@@ -1276,7 +1276,7 @@ cpk-web-inspector,
 }
 
 .sidebar-icon-menu,
-.sidebar-backdrop {
+.sidebar-strip-close {
   display: none;
 }
 
@@ -1336,7 +1336,7 @@ cpk-web-inspector,
     background: var(--color-surface);
   }
 
-  /* The card lies over the drawer, casting its shadow there; a tap on it falls through to the backdrop. */
+  /* The card lies over the drawer, casting its shadow there; a tap on it falls through to the strip's Close sidebar. */
   .app-layout:has(> .sidebar-expanded) .app-shell {
     transform: translateX(80vw);
     z-index: 91;
@@ -1349,12 +1349,13 @@ cpk-web-inspector,
   /* Edit profile's sheet spans the screen from inside the drawer, so the card and the strip's Close sidebar drop
      under the drawer while it is open */
   .app-layout:has(.profile-editor) .app-shell,
-  .app-layout:has(.profile-editor) .sidebar-backdrop {
+  .app-layout:has(.profile-editor) .sidebar-strip-close {
     z-index: 89;
   }
 
-  /* Fades the peeking chat */
-  .app-layout:has(> .sidebar-expanded) .app-shell::after {
+  /* Fades the peeking chat, and the chat card a profile swipe slides off the profile */
+  .app-layout:has(> .sidebar-expanded) .app-shell::after,
+  .app-layout[data-profile-swiping] .app-shell::after {
     content: "";
     position: absolute;
     inset: 0;
@@ -1377,7 +1378,7 @@ cpk-web-inspector,
   }
 
   /* The strip's chip rides with the card, fading as the card's fade does */
-  .app-layout[data-sidebar-swiping] .sidebar-backdrop-menu {
+  .app-layout[data-sidebar-swiping] .sidebar-strip-close-menu {
     transform: translateX(calc(var(--sidebar-drag-offset) - 80vw));
     opacity: calc(1 - 0.5 * var(--sidebar-drag-progress));
     transition: transform 180ms ease-out;
@@ -1385,14 +1386,14 @@ cpk-web-inspector,
 
   .app-layout[data-sidebar-dragging] > .sidebar,
   .app-layout[data-sidebar-dragging] .app-shell,
-  .app-layout[data-sidebar-dragging] .sidebar-backdrop-menu {
+  .app-layout[data-sidebar-dragging] .sidebar-strip-close-menu {
     transition: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
     .app-layout[data-sidebar-swiping] > .sidebar,
     .app-layout[data-sidebar-swiping] .app-shell,
-    .app-layout[data-sidebar-swiping] .sidebar-backdrop-menu {
+    .app-layout[data-sidebar-swiping] .sidebar-strip-close-menu {
       transition: none;
     }
   }
@@ -1474,7 +1475,7 @@ cpk-web-inspector,
 
   /* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
   .sidebar-collapsed .sidebar-logo-btn,
-  .sidebar-backdrop-menu {
+  .sidebar-strip-close-menu {
     flex: none;
     width: 44px;
     height: 44px;
@@ -1487,7 +1488,7 @@ cpk-web-inspector,
   }
 
   /* Over the peeking chat, which lets taps through to it: a tap on the strip closes the drawer */
-  .sidebar-backdrop {
+  .sidebar-strip-close {
     display: block;
     position: fixed;
     inset: 0 0 0 80%;
@@ -1497,12 +1498,12 @@ cpk-web-inspector,
     background: none;
   }
 
-  .sidebar-backdrop:focus-visible {
+  .sidebar-strip-close:focus-visible {
     outline-offset: -4px;
   }
 
   /* The chat's menu chip, where it sits with the drawer shut (the collapsed brand's padding), faded with the chat */
-  .sidebar-backdrop-menu {
+  .sidebar-strip-close-menu {
     position: absolute;
     top: calc(var(--app-safe-top) + 26px);
     left: 12px;
@@ -2870,7 +2871,8 @@ cpk-web-inspector,
   }
 }
 
-/* Phones: the profile is a full-screen sheet that slides in over the chat. */
+/* Phones: the profile is a full-screen sheet beneath the chat, which slides off it to the left as the drawer's card
+   does to the right. */
 @media (max-width: 640px) {
   /* Within the safe area, as a phone's layout runs under the status and home bars */
   .agent-profile {
@@ -2879,7 +2881,43 @@ cpk-web-inspector,
     z-index: 100;
     width: auto;
     border-left: none;
-    animation-name: agentProfileSlideIn;
+    animation: none;
+  }
+
+  /* Over the profile, the chat is the drawer's card: its trailing edge rounded and casting the same shadow. With
+     the profile open it leaves the screen, as the Computer view needs the full width. */
+  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell,
+  .app-layout[data-profile-swiping] .app-shell {
+    z-index: 101;
+    overflow: hidden;
+    border-radius: 0 var(--radius-4xl) var(--radius-4xl) 0;
+    box-shadow: var(--shadow-soft);
+  }
+
+  /* The card hides once it has slid off, or its shadow would grey the profile's left edge; it stays visible until the
+     slide ends. */
+  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell {
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform var(--transition-layout),
+      visibility var(--transition-layout);
+  }
+
+  /* A left swipe across the chat slides the card off the profile under the finger, and a right swipe on the profile
+     brings it back; on release, or the profile's ✕, it settles (the mirror of the drawer's swipe). The chat fades
+     with the card's travel, as it does with the drawer's. */
+  .app-layout[data-profile-swiping] .app-shell {
+    transform: translateX(calc(-1 * var(--profile-drag-offset)));
+    transition: transform 180ms ease-out;
+  }
+
+  .app-layout[data-profile-swiping] .app-shell::after {
+    opacity: var(--profile-drag-progress);
+  }
+
+  .app-layout[data-profile-dragging] .app-shell {
+    transition: none;
   }
 
   /* An open file takes the whole sheet, as Muse stacks a file over the profile (Figs 17-20); its back
@@ -2898,15 +2936,12 @@ cpk-web-inspector,
   }
 }
 
-@keyframes agentProfileSlideIn {
-  from {
-    transform: translateX(100%);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .agent-profile {
+  .agent-profile,
+  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell,
+  .app-layout[data-profile-swiping] .app-shell {
     animation: none;
+    transition: none;
   }
 
   .sheet,
@@ -2952,7 +2987,7 @@ cpk-web-inspector,
   }
 
   .sidebar-logo-btn svg,
-  .sidebar-backdrop-menu svg {
+  .sidebar-strip-close-menu svg {
     width: calc(var(--spacing) * 6);
     height: calc(var(--spacing) * 6);
   }

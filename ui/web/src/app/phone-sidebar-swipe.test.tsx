@@ -12,16 +12,22 @@ beforeEach(() => {
   tick = 100;
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 300 } as DOMRect);
 });
-function Fixture({ enabled = true }: { enabled?: boolean }) {
+let renders = 0;
+function Fixture({ enabled = true, side = 'left', sheet }: { enabled?: boolean; side?: 'left' | 'right'; sheet?: 'open' | 'hidden' }) {
+  renders += 1;
   const [expanded, setExpanded] = useState(false);
   const [linkTaps, setLinkTaps] = useState(0);
   const layoutRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
-  const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, enabled, expanded, onExpandedChange: setExpanded });
+  const name = side === 'left' ? 'sidebar' : 'profile';
+  const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side, name, enabled, expanded, onExpandedChange: setExpanded });
   return <div ref={layoutRef} data-testid="layout" style={swipe.style} data-dragging={swipe.dragging}>
-    <aside ref={drawerRef} data-testid="drawer" data-visible={swipe.visible}><svg data-testid="icon" /></aside>
+    {/* The Agent Profile is a dialog itself; another dialog, such as the sign-in sheet, is a sheet over the page. */}
+    <aside ref={drawerRef} data-testid="drawer" data-visible={swipe.visible} role={side === 'right' ? 'dialog' : undefined}><svg data-testid="icon" /></aside>
+    {sheet && <div role="dialog" aria-label="Sheet" hidden={sheet === 'hidden'} />}
     <button onClick={() => setExpanded(!expanded)}>Menu</button>
     <button onClick={() => setExpanded(false)}>Chat</button>
+    <button onClick={swipe.close}>Close</button>
     <input aria-label="Input" />
     <p data-testid="bubble">A reply with <a href="#source" onClick={(event) => { event.preventDefault(); setLinkTaps(linkTaps + 1); }}>a link</a></p>
     <pre data-testid="code" style={{ overflowX: 'auto' }}><code>wide code</code></pre>
@@ -171,6 +177,96 @@ describe('phone sidebar swipes', () => {
     touch('touchstart', 30); expect(touch('touchmove', 230)).toBe(false); settle(230);
     expect(screen.getByText('closed')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Menu'));
+    expect(screen.getByText('open')).toBeInTheDocument();
+  });
+  it('starts no swipe while a sheet is open', () => {
+    render(<Fixture sheet="open" />);
+    touch('touchstart', 30); expect(touch('touchmove', 250)).toBe(false); settle(250);
+    expect(screen.getByText('closed')).toBeInTheDocument();
+  });
+});
+
+// The drawer's mirror, for the Agent Profile at the right; jsdom's window is 1024px wide.
+describe('phone agent profile swipes', () => {
+  it('draws the profile in from the right under a left swipe anywhere on the chat, and a right swipe puts it back', () => {
+    render(<Fixture side="right" />);
+    const layout = screen.getByTestId('layout');
+    const bubble = screen.getByTestId('bubble');
+    touch('touchstart', 600, 100, bubble);
+    expect(touch('touchmove', 490, 104, bubble)).toBe(true);
+    expect(layout.style.getPropertyValue('--profile-drag-offset')).toBe('110px');
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('');
+    expect(screen.getByTestId('drawer')).toHaveAttribute('data-visible', 'true');
+    expect(screen.getByText('closed')).toBeInTheDocument();
+    touch('touchmove', 380, 104, bubble);
+    settle(380, 104);
+    expect(screen.getByText('open')).toBeInTheDocument();
+    touch('touchstart', 400, 100, screen.getByTestId('icon'));
+    expect(touch('touchmove', 480, 100, screen.getByTestId('drawer'))).toBe(true);
+    expect(layout.style.getPropertyValue('--profile-drag-offset')).toBe('220px');
+    touch('touchmove', 620, 100, screen.getByTestId('drawer'));
+    settle(620);
+    expect(screen.getByText('closed')).toBeInTheDocument();
+  });
+  it('leaves a right swipe on the closed chat to the drawer, and the right edge to Safari', () => {
+    render(<Fixture side="right" />);
+    touch('touchstart', 300); expect(touch('touchmove', 500)).toBe(false); settle(500);
+    touch('touchstart', 1004); expect(touch('touchmove', 800)).toBe(false); settle(800);
+    expect(screen.getByText('closed')).toBeInTheDocument();
+    touch('touchstart', 1003); expect(touch('touchmove', 800)).toBe(true); settle(800);
+    expect(screen.getByText('open')).toBeInTheDocument();
+  });
+  it('leaves a left drag on an input, sideways-scrolling content or selected text to that content', () => {
+    render(<Fixture side="right" />);
+    const input = screen.getByLabelText('Input');
+    touch('touchstart', 600, 100, input); expect(touch('touchmove', 380, 100, input)).toBe(false); settle(380);
+    const code = screen.getByTestId('code');
+    Object.defineProperties(code, { scrollWidth: { value: 600 }, clientWidth: { value: 300 } });
+    touch('touchstart', 600, 100, code); expect(touch('touchmove', 380, 100, code)).toBe(false); settle(380);
+    window.getSelection()?.selectAllChildren(screen.getByTestId('bubble'));
+    touch('touchstart', 600, 100, screen.getByTestId('bubble'));
+    expect(touch('touchmove', 380, 100, screen.getByTestId('bubble'))).toBe(false);
+    settle(380);
+    window.getSelection()?.removeAllRanges();
+    expect(screen.getByText('closed')).toBeInTheDocument();
+  });
+  it('settles in a fast flick\'s direction below halfway', () => {
+    render(<Fixture side="right" />);
+    tick = 10;
+    touch('touchstart', 600); touch('touchmove', 580); touch('touchmove', 540); touch('touchend', 540);
+    expect(screen.getByText('open')).toBeInTheDocument();
+    touch('touchstart', 400); touch('touchmove', 420); touch('touchmove', 460); touch('touchend', 460);
+    expect(screen.getByText('closed')).toBeInTheDocument();
+  });
+  it('does not render for a touch that has not moved yet, so the drawer and the profile both get it', () => {
+    // A real touchstart flushes React between the layout's two listeners, the drawer's first. A render there makes
+    // use-gesture rebind its listeners during the dispatch, and the profile's missed every swipe in iOS Safari.
+    render(<Fixture side="right" />);
+    const before = renders;
+    touch('touchstart', 600);
+    expect(renders).toBe(before);
+    settle(600);
+  });
+  it('closes from the profile\'s ✕ the way a released swipe settles, keeping it shown until the chat is back', async () => {
+    render(<Fixture side="right" />);
+    const layout = screen.getByTestId('layout');
+    const drawer = screen.getByTestId('drawer');
+    touch('touchstart', 600); touch('touchmove', 380); settle(380);
+    await waitFor(() => expect(layout.style.getPropertyValue('--profile-drag-offset')).toBe(''));
+    expect(screen.getByText('open')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Close'));
+    expect(screen.getByText('closed')).toBeInTheDocument();
+    expect(drawer).toHaveAttribute('data-visible', 'true');
+    await waitFor(() => expect(layout.style.getPropertyValue('--profile-drag-offset')).toBe('0px'));
+    await waitFor(() => expect(drawer).toHaveAttribute('data-visible', 'false'));
+  });
+  it('starts no swipe while a sheet is open, and swipes past one kept mounted hidden', () => {
+    const { unmount } = render(<Fixture side="right" sheet="open" />);
+    touch('touchstart', 600); expect(touch('touchmove', 380)).toBe(false); settle(380);
+    expect(screen.getByText('closed')).toBeInTheDocument();
+    unmount();
+    render(<Fixture side="right" sheet="hidden" />);
+    touch('touchstart', 600); expect(touch('touchmove', 380)).toBe(true); settle(380);
     expect(screen.getByText('open')).toBeInTheDocument();
   });
 });

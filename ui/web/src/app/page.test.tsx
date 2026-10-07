@@ -3855,7 +3855,7 @@ describe('sidebar on a phone', () => {
   beforeEach(() => happyDOM().setViewport({ width: 390, height: 844 }));
   afterEach(() => happyDOM().setViewport({ width: 1024, height: 768 }));
 
-  it('opens as a drawer over a backdrop that closes it when tapped', async () => {
+  it('opens as a drawer beside a chat strip that closes it when tapped', async () => {
     await renderPage();
     expect(screen.queryByLabelText('Close sidebar')).toBeNull();
 

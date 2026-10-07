@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, ChevronLeft, Clock, Command, Fingerprint, Heart, IdCard, List, MessageSquare, Monitor, Pencil, ShieldCheck, TriangleAlert, X, Zap, type LucideIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ComponentType, type FormEvent, type ReactNode, type Ref } from "react";
 
 import type { AgentProfileTab } from "../cartridge/index.js";
 import { Button } from "../components/ui/button";
@@ -717,6 +717,7 @@ export function AgentProfile({
   onSaved,
   isAccountCurrent,
   tabs = {},
+  ref,
 }: {
   open?: boolean;
   chatServiceUrl: string;
@@ -731,6 +732,8 @@ export function AgentProfile({
   onSaved: () => void;
   isAccountCurrent?: (() => boolean) | undefined;
   tabs?: Partial<Record<AgentProfileTab, ComponentType>> | undefined;
+  /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
+  ref?: Ref<HTMLDivElement> | undefined;
 }) {
   // A bot with an Agent Computer opens on it; one without, on its Activity. Each opening starts there again.
   const firstTab: AgentProfileTab = computer === undefined ? "Activity" : "Computer";
@@ -754,7 +757,7 @@ export function AgentProfile({
   };
 
   return (
-    <div className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open}>
+    <div ref={ref} className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open}>
       <div className="agent-profile-header">
         <button className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
           <X size={20} aria-hidden />

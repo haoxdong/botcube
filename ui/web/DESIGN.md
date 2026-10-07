@@ -62,7 +62,7 @@ from `botcube-ui-web/ui`.
   is remembered per viewer.
   The desktop brand has 12px top and 8px bottom padding.
   The phone drawer follows Muse Fig 21, measured from the safe area's top: a 44px brand row holding only the `name`
-  at semibold (the chat strip closes the drawer, showing the chat's menu chip faded where it sits with the drawer
+  at semibold (the chat strip, `.sidebar-strip-close`, closes the drawer, showing the chat's menu chip faded where it sits with the drawer
   shut); Main chat from 82px, the rows at a 44px pitch, the open one on
   `selected`; the divider 10px below them; the Side Chats header a 44px row 10px below the divider, its rows at the
   same pitch; content 20px from each side, the plus and each × in one 44px column; the Account row 8px above the
@@ -143,7 +143,7 @@ from `botcube-ui-web/ui`.
 | `xl`   | 16px   | Agent file cards, Customize placeholders                                                          |
 | `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet                                           |
 | `3xl`  | 26px   | The composer                                                                                      |
-| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21)                                               |
+| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile                                    |
 | `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)                                             |
 
 ## Shadows
@@ -153,15 +153,15 @@ from `botcube-ui-web/ui`.
 | `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`                              | The desktop composer (resting)                                       |
 | `elevated` | `0 4px 20px rgba(0,0,0,0.15)`                             | Dropdowns, popovers, the Scheduled sheet                             |
 | `composer` | `0 8px 36px rgba(0,0,0,0.11)`                             | The phone composer, focused or not (ChatGPT Work's)                  |
-| `soft`     | `0 0 40px rgba(0,0,0,0.23)`                               | The chat card beside the phone drawer (Muse Fig 21)                  |
+| `soft`     | `0 0 40px rgba(0,0,0,0.23)`                               | The chat card beside the phone drawer (Muse Fig 21) or profile       |
 | `card`     | `0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06)` | The desktop chat card's edge on the sidebar's grey (memo 0049 Fig 1) |
 
 ## Transitions
 
-| Token    | Value       | Use                                       |
-| -------- | ----------- | ----------------------------------------- |
-| `fast`   | `0.1s`      | Hover backgrounds, opacity, color changes |
-| `layout` | `0.2s ease` | Sidebar width, border-color               |
+| Token    | Value       | Use                                                      |
+| -------- | ----------- | -------------------------------------------------------- |
+| `fast`   | `0.1s`      | Hover backgrounds, opacity, color changes                |
+| `layout` | `0.2s ease` | Sidebar width, border-color, the phone chat card's slide |
 
 ## Spacing
 

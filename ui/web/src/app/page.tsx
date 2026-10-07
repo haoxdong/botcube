@@ -321,7 +321,7 @@ function App({
   const isPhone = useIsPhone();
   const layoutRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
-  const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
+  const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
   // The sidebar's Customize screen shows in the chat's place, which stays mounted under it.
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const ready = auth.sessionStatus === "ready";
@@ -378,6 +378,18 @@ function App({
   const [agentProfileOpen, setAgentProfileOpen] = useState(false);
   // The chat the profile was closed in: it stays mounted there, hidden, keeping its computer's live view connected.
   const [agentProfileChat, setAgentProfileChat] = useState<string | null>(null);
+  const closeAgentProfile = () => {
+    setAgentProfileOpen(false);
+    setAgentProfileChat(activeId);
+  };
+  // A phone's left swipe across the chat slides it off the profile beneath, as its avatar opens it.
+  const agentProfileRef = useRef<HTMLDivElement>(null);
+  const profileSwipe = usePhoneSidebarSwipe({
+    layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile",
+    enabled: isPhone && activeId !== null && !customizeOpen && !swipe.visible,
+    expanded: agentProfileOpen,
+    onExpandedChange: (open) => { if (open) setAgentProfileOpen(true); else closeAgentProfile(); },
+  });
   const agentName = agentProfile?.name ?? UI_CONFIG.agentName;
   // Bumped when the agent edits its Agent Identity or Soul, so the Identity tab reloads them.
   const [agentDocumentsRevision, setAgentDocumentsRevision] = useState(0);
@@ -488,7 +500,7 @@ function App({
     // strip beside it (memo 0049 Fig 21).
     <div onClickCapture={(event) => {
       if (!isPhone && event.target instanceof Element && event.target.closest(".app-shell")) setSidebarExpanded(false);
-    }} ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style }}>
+    }} ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style }}>
       {/* ── Sidebar (outside CopilotKit so it doesn't remount on conversation switch) ── */}
       <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`}>
         <div className="sidebar-top">
@@ -607,9 +619,9 @@ function App({
         </div>
       </aside>
       {swipe.visible && (
-        <button className="sidebar-backdrop" onClick={() => setSidebarExpanded(false)} aria-label="Close sidebar">
+        <button className="sidebar-strip-close" onClick={() => setSidebarExpanded(false)} aria-label="Close sidebar">
           {/* The peeking chat keeps its menu chip (memo 0049 Fig 21) */}
-          <span className="sidebar-backdrop-menu">{menuIcon}</span>
+          <span className="sidebar-strip-close-menu">{menuIcon}</span>
         </button>
       )}
 
@@ -689,20 +701,18 @@ function App({
               </ChatThread>
             </div>
           </main>
-          {(agentProfileOpen || agentProfileChat === activeId) && (
+          {(profileSwipe.visible || agentProfileChat === activeId) && (
             <AgentProfile
               key={accountId}
-              open={agentProfileOpen}
+              ref={agentProfileRef}
+              open={profileSwipe.visible}
               chatServiceUrl={CHAT_SERVICE_URL}
               profile={agentProfile}
               error={agentProfileError}
               computer={ComputerView && ((shown) => (
                 <ComputerView agentId={AGENT_ID} agentName={agentName} conversation={{ id: activeId, service: "chat-service" }} shown={shown} />
               ))}
-              onClose={() => {
-                setAgentProfileOpen(false);
-                setAgentProfileChat(activeId);
-              }}
+              onClose={profileSwipe.close}
               revision={agentDocumentsRevision}
               onSaved={() => void refreshAgentProfile()}
               isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
