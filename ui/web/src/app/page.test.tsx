@@ -4314,42 +4314,95 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
     return within(openProfile()).findByRole('listitem');
   };
+  /** Taps a listed task, and returns the sheet that opens over the profile with its actions. */
+  const openTask = async (task: HTMLElement) => {
+    await userEvent.click(within(task).getByRole('button'));
+    const title = present(task.querySelector('.scheduled-task-title'), "the task's title").textContent;
+    return within(openProfile()).findByRole('dialog', { name: title });
+  };
+  /** Deletes the sheet's task: Delete, then the Delete task it asks to confirm with. */
+  const deleteTask = async (sheet: HTMLElement) => {
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Delete task' }));
+  };
+  const closeTask = async (sheet: HTMLElement) => {
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(within(openProfile()).queryByRole('dialog')).toBeNull());
+  };
   const sent = (method: string, path: string) =>
     fetchMock.mock.calls
       .filter(([url, init]) => url === `http://chat.test${path}` && init?.method === method)
       .map(([, init]) => JSON.parse((init as RequestInit).body as string) as unknown);
 
-  it('lists the scheduled tasks with what each asks and when it runs', async () => {
+  it('lists each scheduled task under how often it runs, with its time and what it asks', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
 
     const task = await openScheduled();
 
+    expect(within(openProfile()).getByRole('region', { name: 'Weekdays' })).toContainElement(task);
+    expect(within(openProfile()).getByRole('heading', { name: 'Weekdays' })).toHaveClass('list-group-heading');
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
-    expect(task.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on rates$/);
-    expect(task.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 8:00 AM, Monday through Friday · America\/New_York$/);
+    expect(task.querySelector('.scheduled-task-detail')).toHaveTextContent(/^8:00 AM · Brief me on rates$/);
+    // Its actions are in its sheet, not on the inSheet.
+    expect(within(task).getAllByRole('button')).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/scheduled-tasks', { credentials: 'include', cache: 'no-store' });
   });
 
-  it('says when each task runs in words, and shows an expression it cannot word as written', async () => {
+  it('labels a task by its frequency, and groups the tasks of one frequency where the first is listed', async () => {
     service.scheduled = [
-      { ...MORNING_BRIEF, schedule: 'cron(30 14 ? * 2 *)' },
-      { ...MORNING_BRIEF, id: 'task-2', schedule: 'rate(1 day)' },
-      { ...MORNING_BRIEF, id: 'task-3', schedule: 'rate(2 hours)' },
-      { ...MORNING_BRIEF, id: 'task-4', schedule: 'at(2026-10-14T08:30:00)' },
-      { ...MORNING_BRIEF, id: 'task-5', schedule: 'cron(nonsense)' },
+      { ...MORNING_BRIEF, schedule: 'cron(0 0 ? * MON-FRI *)' },
+      { ...MORNING_BRIEF, id: 'task-2', schedule: 'cron(5 12 ? * 7 *)' },
+      { ...MORNING_BRIEF, id: 'task-3', schedule: 'rate(1 day)' },
+      { ...MORNING_BRIEF, id: 'task-4', schedule: 'cron(30 14 ? * 2 *)' },
+      { ...MORNING_BRIEF, id: 'task-5', schedule: 'rate(2 hours)' },
+      { ...MORNING_BRIEF, id: 'task-6', schedule: 'cron(59 23 ? * MON-FRI *)' },
+      { ...MORNING_BRIEF, id: 'task-7', schedule: 'at(2026-10-14T08:30:00)' },
     ];
     await renderPage();
     await userEvent.click(avatar());
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
-    const tasks = await within(openProfile()).findAllByRole('listitem');
+    await within(openProfile()).findAllByRole('listitem');
 
-    expect(tasks.map((task) => task.querySelector('.scheduled-task-schedule')?.textContent)).toEqual([
+    const groups = within(openProfile()).getAllByRole('region');
+    expect(groups.map((group) => [
+      group.getAttribute('aria-label'),
+      within(group).getAllByRole('listitem').map((task) => task.querySelector('.scheduled-task-detail')?.textContent),
+    ])).toEqual([
+      ['Weekdays', ['12:00 AM · Brief me on rates', '11:59 PM · Brief me on rates']],
       // EventBridge numbers the days of the week from 1, Sunday.
-      'At 2:30 PM, only on Monday · America/New_York',
-      'Every day · America/New_York',
-      'Every 2 hours · America/New_York',
-      'at(2026-10-14T08:30:00) · America/New_York',
+      ['Every Saturday', ['12:05 PM · Brief me on rates']],
+      ['Daily', ['Brief me on rates']],
+      ['Every Monday', ['2:30 PM · Brief me on rates']],
+      ['Every 2 hours', ['Brief me on rates']],
+      ['at(2026-10-14T08:30:00)', ['Brief me on rates']],
+    ]);
+  });
+
+  it("opens a task's sheet on a tap, saying what it asks and when it runs in words, or as written", async () => {
+    service.scheduled = [
+      MORNING_BRIEF,
+      { ...MORNING_BRIEF, id: 'task-2', title: 'Hourly brief', schedule: 'rate(1 hour)' },
+      { ...MORNING_BRIEF, id: 'task-3', title: 'Odd brief', schedule: 'cron(nonsense)' },
+    ];
+    await renderPage();
+    await userEvent.click(avatar());
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
+    const words = [];
+
+    for (const task of await within(openProfile()).findAllByRole('listitem')) {
+      // eslint-disable-next-line no-await-in-loop -- one sheet open at a time
+      const sheet = await openTask(task);
+      expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on rates$/);
+      expect(within(sheet).getByRole('button', { name: 'Pause' })).toBeEnabled();
+      words.push(sheet.querySelector('.scheduled-task-schedule')?.textContent);
+      // eslint-disable-next-line no-await-in-loop -- one sheet open at a time
+      await closeTask(sheet);
+    }
+
+    expect(words).toEqual([
+      'At 8:00 AM, Monday through Friday · America/New_York',
+      'Every hour · America/New_York',
       'cron(nonsense) · America/New_York',
     ]);
   });
@@ -4358,48 +4411,48 @@ describe('agent profile', () => {
     service.scheduled = [MORNING_BRIEF];
     service.failing.set('PATCH /scheduled-tasks/task-1', 503);
     await renderPage();
-    const task = await openScheduled();
-    const row = within(task);
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.clear(row.getByLabelText('Prompt'));
-    await userEvent.type(row.getByLabelText('Prompt'), 'Keep the edited prompt');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    expect(await within(openProfile()).findByText('Scheduled task change failed: 503')).toBeInTheDocument();
-    expect(row.getByLabelText('Prompt')).toHaveValue('Keep the edited prompt');
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(inSheet.getByLabelText('Prompt'));
+    await userEvent.type(inSheet.getByLabelText('Prompt'), 'Keep the edited prompt');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(await inSheet.findByText('Scheduled task change failed: 503')).toBeInTheDocument();
+    expect(inSheet.getByLabelText('Prompt')).toHaveValue('Keep the edited prompt');
     service.failing.delete('PATCH /scheduled-tasks/task-1');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    expect(task.querySelector('.scheduled-task-prompt')).toHaveTextContent('Keep the edited prompt');
-    expect(row.queryByLabelText('Prompt')).toBeNull();
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent('Keep the edited prompt');
+    expect(inSheet.queryByLabelText('Prompt')).toBeNull();
     expect(within(openProfile()).queryByText('Scheduled task change failed: 503')).toBeNull();
   });
 
   it.each([200, 503])('holds the scheduled draft until saving answers HTTP %i', async (status) => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
-    const task = await openScheduled();
-    const row = within(task);
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.clear(row.getByLabelText('Prompt'));
-    await userEvent.type(row.getByLabelText('Prompt'), 'An unsaved draft');
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(inSheet.getByLabelText('Prompt'));
+    await userEvent.type(inSheet.getByLabelText('Prompt'), 'An unsaved draft');
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/scheduled-tasks/task-1' && init?.method === 'PATCH' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
     );
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    expect(row.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(row.getByRole('button', { name: 'Cancel' })).toBeDisabled();
-    expect(row.getByLabelText('Prompt')).toHaveValue('An unsaved draft');
-    expect(row.getByLabelText('Prompt')).toBeDisabled();
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(inSheet.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(inSheet.getByLabelText('Prompt')).toHaveValue('An unsaved draft');
+    expect(inSheet.getByLabelText('Prompt')).toBeDisabled();
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(held).toHaveLength(1);
     await act(async () => { present(held[0], 'save response')(answer(status, { ...MORNING_BRIEF, prompt: 'An unsaved draft' })); });
     if (status === 200) {
-      expect(row.queryByLabelText('Prompt')).toBeNull();
-      expect(task.querySelector('.scheduled-task-prompt')).toHaveTextContent('An unsaved draft');
+      expect(inSheet.queryByLabelText('Prompt')).toBeNull();
+      expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent('An unsaved draft');
     } else {
-      expect(row.getByLabelText('Prompt')).toHaveValue('An unsaved draft');
-      expect(row.getByRole('button', { name: 'Save' })).toBeEnabled();
-      expect(row.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+      expect(inSheet.getByLabelText('Prompt')).toHaveValue('An unsaved draft');
+      expect(inSheet.getByRole('button', { name: 'Save' })).toBeEnabled();
+      expect(inSheet.getByRole('button', { name: 'Cancel' })).toBeEnabled();
     }
   });
 
@@ -4408,50 +4461,60 @@ describe('agent profile', () => {
     await renderPage();
     const task = await openScheduled();
     expect(within(task).queryByText('Paused')).toBeNull();
-    expect(task).not.toHaveClass('scheduled-task-paused');
+    expect(task.querySelector('.scheduled-task')).not.toHaveClass('scheduled-task-paused');
+    const sheet = await openTask(task);
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Pause' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Pause' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ paused: true }]);
-    expect(within(task).getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+    expect(within(sheet).getByText('Paused')).toHaveClass('status-pill');
     // Paused is a status pill beside the name, not part of it.
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
     expect(within(task).getByText('Paused')).toHaveClass('status-pill');
-    expect(task).toHaveClass('scheduled-task-paused');
+    expect(task.querySelector('.scheduled-task')).toHaveClass('scheduled-task-paused');
+
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Resume' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ paused: true }, { paused: false }]);
+    expect(within(task).queryByText('Paused')).toBeNull();
   });
 
   it('edits what a scheduled task asks and when it runs', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const task = await openScheduled();
+    const sheet = await openTask(task);
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Edit' }));
-    await userEvent.clear(within(task).getByLabelText('Prompt'));
-    await userEvent.type(within(task).getByLabelText('Prompt'), 'Brief me on FX');
-    await userEvent.clear(within(task).getByLabelText('Schedule'));
-    await userEvent.type(within(task).getByLabelText('Schedule'), 'rate(1 day)');
-    await userEvent.click(within(task).getByRole('button', { name: 'Save' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(within(sheet).getByLabelText('Prompt'));
+    await userEvent.type(within(sheet).getByLabelText('Prompt'), 'Brief me on FX');
+    await userEvent.clear(within(sheet).getByLabelText('Schedule'));
+    await userEvent.type(within(sheet).getByLabelText('Schedule'), 'rate(1 day)');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'rate(1 day)' },
     ]);
-    expect(task.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on FX$/);
+    expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on FX$/);
+    await closeTask(sheet);
+    expect(within(openProfile()).getByRole('region', { name: 'Daily' })).toHaveTextContent(/Brief me on FX$/);
   });
 
   // The Schedule field showed only the raw AWS expression, unlike the card and the list.
-  it('reads the Schedule being edited in the words and time zone the list shows', async () => {
+  it('reads the Schedule being edited in the words and time zone the sheet shows', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
     const words = /^At 8:00 AM, Monday through Friday · America\/New_York$/;
-    expect(task.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Edit' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
 
-    expect(task.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
-    await userEvent.clear(within(task).getByLabelText('Schedule'));
-    await userEvent.type(within(task).getByLabelText('Schedule'), 'rate(2 hours)');
-    expect(task.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Every 2 hours · America\/New_York$/);
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
+    await userEvent.clear(within(sheet).getByLabelText('Schedule'));
+    await userEvent.type(within(sheet).getByLabelText('Schedule'), 'rate(2 hours)');
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Every 2 hours · America\/New_York$/);
   });
 
   it("runs a scheduled task on the account's default model until the user picks another", async () => {
@@ -4462,30 +4525,30 @@ describe('agent profile', () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const task = await openScheduled();
-    const row = within(task);
+    const inSheet = within(await openTask(task));
 
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    expect(row.getByLabelText('Model')).toHaveValue('plan');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(row.getByLabelText('Model'), 'Sonnet');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Model')).toHaveValue('plan');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
-    expect(row.getByLabelText('Model')).toHaveValue('sonnet');
+    expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
   });
 
   it('shows a model the account no longer has as unavailable, not as its default', async () => {
     service.models = [{ key: 'plan', label: 'GPT', provider: 'openai' }];
     service.scheduled = [{ ...MORNING_BRIEF, model: 'retired' }];
     await renderPage();
-    const row = within(await openScheduled());
+    const inSheet = within(await openTask(await openScheduled()));
 
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    const model = row.getByLabelText('Model');
+    const model = inSheet.getByLabelText('Model');
     expect(model).toHaveValue('retired');
     expect(within(model).getByRole('option', { name: 'retired (unavailable)' })).toBeDisabled();
   });
@@ -4497,20 +4560,23 @@ describe('agent profile', () => {
     const task = await openScheduled();
     const panel = within(openProfile());
     await panel.findByText('Failed to load the models: 503');
-    const row = within(task);
-    expect(row.getByRole('button', { name: 'Edit' })).toBeEnabled();
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    expect(row.getByLabelText('Model')).toBeDisabled();
-    expect(row.getByLabelText('Model')).toHaveValue(model ?? '');
-    await userEvent.clear(row.getByLabelText('Prompt'));
-    await userEvent.type(row.getByLabelText('Prompt'), 'Brief me on FX');
-    await userEvent.clear(row.getByLabelText('Schedule'));
-    await userEvent.type(row.getByLabelText('Schedule'), 'rate(1 day)');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    const sheet = await openTask(task);
+    const inSheet = within(sheet);
+    // The open sheet covers the tab, so it says why the models failed itself.
+    expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
+    expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Model')).toBeDisabled();
+    expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
+    await userEvent.clear(inSheet.getByLabelText('Prompt'));
+    await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
+    await userEvent.clear(inSheet.getByLabelText('Schedule'));
+    await userEvent.type(inSheet.getByLabelText('Schedule'), 'rate(1 day)');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'rate(1 day)' },
     ]);
-    expect(task.querySelector('.scheduled-task-prompt')).toHaveTextContent('Brief me on FX');
+    expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent('Brief me on FX');
     expect(service.scheduled[0]?.model).toBe(model);
     expect(panel.getByText('Failed to load the models: 503')).toBeInTheDocument();
   });
@@ -4524,21 +4590,22 @@ describe('agent profile', () => {
         cartridgeModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
       }) : chatService(url, init),
     );
-    const row = within(await openScheduled());
+    const task = await openScheduled();
     const panel = within(openProfile());
     await panel.findByText(/Failed to load the models: 503/);
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    const chooser = row.getByLabelText('Model');
+    const inSheet = within(await openTask(task));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    const chooser = inSheet.getByLabelText('Model');
     expect(chooser).toBeEnabled();
     expect(chooser).toHaveValue(model ?? '');
     expect(within(chooser).queryByRole('option', { name: 'GPT' })).not.toBeInTheDocument();
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(row.getByLabelText('Model'), 'Sonnet');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    expect(row.getByLabelText('Model')).toHaveValue('sonnet');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
     if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
   });
@@ -4552,13 +4619,14 @@ describe('agent profile', () => {
         cartridgeModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
       }) : chatService(url, init),
     );
-    const row = within(await openScheduled());
+    const task = await openScheduled();
     await within(openProfile()).findByText(/Failed to load the models: 503/);
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(row.getByLabelText('Model'), 'Sonnet');
-    await userEvent.selectOptions(row.getByLabelText('Model'), 'Account default (models unavailable)');
-    expect(row.getByLabelText('Model')).toHaveValue('');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    const inSheet = within(await openTask(task));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
+    await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
+    expect(inSheet.getByLabelText('Model')).toHaveValue('');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
   });
 
@@ -4567,16 +4635,16 @@ describe('agent profile', () => {
     await renderPage();
     service.failing.set('GET /agent/models', 503);
     service.failing.set('PATCH /scheduled-tasks/task-1', 502);
-    const row = within(await openScheduled());
-    const panel = within(openProfile());
-    await panel.findByText('Failed to load the models: 503');
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    await userEvent.clear(row.getByLabelText('Prompt'));
-    await userEvent.type(row.getByLabelText('Prompt'), 'Brief me on FX');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
-    expect(panel.getByText('Scheduled task change failed: 502')).toBeInTheDocument();
-    expect(panel.getByText('Failed to load the models: 503')).toBeInTheDocument();
-    expect(row.getByLabelText('Prompt')).toHaveValue('Brief me on FX');
+    const task = await openScheduled();
+    await within(openProfile()).findByText('Failed to load the models: 503');
+    const inSheet = within(await openTask(task));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(inSheet.getByLabelText('Prompt'));
+    await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(inSheet.getByText('Scheduled task change failed: 502')).toBeInTheDocument();
+    expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
+    expect(inSheet.getByLabelText('Prompt')).toHaveValue('Brief me on FX');
     expect(service.scheduled[0]).toEqual({ ...MORNING_BRIEF, model: 'sonnet' });
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'cron(0 8 ? * MON-FRI *)' },
@@ -4590,22 +4658,39 @@ describe('agent profile', () => {
       url === 'http://chat.test/agent/models' ? new Promise<Response>(() => {}) : chatService(url, init),
     );
 
-    const row = within(await openScheduled());
+    const inSheet = within(await openTask(await openScheduled()));
 
-    expect(row.getByRole('button', { name: 'Edit' })).toBeDisabled();
-    await userEvent.click(row.getByRole('button', { name: 'Edit' }));
-    expect(row.queryByLabelText('Prompt')).toBeNull();
+    expect(inSheet.getByRole('button', { name: 'Edit' })).toBeDisabled();
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.queryByLabelText('Prompt')).toBeNull();
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([]);
   });
 
-  it('deletes a scheduled task', async () => {
+  it('asks before deleting a scheduled task, and keeps it on Cancel', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Delete' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
+
+    expect(within(sheet).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close', 'Delete task', 'Cancel']);
+    expect(within(sheet).getByRole('button', { name: 'Delete task' })).toHaveClass('button-destructive');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    expect(within(sheet).getByRole('button', { name: 'Delete' })).toBeEnabled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([]);
+    // The tab, under the open sheet, is hidden from assistive tech.
+    expect(within(openProfile()).getAllByRole('listitem', { hidden: true })).toHaveLength(1);
+  });
+
+  it('deletes a scheduled task from its sheet, which closes', async () => {
+    service.scheduled = [MORNING_BRIEF];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    await deleteTask(sheet);
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/scheduled-tasks/task-1', { method: 'DELETE', credentials: 'include' });
+    await waitFor(() => expect(within(openProfile()).queryByRole('dialog')).toBeNull());
     expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^No scheduled tasks yet\.$/);
   });
 
@@ -4624,29 +4709,66 @@ describe('agent profile', () => {
     expect(await within(openProfile()).findByText('Scheduled tasks failed: 503')).toHaveClass('agent-profile-error');
   });
 
-  it('keeps a scheduled task whose delete failed, and says so', async () => {
+  it('keeps a scheduled task whose delete failed, and says so in the sheet, then in the tab', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     service.scheduled = [MORNING_BRIEF];
     service.failing.set('DELETE /scheduled-tasks/task-1', 502);
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Delete' }));
+    await deleteTask(sheet);
 
-    expect(await within(openProfile()).findByText('Scheduled task delete failed: 502')).toHaveClass('agent-profile-error');
+    expect(await within(sheet).findByText("Couldn't delete Morning brief. Try again.")).toHaveClass('agent-profile-error');
+    expect(error).toHaveBeenCalledWith(new Error('Deleting Morning brief failed: 502'));
+    expect(within(sheet).getByRole('button', { name: 'Delete' })).toBeEnabled();
+    await closeTask(sheet);
+    expect(within(openProfile()).getByText("Couldn't delete Morning brief. Try again.")).toHaveClass('agent-profile-error');
     expect(within(openProfile()).getAllByRole('listitem')).toHaveLength(1);
   });
 
-  it('keeps a scheduled task whose delete never reached the Chat Service, and says why', async () => {
+  it('keeps a scheduled task whose delete never reached the Chat Service, and says so', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
     fetchMock.mockImplementationOnce(async () => {
       throw new TypeError('Failed to fetch');
     });
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Delete' }));
+    await deleteTask(sheet);
 
-    expect(await within(openProfile()).findByText('Scheduled task delete failed: Failed to fetch')).toHaveClass('agent-profile-error');
+    expect(await within(sheet).findByText("Couldn't delete Morning brief. Try again.")).toHaveClass('agent-profile-error');
+    expect(error).toHaveBeenCalledWith(new Error('Deleting Morning brief failed: Failed to fetch', { cause: new TypeError('Failed to fetch') }));
+    await closeTask(sheet);
+    expect(within(openProfile()).getAllByRole('listitem')).toHaveLength(1);
+  });
+
+  it("opens another task's sheet clear of the failure the last one showed", async () => {
+    service.scheduled = [MORNING_BRIEF, { ...MORNING_BRIEF, id: 'task-2', title: 'Evening wrap' }];
+    service.failing.set('PATCH /scheduled-tasks/task-1', 400);
+    await renderPage();
+    await userEvent.click(avatar());
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
+    const [morning, evening] = await within(openProfile()).findAllByRole('listitem');
+    const first = await openTask(present(morning, 'the first task'));
+    await userEvent.click(within(first).getByRole('button', { name: 'Pause' }));
+    await within(first).findByText('Scheduled task change failed: 400');
+    await closeTask(first);
+
+    const second = await openTask(present(evening, 'the second task'));
+
+    expect(within(openProfile()).queryByText('Scheduled task change failed: 400')).toBeNull();
+    expect(within(second).getByRole('button', { name: 'Pause' })).toBeEnabled();
+  });
+
+  it('closes the sheet without a change', async () => {
+    service.scheduled = [MORNING_BRIEF];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    await closeTask(sheet);
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('http://chat.test/scheduled-tasks/'))).toEqual([]);
     expect(within(openProfile()).getAllByRole('listitem')).toHaveLength(1);
   });
 
@@ -4654,12 +4776,15 @@ describe('agent profile', () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const task = await openScheduled();
+    const sheet = await openTask(task);
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Edit' }));
-    await userEvent.type(within(task).getByLabelText('Title'), ' and FX');
-    await userEvent.click(within(task).getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
+    await userEvent.type(within(sheet).getByLabelText('Title'), ' and FX');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([]);
+    expect(within(sheet).queryByLabelText('Title')).toBeNull();
+    expect(within(sheet).getByRole('button', { name: 'Edit' })).toBeEnabled();
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
   });
 
@@ -4670,44 +4795,48 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
     const [morning, evening] = await within(openProfile()).findAllByRole('listitem');
     expect(within(openProfile()).queryByText('No scheduled tasks yet.')).toBeNull();
+    const sheet = await openTask(present(morning, 'the first task'));
 
-    await userEvent.click(within(present(morning, 'the first task')).getByRole('button', { name: 'Pause' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Pause' }));
     expect(present(evening, 'the second task').querySelector('.scheduled-task-title')).toHaveTextContent(/^Evening wrap$/);
-    await userEvent.click(within(present(morning, 'the first task')).getByRole('button', { name: 'Delete' }));
+    expect(within(present(evening, 'the second task')).queryByText('Paused')).toBeNull();
+    await deleteTask(sheet);
+    await waitFor(() => expect(within(openProfile()).queryByRole('dialog')).toBeNull());
 
     const left = within(openProfile()).getAllByRole('listitem');
     expect(left.map((task) => task.querySelector('.scheduled-task-title')?.textContent)).toEqual(['Evening wrap']);
   });
 
   it('clears an earlier failure once a change or delete succeeds', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     service.scheduled = [MORNING_BRIEF];
     service.failing.set('PATCH /scheduled-tasks/task-1', 400);
     service.failing.set('DELETE /scheduled-tasks/task-1', 502);
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Pause' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Pause' }));
     await within(openProfile()).findByText('Scheduled task change failed: 400');
     service.failing.delete('PATCH /scheduled-tasks/task-1');
-    await userEvent.click(within(task).getByRole('button', { name: 'Pause' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Pause' }));
     expect(within(openProfile()).queryByText('Scheduled task change failed: 400')).toBeNull();
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Delete' }));
-    await within(openProfile()).findByText('Scheduled task delete failed: 502');
+    await deleteTask(sheet);
+    await within(openProfile()).findByText("Couldn't delete Morning brief. Try again.");
     service.failing.delete('DELETE /scheduled-tasks/task-1');
-    await userEvent.click(within(task).getByRole('button', { name: 'Delete' }));
-    expect(within(openProfile()).queryByText('Scheduled task delete failed: 502')).toBeNull();
+    await deleteTask(sheet);
+    expect(within(openProfile()).queryByText("Couldn't delete Morning brief. Try again.")).toBeNull();
   });
 
   it('shows why a scheduled task change failed', async () => {
     service.scheduled = [MORNING_BRIEF];
     service.failing.set('PATCH /scheduled-tasks/task-1', 400);
     await renderPage();
-    const task = await openScheduled();
+    const sheet = await openTask(await openScheduled());
 
-    await userEvent.click(within(task).getByRole('button', { name: 'Pause' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Pause' }));
 
-    expect(await within(openProfile()).findByText('Scheduled task change failed: 400')).toHaveClass('agent-profile-error');
+    expect(await within(sheet).findByText('Scheduled task change failed: 400')).toHaveClass('agent-profile-error');
   });
 
   it("shows the cartridge's computer for the open chat in the Computer tab, under the agent's name", async () => {

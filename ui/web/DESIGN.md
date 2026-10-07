@@ -75,10 +75,16 @@ from `botcube-ui-web/ui`.
 - **List row** (`<ListRow>` and its parts, `.list-row`): a round icon tile (`--row-icon`, 40px desktop, 44px phone) on `surface-hover`, a 14px gap,
   then a `headline` title over `detail` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Customize use
   it (a Customize placeholder adds a dashed `border` edge); a failed row tints its tile `danger-soft` with a `danger`
-  icon. A paused Scheduled row sets its icon `control` and its title `text-muted`, a Paused status pill beside the
+  icon. Scheduled rows sit under frequency headings (`.list-group-heading`, as Activity's days), each a button with one
+  cut-short detail line (time · prompt) that opens the task's Sheet. A paused Scheduled row sets its icon `control` and its title `text-muted`, a Paused status pill beside the
   title. A Sign-ins row has no tile: the site's `headline` name over its account, the status pill at the right, buttons
   below.
 - **Section label** (`<SectionLabel>`, `.section-label`): `label` above the rows it names.
+- **Sheet** (`<Sheet>` on Base UI's Drawer, `.sheet`; Scheduled's task actions): an iOS sheet that rises from the bottom
+  of the Agent Profile over a 32% black backdrop, `white` with `radius-2xl` top corners and `shadow-elevated`; on phones
+  a 36 × 5px `control` grabber, and a finger swipes it down; Edit profile's title bar (close at the left, `headline`
+  title centred); its actions full-width Buttons, one under another. A destructive action asks first, as iOS does: the
+  actions give way to a `destructive` confirm (Delete task) over Cancel.
 - **Chat header** (`.chat-header`): a centered avatar over scrolling messages (memo 0049 Figs 1, 7, and 11).
   Messages remain clear behind it and extend under the phone status bar.
   On desktop Marq's hat sits 1.5px under the chat card's top, as dots' avatar under its card's (Fig 1), in front of a
@@ -135,7 +141,7 @@ from `botcube-ui-web/ui`.
 | `md`   | 8px    | Header and sidebar icon buttons, the computer's window                                            |
 | `lg`   | 12px   | Fields, dropdowns, info boxes, chat error, proposal card, the desktop chat card (memo 0049 Fig 1) |
 | `xl`   | 16px   | Agent file cards, Customize placeholders                                                          |
-| `2xl`  | 20px   | Message bubbles, the sign-in sheet                                                                |
+| `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet                                           |
 | `3xl`  | 26px   | The composer                                                                                      |
 | `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21)                                               |
 | `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)                                             |
@@ -145,7 +151,7 @@ from `botcube-ui-web/ui`.
 | Token      | Value                                                     | Use                                                                  |
 | ---------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
 | `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`                              | The desktop composer (resting)                                       |
-| `elevated` | `0 4px 20px rgba(0,0,0,0.15)`                             | Dropdowns, popovers                                                  |
+| `elevated` | `0 4px 20px rgba(0,0,0,0.15)`                             | Dropdowns, popovers, the Scheduled sheet                             |
 | `composer` | `0 8px 36px rgba(0,0,0,0.11)`                             | The phone composer, focused or not (ChatGPT Work's)                  |
 | `soft`     | `0 0 40px rgba(0,0,0,0.23)`                               | The chat card beside the phone drawer (Muse Fig 21)                  |
 | `card`     | `0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06)` | The desktop chat card's edge on the sidebar's grey (memo 0049 Fig 1) |

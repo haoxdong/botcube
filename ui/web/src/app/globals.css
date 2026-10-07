@@ -1019,6 +1019,100 @@ cpk-web-inspector,
   background: var(--color-white);
 }
 
+/* A sheet (iOS's): it rises from the bottom of what it covers, over a dimmed backdrop that lightens as a finger swipes
+   it down, with `radius-2xl` top corners, a grabber, and the phone Edit profile sheet's title bar (its close at the
+   left, the title centred). Desktops, which close it from its title bar or outside it, show no grabber. */
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.32);
+  opacity: calc(1 - var(--drawer-swipe-progress, 0));
+  transition: opacity var(--transition-layout);
+}
+
+.sheet-viewport {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet {
+  width: 100%;
+  max-height: calc(100% - 48px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px 16px 20px;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  background: var(--color-white);
+  box-shadow: var(--shadow-elevated);
+  /* Focus falls back to the sheet when the action pressed gives way (Delete to its confirm); it shows no ring. */
+  outline: 0;
+  transform: translateY(var(--drawer-swipe-movement-y, 0));
+  transition: transform var(--transition-layout);
+}
+
+.sheet-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sheet-backdrop[data-swiping],
+.sheet[data-swiping] {
+  transition: none;
+}
+
+.sheet-backdrop[data-starting-style],
+.sheet-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.sheet[data-starting-style],
+.sheet[data-ending-style] {
+  transform: translateY(100%);
+}
+
+.sheet-grabber {
+  align-self: center;
+  width: 36px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-control);
+}
+
+@media (min-width: 641px) {
+  .sheet-grabber {
+    display: none;
+  }
+}
+
+.sheet-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 48px;
+}
+
+.sheet-close {
+  position: absolute;
+  left: -6px;
+  color: var(--color-text);
+}
+
+.sheet-title {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
 .status-pill {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
@@ -2118,6 +2212,7 @@ cpk-web-inspector,
 
 /* A right sidebar beside the chat, which narrows to make room; it slides open from the right edge. */
 .agent-profile {
+  position: relative;
   flex: none;
   width: 440px;
   overflow: hidden;
@@ -2555,29 +2650,72 @@ cpk-web-inspector,
   overflow-wrap: anywhere;
 }
 
-.scheduled-tasks {
+/* Scheduled: rows under frequency labels styled as Activity's days (Muse Fig 15); a tap opens the task's sheet. */
+.scheduled-tasks > section:first-child .list-group-heading {
+  margin-top: 0;
+}
+
+.scheduled > .agent-profile-error {
+  margin-bottom: 12px;
+}
+
+.scheduled-task-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
 .scheduled-task {
-  flex-wrap: wrap;
-  row-gap: 10px;
-  padding-bottom: 14px;
-  font-size: var(--font-detail);
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-/* A row with no room for 240px of text beside the buttons wraps them under it. */
 .scheduled-task-text {
-  flex: 1 1 240px;
+  flex: 1;
 }
 
-/* Wrapped, they line up with the text: past the icon tile and the row's 14px gap. */
-.scheduled-task-actions {
+/* One line under the title: the time, then what the task asks, cut short. */
+.scheduled-task-detail {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.scheduled-sheet-body {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--font-detail);
+  line-height: 1.4;
+}
+
+.scheduled-sheet-body .scheduled-task-prompt {
+  margin: 0;
+  font-size: var(--font-body);
+  overflow-wrap: anywhere;
+}
+
+/* Pause or Resume, Edit and Delete, one under another across the sheet. */
+.scheduled-sheet-actions {
+  display: grid;
   gap: 8px;
-  margin-left: calc(var(--row-icon) + 14px);
+  align-self: stretch;
+  margin-top: 10px;
+}
+
+.scheduled-sheet-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  align-self: stretch;
+  margin-top: 6px;
 }
 
 .scheduled-proposal {
@@ -2641,7 +2779,7 @@ cpk-web-inspector,
 }
 
 .scheduled-task-field {
-  flex-basis: 100%;
+  align-self: stretch;
   gap: 2px;
   color: inherit;
 }
@@ -2769,6 +2907,11 @@ cpk-web-inspector,
 @media (prefers-reduced-motion: reduce) {
   .agent-profile {
     animation: none;
+  }
+
+  .sheet,
+  .sheet-backdrop {
+    transition: none;
   }
 }
 
