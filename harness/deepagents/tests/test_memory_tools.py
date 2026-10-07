@@ -222,7 +222,7 @@ class TestExtractText:
 class TestRecord:
     def test_success(self) -> None:
         store = MagicMock()
-        with patch('botcube_harness_deepagents.memory_tools.pending_memory_session_id', return_value='pending-memory-20260702'):
+        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             result = _invoke('record', store=store, content='User prefers dark mode')
 
         assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
@@ -235,7 +235,7 @@ class TestRecord:
     def test_record_writes_to_date_keyed_pending_memory_session(self) -> None:
         store = MagicMock()
 
-        with patch('botcube_harness_deepagents.memory_tools.pending_memory_session_id', return_value='pending-memory-20260702'):
+        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             _invoke(
                 'record',
                 store=store,
@@ -247,13 +247,6 @@ class TestRecord:
         assert isinstance(store.put.call_args[0][2]['message'], HumanMessage)
         assert store.put.call_args[0][2]['message'].content == 'Runbook URL is wiki/runbook-v2'
 
-    def test_record_uses_real_pending_memory_session_formatter(self) -> None:
-        store = MagicMock()
-
-        _invoke('record', store=store, content='test')
-
-        assert re.fullmatch(r'pending-memory-\d{8}', store.put.call_args[0][0][1])
-
     def test_error(self) -> None:
         store = MagicMock()
         store.put.side_effect = RuntimeError('network')
@@ -263,7 +256,7 @@ class TestRecord:
 
     def test_custom_actor_id(self) -> None:
         store = MagicMock()
-        with patch('botcube_harness_deepagents.memory_tools.pending_memory_session_id', return_value='pending-memory-20260702'):
+        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             _invoke('record', store=store, content='test', actor_id='custom-actor')
         assert store.put.call_args[0][0] == ('custom-actor', 'pending-memory-20260702')
 
@@ -343,13 +336,20 @@ class TestRecord:
         assert len(session_id) <= 100
         assert re.fullmatch(r'pending-memory-\d{8}-thread_42-[0-9a-f]{12}', session_id)
 
-    def test_record_ignores_conversation_thread_id(self) -> None:
+    def test_anonymous_record_separates_threads_with_same_sanitized_id(self) -> None:
         store = MagicMock()
 
-        with patch('botcube_harness_deepagents.memory_tools.pending_memory_session_id', return_value='pending-memory-20260702'):
-            _invoke('record', store=store, content='test', thread_id='thread-42')
+        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
+            for thread_id in ('Thread:42', 'Thread 42'):
+                result = _invoke('record', store=store, content='test', actor_id='anonymous', thread_id=thread_id)
+                assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
 
-        assert store.put.call_args[0][0] == ('botcube_harness_deepagents', 'pending-memory-20260702')
+        assert store.put.call_count == 2
+        namespaces = [call.args[0] for call in store.put.call_args_list]
+        for actor_id, session_id in namespaces:
+            assert actor_id == 'anonymous'
+            assert re.fullmatch(r'pending-memory-20260702-thread_42-[0-9a-f]{12}', session_id)
+        assert namespaces[0] != namespaces[1]
 
 
 # -- retrieve ----------------------------------------------------------------
