@@ -94,7 +94,7 @@ def _invocation_secret(secret_id: str, region: str | None) -> str:
 def _sign_in(client: httpx.Client, open_browser: Callable[[str], object], port: int, agent_name: str) -> dict[str, str]:
     settings = OpenAISettings.from_env()
     discovery = _answer(client.get(f'{settings.issuer}/.well-known/openid-configuration'))
-    state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
+    state, nonce, verifier = (secrets.token_urlsafe() for _ in range(3))
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
     with _CallbackServer(port) as server:
         redirect_uri = f'http://127.0.0.1:{server.server_address[1]}/auth/callback'
