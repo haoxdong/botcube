@@ -1,0 +1,396 @@
+/* The template's own views, drawn with the app's design tokens so a restyled theme reaches them too. */
+
+/* ── The Agent Computer's screen: a browser window's frame around its live image ── */
+.template-screen {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  box-shadow: var(--shadow-subtle);
+}
+
+.template-screen-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.template-screen-lights {
+  display: flex;
+  gap: 6px;
+}
+
+.template-screen-lights i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-control);
+}
+
+/* Live, the window's first light glows as a recording light does. */
+.template-screen[data-live] .template-screen-lights i:first-child {
+  background: var(--color-success);
+}
+
+.template-screen-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-subtle);
+}
+
+.template-screen-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.template-screen-action {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+}
+
+.template-screen-action:hover {
+  background: var(--color-surface-hover);
+}
+
+.template-screen-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The browser's 16:10 viewport, whether it shows the screen or the cover. */
+.template-screen-glass {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  background: var(--color-surface);
+}
+
+.template-screen-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--color-white);
+}
+
+.template-screen-cover {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+}
+
+.template-screen-cover-icon {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 2px;
+  color: var(--color-text-muted);
+}
+
+.template-screen-cover-title {
+  margin: 0;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.template-screen-cover-detail {
+  max-width: 30ch;
+  margin: 0;
+  font-size: var(--font-detail);
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.template-screen-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-blue);
+  border-radius: 50%;
+  animation: template-spin 0.8s linear infinite;
+}
+
+@keyframes template-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .template-screen-spinner {
+    animation: none;
+  }
+}
+
+/* ── The Computer tab ── */
+.template-computer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.template-computer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.template-computer-driver {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.template-computer-bar .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--button-height);
+}
+
+.template-computer-bar .button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.template-error {
+  margin: 0;
+  font-size: var(--font-detail);
+  line-height: 1.4;
+  color: var(--color-danger);
+}
+
+/* ── The live browser panel, floating over the chat while a Turn drives the computer ── */
+.template-browser-panel {
+  position: fixed;
+  right: calc(24px + var(--app-safe-right));
+  bottom: calc(120px + var(--app-safe-bottom));
+  z-index: 20;
+  width: 288px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* The open Agent Profile shows the same screen in its Computer tab, where the panel would cover it. */
+.app-layout:has(.agent-profile:not([hidden])) .template-browser-panel {
+  display: none;
+}
+
+/* Phones have no room beside the chat for a screen: the panel is a pill naming the live browser, with Pop out. */
+@media (max-width: 640px) {
+  .template-browser-panel {
+    top: calc(128px + var(--app-safe-top));
+    right: calc(12px + var(--app-safe-right));
+    bottom: auto;
+    width: auto;
+    border-radius: var(--radius-pill);
+  }
+
+  .template-browser-panel .template-screen {
+    border-radius: var(--radius-pill);
+  }
+
+  /* 42px and the frame's two border pixels: a 44px target. */
+  .template-browser-panel .template-screen-bar {
+    height: 42px;
+    padding: 0 4px 0 14px;
+    border-bottom: none;
+    background: var(--color-white);
+  }
+
+  .template-browser-panel .template-screen-lights i:not(:first-child),
+  .template-browser-panel .template-screen-glass {
+    display: none;
+  }
+
+  .template-browser-panel .template-screen-action {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+  }
+
+  .template-browser-panel .template-screen-action svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+/* ── The pop-out window: the screen, as large as the window allows ── */
+.template-browser-view {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 24px;
+  background: var(--color-surface);
+}
+
+.template-browser-view .template-screen {
+  width: min(100%, calc((100dvh - 48px - 33px) * 1.6));
+}
+
+/* ── The template site's data, under the shell call that read it ── */
+.template-site-data {
+  max-width: 360px;
+  margin: 4px 0 8px 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+
+.template-site-data-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.template-site-data-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-md);
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+}
+
+.template-site-data-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.template-site-data-title {
+  font-size: var(--font-detail);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.template-site-data-count {
+  margin-left: auto;
+  font-size: var(--font-label);
+  color: var(--color-text-muted);
+}
+
+.template-site-data-items {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+}
+
+.template-site-data-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  font-size: var(--font-message);
+}
+
+.template-site-data-item + .template-site-data-item {
+  border-top: 1px solid var(--color-border);
+}
+
+.template-site-data-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+
+.template-site-data-value {
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+/* ── Sign-ins ── */
+.template-sign-ins {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.template-sign-ins-list {
+  align-self: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-sign-in-status {
+  flex: none;
+  margin-left: auto;
+}
+
+/* The action sits under the site's name and detail. */
+.template-sign-in-action {
+  align-self: flex-start;
+  min-height: var(--button-height);
+  margin-top: 8px;
+}
+
+/* The composer's chip when a scheduled task found the site signed out. */
+.template-sign-in-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+  cursor: pointer;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+}
+
+.template-sign-in-chip svg {
+  width: 14px;
+  height: 14px;
+}
+
+.template-sign-in-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (max-width: 640px) {
+  .template-sign-in-chip {
+    min-height: 44px;
+  }
+}

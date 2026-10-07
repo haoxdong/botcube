@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+case "$(uname -m)" in
+  x86_64) arch=x64 ;;
+  aarch64|arm64) arch=arm64 ;;
+  *) echo 'Unsupported browser tool architecture' >&2; exit 1 ;;
+esac
+exec "$(dirname "$0")/../agent-browser-linux-$arch" "$@"

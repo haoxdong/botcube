@@ -1,0 +1,9 @@
+{
+  "access_token": "at_rotated",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "chatgpt.tokens.use.direct email offline_access openid profile resource.invoke",
+  "id_token": "id_rotated",
+  "earliest_refresh_at": 1790969066,
+  "refresh_token": "rt_rotated"
+}

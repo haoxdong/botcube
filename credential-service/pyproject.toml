@@ -1,0 +1,36 @@
+[project]
+name = "botcube-credential-service"
+version = "0.1.0"
+description = "BotCube's Credential Service: the one process that can decrypt Durable Credentials, with provider plug-ins."
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.43.108",
+  "cryptography>=48.0.1",
+  "fastapi>=0.142.2",
+  "httpx>=0.28.1",
+  "pyjwt[crypto]>=2.15.1",
+]
+
+[project.scripts]
+botcube-openai-plan-usage = "botcube_credential_service.openai_sign_in:main"
+
+[dependency-groups]
+dev = [
+  "moto[dynamodb,kms,secretsmanager]>=5.2.3",
+  "pyright==1.1.414",
+  "pytest>=9.1.1",
+  "types-boto3[dynamodb,kms,secretsmanager]>=1.43.108",
+]
+
+[tool.pyright]
+# Check against the oldest supported Python, which Presubmit runs.
+pythonVersion = "3.11"
+# Every parameter carries a type annotation.
+reportMissingParameterType = "error"
+# Generic types carry their type arguments, and no parameter type is unknown.
+reportMissingTypeArgument = "error"
+reportUnknownParameterType = "error"
+
+[build-system]
+requires = ["hatchling>=1.32.4"]
+build-backend = "hatchling.build"

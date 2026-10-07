@@ -1,0 +1,16 @@
+{
+  "name": "botcube-template-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\" --outdir=dist"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.2",
+    "botcube-chat": "workspace:*",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

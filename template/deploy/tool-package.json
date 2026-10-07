@@ -1,0 +1,13 @@
+{
+  "name": "botcube-template-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline template site tools.",
+  "bin": {
+    "template-cli": "bin/template-cli",
+    "agent-browser": "bin/agent-browser"
+  },
+  "dependencies": {
+    "agent-browser": "0.38.1"
+  }
+}

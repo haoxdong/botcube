@@ -1,0 +1,13 @@
+{
+  "extends": "../../../ui/web/tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../../../ui/web/src/cartridge/alias.d.ts",
+    "storybook/**/*.ts",
+    "storybook/**/*.tsx"
+  ]
+}

@@ -1,0 +1,2787 @@
+@import "tailwindcss";
+@import "shadcn/tailwind.css";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Design tokens ── */
+:root {
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --app-safe-right: env(safe-area-inset-right, 0px);
+  --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-left: env(safe-area-inset-left, 0px);
+  --color-text: #0d0d0d;
+  --color-text-subtle: #555;
+  --color-text-muted: #6b6b6b;
+  --color-surface: #f7f7f8;
+  --color-surface-hover: #f4f4f4;
+  --color-composer: #fbfbfb;
+  --color-selected: #efefef;
+  --color-border: #e0e0e0;
+  --color-control: #bfbfbf;
+  --color-white: #fff;
+  --color-blue: #2563eb;
+  --color-blue-soft: #eff6ff;
+  --color-success: #22c55e;
+  --color-danger: #dc2626;
+  --color-danger-soft: #fef2f2;
+  --color-black: #000;
+
+  /* The type scale (DESIGN.md): ChatGPT's Mac app here, iOS's defaults in the 640px query below */
+  --font-title: 1.5rem;
+  --font-name: 1.125rem;
+  --font-headline: 0.875rem;
+  --font-message: 1rem;
+  --font-body: 0.875rem;
+  --font-detail: 0.8125rem;
+  --font-label: 0.6875rem;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-title: var(--weight-medium);
+  --weight-name: var(--weight-semibold);
+  --weight-headline: var(--weight-medium);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 26px;
+  --radius-4xl: 64px;
+  --radius-pill: 9999px;
+
+  --shadow-subtle: 0 1px 6px rgba(0,0,0,0.08);
+  --shadow-elevated: 0 4px 20px rgba(0,0,0,0.15);
+  --shadow-composer: 0 8px 36px rgba(0,0,0,0.11);
+  --shadow-soft: 0 0 40px rgba(0,0,0,0.23);
+
+  --transition-fast: 0.1s;
+  --transition-layout: 0.2s ease;
+
+  /* Sidebar spacing */
+  --sidebar-pad-x: 8px;
+  --sidebar-pad-y: 4px;
+  --sidebar-pad-bottom: 12px;
+  --sidebar-btn-pad: 8px 10px;
+  --sidebar-row-weight: var(--weight-regular);
+
+  /* CopilotKit v2 theme overrides */
+  --copilot-kit-primary-color: var(--color-black);
+  --copilot-kit-contrast-color: var(--color-white);
+  --copilot-kit-background-color: var(--color-surface);
+  --copilot-kit-secondary-color: var(--color-border);
+  --copilot-kit-secondary-contrast-color: var(--color-text);
+  --copilot-kit-separator-color: transparent;
+  --copilot-kit-muted-color: var(--color-text-muted);
+  --copilot-kit-response-button-background-color: transparent;
+  --copilot-kit-response-button-color: var(--color-text-muted);
+}
+
+.chat-full-height {
+  height: 100%;
+}
+
+.account-session-gate {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: var(--color-white);
+  text-align: center;
+}
+
+/* ── Hide CopilotKit's built-in header (we use our own) ── */
+.copilotKitHeader {
+  display: none !important;
+}
+
+/* ── Hide avatars ── */
+.copilotKitAvatar {
+  display: none !important;
+}
+
+.copilotKitInput:not(.picker-ready) {
+  visibility: hidden;
+}
+
+.copilotKitInput > [data-layout] {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-rows: auto !important;
+  align-items: end !important;
+  gap: 0 !important;
+}
+
+.copilotKitInput > [data-layout] > :first-child {
+  display: none !important;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(2) {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  min-height: 44px !important;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(3) {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  min-width: 0;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(3) button {
+  min-width: 44px !important;
+  min-height: 44px !important;
+  flex-shrink: 0;
+}
+
+.copilotKitInput textarea {
+  padding: 10px 0 !important;
+  font-size: var(--font-message) !important;
+}
+
+@media (max-width: 767px) {
+  /* Text sits 16px inside the box's outer edge: 15px here plus its 1px border. */
+  .copilotKitInput > [data-layout] {
+    padding: 0 15px !important;
+    grid-template-rows: minmax(44px, auto) 44px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(2) {
+    grid-column: 1 / -1 !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) {
+    grid-row: 2 !important;
+  }
+
+  /* Send's 44px target reaches 2px from the box's right edge, so its 32px circle sits 7px inside the border. */
+  .copilotKitInput > [data-layout] > :nth-child(3) > div:has(> [data-testid="copilot-send-button"]) {
+    margin-right: -14px !important;
+  }
+
+  .copilotKitInput textarea {
+    padding: 8px 0 0 !important;
+  }
+}
+
+/* ── Centered content column ── */
+.copilotKitMessages {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+  /* Earlier messages joining above keep the one being read in place themselves (MessageRows), in every browser. */
+  overflow-anchor: none;
+}
+
+/* Right under the agent's header, which floats over the chat, the first message starts below it. */
+.chat-header + .app-chat .copilotKitMessages {
+  padding-top: calc(var(--chat-header-height) + 0.5rem);
+}
+
+/* streamdown 1.6.11 marks a markdown table, not just its wrapper, data-streamdown="table-wrapper", so
+   CopilotKit's flex column for the wrapper would turn the table into a flexbox with shrunken rows. */
+[data-copilotkit] table[data-streamdown='table-wrapper'] {
+  display: table;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* The table's copy and download buttons: streamdown's `justify-end gap-1` row and `p-1` buttons, which
+   Tailwind leaves out because it compiles only this app's own classes. */
+[data-copilotkit] [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+
+[data-copilotkit] [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) button {
+  padding: 0.25rem;
+}
+
+[data-copilotkit] div[data-streamdown='table-wrapper'] {
+  margin-right: -16px;
+}
+
+/* A table wider than its bubble scrolls sideways, with a shadow at each edge it can still scroll past, so
+   it never looks cut off: the bubble-coloured covers scroll with the table and hide a shadow
+   once its edge is reached. */
+[data-copilotkit] div[data-streamdown='table-wrapper'] > .overflow-x-auto {
+  background-image:
+    linear-gradient(to right, var(--color-surface-hover) 30%, transparent),
+    linear-gradient(to left, var(--color-surface-hover) 30%, transparent),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.22), transparent),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.22), transparent);
+  background-position: left, right, left, right;
+  background-size: 32px 100%, 32px 100%, 16px 100%, 16px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* ── Message entrance animation ── */
+.copilotKitMessage {
+  animation: messageIn 0.3s ease-out;
+}
+
+/* The kept history the page shows while the chat loads is no message arriving: it shows at once (#3539). */
+[aria-label="Loading chat controls"] .copilotKitMessage {
+  animation: none;
+}
+
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── User message — outer container transparent, inner bubble blackish (the maintainer kept it over blue) ── */
+.copilotKitUserMessage {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.copilotKitUserMessage > div:first-child {
+  background-color: var(--color-text) !important;
+  color: var(--color-white) !important;
+  border-radius: var(--radius-2xl) !important;
+  padding: 10px 18px !important;
+  font-size: var(--font-message);
+  line-height: 1.5;
+  max-width: 80%;
+  /* A long URL or token breaks inside the bubble rather than running past it. */
+  overflow-wrap: anywhere;
+}
+
+/* ── Assistant messages ── */
+.copilotKitAssistantMessage,
+.copilotKitAssistantMessage [class*="cpk:prose"] {
+  font-size: var(--font-message) !important;
+  line-height: 1.5 !important;
+  color: var(--color-text);
+  max-width: 720px;
+  letter-spacing: -0.005em;
+  padding: 0 !important;
+}
+
+/* Each message's prose in a grey bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). A long
+   one reaches the column's right edge, as the user's messages do, and a table shows as much as it can. */
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
+  width: fit-content;
+  max-width: 100%;
+  background-color: var(--color-surface-hover);
+  border-radius: var(--radius-2xl);
+  padding: 10px 16px;
+  margin-block: 4px;
+}
+
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child {
+  margin-top: 0 !important;
+}
+
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Code in the bubble shows white on its grey; code in tool rows keeps the grey chip. */
+.copilotKitAssistantMessage > [class*="cpk:prose"] pre,
+.copilotKitAssistantMessage > [class*="cpk:prose"] :not(pre) > code {
+  background: var(--color-white);
+}
+
+/* The bubble keeps its paragraphs' margins in, so the user's next message keeps its distance outside it. */
+.copilotKitAssistantMessage + .copilotKitUserMessage {
+  margin-top: 12px;
+}
+
+/* ── Input — white box, bordered and shadowed ── */
+/* As wide as the messages' column inside CopilotKit's (720px at most, less its 1.5rem side padding), so its
+   edges meet the grey panel's. */
+.copilotKitInput {
+  margin: 0 auto !important;
+  width: calc(min(720px, 100%) - 3rem) !important;
+  background-color: var(--color-white) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-3xl) !important;
+  box-shadow: var(--shadow-subtle) !important;
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-style: none !important;
+  transition: border-color var(--transition-layout), box-shadow var(--transition-layout);
+  position: relative;
+}
+
+div.copilotKitInput {
+  outline: 0 !important;
+}
+
+.copilotKitInput:focus-within {
+  border-color: var(--color-control) !important;
+  box-shadow: var(--shadow-elevated) !important;
+}
+
+/* The cartridge's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.copilotKitInput`. */
+.composer-accessory {
+  display: flex;
+  width: calc(min(720px, 100%) - 3rem);
+  margin: 0 auto 8px;
+}
+.composer-accessory > * {
+  pointer-events: auto;
+}
+
+/* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──
+   The user's toolbar is invisible until hover but still holds ~40px under every question, which put each answer
+   farther from its question than from the next one. CopilotKit gives that toolbar no class, only this test id. */
+.copilotKitAssistantMessage > div.cpk\:bg-transparent,
+[data-testid="copilot-user-toolbar"] {
+  display: none !important;
+}
+
+/* ── Send / stop button: grey while disabled, dark once it can send or stop ── */
+.copilotKitInput [data-testid="copilot-send-button"] {
+  background: var(--color-control) !important;
+  color: var(--color-white) !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 50% !important;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: background var(--transition-fast) !important;
+}
+
+.copilotKitInput [data-testid="copilot-send-button"] svg.lucide-square {
+  width: 12px !important;
+  height: 12px !important;
+  fill: var(--color-white) !important;
+  stroke: var(--color-white) !important;
+}
+
+/* Keyed on the button, not focus in the input: the picker or an empty textarea has focus with nothing to send. */
+.copilotKitInput [data-testid="copilot-send-button"]:not(:disabled) {
+  background: var(--color-text) !important;
+}
+
+/* Phones match ChatGPT Work's composer: a grey box with a white rim and a soft shadow, focused or
+   not, and a 32px Send circle drawn inside its 44px target by a clear 6px border. */
+@media (max-width: 767px) {
+  .copilotKitInput,
+  .copilotKitInput:focus-within {
+    background-color: var(--color-composer) !important;
+    border-color: var(--color-white) !important;
+    box-shadow: var(--shadow-composer) !important;
+  }
+
+  .copilotKitInput [data-testid="copilot-send-button"],
+  .copilotKitInput [data-testid="copilot-send-button"]:not(:disabled) {
+    border: 6px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+}
+
+/* ── Scrollbar ── */
+.copilotKitMessages::-webkit-scrollbar {
+  width: 5px;
+}
+
+.copilotKitMessages::-webkit-scrollbar-thumb {
+  background-color: var(--color-control);
+  border-radius: var(--radius-pill);
+}
+
+.copilotKitMessages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Hide CopilotKit chrome ── */
+.poweredBy,
+.copilotKitDebugMenuTriggerButton,
+.copilotKitHelpModal,
+cpk-web-inspector,
+[data-testid="copilot-error-banner"] {
+  display: none !important;
+}
+
+/* ── Markdown prose ── */
+.copilotKitAssistantMessage pre {
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  overflow-x: auto;
+  font-size: var(--font-detail);
+  line-height: 1.5;
+  border: none;
+  margin: 0.25rem 0;
+}
+
+.copilotKitAssistantMessage code {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: var(--font-detail);
+  color: var(--color-text);
+}
+
+.copilotKitAssistantMessage p {
+  margin: 1rem 0 !important;
+}
+
+.copilotKitAssistantMessage p + p {
+  margin-top: 0.5rem !important;
+}
+
+/* Hanging indent with markers in the text colour, as Muse does (memo 0049 Fig 11); streamdown sets `list-inside`. */
+.copilotKitAssistantMessage ol,
+.copilotKitAssistantMessage ul {
+  margin: 0.375rem 0 !important;
+  padding-left: 20px !important;
+  list-style-position: outside !important;
+}
+
+.copilotKitAssistantMessage li::marker {
+  color: var(--color-text);
+}
+
+.copilotKitAssistantMessage li {
+  margin-top: 0 !important;
+  margin-bottom: 0.125rem !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* links */
+.copilotKitAssistantMessage a {
+  color: var(--color-blue);
+  text-decoration: underline;
+}
+
+/* inline code */
+.copilotKitAssistantMessage :not(pre) > code {
+  background: var(--color-surface-hover);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-detail);
+}
+
+/* The chip marks the code, so drop the backticks Tailwind Typography quotes it with. */
+.copilotKitAssistantMessage :not(pre) > code::before,
+.copilotKitAssistantMessage :not(pre) > code::after {
+  content: none;
+}
+
+/* ── Suggestion chips (initial prompts) ── */
+.copilotKitMessagesFooter {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* ── Empty state: center greeting in viewport ── */
+.copilotKitMessages:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+/* ── App layout ── */
+/* The visible viewport (dvh): iOS Safari's 100vh is the viewport without its toolbars, so the page could
+   scroll by their height, lifting the header under the fixed menu button. */
+.app-layout {
+  display: flex;
+  height: calc(100dvh - var(--app-safe-top) - var(--app-safe-bottom));
+  margin: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  transform: translateZ(0);
+}
+
+.app-layout > .sidebar {
+  max-height: 100%;
+}
+
+/* ── App shell (main content area): the chat's white, so the avatar header shares the chat's surface (dots Fig 1) ── */
+.app-shell {
+  /* The agent's header: 12px padding, the 72px avatar, the 21px of its capsule below it, 16px padding, 1px spare. */
+  --chat-header-height: 122px;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-white);
+  position: relative;
+}
+
+/* The chat stays mounted under the Plugins screen. */
+.app-shell[hidden] {
+  display: none;
+}
+
+.app-chat {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+
+.chat-model-picker {
+  min-width: 0;
+}
+
+.chat-model-picker .mep {
+  min-width: 0;
+}
+
+.chat-model-picker .mep-pill {
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 6px;
+  gap: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-detail);
+  font-weight: var(--weight-regular);
+}
+
+.mep-pill-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: inherit;
+}
+
+.mep-pill-effort,
+.mep-pill > svg {
+  flex-shrink: 0;
+}
+
+.mep-pill-model-phone {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .chat-model-picker .mep-pill {
+    padding: 0 8px;
+    font-weight: var(--weight-medium);
+  }
+
+  .mep-pill-model-desktop {
+    display: none;
+  }
+
+  .mep-pill-model-phone {
+    display: inline;
+  }
+
+  .chat-model-picker .mep-pill > svg {
+    display: none;
+  }
+
+  .chat-model-picker .mep-pill-effort {
+    color: var(--color-text-muted);
+    font-weight: var(--weight-regular);
+  }
+}
+
+.mep-pill:focus-visible,
+.copilotKitInput > [data-layout] button:focus-visible {
+  outline: 2px solid var(--color-text) !important;
+  outline-offset: 2px;
+}
+
+.chat-model-picker .mep-pill:hover {
+  background: var(--color-surface-hover);
+}
+
+/* The menu opens above the whole composer, not above the pill inside it, so it never covers the text box: the
+   pill's own box is static, so the composer (`position: relative`) holds the menu. Its right edge meets the
+   composer's outer edge: the box it sits in is the composer less its 1px border, hence -1px. */
+.chat-model-picker .mep {
+  position: static;
+}
+
+.chat-model-picker .mep-dropdown {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: -1px;
+}
+
+/* ── Header buttons (shared style) ── */
+.header-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 6px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.header-btn:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+
+/* ══════════════════════════════════════════
+   Sidebar — ChatGPT-style collapsed/expanded
+   ══════════════════════════════════════════ */
+
+.sidebar {
+  height: 100dvh;
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: visible;
+  transition: width var(--transition-layout);
+}
+
+.sidebar-collapsed {
+  width: 60px;
+}
+
+.sidebar-expanded {
+  width: 260px;
+}
+
+/* ── Sidebar top section (brand + nav) ── */
+.sidebar-top {
+  flex-shrink: 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  padding: 12px 12px 8px;
+  gap: 8px;
+}
+
+.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 12px 8px 8px;
+}
+
+/* The name hangs from the nav icons' 20px edge, as the phone's does (memo 0049 Fig 21) */
+.sidebar-expanded .sidebar-brand {
+  padding-left: 20px;
+}
+
+.sidebar-logo-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text);
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-logo-btn:hover {
+  background: var(--color-border);
+}
+
+.sidebar-brand-text {
+  font-size: var(--font-name);
+  font-weight: var(--weight-name);
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  flex: 1;
+}
+
+.sidebar-compose-btn,
+.sidebar-new-chat {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.sidebar-logo-btn svg,
+.sidebar-compose-btn svg,
+.sidebar-new-chat svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-compose-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.sidebar-collapsed .sidebar-brand-text,
+.sidebar-collapsed .sidebar-compose-btn {
+  display: none;
+}
+
+.sidebar-expanded .sidebar-logo-btn {
+  display: none;
+}
+
+/* ── Sidebar nav ── */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sidebar-pad-y) var(--sidebar-pad-x);
+  gap: 1px;
+}
+
+.sidebar-collapsed .sidebar-nav {
+  padding: 0 8px;
+}
+
+.sidebar-nav-item {
+  appearance: none;
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--sidebar-btn-pad);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--sidebar-row-weight);
+  font-family: inherit;
+  transition: background var(--transition-fast);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-nav-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-nav-item:hover,
+.sidebar-nav-item-active {
+  background: var(--color-border);
+}
+
+.sidebar-collapsed .sidebar-nav-item {
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.sidebar-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-collapsed .sidebar-nav-label {
+  display: none;
+}
+
+/* Main chat and Plugins: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
+.sidebar-main {
+  position: relative;
+  --divider-inset: 20px;
+}
+
+.sidebar-expanded .sidebar-main {
+  gap: 2px;
+  padding-bottom: 24px;
+}
+
+.sidebar-main::after {
+  content: "";
+  position: absolute;
+  left: var(--divider-inset);
+  right: var(--divider-inset);
+  bottom: 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sidebar-expanded .sidebar-nav-item {
+  padding: 9px 12px;
+  border-radius: var(--radius-pill);
+}
+
+.sidebar-collapsed .sidebar-main {
+  --divider-inset: 8px;
+  gap: 8px;
+  padding-bottom: 5px;
+}
+
+/* ── Sidebar recents (conversation list) ── */
+.sidebar-recents {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-collapsed .sidebar-recents {
+  flex: none;
+}
+
+.sidebar-collapsed .sidebar-side-chats-toggle,
+.sidebar-collapsed .sidebar-list {
+  display: none;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 12px 16px 20px;
+  flex-shrink: 0;
+}
+
+.sidebar-collapsed .sidebar-section-header {
+  justify-content: center;
+  padding: var(--sidebar-pad-y) var(--sidebar-pad-x);
+}
+
+.sidebar-collapsed .sidebar-section-header .header-btn {
+  padding: 0;
+  color: var(--color-text);
+}
+
+.sidebar-collapsed .sidebar-section-header .header-btn:hover {
+  background: var(--color-border);
+}
+
+@media (min-width: 641px) {
+  .sidebar-expanded .sidebar-brand {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3) calc(var(--spacing) * 2) calc(var(--spacing) * 5);
+  }
+
+  .sidebar-collapsed .sidebar-brand {
+    min-height: calc(var(--spacing) * 16);
+  }
+
+  .sidebar-expanded .sidebar-main {
+    gap: calc(var(--spacing) * 2);
+    padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
+  }
+
+  .sidebar-expanded .sidebar-nav-item {
+    height: calc(var(--spacing) * 11);
+    padding: 0;
+  }
+
+  .sidebar-expanded .sidebar-nav-icon {
+    margin-left: calc(var(--spacing) * 3);
+  }
+
+  .sidebar-expanded .sidebar-section-header {
+    justify-content: space-between;
+    gap: calc(var(--spacing) * 2);
+    padding: var(--sidebar-pad-y) calc(var(--spacing) * 3) calc(var(--spacing) * 4) var(--sidebar-pad-x);
+  }
+
+  .sidebar-expanded .sidebar-new-chat {
+    flex-shrink: 0;
+  }
+}
+
+.sidebar-side-chats-toggle {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: calc(var(--spacing) * 11);
+  padding: 0;
+  cursor: pointer;
+}
+
+.sidebar-side-chats-toggle svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+
+.sidebar-list[hidden] {
+  display: none;
+}
+
+/* ── Components (src/components/ui; DESIGN.md's Components) ── */
+
+/* A section's name: small grey capitals (Muse Fig 12's TABS and SIDE CHATS) */
+.section-label {
+  font-size: var(--font-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* A button's height: its detail line at the page's 1.5 line height, plus its 6px padding above and below. */
+:root {
+  --button-height: calc(var(--font-detail) * 1.5 + 12px);
+}
+
+.button {
+  appearance: none;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.button-primary,
+.button-primary:hover:not(:disabled) {
+  color: var(--color-white);
+  background: var(--color-text);
+}
+
+.button-primary:disabled {
+  background: var(--color-control);
+  cursor: default;
+}
+
+.button-destructive {
+  color: var(--color-danger);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.field input,
+.field textarea,
+.field select,
+.agent-memory-line input {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-white);
+}
+
+.status-pill {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-hover);
+  font-size: var(--font-label);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-muted);
+}
+
+.status-pill-blue {
+  color: var(--color-blue);
+  background: var(--color-blue-soft);
+}
+
+.status-pill-danger {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+/* No Side Chats yet: an invitation centred in the list (Muse Fig 12) */
+.sidebar-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 1.5rem 1.25rem;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.sidebar-empty svg {
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.sidebar-empty-title {
+  font-size: var(--font-headline);
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+}
+
+.sidebar-error {
+  padding: 0.5rem 0.75rem;
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+  margin-bottom: 2px;
+}
+
+.sidebar-item:hover {
+  background: var(--color-border);
+}
+
+.sidebar-item-active {
+  background: var(--color-border);
+  font-weight: var(--weight-medium);
+}
+
+.sidebar-item-active::before {
+  content: "";
+  width: 3px;
+  height: 16px;
+  background: var(--color-text);
+  border-radius: 2px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.sidebar-item-btn {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 8px 4px 8px 12px;
+  font-size: var(--font-body);
+  color: var(--color-text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.sidebar-item-active .sidebar-item-btn {
+  padding-left: 8px;
+}
+
+/* A muted glyph, AA on surface */
+.sidebar-item-delete {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: var(--font-body);
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+/* Only a mouse reveals delete on hover: iOS Safari spends a tap on any hover that reveals content, so a
+   touch screen shows it at rest and one tap opens the chat. */
+@media (hover: hover) {
+  .sidebar-item-delete {
+    opacity: 0;
+  }
+
+  .sidebar-item:hover .sidebar-item-delete {
+    opacity: 1;
+  }
+}
+
+.sidebar-item-delete:hover {
+  color: var(--color-danger);
+}
+
+/* ── Sidebar bottom ── */
+.sidebar-bottom {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding: var(--sidebar-pad-y) var(--sidebar-pad-x) var(--sidebar-pad-bottom);
+}
+
+.sidebar-collapsed .sidebar-bottom {
+  padding: var(--sidebar-pad-y) var(--sidebar-pad-x) var(--sidebar-pad-bottom);
+}
+
+/* ── Sidebar scrollbar ── */
+.sidebar-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-list::-webkit-scrollbar-thumb {
+  background-color: var(--color-control);
+  border-radius: var(--radius-pill);
+}
+
+.sidebar-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-icon-menu,
+.sidebar-backdrop {
+  display: none;
+}
+
+/* Phones: the chat keeps the full width. A round menu button top-left opens the sidebar as a
+   drawer beside the chat, which slides right as a faded card; tapping that card closes it (memo 0049 Fig 21). */
+@media (max-width: 640px) {
+  /* Phone body text is 17px, the drawer rows' size (Muse Fig 11, dots Fig 7, iOS body) */
+  :root {
+    --weight-title: var(--weight-bold);
+    --weight-name: var(--weight-bold);
+    --weight-headline: var(--weight-semibold);
+    --sidebar-row-weight: var(--weight-medium);
+    --font-title: 1.375rem;
+    --font-name: 1.375rem;
+    --font-headline: 1.0625rem;
+    --font-message: 1.0625rem;
+    --font-body: 1.0625rem;
+    --font-detail: 0.9375rem;
+    --font-label: 0.8125rem;
+  }
+
+  /* The drawer and the screens beside it run under the status and home bars (memo 0049 Fig 21); their contents
+     keep to the safe area. */
+  .app-layout {
+    height: 100dvh;
+    margin: 0 var(--app-safe-right) 0 var(--app-safe-left);
+    padding-top: var(--app-safe-top);
+  }
+
+  .app-shell {
+    padding-bottom: var(--app-safe-bottom);
+  }
+
+  .app-shell:not(:has(> .chat-header)) {
+    margin-top: calc(-1 * var(--app-safe-top));
+    padding-top: var(--app-safe-top);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 90;
+    padding-top: var(--app-safe-top);
+    padding-bottom: var(--app-safe-bottom);
+  }
+
+  /* The open drawer takes 80% of the screen with large rows, the chat peeking beside it (memo 0049 Fig 21) */
+  .sidebar-expanded {
+    width: 80%;
+  }
+
+  /* The chat slides right by the drawer's width as a rounded card, its strip still in view, the drawer's grey
+     showing past its corners (memo 0049 Fig 21) */
+  .app-layout:has(> .sidebar-expanded) {
+    overflow: hidden;
+    background: var(--color-surface);
+  }
+
+  /* The card lies over the drawer, casting its shadow there; a tap on it falls through to the backdrop. */
+  .app-layout:has(> .sidebar-expanded) .app-shell {
+    transform: translateX(80vw);
+    z-index: 91;
+    overflow: hidden;
+    border-radius: var(--radius-4xl) 0 0 var(--radius-4xl);
+    box-shadow: var(--shadow-soft);
+    pointer-events: none;
+  }
+
+  /* Edit profile's sheet spans the screen from inside the drawer, so the card and the strip's Close sidebar drop
+     under the drawer while it is open */
+  .app-layout:has(.profile-editor) .app-shell,
+  .app-layout:has(.profile-editor) .sidebar-backdrop {
+    z-index: 89;
+  }
+
+  /* Fades the peeking chat */
+  .app-layout:has(> .sidebar-expanded) .app-shell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 400;
+    background: rgb(255 255 255 / 0.5);
+  }
+
+  .app-layout[data-sidebar-swiping] > .sidebar {
+    transform: translateX(calc(var(--sidebar-drag-offset) - 100%));
+    transition: transform 180ms ease-out;
+  }
+
+  .app-layout[data-sidebar-swiping] .app-shell {
+    transform: translateX(var(--sidebar-drag-offset));
+    transition: transform 180ms ease-out;
+  }
+
+  .app-layout[data-sidebar-swiping] .app-shell::after {
+    opacity: var(--sidebar-drag-progress);
+  }
+
+  /* The strip's chip rides with the card, fading as the card's fade does */
+  .app-layout[data-sidebar-swiping] .sidebar-backdrop-menu {
+    transform: translateX(calc(var(--sidebar-drag-offset) - 80vw));
+    opacity: calc(1 - 0.5 * var(--sidebar-drag-progress));
+    transition: transform 180ms ease-out;
+  }
+
+  .app-layout[data-sidebar-dragging] > .sidebar,
+  .app-layout[data-sidebar-dragging] .app-shell,
+  .app-layout[data-sidebar-dragging] .sidebar-backdrop-menu {
+    transition: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-layout[data-sidebar-swiping] > .sidebar,
+    .app-layout[data-sidebar-swiping] .app-shell,
+    .app-layout[data-sidebar-swiping] .sidebar-backdrop-menu {
+      transition: none;
+    }
+  }
+
+  /* Fig 21's drawer, from the safe area's top: a 44px title row, rows from 82px (Fig 21's gap from its title to
+     its TABS label, which we leave out) at a 44px pitch, a divider 10px below them, then the Side chats header and
+     its rows at the same pitch; content 20px from each side. */
+  .sidebar-expanded .sidebar-brand {
+    height: 44px;
+    padding: 0 20px;
+  }
+
+  .sidebar-expanded .sidebar-brand-text {
+    font-weight: var(--weight-semibold);
+  }
+
+  .sidebar-expanded .sidebar-nav {
+    gap: 0;
+    padding: 38px 10px 10px;
+  }
+
+  /* The open row's fill, as light as Fig 21's */
+  .sidebar-expanded .sidebar-nav-item-active,
+  .sidebar-item-active {
+    background: var(--color-selected);
+  }
+
+  .sidebar-expanded .sidebar-section-header {
+    padding: 10px 20px 0;
+  }
+
+  /* A section label (Fig 21's SIDE CHATS) */
+  .sidebar-side-chats-toggle {
+    font-size: var(--font-label);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Text 20px from the edge; each × in the + control's column */
+  .sidebar-list {
+    padding: 0 20px 0 8px;
+  }
+
+  .sidebar-item {
+    margin-bottom: 0;
+  }
+
+  .sidebar-expanded .sidebar-nav-item {
+    gap: 18px;
+    padding: calc(var(--spacing) * 2.5);
+    line-height: 22px;
+  }
+
+  .sidebar-expanded .sidebar-nav-icon {
+    width: calc(var(--spacing) * 6);
+    height: calc(var(--spacing) * 6);
+  }
+
+  /* Side Chats step at the nav rows' 44px pitch */
+  .sidebar-item-btn {
+    padding-top: 11px;
+    padding-bottom: 11px;
+    line-height: 22px;
+  }
+
+  /* A finger's 44px-wide target, as tall as its row, which it never grows */
+  .sidebar-item-delete {
+    align-self: stretch;
+    flex: none;
+    width: 44px;
+    padding: 0;
+  }
+
+  .sidebar-expanded .sidebar-bottom {
+    padding: 4px 20px 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .sidebar-collapsed {
+    width: auto;
+    height: auto;
+    background: none;
+  }
+
+  .sidebar-collapsed .sidebar-brand {
+    padding: 26px 12px 12px;
+  }
+
+  .sidebar-collapsed .sidebar-nav,
+  .sidebar-collapsed .sidebar-section-header,
+  .sidebar-collapsed .sidebar-bottom,
+  .sidebar-icon-panel {
+    display: none;
+  }
+
+  .sidebar-icon-menu {
+    display: block;
+  }
+
+  /* New side chat keeps its 44px, the column of the rows' × marks */
+  .sidebar-new-chat {
+    flex: none;
+  }
+
+  /* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
+  .sidebar-collapsed .sidebar-logo-btn,
+  .sidebar-backdrop-menu {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+    color: var(--color-text);
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(4px);
+    box-shadow: none;
+  }
+
+  /* Over the peeking chat, which lets taps through to it: a tap on the strip closes the drawer */
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0 0 0 80%;
+    z-index: 92;
+    border: none;
+    padding: 0;
+    background: none;
+  }
+
+  .sidebar-backdrop:focus-visible {
+    outline-offset: -4px;
+  }
+
+  /* The chat's menu chip, where it sits with the drawer shut (the collapsed brand's padding), faded with the chat */
+  .sidebar-backdrop-menu {
+    position: absolute;
+    top: calc(var(--app-safe-top) + 26px);
+    left: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.5;
+  }
+}
+
+/* A load in flight: grey bars in the shape of text, pulsing (load-state.tsx). */
+.load-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.load-skeleton-line {
+  display: block;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+  animation: loadPulse 1.4s ease-in-out infinite;
+}
+
+.load-skeleton-line:nth-child(2) {
+  width: 85%;
+}
+
+.load-skeleton-line:last-child {
+  width: 60%;
+}
+
+@keyframes loadPulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .load-skeleton-line {
+    animation: none;
+  }
+}
+
+/* A failed load: why, with a Retry, in place of what it would show. */
+.load-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.load-failed-error {
+  margin: 0;
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+}
+
+/* Below the last message, in the messages' column (`.copilotKitMessages`: 720px at most, 1.5rem side padding). */
+.chat-run-error {
+  width: calc(min(720px, 100%) - 3rem);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+  margin: 0 auto;
+}
+
+.chat-turn-retry {
+  display: block;
+  margin: 0.5rem auto 0;
+}
+
+/* ── Welcome screen (empty chat state) ── */
+.welcome-screen {
+  position: absolute;
+  inset: 0;
+  /* Centered in the chat below the agent's header, which floats over it. */
+  top: var(--chat-header-height);
+  bottom: 80px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  text-align: center;
+  padding: 24px;
+}
+
+.welcome-title {
+  font-size: var(--font-title);
+  font-weight: var(--weight-title);
+  color: var(--color-text);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.welcome-desc {
+  font-size: var(--font-body);
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.5;
+  max-width: 360px;
+}
+
+.welcome-error {
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+  margin: 0;
+}
+
+/* ── Chat wrapper ── */
+.chat-wrapper {
+  height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── User menu ── */
+.user-menu {
+  position: relative;
+  width: 100%;
+}
+
+.user-menu-trigger {
+  appearance: none;
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--sidebar-btn-pad);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  font-family: inherit;
+  transition: background var(--transition-fast);
+  position: relative;
+}
+
+.user-menu-trigger:hover {
+  background: var(--color-border);
+}
+
+.sidebar-collapsed .user-menu-trigger {
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+/* On the nav rows' columns: the avatar centred on their 20px icons, the name on their labels' 52px edge */
+@media (min-width: 641px) {
+  .sidebar-expanded .user-menu-trigger {
+    padding: 8px;
+    gap: 8px;
+  }
+}
+
+/* On a phone, the rows' grid: a 29px avatar (iOS's list icon) from their icons' edge, the name on their labels */
+@media (max-width: 640px) {
+  .sidebar-expanded .user-menu-trigger {
+    height: 44px;
+    gap: 13px;
+    padding: 0;
+  }
+}
+
+/* Styled tooltip on avatar hover */
+.user-menu-trigger[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 4px;
+  background: var(--color-black);
+  color: var(--color-white);
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 100;
+  line-height: 1.4;
+}
+.user-menu-trigger[data-tooltip]:hover::after {
+  opacity: 1;
+}
+/* Hide tooltip when dropdown is open */
+.user-menu-trigger[data-tooltip].menu-open::after {
+  display: none;
+}
+
+/* A grey disc dark enough for its white initial (5.3:1) */
+.user-menu .avatar {
+  background: var(--color-text-muted);
+}
+
+/* The generic person keeps its 14px glyph in the menu header. */
+.user-menu-header .avatar svg {
+  width: 14px;
+  height: 14px;
+}
+
+.user-menu-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 4px 0;
+  /* One width for the menu and Edit profile, so the editor replaces the menu in place */
+  width: 260px;
+  box-shadow: var(--shadow-elevated);
+  z-index: 300;
+  overflow: hidden;
+}
+
+.user-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.user-menu-name {
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.user-menu-sep {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
+}
+
+.user-menu-item {
+  appearance: none;
+  background: none;
+  border: none;
+  font-family: inherit;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  font-size: var(--font-body);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  text-align: left;
+}
+
+.user-menu-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.user-menu-item:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.user-menu-item svg {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.profile-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+/* The phone sheet's title bar: its close at the left, as the Agent Profile's, and the title centred */
+.profile-editor-head {
+  display: none;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+}
+
+.profile-editor-close {
+  position: absolute;
+  left: -6px;
+}
+
+.profile-editor-title {
+  margin: 0;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
+/* Phones: Edit profile is a titled bottom sheet, as the sign-in sheet is, rather than a popover over the account row */
+@media (max-width: 640px) {
+  .user-menu-dropdown:has(> .profile-editor) {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    padding: 8px 4px env(safe-area-inset-bottom);
+    border: none;
+    border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  }
+
+  .profile-editor-head {
+    display: flex;
+  }
+}
+
+.profile-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+
+/* ── Model + Effort picker (Claude-style) ── */
+.mep {
+  position: relative;
+}
+
+.mep-pill {
+  appearance: none;
+  background: var(--color-border);
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 8px 16px;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+  transition: background var(--transition-fast);
+}
+
+.mep-pill:hover {
+  background: var(--color-control);
+}
+
+.mep-pill-effort {
+  color: var(--color-text-subtle);
+  font-weight: var(--weight-regular);
+}
+
+.mep-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 6px 0;
+  min-width: 280px;
+  box-shadow: var(--shadow-elevated);
+  z-index: 100;
+}
+
+.mep-option {
+  appearance: none;
+  background: none;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background var(--transition-fast);
+  gap: 16px;
+  color: var(--color-text);
+}
+
+.mep-option:hover {
+  background: var(--color-surface-hover);
+}
+
+.mep-option-name {
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+
+.mep-option-desc {
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.mep-option-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-subtle);
+  font-size: var(--font-detail);
+}
+
+.mep-check {
+  flex-shrink: 0;
+  color: var(--color-blue);
+}
+
+.mep-back {
+  gap: 10px;
+  justify-content: flex-start;
+  color: var(--color-text-muted);
+}
+
+.mep-separator {
+  height: 1px;
+  background: var(--color-border);
+  margin: 6px 16px;
+}
+
+/* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names,
+   and the type roles and weights. --color-border names itself: the :root token, unlayered, outranks this layer. */
+@theme inline {
+  --font-sans: var(--font-sans);
+  --color-background: var(--color-white);
+  --color-foreground: var(--color-text);
+  --color-card: var(--color-white);
+  --color-card-foreground: var(--color-text);
+  --color-popover: var(--color-white);
+  --color-popover-foreground: var(--color-text);
+  --color-primary: var(--color-text);
+  --color-primary-foreground: var(--color-white);
+  --color-secondary: var(--color-surface-hover);
+  --color-secondary-foreground: var(--color-text);
+  --color-muted: var(--color-surface);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-accent: var(--color-surface-hover);
+  --color-accent-foreground: var(--color-text);
+  --color-destructive: var(--color-danger);
+  --color-border: var(--color-border);
+  --color-input: var(--color-border);
+  --color-ring: var(--color-blue);
+  --text-title: var(--font-title);
+  --text-name: var(--font-name);
+  --text-headline: var(--font-headline);
+  --text-message: var(--font-message);
+  --text-body: var(--font-body);
+  --text-detail: var(--font-detail);
+  --text-label: var(--font-label);
+  --font-weight-normal: var(--weight-regular);
+  --font-weight-medium: var(--weight-medium);
+  --font-weight-semibold: var(--weight-semibold);
+  --font-weight-bold: var(--weight-bold);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* ── Avatars, Agent avatar and Agent Profile ── */
+/* The Avatar component sets its own size and font size. */
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: var(--color-white);
+  font-weight: var(--weight-semibold);
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The agent's default avatar is its own figure, drawn on the page rather than in a disc. */
+.avatar-agent {
+  background: none;
+}
+
+.chat-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  padding: 12px 16px 16px;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --chat-header-safe-top: var(--app-safe-top);
+  }
+
+  .app-shell {
+    --chat-header-height: calc(120px + var(--chat-header-safe-top));
+  }
+
+  .app-shell:has(> .chat-header) {
+    margin-top: calc(-1 * var(--app-safe-top));
+  }
+
+  .chat-header {
+    padding-top: calc(12px + var(--chat-header-safe-top));
+  }
+
+  .chat-header-agent .avatar-agent {
+    overflow: visible;
+  }
+
+  .chat-header-agent .avatar-agent svg {
+    flex-shrink: 0;
+    width: 99px;
+    height: 99px;
+    transform: translateY(-3px);
+  }
+
+  .chat-header-agent .chat-header-name {
+    margin-top: -12px;
+  }
+}
+
+/* What follows the header in the shell, other than the chat, which scrolls beneath it, starts below it: an
+   alert, then the chat below the alert, or the Main Chat's skeleton or failure. */
+.chat-header + :not(.app-chat) {
+  margin-top: var(--chat-header-height);
+}
+
+.chat-header-agent {
+  pointer-events: auto;
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.chat-header-agent:disabled {
+  cursor: default;
+}
+
+/* Pressed, the avatar and its name sink a little and the capsule darkens, as a button does. */
+.chat-header-agent:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chat-header-agent:active:not(:disabled) .chat-header-name {
+  background: rgba(235, 235, 235, 0.85);
+}
+
+/* A mouse over it lifts the capsule; phones, which have no hover, keep the press. */
+@media (hover: hover) {
+  .chat-header-agent:hover:not(:disabled) .chat-header-name {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  }
+}
+
+/* The keyboard's focus rings the capsule in blue, in place of the browser's outline around the whole button. The
+   outline stays, transparent, for forced colors, which drop the ring's box-shadow and paint the outline instead. */
+.chat-header-agent:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.chat-header-agent:focus-visible:not(:disabled) .chat-header-name {
+  box-shadow: 0 0 0 2px var(--color-white), 0 0 0 4px var(--color-blue);
+}
+
+/* The name in a frosted capsule over the avatar's bottom edge, as dots (Fig 7) and Muse (Fig 11) show it: a button, not a heading. */
+.chat-header-name {
+  position: relative;
+  max-width: 240px;
+  margin-top: -6px;
+  padding: 2px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: var(--font-message);
+  font-weight: var(--weight-medium);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* The phone keeps its semibold name, as on iOS; the desktop takes ChatGPT's `font-medium`. */
+@media (max-width: 640px) {
+  .chat-header-name {
+    font-weight: var(--weight-semibold);
+  }
+}
+
+/* A failed sign-in, sign-out or Sheet action, between the header and the chat. */
+.chat-account-error {
+  flex-shrink: 0;
+  margin: 0 auto 4px;
+  width: min(640px, calc(100% - 32px));
+  text-align: center;
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+}
+
+/* A right sidebar beside the chat, which narrows to make room; it slides open from the right edge. */
+.agent-profile {
+  flex: none;
+  width: 440px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-white);
+  border-left: 1px solid var(--color-border);
+  animation: agentProfileOpen var(--transition-layout);
+}
+
+/* The closed profile stays mounted to keep its Computer live view connected. */
+.agent-profile[hidden] {
+  display: none;
+}
+
+@keyframes agentProfileOpen {
+  from {
+    width: 0;
+  }
+}
+
+.agent-profile-header {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 24px 16px 16px;
+}
+
+.agent-profile-avatar {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.agent-profile-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--color-white);
+  border-radius: 50%;
+  background: var(--color-text);
+  color: var(--color-white);
+  cursor: pointer;
+}
+
+.agent-profile-name {
+  font-size: var(--font-name);
+  font-weight: var(--weight-name);
+}
+
+.agent-profile-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+/* Connected: plain text after a filled white bolt on a green badge (Muse Fig 13). */
+.agent-profile-status-online {
+  color: var(--color-text);
+}
+
+.agent-profile-status-online svg {
+  box-sizing: content-box;
+  padding: 3px;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: var(--color-white);
+  fill: currentColor;
+}
+
+.agent-profile-error,
+.profile-editor-error {
+  font-size: var(--font-detail);
+  color: var(--color-danger);
+}
+
+/* Close is a 44px filled circle at the top left, level with the avatar's top, on the tab bar's gutter (Muse Figs 13-16). */
+.agent-profile-close {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.agent-profile-close:hover {
+  background: var(--color-border);
+}
+
+.agent-profile-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 16px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+}
+
+.agent-profile-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  background: none;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  padding: 8px;
+  color: var(--color-text-muted);
+}
+
+.agent-profile-tab:hover {
+  color: var(--color-text);
+}
+
+.agent-profile-tab[aria-selected="true"] {
+  color: var(--color-text);
+  background: var(--color-white);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.agent-profile-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 16px;
+}
+
+.agent-profile-empty {
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.agent-files {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.agent-file {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-file-cards {
+  display: grid;
+  /* One card per row, at the panel's full width. */
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+/* Each file a soft tinted tile with its icon, after Muse's file cards (Fig 16), in our light palette. */
+.file-card {
+  appearance: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 112px;
+  padding: 16px;
+  border: 1px solid var(--card-edge, var(--color-border));
+  border-radius: var(--radius-xl);
+  background: var(--card-tint, var(--color-surface));
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.file-card:hover {
+  box-shadow: var(--shadow-subtle);
+  transform: translateY(-1px);
+}
+
+.agent-file-card-identity {
+  --card-tint: linear-gradient(140deg, #eff6ff 0%, #dbeafe 100%);
+  --card-edge: #bfdbfe;
+  --card-ink: #2563eb;
+}
+
+.agent-file-card-soul {
+  --card-tint: linear-gradient(140deg, #faf5ff 0%, #f3e8ff 55%, #fce7f3 100%);
+  --card-edge: #e9d5ff;
+  --card-ink: #9333ea;
+}
+
+.agent-file-card-memory {
+  --card-tint: linear-gradient(140deg, #fefce8 0%, #fef3c7 55%, #ecfccb 100%);
+  --card-edge: #fde68a;
+  --card-ink: #b45309;
+}
+
+.file-card-name {
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
+.file-card-hint {
+  font-size: var(--font-detail);
+  color: var(--color-text-subtle);
+}
+
+.file-card-icon {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 24px;
+  height: 24px;
+  color: var(--card-ink, var(--color-text-muted));
+}
+
+/* The header keeps a button's height in every state, with Edit, Cancel and Save, or none, so the file never
+   shifts (Muse Figs 17-20). */
+.agent-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--button-height);
+}
+
+.agent-file h3 {
+  margin-right: auto;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
+/* Back is a round chevron as tall as the header's buttons. */
+.agent-file-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--button-height);
+  height: var(--button-height);
+  padding: 0;
+}
+
+/* The default figure starts 19/120 into its box (avatar.tsx); pulled back by that much at the file's 64px avatar,
+   it lines up with the text. */
+.agent-file > .avatar-agent {
+  margin-left: calc(64px * -19 / 120);
+}
+
+.agent-file-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--font-body);
+}
+
+.agent-file-entry {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-file-entry dt {
+  font-weight: var(--weight-semibold);
+}
+
+.agent-file-entry dt::after {
+  content: ":";
+}
+
+.agent-file-unset {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.agent-file-text {
+  font-size: var(--font-body);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-file-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The note is a preface: the file's own content starts 24px below it (Muse Figs 17-19). */
+.agent-file-about {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.agent-file-about h4 {
+  font-weight: var(--weight-semibold);
+}
+
+.picture-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The file input stays reachable through its label, which looks like a button. */
+.picture-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.picture-upload:focus-within {
+  outline: 2px solid var(--color-blue);
+}
+
+.agent-file-saved {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.agent-file-saved svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.agent-memory-line {
+  display: flex;
+  gap: 8px;
+  font-size: var(--font-body);
+}
+
+.agent-memory-line input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Read, each memory is a bullet whose wrapped lines hang under its first (Muse Fig 19); editing keeps plain rows. */
+.agent-file > .agent-memory {
+  display: block;
+  padding-left: 1.25em;
+  list-style: disc;
+}
+
+.agent-file > .agent-memory .agent-memory-line {
+  display: list-item;
+}
+
+.agent-file > .agent-memory .agent-memory-line + .agent-memory-line {
+  margin-top: 12px;
+}
+
+/* ── List rows (Muse Fig 13, 15): a round icon tile, then a headline over muted detail lines ── */
+.list-group-heading {
+  margin: 24px 0 6px;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
+.list-row {
+  --row-icon: 40px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 10px 0;
+}
+
+.list-row-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--row-icon);
+  height: var(--row-icon);
+  border-radius: 50%;
+  background: var(--color-surface-hover);
+  color: var(--color-text-subtle);
+}
+
+.list-row-icon-failed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.list-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--font-detail);
+  line-height: 1.35;
+}
+
+.list-row-title {
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+  overflow-wrap: anywhere;
+}
+
+.list-row-detail {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.agent-activity > section:first-child .agent-activity-day {
+  margin-top: 0;
+}
+
+.agent-activity-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-activity-failed {
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.scheduled-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scheduled-task {
+  flex-wrap: wrap;
+  row-gap: 10px;
+  padding-bottom: 14px;
+  font-size: var(--font-detail);
+}
+
+/* A row with no room for 240px of text beside the buttons wraps them under it. */
+.scheduled-task-text {
+  flex: 1 1 240px;
+}
+
+/* Wrapped, they line up with the text: past the icon tile and the row's 14px gap. */
+.scheduled-task-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: calc(var(--row-icon) + 14px);
+}
+
+.scheduled-proposal {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 480px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  font-size: var(--font-detail);
+  line-height: 1.4;
+}
+
+/* The assistant message gives its paragraphs prose margins; the card spaces its lines by its gap. */
+.copilotKitAssistantMessage .scheduled-proposal p {
+  margin: 0 !important;
+}
+
+.scheduled-proposal-confirm {
+  margin-top: 6px;
+}
+
+.scheduled-proposal-done {
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-title {
+  font-weight: var(--weight-semibold);
+}
+
+.scheduled-task-schedule {
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-zone {
+  white-space: nowrap;
+}
+
+.scheduled-task-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scheduled-task-heading .status-pill {
+  flex: none;
+}
+
+/* A paused task's icon and name dim beside its Paused pill; its detail lines are already muted. Colours, not
+   opacity, keep the name at AA contrast. */
+.scheduled-task-paused .list-row-icon {
+  color: var(--color-control);
+}
+
+.scheduled-task-paused .scheduled-task-title {
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-field {
+  flex-basis: 100%;
+  gap: 2px;
+  color: inherit;
+}
+
+/* ── Plugins screen: each kind of plugin a placeholder card under its label ── */
+.plugins {
+  flex: 1;
+  overflow: auto;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 20px 48px;
+}
+
+.plugins-title {
+  font-size: var(--font-title);
+  font-weight: var(--weight-title);
+  letter-spacing: -0.01em;
+}
+
+.plugins-intro {
+  margin-top: 4px;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.plugins-kind {
+  margin-top: 28px;
+}
+
+.plugins-placeholder {
+  align-items: center;
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+}
+
+.plugins-soon {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .list-row {
+    --row-icon: 44px;
+  }
+
+  /* Clear of the round menu button at the top left */
+  .plugins {
+    padding-top: 72px;
+  }
+
+  /* Coming soon sits under the title, so the description takes the card's full width */
+  .plugins-placeholder {
+    display: grid;
+    grid-template-columns: var(--row-icon) 1fr;
+    column-gap: 14px;
+    row-gap: 2px;
+  }
+
+  .plugins-placeholder .list-row-icon {
+    grid-row: span 3;
+  }
+
+  .plugins-placeholder .list-row-text {
+    display: contents;
+  }
+
+  .plugins-soon {
+    grid-area: 2 / 2;
+    justify-self: start;
+    margin: 2px 0;
+  }
+}
+
+/* Too narrow for the sidebar, a readable chat and the profile side by side (260 + 440 + 440): the
+   profile slides in over the chat's right edge instead of squeezing it. */
+@media (max-width: 1139px) {
+  .agent-profile {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-elevated);
+  }
+}
+
+/* Phones: the profile is a full-screen sheet that slides in over the chat. */
+@media (max-width: 640px) {
+  /* Within the safe area, as a phone's layout runs under the status and home bars */
+  .agent-profile {
+    position: fixed;
+    inset: var(--app-safe-top) 0 var(--app-safe-bottom);
+    z-index: 100;
+    width: auto;
+    border-left: none;
+    animation-name: agentProfileSlideIn;
+  }
+
+  /* An open file takes the whole sheet, as Muse stacks a file over the profile (Figs 17-20); its back
+     chevron returns to the profile. A profile error stays in view over it (ADR 0030). */
+  .agent-profile:has(.agent-file) .agent-profile-header > :not(.agent-profile-error),
+  .agent-profile:has(.agent-file) .agent-profile-tabs {
+    display: none;
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-header {
+    padding: 0 16px;
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
+    margin-top: 16px;
+  }
+}
+
+@keyframes agentProfileSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-profile {
+    animation: none;
+  }
+}
+
+/* Phones: CopilotKit's own 1rem side padding is the chat's gutter (dots Fig 7), so the messages'
+   column adds none, and the composer accessory fills its column too. Its min-width breakpoint (sm, 40rem) drops that
+   padding at 640px itself. */
+@media (max-width: 639.98px) {
+  .copilotKitMessages {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .chat-run-error,
+  .composer-accessory {
+    width: 100%;
+  }
+
+  /* The composer reaches 4px into that gutter, 12px from the screen's edges like ChatGPT Work's. */
+  .copilotKitInput {
+    width: calc(100% + 8px) !important;
+    margin: 0 -4px !important;
+  }
+}
+
+/* Phones: every control is a finger's 44px target at the least (Apple HIG). Icons keep their size. */
+@media (max-width: 640px) {
+  :root {
+    --button-height: 44px;
+  }
+
+  .button {
+    min-height: var(--button-height);
+  }
+
+  .header-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .sidebar-logo-btn svg,
+  .sidebar-backdrop-menu svg {
+    width: calc(var(--spacing) * 6);
+    height: calc(var(--spacing) * 6);
+  }
+
+  .profile-editor-close {
+    left: -12px;
+  }
+
+  /* The badge keeps its drawn 32px circle and white ring inside a clear 6px border, so it doesn't swamp the avatar */
+  .agent-profile-edit {
+    right: -8px;
+    bottom: -8px;
+    width: 44px;
+    height: 44px;
+    border: 6px solid transparent;
+    background-clip: padding-box;
+    box-shadow: inset 0 0 0 2px var(--color-white);
+  }
+
+  .agent-profile-tab,
+  .mep-pill {
+    min-height: 44px;
+  }
+}

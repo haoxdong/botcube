@@ -1,0 +1,29 @@
+services:
+  chat-table-init:
+    build:
+      secrets: [build_ca]
+  vault-table-init:
+    build:
+      secrets: [build_ca]
+  fake-site:
+    build:
+      secrets: [build_ca]
+  credential-service:
+    build:
+      secrets: [build_ca]
+  harness:
+    build:
+      secrets: [build_ca]
+  session-api:
+    build:
+      secrets: [build_ca]
+  chat-service:
+    build:
+      secrets: [build_ca]
+  ui:
+    build:
+      secrets: [build_ca]
+
+secrets:
+  build_ca:
+    file: ${BOTCUBE_BUILD_CA_CERTS:?Set BOTCUBE_BUILD_CA_CERTS to a CA bundle}

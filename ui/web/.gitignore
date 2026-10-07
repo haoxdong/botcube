@@ -1,0 +1,7 @@
+out/
+.next/
+.next-*/
+public/
+storybook-static/
+.storybook/public/
+.vitest-attachments/

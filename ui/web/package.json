@@ -1,0 +1,74 @@
+{
+  "name": "botcube-ui-web",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./cartridge": "./src/cartridge/index.ts",
+    "./cartridge-default": "./src/cartridge/default.tsx",
+    "./latency": "./src/app/latency.ts",
+    "./load-state": "./src/app/load-state.tsx",
+    "./ui": "./src/components/ui/index.ts",
+    "./storybook-page": "./src/app/page.tsx"
+  },
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build --webpack",
+    "start": "serve .next-standalone --listen ${PORT:-3001}",
+    "storybook": "storybook dev --port 6006",
+    "build:storybook": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --max-old-space-size=4096\" ../../../scripts/heavy.sh storybook build --output-dir storybook-static",
+    "screenshots:storybook": "sh screenshots.sh",
+    "prestorybook": "msw init .storybook/public --save",
+    "prebuild:storybook": "msw init .storybook/public --save"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.2",
+    "@base-ui/react": "^1.8.0",
+    "@copilotkit/react-core": "^1.77.0",
+    "@streamdown/cjk": "^1.0.4",
+    "@streamdown/code": "^2.0.0",
+    "@streamdown/math": "^1.0.3",
+    "@streamdown/mermaid": "^1.0.3",
+    "@use-gesture/react": "^10.3.1",
+    "aws-rum-web": "^3.2.1",
+    "clsx": "^2.1.1",
+    "cronstrue": "^3.29.0",
+    "lucide-react": "^0.577.0",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remark-breaks": "^4.0.0",
+    "serve": "^14.2.6",
+    "shadcn": "^4.21.2",
+    "shiki": "^3.23.0",
+    "streamdown": "^2.7.0",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "^10.6.1",
+    "@storybook/addon-vitest": "10.6.1",
+    "@storybook/nextjs-vite": "^10.6.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^24.19.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitest/browser-playwright": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.11",
+    "happy-dom": "^20.14.5",
+    "msw": "^2.15.0",
+    "postcss": "^8.5.29",
+    "postcss-load-config": "^6.0.1",
+    "storybook": "^10.6.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "msw": {
+    "workerDirectory": [
+      ".storybook/public"
+    ]
+  }
+}

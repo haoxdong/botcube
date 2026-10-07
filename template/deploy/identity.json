@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "aws": {
+    "account": "000000000000",
+    "region": "us-east-1",
+    "cloudFormation": {
+      "stackFamily": "bot-cube"
+    },
+    "agentCore": {
+      "runtime": "bot_cube_runtime",
+      "runtimeNetworkParameter": "/bot-cube/agentcore/security-group-id",
+      "memory": "bot_cube_memory",
+      "sessionApiFunction": "bot-cube-session-api",
+      "sessionApiAlias": "live",
+      "agentComputerBrowser": {
+        "name": "bot_cube_agent_computer_managed",
+        "profileNamePrefix": "bot_cube_"
+      },
+      "privateNatBrowser": {
+        "name": "bot_cube_provider_link",
+        "id": "browser-placeholder",
+        "vpcId": "vpc-placeholder",
+        "browserSecurityGroupId": "sg-placeholder",
+        "extension": {
+          "bucket": "example-browser-assets",
+          "prefix": "bot-cube/browser-extensions/provider-user-agent/v2.zip",
+          "versionId": "placeholder"
+        },
+        "subnets": [
+          {
+            "id": "subnet-placeholder-a",
+            "availabilityZone": "us-east-1a",
+            "cidrBlock": "172.31.96.0/24"
+          },
+          {
+            "id": "subnet-placeholder-b",
+            "availabilityZone": "us-east-1c",
+            "cidrBlock": "172.31.97.0/24"
+          }
+        ]
+      }
+    },
+    "credentialService": {
+      "vpcId": "vpc-placeholder",
+      "port": 8081
+    },
+    "ecs": {
+      "privateNamespace": "bot-cube.internal",
+      "credentialService": {
+        "tableName": "credential-vault-by-provider",
+        "legacyVault": {
+          "tableName": "credential-vault",
+          "mirrored": false
+        },
+        "rpcPath": "/bot-cube",
+        "environmentKeys": {
+          "url": "BOT_CUBE_CREDENTIAL_SERVICE_URL",
+          "invocationToken": "BOT_CUBE_CREDENTIAL_SERVICE_INVOCATION_TOKEN",
+          "port": "BOT_CUBE_CREDENTIAL_SERVICE_PORT",
+          "keyId": "BOT_CUBE_VAULT_KMS_KEY_ID",
+          "vaultTable": "BOT_CUBE_VAULT_TABLE",
+          "legacyVaultTable": "BOT_CUBE_LEGACY_VAULT_TABLE"
+        }
+      },
+      "chatService": {
+        "planUsageOwnerAccountParameter": "/bot-cube/plan-usage/owner-account-id",
+        "environmentKeys": {
+          "planUsageOwnerAccountId": "BOT_CUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
+          "agentComputerCdpUrl": "BOT_CUBE_AGENT_COMPUTER_CDP_URL",
+          "filesBucket": "BOT_CUBE_FILES_BUCKET",
+          "filesFileSystemArn": "BOT_CUBE_FILES_FILE_SYSTEM_ARN",
+          "agentComputerPolicyBucket": "BOT_CUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
+          "agentComputerPolicyKey": "BOT_CUBE_AGENT_COMPUTER_POLICY_S3_KEY",
+          "filesSyncRoleArn": "BOT_CUBE_FILES_SYNC_ROLE_ARN"
+        }
+      },
+      "cluster": "bot-cube",
+      "deployRoleName": "bot-cube-ecs-github-deploy",
+      "originPullCaCertificate": "template/deploy/ecs/origin-pull-ca.crt",
+      "originPullClientSecretName": "/bot-cube/cloudflare/origin-pull-client",
+      "originTokenSecretName": "/bot-cube/cloudflare/origin-api-token",
+      "previewOriginStackName": "bot-cube-preview-origin",
+      "parkedDnsTarget": "parked.invalid",
+      "privateEgress": {
+        "stackName": "bot-cube-private-egress",
+        "publicIp": "192.0.2.1",
+        "routeTableId": "rtb-placeholder",
+        "natGateway": {
+          "name": "bot-cube-private-egress",
+          "publicSubnetId": "subnet-placeholder-a"
+        }
+      },
+      "apiHealth": {
+        "stackName": "bot-cube-api-health",
+        "alarmName": "bot-cube-api-health"
+      },
+      "webLatency": {
+        "stackName": "bot-cube-web-latency",
+        "appMonitorName": "bot-cube-web"
+      },
+      "alertsTopicName": "bot-cube-alerts",
+      "publicSubnets": [
+        {
+          "id": "subnet-placeholder-a",
+          "availabilityZone": "us-east-1a"
+        },
+        {
+          "id": "subnet-placeholder-b",
+          "availabilityZone": "us-east-1c"
+        }
+      ]
+    },
+    "ecr": {
+      "repository": "bot-cube/runtime"
+    },
+    "codeBuild": {
+      "project": "bot-cube-container-builder"
+    },
+    "lambda": {
+      "family": "bot-cube-container-build-handler"
+    },
+    "cloudWatch": {
+      "logGroup": "/aws/lambda/bot-cube-container-build-handler"
+    },
+    "iam": {
+      "deployUser": "bot-cube-deploy",
+      "runtimeRole": "bot-cube-runtime",
+      "memoryRole": "bot-cube-memory",
+      "lambdaRole": "bot-cube-container-build-handler",
+      "codeBuildRole": "bot-cube-container-build",
+      "sessionApiRole": "bot-cube-session-api",
+      "invokePolicyFamily": "bot-cube-agentcore-invoke"
+    }
+  },
+  "ssm": {
+    "runtimeArn": "/bot-cube/agentcore/runtime-arn",
+    "parkState": "/bot-cube/production/park-state"
+  },
+  "domains": {
+    "web": "http://localhost:3001",
+    "chatService": "http://localhost:8123",
+    "chatServicePreview": "https://api-preview.example.invalid",
+    "corsOrigins": ["http://localhost:3001", "http://127.0.0.1:3001"]
+  },
+  "github": {
+    "environment": "bot-cube-production",
+    "oidcSubjectPrefix": "repo:example-owner@000000000/example-repository@000000000",
+    "variables": {
+      "ecsDeployRoleArn": "BOT_CUBE_ECS_DEPLOY_ROLE_ARN"
+    },
+    "secrets": {
+      "cloudflareOriginApiToken": "CLOUDFLARE_ORIGIN_API_TOKEN"
+    }
+  },
+  "artifacts": {
+    "chatService": {
+      "reaperCommand": ["node", "dist/reap-auth-browsers.js"]
+    },
+    "toolStaging": {
+      "hook": "template/deploy/stage-tools.sh",
+      "directory": "harness/deepagents/.tool-dist"
+    }
+  }
+}

@@ -1,0 +1,168 @@
+services:
+  dynamodb:
+    image: ${BOTCUBE_LOCAL_DYNAMODB_IMAGE:-amazon/dynamodb-local:3.3.0}
+    user: root
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-dbPath", "/data"]
+    volumes:
+      - dynamodb-state:/data
+
+  # The Harness image carries Python and boto3 for this one-off script.
+  chat-table-init:
+    build:
+      context: ../..
+      dockerfile: infra/local/harness.Dockerfile
+      args: &harness-build-args
+        PYTHON_IMAGE: ${BOTCUBE_LOCAL_PYTHON_IMAGE:-public.ecr.aws/docker/library/python:3.13-slim}
+        UV_IMAGE: ${BOTCUBE_LOCAL_UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+    depends_on:
+      - dynamodb
+    environment: &dynamodb-environment
+      NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      AWS_ENDPOINT_URL_DYNAMODB: http://dynamodb:8000
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      BOTCUBE_CHAT_TABLE: ${BOTCUBE_CHAT_TABLE:-chat}
+    volumes:
+      - ./init-chat-table.py:/init-chat-table.py:ro
+    command: ["python", "/init-chat-table.py"]
+
+  vault-table-init:
+    build:
+      context: ../..
+      dockerfile: infra/local/credential-service.Dockerfile
+      args: *harness-build-args
+    depends_on:
+      - dynamodb
+    environment:
+      <<: *dynamodb-environment
+      BOTCUBE_VAULT_TABLE: credential-vault
+    volumes:
+      - ./init-vault-table.py:/init-vault-table.py:ro
+    command: ["python", "/init-vault-table.py"]
+
+  fake-site:
+    build:
+      context: ../..
+      dockerfile: infra/local/credential-service.Dockerfile
+      args: *harness-build-args
+    command: ["template-site"]
+    environment:
+      PORT: "8124"
+      TEMPLATE_SITE_HOST: "0.0.0.0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8124/login')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  credential-service:
+    build:
+      context: ../..
+      dockerfile: infra/local/credential-service.Dockerfile
+      args: *harness-build-args
+    depends_on:
+      fake-site:
+        condition: service_healthy
+      vault-table-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *dynamodb-environment
+      PORT: "8125"
+      DYNAMODB_ENDPOINT_URL: http://dynamodb:8000
+      BOTCUBE_VAULT_TABLE: credential-vault
+      BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/template-vault/key
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret
+      TEMPLATE_SITE_URL: http://fake-site:8124
+    volumes:
+      - credential-key:/var/lib/template-vault
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8125/health')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  harness:
+    build:
+      context: ../..
+      dockerfile: infra/local/harness.Dockerfile
+      args: *harness-build-args
+    environment:
+      NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      BOTCUBE_MODEL: ${BOTCUBE_MODEL:-echo}
+      BOTCUBE_CHECKPOINT_PATH: ${BOTCUBE_CHECKPOINT_PATH:-/var/lib/botcube-harness/checkpoints.sqlite3}
+    volumes:
+      - harness-state:/var/lib/botcube-harness
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # The session API reads Sessions from the Harness's checkpoints (ADR 0067).
+  session-api:
+    build:
+      context: ../..
+      dockerfile: infra/local/harness.Dockerfile
+      args: *harness-build-args
+    command: ["botcube-session-api"]
+    environment:
+      NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      PORT: "8081"
+      BOTCUBE_CHECKPOINT_PATH: ${BOTCUBE_CHECKPOINT_PATH:-/var/lib/botcube-harness/checkpoints.sqlite3}
+    volumes:
+      - harness-state:/var/lib/botcube-harness
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/ping')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  chat-service:
+    build:
+      context: ../..
+      dockerfile: infra/local/chat.Dockerfile
+      args:
+        NODE_IMAGE: ${BOTCUBE_LOCAL_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}
+    depends_on:
+      harness:
+        condition: service_healthy
+      session-api:
+        condition: service_healthy
+      chat-table-init:
+        condition: service_completed_successfully
+      credential-service:
+        condition: service_healthy
+    environment:
+      <<: *dynamodb-environment
+      AWS_ENDPOINT_URL_BEDROCK_RUNTIME: http://fake-site:8124
+      TEMPLATE_SITE_URL: http://fake-site:8124
+      TEMPLATE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret
+      TEMPLATE_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
+      BOTCUBE_CORS_ORIGINS: http://localhost:${BOTCUBE_LOCAL_UI_PORT:-3001},http://127.0.0.1:${BOTCUBE_LOCAL_UI_PORT:-3001}
+    ports:
+      - "${BOTCUBE_LOCAL_CHAT_PORT:-8123}:8123"
+
+  ui:
+    build:
+      context: ../..
+      dockerfile: infra/local/ui.Dockerfile
+      args:
+        NODE_IMAGE: ${BOTCUBE_LOCAL_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}
+    environment:
+      NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
+      NEXT_PUBLIC_CHAT_SERVICE_URL: ${NEXT_PUBLIC_CHAT_SERVICE_URL:-http://localhost:${BOTCUBE_LOCAL_CHAT_PORT:-8123}}
+    depends_on:
+      - chat-service
+    ports:
+      - "${BOTCUBE_LOCAL_UI_PORT:-3001}:3001"
+
+volumes:
+  dynamodb-state:
+  harness-state:
+  credential-key:

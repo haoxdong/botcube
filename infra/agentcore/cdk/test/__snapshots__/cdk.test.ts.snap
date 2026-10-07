@@ -1,0 +1,57 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`existing resources replace runtime role and network without creating or mutating external infrastructure 1`] = `
+{
+  "memory": [
+    "arn:aws:kms:us-east-1:123456789012:key/corporate-key",
+  ],
+  "runtime": [
+    {
+      "filesystem": [
+        {
+          "SessionStorage": {
+            "MountPath": "/mnt/corporate",
+          },
+        },
+      ],
+      "lifecycle": {
+        "IdleRuntimeSessionTimeout": 600,
+        "MaxLifetime": 1800,
+      },
+      "network": {
+        "NetworkMode": "VPC",
+        "NetworkModeConfig": {
+          "SecurityGroups": [
+            "sg-corporate",
+          ],
+          "Subnets": [
+            "subnet-corporate",
+          ],
+        },
+      },
+      "role": "arn:aws:iam::123456789012:role/corporate-runtime",
+    },
+  ],
+}
+`;
+
+exports[`omitted resource props retain the default runtime configuration snapshot 1`] = `
+[
+  {
+    "filesystem": [
+      {
+        "SessionStorage": {
+          "MountPath": "/mnt/workspace",
+        },
+      },
+    ],
+    "lifecycle": {
+      "IdleRuntimeSessionTimeout": 900,
+      "MaxLifetime": 3600,
+    },
+    "network": {
+      "NetworkMode": "PUBLIC",
+    },
+  },
+]
+`;

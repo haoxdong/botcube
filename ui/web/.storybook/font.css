@@ -1,0 +1,9 @@
+@font-face {
+  font-family: 'Geist';
+  src: url('../src/app/fonts/Geist.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+html {
+  --font-sans: 'Geist', sans-serif;
+}
