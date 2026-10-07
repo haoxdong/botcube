@@ -18,7 +18,7 @@ import { endOpeningMoment } from "./latency";
 import { rumConfig, startRum } from "./rum";
 import { useModelSelection, type ModelList } from "./model-selection";
 import { Avatar } from "./avatar";
-import { PluginsScreen } from "./plugins";
+import { CustomizeScreen } from "./customize";
 import { ProfileEditor } from "./profile-editor";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { SessionGate } from "./session-gate";
@@ -322,8 +322,8 @@ function App({
   const layoutRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
-  // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
-  const [pluginsOpen, setPluginsOpen] = useState(false);
+  // The sidebar's Customize screen shows in the chat's place, which stays mounted under it.
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const ready = auth.sessionStatus === "ready";
   // A sign-in can move the page to another account: its models, Side Chats and agent load again.
   const { accountId } = auth;
@@ -410,9 +410,9 @@ function App({
     [ready, accountId],
   );
 
-  /** Choosing a chat, or Plugins, shows it in the main area; on a phone it closes the sidebar drawer to show it. */
-  const showMain = (view: 'chat' | 'plugins') => {
-    setPluginsOpen(view === 'plugins');
+  /** Choosing a chat, or Customize, shows it in the main area; on a phone it closes the sidebar drawer to show it. */
+  const showMain = (view: 'chat' | 'customize') => {
+    setCustomizeOpen(view === 'customize');
     if (isPhone) setSidebarExpanded(false);
   };
 
@@ -484,7 +484,11 @@ function App({
   );
 
   return (
-    <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style }}>
+    // A desktop click on the main stage collapses the sidebar (#3604); a phone closes its drawer from the chat
+    // strip beside it (memo 0049 Fig 21).
+    <div onClickCapture={(event) => {
+      if (!isPhone && event.target instanceof Element && event.target.closest(".app-shell")) setSidebarExpanded(false);
+    }} ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style }}>
       {/* ── Sidebar (outside CopilotKit so it doesn't remount on conversation switch) ── */}
       <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`}>
         <div className="sidebar-top">
@@ -503,25 +507,13 @@ function App({
               {menuIcon}
             </button>}
             <span className="sidebar-brand-text">{UI_CONFIG.title}</span>
-            {/* A phone closes the drawer from the chat strip beside it (memo 0049 Fig 21) */}
-            {!isPhone && <button
-              className="header-btn sidebar-compose-btn"
-              onClick={() => setSidebarExpanded(false)}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </svg>
-            </button>}
           </div>
 
-          {/* Main chat and Plugins as icon rows, the open one a filled pill (Muse Fig 12) */}
+          {/* Main chat and Customize as icon rows, the open one a filled pill (Muse Fig 12) */}
           <nav className="sidebar-nav sidebar-main">
             <SidebarRow
               className="sidebar-main-chat"
-              active={!pluginsOpen && activeId !== null && activeId === mainChatId}
+              active={!customizeOpen && activeId !== null && activeId === mainChatId}
               onClick={() => {
                 showMain('chat');
                 if (!isPhone) setSidebarExpanded(true);
@@ -535,13 +527,13 @@ function App({
               <span className="sidebar-nav-label">Main chat</span>
             </SidebarRow>
             <SidebarRow
-              active={pluginsOpen}
-              onClick={() => showMain('plugins')}
-              aria-label="Plugins"
-              title="Plugins"
+              active={customizeOpen}
+              onClick={() => showMain('customize')}
+              aria-label="Customize"
+              title="Customize"
             >
               <Blocks className="sidebar-nav-icon" aria-hidden />
-              <span className="sidebar-nav-label">Plugins</span>
+              <span className="sidebar-nav-label">Customize</span>
             </SidebarRow>
           </nav>
         </div>
@@ -552,9 +544,10 @@ function App({
               <span>Side chats</span>
               {sideChatsCollapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
             </button>
-            <button className="header-btn sidebar-new-chat" onClick={() => { showMain('chat'); handleNewConversation(); }} aria-label="New side chat" title="New side chat">
+            {/* The collapsed desktop rail keeps only Main chat and Customize (#3604) */}
+            {(isPhone || sidebarExpanded) && <button className="header-btn sidebar-new-chat" onClick={() => { showMain('chat'); handleNewConversation(); }} aria-label="New side chat" title="New side chat">
               <Plus aria-hidden />
-            </button>
+            </button>}
           </div>
           {sideChatsError !== null && (
             <div className="sidebar-error" role="alert" hidden={!swipe.visible}>{sideChatsError}</div>
@@ -573,7 +566,7 @@ function App({
             {sideChats.map((c) => (
               <div
                 key={c.id}
-                className={`sidebar-item ${!pluginsOpen && c.id === activeId ? "sidebar-item-active" : ""}`}
+                className={`sidebar-item ${!customizeOpen && c.id === activeId ? "sidebar-item-active" : ""}`}
               >
                 <button
                   className="sidebar-item-btn"
@@ -620,13 +613,13 @@ function App({
         </button>
       )}
 
-      {pluginsOpen && (
+      {customizeOpen && (
         <main className="app-shell">
-          <PluginsScreen agentName={agentName} />
+          <CustomizeScreen agentName={agentName} />
         </main>
       )}
       {activeId === null && (
-        <main className="app-shell" hidden={pluginsOpen}>
+        <main className="app-shell" hidden={customizeOpen}>
           {chatHeader}
           {linkedChatError !== null ? (
             <LoadFailed error={linkedChatError} onRetry={() => void openMainChat()} action="Go to Main Chat" />
@@ -639,7 +632,7 @@ function App({
       )}
       {activeId !== null && (
         <Suspense fallback={
-          <main className="app-shell" hidden={pluginsOpen}>
+          <main className="app-shell" hidden={customizeOpen}>
             {chatHeader}
             <div className="app-chat" role="status" aria-label="Loading chat controls">
               <div className="copilotKitMessages">
@@ -667,7 +660,7 @@ function App({
           ))}
           {webUiPlugin.toolResultRenderers.map((Renderer, index) => <Renderer key={index} />)}
           {/* ── Main content ── */}
-          <main className="app-shell" hidden={pluginsOpen}>
+          <main className="app-shell" hidden={customizeOpen}>
             {chatHeader}
             {/* ADR 0030: a failed sign-in, sign-out or Sheet action shows why, even with the Sheet closed. */}
             {auth.error && <p className="chat-account-error" role="alert">{auth.error}</p>}

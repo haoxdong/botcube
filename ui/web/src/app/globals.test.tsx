@@ -480,7 +480,7 @@ it('spaces a scheduled-task proposal in a message by its own gap, not prose para
   expect(styleOf(message, '.scheduled-proposal').gap).toBe('4px');
 });
 
-it("shows the agent's name in a frosted capsule over the avatar's bottom edge, which sinks when pressed (memo 0049 Figs 7 and 11)", () => {
+it("shows the agent's name in a capsule over the avatar's bottom edge, which sinks when pressed (memo 0049 Figs 1, 7 and 11)", () => {
   const { container } = render(
     <header className="chat-header">
       <button className="chat-header-agent">
@@ -491,11 +491,11 @@ it("shows the agent's name in a frosted capsule over the avatar's bottom edge, w
   );
 
   const name = styleOf(container, '.chat-header-name');
-  // Over the avatar's bottom 6px, as Muse's sits over about 5px.
-  expect(name.marginTop).toBe('-6px');
+  // Over the avatar's bottom edge, crisp white on desktop (Fig 1; the phone's frosted one is pinned with the phone below).
+  expect(name.marginTop).toBe('-11px');
   expect(name.position).toBe('relative');
   expect(name.borderRadius).toBe('9999px');
-  expect(name.backgroundColor).toBe('rgba(255, 255, 255, 0.6)');
+  expect(name.backgroundColor).toBe('#fff');
   expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\)\s*\{\s*transform: scale\(0\.95\);/);
   expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\) \.chat-header-name \{\s*background: rgba\(235, 235, 235, 0\.85\);/);
 });
@@ -532,7 +532,7 @@ it('keeps the avatar keyboard focus ring while the pointer is over it', () => {
     button.classList.add('pointer-over');
     expect(styleOf(button, '.chat-header-name').boxShadow).toBe('0 2px 8px rgba(0, 0, 0, 0.18)');
     button.disabled = true;
-    expect(styleOf(button, '.chat-header-name').boxShadow).toBe('0 1px 3px rgba(0, 0, 0, 0.12)');
+    expect(styleOf(button, '.chat-header-name').boxShadow).toBe('none');
   } finally {
     button.remove();
     states.remove();
@@ -562,7 +562,7 @@ it("floats the agent's header over the chat, which scrolls beneath it without a 
   expect(styleOf(container, '.pseudo-before').backdropFilter || 'none').toBe('none');
   expect(styleOf(container, '.pseudo-before').backgroundImage || 'none').toBe('none');
   // happy-dom leaves var() and calc() unresolved, so this reads the sheet: the header's height, then the column's gap.
-  expect(sheet).toMatch(/\n\.app-shell \{[^}]*--chat-header-height: 122px;/);
+  expect(sheet).toMatch(/\n\.app-shell \{[^}]*--chat-header-height: 97px;/);
   expect(sheet).toMatch(/\n\.chat-header \+ \.app-chat \.copilotKitMessages \{\s*padding-top: calc\(var\(--chat-header-height\) \+ 0\.5rem\);/);
   expect(sheet).toMatch(/\n\.welcome-screen \{[^}]*top: var\(--chat-header-height\);/);
 });
@@ -700,7 +700,7 @@ it("sets the messages at the drawer rows' 17px on a phone, and at 16px on deskto
 it("sets each type role at ChatGPT's desktop size and weight and iOS's phone one", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   const samples = [
-    ['title', '<h1 class="plugins-title"></h1>', '24px', '500', '22px', '700'],
+    ['title', '<h1 class="customize-title"></h1>', '24px', '500', '22px', '700'],
     ['headline', '<div class="list-row-title"></div>', '14px', '500', '17px', '600'],
     ['body', '<p class="welcome-desc"></p>', '14px', '400', '17px', '400'],
     ['sidebar row', '<aside class="sidebar sidebar-expanded"><button class="sidebar-nav-item"></button></aside>', '14px', '400', '17px', '500'],
@@ -748,7 +748,8 @@ it('centres every desktop rail control on one 44px target with an aligned divide
       const control = styleOf(container, selector);
       expect({ width: control.width, height: control.height, padding: control.padding }).toEqual({ width: '44px', height: '44px', padding: '0px' });
     }
-    expect(styleOf(container, '.sidebar-main').gap).toBe('8px');
+    // Dots' rail steps at 44pt (memo 0049 Fig 1, #3624)
+    expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
     expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('5px');
     expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('4px');
     expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
@@ -764,7 +765,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
       happyDOM.setViewport({ width, height: 956 });
       const { container, unmount } = render(
         <aside className="sidebar sidebar-expanded">
-          <div className="sidebar-brand"><button className="header-btn sidebar-compose-btn"><svg /></button></div>
+          <div className="sidebar-brand" />
           <nav className="sidebar-nav sidebar-main" />
           <div className="sidebar-section-header"><button className="sidebar-side-chats-toggle">Side chats</button><button className="header-btn sidebar-new-chat"><svg /></button></div>
           <div className="sidebar-list" />
@@ -772,8 +773,9 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         </aside>,
       );
       try {
-        expect(styleOf(container, '.sidebar-list').paddingTop).toBe(width === 440 ? '0px' : '4px');
-        for (const selector of width === 440 ? ['.sidebar-new-chat'] : ['.sidebar-compose-btn', '.sidebar-new-chat']) {
+        // Side chats sit right under their header on both (memo 0049 Fig 21, #3624)
+        expect(zero(styleOf(container, '.sidebar-list').paddingTop)).toBe('0px');
+        for (const selector of ['.sidebar-new-chat']) {
           expect(styleOf(container, selector).width).toBe('44px');
           expect(styleOf(container, selector).height).toBe('44px');
           // A phone's plus is as light as the rows' × marks
@@ -817,6 +819,182 @@ it('floats translucent phone controls over clear chat with the pill overlapping 
     expect(styleOf(container, '.app-chat').paddingTop || '0px').toBe('0px');
   } finally {
     unmount();
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+// #3624: the desktop takes the phone's chat card, top of chat and drawer layout (#3613, #3614, #3616), measured
+// against memo 0049 Fig 1 (dots desktop): a rounded white card 4px inside the sidebar's grey frame, the avatar's top
+// 1.5pt under the card's, a 44pt rail pitch and the account row on the card's bottom inset.
+// happy-dom reports an unset length as '' and a written `0` as '0'.
+const zero = (value: string) => (value === '' || value === '0' ? '0px' : value);
+const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
+  <div className="app-layout">
+    <aside className={`sidebar ${sidebar}`}>
+      <div className="sidebar-top">
+        <div className="sidebar-brand"><span className="sidebar-brand-text">Bot</span></div>
+        <nav className="sidebar-nav sidebar-main">
+          <button className="sidebar-nav-item sidebar-main-chat sidebar-nav-item-active"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Main chat</span></button>
+          <button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Customize</span></button>
+          <span className="pseudo-after" />
+        </nav>
+      </div>
+      <div className="sidebar-recents">
+        <div className="sidebar-section-header">
+          <button className="sidebar-side-chats-toggle"><span>Side chats</span></button>
+          <button className="header-btn sidebar-new-chat"><svg /></button>
+        </div>
+        <div className="sidebar-list">
+          <div className="sidebar-item sidebar-item-active"><button className="sidebar-item-btn">Rates</button><button className="sidebar-item-delete">×</button></div>
+        </div>
+      </div>
+      <div className="sidebar-bottom"><button className="user-menu-trigger"><span className="avatar" style={{ width: 28, height: 28 }} /></button></div>
+    </aside>
+    <main className="app-shell">
+      <header className="chat-header">
+        <button className="chat-header-agent"><span className="avatar avatar-agent" style={{ width: 72, height: 72 }}><svg width="72" height="72" /></span><span className="chat-header-name">Marq</span></button>
+      </header>
+      <div className="app-chat" />
+    </main>
+  </div>
+);
+
+it("sets the desktop chat as a rounded white card 4px inside the sidebar's grey frame, its edge soft (memo 0049 Fig 1, #3624)", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 1440, height: 900 });
+  const { container, unmount } = render(desktopApp('sidebar-collapsed'));
+  try {
+    // The frame is Fig 1's grey, the sidebar on it (#3604)
+    expect(styleOf(container, '.app-layout').backgroundColor).toBe('#ebebec');
+    expect(styleOf(container, '.sidebar').backgroundColor).toBe('#ebebec');
+    const card = styleOf(container, '.app-shell');
+    expect(card.backgroundColor).toBe('#fff');
+    expect(card.margin).toBe('4px 4px 4px 0px');
+    expect(card.borderRadius).toBe('12px');
+    expect(card.overflow).toBe('hidden');
+    expect(card.boxShadow).toBe('0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06)');
+    // happy-dom matches no :has(), so this reads the sheet: beside the chat, the open profile shares its card (Fig 3).
+    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.app-shell:has\(~ \.agent-profile:not\(\[hidden\]\)\) \{\s*margin-right: 0;\s*border-top-right-radius: 0;\s*border-bottom-right-radius: 0;/);
+    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.agent-profile \{\s*margin: 4px 4px 4px 0;\s*border-radius: 0 var\(--radius-lg\) var\(--radius-lg\) 0;\s*box-shadow: var\(--shadow-card\);\s*\}/);
+    // A clip would cut the full-window computer sheet the profile holds, so the seam clip waits for it to close
+    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.agent-profile:not\(:has\(\.agent-computer-sheet\)\) \{\s*clip-path: inset\(-24px -24px -24px 0\);/);
+  } finally {
+    unmount();
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name pill with no frost or glow (memo 0049 Fig 1, #3624)", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 1440, height: 900 });
+  const { container, unmount } = render(desktopApp('sidebar-collapsed'));
+  try {
+    // His hat sits 9.5px into his 72px box: 2px of padding less 10px puts it 1.5px under the card's top, as Fig 1's.
+    expect(styleOf(container, '.chat-header').paddingTop).toBe('2px');
+    expect(styleOf(container, '.chat-header-agent .avatar-agent').marginTop).toBe('-10px');
+    const marq = styleOf(container, '.chat-header-agent .avatar-agent svg');
+    expect({ position: marq.position, zIndex: marq.zIndex }).toEqual({ position: 'relative', zIndex: '1' });
+    const pill = styleOf(container, '.chat-header-name');
+    // Tucked about 6px behind his body, as the phone's (#3614)
+    expect(pill.marginTop).toBe('-11px');
+    expect(pill.backgroundColor).toBe('#fff');
+    expect(pill.backdropFilter || 'none').toBe('none');
+    expect(pill.boxShadow).toBe('none');
+    // No band behind the header: the chat scrolls beneath it clear.
+    expect(styleOf(container, '.chat-header').backdropFilter || 'none').toBe('none');
+    expect(styleOf(container, '.chat-header').backgroundImage || 'none').toBe('none');
+  } finally {
+    unmount();
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHATS label, a white selected fill, a plain plus and the account row on the card's bottom inset (memo 0049 Fig 1, #3624)", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 1440, height: 900 });
+  try {
+    for (const state of ['sidebar-expanded', 'sidebar-collapsed'] as const) {
+      const { container, unmount } = render(desktopApp(state));
+      try {
+        // Fig 1's rail steps at 44pt, so the rows meet with no gap in both states and keep their places (#3555).
+        expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
+        // The open row is white, which shows on the frame (memo 0049 Fig 1, #3604)
+        expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#fff');
+        // The brand row keeps its 64px in both states, so nothing under it moves (#3555)
+        expect(styleOf(container, '.sidebar-brand').minHeight).toBe('64px');
+        // The rail keeps only Main chat and Customize, so it drops the divider under them (#3604)
+        expect(styleOf(container, '.sidebar-main > .pseudo-after').display === 'none').toBe(state === 'sidebar-collapsed');
+        // The account row ends 4px above the bottom, on the card's bottom inset, as Fig 1's does.
+        expect(styleOf(container, '.sidebar-bottom').paddingBottom).toBe('4px');
+        expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('4px');
+      } finally {
+        unmount();
+      }
+    }
+    const { container, unmount } = render(desktopApp('sidebar-expanded'));
+    try {
+      // The label 20px in, on the title and the icons' edge; the plus at the header's right, as before (#3555).
+      expect(styleOf(container, '.sidebar-section-header').padding).toBe('4px 12px 0px 20px');
+      const label = styleOf(container, '.sidebar-side-chats-toggle');
+      expect({ size: label.fontSize, weight: label.fontWeight, spacing: label.letterSpacing, transform: label.textTransform })
+        .toEqual({ size: '11px', weight: '600', spacing: '0.44px', transform: 'uppercase' });
+      const plus = styleOf(container, '.sidebar-new-chat');
+      expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#6b6b6b' });
+      expect(plus.backgroundColor || 'transparent').toMatch(/^(transparent|none|rgba\(0, 0, 0, 0\))$/);
+      expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
+      // Side chats step at the rows' 44px pitch, the text on the labels' 20px, each × in the plus's 44px column.
+      expect(styleOf(container, '.sidebar-list').padding).toBe('0px 12px 0px 8px');
+      expect(zero(styleOf(container, '.sidebar-item').marginBottom)).toBe('0px');
+      expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#fff');
+      const row = styleOf(container, '.sidebar-item-btn');
+      expect({ top: row.paddingTop, bottom: row.paddingBottom, lineHeight: row.lineHeight }).toEqual({ top: '11px', bottom: '11px', lineHeight: '22px' });
+      const remove = styleOf(container, '.sidebar-item-delete');
+      expect({ width: remove.width, padding: remove.padding }).toEqual({ width: '44px', padding: '0px' });
+      expect(styleOf(container, '.user-menu-trigger').padding).toBe('8px');
+    } finally {
+      unmount();
+    }
+  } finally {
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+it('keeps the phone as it was: no desktop card, frame, header or sidebar value reaches 640px and below (#3624)', () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 440, height: 956 });
+  try {
+    const shut = render(desktopApp('sidebar-collapsed'));
+    try {
+      const card = styleOf(shut.container, '.app-shell');
+      expect({ margin: zero(card.margin), radius: card.borderRadius || '0px', shadow: card.boxShadow || 'none' }).toEqual({ margin: '0px', radius: '0px', shadow: 'none' });
+      expect(styleOf(shut.container, '.app-layout').backgroundColor || 'transparent').toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+      const pill = styleOf(shut.container, '.chat-header-name');
+      expect({ background: pill.backgroundColor, frost: pill.backdropFilter, top: pill.marginTop })
+        .toEqual({ background: 'rgba(255, 255, 255, 0.6)', frost: 'blur(4px)', top: '-12px' });
+      expect(zero(styleOf(shut.container, '.chat-header-agent .avatar-agent').marginTop)).toBe('0px');
+    } finally {
+      shut.unmount();
+    }
+    const open = render(desktopApp('sidebar-expanded'));
+    try {
+      expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f7f7f8');
+      expect(zero(styleOf(open.container, '.sidebar-main').gap)).toBe('0px');
+      expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
+      expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');
+      // happy-dom keeps :root's custom properties from their first read, whatever the viewport since, so this reads
+      // the sheet: the label still takes the phone's 13px `label` role.
+      expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*(\/\*[^*]*\*\/\s*)?:root \{[^}]*--font-label: 0\.8125rem;/);
+      expect(sheet).toMatch(/\.sidebar-side-chats-toggle \{[^}]*font-size: var\(--font-label\);/);
+      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 20px 0px 8px');
+      expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
+      expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#efefef');
+      expect(styleOf(open.container, '.sidebar-item-btn').paddingTop).toBe('11px');
+      expect(styleOf(open.container, '.sidebar-item-delete').width).toBe('44px');
+      expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('13px');
+    } finally {
+      open.unmount();
+    }
+  } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
 });

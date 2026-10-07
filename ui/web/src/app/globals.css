@@ -25,6 +25,7 @@ body {
   --color-surface-hover: #f4f4f4;
   --color-composer: #fbfbfb;
   --color-selected: #efefef;
+  --color-frame: #ebebec;
   --color-border: #e0e0e0;
   --color-control: #bfbfbf;
   --color-white: #fff;
@@ -65,6 +66,7 @@ body {
   --shadow-elevated: 0 4px 20px rgba(0,0,0,0.15);
   --shadow-composer: 0 8px 36px rgba(0,0,0,0.11);
   --shadow-soft: 0 0 40px rgba(0,0,0,0.23);
+  --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06);
 
   --transition-fast: 0.1s;
   --transition-layout: 0.2s ease;
@@ -72,7 +74,7 @@ body {
   /* Sidebar spacing */
   --sidebar-pad-x: 8px;
   --sidebar-pad-y: 4px;
-  --sidebar-pad-bottom: 12px;
+  --sidebar-pad-bottom: 4px;
   --sidebar-btn-pad: 8px 10px;
   --sidebar-row-weight: var(--weight-regular);
 
@@ -518,8 +520,9 @@ cpk-web-inspector,
 
 /* ── App shell (main content area): the chat's white, so the avatar header shares the chat's surface (dots Fig 1) ── */
 .app-shell {
-  /* The agent's header: 12px padding, the 72px avatar, the 21px of its capsule below it, 16px padding, 1px spare. */
-  --chat-header-height: 122px;
+  /* The desktop agent's header: 2px padding, Marq's box's 62px past its -10px, the 16px of his capsule below it,
+     16px padding, 1px spare. */
+  --chat-header-height: 97px;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -528,7 +531,7 @@ cpk-web-inspector,
   position: relative;
 }
 
-/* The chat stays mounted under the Plugins screen. */
+/* The chat stays mounted under the Customize screen. */
 .app-shell[hidden] {
   display: none;
 }
@@ -720,7 +723,6 @@ cpk-web-inspector,
   flex: 1;
 }
 
-.sidebar-compose-btn,
 .sidebar-new-chat {
   width: 44px;
   height: 44px;
@@ -728,19 +730,12 @@ cpk-web-inspector,
 }
 
 .sidebar-logo-btn svg,
-.sidebar-compose-btn svg,
 .sidebar-new-chat svg {
   width: 20px;
   height: 20px;
 }
 
-.sidebar-compose-btn {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.sidebar-collapsed .sidebar-brand-text,
-.sidebar-collapsed .sidebar-compose-btn {
+.sidebar-collapsed .sidebar-brand-text {
   display: none;
 }
 
@@ -786,9 +781,13 @@ cpk-web-inspector,
   height: 20px;
 }
 
-.sidebar-nav-item:hover,
-.sidebar-nav-item-active {
+.sidebar-nav-item:hover {
   background: var(--color-border);
+}
+
+/* The open row's fill, as light as Muse's (memo 0049 Fig 21) and dots' rail (Fig 1) */
+.sidebar-nav-item-active {
+  background: var(--color-selected);
 }
 
 .sidebar-collapsed .sidebar-nav-item {
@@ -807,7 +806,7 @@ cpk-web-inspector,
   display: none;
 }
 
-/* Main chat and Plugins: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
+/* Main chat and Customize: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
 .sidebar-main {
   position: relative;
   --divider-inset: 20px;
@@ -883,13 +882,24 @@ cpk-web-inspector,
     padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3) calc(var(--spacing) * 2) calc(var(--spacing) * 5);
   }
 
-  .sidebar-collapsed .sidebar-brand {
-    min-height: calc(var(--spacing) * 16);
+  /* The brand row keeps its 64px in both states, so the rows under it never move (#3555) */
+  .sidebar-brand {
+    min-height: 64px;
   }
 
+  /* The rows meet at a 44px pitch in both states, as dots' rail steps (memo 0049 Fig 1) */
   .sidebar-expanded .sidebar-main {
-    gap: calc(var(--spacing) * 2);
+    gap: 0;
     padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
+  }
+
+  /* The rail keeps only Main chat and Customize (#3604), so nothing follows a divider */
+  .sidebar-collapsed .sidebar-main {
+    gap: 0;
+  }
+
+  .sidebar-collapsed .sidebar-main::after {
+    display: none;
   }
 
   .sidebar-expanded .sidebar-nav-item {
@@ -901,10 +911,11 @@ cpk-web-inspector,
     margin-left: calc(var(--spacing) * 3);
   }
 
+  /* The label on the title's and icons' 20px edge, the rows right under it (memo 0049 Fig 21) */
   .sidebar-expanded .sidebar-section-header {
     justify-content: space-between;
     gap: calc(var(--spacing) * 2);
-    padding: var(--sidebar-pad-y) calc(var(--spacing) * 3) calc(var(--spacing) * 4) var(--sidebar-pad-x);
+    padding: var(--sidebar-pad-y) 12px 0 20px;
   }
 
   .sidebar-expanded .sidebar-new-chat {
@@ -912,14 +923,17 @@ cpk-web-inspector,
   }
 }
 
+/* A section label (Muse Fig 21's SIDE CHATS) */
 .sidebar-side-chats-toggle {
   appearance: none;
   border: none;
   background: none;
   color: var(--color-text-muted);
   font-family: inherit;
-  font-size: var(--font-body);
-  font-weight: var(--weight-medium);
+  font-size: var(--font-label);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   display: flex;
   align-items: center;
   gap: calc(var(--spacing) * 2);
@@ -1024,10 +1038,11 @@ cpk-web-inspector,
   background: var(--color-danger-soft);
 }
 
+/* Text on the labels' 20px edge; each × in the + control's column */
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px;
+  padding: 0 12px 0 8px;
 }
 
 /* No Side Chats yet: an invitation centred in the list (Muse Fig 12) */
@@ -1067,7 +1082,6 @@ cpk-web-inspector,
   align-items: center;
   border-radius: var(--radius-md);
   transition: background var(--transition-fast);
-  margin-bottom: 2px;
 }
 
 .sidebar-item:hover {
@@ -1075,7 +1089,7 @@ cpk-web-inspector,
 }
 
 .sidebar-item-active {
-  background: var(--color-border);
+  background: var(--color-selected);
   font-weight: var(--weight-medium);
 }
 
@@ -1096,7 +1110,9 @@ cpk-web-inspector,
   appearance: none;
   background: none;
   border: none;
-  padding: 8px 4px 8px 12px;
+  /* At the nav rows' 44px pitch */
+  padding: 11px 4px 11px 12px;
+  line-height: 22px;
   font-size: var(--font-body);
   color: var(--color-text);
   cursor: pointer;
@@ -1117,7 +1133,11 @@ cpk-web-inspector,
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  padding: 4px 8px;
+  /* A 44px-wide target, as tall as its row, which it never grows */
+  align-self: stretch;
+  flex: none;
+  width: 44px;
+  padding: 0;
   font-size: var(--font-body);
   line-height: 1;
   border-radius: var(--radius-sm);
@@ -1144,10 +1164,6 @@ cpk-web-inspector,
 .sidebar-bottom {
   flex-shrink: 0;
   margin-top: auto;
-  padding: var(--sidebar-pad-y) var(--sidebar-pad-x) var(--sidebar-pad-bottom);
-}
-
-.sidebar-collapsed .sidebar-bottom {
   padding: var(--sidebar-pad-y) var(--sidebar-pad-x) var(--sidebar-pad-bottom);
 }
 
@@ -1304,9 +1320,8 @@ cpk-web-inspector,
     padding: 38px 10px 10px;
   }
 
-  /* The open row's fill, as light as Fig 21's */
-  .sidebar-expanded .sidebar-nav-item-active,
-  .sidebar-item-active {
+  /* The open row keeps its fill under a tap's lingering hover */
+  .sidebar-expanded .sidebar-nav-item-active {
     background: var(--color-selected);
   }
 
@@ -1314,21 +1329,9 @@ cpk-web-inspector,
     padding: 10px 20px 0;
   }
 
-  /* A section label (Fig 21's SIDE CHATS) */
-  .sidebar-side-chats-toggle {
-    font-size: var(--font-label);
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
   /* Text 20px from the edge; each × in the + control's column */
   .sidebar-list {
     padding: 0 20px 0 8px;
-  }
-
-  .sidebar-item {
-    margin-bottom: 0;
   }
 
   .sidebar-expanded .sidebar-nav-item {
@@ -1340,21 +1343,6 @@ cpk-web-inspector,
   .sidebar-expanded .sidebar-nav-icon {
     width: calc(var(--spacing) * 6);
     height: calc(var(--spacing) * 6);
-  }
-
-  /* Side Chats step at the nav rows' 44px pitch */
-  .sidebar-item-btn {
-    padding-top: 11px;
-    padding-bottom: 11px;
-    line-height: 22px;
-  }
-
-  /* A finger's 44px-wide target, as tall as its row, which it never grows */
-  .sidebar-item-delete {
-    align-self: stretch;
-    flex: none;
-    width: 44px;
-    padding: 0;
   }
 
   .sidebar-expanded .sidebar-bottom {
@@ -1942,7 +1930,7 @@ cpk-web-inspector,
   z-index: 30;
   display: flex;
   justify-content: center;
-  padding: 12px 16px 16px;
+  padding: 2px 16px 16px;
   pointer-events: none;
 }
 
@@ -1976,6 +1964,67 @@ cpk-web-inspector,
 
   .chat-header-agent .chat-header-name {
     margin-top: -12px;
+  }
+}
+
+/* Desktop: the chat is a rounded white card inside the sidebar's grey frame, 4px clear of the window's other edges
+   (memo 0049 Fig 1). Marq's hat, 9.5px into his 72px box, sits 1.5px under the card's top as dots' avatar does, in
+   front of a crisp name pill tucked about 6px behind his body, as on the phone (#3614); the chat scrolls beneath
+   them with no band. */
+@media (min-width: 641px) {
+  .app-layout,
+  .sidebar {
+    background: var(--color-frame);
+  }
+
+  /* The open row is white on the frame, as dots' rail (memo 0049 Fig 1) */
+  .sidebar-nav-item-active,
+  .sidebar-item-active {
+    background: var(--color-white);
+  }
+
+  .app-shell {
+    margin: 4px 4px 4px 0;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+
+  .chat-header-agent .avatar-agent {
+    margin-top: -10px;
+  }
+
+  .chat-header-agent .avatar-agent svg {
+    position: relative;
+    z-index: 1;
+  }
+
+  .chat-header-agent .chat-header-name {
+    margin-top: -11px;
+    background: var(--color-white);
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+}
+
+/* Beside the chat, the open profile shares its card, as dots' computer panel does (memo 0049 Fig 3); each clips its
+   shadow at the seam, except while the profile holds the full-window computer sheet, which a clip would cut. */
+@media (min-width: 1140px) {
+  .app-shell:has(~ .agent-profile:not([hidden])) {
+    margin-right: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    clip-path: inset(-24px 0 -24px -24px);
+  }
+
+  .agent-profile {
+    margin: 4px 4px 4px 0;
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    box-shadow: var(--shadow-card);
+  }
+
+  .agent-profile:not(:has(.agent-computer-sheet)) {
+    clip-path: inset(-24px -24px -24px 0);
   }
 }
 
@@ -2597,8 +2646,8 @@ cpk-web-inspector,
   color: inherit;
 }
 
-/* ── Plugins screen: each kind of plugin a placeholder card under its label ── */
-.plugins {
+/* ── Customize screen: each kind of extension a placeholder card under its label ── */
+.customize {
   flex: 1;
   overflow: auto;
   width: 100%;
@@ -2607,23 +2656,23 @@ cpk-web-inspector,
   padding: 40px 20px 48px;
 }
 
-.plugins-title {
+.customize-title {
   font-size: var(--font-title);
   font-weight: var(--weight-title);
   letter-spacing: -0.01em;
 }
 
-.plugins-intro {
+.customize-intro {
   margin-top: 4px;
   font-size: var(--font-detail);
   color: var(--color-text-muted);
 }
 
-.plugins-kind {
+.customize-kind {
   margin-top: 28px;
 }
 
-.plugins-placeholder {
+.customize-placeholder {
   align-items: center;
   margin-top: 8px;
   padding: 14px 16px;
@@ -2631,7 +2680,7 @@ cpk-web-inspector,
   border-radius: var(--radius-xl);
 }
 
-.plugins-soon {
+.customize-soon {
   flex: none;
   margin-left: auto;
   white-space: nowrap;
@@ -2643,27 +2692,27 @@ cpk-web-inspector,
   }
 
   /* Clear of the round menu button at the top left */
-  .plugins {
+  .customize {
     padding-top: 72px;
   }
 
   /* Coming soon sits under the title, so the description takes the card's full width */
-  .plugins-placeholder {
+  .customize-placeholder {
     display: grid;
     grid-template-columns: var(--row-icon) 1fr;
     column-gap: 14px;
     row-gap: 2px;
   }
 
-  .plugins-placeholder .list-row-icon {
+  .customize-placeholder .list-row-icon {
     grid-row: span 3;
   }
 
-  .plugins-placeholder .list-row-text {
+  .customize-placeholder .list-row-text {
     display: contents;
   }
 
-  .plugins-soon {
+  .customize-soon {
     grid-area: 2 / 2;
     justify-self: start;
     margin: 2px 0;

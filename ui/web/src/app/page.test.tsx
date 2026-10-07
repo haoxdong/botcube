@@ -539,6 +539,7 @@ describe('cartridge wiring', () => {
       ],
     ]);
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
     expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","model":"deep","effort":"max"}');
@@ -617,6 +618,7 @@ describe('cartridge wiring', () => {
       return chatService(url, init);
     });
     await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await settle();
 
@@ -651,6 +653,7 @@ describe('cartridge wiring', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Your agent could not be prepared: offline');
 
     fetchMock.mockImplementation(chatService);
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await settle();
 
@@ -667,6 +670,7 @@ describe('cartridge wiring', () => {
     const older = pending.splice(0);
 
     fetchMock.mockImplementation(chatService);
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await settle();
     await act(async () => { for (const finish of older) finish(answer(502)); });
@@ -1090,6 +1094,7 @@ describe('a failed Turn', () => {
     });
     expect(document.querySelector('.chat-failed-question')).toHaveTextContent('original question');
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     expect(document.querySelector('.chat-failed-question')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -1845,6 +1850,7 @@ describe('the history moments', () => {
     );
     await renderPage();
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await act(async () => {
@@ -2257,23 +2263,23 @@ describe('Main Chat', () => {
     expect(document.querySelector('.sidebar-item-active')).toBeNull();
   });
 
-  // Plugins, under Main chat, opens a screen of the plugin kinds to come, each a placeholder.
-  it('opens the Plugins screen in place of the chat, and returns to the Main Chat', async () => {
+  // Customize, under Main chat, opens a screen of the extension kinds to come, each a placeholder (#3638).
+  it('opens the Customize screen in place of the chat, and returns to the Main Chat', async () => {
     await renderPage();
 
-    await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Customize' }));
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Plugins' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Customize' })).toBeVisible();
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Connectors', 'MCP servers', 'Skills']);
     expect(screen.getAllByText('Coming soon')).toHaveLength(3);
-    expect(sidebar().getByRole('button', { name: 'Plugins' })).toHaveClass('sidebar-nav-item-active');
+    expect(sidebar().getByRole('button', { name: 'Customize' })).toHaveClass('sidebar-nav-item-active');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).not.toHaveClass('sidebar-nav-item-active');
     expect(document.querySelector('.chat-header')?.closest('main')).not.toBeVisible();
 
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await settle();
 
-    expect(screen.queryByRole('heading', { name: 'Plugins' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Customize' })).toBeNull();
     expect(copilot.chat?.threadId).toBe('main-1');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item-active');
   });
@@ -3318,6 +3324,7 @@ describe('Side Chats', () => {
   it('keeps a new chat and its draft when an earlier Side Chat replay arrives late', async () => {
     service.sideChats = [sideChat('first', 'First question')];
     await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/threads/first' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
@@ -3402,6 +3409,7 @@ describe('Side Chats', () => {
     await renderPage();
     const previous = agent();
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await act(async () => {
       previous.addMessage({ id: 'late', role: 'user', content: 'Late message' });
@@ -3415,6 +3423,7 @@ describe('Side Chats', () => {
     await sendMessage('first question');
     await agentAddsMessage({ id: 'u1', role: 'user', content: 'first question' });
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
     expect(welcome()).not.toBeNull();
@@ -3444,6 +3453,7 @@ describe('Side Chats', () => {
   it('shows Main chat, then the Side chats disclosure and plus, and no search or archive', async () => {
     service.sideChats = [sideChat('a', 'First')];
     await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
 
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveTextContent(/^Main chat$/);
     // The drawer is titled with the product, as only the avatar and what belongs to it carry the agent's
@@ -3530,6 +3540,7 @@ describe("a Side Chat's URL", () => {
   it('names a new Side Chat once the user sends its first message', async () => {
     await renderPage();
 
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     expect(window.location.search).toBe('');
 
@@ -3632,7 +3643,7 @@ describe('sidebar', () => {
     }
   });
 
-  it('expands from Main Chat and collapses only from the expanded Collapse control', async () => {
+  it('expands from Main Chat and collapses from the desktop stage while sidebar clicks stay expanded', async () => {
     await renderPage(auth({ user: { name: 'Ada Lovelace' } }));
     const aside = present(document.querySelector('aside'), 'the sidebar');
     const mainChat = sidebar().getByRole('button', { name: 'Main Chat' });
@@ -3651,8 +3662,12 @@ describe('sidebar', () => {
 
     await userEvent.click(mainChat);
     expect(aside).toHaveClass('sidebar-expanded');
-    await userEvent.click(screen.getByLabelText('Collapse sidebar'));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Account' }));
+    expect(aside).toHaveClass('sidebar-expanded');
+    expect(screen.queryByLabelText('Collapse sidebar')).toBeNull();
+    await userEvent.click(screen.getByRole('textbox'));
     expect(aside).toHaveClass('sidebar-collapsed');
+    expect(screen.getByRole('textbox')).toHaveFocus();
     expect(mainChat).toHaveAttribute('aria-expanded', 'false');
 
     mainChat.focus();
@@ -3661,7 +3676,30 @@ describe('sidebar', () => {
     expect(mainChat).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('names the Main Chat and New chat buttons in the collapsed rail, which hides their labels', async () => {
+  it('collapses from the Customize stage without treating sidebar navigation as a stage click', async () => {
+    await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Customize' }));
+    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
+    await userEvent.click(screen.getByRole('heading', { name: 'Customize' }));
+    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
+    expect(screen.getByRole('heading', { name: 'Customize' })).toBeVisible();
+  });
+
+  it('collapses from the failed Main Chat stage while its Retry still restores the chat', async () => {
+    service.failing.set('GET /main-chat', 503);
+    await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
+    service.failing.delete('GET /main-chat');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await settle();
+    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
+    expect(screen.getByRole('textbox')).toBeVisible();
+    expect(copilot.chat?.threadId).toBe('main-1');
+  });
+
+  it('keeps only Main Chat and Customize in the collapsed primary rail and restores New side chat when expanded', async () => {
     const hidden = document.createElement('style');
     hidden.textContent = '.sidebar-collapsed .sidebar-nav-label { display: none; }'; // as globals.css hides them
     document.head.append(hidden);
@@ -3669,6 +3707,9 @@ describe('sidebar', () => {
       await renderPage();
 
       expect(sidebar().getByRole('button', { name: 'Main Chat' })).toBeInTheDocument();
+      expect(sidebar().getByRole('button', { name: 'Customize' })).toBeInTheDocument();
+      expect(sidebar().queryByRole('button', { name: 'New side chat' })).toBeNull();
+      await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
       expect(sidebar().getByRole('button', { name: 'New side chat' })).toBeInTheDocument();
     } finally {
       hidden.remove();
@@ -3819,6 +3860,8 @@ describe('sidebar on a phone', () => {
     expect(screen.queryByLabelText('Close sidebar')).toBeNull();
 
     await openDrawer();
+    expect(aside()).toHaveClass('sidebar-expanded');
+    await userEvent.click(screen.getByRole('textbox'));
     expect(aside()).toHaveClass('sidebar-expanded');
 
     await userEvent.click(screen.getByLabelText('Close sidebar'));
@@ -5701,6 +5744,7 @@ describe('model and effort picker', () => {
       service.mainChat = { id: 'main-1', provider: 'openai', messages: [{ id: 'm1', role: 'user', content: 'Hi' }] };
       await renderPage();
 
+      await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
       await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
       await userEvent.click(pill());
@@ -6517,6 +6561,7 @@ describe('a pending Side Chat deletion', () => {
       url === 'http://chat.test/threads/old' && init?.method === 'DELETE' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
     );
     await userEvent.click(sidebar().getByLabelText('Delete conversation'));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await userEvent.type(screen.getByLabelText('Message'), 'Keep this draft');
     await act(async () => { present(held[0], 'delete response')(answer(204)); });
