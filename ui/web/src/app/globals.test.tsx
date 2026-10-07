@@ -700,7 +700,7 @@ it("sets the messages at the drawer rows' 17px on a phone, and at 16px on deskto
 it("sets each type role at ChatGPT's desktop size and weight and iOS's phone one", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   const samples = [
-    ['title', '<h1 class="customize-title"></h1>', '24px', '500', '22px', '700'],
+    ['title', '<h1 class="plugins-title"></h1>', '24px', '500', '22px', '700'],
     ['headline', '<div class="list-row-title"></div>', '14px', '500', '17px', '600'],
     ['body', '<p class="welcome-desc"></p>', '14px', '400', '17px', '400'],
     ['sidebar row', '<aside class="sidebar sidebar-expanded"><button class="sidebar-nav-item"></button></aside>', '14px', '400', '17px', '500'],
@@ -835,7 +835,7 @@ const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
         <div className="sidebar-brand"><span className="sidebar-brand-text">Bot</span></div>
         <nav className="sidebar-nav sidebar-main">
           <button className="sidebar-nav-item sidebar-main-chat sidebar-nav-item-active"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Main chat</span></button>
-          <button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Customize</span></button>
+          <button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Plugins</span></button>
           <span className="pseudo-after" />
         </nav>
       </div>
@@ -922,7 +922,7 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHA
         expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#fff');
         // The brand row keeps its 64px in both states, so nothing under it moves (#3555)
         expect(styleOf(container, '.sidebar-brand').minHeight).toBe('64px');
-        // The rail keeps only Main chat and Customize, so it drops the divider under them (#3604)
+        // The rail keeps only Main chat and Plugins, so it drops the divider under them (#3604)
         expect(styleOf(container, '.sidebar-main > .pseudo-after').display === 'none').toBe(state === 'sidebar-collapsed');
         // The account row ends 4px above the bottom, on the card's bottom inset, as Fig 1's does.
         expect(styleOf(container, '.sidebar-bottom').paddingBottom).toBe('4px');

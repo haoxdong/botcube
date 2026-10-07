@@ -531,7 +531,7 @@ cpk-web-inspector,
   position: relative;
 }
 
-/* The chat stays mounted under the Customize screen. */
+/* The chat stays mounted under the Plugins screen. */
 .app-shell[hidden] {
   display: none;
 }
@@ -806,7 +806,7 @@ cpk-web-inspector,
   display: none;
 }
 
-/* Main chat and Customize: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
+/* Main chat and Plugins: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
 .sidebar-main {
   position: relative;
   --divider-inset: 20px;
@@ -893,7 +893,7 @@ cpk-web-inspector,
     padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
   }
 
-  /* The rail keeps only Main chat and Customize (#3604), so nothing follows a divider */
+  /* The rail keeps only Main chat and Plugins (#3604), so nothing follows a divider */
   .sidebar-collapsed .sidebar-main {
     gap: 0;
   }
@@ -2785,8 +2785,8 @@ cpk-web-inspector,
   color: inherit;
 }
 
-/* ── Customize screen: each kind of extension a placeholder card under its label ── */
-.customize {
+/* ── Plugins screen: each kind of plugin a placeholder card under its label ── */
+.plugins {
   flex: 1;
   overflow: auto;
   width: 100%;
@@ -2795,23 +2795,23 @@ cpk-web-inspector,
   padding: 40px 20px 48px;
 }
 
-.customize-title {
+.plugins-title {
   font-size: var(--font-title);
   font-weight: var(--weight-title);
   letter-spacing: -0.01em;
 }
 
-.customize-intro {
+.plugins-intro {
   margin-top: 4px;
   font-size: var(--font-detail);
   color: var(--color-text-muted);
 }
 
-.customize-kind {
+.plugins-kind {
   margin-top: 28px;
 }
 
-.customize-placeholder {
+.plugins-placeholder {
   align-items: center;
   margin-top: 8px;
   padding: 14px 16px;
@@ -2819,7 +2819,7 @@ cpk-web-inspector,
   border-radius: var(--radius-xl);
 }
 
-.customize-soon {
+.plugins-soon {
   flex: none;
   margin-left: auto;
   white-space: nowrap;
@@ -2831,27 +2831,27 @@ cpk-web-inspector,
   }
 
   /* Clear of the round menu button at the top left */
-  .customize {
+  .plugins {
     padding-top: 72px;
   }
 
   /* Coming soon sits under the title, so the description takes the card's full width */
-  .customize-placeholder {
+  .plugins-placeholder {
     display: grid;
     grid-template-columns: var(--row-icon) 1fr;
     column-gap: 14px;
     row-gap: 2px;
   }
 
-  .customize-placeholder .list-row-icon {
+  .plugins-placeholder .list-row-icon {
     grid-row: span 3;
   }
 
-  .customize-placeholder .list-row-text {
+  .plugins-placeholder .list-row-text {
     display: contents;
   }
 
-  .customize-soon {
+  .plugins-soon {
     grid-area: 2 / 2;
     justify-self: start;
     margin: 2px 0;

@@ -2263,23 +2263,23 @@ describe('Main Chat', () => {
     expect(document.querySelector('.sidebar-item-active')).toBeNull();
   });
 
-  // Customize, under Main chat, opens a screen of the extension kinds to come, each a placeholder (#3638).
-  it('opens the Customize screen in place of the chat, and returns to the Main Chat', async () => {
+  // Plugins, under Main chat, opens a screen of the plugin kinds to come, each a placeholder (#3654).
+  it('opens the Plugins screen in place of the chat, and returns to the Main Chat', async () => {
     await renderPage();
 
-    await userEvent.click(sidebar().getByRole('button', { name: 'Customize' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Customize' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Plugins' })).toBeVisible();
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Connectors', 'MCP servers', 'Skills']);
     expect(screen.getAllByText('Coming soon')).toHaveLength(3);
-    expect(sidebar().getByRole('button', { name: 'Customize' })).toHaveClass('sidebar-nav-item-active');
+    expect(sidebar().getByRole('button', { name: 'Plugins' })).toHaveClass('sidebar-nav-item-active');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).not.toHaveClass('sidebar-nav-item-active');
     expect(document.querySelector('.chat-header')?.closest('main')).not.toBeVisible();
 
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await settle();
 
-    expect(screen.queryByRole('heading', { name: 'Customize' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Plugins' })).toBeNull();
     expect(copilot.chat?.threadId).toBe('main-1');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item-active');
   });
@@ -3676,14 +3676,14 @@ describe('sidebar', () => {
     expect(mainChat).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('collapses from the Customize stage without treating sidebar navigation as a stage click', async () => {
+  it('collapses from the Plugins stage without treating sidebar navigation as a stage click', async () => {
     await renderPage();
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
-    await userEvent.click(sidebar().getByRole('button', { name: 'Customize' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
     expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
-    await userEvent.click(screen.getByRole('heading', { name: 'Customize' }));
+    await userEvent.click(screen.getByRole('heading', { name: 'Plugins' }));
     expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
-    expect(screen.getByRole('heading', { name: 'Customize' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Plugins' })).toBeVisible();
   });
 
   it('collapses from the failed Main Chat stage while its Retry still restores the chat', async () => {
@@ -3699,7 +3699,7 @@ describe('sidebar', () => {
     expect(copilot.chat?.threadId).toBe('main-1');
   });
 
-  it('keeps only Main Chat and Customize in the collapsed primary rail and restores New side chat when expanded', async () => {
+  it('keeps only Main Chat and Plugins in the collapsed primary rail and restores New side chat when expanded', async () => {
     const hidden = document.createElement('style');
     hidden.textContent = '.sidebar-collapsed .sidebar-nav-label { display: none; }'; // as globals.css hides them
     document.head.append(hidden);
@@ -3707,7 +3707,7 @@ describe('sidebar', () => {
       await renderPage();
 
       expect(sidebar().getByRole('button', { name: 'Main Chat' })).toBeInTheDocument();
-      expect(sidebar().getByRole('button', { name: 'Customize' })).toBeInTheDocument();
+      expect(sidebar().getByRole('button', { name: 'Plugins' })).toBeInTheDocument();
       expect(sidebar().queryByRole('button', { name: 'New side chat' })).toBeNull();
       await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
       expect(sidebar().getByRole('button', { name: 'New side chat' })).toBeInTheDocument();

@@ -26,7 +26,7 @@ the `max-width: 640px` query, as are `--weight-title`, `--weight-name` and `--we
 
 | Token      | CSS var           | Desktop  | Phone (≤640px) | Use                                                                                                                                                                    |
 | ---------- | ----------------- | -------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `title`    | `--font-title`    | 24px/500 | 22px/700       | A screen's title (`.customize-title`, `.welcome-title`)                                                                                                                |
+| `title`    | `--font-title`    | 24px/500 | 22px/700       | A screen's title (`.plugins-title`, `.welcome-title`)                                                                                                                  |
 | `name`     | `--font-name`     | 18px/600 | 22px/700       | The sidebar brand and the Agent Profile's name, as ChatGPT's identity-panel hero name (`text-lg font-semibold`)                                                        |
 | `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's, card's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.file-card-name`, `.agent-file h3`, `.profile-editor-title`, sign-ins) |
 | `message`  | `--font-message`  | 16px/400 | 17px/400       | The chat: messages, the composer's text, the agent's name pill under the avatar                                                                                        |
@@ -49,7 +49,7 @@ from `botcube-ui-web/ui`.
 - **Sidebar row** (`<SidebarRow>`, `.sidebar-nav-item`): icon, then `body` label, a full-width pill filled while its screen is open.
   Phone: 44px tall, 24px icon viewport, 18px gap, the icon 20px from the screen edge under the brand (Muse Fig 21).
   The desktop rail is 60px wide, with every control centred in a 44px square, 20px glyphs (the account avatar stays 28px),
-  at a 44px pitch, as dots' rail (memo 0049 Fig 1). It holds only Main chat, Customize and Account, with no divider
+  at a 44px pitch, as dots' rail (memo 0049 Fig 1). It holds only Main chat, Plugins and Account, with no divider
   (#3604).
   Sidebar menu and New side chat controls have 44px square targets with 20px glyphs. The phone menu has a 24px
   viewport and 22px drawn width, matching dots; the phone plus is a plain `text-muted` glyph, like the ×s.
@@ -68,13 +68,13 @@ from `botcube-ui-web/ui`.
   same pitch; content 20px from each side, the plus and each × in one 44px column; the Account row 8px above the
   bottom, on the rows' grid: a 29px avatar (iOS's list icon) at 20px and the name at the labels' 62px.
   The drawer and the chat card beside it run under the status and home bars; their contents keep to the safe area.
-  The desktop sidebar takes the drawer's layout at its own positions on the `frame`: Main chat and Customize at a 44px
+  The desktop sidebar takes the drawer's layout at its own positions on the `frame`: Main chat and Plugins at a 44px
   pitch, the open row (nav or Side Chat) `white`, as dots' (Fig 1); 5px under them to the divider, then the header's 4px, in both states; the
   Side Chats header's label at 20px, its rows at the same 44px pitch right under it, each × in the plus's column; the
   Account row 4px above the bottom, on the chat card's bottom inset, as dots' account (Fig 1).
 - **List row** (`<ListRow>` and its parts, `.list-row`): a round icon tile (`--row-icon`, 40px desktop, 44px phone) on `surface-hover`, a 14px gap,
-  then a `headline` title over `detail` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Customize use
-  it (a Customize placeholder adds a dashed `border` edge); a failed row tints its tile `danger-soft` with a `danger`
+  then a `headline` title over `detail` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Plugins use
+  it (a Plugins placeholder adds a dashed `border` edge); a failed row tints its tile `danger-soft` with a `danger`
   icon. Scheduled rows sit under frequency headings (`.list-group-heading`, as Activity's days), each a button with one
   cut-short detail line (time · prompt) that opens the task's Sheet. A paused Scheduled row sets its icon `control` and its title `text-muted`, a Paused status pill beside the
   title. A Sign-ins row has no tile: the site's `headline` name over its account, the status pill at the right, buttons
@@ -92,7 +92,7 @@ from `botcube-ui-web/ui`.
   A shared safe content frame keeps controls clear of every screen inset while phone chat alone extends to the top.
   On a phone the name capsule and closed menu use 4px blur on 60% white, with no saturation boost.
   The phone menu has no shadow and centers on the avatar. The default figure is about 66px wide, with the capsule overlapping its bottom edge.
-- **Chat card** (`.app-shell`): on desktop the chat, or Customize, is a `white` card inside the sidebar's `frame`, 4px clear of the window's other edges, with `radius-lg` corners and the `card` edge (memo 0049 Fig 1). Beside
+- **Chat card** (`.app-shell`): on desktop the chat, or Plugins, is a `white` card inside the sidebar's `frame`, 4px clear of the window's other edges, with `radius-lg` corners and the `card` edge (memo 0049 Fig 1). Beside
   the chat, the open Agent Profile shares the card, as dots' computer panel does (Fig 3).
 - **Button** (`<Button>`, `.button`): a pill, `detail` at medium, 6px × 14px. Secondary is `text` on `surface-hover` (hover `border`); primary
   (Save, Confirm) is `white` on `text`; a destructive one (Delete) sets its text `danger`. Disabled primary is
@@ -140,7 +140,7 @@ from `botcube-ui-web/ui`.
 | `sm`   | 4px    | Inline code, the sidebar's delete button                                                          |
 | `md`   | 8px    | Header and sidebar icon buttons, the computer's window                                            |
 | `lg`   | 12px   | Fields, dropdowns, info boxes, chat error, proposal card, the desktop chat card (memo 0049 Fig 1) |
-| `xl`   | 16px   | Agent file cards, Customize placeholders                                                          |
+| `xl`   | 16px   | Agent file cards, Plugin placeholders                                                             |
 | `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet                                           |
 | `3xl`  | 26px   | The composer                                                                                      |
 | `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile                                    |
