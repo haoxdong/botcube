@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from moto import mock_aws
 
+import botcube_credential_service.openai_sign_in as sign_in
 from botcube_credential_service.invocation import verify_credential_service_invocation
 from botcube_credential_service.openai_sign_in import main
 
@@ -124,6 +126,42 @@ def test_storing_signs_in_with_chatgpt_and_ingests_the_sign_in_for_the_named_acc
     assert ingest.method == 'POST'
     assert _invocation(ingest) == ('acct_owner123', 'credential_capture')
     assert json.loads(ingest.content) == {'subject': 'user-AbC123', 'clientId': 'app_dyn_1', 'refreshToken': 'rt_first'}
+
+
+@pytest.mark.usefixtures('secret')
+@pytest.mark.parametrize('remove', [False, True])
+def test_operator_command_reports_the_account_result_after_real_sign_in_or_revocation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], remove: bool,
+) -> None:
+    openai = FakeOpenAI()
+
+    def client_factory(*, timeout: httpx.Timeout) -> httpx.Client:
+        return httpx.Client(timeout=timeout, transport=httpx.MockTransport(openai.handle))
+
+    # Replace only the command's outbound transport; the browser still reaches
+    # the real loopback callback, and the command reads its secret through Moto.
+    monkeypatch.setattr(sign_in, 'httpx', SimpleNamespace(Client=client_factory, Timeout=httpx.Timeout))
+    argv = ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL,
+            '--secret-id', SECRET_ID, '--region', 'us-east-1']
+    if remove:
+        argv.append('--remove')
+    assert main(argv, open_browser=openai.browser, port=0) == 0
+    [request] = openai.plan_usage_requests
+    assert request.extensions['timeout'] == {'connect': 30, 'read': 30, 'write': 30, 'pool': 30}
+    assert request.method == ('DELETE' if remove else 'POST')
+    assert _invocation(request) == ('acct_owner123', 'credential_revocation' if remove else 'credential_capture')
+    if remove:
+        assert openai.authorize == {}
+        assert openai.token_requests == []
+        expected_output = "Removed Plan Usage from acct_owner123: {'status': 'removed'}\n"
+    else:
+        assert openai.authorize['agent_name_hint'] == 'BotCube Plan Usage'
+        assert openai.token_requests[0]['code'] == 'auth-code-1'
+        assert json.loads(request.content) == {
+            'subject': 'user-AbC123', 'clientId': 'app_dyn_1', 'refreshToken': 'rt_first',
+        }
+        expected_output = "Stored Plan Usage for acct_owner123: {'status': 'stored', 'subject': 'user-AbC123'}\n"
+    assert capsys.readouterr().out == expected_output
 
 
 @pytest.mark.usefixtures('secret')

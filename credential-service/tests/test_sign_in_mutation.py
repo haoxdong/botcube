@@ -250,47 +250,6 @@ def test_provider_refusal_keeps_the_upstream_body_status_and_diagnostic() -> Non
     assert str(refusal) == "HTTP 401: {'error': {'code': 'plan_usage_revoked'}}"
 
 
-@pytest.mark.parametrize('remove', [False, True])
-def test_operator_command_reports_the_account_result_and_uses_a_bounded_http_client(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], remove: bool,
-) -> None:
-    client_class = httpx.Client
-    requests: list[httpx.Request] = []
-    app_names: list[str] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={'status': 'removed' if remove else 'stored'})
-
-    def client_factory(*, timeout: httpx.Timeout) -> httpx.Client:
-        return client_class(timeout=timeout, transport=httpx.MockTransport(answer))
-
-    def captured_sign_in(
-        client: httpx.Client, browser: Callable[[str], object], port: int, name: str,
-    ) -> dict[str, str]:
-        app_names.append(name)
-        return {'subject': 'user-123', 'clientId': 'registered', 'refreshToken': 'rt_saved'}
-
-    def invocation_secret(secret_id: str, region: str | None) -> str:
-        return 'local-test-secret'
-
-    monkeypatch.setattr(sign_in, '_invocation_secret', invocation_secret)
-    monkeypatch.setattr(sign_in, '_sign_in', captured_sign_in)
-    monkeypatch.setattr(sign_in.httpx, 'Client', client_factory)
-    argv = ['--account', 'acct_owner123', '--url', 'https://chat.example/plan', '--secret-id', 'invocation']
-    if remove:
-        argv.append('--remove')
-    assert sign_in.main(argv) == 0
-    [request] = requests
-    assert request.extensions['timeout'] == {'connect': 30, 'read': 30, 'write': 30, 'pool': 30}
-    assert request.method == ('DELETE' if remove else 'POST')
-    assert app_names == ([] if remove else ['BotCube Plan Usage'])
-    assert capsys.readouterr().out == (
-        "Removed Plan Usage from acct_owner123: {'status': 'removed'}\n" if remove
-        else "Stored Plan Usage for acct_owner123: {'status': 'stored'}\n"
-    )
-
-
 def test_identity_algorithm_stays_pinned_when_the_issuer_key_advertises_another_algorithm(
     signing_key: rsa.RSAPrivateKey,
 ) -> None:
