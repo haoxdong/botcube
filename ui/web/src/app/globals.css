@@ -542,6 +542,21 @@ cpk-web-inspector,
   overflow: auto;
 }
 
+/* The kept Main Chat lies over the chat as it opens, which lays out unseen under it until it opens at its latest
+   message (#3697). */
+.app-chat-opening {
+  position: relative;
+}
+
+.app-chat-opening > .chat-wrapper {
+  visibility: hidden;
+}
+
+.kept-chat {
+  position: absolute;
+  inset: 0;
+}
+
 
 .chat-model-picker {
   min-width: 0;

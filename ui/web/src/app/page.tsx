@@ -3,7 +3,7 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { Blocks, ChevronDown, ChevronRight, MessageCircle, Pencil, Plus } from "lucide-react";
 import "@copilotkit/react-core/v2/styles.css";
-import { contentToText } from "@ag-ui/client";
+import { KeptChat } from "./kept-chat";
 import { usePhoneSidebarSwipe } from "./phone-sidebar-swipe";
 import { ChatServiceError } from "./conversations";
 import {
@@ -324,6 +324,8 @@ function App({
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
   // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  // The kept Main Chat shows in the chat's place until the chat surface opens at its latest message (#3697).
+  const [keptChatShown, setKeptChatShown] = useState(true);
   const ready = auth.sessionStatus === "ready";
   // A sign-in can move the page to another account: its models, Side Chats and agent load again.
   const { accountId } = auth;
@@ -494,6 +496,12 @@ function App({
       </button>
     </header>
   );
+  // The kept Main Chat, over the chat's place from the moment it shows until the chat opens on it (#3697).
+  const keptChat = (
+    <div className="kept-chat" role="status" aria-label="Loading chat controls">
+      <KeptChat messages={agent.messages} disclaimer={UI_CONFIG.disclaimer} composerAccessory={auth.composerAccessory} />
+    </div>
+  );
 
   return (
     // A desktop click on the main stage collapses the sidebar (#3604); a phone closes its drawer from the chat
@@ -646,15 +654,7 @@ function App({
         <Suspense fallback={
           <main className="app-shell" hidden={pluginsOpen}>
             {chatHeader}
-            <div className="app-chat" role="status" aria-label="Loading chat controls">
-              <div className="copilotKitMessages">
-                {agent.messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) => (
-                  <div className={`copilotKitMessage ${message.role === "user" ? "copilotKitUserMessage" : "copilotKitAssistantMessage"}`} key={message.id}>
-                    <p style={{ whiteSpace: "pre-wrap" }}>{contentToText(message.content)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <div className="app-chat app-chat-opening">{keptChat}</div>
           </main>
         }>
         <ChatSurface
@@ -681,11 +681,12 @@ function App({
             {stopError !== null && <p className="chat-account-error" role="alert">{stopError}</p>}
             {choiceError !== null && <p className="chat-account-error" role="alert">{choiceError}</p>}
             {warmupError !== null && warmupError.accountId === accountId && <p className="chat-account-error" role="alert">{warmupError.message}</p>}
-            <div className="app-chat">
+            <div className={keptChatShown ? "app-chat app-chat-opening" : "app-chat"}>
               <ChatThread
                 key={activeId}
                 agent={agent}
                 threadId={activeId}
+                onOpened={() => setKeptChatShown(false)}
                 showWelcome={showWelcome}
                 userName={auth.user?.name}
                 composerAccessory={auth.composerAccessory}
@@ -699,6 +700,7 @@ function App({
                   <ModelEffortPicker {...picker} />
                 </div>
               </ChatThread>
+              {keptChatShown && keptChat}
             </div>
           </main>
           {(profileSwipe.visible || agentProfileChat === activeId) && (

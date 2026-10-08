@@ -177,8 +177,7 @@ function JumpToBottom({ onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElem
     <CopilotChatView.ScrollToBottomButton
       {...props}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
-        const list = event.currentTarget.closest(".chat-wrapper")?.querySelector('[data-testid="copilot-message-list"]');
-        const scroller = list && scrollParent(list);
+        const scroller = messagesScroller(event.currentTarget.closest(".chat-wrapper"));
         if (scroller) holdAtBottom(scroller);
         onClick?.(event);
       }}
@@ -234,6 +233,12 @@ function scrollParent(element: Element): Element | null {
     if (/auto|scroll/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return parent;
   }
   return null;
+}
+
+/** The element that scrolls the messages of the chat in `wrapper`, while there is more to scroll than it shows. */
+function messagesScroller(wrapper: Element | null): Element | null {
+  const list = wrapper?.querySelector('[data-testid="copilot-message-list"]');
+  return list ? scrollParent(list) : null;
 }
 
 /** A row the user was reading, its scroll view, and where the row was in the scroll view's content. */
@@ -411,6 +416,9 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
 const CHAT_INPUT = Object.assign(ComposerInput, CopilotChatInput);
 const CHAT_MESSAGES = Object.assign(ChatMessages, { Cursor: CopilotChatMessageView.Cursor });
 
+/** The longest a chat may take to reach its latest message as it opens. */
+const OPENING_MS = 1000;
+
 /** Captures the first Enter keypress so the server-owned sidebar can refresh. */
 function ChatThread({
   agent,
@@ -423,6 +431,7 @@ function ChatThread({
   isAccountCurrent,
   stopServerTurn,
   savedFailure,
+  onOpened,
   children,
 }: {
   agent: AbstractAgent;
@@ -439,12 +448,33 @@ function ChatThread({
   showWelcome: boolean;
   userName?: string | undefined;
   composerAccessory?: React.ReactNode;
+  /** Called once as the chat opens, on the first frame it shows at its latest message. */
+  onOpened: () => void;
   children?: React.ReactNode;
 }) {
   const firedRef = useRef(false);
   const refreshTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // CopilotKit's scroll view reaches the latest message some frames after it mounts (#3697). The chat is open on the
+  // first frame it shows there or has nothing to scroll, or a second on, wherever it shows: a chat that never comes to
+  // rest there, as a reply streams in, still opens.
+  const onOpenedRef = useRef(onOpened);
+  onOpenedRef.current = onOpened;
+  useEffect(() => {
+    const started = performance.now();
+    let frame = requestAnimationFrame(function checkOpened(now) {
+      const scroller = messagesScroller(wrapperRef.current);
+      if (scroller === null || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1 || now - started >= OPENING_MS) {
+        onOpenedRef.current();
+      } else {
+        frame = requestAnimationFrame(checkOpened);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  },
+  // Stryker disable next-line ArrayDeclaration: any constant dependency list checks once, from mount on
+  []);
   // ADR 0030: a failed Turn shows why, until the next message is sent.
   const [runError, setRunError] = useState<TurnFailure | null>(null);
   const submittedQuestion = useRef<string | undefined>(undefined);

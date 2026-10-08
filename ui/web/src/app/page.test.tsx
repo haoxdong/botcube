@@ -1735,6 +1735,142 @@ describe('Main Chat kept in this browser', () => {
   });
 });
 
+// The chat opened at its top and scrolled to its latest message frames later, moving the kept messages (#3697).
+describe('the kept Main Chat over the chat as it opens', () => {
+  const earlier: Message[] = [
+    { id: 'm1', role: 'user', content: 'Earlier question' },
+    { id: 'm2', role: 'assistant', content: 'Earlier answer' },
+  ];
+  // The frames requested and not cancelled, by id.
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameIds = 0;
+  const frame = (now = 0) => act(async () => {
+    const due = [...frames.values()];
+    frames.clear();
+    for (const callback of due) callback(now);
+  });
+  const keptChat = () => screen.queryByRole('status', { name: 'Loading chat controls' });
+  const opening = () => document.querySelector('.app-chat-opening');
+  // The chat's scroll view, 300px tall, over its content `height` px tall, scrolled `top` px down.
+  const layOut = (height: () => number, top: () => number) => {
+    const scrollView = screen.getByTestId('copilot-scroll-view');
+    Object.defineProperty(scrollView, 'clientHeight', { configurable: true, value: 300 });
+    Object.defineProperty(scrollView, 'scrollHeight', { configurable: true, get: height });
+    Object.defineProperty(scrollView, 'scrollTop', { configurable: true, get: top });
+  };
+
+  beforeEach(() => {
+    frames.clear();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frameIds += 1;
+      frames.set(frameIds, callback);
+      return frameIds;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+    localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: earlier }));
+    service.mainChat = { id: 'main-1', provider: 'openai', messages: earlier };
+  });
+
+  it('lifts on the first frame when the chat has nothing to scroll', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    layOut(() => 200, () => 0);
+    expect(keptChat()).toHaveTextContent('Earlier answer');
+    expect(opening()).toContainElement(screen.getByTestId('copilot-message-list'));
+
+    await frame();
+
+    expect(keptChat()).toBeNull();
+    expect(opening()).toBeNull();
+  });
+
+  it('stays until the first frame the chat shows its latest message', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    let top = 0;
+    layOut(() => 1000, () => top);
+
+    await frame();
+    top = 698;
+    await frame();
+    expect(keptChat()).not.toBeNull();
+
+    // Within a pixel of the end, as a scroll position rounds.
+    top = 699;
+    await frame();
+
+    expect(keptChat()).toBeNull();
+    expect(opening()).toBeNull();
+  });
+
+  it('stays while a reply in flight grows the chat past its latest message, then lifts there', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    let top = 0;
+    layOut(() => agent().messages.length * 500, () => top);
+    await frame();
+
+    top = 700;
+    await agentAddsMessage({ id: 'm3', role: 'assistant', content: 'A reply in flight' });
+    await frame();
+    expect(keptChat()).not.toBeNull();
+
+    top = 1200;
+    await frame();
+
+    expect(keptChat()).toBeNull();
+  });
+
+  it('lifts a second on when the chat never reaches its latest message', async () => {
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    await renderPage(auth({ accountId: 'acct-first' }));
+    layOut(() => 1000, () => 0);
+
+    await frame(5999);
+    expect(keptChat()).not.toBeNull();
+    await frame(6000);
+
+    expect(keptChat()).toBeNull();
+  });
+
+  it('stays over a chat opened as it shows until that chat reaches its latest message, not the chat left', async () => {
+    service.sideChats = [sideChat('side', 'Side question')];
+    await renderPage(auth({ accountId: 'acct-first' }));
+    layOut(() => 1000, () => 0);
+
+    await userEvent.click(sidebar().getByText('Side question'));
+    await settle();
+    expect(copilot.chat?.threadId).toBe('side');
+    layOut(() => 1000, () => 0);
+    await frame();
+
+    expect(keptChat()).not.toBeNull();
+  });
+
+  it('goes with the chat when the chat unmounts', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    expect(keptChat()).not.toBeNull();
+    vi.spyOn(localStorage, 'removeItem').mockImplementation(() => { throw new DOMException('The operation is insecure.', 'SecurityError'); });
+
+    cartridge.auth = auth({ accountId: 'acct-second' });
+    view.rerender(<Page />);
+    await settle();
+
+    expect(screen.queryByTestId('copilot-message-list')).toBeNull();
+    expect(keptChat()).toBeNull();
+    expect(error).toHaveBeenCalled();
+  });
+
+  it('leaves the chat taking a message right after it lifts', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    layOut(() => 200, () => 0);
+    await frame();
+
+    await userEvent.type(screen.getByLabelText('Message'), 'Next question{Enter}');
+
+    expect(copilot.runAgent).toHaveBeenCalledOnce();
+    expect(agent().messages.at(-1)).toMatchObject({ role: 'user', content: 'Next question' });
+  });
+});
+
 // The history moments run from the page's opening to the Main Chat's history on screen, once per page load.
 describe('the history moments', () => {
   const earlier: Message[] = [
@@ -6941,4 +7077,32 @@ it('propagates a failed latency reporter to the page error boundary', async () =
   render(<Boundary><Page /></Boundary>);
   expect(await screen.findByText(error.message)).toBeDefined();
   expect(screen.queryByRole('textbox')).toBeNull();
+});
+
+// Last in the file: it reloads the page module with the chat surface's chunk held, so the module registry it leaves
+// behind reaches no page another test rendered.
+it('shows a kept markdown reply formatted, not as raw markdown, while the chat surface loads', async () => {
+  vi.resetModules();
+  vi.doMock('./chat-surface', () => new Promise(() => {}));
+  try {
+    const { default: LoadingPage } = await import('./page');
+    const reply = '## Rates recap\n\nThe **10y** closed at **4.12%**.\n\n| Tenor | Close |\n| --- | --- |\n| 10y | 4.12% |';
+    localStorage.setItem(KEY, JSON.stringify({
+      accountId: 'acct-first',
+      id: 'main-1',
+      provider: 'openai',
+      messages: [{ id: 'm1', role: 'user', content: 'Where did rates close?' }, { id: 'm2', role: 'assistant', content: reply }],
+    }));
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test/main-chat' ? new Promise<Response>(() => {}) : chatService(url, init),
+    );
+    cartridge.auth = auth({ accountId: 'acct-first' });
+    render(<LoadingPage />);
+    await settle();
+    const loading = screen.getByRole('status', { name: 'Loading chat controls' });
+    expect(loading).toHaveTextContent('Rates recap');
+    expect(loading.textContent).not.toMatch(/\*\*|##|\|/);
+  } finally {
+    vi.doUnmock('./chat-surface');
+  }
 });
