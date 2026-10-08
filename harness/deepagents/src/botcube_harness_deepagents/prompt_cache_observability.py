@@ -34,12 +34,15 @@ _current_agentcore_session_id: ContextVar[str | None] = ContextVar(
 
 
 @contextmanager
-def prompt_cache_agentcore_session(agentcore_session_id: str | None):
+def prompt_cache_turn(agentcore_session_id: str | None = None):
+    """Collect one Turn across graph tasks and restore its caller on every exit."""
+    collector_token = _current_collector.set(_PromptCacheUsageCollector())
     token = _current_agentcore_session_id.set(agentcore_session_id)
     try:
         yield
     finally:
         _current_agentcore_session_id.reset(token)
+        _current_collector.reset(collector_token)
 
 
 @dataclass
@@ -176,12 +179,6 @@ class PromptCacheUsageMiddleware(AgentMiddleware):
         self.model = model
         self.effort = effort
 
-    def before_agent(self, state: Any, runtime: Any) -> None:
-        _current_collector.set(_PromptCacheUsageCollector())
-
-    async def abefore_agent(self, state: Any, runtime: Any) -> None:
-        _current_collector.set(_PromptCacheUsageCollector())
-
     def after_agent(self, state: Any, runtime: Any) -> None:
         self._log_usage(state)
 
@@ -194,7 +191,6 @@ class PromptCacheUsageMiddleware(AgentMiddleware):
         collector = _current_collector.get()
         if collector is not None:
             usage = collector.resolve(usage)
-            _current_collector.set(None)
         if usage is None:
             return
 

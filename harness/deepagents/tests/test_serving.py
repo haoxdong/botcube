@@ -56,6 +56,7 @@ from botcube_harness_deepagents import (
     session_api,
 )
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
+from prompt_cache_fake import DelegatingBedrockClient, fake_bedrock_model
 from relay_fake import (
     REASONING_STREAM,
     RelayReply,
@@ -425,6 +426,26 @@ def test_the_agentcore_session_is_logged_with_the_turns_prompt_cache_usage(servi
 
     [entry] = _cache_usage(caplog)
     assert entry['agentcore_session_id'] == 'agentcore-session-1'
+
+
+def test_serving_turn_logs_delegated_usage_and_starts_fresh_on_reuse(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = DelegatingBedrockClient()
+    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: fake_bedrock_model(client, streaming=True))
+    caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache')
+
+    for multiplier in (1, 2):
+        client.multiplier = multiplier
+        events = service.turn('Check the result.', session='cache-session')
+        assert events[-1]['type'] == 'RUN_FINISHED'
+        assert _said(events) == 'Checked.The helper checked the result.'
+
+    logged = _cache_usage(caplog)
+    assert [[entry[key] for key in ('input_tokens', 'output_tokens', 'total_tokens',
+                                  'cache_read_input_tokens', 'cache_creation_input_tokens')]
+            for entry in logged] == [[300, 30, 330, 120, 60], [600, 60, 660, 240, 120]]
+    assert [entry['agentcore_session_id'] for entry in logged] == ['cache-session', 'cache-session']
 
 
 # -- The sandbox -----------------------------------------------------------------

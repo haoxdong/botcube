@@ -534,6 +534,7 @@ def test_bedrock_delegation_uses_native_cache_points_and_collects_with_outer_tur
 
     from botcube_harness_deepagents.prompt_cache_observability import (
         PromptCacheUsageMiddleware,
+        prompt_cache_turn,
     )
 
     requests: list[dict[str, Any]] = []
@@ -551,10 +552,8 @@ def test_bedrock_delegation_uses_native_cache_points_and_collects_with_outer_tur
         model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
         skills=[], memory=[], subagents=[helper] if helper else [],
     )
-    # Isolate profile propagation from LangGraph's separate hook-node ContextVars.
     turn_usage = PromptCacheUsageMiddleware(thread_id='cache-turn', model=model_id, effort='medium')
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
-        turn_usage.before_agent({'messages': []}, runtime=object())
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         result = agent.invoke({'messages': 'Check the result.'})
         turn_usage.after_agent(result, runtime=object())
         assert result['messages'][-1].text == 'The helper checked the result.'

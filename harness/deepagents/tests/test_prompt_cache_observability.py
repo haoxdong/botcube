@@ -16,7 +16,7 @@ from botcube_harness_deepagents.prompt_cache_observability import (
     PromptCacheUsageCollectorMiddleware,
     PromptCacheUsageMiddleware,
     install_prompt_cache_usage_callback,
-    prompt_cache_agentcore_session,
+    prompt_cache_turn,
 )
 
 
@@ -68,7 +68,7 @@ def test_prompt_cache_usage_middleware_emits_structured_turn_counters(caplog: py
 
     with (
         caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'),
-        prompt_cache_agentcore_session('agentcore-session-1'),
+        prompt_cache_turn('agentcore-session-1'),
     ):
         asyncio.run(middleware.aafter_agent(state, runtime=object()))
 
@@ -125,7 +125,7 @@ def test_prompt_cache_usage_middleware_logs_bounded_text_messages(caplog: pytest
         ]
     }
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         asyncio.run(middleware.aafter_agent(state, runtime=object()))
 
     payload = json.loads(caplog.records[0].message)
@@ -141,8 +141,7 @@ def test_prompt_cache_usage_middleware_logs_bounded_text_messages(caplog: pytest
 
 def _log_turn(caplog: pytest.LogCaptureFixture, messages: list[BaseMessage]) -> dict[str, object]:
     middleware = PromptCacheUsageMiddleware(thread_id='thread-1', model='us.anthropic.claude-sonnet-4-6', effort='low')
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
-        middleware.before_agent({'messages': messages}, runtime=object())
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         middleware.after_agent({'messages': messages}, runtime=object())
     return json.loads(caplog.records[0].message)
 
@@ -173,8 +172,7 @@ def test_a_turn_without_usage_logs_nothing(caplog: pytest.LogCaptureFixture) -> 
     middleware = PromptCacheUsageMiddleware(thread_id='thread-1', model='us.anthropic.claude-sonnet-4-6', effort='low')
     state = {'messages': [HumanMessage('q'), AIMessage('a')]}
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
-        middleware.before_agent(state, runtime=object())
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         middleware.after_agent(state, runtime=object())
 
     assert caplog.records == []
@@ -193,8 +191,7 @@ def test_a_synchronous_turn_logs_the_usage_of_its_model_calls(caplog: pytest.Log
 
     state = {'messages': [HumanMessage('q'), AIMessage('a', usage_metadata=_usage(100))]}
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
-        middleware.before_agent(state, runtime=object())
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         response = collector.wrap_model_call(request, handler)
         middleware.after_agent(state, runtime=object())
 
@@ -225,7 +222,7 @@ def test_prompt_cache_usage_middleware_accepts_bedrock_usage_aliases(caplog: pyt
         ]
     }
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         asyncio.run(middleware.aafter_agent(state, runtime=object()))
 
     payload = json.loads(caplog.records[0].message)
@@ -272,12 +269,11 @@ def test_prompt_cache_usage_middleware_includes_delegated_model_calls(caplog: py
         return responses[request]
 
     async def run_turn() -> None:
-        await middleware.abefore_agent(state, runtime=object())
         await collector.awrap_model_call(parent_request, handler)
         await collector.awrap_model_call(subagent_request, handler)
         await middleware.aafter_agent(state, runtime=object())
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         asyncio.run(run_turn())
 
     payload = json.loads(caplog.records[0].message)
@@ -349,7 +345,6 @@ def test_prompt_cache_usage_keeps_main_turn_when_only_summary_callback_fires(
     }
 
     async def run_turn() -> None:
-        await middleware.abefore_agent(state, runtime=object())
         # Summarization runs the model directly (outside wrap_model_call); the
         # installed callback records its usage.  No collector middleware fires.
         model.invoke(
@@ -360,7 +355,7 @@ def test_prompt_cache_usage_keeps_main_turn_when_only_summary_callback_fires(
         model.invoke('answer this')
         await middleware.aafter_agent(state, runtime=object())
 
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'):
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
         asyncio.run(run_turn())
 
     payload = json.loads(caplog.records[0].message)

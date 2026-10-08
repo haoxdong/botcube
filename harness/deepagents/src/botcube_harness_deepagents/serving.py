@@ -85,7 +85,7 @@ from .pending_memory import (
 from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     install_prompt_cache_usage_callback,
-    prompt_cache_agentcore_session,
+    prompt_cache_turn,
 )
 from .scheduled_tasks import propose_scheduled_task
 from .shell_backend import PolicyShellBackend
@@ -1030,7 +1030,7 @@ class _SessionTurns:
                     put(event)
                 # Graph work and settlement share one read of the Session record.
                 with reading_once():
-                    with prompt_cache_agentcore_session(context.session_id):
+                    with prompt_cache_turn(context.session_id):
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, files, root, reply.watching(publish)))
                     await asyncio.wait([turn.work])
                     try:
