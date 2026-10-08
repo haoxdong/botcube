@@ -1008,6 +1008,7 @@ class _SessionTurns:
             baggage.set_baggage('session.id', context.session_id)
             if context.session_id else otel_context.get_current()
         )
+        trace_context = baggage.set_baggage('run.id', input_data.run_id, context=trace_context)
         trace_token = otel_context.attach(trace_context)
         try:
             async with self._locks.setdefault(session, asyncio.Lock()):

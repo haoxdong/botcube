@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from botcube_cartridge import ModelRelay
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import SimpleChatModel
 from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk
+from opentelemetry import baggage, propagate
 
 if TYPE_CHECKING:
     from openai import APIError
@@ -180,6 +182,13 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
             return payload
 
         async def _astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+            headers = dict(kwargs.get('extra_headers') or {})
+            if (run_id := baggage.get_baggage('run.id')) is not None:
+                headers['x-botcube-run-id'] = str(run_id)
+            manager = kwargs.get('run_manager')
+            headers['x-botcube-model-step-id'] = str(manager.run_id if manager is not None else uuid4())
+            propagate.inject(headers)
+            kwargs['extra_headers'] = headers
             try:
                 async for chunk in super()._astream(*args, **kwargs):
                     yield chunk

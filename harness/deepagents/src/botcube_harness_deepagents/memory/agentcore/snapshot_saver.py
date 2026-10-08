@@ -78,11 +78,15 @@ class SnapshotAgentCoreMemorySaver(OnePassAgentCoreMemorySaver):
         channels: Sequence[str],
         target: CheckpointTuple | None,
         known: Mapping[str, CheckpointTuple],
+        persisted: dict[str, CheckpointTuple] | None = None,
     ) -> dict[str, DeltaChannelHistory]:
         """Walk `known` first, then the read record instead of paging it again."""
         if _RECORDS.get() is not None:
             result, complete = _replay_delta_channel_history(target, {**known}, channels)
             if complete:
                 return result
-            known = {**(self._record(config) or {}), **known}
-        return super().delta_channel_history(config=config, channels=channels, target=target, known=known)
+            record = self._record(config) or {}
+            if persisted is not None:
+                persisted.update(record)
+            known = {**record, **known}
+        return super().delta_channel_history(config=config, channels=channels, target=target, known=known, persisted=persisted)

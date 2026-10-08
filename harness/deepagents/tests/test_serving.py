@@ -912,6 +912,118 @@ def test_a_file_put_in_files_reaches_the_agent(service: _Service, files_bucket: 
     assert not any(service.home.rglob('secret.txt'))
 
 
+def test_warm_turns_read_unchanged_files_without_downloading_them_again_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
+    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
+    downloads: list[str] = []
+    download = files_bucket.get_object
+
+    def record_download(**kwargs: Any) -> Any:
+        downloads.append(kwargs['Key'])
+        return download(**kwargs)
+
+    monkeypatch.setattr(files_bucket, 'get_object', record_download)
+    for _ in range(2):
+        events = service.turn('read: /plan.txt', files=_files())
+        assert events[-1]['type'] == 'RUN_FINISHED'
+        assert 'from Files' in _tool_output(events)
+        assert (service.home / 'plan.txt').read_bytes() == b'from Files'
+    assert downloads.count(key) == 1
+
+
+def test_a_files_replacement_between_listing_and_download_cannot_poison_the_next_turn_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
+    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
+    head = files_bucket.head_object
+    pending = [key]
+
+    def replace_before_download(**kwargs: Any) -> Any:
+        if pending and kwargs['Key'] == pending[0]:
+            pending.pop()
+            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=kwargs['Key'], Body=b'replaced while pulling')
+        return head(**kwargs)
+
+    monkeypatch.setattr(files_bucket, 'head_object', replace_before_download)
+    first = service.turn('read: /plan.txt', files=_files())
+    assert 'replaced while pulling' in _tool_output(first)
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
+
+    second = service.turn('read: /plan.txt', files=_files())
+
+    assert second[-1]['type'] == 'RUN_FINISHED'
+    assert 'original' in _tool_output(second)
+    assert (service.home / 'plan.txt').read_bytes() == b'original'
+
+
+def test_a_files_replacement_after_download_metadata_fails_without_overwriting_local_bytes_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
+    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
+    first = service.turn('read: /plan.txt', files=_files())
+    assert 'original' in _tool_output(first)
+    replacement = files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'next version')
+    head = files_bucket.head_object
+    get = files_bucket.get_object
+    conditions: list[str | None] = []
+
+    def observe_condition(**kwargs: Any) -> Any:
+        if kwargs['Key'] == key:
+            conditions.append(kwargs.get('IfMatch'))
+        return get(**kwargs)
+
+    def replace_after_metadata(**kwargs: Any) -> Any:
+        response = head(**kwargs)
+        if kwargs['Key'] == key:
+            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=key, Body=b'replaced after metadata')
+        return response
+
+    monkeypatch.setattr(files_bucket, 'head_object', replace_after_metadata)
+    monkeypatch.setattr(files_bucket, 'get_object', observe_condition)
+    events = service.turn('read: /plan.txt', files=_files())
+
+    assert events[-1]['type'] == 'RUN_ERROR'
+    assert 'did not match expected ETag' in events[-1]['message']
+    assert 'RUN_FINISHED' not in [event['type'] for event in events]
+    assert (service.home / 'plan.txt').read_bytes() == b'original'
+    assert conditions == [replacement['ETag']]
+
+
+def test_an_empty_files_object_replaced_after_metadata_cannot_poison_the_next_turn_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'')
+    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
+    head = files_bucket.head_object
+    pending = [key]
+
+    def replace_empty_after_metadata(**kwargs: Any) -> Any:
+        response = head(**kwargs)
+        if pending and kwargs['Key'] == pending[0]:
+            pending.pop()
+            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=key, Body=b'replaced empty file')
+        return response
+
+    monkeypatch.setattr(files_bucket, 'head_object', replace_empty_after_metadata)
+    first = service.turn('read: /plan.txt', files=_files())
+    assert first[-1]['type'] == 'RUN_FINISHED'
+    assert 'replaced empty file' in _tool_output(first)
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'')
+
+    second = service.turn('read: /plan.txt', files=_files())
+
+    assert second[-1]['type'] == 'RUN_FINISHED'
+    assert (service.home / 'plan.txt').read_bytes() == b''
+
+
 @pytest.mark.parametrize('name', ['abcdefghi-' * 30 + '.svg', 'a' * 256, 'é' * 128, 'a' * 256 + '/report.svg'])
 def test_an_overlong_files_name_fails_with_a_classified_file_error_issue_3487(
     service: _Service, files_bucket: Any, name: str
@@ -1423,6 +1535,7 @@ def test_a_turn_whose_files_cannot_sync_fails_loudly(service: _Service, files_bu
     assert events[-1]['type'] == 'RUN_ERROR'
     assert 'NoSuchBucket' in events[-1]['message']
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
+    assert service.recorder.heard == []
 
 
 # -- Conversation state ----------------------------------------------------------

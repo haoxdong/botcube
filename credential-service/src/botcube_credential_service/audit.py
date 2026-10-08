@@ -50,6 +50,25 @@ class CredentialAuditRecorder:
     def record_upstream_relay(self, account_id: str, provider: str, request_context: Mapping[str, Any]) -> None:
         self._record('upstream_relay', account_id, request_context=request_context, extra={'provider': provider})
 
+    def record_provider_timing(
+        self, account_id: str, request_context: Mapping[str, Any], *,
+        event: str, result: str, dispatched_at: float, observed_at: float,
+        duration_ms: float | None = None, answer_observed: bool = False,
+    ) -> None:
+        extra: dict[str, Any] = {
+            'provider': 'openai', 'result': result, 'dispatchedAt': dispatched_at,
+            'observedAt': observed_at, 'answerObserved': answer_observed,
+        }
+        if duration_ms is not None:
+            extra.update({
+                'durationMs': duration_ms, 'Moment': 'provider-first-token', 'Latency': duration_ms,
+                '_aws': {'Timestamp': int(observed_at * 1000), 'CloudWatchMetrics': [{
+                    'Namespace': 'RUM/CustomMetrics/WebLatency', 'Dimensions': [['Moment']],
+                    'Metrics': [{'Name': 'Latency', 'Unit': 'Milliseconds'}],
+                }]},
+            })
+        self._record(event, account_id, request_context=request_context, extra=extra)
+
     def _record(
         self,
         event_name: str,
@@ -103,6 +122,10 @@ def _request_context_fields(request_context: Mapping[str, Any] | None) -> dict[s
         ('method', 'method'),
         ('path', 'path'),
         ('scope', 'scope'),
+        ('runId', 'runId'),
+        ('modelStepId', 'modelStepId'),
+        ('traceId', 'traceId'),
+        ('modelId', 'modelId'),
     ):
         value = request_context.get(source)
         if isinstance(value, str) and value:

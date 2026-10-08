@@ -52,9 +52,13 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
         channels: Sequence[str],
         target: CheckpointTuple | None,
         known: Mapping[str, CheckpointTuple],
+        persisted: dict[str, CheckpointTuple] | None = None,
     ) -> dict[str, DeltaChannelHistory]:
         """Walk `target`'s ancestors over `known` checkpoints (they win), then over
-        the record's events, paged once until the walk completes."""
+        the record's events, paged once until the walk completes.
+
+        A requested persisted collector reads every page so cached pending writes
+        cannot omit writes stored after the replay seed's page."""
         result, complete = _replay_delta_channel_history(target, {**known}, channels)
         if complete:
             return result
@@ -62,10 +66,12 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
         all_events: list[EventType] = []
         for page in self._iter_event_pages(checkpoint_config):
             all_events.extend(page)
-            persisted = self._tuples_by_checkpoint_id(all_events, checkpoint_config)
-            result, complete = _replay_delta_channel_history(target, {**persisted, **known}, channels)
-            if complete:
+            fetched = self._tuples_by_checkpoint_id(all_events, checkpoint_config)
+            result, complete = _replay_delta_channel_history(target, {**fetched, **known}, channels)
+            if complete and persisted is None:
                 break
+        if persisted is not None:
+            persisted.update(self._tuples_by_checkpoint_id(all_events, checkpoint_config))
         return result
 
     async def aget_delta_channel_history(

@@ -75,8 +75,8 @@ def _latest_key(config: RunnableConfig) -> tuple[str, str, str]:
 class TurnCheckpointSaver(BaseCheckpointSaver[str]):
     """Publishes a new Session's question, then buffers its Turn until `aflush`.
 
-    Each Session's last flushed Turn stays readable from memory, so the next Turn starts
-    without re-reading it from AgentCore Memory.
+    Each Session retains its flushed Turn and the ancestors needed to seed its
+    DeltaChannels, so warm Turns do not re-read that history from AgentCore Memory.
     """
 
     def __init__(self, saver: OnePassAgentCoreMemorySaver) -> None:
@@ -88,6 +88,7 @@ class TurnCheckpointSaver(BaseCheckpointSaver[str]):
         self._checkpoints: dict[str, _Checkpoint] = {}
         self._writes: dict[str, list[_Writes]] = defaultdict(list)
         self._latest: dict[tuple[str, str, str], str] = {}
+        self._delta_channels: dict[tuple[str, str, str], set[str]] = defaultdict(set)
         # What the next flush persists, in the order LangGraph produced it.
         self._unflushed_checkpoints: list[str] = []
         self._unflushed_writes: list[_Writes] = []
@@ -178,10 +179,38 @@ class TurnCheckpointSaver(BaseCheckpointSaver[str]):
         if not channels:
             return {}
         with self._lock:
+            self._delta_channels[_latest_key(config)].update(channels)
             buffered = {checkpoint_id: self._tuple(checkpoint_id) for checkpoint_id in self._checkpoints}
-        return self._saver.delta_channel_history(
-            config=config, channels=channels, target=self.get_tuple(config), known=buffered
+        target = self.get_tuple(config)
+        persisted: dict[str, CheckpointTuple] = {}
+        result = self._saver.delta_channel_history(
+            config=config, channels=channels, target=target, known=buffered, persisted=persisted
         )
+        self._retain_history(target, channels, {**persisted, **buffered})
+        return result
+
+    def _retain_history(
+        self, target: CheckpointTuple | None, channels: Sequence[str], known: Mapping[str, CheckpointTuple],
+    ) -> None:
+        remaining = set(channels)
+        ancestor = target
+        with self._lock:
+            while ancestor is not None:
+                checkpoint_id = ancestor.checkpoint['id']
+                if checkpoint_id not in self._checkpoints:
+                    parent = ancestor.parent_config or {'configurable': {
+                        key: value for key, value in _configurable(ancestor.config).items() if key != 'checkpoint_id'
+                    }}
+                    self._checkpoints[checkpoint_id] = _Checkpoint(parent, ancestor.checkpoint, ancestor.metadata, {})
+                    self._writes[checkpoint_id] = [
+                        _Writes(ancestor.config, [(channel, value)], task_id, '')
+                        for task_id, channel, value in ancestor.pending_writes or []
+                    ]
+                remaining.difference_update(ancestor.checkpoint['channel_values'])
+                if not remaining or ancestor.parent_config is None:
+                    break
+                parent_id = get_checkpoint_id(ancestor.parent_config)
+                ancestor = known.get(parent_id) if parent_id is not None else None
 
     async def aget_delta_channel_history(
         self, *, config: RunnableConfig, channels: Sequence[str]
@@ -269,7 +298,7 @@ class TurnCheckpointSaver(BaseCheckpointSaver[str]):
                 checkpoint_id for checkpoint_id, entry in self._checkpoints.items()
                 if _session_key(entry.config) not in flushed_sessions
             }
-            keep |= _turn_checkpoint_ids(self._checkpoints, checkpoint_ids)
+            keep |= _turn_checkpoint_ids(self._checkpoints, checkpoint_ids, self._delta_channels)
             self._checkpoints = {k: v for k, v in self._checkpoints.items() if k in keep}
             self._writes = defaultdict(list, {k: v for k, v in self._writes.items() if k in keep})
             self._latest = {k: v for k, v in self._latest.items() if v in keep}
@@ -292,14 +321,20 @@ class TurnCheckpointSaver(BaseCheckpointSaver[str]):
             await self.aflush()
 
 
-def _turn_checkpoint_ids(checkpoints: Mapping[str, _Checkpoint], checkpoint_ids: Sequence[str]) -> set[str]:
+def _turn_checkpoint_ids(
+    checkpoints: Mapping[str, _Checkpoint], checkpoint_ids: Sequence[str],
+    delta_channels: Mapping[tuple[str, str, str], set[str]],
+) -> set[str]:
     retained: set[str] = set()
     for checkpoint_id in checkpoint_ids:
+        channels = delta_channels.get(_latest_key(checkpoints[checkpoint_id].config), set())
+        remaining = set(channels)
         ancestor: str | None = checkpoint_id
         while ancestor is not None and ancestor in checkpoints and ancestor not in retained:
             retained.add(ancestor)
             entry = checkpoints[ancestor]
-            if entry.metadata.get('source') == 'input':
+            remaining.difference_update(entry.checkpoint['channel_values'])
+            if not remaining and (channels or entry.metadata.get('source') == 'input'):
                 break
             ancestor = _configurable(entry.config).get('checkpoint_id')
     return retained

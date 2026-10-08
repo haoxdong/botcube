@@ -81,6 +81,8 @@ def request_context(invocation: CredentialServiceInvocation, method: str, path: 
     }
     if invocation.scope is not None:
         context['scope'] = invocation.scope
+    if invocation.model_id is not None:
+        context['modelId'] = invocation.model_id
     return context
 
 

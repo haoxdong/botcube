@@ -1210,7 +1210,6 @@ def test_a_turn_reads_the_sessions_record_once_on_a_warm_or_restarted_harness_is
     async def scenario() -> tuple[list[str], list[int]]:
         replayed, _ = await turn([{'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}])
         replayed, _ = await turn([*replayed, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}])
-        # The Turn buffer holds only the last Turn, so this one walks back into the record.
         replayed, warm = await turn([*replayed, {'id': 'user-message-3', 'role': 'user', 'content': 'Once more'}])
         # A new VM: no Turn buffer and no built agent.
         for name, value in {'_DEFERRED_SAVER': None, '_CHECKPOINTER': None, '_STORE': None, '_AGENTS': {}}.items():
@@ -1223,7 +1222,122 @@ def test_a_turn_reads_the_sessions_record_once_on_a_warm_or_restarted_harness_is
     assert [message_id for message_id in replayed if message_id.startswith('user-message')] == [
         'user-message-1', 'user-message-2', 'user-message-3', 'user-message-4',
     ]
-    assert passes == [1, 1]
+    assert passes == [0, 1]
+
+
+def test_warm_turn_preserves_exact_replay_without_reading_durable_ancestry_issue_3701(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents import serving
+
+    memory = _FakeAgentCoreMemory()
+    session = _serve_session(tmp_path, monkeypatch, memory)
+    questions: list[str] = []
+    original_stream = _ToolCallingModel._stream
+
+    def inspect_history(model: _ToolCallingModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        assert [message.content for message in messages if isinstance(message, HumanMessage)] == questions
+        yield from original_stream(model, messages, *args, **kwargs)
+
+    monkeypatch.setattr(_ToolCallingModel, '_stream', inspect_history)
+
+    async def scenario() -> tuple[list[int], int]:
+        expected: list[dict[str, Any]] = []
+        warm_reads = []
+        for number in range(1, 5):
+            question = {'id': f'user-message-{number}', 'role': 'user', 'content': f'List {number}'}
+            questions.append(f'List {number}')
+            memory.listed.clear()
+            events = await session.events([question])
+            reads = memory.listed['session-1']
+            assert events[-1].type == 'RUN_FINISHED'
+            replayed = await session.replay()
+            assert replayed[:len(expected)] == expected
+            assert replayed[len(expected)] == question
+            assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+            expected = replayed
+            if number > 1:
+                warm_reads.append(reads)
+        for name, value in {'_DEFERRED_SAVER': None, '_CHECKPOINTER': None, '_STORE': None, '_AGENTS': {}}.items():
+            monkeypatch.setattr(serving, name, value)
+        question = {'id': 'user-message-5', 'role': 'user', 'content': 'After restart'}
+        questions.append('After restart')
+        memory.listed.clear()
+        events = await session.events([question])
+        recovered_reads = memory.listed['session-1']
+        assert events[-1].type == 'RUN_FINISHED'
+        replayed = await session.replay()
+        assert replayed[:len(expected)] == expected
+        assert replayed[len(expected)] == question
+        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+        recovered_question = {'id': 'user-message-6', 'role': 'user', 'content': 'Warm after restart'}
+        questions.append('Warm after restart')
+        memory.listed.clear()
+        events = await session.events([recovered_question])
+        warmed_after_restart = memory.listed['session-1']
+        assert events[-1].type == 'RUN_FINISHED'
+        assert (await session.replay())[:len(replayed)] == replayed
+        assert warmed_after_restart == 0
+        return warm_reads, recovered_reads
+
+    warm_reads, recovered_reads = asyncio.run(scenario())
+    assert warm_reads == [0, 0, 0]
+    assert recovered_reads == 1
+
+
+def test_warm_ancestry_cache_prunes_when_a_new_messages_seed_is_published_issue_3701(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents import serving
+
+    memory = _FakeAgentCoreMemory()
+    session = _serve_session(tmp_path, monkeypatch, memory)
+
+    async def scenario() -> tuple[list[int], list[int], list[dict[str, Any]]]:
+        reads, retained = [], []
+        for number in range(30):
+            memory.listed.clear()
+            events = await session.events([{'id': f'question-{number}', 'role': 'user', 'content': f'List {number}'}])
+            assert events[-1].type == 'RUN_FINISHED'
+            reads.append(memory.listed['session-1'])
+            saver = serving._DEFERRED_SAVER
+            assert saver is not None
+            retained.append(len(saver._checkpoints))
+        return reads, retained, await session.replay()
+
+    reads, retained, replayed = asyncio.run(scenario())
+    assert reads == [1, *([0] * 29)]
+    assert any(new < old for old, new in zip(retained, retained[1:], strict=False))
+    assert [message['content'] for message in replayed if message['role'] == 'user'] == [f'List {number}' for number in range(30)]
+    assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+
+
+def test_recovered_ancestry_keeps_pending_writes_without_repersisting_them_issue_3701(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory, writer = _turn_saver(monkeypatch)
+    _put(writer, None, 'checkpoint-1')
+    writer.put_writes(_turn_config(checkpoint_id='checkpoint-1'), [('messages', 'pending one'), ('topic', 'pending two')], 'task-a')
+    _put(writer, 'checkpoint-1', 'checkpoint-2')
+    writer.flush()
+    reader = TurnCheckpointSaver(writer._saver)
+    history = reader.get_delta_channel_history(config=_turn_config(checkpoint_id='checkpoint-2'), channels=['messages'])
+    assert history == {'messages': {'writes': [('task-a', 'messages', 'pending one')]}}
+
+    def forbid_durable_read(_config: RunnableConfig) -> NoReturn:
+        raise AssertionError('Recovered ancestry must stay readable from the buffered checkpoint')
+
+    monkeypatch.setattr(reader._saver, 'get_tuple', forbid_durable_read)
+    recovered = reader.get_tuple(_turn_config(checkpoint_id='checkpoint-1'))
+    assert recovered is not None
+    assert recovered.config == _turn_config(checkpoint_id='checkpoint-1')
+    assert recovered.parent_config is None
+    assert recovered.metadata.get('source') == 'loop'
+    assert recovered.metadata.get('step') == 0
+    assert recovered.pending_writes == [('task-a', 'messages', 'pending one'), ('task-a', 'topic', 'pending two')]
+    written = memory.create_event_calls
+    reader.flush()
+    assert memory.create_event_calls == written
 
 
 class _MissingToolModel(_ToolCallingModel):
@@ -1811,3 +1925,111 @@ def test_concurrent_sessions_keep_their_flushed_turns_until_snapshotting_issue_3
     assert [message['content'] for message in two.messages] == ['second question', 'second answer']
     assert memory.listed['session-1'] == 1
     assert memory.listed['session-2'] == 1
+
+
+
+def test_adaptive_page_requires_pending_writes_beyond_a_complete_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A complete seed on one page does not prove its pending writes were read."""
+    from langgraph.checkpoint.base import CheckpointTuple
+    from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import (
+        ChannelDataEvent,
+        CheckpointEvent,
+        WriteItem,
+        WritesEvent,
+    )
+
+    from botcube_harness_deepagents.memory.agentcore.snapshot_saver import reading_once
+
+    memory = _FakeAgentCoreMemory()
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name="us-east-1")
+    saver.max_results = 2
+    target = CheckpointTuple(
+        config=_turn_config(checkpoint_id="checkpoint-2"),
+        checkpoint={**empty_checkpoint(), "id": "checkpoint-2"},
+        metadata={},
+        parent_config=_turn_config(checkpoint_id="checkpoint-1"),
+        pending_writes=[],
+    )
+    # No ListEvents ordering contract: checkpoint/channel blobs can precede pending writes.
+    events = [
+        WritesEvent(
+            checkpoint_id="checkpoint-1",
+            writes=[
+                WriteItem(
+                    task_id="task-1",
+                    channel="topic",
+                    value="pending update",
+                    task_path="",
+                )
+            ],
+        ),
+        ChannelDataEvent(
+            channel="topic",
+            version="1",
+            value="seed",
+            thread_id="session-1",
+            checkpoint_ns="",
+        ),
+        CheckpointEvent(
+            checkpoint_id="checkpoint-1",
+            checkpoint_data={
+                **empty_checkpoint(),
+                "id": "checkpoint-1",
+                "channel_versions": {"topic": "1"},
+            },
+            metadata={},
+            parent_checkpoint_id=None,
+            thread_id="session-1",
+            checkpoint_ns="",
+        ),
+    ]
+    for event in events:
+        saver.checkpoint_event_client.store_blob_event(event, "session-1", "user-1")
+    memory.list_events_calls = 0
+    with reading_once():
+        history = saver.delta_channel_history(
+            config=_turn_config(),
+            channels=["topic"],
+            target=target,
+            known={"checkpoint-2": target},
+        )
+    assert history == {
+        "topic": {"seed": "seed", "writes": [("task-1", "topic", "pending update")]}
+    }
+    assert memory.list_events_calls == 2
+
+
+def test_adaptive_page_cannot_choose_latest_from_an_unordered_first_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older checkpoint on page one cannot establish the Session's latest."""
+    from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import CheckpointEvent
+
+    from botcube_harness_deepagents.memory.agentcore.snapshot_saver import reading_once
+
+    memory = _FakeAgentCoreMemory()
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name="us-east-1")
+    saver.max_results = 1
+    for checkpoint_id in ["checkpoint-2", "checkpoint-1"]:
+        saver.checkpoint_event_client.store_blob_event(
+            CheckpointEvent(
+                checkpoint_id=checkpoint_id,
+                checkpoint_data={**empty_checkpoint(), "id": checkpoint_id},
+                metadata={},
+                parent_checkpoint_id=None,
+                thread_id="session-1",
+                checkpoint_ns="",
+            ),
+            "session-1",
+            "user-1",
+        )
+    memory.list_events_calls = 0
+    with reading_once():
+        latest = saver.get_tuple(_turn_config())
+    assert latest is not None
+    assert latest.checkpoint["id"] == "checkpoint-2"
+    assert memory.list_events_calls == 2

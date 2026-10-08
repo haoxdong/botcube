@@ -161,3 +161,24 @@ def test_an_error_plan_usage_does_not_name_stays_openais(relay: FakeRelay) -> No
 
     with pytest.raises(openai.PermissionDeniedError):
         _ask(relay)
+
+
+def test_async_cached_plan_model_correlates_each_turn_and_step(relay: FakeRelay) -> None:
+    from opentelemetry import baggage, context
+
+    model = build_model(model='openai-plan:gpt-6-astra', relay=lambda: _relay(relay))
+
+    async def ask(run: str) -> None:
+        token = context.attach(baggage.set_baggage('run.id', run))
+        try:
+            await model.ainvoke([HumanMessage('Say exactly: hello')])
+        finally:
+            context.detach(token)
+
+    asyncio.run(ask('turn-1'))
+    asyncio.run(ask('turn-2'))
+    headers = [{name.lower(): value for name, value in call['headers'].items()} for call in relay.calls]
+    assert [item['x-botcube-run-id'] for item in headers] == ['turn-1', 'turn-2']
+    steps = [item['x-botcube-model-step-id'] for item in headers]
+    assert all(steps)
+    assert steps[0] != steps[1]

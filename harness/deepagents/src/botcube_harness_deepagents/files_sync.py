@@ -19,12 +19,17 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from queue import Queue
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 import boto3
+from boto3.exceptions import RetriesExceededError
+from boto3.s3.transfer import TransferConfig, create_transfer_manager
+from s3transfer.exceptions import RetriesExceededError as TransferRetriesExceededError
 
 FILES_PROP = 'files'
 # The Harness's own directory in the workspace: the rendered long-term memory.
@@ -52,6 +57,13 @@ class FilesSyncRecordError(RuntimeError):
 class SyncedFile:
     stamp: int
     digest: str | None
+    remote: str | None = None
+
+
+@dataclass(frozen=True)
+class RemoteFile:
+    stamp: int
+    identity: str | None
 
 
 @dataclass(frozen=True)
@@ -70,9 +82,8 @@ class FilesSync:
             aws_session_token=self.credentials['sessionToken'],  # pragma: no mutate: moto, the suite's S3, checks no session token
         )
 
-    def _remote(self, s3: Any, skip: tuple[str, ...]) -> dict[str, int]:
-        """Each of the agent's files in Files, by its path in the workspace, with its last-modified second."""
-        remote: dict[str, int] = {}
+    def _remote(self, s3: Any, skip: tuple[str, ...]) -> dict[str, RemoteFile]:
+        remote: dict[str, RemoteFile] = {}
         for page in s3.get_paginator('list_objects_v2').paginate(Bucket=self.bucket, Prefix=self.prefix):
             for item in page.get('Contents', []):
                 name = item['Key'][len(self.prefix):]
@@ -81,7 +92,7 @@ class FilesSync:
                     continue
                 if any(len(part.encode('utf-8')) > 255 for part in PurePosixPath(name).parts):
                     raise FilesSyncError(f'Cannot sync file {name!r} from Files: each file name must be at most 255 UTF-8 bytes')
-                remote[name] = int(item['LastModified'].timestamp())
+                remote[name] = RemoteFile(int(item['LastModified'].timestamp()), _remote_identity(self.bucket, item['Key'], item.get('ETag')))
         return remote
 
     def pull(self, root: Path, excluded: Iterable[str]) -> None:
@@ -107,12 +118,32 @@ class FilesSync:
                 elif local.is_file() and _unchanged(local, baseline):
                     local.unlink()
                     synced.pop(name)
-        for name, modified in remote.items():
-            local = root / name
-            baseline = _pull_file(s3, self.bucket, self.prefix + name, local, modified, record.get(name))
-            if baseline is not None:
-                synced[name] = baseline
+        synced.update(self._pull_remote_files(s3, root, remote, record))
         _write_record(root, synced)
+
+    def _pull_remote_files(
+        self, s3: Any, root: Path, remote: Mapping[str, RemoteFile], record: Mapping[str, SyncedFile],
+    ) -> dict[str, SyncedFile]:
+        synced: dict[str, SyncedFile] = {}
+        with ThreadPoolExecutor(max_workers=4) as downloads:
+            completed: Queue[Future[SyncedFile | None]] = Queue()
+            pending: dict[Future[SyncedFile | None], str] = {}
+            for name, file in remote.items():
+                download = downloads.submit(_pull_file, s3, self.bucket, self.prefix + name,
+                                            root / name, file, record.get(name))
+                pending[download] = name
+                download.add_done_callback(completed.put)
+            try:
+                for _ in pending:
+                    download = completed.get()
+                    baseline = download.result()
+                    if baseline is not None:
+                        synced[pending[download]] = baseline
+            except BaseException:
+                for download in pending:
+                    download.cancel()
+                raise
+        return synced
 
     def push(self, root: Path, excluded: Iterable[str]) -> None:
         """Put each file the agent wrote or changed into Files, never one deleted there since its sync."""
@@ -120,14 +151,15 @@ class FilesSync:
         skip = tuple(excluded)
         record = _read_record(root)
         remote = self._remote(s3, skip)
-        synced = {name: record.get(name, SyncedFile(stamp, None)) for name, stamp in remote.items()}
+        synced = {name: record.get(name, SyncedFile(file.stamp, None)) for name, file in remote.items()}
         for local in sorted(root.rglob('*')):
             name = local.relative_to(root).as_posix()
             if not local.is_file() or local.is_symlink() or not _synced(name, skip):
                 continue
             baseline = record.get(name)
             digest = _digest(local)
-            unchanged = _synced_baseline(local, baseline, remote.get(name), digest)
+            remote_file = remote.get(name)
+            unchanged = _synced_baseline(local, baseline, remote_file.stamp if remote_file is not None else None, digest)
             if unchanged is not None:
                 synced[name] = unchanged
                 continue
@@ -141,8 +173,16 @@ class FilesSync:
 
 
 def _pull_file(
-    s3: Any, bucket: str, key: str, local: Path, modified: int, baseline: SyncedFile | None,
+    s3: Any, bucket: str, key: str, local: Path, remote: RemoteFile, baseline: SyncedFile | None,
 ) -> SyncedFile | None:
+    modified = remote.stamp
+    if (
+        baseline is not None and baseline.digest is not None
+        and remote.identity is not None and baseline.remote == remote.identity
+        and local.is_file() and _unchanged(local, baseline)
+    ):
+        os.utime(local, (modified, modified))
+        return SyncedFile(modified, baseline.digest, remote.identity)
     # Distinct S3 replacements can share a second; only a newer local edit wins.
     newer = local.is_file() and local.stat().st_mtime > modified and (baseline is None or not _unchanged(local, baseline))
     if newer and (baseline is None or baseline.digest is not None):
@@ -150,12 +190,28 @@ def _pull_file(
     local.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=local.parent, prefix='.files-sync-') as directory:
         downloaded = Path(directory) / 'file'
-        s3.download_file(bucket, key, str(downloaded))
-        synced = SyncedFile(modified, _digest(downloaded))
+        etag = _download_file(s3, bucket, key, downloaded)
+        synced = SyncedFile(modified, _digest(downloaded), _remote_identity(bucket, key, etag))
         if not newer:
             downloaded.replace(local)
             os.utime(local, (modified, modified))
     return synced
+
+
+def _download_file(s3: Any, bucket: str, key: str, destination: Path) -> str | None:
+    # Only the managed ranged GET sends IfMatch for the ETag recorded by HEAD.
+    config = TransferConfig(multipart_threshold=1, preferred_transfer_client='classic')
+    with create_transfer_manager(s3, config) as transfers:
+        download = transfers.download(bucket, key, str(destination))
+        try:
+            download.result()
+        except TransferRetriesExceededError as error:
+            raise RetriesExceededError(cast(Any, error.last_exception)) from error
+        return download.meta.etag if download.meta.size else None
+
+
+def _remote_identity(bucket: str, key: str, etag: str | None) -> str | None:
+    return json.dumps([bucket, key, etag]) if etag else None
 
 
 def _synced_baseline(
@@ -208,13 +264,14 @@ def _parse_synced_file(value: Any) -> SyncedFile:
     if not isinstance(value, dict):
         raise FilesSyncRecordError(f'The Files sync record /{RECORD_PATH} is unreadable: not an object of file names to seconds')
     if (
-        set(value) != {'stamp', 'digest'}
+        set(value) not in ({'stamp', 'digest'}, {'stamp', 'digest', 'remote'})
         or type(value['stamp']) is not int
         or not isinstance(value['digest'], str)
         or re.fullmatch(r'[0-9a-f]{64}', value['digest']) is None
+        or ('remote' in value and (not isinstance(value['remote'], str) or not value['remote']))
     ):
         raise FilesSyncRecordError(f'The Files sync record /{RECORD_PATH} is unreadable: invalid file stamp or SHA256 digest')
-    return SyncedFile(value['stamp'], value['digest'])
+    return SyncedFile(value['stamp'], value['digest'], value.get('remote'))
 
 
 def _write_record(root: Path, record: Mapping[str, SyncedFile]) -> None:
@@ -222,7 +279,9 @@ def _write_record(root: Path, record: Mapping[str, SyncedFile]) -> None:
     path = root / RECORD_PATH
     path.parent.mkdir(exist_ok=True)
     partial = path.with_name(f'{path.name}.partial')  # pragma: no mutate: any name beside the record works; only a crash mid-write, which no test runs, reads it
-    values = {name: entry.stamp if entry.digest is None else {'stamp': entry.stamp, 'digest': entry.digest}
+    values = {name: entry.stamp if entry.digest is None else {
+        'stamp': entry.stamp, 'digest': entry.digest, **({'remote': entry.remote} if entry.remote is not None else {}),
+    }
               for name, entry in record.items()}
     partial.write_text(json.dumps(values))
     partial.replace(path)

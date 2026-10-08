@@ -79,6 +79,43 @@ class _RefreshLease:
     request_deadline: asyncio.Timeout | None = None
 
 
+@dataclass
+class _ProviderTiming:
+    audit: CredentialAuditRecorder
+    account_id: str
+    context: Mapping[str, str]
+    dispatched_at: float
+    started: float
+    answer_observed: bool = False
+    failed: bool = False
+
+    def observe(self, event: Any) -> None:
+        if not isinstance(event, Mapping):
+            return
+        if event.get('type') in {'error', 'response.failed', 'response.incomplete'}:
+            self.failed = True
+        delta = event.get('delta')
+        if (not self.answer_observed and event.get('type') == 'response.output_text.delta'
+                and isinstance(delta, str) and delta.strip()):
+            self.answer_observed = True
+            self.audit.record_provider_timing(
+                self.account_id, self.context, event='provider_first_answer', result='answer',
+                dispatched_at=self.dispatched_at, observed_at=time.time(),
+                duration_ms=(time.monotonic() - self.started) * 1000, answer_observed=True,
+            )
+
+    def finish(self, result: str) -> None:
+        if not self.answer_observed:
+            self.audit.record_provider_timing(
+                self.account_id, self.context, event='provider_first_answer', result=result,
+                dispatched_at=self.dispatched_at, observed_at=time.time(),
+            )
+        self.audit.record_provider_timing(
+            self.account_id, self.context, event='provider_response_outcome', result=result,
+            dispatched_at=self.dispatched_at, observed_at=time.time(), answer_observed=self.answer_observed,
+        )
+
+
 class OpenAIProvider:
     """The OpenAI plan-provider plug-in. The operator command stores the owner's Sign-in through ingest.
 
@@ -341,26 +378,23 @@ class OpenAIProvider:
         self._audit.record_upstream_relay(account_id, OPENAI_PROVIDER, request_context)
         headers = {name: request.headers[name] for name in _FORWARDED_HEADERS if name in request.headers}
         client = self._client()
-        try:
-            upstream = await client.send(
-                client.build_request(
-                    request.method,
-                    f'{self._settings.api_origin}/{path}',
-                    params=request.url.query or None,
-                    headers={**headers, 'authorization': f'Bearer {access}'},
-                    content=await request.body(),
-                ),
-                stream=True,
-            )
-        except httpx.ReadTimeout:
-            await client.aclose()
-            cause = f'no response within {self._read_timeout_seconds:g} s'
-            return JSONResponse(_plan_usage_error(_PROVIDER_TIMEOUT, cause), status_code=504)
+        upstream_request = client.build_request(
+            request.method, f'{self._settings.api_origin}/{path}', params=request.url.query or None,
+            headers={**headers, 'authorization': f'Bearer {access}'}, content=await request.body(),
+        )
+        context = _timing_context(request, request_context) if path == _RESPONSES_PATH else None
+        timing = None if context is None else _ProviderTiming(
+            self._audit, account_id, context, time.time(), time.monotonic(),
+        )
+        upstream = await self._send(client, upstream_request, timing)
+        if isinstance(upstream, Response):
+            return upstream
         content_type = upstream.headers.get('content-type')
         if not upstream.is_success:
-            content = await upstream.aread()
-            await upstream.aclose()
-            await client.aclose()
+            try:
+                content = await upstream.aread()
+            finally:
+                await _finish_relay(timing, 'failure', upstream, client)
             classified = _classified(_json_error(content_type, content))
             if classified is not None:
                 return JSONResponse(classified, status_code=upstream.status_code)
@@ -368,26 +402,73 @@ class OpenAIProvider:
 
         chunks = upstream.aiter_bytes()
         if path == _RESPONSES_PATH:
-            chunks = _failures_as_errors(chunks)
-
-        async def body() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in chunks:
-                    yield chunk
-            finally:
-                await upstream.aclose()
-                await client.aclose()
+            chunks = _failures_as_errors(chunks, None if timing is None else timing.observe)
 
         return StreamingResponse(
-            body(),
+            _relay_body(chunks, upstream, client, timing),
             headers={'content-type': content_type} if content_type else None,
         )
+
+    async def _send(
+        self, client: httpx.AsyncClient, upstream_request: httpx.Request, timing: _ProviderTiming | None,
+    ) -> httpx.Response | Response:
+        try:
+            return await client.send(upstream_request, stream=True)
+        except httpx.ReadTimeout:
+            await _finish_relay(timing, 'failure', None, client)
+            cause = f'no response within {self._read_timeout_seconds:g} s'
+            return JSONResponse(_plan_usage_error(_PROVIDER_TIMEOUT, cause), status_code=504)
+        except BaseException as failure:
+            await _finish_relay(timing, 'cancelled' if isinstance(failure, asyncio.CancelledError) else 'failure', None, client)
+            raise
 
     def routes(self, guard: InvocationGuard) -> APIRouter:
         return APIRouter()
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds))
+
+
+async def _relay_body(
+    chunks: AsyncIterator[bytes], upstream: httpx.Response, client: httpx.AsyncClient, timing: _ProviderTiming | None,
+) -> AsyncIterator[bytes]:
+    result = 'no_answer'
+    try:
+        async for chunk in chunks:
+            yield chunk
+        if timing is not None:
+            result = 'failure' if timing.failed else ('answer' if timing.answer_observed else 'no_answer')
+    except BaseException as failure:
+        result = 'cancelled' if isinstance(failure, (asyncio.CancelledError, GeneratorExit)) else 'failure'
+        raise
+    finally:
+        await _finish_relay(timing, result, upstream, client)
+
+
+async def _finish_relay(
+    timing: _ProviderTiming | None, result: str, upstream: httpx.Response | None, client: httpx.AsyncClient,
+) -> None:
+    try:
+        if timing is not None:
+            timing.finish(result)
+    finally:
+        try:
+            if upstream is not None:
+                await upstream.aclose()
+        finally:
+            await client.aclose()
+
+
+def _timing_context(request: Request, request_context: Mapping[str, str]) -> dict[str, str]:
+    context = dict(request_context)
+    for header, field in (('x-botcube-run-id', 'runId'), ('x-botcube-model-step-id', 'modelStepId')):
+        value = request.headers.get(header)
+        if value is not None and len(value) <= 128 and all(c.isalnum() or c in '-_' for c in value):
+            context[field] = value
+    traceparent = request.headers.get('traceparent', '').split('-')
+    if len(traceparent) == 4 and len(traceparent[1]) == 32 and all(c in '0123456789abcdef' for c in traceparent[1]):
+        context['traceId'] = traceparent[1]
+    return context
 
 
 def _plan_usage_error(classification: tuple[str, str], cause: str) -> dict[str, Any]:
@@ -432,7 +513,9 @@ def _refresh_error_code(response: httpx.Response) -> str | None:
     return error if isinstance(error, str) else None
 
 
-async def _failures_as_errors(chunks: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+async def _failures_as_errors(
+    chunks: AsyncIterator[bytes], observe: Callable[[Any], None] | None = None,
+) -> AsyncIterator[bytes]:
     """OpenAI's Responses stream frame by frame, each `response.failed` turned into an error frame.
 
     A failure can arrive after streaming has begun; the Harness's OpenAI client raises on an error
@@ -442,14 +525,20 @@ async def _failures_as_errors(chunks: AsyncIterator[bytes]) -> AsyncIterator[byt
     async for chunk in chunks:
         *frames, pending = (pending + chunk).split(b'\n\n')
         for frame in frames:
-            yield _error_frame(frame) or frame + b'\n\n'
+            event = _frame_event(frame)
+            if observe is not None:
+                observe(event)
+            yield _error_event(event) or frame + b'\n\n'
     if pending:
         yield pending
 
 
-def _error_frame(frame: bytes) -> bytes | None:
+def _frame_event(frame: bytes) -> Any:
     data = [line.removeprefix(b'data:').removeprefix(b' ') for line in frame.split(b'\n') if line.startswith(b'data:')]
-    event = json.loads(b'\n'.join(data)) if data else None
+    return json.loads(b'\n'.join(data)) if data else None
+
+
+def _error_event(event: Any) -> bytes | None:
     if not isinstance(event, Mapping) or event.get('type') != 'response.failed':
         return None
     error = event['response'].get('error')

@@ -480,13 +480,13 @@ def test_each_relayed_call_is_in_the_audit_trail(vault: DynamoDbCredentialVault)
     client.post('/openai/v1/responses', json={'model': 'gpt-6-astra'},
                 headers=_bound_turn('openai', 'gpt-6-astra', session_id='thread-2'))
 
-    assert sink.events == [
+    assert [event for event in sink.events if event['event'] in {'kms_decrypt', 'upstream_relay'}] == [
         {'event': 'kms_decrypt', 'accountId': 'acct-1', 'sessionId': 'thread-1', 'method': 'GET', 'path': 'v1/models',
          'timestamp': 1_790_965_829.0},
         {'event': 'upstream_relay', 'accountId': 'acct-1', 'provider': 'openai', 'sessionId': 'thread-1',
          'method': 'GET', 'path': 'v1/models', 'timestamp': 1_790_965_829.0},
         {'event': 'upstream_relay', 'accountId': 'acct-1', 'provider': 'openai', 'sessionId': 'thread-2',
-         'method': 'POST', 'path': 'v1/responses', 'timestamp': 1_790_965_829.0},
+         'method': 'POST', 'path': 'v1/responses', 'modelId': 'gpt-6-astra', 'timestamp': 1_790_965_829.0},
     ]
 
 
