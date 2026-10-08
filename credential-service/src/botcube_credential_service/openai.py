@@ -7,7 +7,7 @@ import json
 import secrets
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -26,7 +26,7 @@ from .vault import (
 if TYPE_CHECKING:
     from fastapi import Request
 
-    from .audit import CredentialAuditRecorder
+    from .audit import CredentialAuditRecorder, _UpstreamContentEncoding
     from .invocation import CredentialServiceInvocation
     from .server import InvocationGuard
     from .vault import RevisedCredential, RotatingCredentialVault
@@ -71,6 +71,19 @@ _LEASE_POLL_SECONDS = 0.2
 _READ_TIMEOUT_SECONDS = 300
 # Request headers OpenAI gets from the Harness's call; the invocation's own headers stay here.
 _FORWARDED_HEADERS = ('accept', 'content-type')
+_UPSTREAM_TRACE_PHASES = {
+    f'{operation}.{outcome}'
+    for operation in (
+        'connection.connect_tcp', 'connection.start_tls', 'proxy.start_tls',
+        'http11.send_request_headers', 'http11.send_request_body', 'http11.receive_response_headers',
+        'http2.send_request_headers', 'http2.send_request_body', 'http2.receive_response_headers',
+    )
+    for outcome in ('started', 'complete', 'failed')
+}
+_UPSTREAM_TRACE_LIMIT = 64
+_UPSTREAM_CONTENT_ENCODINGS: dict[str, _UpstreamContentEncoding] = {
+    'identity': 'identity', 'gzip': 'gzip', 'deflate': 'deflate', 'br': 'br', 'zstd': 'zstd',
+}
 
 
 @dataclass
@@ -88,16 +101,44 @@ class _ProviderTiming:
     started: float
     answer_observed: bool = False
     failed: bool = False
+    phases: list[dict[str, str | float]] = field(default_factory=list)
+    observed_phases: set[str] = field(default_factory=set)
+    transport_phases: int = 0
+    phases_truncated: bool = False
+    upstream_content_encoding: _UpstreamContentEncoding = 'unavailable'
+
+    def phase(self, name: str) -> None:
+        self.phases.append({'phase': name, 'offsetMs': (time.monotonic() - self.started) * 1000})
+
+    def first_phase(self, name: str) -> None:
+        if name not in self.observed_phases:
+            self.observed_phases.add(name)
+            self.phase(name)
+
+    async def trace(self, name: str, _info: Mapping[str, Any]) -> None:
+        if name not in _UPSTREAM_TRACE_PHASES:
+            return
+        if self.transport_phases >= _UPSTREAM_TRACE_LIMIT:
+            self.phases_truncated = True
+            return
+        self.transport_phases += 1
+        self.phase(name)
 
     def observe(self, event: Any) -> None:
         if not isinstance(event, Mapping):
             return
+        self.first_phase('first_parsed_event')
+        if event.get('type') == 'response.completed':
+            self.first_phase('first_completed_event')
         if event.get('type') in {'error', 'response.failed', 'response.incomplete'}:
             self.failed = True
         delta = event.get('delta')
+        if event.get('type') in {'response.reasoning_text.delta', 'response.reasoning_summary_text.delta'} and isinstance(delta, str) and delta.strip():
+            self.first_phase('first_reasoning_delta')
         if (not self.answer_observed and event.get('type') == 'response.output_text.delta'
                 and isinstance(delta, str) and delta.strip()):
             self.answer_observed = True
+            self.first_phase('first_answer_delta')
             self.audit.record_provider_timing(
                 self.account_id, self.context, event='provider_first_answer', result='answer',
                 dispatched_at=self.dispatched_at, observed_at=time.time(),
@@ -105,6 +146,13 @@ class _ProviderTiming:
             )
 
     def finish(self, result: str) -> None:
+        self.first_phase('terminal')
+        self.audit.record_provider_timing(
+            self.account_id, self.context, event='provider_upstream_phases', result=result,
+            dispatched_at=self.dispatched_at, observed_at=time.time(), answer_observed=self.answer_observed,
+            phases=self.phases, phases_truncated=self.phases_truncated,
+            upstream_content_encoding=self.upstream_content_encoding,
+        )
         if not self.answer_observed:
             self.audit.record_provider_timing(
                 self.account_id, self.context, event='provider_first_answer', result=result,
@@ -386,6 +434,8 @@ class OpenAIProvider:
         timing = None if context is None else _ProviderTiming(
             self._audit, account_id, context, time.time(), time.monotonic(),
         )
+        if timing is not None:
+            upstream_request.extensions['trace'] = timing.trace
         upstream = await self._send(client, upstream_request, timing)
         if isinstance(upstream, Response):
             return upstream
@@ -402,7 +452,8 @@ class OpenAIProvider:
 
         chunks = upstream.aiter_bytes()
         if path == _RESPONSES_PATH:
-            chunks = _failures_as_errors(chunks, None if timing is None else timing.observe)
+            chunks = _failures_as_errors(chunks, None if timing is None else timing.observe,
+                                        None if timing is None else timing.first_phase)
 
         return StreamingResponse(
             _relay_body(chunks, upstream, client, timing),
@@ -413,7 +464,12 @@ class OpenAIProvider:
         self, client: httpx.AsyncClient, upstream_request: httpx.Request, timing: _ProviderTiming | None,
     ) -> httpx.Response | Response:
         try:
-            return await client.send(upstream_request, stream=True)
+            upstream = await client.send(upstream_request, stream=True)
+            if timing is not None:
+                encoding = upstream.headers.get('content-encoding')
+                timing.upstream_content_encoding = 'absent' if encoding is None else _UPSTREAM_CONTENT_ENCODINGS.get(encoding.strip().lower(), 'other')
+                timing.first_phase('headers_returned')
+            return upstream
         except httpx.ReadTimeout:
             await _finish_relay(timing, 'failure', None, client)
             cause = f'no response within {self._read_timeout_seconds:g} s'
@@ -461,10 +517,10 @@ async def _finish_relay(
 
 def _timing_context(request: Request, request_context: Mapping[str, str]) -> dict[str, str]:
     context = dict(request_context)
-    for header, field in (('x-botcube-run-id', 'runId'), ('x-botcube-model-step-id', 'modelStepId')):
+    for header, context_field in (('x-botcube-run-id', 'runId'), ('x-botcube-model-step-id', 'modelStepId')):
         value = request.headers.get(header)
         if value is not None and len(value) <= 128 and all(c.isalnum() or c in '-_' for c in value):
-            context[field] = value
+            context[context_field] = value
     traceparent = request.headers.get('traceparent', '').split('-')
     if len(traceparent) == 4 and len(traceparent[1]) == 32 and all(c in '0123456789abcdef' for c in traceparent[1]):
         context['traceId'] = traceparent[1]
@@ -515,6 +571,7 @@ def _refresh_error_code(response: httpx.Response) -> str | None:
 
 async def _failures_as_errors(
     chunks: AsyncIterator[bytes], observe: Callable[[Any], None] | None = None,
+    observe_stream_phase: Callable[[str], None] | None = None,
 ) -> AsyncIterator[bytes]:
     """OpenAI's Responses stream frame by frame, each `response.failed` turned into an error frame.
 
@@ -523,12 +580,16 @@ async def _failures_as_errors(
     """
     pending = b''
     async for chunk in chunks:
+        if chunk and observe_stream_phase is not None:
+            observe_stream_phase('first_decoded_chunk')
         *frames, pending = (pending + chunk).split(b'\n\n')
         for frame in frames:
             event = _frame_event(frame)
             if observe is not None:
                 observe(event)
             yield _error_event(event) or frame + b'\n\n'
+    if observe_stream_phase is not None:
+        observe_stream_phase('decoded_stream_eof')
     if pending:
         yield pending
 

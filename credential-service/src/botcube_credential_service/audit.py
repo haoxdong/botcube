@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable, Mapping
-from typing import Any, Protocol
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal, Protocol
+
+_UpstreamContentEncoding = Literal['unavailable', 'absent', 'identity', 'gzip', 'deflate', 'br', 'zstd', 'other']
 
 
 class CredentialAuditSink(Protocol):
@@ -54,6 +56,8 @@ class CredentialAuditRecorder:
         self, account_id: str, request_context: Mapping[str, Any], *,
         event: str, result: str, dispatched_at: float, observed_at: float,
         duration_ms: float | None = None, answer_observed: bool = False,
+        phases: Sequence[Mapping[str, str | float]] | None = None, phases_truncated: bool = False,
+        upstream_content_encoding: _UpstreamContentEncoding | None = None,
     ) -> None:
         extra: dict[str, Any] = {
             'provider': 'openai', 'result': result, 'dispatchedAt': dispatched_at,
@@ -67,6 +71,12 @@ class CredentialAuditRecorder:
                     'Metrics': [{'Name': 'Latency', 'Unit': 'Milliseconds'}],
                 }]},
             })
+        if phases is not None:
+            extra['phases'] = [dict(phase) for phase in phases]
+            if phases_truncated:
+                extra['phasesTruncated'] = True
+        if upstream_content_encoding is not None:
+            extra['upstreamContentEncoding'] = upstream_content_encoding
         self._record(event, account_id, request_context=request_context, extra=extra)
 
     def _record(
