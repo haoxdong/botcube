@@ -132,6 +132,8 @@ class AnswerTiming:
                 if chunk_index is not None and chunk_index != index:
                     step.item_conflict = True
                 chunk_index = index
+        if chunk_index is None:
+            return
         if len(self.chunks) >= 1024:
             self.chunks = {
                 key: value
@@ -145,7 +147,7 @@ class AnswerTiming:
 
     def alias(self, chunk: Any, public: str) -> None:
         safe = _id(public)
-        match = self.chunks.get(id(chunk))
+        match = self.chunks.pop(id(chunk), None)
         if safe is None or match is None or match[0]() is not chunk:
             self.invalid = "missing_native_alias"
             return

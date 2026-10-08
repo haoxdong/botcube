@@ -76,12 +76,43 @@ def test_native_sdk_response_alias_and_actual_dispatch(
     assert list(offsets.values()) == sorted(offsets.values())
 
 
-@pytest.mark.parametrize("multi_output", [False, True])
+def _long_answer_stream(count: int) -> bytes:
+    import json
+
+    frames = [
+        json.loads(frame.split(b"data: ", 1)[1])
+        for frame in RECORDED_STREAM.split(b"\n\n")
+        if frame.strip()
+    ]
+    expanded = []
+    for frame in frames:
+        if frame["type"] == "response.output_text.delta":
+            expanded.extend(dict(frame) for _ in range(count))
+        else:
+            if frame["type"] == "response.output_text.done":
+                frame["text"] = "hello" * count
+            expanded.append(frame)
+    return b"".join(
+        (
+            "event: "
+            + frame["type"]
+            + "\ndata: "
+            + json.dumps(dict(frame, sequence_number=index))
+            + "\n\n"
+        ).encode()
+        for index, frame in enumerate(expanded)
+    )
+
+
+@pytest.mark.parametrize(
+    "multi_output,delta_count", [(False, 1), (True, 1), (False, 1100)]
+)
 def test_serving_aliases_native_sdk_chunk_to_actual_public_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     multi_output: bool,
+    delta_count: int,
 ) -> None:
     import dataclasses
     import json
@@ -95,6 +126,8 @@ def test_serving_aliases_native_sdk_chunk_to_actual_public_message(
     caplog.set_level(logging.INFO)
     _serve_session(tmp_path, monkeypatch, FakeAgentCoreMemory())
     with serving_relay() as relay:
+        if delta_count > 1:
+            relay.reply = RelayReply(body=_long_answer_stream(delta_count))
         if multi_output:
             frames = [
                 json.loads(f.split(b"data: ", 1)[1])
@@ -205,8 +238,10 @@ def test_serving_aliases_native_sdk_chunk_to_actual_public_message(
         e for e in events if e["type"] == "TEXT_MESSAGE_CONTENT" and e["delta"].strip()
     ]
     assert content and "".join(e["delta"] for e in content) == (
-        "hellosecond" if multi_output else "hello"
+        "hellosecond" if multi_output else "hello" * delta_count
     )
+    assert response.status_code == 200
+    assert events[-1]["type"] == "RUN_FINISHED"
     assert records[0]["status"] == "complete", records
     assert records[0]["publicMessageId"] == content[0]["messageId"]
     assert (
@@ -336,9 +371,7 @@ async def _prepare_sdk_alias_control(mode: str, model: Any, relay: Any) -> None:
 
     if mode == "hidden_prior":
         hidden = object.__new__(_SessionAgent)
-        async for chunk in model.astream(
-            [HumanMessage("Synthetic hidden call")]
-        ):
+        async for chunk in model.astream([HumanMessage("Synthetic hidden call")]):
             assert [
                 item
                 async for item in hidden._handle_model_event(
@@ -369,10 +402,7 @@ async def _prepare_sdk_alias_control(mode: str, model: Any, relay: Any) -> None:
 def _alter_sdk_output_control(mode: str, chunk: Any) -> None:
     if mode == "wrong_output":
         for block in chunk.content:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "text"
-            ):
+            if isinstance(block, dict) and block.get("type") == "text":
                 block["index"] = 9
 
 
