@@ -7,11 +7,13 @@ import type { Plugin } from 'unified';
 declare module 'micromark-util-types' {
   interface TokenTypeMap {
     bracketMath: 'bracketMath';
+    bracketMathData: 'bracketMathData';
   }
 }
 
 const tokenizeBracketMath: Tokenizer = function (effects, ok, nok) {
   let close: 41 | 93;
+  let dataOpen = false;
   return start;
 
   function start(code: Parameters<State>[0]): ReturnType<State> {
@@ -29,14 +31,28 @@ const tokenizeBracketMath: Tokenizer = function (effects, ok, nok) {
 
   function body(code: Parameters<State>[0]): ReturnType<State> {
     if (code === null) return nok(code);
+    if (code === -5 || code === -4 || code === -3) {
+      if (dataOpen) effects.exit('bracketMathData');
+      dataOpen = false;
+      effects.enter('lineEnding');
+      effects.consume(code);
+      effects.exit('lineEnding');
+      return body;
+    }
+    if (!dataOpen) {
+      effects.enter('bracketMathData');
+      dataOpen = true;
+    }
     effects.consume(code);
     return code === 92 ? closing : body;
   }
 
   function closing(code: Parameters<State>[0]): ReturnType<State> {
     if (code === null) return nok(code);
+    if (code === -5 || code === -4 || code === -3) return body(code);
     effects.consume(code);
     if (code !== close) return body;
+    effects.exit('bracketMathData');
     effects.exit('bracketMath');
     return ok;
   }
@@ -76,10 +92,12 @@ const fromMarkdown: FromMarkdownExtension = {
               },
       };
       this.enter(node, token);
+      this.buffer();
     },
   },
   exit: {
     bracketMath(token) {
+      this.resume();
       this.exit(token);
     },
   },

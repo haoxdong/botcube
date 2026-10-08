@@ -4,6 +4,7 @@ import { Streamdown } from 'streamdown';
 import { expect, it } from 'vitest';
 
 import { MARKDOWN_RENDERER } from './markdown';
+import MarkdownRenderer from './markdown-renderer';
 
 const tables = [
   {
@@ -271,4 +272,40 @@ Inline \(S-K\), dollars $$N \times S$$.`;
       (node) => node.textContent
     )
   ).toContain('−');
+});
+
+const streamedBracketMath = [
+  { content: "\\[\n2\n\\", text: "2" },
+  { content: "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\", text: "Using the sum-of-squares formula:" },
+];
+
+it.each(streamedBracketMath)('renders incomplete bracket math: $content', ({ content, text }) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent(text);
+});
+
+it.each([
+  { content: "\\[\n2\n\\]", text: "2" },
+  {
+    content: "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\frac{20(20+1)(2\\cdot20+1)}{6}\n= \\frac{20\\cdot21\\cdot41}{6}\n= 70\\cdot41\n= \\boxed{2870}.\n\\]",
+    text: "2870",
+  },
+])('keeps incomplete and complete math visible through every streamed prefix: $text', ({ content, text }) => {
+  const view = render(<MarkdownRenderer content="" />);
+  for (let end = 1; end <= content.length; end++) {
+    view.rerender(<MarkdownRenderer content={content.slice(0, end)} />);
+    expect(view.container.textContent.length).toBeGreaterThan(0);
+  }
+  expect(view.container).toHaveTextContent(text);
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+  view.unmount();
+  const replay = render(<MarkdownRenderer content={content} />);
+  expect(replay.container).toHaveTextContent(text);
+  expect(replay.container.querySelector('.katex')).not.toBeNull();
+});
+
+it.each(['\n', '\r', '\r\n'])('renders multiline bracket math with line ending %j', (lineEnding) => {
+  const view = render(<MarkdownRenderer content={`\\[${lineEnding}2${lineEnding}\\]`} />);
+  expect(view.container).toHaveTextContent('2');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
 });
