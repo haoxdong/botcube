@@ -165,3 +165,110 @@ it.each(tables)(
     ).toEqual(rows);
   }
 );
+
+it('renders bracket display math at the actual assistant input boundary', () => {
+  const content = String.raw`\[V = N \times \max(S-K,0)\]
+
+$$V = N \times \max(S-K,0)$$`;
+  const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+  const view = render(<Renderer {...MARKDOWN_RENDERER} content={content} />);
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual([
+    String.raw`V = N \times \max(S-K,0)`,
+    String.raw`V = N \times \max(S-K,0)`,
+  ]);
+});
+
+it('renders inline bracket math at the actual assistant input boundary', () => {
+  const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+  const view = render(
+    <Renderer
+      {...MARKDOWN_RENDERER}
+      content={String.raw`Value \(V = N \times \max(S-K,0)\).`}
+    />
+  );
+  expect(view.container.querySelector('.katex annotation')?.textContent).toBe(
+    String.raw`V = N \times \max(S-K,0)`
+  );
+});
+
+it('preserves literal code, ordinary escapes, unmatched delimiters and dollar math in the assistant renderer', async () => {
+  const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+  const view = render(
+    <Renderer
+      {...MARKDOWN_RENDERER}
+      content={
+        String.raw`\[S-K\] and \(N \times S\) and $$x^2$$ and $5.
+
+` +
+        '`' +
+        String.raw`\[literal\]` +
+        '`' +
+        String.raw`
+
+` +
+        '```text\n' +
+        String.raw`\[fenced\]
+\(fenced\)
+$$fenced$$` +
+        '\n```\n\n' +
+        String.raw`Escapes: \*plain\* \[ordinary] \\[escaped\\] and unmatched \(open.`
+      }
+    />
+  );
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual(['S-K', String.raw`N \times S`, 'x^2']);
+  await waitFor(() =>
+    expect(
+      view.container.querySelector('[data-streamdown="code-block-body"]')
+        ?.textContent
+    ).toBe(String.raw`\[fenced\]\(fenced\)$$fenced$$`)
+  );
+  expect(view.container.querySelector('p code')?.textContent).toContain(
+    String.raw`\[literal\]`
+  );
+  expect(view.container.textContent).toContain(
+    'Escapes: *plain* [ordinary] \\[escaped\\] and unmatched (open.'
+  );
+  expect(view.container.textContent).toContain('$5.');
+});
+
+it('keeps bracket math and source operators after streaming through the actual assistant renderer', () => {
+  const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+  const content = String.raw`\[V = N \times \max(S-K,0)\]
+
+Inline \(S-K\), dollars $$N \times S$$.`;
+  const view = render(<Renderer {...MARKDOWN_RENDERER} content="" />);
+  for (let end = 1; end <= content.length; end++) {
+    view.rerender(
+      <Renderer {...MARKDOWN_RENDERER} content={content.slice(0, end)} />
+    );
+  }
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual([
+    String.raw`V = N \times \max(S-K,0)`,
+    'S-K',
+    String.raw`N \times S`,
+  ]);
+  expect(
+    view.container.querySelector('.katex-display math')?.getAttribute('display')
+  ).toBe('block');
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex math mo'),
+      (node) => node.textContent
+    )
+  ).toContain('−');
+});

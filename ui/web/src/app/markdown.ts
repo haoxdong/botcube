@@ -5,6 +5,8 @@ import { mermaid } from "@streamdown/mermaid";
 import remarkBreaks from "remark-breaks";
 import { defaultRehypePlugins, defaultRemarkPlugins } from "streamdown";
 
+import { remarkBracketMath } from "./remark-bracket-math";
+
 type Pluggable = (typeof defaultRehypePlugins)[string];
 
 type MarkdownNode = {
@@ -45,7 +47,7 @@ function remarkBareListMarkersAsText() {
 export const MARKDOWN_RENDERER = {
   plugins: { cjk, code, math, mermaid },
   linkSafety: { enabled: false },
-  remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBareListMarkersAsText, remarkBreaks],
+  remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBracketMath, remarkBareListMarkersAsText, remarkBreaks],
   rehypePlugins: Object.values({
     ...defaultRehypePlugins,
     harden: [harden, { ...hardenOptions, linkBlockPolicy: "text-only" }] as Pluggable,
