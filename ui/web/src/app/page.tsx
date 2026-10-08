@@ -1,6 +1,7 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { Blocks, ChevronDown, ChevronRight, MessageCircle, Pencil, Plus } from "lucide-react";
 import "@copilotkit/react-core/v2/styles.css";
 import { KeptChat } from "./kept-chat";
@@ -320,6 +321,9 @@ function App({
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const isPhone = useIsPhone();
   const layoutRef = useRef<HTMLDivElement>(null);
+  // What the chat controls render beside the shell rather than in it, such as the Agent Profile, goes here.
+  const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
   // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
@@ -496,6 +500,14 @@ function App({
       </button>
     </header>
   );
+  // Before a chat opens: the Main Chat loading, or why it or a linked chat failed to.
+  const noChat = linkedChatError !== null ? (
+    <LoadFailed error={linkedChatError} onRetry={() => void openMainChat()} action="Go to Main Chat" />
+  ) : mainChatError === null ? (
+    <LoadingSkeleton label="Main Chat" />
+  ) : (
+    <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />
+  );
   // The kept Main Chat, over the chat's place from the moment it shows until the chat opens on it (#3697).
   const keptChat = (
     <div className="kept-chat" role="status" aria-label="Loading chat controls">
@@ -638,42 +650,18 @@ function App({
           <PluginsScreen agentName={agentName} />
         </main>
       )}
-      {activeId === null && (
-        <main className="app-shell" hidden={pluginsOpen}>
-          {chatHeader}
-          {linkedChatError !== null ? (
-            <LoadFailed error={linkedChatError} onRetry={() => void openMainChat()} action="Go to Main Chat" />
-          ) : mainChatError === null ? (
-            <LoadingSkeleton label="Main Chat" />
-          ) : (
-            <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />
-          )}
-        </main>
-      )}
-      {activeId !== null && (
-        <Suspense fallback={
-          <main className="app-shell" hidden={pluginsOpen}>
-            {chatHeader}
-            <div className="app-chat app-chat-opening">{keptChat}</div>
-          </main>
-        }>
-        <ChatSurface
-          key={activeId}
-          selfManagedAgents={selfManagedAgents}
-          properties={properties}
-        >
-          {(ChatThread) => <>
-          {webUiPlugin.auxiliaryPanels.map((Panel, index) => (
-            <Panel
-              key={index}
-              agentId={AGENT_ID}
-              conversation={{ id: activeId, service: "chat-service" }}
-            />
-          ))}
-          {webUiPlugin.toolResultRenderers.map((Renderer, index) => <Renderer key={index} />)}
-          {/* ── Main content ── */}
-          <main className="app-shell" hidden={pluginsOpen}>
-            {chatHeader}
+      {/* One shell for the chat however far it has loaded, so its header, and the press of a tap on its avatar,
+          outlast the chat controls replacing their stand-in. */}
+      <main className="app-shell" hidden={pluginsOpen}>
+        {chatHeader}
+        {activeId === null ? noChat : (
+          <Suspense fallback={<div className="app-chat app-chat-opening">{keptChat}</div>}>
+          <ChatSurface
+            key={activeId}
+            selfManagedAgents={selfManagedAgents}
+            properties={properties}
+          >
+            {(ChatThread) => <>
             {/* ADR 0030: a failed sign-in, sign-out or Sheet action shows why, even with the Sheet closed. */}
             {auth.error && <p className="chat-account-error" role="alert">{auth.error}</p>}
             {mainChatError !== null && <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />}
@@ -702,30 +690,40 @@ function App({
               </ChatThread>
               {keptChatShown && keptChat}
             </div>
-          </main>
-          {(profileSwipe.visible || agentProfileChat === activeId) && (
-            <AgentProfile
-              key={accountId}
-              ref={agentProfileRef}
-              open={profileSwipe.visible}
-              chatServiceUrl={CHAT_SERVICE_URL}
-              profile={agentProfile}
-              error={agentProfileError}
-              computer={ComputerView && ((shown) => (
-                <ComputerView agentId={AGENT_ID} agentName={agentName} conversation={{ id: activeId, service: "chat-service" }} shown={shown} />
+            {layoutElement !== null && createPortal(<>
+              {webUiPlugin.auxiliaryPanels.map((Panel, index) => (
+                <Panel
+                  key={index}
+                  agentId={AGENT_ID}
+                  conversation={{ id: activeId, service: "chat-service" }}
+                />
               ))}
-              onClose={profileSwipe.close}
-              revision={agentDocumentsRevision}
-              onSaved={() => void refreshAgentProfile()}
-              isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
-              tabs={webUiPlugin.agentProfileTabs}
-            />
-          )}
-          {auth.overlay}
-          </>}
-        </ChatSurface>
-        </Suspense>
-      )}
+              {webUiPlugin.toolResultRenderers.map((Renderer, index) => <Renderer key={index} />)}
+              {(profileSwipe.visible || agentProfileChat === activeId) && (
+                <AgentProfile
+                  key={accountId}
+                  ref={agentProfileRef}
+                  open={profileSwipe.visible}
+                  chatServiceUrl={CHAT_SERVICE_URL}
+                  profile={agentProfile}
+                  error={agentProfileError}
+                  computer={ComputerView && ((shown) => (
+                    <ComputerView agentId={AGENT_ID} agentName={agentName} conversation={{ id: activeId, service: "chat-service" }} shown={shown} />
+                  ))}
+                  onClose={profileSwipe.close}
+                  revision={agentDocumentsRevision}
+                  onSaved={() => void refreshAgentProfile()}
+                  isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
+                  tabs={webUiPlugin.agentProfileTabs}
+                />
+              )}
+              {auth.overlay}
+            </>, layoutElement)}
+            </>}
+          </ChatSurface>
+          </Suspense>
+        )}
+      </main>
     </div>
   );
 }

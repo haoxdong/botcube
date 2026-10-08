@@ -4311,6 +4311,36 @@ describe('agent profile', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent', { credentials: 'include', cache: 'no-store' });
   });
 
+  it('opens from a press on the loading chat that is released once the chat has loaded', async () => {
+    // This file's page loads its chat controls first, so the other tests keep them whatever runs after this one.
+    (await renderPage()).unmount();
+    // A fresh page, whose chat controls load only when the test lets them.
+    const controls = Promise.withResolvers<void>();
+    vi.resetModules();
+    vi.doMock('./chat-surface', async (importOriginal) => {
+      await controls.promise;
+      return importOriginal();
+    });
+    try {
+      const { default: LoadingPage } = await import('./page');
+      cartridge.auth = auth();
+      render(<LoadingPage />);
+      await settle();
+      const loading = () => screen.queryByRole('status', { name: 'Loading chat controls' });
+      expect(loading()).not.toBeNull();
+      const user = userEvent.setup();
+
+      await user.pointer({ keys: '[MouseLeft>]', target: avatar() });
+      controls.resolve();
+      await waitFor(() => expect(loading()).toBeNull());
+      await user.pointer({ keys: '[/MouseLeft]', target: avatar() });
+
+      expect(openProfile().querySelector('.agent-profile-name')).toHaveTextContent(/^Ada Bot$/);
+    } finally {
+      vi.doUnmock('./chat-surface');
+    }
+  });
+
   it('switches tabs and closes', async () => {
     await renderPage();
     await userEvent.click(avatar());
