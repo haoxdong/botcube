@@ -639,6 +639,8 @@ cpk-web-inspector,
 .chat-model-picker .mep-dropdown {
   top: auto;
   bottom: calc(100% + 8px);
+  max-height: calc(100dvh - 100% - var(--chat-header-height) - 4rem - var(--app-safe-top) - var(--app-safe-bottom));
+  overflow-y: auto;
   left: auto;
   right: -1px;
 }
