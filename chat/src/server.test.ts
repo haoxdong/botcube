@@ -186,3 +186,37 @@ describe('Account History Session ownership', () => {
     }
   });
 });
+
+it('records first-answer attribution receipt, admission and actual dispatch around native preparation', async () => {
+  let now = 100;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  const target = await startInProcess({ cartridge: {
+    requester: async () => { now = 120; return { owner: 'account-1' }; },
+    invocationPayload: async (input) => { now = 190; return { ...input, forwardedProps: { ...input.forwardedProps } }; },
+  } });
+  const record = target.sessionMetadata.recordTurn.bind(target.sessionMetadata);
+  vi.spyOn(target.sessionMetadata, 'recordTurn').mockImplementation(async (...args) => {
+    const result = await record(...args);
+    now = 160;
+    return result;
+  });
+  const sessionId = '33333333-3333-4333-8333-333333333333';
+  const runId = '44444444-4444-4444-8444-444444444444';
+  target.agentcore.script(sessionId, { kind: 'stream', frames: () => { now = 240; return [
+    'data: {"type":"RUN_STARTED"}',
+    'data: {"type":"TEXT_MESSAGE_START","messageId":"first","role":"assistant"}',
+    'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"first","delta":"private answer"}',
+    'data: {"type":"RUN_FINISHED"}',
+  ]; } });
+  try {
+    const response = await target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: sessionId, runId, state: {}, messages: [{ id: 'user', role: 'user', content: 'private prompt' }], tools: [], context: [], forwardedProps: {} }) });
+    expect(await response.text()).toContain('private answer');
+    const boundary = log.mock.calls.map(([line]) => String(line)).find((line) => line.startsWith('{"event":"chat_first_answer_boundary"'));
+    expect(boundary).toBeDefined();
+    expect(JSON.parse(boundary ?? '{}')).toMatchObject({ runId, sessionId, publicMessageId: 'first', status: 'complete',
+      offsetsMs: { receipt: 0, admissionComplete: 60, invokeDispatch: 90, answerReceived: 140, answerEmitted: 140 } });
+    expect(boundary).not.toContain('private');
+  } finally { await target.stop(); }
+});

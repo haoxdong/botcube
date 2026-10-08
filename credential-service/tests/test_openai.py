@@ -1454,3 +1454,36 @@ def test_multiline_failed_event_preserves_the_upstream_error(
 
     assert b'event: error\n' in response.content
     assert _frames(response.content) == [('error', {'type': 'error', 'error': error})]
+
+
+def test_credential_receipt_precedes_authenticated_access_and_upstream_dispatch(
+    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stored(vault)
+    sink = ListSink()
+    clock = [100.0]
+    monkeypatch.setattr('botcube_credential_service.openai.time.monotonic', lambda: clock[0])
+    original = OpenAIProvider.mint_access
+
+    async def delayed_access(self: OpenAIProvider, account_id: str, request_context: Mapping[str, str]) -> str:
+        clock[0] = 100.3
+        return await original(self, account_id, request_context)
+
+    monkeypatch.setattr(OpenAIProvider, 'mint_access', delayed_access)
+    upstream = FakeOpenAI()
+    upstream.responses = lambda: httpx.Response(200, content=(
+        b'data: {"type":"response.created","response":{"id":"resp-safe"}}\n\n'
+        b'data: {"type":"response.output_text.delta","item_id":"msg-safe","delta":"answer"}\n\n'
+    ))
+    response = _client(vault, upstream, sink=sink).post(
+        '/openai/v1/responses', json={'model': 'gpt-6-astra'},
+        headers={**_bound_turn('openai', 'gpt-6-astra'), 'x-botcube-run-id': 'run-safe',
+                 'x-botcube-model-step-id': 'step-safe',
+                 'traceparent': '00-' + 'a' * 32 + '-' + 'b' * 16 + '-01'},
+    )
+    assert response.status_code == 200
+    [boundary] = [event for event in sink.events if event['event'] == 'credential_first_answer_boundary']
+    assert boundary['status'] == 'complete'
+    assert boundary['offsetsMs'] == pytest.approx({
+        'receipt': 0, 'upstreamDispatch': 300, 'answerReceived': 300, 'answerEmitted': 300,
+    })

@@ -79,6 +79,18 @@ class CredentialAuditRecorder:
             extra['upstreamContentEncoding'] = upstream_content_encoding
         self._record(event, account_id, request_context=request_context, extra=extra)
 
+    def record_first_answer_boundary(
+        self, context: Mapping[str, str], *, response_id: str | None, item_id: str | None,
+        offsets: Mapping[str, float], invalid_reason: str | None,
+    ) -> None:
+        self.sink.record({
+            'event': 'credential_first_answer_boundary',
+            **{key: context[key] for key in ('runId', 'sessionId', 'modelId', 'traceId', 'modelStepId') if key in context},
+            'providerResponseId': response_id, 'providerItemId': item_id,
+            'status': 'complete' if invalid_reason is None else 'invalid', 'offsetsMs': dict(offsets),
+            **({'invalidReason': invalid_reason} if invalid_reason is not None else {}),
+        })
+
     def _record(
         self,
         event_name: str,

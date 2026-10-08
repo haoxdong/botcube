@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -152,6 +153,7 @@ def _mount(
 
     @app.api_route(prefix + '/{path:path}', methods=['GET', 'POST', 'PUT', 'DELETE'])
     async def relay(path: str, request: Request) -> Response:
+        request.state.credential_received_at = time.monotonic()
         invocation = guard.verify_account(
             request.headers.get('authorization'), request.headers.get(settings.account_header), None,
         )

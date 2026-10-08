@@ -20,9 +20,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard, cast
 
-from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunFinishedEvent
+from ag_ui.core import (
+    EventType,
+    RunAgentInput,
+    RunErrorEvent,
+    RunFinishedEvent,
+    TextMessageContentEvent,
+)
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
 from botcube_cartridge import HarnessDefinition, InvocationAuth, ModelRelay
@@ -42,6 +48,7 @@ from langgraph_checkpoint_aws import AgentCoreMemoryStore
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
 
+from . import answer_timing
 from ._env import positive_float, positive_int
 from .actor_identity import (
     actor_path_segment,
@@ -329,6 +336,9 @@ class _SessionAgent(LangGraphAgent):
         try:
             async with aclosing(super()._handle_single_event(event, state)) as events:
                 async for emitted in events:
+                    timing = answer_timing.current()
+                    if timing and _is_assistant_text(emitted):
+                        timing.alias(event.get('data', {}).get('chunk'), emitted.message_id)
                     yield emitted
         finally:
             self._model_lane = None
@@ -874,6 +884,8 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         memory_revision=memory_revision,
         syncs_files=files is not None,
     )
+    if (timing := answer_timing.current()) is not None:
+        timing.prepared()
     if warmup:
         # The requester's agent is cached for their next Turn, so it starts without the build.
         return
@@ -1124,7 +1136,7 @@ async def _turn_events(
                              input_data.run_id, (perf_counter() - graph_end) * 1000)
 
 
-def _is_assistant_text(event: Any) -> bool:
+def _is_assistant_text(event: Any) -> TypeGuard[TextMessageContentEvent]:
     return event.type == EventType.TEXT_MESSAGE_CONTENT and bool(event.delta.strip())
 
 
@@ -1156,6 +1168,7 @@ async def invocations(request: Request) -> Any:
     mid-stream are emitted as a RunErrorEvent on the open SSE connection,
     matching the AG-UI spec (parity with AGUIApp).
     """
+    receipt = perf_counter()
     try:
         payload = await request.json()
     except Exception as e:
@@ -1168,11 +1181,17 @@ async def invocations(request: Request) -> Any:
 
     context = _RequestContext(request.headers.get(SESSION_ID_HEADER))
     encoder = EventEncoder(accept=request.headers.get('accept', ''))
+    timing = answer_timing.AnswerTiming(run_input.run_id, context.session_id,
+        (run_input.forwarded_props or {}).get('model'), receipt)
 
     async def event_generator():
+        token = answer_timing._current.set(timing)
         try:
             async for event in _events_with_response_check(run_input, context):
-                yield encoder.encode(event)
+                frame = encoder.encode(event)
+                if _is_assistant_text(event):
+                    timing.frame(frame, event.message_id)
+                yield frame
         except (
             MissingUserIdError,
             AgentDocumentsError,
@@ -1186,11 +1205,13 @@ async def invocations(request: Request) -> Any:
         except Exception as e:
             log.exception('Error during AG-UI event streaming')
             yield encoder.encode(RunErrorEvent(message=str(e), code='INTERNAL_ERROR'))
+        finally:
+            answer_timing._current.reset(token)
 
-    return StreamingResponse(_kept_alive(event_generator()), media_type=encoder.get_content_type())
+    return StreamingResponse(_kept_alive(event_generator(), timing), media_type=encoder.get_content_type())
 
 
-async def _kept_alive(frames: AsyncIterator[str]) -> AsyncGenerator[str, None]:
+async def _kept_alive(frames: AsyncIterator[str], timing: answer_timing.AnswerTiming | None = None) -> AsyncGenerator[str, None]:
     """`frames`, with `_KEEPALIVE` after each quiet `_KEEPALIVE_SECONDS`.
 
     One task reads `frames` from start to end, so the Turn's events are made in one context as before.
@@ -1215,11 +1236,17 @@ async def _kept_alive(frames: AsyncIterator[str]) -> AsyncGenerator[str, None]:
             frame = waiting.result()
             if frame is None:
                 break
+            if timing:
+                timing.emitted(frame)
             yield frame
             waiting = asyncio.create_task(queue.get())
         await reading
     finally:
-        await _cancel_keepalive_tasks(reading, waiting)
+        try:
+            await _cancel_keepalive_tasks(reading, waiting)
+        finally:
+            if timing:
+                timing.finish()
 
 
 async def _cancel_keepalive_tasks(*tasks: asyncio.Task[object]) -> None:
@@ -1262,6 +1289,7 @@ def main() -> None:
         },
         'root': {'level': 'INFO', 'handlers': ['named']},
         'loggers': {
+            'botcube_harness_deepagents.answer_timing': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })

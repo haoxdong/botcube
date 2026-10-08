@@ -14,6 +14,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .answer_boundary import CredentialAnswerBoundary
 from .config import OpenAISettings, positive_seconds
 from .provider import UpstreamRefusal
 from .vault import (
@@ -99,6 +100,7 @@ class _ProviderTiming:
     context: Mapping[str, str]
     dispatched_at: float
     started: float
+    boundary: CredentialAnswerBoundary | None = None
     answer_observed: bool = False
     failed: bool = False
     phases: list[dict[str, str | float]] = field(default_factory=list)
@@ -125,6 +127,8 @@ class _ProviderTiming:
         self.phase(name)
 
     def observe(self, event: Any) -> None:
+        if self.boundary is not None:
+            self.boundary.observe(event)
         if not isinstance(event, Mapping):
             return
         self.first_phase('first_parsed_event')
@@ -162,6 +166,8 @@ class _ProviderTiming:
             self.account_id, self.context, event='provider_response_outcome', result=result,
             dispatched_at=self.dispatched_at, observed_at=time.time(), answer_observed=self.answer_observed,
         )
+        if self.boundary is not None:
+            self.boundary.record()
 
 
 class OpenAIProvider:
@@ -435,6 +441,9 @@ class OpenAIProvider:
             self._audit, account_id, context, time.time(), time.monotonic(),
         )
         if timing is not None:
+            timing.boundary = CredentialAnswerBoundary(
+                self._audit, timing.context, getattr(request.state, 'credential_received_at', None), timing.started,
+            )
             upstream_request.extensions['trace'] = timing.trace
         upstream = await self._send(client, upstream_request, timing)
         if isinstance(upstream, Response):
@@ -452,8 +461,7 @@ class OpenAIProvider:
 
         chunks = upstream.aiter_bytes()
         if path == _RESPONSES_PATH:
-            chunks = _failures_as_errors(chunks, None if timing is None else timing.observe,
-                                        None if timing is None else timing.first_phase)
+            chunks = _observed_chunks(chunks, timing)
 
         return StreamingResponse(
             _relay_body(chunks, upstream, client, timing),
@@ -483,6 +491,13 @@ class OpenAIProvider:
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds))
+
+
+def _observed_chunks(chunks: AsyncIterator[bytes], timing: _ProviderTiming | None) -> AsyncIterator[bytes]:
+    if timing is None:
+        return _failures_as_errors(chunks)
+    return _failures_as_errors(chunks, timing.observe, timing.first_phase,
+                               None if timing.boundary is None else timing.boundary.emitted)
 
 
 async def _relay_body(
@@ -572,6 +587,7 @@ def _refresh_error_code(response: httpx.Response) -> str | None:
 async def _failures_as_errors(
     chunks: AsyncIterator[bytes], observe: Callable[[Any], None] | None = None,
     observe_stream_phase: Callable[[str], None] | None = None,
+    emitted: Callable[[], None] | None = None,
 ) -> AsyncIterator[bytes]:
     """OpenAI's Responses stream frame by frame, each `response.failed` turned into an error frame.
 
@@ -587,7 +603,10 @@ async def _failures_as_errors(
             event = _frame_event(frame)
             if observe is not None:
                 observe(event)
-            yield _error_event(event) or frame + b'\n\n'
+            output = _error_event(event) or frame + b'\n\n'
+            if emitted is not None:
+                emitted()
+            yield output
     if observe_stream_phase is not None:
         observe_stream_phase('decoded_stream_eof')
     if pending:

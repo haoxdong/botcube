@@ -165,6 +165,16 @@ def build_model(
 build_bedrock_model = build_model
 
 
+def _plan_request_headers(kwargs: Mapping[str, Any]) -> dict[str, str]:
+    headers = dict(kwargs.get('extra_headers') or {})
+    if (run_id := baggage.get_baggage('run.id')) is not None:
+        headers['x-botcube-run-id'] = str(run_id)
+    manager = kwargs.get('run_manager')
+    headers['x-botcube-model-step-id'] = str(manager.run_id if manager is not None else uuid4())
+    propagate.inject(headers)
+    return headers
+
+
 def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
     """A ChatGPT plan model under the plan request rules: streamed, unstored, no sampling or length limits."""
     import openai
@@ -182,21 +192,24 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
             return payload
 
         async def _astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
-            headers = dict(kwargs.get('extra_headers') or {})
-            if (run_id := baggage.get_baggage('run.id')) is not None:
-                headers['x-botcube-run-id'] = str(run_id)
-            manager = kwargs.get('run_manager')
-            headers['x-botcube-model-step-id'] = str(manager.run_id if manager is not None else uuid4())
-            propagate.inject(headers)
+            headers = _plan_request_headers(kwargs)
             kwargs['extra_headers'] = headers
+            from . import answer_timing
+            timing = answer_timing.current()
+            step = timing.begin(headers['x-botcube-model-step-id']) if timing else None
+            token = answer_timing._step.set(step.id if step else None)
             try:
                 async for chunk in super()._astream(*args, **kwargs):
+                    if timing and step:
+                        timing.received(chunk.message, step)
                     yield chunk
             except openai.APIError as error:
                 classified = _plan_usage_error(error)
                 if classified is None:
                     raise
                 raise classified from error
+            finally:
+                answer_timing._step.reset(token)
 
     current = relay()
     plan_kwargs: dict[str, Any] = {
@@ -211,7 +224,10 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
         'store': False,
         'max_retries': 0,
     }
-    return ChatGPTPlanModel(**plan_kwargs)
+    model = ChatGPTPlanModel(**plan_kwargs)
+    from .answer_timing import dispatched
+    model.root_async_client._client.event_hooks['request'].append(dispatched)
+    return model
 
 
 def resolve_model(model: str | None = None) -> str:

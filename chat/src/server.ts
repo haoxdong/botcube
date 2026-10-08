@@ -1,3 +1,4 @@
+import { FirstAnswerTiming } from './first-answer-timing.js';
 import { positiveInteger } from './config.js';
 import { TurnMemory, awsMemoryBackend, turnMemoryRoutes } from './turn-memory.js';
 import type { TurnFailure, TurnMemoryLease } from './session-metadata.js';
@@ -318,6 +319,7 @@ export function createChatService(
   };
 
   app.post('/', async (c) => {
+    const timing = new FirstAnswerTiming(performance.now());
     const body = withoutOptionalNulls(await c.req.json().catch(() => undefined));
     const parsed = RunAgentInputSchema.safeParse(body);
     if (!parsed.success) return c.json({ detail: parsed.error.issues }, 422);
@@ -351,6 +353,7 @@ export function createChatService(
       }
       throw error;
     }
+    timing.admitted(input.runId, input.threadId, model.key, initialMessages);
     let memoryLease: TurnMemoryLease | undefined;
     const end = (failure: TurnFailure | undefined) => turnMemory === null
       ? sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure)
@@ -372,6 +375,7 @@ export function createChatService(
       const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
       const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
       return await relayTurn(upstream, {
+        timing,
         body: JSON.stringify(payload),
         sessionId: input.threadId,
         accept: c.req.header('accept'),

@@ -1,3 +1,4 @@
+import type { FirstAnswerTiming } from './first-answer-timing.js';
 import { positiveInteger } from './config.js';
 import { EventType } from '@ag-ui/client';
 import { applyPatch, type Operation } from 'fast-json-patch';
@@ -599,6 +600,7 @@ export function persistedTurnError(message: string): string {
 
 /** One Turn to send upstream, and what its relay does with the answer. */
 interface RelayedTurn {
+  timing?: FirstAnswerTiming;
   body: string;
   sessionId: string;
   accept?: string | undefined;
@@ -634,8 +636,10 @@ interface RelayedTurn {
 export async function relayTurn(upstream: Upstream, turn: RelayedTurn): Promise<Response> {
   let response: Response;
   try {
+    turn.timing?.invoke();
     response = await upstream.invoke(turn.body, turn.sessionId, { accept: turn.accept });
   } catch (error) {
+    turn.timing?.finish();
     console.error(`${upstream.label} request failed before the stream opened`, error);
     const message = `${upstream.label} request failed`;
     const details = turnErrorDetails(reason(error), turn.credentials);
@@ -644,6 +648,7 @@ export async function relayTurn(upstream: Upstream, turn: RelayedTurn): Promise<
   }
   // A bodiless success (a 204, say) carries no answer to relay.
   if (!response.ok || response.body === null) {
+    turn.timing?.finish();
     const failed = await upstreamError(upstream, response, turn.credentials);
     await tellEnd(turn, failed.failure);
     return failed.response;
@@ -747,6 +752,7 @@ interface Frame {
   edits: unknown[];
   events: Record<string, unknown>[];
   readAt: number;
+  monotonicReadAt: number;
 }
 
 /**
@@ -761,6 +767,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let readAt = Date.now();
+  let monotonicReadAt = performance.now();
   let pending = '';
   let frame: string[] = [];
   const guard = turnCredentialGuard(credentials, turn.initialMessages, turn.held);
@@ -799,7 +806,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     const edits = events.flatMap(({ type, name, value }) =>
       type === EventType.CUSTOM && name === AGENT_DOCUMENT_EDITED ? [value] : [],
     );
-    const out = { text, edits, events, readAt };
+    const out = { text, edits, events, readAt, monotonicReadAt };
     frame = [];
     return [out];
   };
@@ -875,7 +882,8 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
 
   const saveFrames = async (frames: Frame[]): Promise<{ out: string; failed: boolean }> => {
     let out = '';
-    for (const { text, edits, events, readAt: frameReadAt } of frames) {
+    for (const { text, edits, events, readAt: frameReadAt, monotonicReadAt: frameReadMono } of frames) {
+      turn.timing?.observe(events, frameReadMono);
       // Log only frames already checked for decoded credentials and delta prefixes.
       logRunErrors(events);
       for (const edit of edits) {
@@ -937,6 +945,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     try {
       const chunk = await reader.read();
       readAt = Date.now();
+      monotonicReadAt = performance.now();
       if (chunk.done) {
         // Stryker disable next-line Regex: pending holds a CR only as its last character, since any other CR splits a line
         const last = (pending + decoder.decode()).replace(/\r$/, '');
@@ -950,7 +959,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       terminal = true;
       console.error(`${upstream.label} stream failed session_id=${sessionId} code=AGENTCORE_UPSTREAM_STREAM_ERROR`, error);
       const failed = await failure(`${upstream.label} stream failed: ${reason(error)}`, 'AGENTCORE_UPSTREAM_STREAM_ERROR');
-      frames = [...flush(), { text: failed, edits: [], events: [], readAt }];
+      frames = [...flush(), { text: failed, edits: [], events: [], readAt, monotonicReadAt }];
       done = true;
     }
     const { out, failed } = await saved(frames, done);
@@ -1007,8 +1016,12 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       } finally {
         clearTimeout(timer);
       }
-      if (next.out !== '') controller.enqueue(encoder.encode(next.out));
+      if (next.out !== '') {
+        controller.enqueue(encoder.encode(next.out));
+        turn.timing?.emitted(next.out.split('\n\n').flatMap((text) => dataEvents(text.split('\n'))));
+      }
       if (!next.end) return;
+      turn.timing?.finish();
       const endFailure = await ending;
       if (endFailure === undefined) {
         controller.close();
@@ -1030,6 +1043,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
         next = await relayInOrder();
       } while (!next.end);
       const endFailure = await ending;
+      turn.timing?.finish();
       logEnd('gone', endFailure !== undefined);
     },
   });
