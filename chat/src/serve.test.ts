@@ -1,13 +1,14 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { ServerType } from '@hono/node-server';
+import { DeleteTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { Hono } from 'hono';
 import * as scheduledRuns from './scheduled-runs.js';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
-import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import type { ChatServiceCartridge } from './cartridge.js';
 import { serveChatService } from './server.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
@@ -35,8 +36,10 @@ beforeAll(() => bedrock.listen());
 afterAll(() => bedrock.close());
 
 const closers: (() => Promise<void>)[] = [];
+const tableClosers: (() => Promise<void>)[] = [];
 afterEach(async () => {
   await Promise.all(closers.splice(0).map((close) => close()));
+  await Promise.all(tableClosers.splice(0).map((close) => close()));
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -49,7 +52,20 @@ async function fake<T extends HttpFake>(server: T): Promise<T> {
 }
 
 async function newTable(name = `chat-${Math.random().toString(36).slice(2)}`): Promise<string> {
-  await createChatTable(inject('dynamodbEndpoint'), name);
+  const endpoint = inject('dynamodbEndpoint');
+  await createChatTable(endpoint, name);
+  tableClosers.push(async () => {
+    const client = new DynamoDBClient({
+      region: 'us-east-1',
+      endpoint,
+      credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+    });
+    try {
+      await client.send(new DeleteTableCommand({ TableName: name }));
+    } finally {
+      client.destroy();
+    }
+  });
   return name;
 }
 
@@ -129,11 +145,17 @@ describe('the Chat Service served from the environment', () => {
     expect(await (await fetch(`${url}/health`)).json()).toEqual({ status: 'ok' });
   });
 
-  it('keeps Session Metadata in the "chat" table by default', async () => {
+  it.each([1, 2])('keeps Session Metadata in the "chat" table by default on fixture run %i', async () => {
     await newTable('chat');
     const url = await serve({ PORT: '0' });
 
     expect(await (await fetch(`${url}/health`)).json()).toEqual({ status: 'ok' });
+  });
+
+  it('rejects creating a fixture table that already exists', async () => {
+    const table = await newTable();
+
+    await expect(newTable(table)).rejects.toThrow('ResourceInUseException');
   });
 
   it('sends Turns and warmups to the AgentCore Runtime AGENTCORE_RUNTIME_ARN names', async () => {
