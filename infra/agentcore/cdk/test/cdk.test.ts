@@ -520,6 +520,7 @@ test('existing resources replace runtime role and network without creating or mu
     vpc,
     subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
     securityGroups: [ec2.SecurityGroup.fromSecurityGroupId(imports, 'Group', 'sg-corporate')],
+    runtimeSecurityGroupName: 'unused-fallback-name',
     kmsKey: kms.Key.fromKeyArn(imports, 'Key', keyArn),
     permissionsBoundary: iam.ManagedPolicy.fromManagedPolicyArn(imports, 'Boundary', boundaryArn),
     workspace: '/mnt/corporate',
@@ -536,6 +537,7 @@ test('existing resources replace runtime role and network without creating or mu
     LifecycleConfiguration: { MaxLifetime: 1800, IdleRuntimeSessionTimeout: 600 },
     FilesystemConfigurations: [{ SessionStorage: { MountPath: '/mnt/corporate' } }],
   });
+  template.resourceCountIs('AWS::EC2::SecurityGroup', 0);
   template.hasResourceProperties('AWS::BedrockAgentCore::Memory', { EncryptionKeyArn: keyArn });
   expect({
     runtime: Object.values(template.findResources('AWS::BedrockAgentCore::Runtime')).map(resource => ({
@@ -623,5 +625,31 @@ test.each([
   });
   Template.fromStack(stack).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
     LifecycleConfiguration: { MaxLifetime: maxLifetime, IdleRuntimeSessionTimeout: idleTimeout },
+  });
+});
+
+test('adopters name the security group created for a runtime VPC', () => {
+  const app = new cdk.App();
+  const imports = new cdk.Stack(app, 'Imports', { env: { account: '123456789012', region: 'us-east-1' } });
+  const vpc = ec2.Vpc.fromVpcAttributes(imports, 'Vpc', {
+    vpcId: 'vpc-adopter',
+    availabilityZones: ['us-east-1a'],
+    privateSubnetIds: ['subnet-adopter'],
+  });
+  const stack = new AgentCoreStack(app, 'NamedRuntime', {
+    env: { account: '123456789012', region: 'us-east-1' },
+    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    physicalIdentity: PHYSICAL_IDENTITY,
+    vpc,
+    runtimeSecurityGroupName: 'adopter-runtime',
+  });
+  const template = Template.fromStack(stack);
+  template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: 'adopter-runtime' });
+  const [groupId] = Object.keys(template.findResources('AWS::EC2::SecurityGroup'));
+  template.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+    NetworkConfiguration: {
+      NetworkMode: 'VPC',
+      NetworkModeConfig: { SecurityGroups: [{ 'Fn::GetAtt': [groupId, 'GroupId'] }] },
+    },
   });
 });

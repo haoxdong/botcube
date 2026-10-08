@@ -7,6 +7,7 @@ FROM ${PYTHON_IMAGE}
 COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /opt/harness
+COPY cartridge/ /cartridge/
 COPY harness/deepagents/ ./
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \

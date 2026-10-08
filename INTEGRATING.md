@@ -4,10 +4,10 @@ BotCube gives you a web UI, a Chat Service, and a Harness. Your Cartridge suppli
 
 ## Run the template in a clean clone
 
-Install Docker with Compose, Git, Python 3, curl, uv, Node.js 24 or newer, and npm. Browser staging needs access to the npm registry or a populated npm cache. Clone [the BotCube mirror](https://github.com/haoxdong/botcube) with an account that has access. The mirror is currently private.
+Install Docker with Compose, Git, Python 3, curl, uv, Node.js 24 or newer, Corepack, and npm. Browser staging needs access to the npm registry or a populated npm cache. Clone [the public BotCube repository](https://github.com/haoxdong/botcube) over HTTPS.
 
 ```bash
-git clone git@github.com:haoxdong/botcube.git
+git clone https://github.com/haoxdong/botcube.git
 cd botcube
 bash infra/local/run.sh -d
 ```
@@ -22,11 +22,65 @@ bash infra/local/smoke.sh
 
 The check verifies a turn, replay after Harness restart, deletion, rejection of an invalid request, and the UI. Stop the sandbox with `docker compose -f infra/local/compose.yml down`. Add `--volumes` only when you want to discard the sandbox's saved sessions.
 
-The source repository's `scripts/check-botcube-clean-clone.sh` exports the proposed `botcube/` subtree into a fresh, single-commit local bare repository, clones it, and runs the documented startup and smoke checks. This uses the mirror publisher's file selection without copying private mirror history into proposed code's sandbox. CI independently probes private mirror read access through the base-branch workflow `.github/workflows/botcube-mirror-read.yml`. Its protected `botcube-mirror-read` environment holds `BOTCUBE_MIRROR_READ_SSH_KEY`, a read-only mirror deploy key. Allow that environment to deploy only from `main`, and keep this key out of repository secrets. The trusted probe uploads no clone artifact. The PR workflow has no mirror credentials or Actions artifact access. Until publication, these checks prove private mirror read access and proposed-tree startup separately. Verify startup from an anonymous public mirror clone after publication.
+## Build and test the public workspace
 
-Before the public cutover, the chief of staff must inventory every advertised mirror ref and prove its reachable history safe, including GitHub-managed pull request refs. Keep snapshot publication paused until that controlled cutover. After cutover, the publisher preserves GitHub's read-only `refs/pull/<positive integer>/head` and `refs/pull/<positive integer>/merge` refs. Before advancing the snapshot branch, it fetches every advertised provider ref and scans every reachable raw tree, commit message, author and committer for the existing private-material patterns. Provider commits need no snapshot trailer and may have merge parents. Ordinary bare `#N` references remain allowed. The scanner recognizes only an exact first-line `Merge pull request #N from owner/branch` for a two-parent commit identified by the matching advertised merge ref; it still scans the owner, branch, message body and identities. Other tracker prose remains subject to the existing policy. It still refuses every unexpected branch, tag, note, or unknown ref. This pattern check does not prove arbitrary retained history safe and does not replace the chief of staff's pre-cutover audit.
+Use the pinned `pnpm@12.10.1` through Corepack. From the public repository root, install the shipped workspace dependencies and build the neutral web UI and template Chat Service:
 
-Before enabling the trusted mirror probe, the maintainer must land its workflow on `main`, create the restricted environment and its secret, and register the public deploy key on the mirror with write access disabled. Reopen the PR or push a new head after setup to trigger both workflows. Until bootstrap completes, the trusted mirror probe fails rather than skipping its clone. The proposed-tree startup check runs independently.
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm build
+corepack pnpm test:chat --reporter=verbose
+```
+
+`pnpm test:chat` runs generic Chat Service unit tests and the neutral HTTP smoke check. `pnpm test:chat:unit` runs only the generic unit tests. The pretest hook prepares the template Python environment, Chat Service bundle, and staged tools. The container startup and smoke commands above verify the complete local application separately.
+
+Run each CDK package's build and tests from its directory. Set `CARTRIDGE_DEPLOY_ROOT` to your Cartridge's deploy directory for composition and synthesis. The template's deployment settings are placeholders; replace them before using your AWS account.
+
+## Build production artifacts
+
+The public repository ships source-build Dockerfiles. From its root, stage the
+Cartridge tools, then build Chat, Credential Service, Harness, and session API
+images:
+
+```bash
+bash template/deploy/stage-tools.sh
+docker build -f template/chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
+docker build -f template/deploy/credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
+docker build -f harness/deepagents/Dockerfile -t harness harness/deepagents
+docker build -f harness/deepagents/session-api.Dockerfile -t session-api harness/deepagents
+```
+
+Export the static UI with the URL of your deployed Chat Service:
+
+```bash
+docker build -f ui/web/Dockerfile --target artifact \
+  --build-arg NEXT_PUBLIC_CHAT_SERVICE_URL=https://your-chat.example \
+  --output type=local,dest=ui-artifact .
+```
+
+The export writes the UI files to `ui-artifact/`. Omit `--target` and `--output`
+and add an image tag to build its static server image, which listens on port 3001. Set `CARTRIDGE_UI_PACKAGE` and, when needed, `CARTRIDGE_UI_BUILD_CONFIG`
+through build arguments to bind your UI Cartridge. Chat and Credential Service
+Dockerfiles above bind the neutral template; supply your own Cartridge build
+inputs when replacing it. The neutral Chat image's default Computer configuration and the Credential
+Service need `TEMPLATE_SITE_URL` at runtime. Set it to your reachable, caller-owned HTTPS site URL. Configure the
+Credential Vault and invocation settings as described in the
+[template README](template/README.md).
+
+Exercise the production images against the neutral local infrastructure:
+
+```bash
+BOTCUBE_PRODUCTION_ARTIFACTS=1 bash infra/local/run.sh -d
+BOTCUBE_PRODUCTION_ARTIFACTS=1 bash infra/local/smoke.sh
+```
+
+This builds all five images and verifies Turn, replay after Harness restart,
+delete, invalid-request rejection, and UI responses. Stop this stack with
+`docker compose -f infra/local/compose.yml -f infra/local/compose.production.yml down`.
+
+For a build behind your organization's TLS proxy, pass its CA bundle with
+`--secret id=build_ca,src=<bundle>`. Compose accepts the same bundle through
+`BOTCUBE_BUILD_CA_CERTS`. Build trust does not configure runtime trust.
 
 ## Connect the three pieces
 
@@ -34,11 +88,16 @@ The UI sends AG-UI requests to the Chat Service at `POST /`. The Chat Service ow
 
 The Chat Service exposes `GET /threads`, `GET /threads/{id}`, and `DELETE /threads/{id}` for session listing, replay, and deletion. It gets session content from the Harness's separate session API, rather than keeping a second conversation record. See [the Chat Service contract](chat/README.md) and [the Harness contract](harness/deepagents/README.md).
 
-A corporate HTTPS wrapper must preserve the invocation body and streaming response. Configure its complete invocation URL and select whether the Chat Service signs requests with SigV4. Local plain HTTP remains available for the sandbox. In ECS CDK composition, signed endpoints require a valid `runtimeArn` so the task receives its AgentCore invocation grant. Only `harnessSigv4: false` allows an endpoint without that ARN.
+A corporate HTTPS wrapper must preserve the invocation body and streaming response. Configure its complete invocation URL and select whether the Chat Service signs requests with SigV4. Local plain HTTP remains available for the sandbox. Memory IDs and runtime ARNs may be supported unresolved CDK resource references. Harness endpoint URLs must be concrete HTTPS URLs without credentials or fragments. In ECS CDK composition, signed endpoints require a valid `runtimeArn` so the task receives its AgentCore invocation grant. Only `harnessSigv4: false` allows an endpoint without that ARN.
 
 ## Supply your Cartridge
 
 Use [the template Harness definition](template/src/botcube_template/harness.py) as the starting point. The `botcube.cartridge` Python entry point supplies skills, agent copy, invocation identity, shell validation and environment, root preparation, and the session variable. The Harness adapts these values to DeepAgents. Your Cartridge does not import the agent framework.
+
+Import `HarnessDefinition`, `InvocationAuth`, and `ModelRelay` from the shared
+[`botcube-cartridge` package](cartridge/README.md). Declare it as a runtime
+dependency of your Cartridge. The template and product Cartridge use the same
+definitions; keep sign-in, skills, and model policy in your own Cartridge.
 
 Use [the template Chat Cartridge](template/chat/src/cartridge.ts) to supply request identity, Session ownership, invocation policy, routes, and browser authorization. Its [entry point](template/chat/src/main.ts) calls `serveChatService` with the Cartridge factory.
 
@@ -56,14 +115,12 @@ Your [tool staging hook](template/deploy/stage-tools.sh) prepares your CLI packa
 6. Synthesize with your overrides, inspect the templates, and compare with your deployed stack before your organization's deployment process runs. See [AgentCore CDK commands](infra/agentcore/cdk/README.md) and [ECS CDK commands](infra/ecs/cdk/README.md).
 7. Set the Chat Service's Harness endpoint, signing choice, session API, storage, and origins. Build the UI with your Cartridge and its Chat Service URL. Verify a successful turn, session replay, and a rejected request.
 
-From the root of the standalone mirror, install Node.js 24 or newer, npm, and uv, then run the template synth.
+From the root of the standalone mirror, use the pinned Corepack/pnpm workspace installation above, then run the template synth.
 
 ```bash
 export CARTRIDGE_DEPLOY_ROOT="$PWD/template/deploy"
-cd infra/agentcore/cdk
-npm install
-npm run build
-npx cdk synth
+corepack pnpm --dir infra/agentcore/cdk build
+corepack pnpm --dir infra/agentcore/cdk cdk synth
 ```
 
 The template uses the placeholder account `000000000000`. Set your account in both identity and target files before deployment. Synthesis stages the template wheel and may build Docker assets. It does not deploy resources.
@@ -124,7 +181,57 @@ Replace the placeholder IDs and ARNs with your resources. Stage tools through yo
 
 The [template deploy identity](template/deploy/identity.json) contains placeholder AgentCore and ECS inputs. For corporate ECS composition, replace its placeholders and supply your origin inputs, then pass `executionRole`, `vpc`, `publicSubnets`, `privateSubnets`, `kmsKey`, and `permissionsBoundary` to `defineProduction`. When you supply `vpc`, private consumers use that VPC's private subnets unless you set `privateSubnets`. An explicit subnet selection takes precedence, and an empty private selection fails synthesis. Pass service settings through `chat` and `credentials`. Pass origin, monitoring, and RUM settings through `originConfig`, `apiHealth`, and `webLatency`. Supply the UI's latency event names as `webLatency.moments` when the Cartridge has no `latency-budgets.json` beside its deploy directory. Omitted moments retain the file-based budget input and fail if it is absent. The generic entry point accepts the same names through the [template's `webLatencyMoments` CDK context](template/IDENTITY.md). The ECS execution role pulls images and writes logs. The task role owns application access. The imported Credential Vault key must authorize decrypt only for the Credential Service task role. Use a different key for AgentCore memory. Use the template identity as the shape reference, not as a deployable account configuration.
 
+For Cartridge-specific container settings, pass an `environment` map to
+`PreviewChatService` or `PrivateCredentialService`. Production composition
+forwards `chat.environment` and `credentials.environment`. For the neutral
+serving images' default configuration, set `TEMPLATE_SITE_URL` in both maps to your reachable HTTPS
+site URL. Framework-owned values, including serving ports and regions, take
+precedence over caller entries. The Chat image enables Chromium by default;
+its Computer configuration requires the site URL and Chromium path together.
+An echo-only API fixture can disable Computer by setting
+`TEMPLATE_CHROMIUM_PATH` to an empty string and omitting `TEMPLATE_SITE_URL`.
+
 For the generic ECS CDK entry point, set `BOTCUBE_REPOSITORY_ROOT` to the absolute checkout root when running from a standalone BotCube mirror. This controls the image build context and Cartridge asset paths. If unset, it retains the current monorepo root; relative values resolve from `infra/ecs/cdk`.
+
+## Use an existing load balancer and listener
+
+`PreviewChatService` accepts an ordinary CDK construct scope and a
+`ChatServiceIngress` interface from `infra/ecs/cdk/lib/preview-chat-service`.
+Supply your ALB, listener, and ingress security group, including imported CDK
+interfaces. The remaining `chatProps` are your application's Chat Service
+configuration from the reference below.
+
+```ts
+new PreviewChatService(stack, 'ChatService', {
+  ...chatProps,
+  ingress: {
+    loadBalancer,
+    listener,
+    securityGroup,
+    cdpRulePriority: 101,
+    chatRulePriority: 102,
+  },
+});
+```
+
+Reserve two unused listener priorities in `1..50000`, with the CDP denial
+before Chat forwarding. The example numbers are placeholders. Both rules apply
+only to your configured Chat hostnames.
+
+You own TLS, listener default actions, and the shared ALB idle timeout. Set a
+streaming timeout appropriate for your application on the ALB; the provided
+origin defaults to 3600 seconds. Omit `loadBalancerIdleSeconds` from `chatProps`
+when supplying `ingress`, or synthesis fails. Ensure the ALB security group can
+send traffic to the Chat Service's `network` security group on the configured
+Chat port, which defaults to 8123. BotCube adds its task ingress and reserved
+listener rules without changing the supplied security group's outbound rules.
+Use distinct resource names, hostnames, and priorities for separate services.
+
+You own ALB-wide alarms for shared ingress. BotCube retains the Chat Service's
+target-group alarms alongside its task and application alarms.
+
+See [resource names and imports](RESOURCE-NAMES.md) for physical name inputs,
+existing-resource examples, and ownership constraints.
 
 ## Configuration reference
 
@@ -277,11 +384,7 @@ The adapter filters credential-export commands and cookie data from network even
 
 The Chat Cartridge's `scheduledRequester` restores the task owner's Account. Its `invocationPayload` creates the same scoped Credential Service binding for scheduled and interactive Turns. The generic [task routes](chat/src/scheduled-tasks.ts) and [run handler](chat/src/scheduled-runs.ts) remain in BotCube. The Harness [proposal tool](harness/deepagents/src/botcube_harness_deepagents/scheduled_tasks.py) proposes a task, and the user confirms it before creation.
 
-The template echo model does not propose or execute tools. The source repository's [scripted stack test](https://github.com/haoxdong/collective/blob/feat/issue-3590-going-public/tests/chat/template-stack.test.ts) exercises skill-driven CLI execution, schedule proposal, HTTP confirmation, local delivery, and refusal after unlinking. Run it from the source repository root.
-
-```bash
-pnpm test:chat tests/chat/template-stack.test.ts --reporter=verbose
-```
+The template echo model does not propose or execute tools. Run `pnpm test:chat --reporter=verbose` for generic Chat Service tests and neutral HTTP smoke. Exercise your own Cartridge's tool execution, scheduling, and Sign-in behavior with its configured model and providers.
 
 ### Bind the UI slots
 

@@ -26,3 +26,12 @@ it('preserves the production browser configuration independently of the fixture'
     cdpUrl: 'ws://127.0.0.1:8123/computer',
   });
 });
+
+it('rejects production browser configuration without its required site URL', () => {
+  expect(() =>
+    templateComputerConfig({ TEMPLATE_CHROMIUM_PATH: '/usr/bin/chromium' })
+  ).toThrow('Agent Computer needs TEMPLATE_SITE_URL and TEMPLATE_CHROMIUM_PATH');
+  expect(() =>
+    templateComputerConfig({ TEMPLATE_SITE_URL: 'not-a-url', TEMPLATE_CHROMIUM_PATH: '/usr/bin/chromium' })
+  ).toThrow('Invalid URL');
+});

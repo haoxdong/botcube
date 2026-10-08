@@ -1,4 +1,5 @@
-import { ArnFormat, CfnOutput, Duration } from 'aws-cdk-lib';
+import { optionalPhysicalName } from './physical-name.js';
+import { ArnFormat, CfnOutput, Duration, Stack, Token } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -13,9 +14,41 @@ import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
+import { nameTaskRoles } from './task-role-names.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 
+/** Adopters reserve these listener priorities and own all shared ALB attributes. */
+export interface ChatServiceIngress {
+  securityGroup: ec2.ISecurityGroup;
+  loadBalancer: elb.IApplicationLoadBalancer;
+  listener: elb.IApplicationListener;
+  cdpRulePriority: number;
+  chatRulePriority: number;
+}
+
 export interface PreviewChatServiceProps {
+  /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
+  environment?: Record<string, string>;
+  turnMemorySecret?: secretsmanager.ISecret;
+  scheduledRunsQueue?: sqs.IQueue;
+  metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures', string>>;
+  taskFamily?: string;
+  reaperTaskFamily?: string;
+  taskRoleName?: string;
+  executionRoleName?: string;
+  reaperTaskRoleName?: string;
+  reaperExecutionRoleName?: string;
+  turnMemorySecretName?: string;
+  scheduledRunsQueueName?: string;
+  scheduledRunsFailedQueueName?: string;
+  scheduledRunsRoleName?: string;
+  reaperInvocationRoleName?: string;
+  securityGroupName?: string;
+  reaperSecurityGroupName?: string;
+  targetGroupName?: string;
+  reaperRuleName?: string;
+  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
+  ingress?: ChatServiceIngress;
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
   securityGroups?: ec2.ISecurityGroup[];
@@ -29,6 +62,7 @@ export interface PreviewChatServiceProps {
   healthTimeoutSeconds?: number;
   healthHealthyThreshold?: number;
   healthUnhealthyThreshold?: number;
+  /** Provided-origin idle timeout; adopters configure shared ALB attributes themselves. */
   loadBalancerIdleSeconds?: number;
   alarmPeriodSeconds?: number;
   alarmEvaluationPeriods?: number;
@@ -79,8 +113,10 @@ export interface PreviewChatServiceProps {
 }
 
 function validateChatService(props: PreviewChatServiceProps): void {
-  if (!/^[A-Za-z0-9_]+-[A-Za-z0-9]+$/.test(props.memoryId)) throw new Error('Chat Service requires the deployed AgentCore Memory ID');
-  if ((!props.vpc && !props.subnets && props.privateSubnets.length < 2) || ((!props.harnessEndpoint || props.harnessSigv4 !== false) && !/^arn:aws:bedrock-agentcore:[^:]+:\d{12}:runtime\/.+$/.test(props.runtimeArn ?? ''))) {
+  if (props.turnMemorySecret && props.turnMemorySecretName !== undefined) throw new Error('An imported turnMemorySecret owns its name; omit turnMemorySecretName');
+  if (props.scheduledRunsQueue && [props.scheduledRunsQueueName, props.scheduledRunsFailedQueueName, props.scheduledRunVisibilitySeconds, props.scheduledRunRetentionDays, props.scheduledRunMaxReceiveCount].some(value => value !== undefined)) throw new Error('An imported scheduledRunsQueue owns its name and redrive settings; omit queue creation options');
+  if (!Token.isUnresolved(props.memoryId) && !/^[A-Za-z0-9_]+-[A-Za-z0-9]+$/.test(props.memoryId)) throw new Error('Chat Service requires the deployed AgentCore Memory ID');
+  if ((!props.vpc && !props.subnets && props.privateSubnets.length < 2) || ((!props.harnessEndpoint || props.harnessSigv4 !== false) && !Token.isUnresolved(props.runtimeArn) && !/^arn:aws:bedrock-agentcore:[^:]+:\d{12}:runtime\/.+$/.test(props.runtimeArn ?? ''))) {
     throw new Error('Preview Chat Service requires private subnets and the deployed AgentCore runtime ARN');
   }
   if (props.harnessEndpoint) {
@@ -89,15 +125,17 @@ function validateChatService(props: PreviewChatServiceProps): void {
   }
 }
 
-/** The preview shares the existing origin's deployment owner and TLS boundary. */
+/** Deploy the Chat Service with the provided origin or adopter-owned ingress. */
 export class PreviewChatService extends Construct {
   readonly cluster: ecs.Cluster;
   readonly network: ec2.SecurityGroup;
   readonly task: ecs.FargateTaskDefinition;
   readonly container: ecs.ContainerDefinition;
   readonly service: ecs.FargateService;
-  constructor(origin: PreviewOriginStack, id: string, props: PreviewChatServiceProps) {
-    super(origin, id);
+  constructor(scope: Construct, id: string, props: PreviewChatServiceProps) {
+    super(scope, id);
+    const origin = Stack.of(this);
+    const { providedOrigin, ingressResources, outputScope, alb } = resolveIngress(scope, this, props);
     validateChatService(props);
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
     const port = props.port ?? 8123;
@@ -111,13 +149,15 @@ export class PreviewChatService extends Construct {
       : props.privateSubnets.map(subnet => subnet.id);
     if (selectedSubnets.length === 0) throw new Error('Preview Chat Service requires a non-empty private subnet selection');
     const cluster = this.cluster = new ecs.Cluster(this, 'Cluster', { vpc, clusterName: props.clusterName, containerInsightsV2: ecs.ContainerInsights.ENABLED });
-    const ingress = this.network = new ec2.SecurityGroup(this, 'Ingress', { vpc });
-    ingress.connections.allowFrom(origin.securityGroup, ec2.Port.tcp(port), 'Preview ALB only');
+    const ingress = this.network = new ec2.SecurityGroup(this, 'Ingress', { vpc, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
+    allowIngress(ingress, ingressResources.securityGroup, port, Boolean(props.ingress));
     const task = this.task = new ecs.FargateTaskDefinition(this, 'Task', {
+      ...optionalPhysicalName('family', props.taskFamily),
       cpu: props.cpu ?? 512, memoryLimitMiB: props.memoryLimitMiB ?? 1024,
       ...(props.executionRole ? { executionRole: props.executionRole } : {}),
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
+    nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
     props.chatTable.grantReadWriteData(task.taskRole);
     if (props.runtimeArn) task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:InvokeAgentRuntime'],
@@ -135,7 +175,8 @@ export class PreviewChatService extends Construct {
       resources: [memoryArn],
       conditions: { StringLike: { 'bedrock-agentcore:namespacePath': '/strategies/*/actors/*/' } },
     }));
-    const turnMemorySecret = new secretsmanager.Secret(this, 'TurnMemorySecret', {
+    const turnMemorySecret = props.turnMemorySecret ?? new secretsmanager.Secret(this, 'TurnMemorySecret', {
+      ...optionalPhysicalName('secretName', props.turnMemorySecretName),
       generateSecretString: { passwordLength: 64, excludePunctuation: true },
     });
     // The session API has no public endpoint; this grant is its only caller.
@@ -161,6 +202,7 @@ export class PreviewChatService extends Construct {
       image: props.image,
       portMappings: [{ containerPort: port }],
       environment: {
+        ...props.environment,
         AWS_DEFAULT_REGION: origin.region,
         AGENTCORE_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
@@ -172,7 +214,7 @@ export class PreviewChatService extends Construct {
         BOTCUBE_CORS_ORIGINS: props.corsOrigins.join(','),
         ...(props.harnessEndpoint ? { BOTCUBE_HARNESS_ENDPOINT: props.harnessEndpoint } : {}),
         ...(props.harnessSigv4 !== undefined ? { BOTCUBE_HARNESS_SIGV4: String(props.harnessSigv4) } : {}),
-        ...(props.port !== undefined ? { PORT: String(port) } : {}),
+        PORT: String(port),
       },
       secrets: { BOTCUBE_TURN_MEMORY_SECRET: ecs.Secret.fromSecretsManager(turnMemorySecret as secretsmanager.ISecret) },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.logStreamPrefix ?? 'chat-service', logGroup }),
@@ -183,12 +225,13 @@ export class PreviewChatService extends Construct {
     // since EventBridge Scheduler cannot call the Chat Service directly.
     const scheduleGroup = props.scheduleGroupName ?? `${props.clusterName}-scheduled-tasks`;
     new scheduler.CfnScheduleGroup(this, 'ScheduledTasks', { name: scheduleGroup });
-    const runs = new sqs.Queue(this, 'ScheduledRuns', {
+    const runs = props.scheduledRunsQueue ?? new sqs.Queue(this, 'ScheduledRuns', {
+      ...optionalPhysicalName('queueName', props.scheduledRunsQueueName),
       // Longer than a run's stream, so a run in progress is not delivered twice.
       visibilityTimeout: Duration.seconds(props.scheduledRunVisibilitySeconds ?? 900),
-      deadLetterQueue: { queue: new sqs.Queue(this, 'ScheduledRunsFailed', { retentionPeriod: Duration.days(props.scheduledRunRetentionDays ?? 14) }), maxReceiveCount: props.scheduledRunMaxReceiveCount ?? 3 },
+      deadLetterQueue: { queue: new sqs.Queue(this, 'ScheduledRunsFailed', { ...optionalPhysicalName('queueName', props.scheduledRunsFailedQueueName), retentionPeriod: Duration.days(props.scheduledRunRetentionDays ?? 14) }), maxReceiveCount: props.scheduledRunMaxReceiveCount ?? 3 },
     });
-    const runsRole = new iam.Role(this, 'ScheduledRunsRole', { assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
+    const runsRole = new iam.Role(this, 'ScheduledRunsRole', { ...optionalPhysicalName('roleName', props.scheduledRunsRoleName), assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
     runs.grantSendMessages(runsRole);
     runs.grantConsumeMessages(task.taskRole);
     task.addToTaskRolePolicy(new iam.PolicyStatement({
@@ -203,10 +246,12 @@ export class PreviewChatService extends Construct {
     // Reuse the Chat Service image; the reaper runs its reap command against the login browser.
     // The reaper needs no serving-role table/runtime permissions.
     const reaper = new ecs.FargateTaskDefinition(this, 'ReaperTask', {
+      ...optionalPhysicalName('family', props.reaperTaskFamily),
       cpu: props.reaperCpu ?? 256, memoryLimitMiB: props.reaperMemoryLimitMiB ?? 512,
       ...(props.executionRole ? { executionRole: props.executionRole } : {}),
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
+    nameTaskRoles(reaper, props.reaperTaskRoleName, props.reaperExecutionRoleName, props.executionRole);
     const reaperBrowserId = props.authBrowserId;
     const reaperBrowserArn = origin.formatArn({
       service: 'bedrock-agentcore',
@@ -224,8 +269,9 @@ export class PreviewChatService extends Construct {
       environment: { AWS_DEFAULT_REGION: origin.region, AGENTCORE_REGION: origin.region, AGENTCORE_BROWSER_ID: reaperBrowserId },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.reaperLogStreamPrefix ?? 'reaper', logGroup: reaperLogs }),
     });
-    const reaperNetwork = new ec2.SecurityGroup(this, 'ReaperNetwork', { vpc });
+    const reaperNetwork = new ec2.SecurityGroup(this, 'ReaperNetwork', { vpc, ...optionalPhysicalName('securityGroupName', props.reaperSecurityGroupName) });
     const schedulerRole = new iam.Role(this, 'ReaperInvocationRole', {
+      ...optionalPhysicalName('roleName', props.reaperInvocationRoleName),
       assumedBy: new iam.ServicePrincipal('events.amazonaws.com'),
     });
     schedulerRole.addToPolicy(new iam.PolicyStatement({
@@ -237,6 +283,7 @@ export class PreviewChatService extends Construct {
       conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
     }));
     const reaperSchedule = new events.CfnRule(this, 'ReaperSchedule', {
+      ...optionalPhysicalName('name', props.reaperRuleName),
       scheduleExpression: props.reaperSchedule ?? 'rate(5 minutes)', state: props.parked ? 'DISABLED' : 'ENABLED',
       description: 'Expire abandoned credential login browser sessions',
       targets: [{
@@ -251,11 +298,11 @@ export class PreviewChatService extends Construct {
         },
       }],
     });
-    new CfnOutput(origin, 'ReaperBrowserId', { value: reaperBrowserId });
-    new CfnOutput(origin, 'ReaperTaskDefinitionArn', { value: reaper.taskDefinitionArn });
-    new CfnOutput(origin, 'ReaperRuleName', { value: reaperSchedule.ref });
-    new CfnOutput(origin, 'ReaperLogGroupName', { value: reaperLogs.logGroupName });
-    new CfnOutput(origin, 'ReaperSecurityGroupId', { value: reaperNetwork.securityGroupId });
+    new CfnOutput(outputScope, 'ReaperBrowserId', { value: reaperBrowserId });
+    new CfnOutput(outputScope, 'ReaperTaskDefinitionArn', { value: reaper.taskDefinitionArn });
+    new CfnOutput(outputScope, 'ReaperRuleName', { value: reaperSchedule.ref });
+    new CfnOutput(outputScope, 'ReaperLogGroupName', { value: reaperLogs.logGroupName });
+    new CfnOutput(outputScope, 'ReaperSecurityGroupId', { value: reaperNetwork.securityGroupId });
     const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
@@ -273,10 +320,10 @@ export class PreviewChatService extends Construct {
       period,
     });
     // Availability alarms (the `-preview-` set the Smoke Test checks) by default.
-    const alarm = (suffix: string, metric: cloudwatch.IMetric, missing: cloudwatch.TreatMissingData, threshold = 0, comparisonOperator = cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+    const alarm = (suffix: keyof NonNullable<PreviewChatServiceProps['alarmNames']>, metric: cloudwatch.IMetric, missing: cloudwatch.TreatMissingData, threshold = 0, comparisonOperator = cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
       { periods = props.alarmEvaluationPeriods ?? 3, alarmName = `${props.clusterName}-preview-${suffix}`, silenceWhenParked = true } = {}) => {
       const value = new cloudwatch.Alarm(this, suffix, {
-        alarmName, metric, threshold,
+        alarmName: props.alarmNames?.[suffix] ?? alarmName, metric, threshold,
         comparisonOperator,
         evaluationPeriods: periods, datapointsToAlarm: periods, treatMissingData: missing,
         // Parked runs zero tasks on purpose: silence rather than page (production-parking.md).
@@ -292,6 +339,7 @@ export class PreviewChatService extends Construct {
     }), cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
     // A purge whose retries ran out leaves the Session fenced with its events stored.
     const purgeFailures = new logs.MetricFilter(this, 'SessionPurgeFailures', {
+      ...optionalPhysicalName('filterName', props.metricFilterNames?.sessionPurgeFailures),
       logGroup, filterPattern: logs.FilterPattern.literal('"Session purge failed"'),
       metricNamespace: 'BotCube/ChatService', metricName: 'SessionPurgeFailures', metricValue: '1',
     });
@@ -300,6 +348,7 @@ export class PreviewChatService extends Construct {
       { periods: 1, alarmName: `${props.clusterName}-session-purge-failures`, silenceWhenParked: false });
     // A failed Turn summary leaves that Turn's Activity row showing the request's first line.
     const summaryFailures = new logs.MetricFilter(this, 'TurnSummaryFailures', {
+      ...optionalPhysicalName('filterName', props.metricFilterNames?.turnSummaryFailures),
       logGroup, filterPattern: logs.FilterPattern.literal('"Turn summary failed"'),
       metricNamespace: 'BotCube/ChatService', metricName: 'TurnSummaryFailures', metricValue: '1',
     });
@@ -307,40 +356,94 @@ export class PreviewChatService extends Construct {
       { periods: 1, alarmName: `${props.clusterName}-turn-summary-failures`, silenceWhenParked: false });
     // A stopping task whose Agent Computer browsers did not sleep may leave them running until their timeout.
     const stopSleepFailures = new logs.MetricFilter(this, 'AgentComputerStopSleepFailures', {
+      ...optionalPhysicalName('filterName', props.metricFilterNames?.agentComputerStopSleepFailures),
       logGroup, filterPattern: logs.FilterPattern.literal('"Agent Computer sleep at task stop failed"'),
       metricNamespace: 'BotCube/ChatService', metricName: 'AgentComputerStopSleepFailures', metricValue: '1',
     });
     alarm('agent-computer-stop-sleep-failures', stopSleepFailures.metric({ statistic: 'Sum', period: Duration.seconds(props.failureAlarmPeriodSeconds ?? 300) }), cloudwatch.TreatMissingData.NOT_BREACHING, 0, cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
       { periods: 1, alarmName: `${props.clusterName}-agent-computer-stop-sleep-failures`, silenceWhenParked: false });
-    new CfnOutput(origin, 'AlertsTopicArn', { value: topic.topicArn });
-    new CfnOutput(origin, 'ClusterName', { value: cluster.clusterName });
-    new CfnOutput(origin, 'ServiceName', { value: service.serviceName });
-    new CfnOutput(origin, 'TaskDefinitionArn', { value: task.taskDefinitionArn });
-    new CfnOutput(origin, 'ChatTableName', { value: props.chatTable.tableName });
+    new CfnOutput(outputScope, 'AlertsTopicArn', { value: topic.topicArn });
+    new CfnOutput(outputScope, 'ClusterName', { value: cluster.clusterName });
+    new CfnOutput(outputScope, 'ServiceName', { value: service.serviceName });
+    new CfnOutput(outputScope, 'TaskDefinitionArn', { value: task.taskDefinitionArn });
+    new CfnOutput(outputScope, 'ChatTableName', { value: props.chatTable.tableName });
     // Live drains a stream for up to an hour so a deploy doesn't cut it. Park proceeds
     // immediately instead: the dependency updates the group to no delay before the
     // service scales to 0, and the group survives Parked (it costs nothing) so that
     // update happens in place rather than in the cleanup after the service.
     const target = new elb.ApplicationTargetGroup(this, 'Target', {
+      ...optionalPhysicalName('targetGroupName', props.targetGroupName),
       vpc, port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
       healthCheck: { path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(props.healthIntervalSeconds ?? 5), timeout: Duration.seconds(props.healthTimeoutSeconds ?? 4), healthyThresholdCount: props.healthHealthyThreshold ?? 2, unhealthyThresholdCount: props.healthUnhealthyThreshold ?? 6 },
       deregistrationDelay: Duration.seconds(props.parked ? 0 : (props.drainSeconds ?? 3600)),
     });
-    // The logical ID it had as a listener target, so moving it here doesn't replace it.
-    (target.node.defaultChild as elb.CfnTargetGroup).overrideLogicalId('OriginHttpsChatServiceGroup7CF46779');
-    service.node.addDependency(target);
+    preserveTarget(service, target, providedOrigin);
     // The origin has an ALB only while Live.
-    if (!origin.alb) {
+    if (!alb) {
       // An empty list removes the association in place; omitting it would keep the old one.
       (service.node.defaultChild as ecs.CfnService).loadBalancers = [];
       return;
     }
-    const { loadBalancer, listener } = origin.alb;
-    loadBalancer.setAttribute('idle_timeout.timeout_seconds', String(props.loadBalancerIdleSeconds ?? 3600));
-    service.attachToApplicationTargetGroup(target);
-    // The Agent Computer CDP channel is for the harness only, which reaches it over
-    // Cloud Map; the public listener answers it 404 before forwarding anything.
-    // Priorities 5 and 10 never collide with the forward rule's former 1 mid-update.
+    attachIngress(this, service, target, props, alb, providedOrigin);
+    addIngressAlarms(alarm, target, alb.loadBalancer, period, providedOrigin !== undefined);
+    new CfnOutput(outputScope, 'TargetGroupArn', { value: target.targetGroupArn });
+  }
+}
+
+/** Target alarms belong to this service; ALB errors belong only to the provided origin. */
+function addIngressAlarms(
+  alarm: (suffix: 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', metric: cloudwatch.IMetric, missing: cloudwatch.TreatMissingData) => void,
+  target: elb.ApplicationTargetGroup,
+  loadBalancer: elb.IApplicationLoadBalancer,
+  period: Duration,
+  ownsOrigin: boolean,
+): void {
+  if (ownsOrigin) alarm('alb-5xx', loadBalancer.metrics.httpCodeElb(elb.HttpCodeElb.ELB_5XX_COUNT, { statistic: 'Sum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
+  alarm('target-5xx', target.metrics.httpCodeTarget(elb.HttpCodeTarget.TARGET_5XX_COUNT, { statistic: 'Sum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
+  alarm('unhealthy-hosts', target.metrics.unhealthyHostCount({ statistic: 'Minimum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
+}
+
+function browserLiveViewArn(origin: Stack, browserId: string): string {
+  return origin.formatArn({ service: 'bedrock-agentcore', ...(browserId === 'aws.browser.v1' ? { account: 'aws', resource: 'browser' } : { resource: 'browser-custom' }), resourceName: browserId });
+}
+
+function resolveIngress(scope: Construct, chat: Construct, props: PreviewChatServiceProps) {
+  const providedOrigin = scope instanceof PreviewOriginStack && !props.ingress ? scope : undefined;
+  const ingressResources = props.ingress ?? providedOrigin;
+  if (!ingressResources) throw new Error('Chat Service requires adopter ingress or a provided PreviewOriginStack');
+  if (props.ingress) {
+    const { cdpRulePriority, chatRulePriority } = props.ingress;
+    if (![cdpRulePriority, chatRulePriority].every(priority => Number.isInteger(priority) && priority >= 1 && priority <= 50000) || cdpRulePriority >= chatRulePriority) {
+      throw new Error('Chat Service ingress requires distinct listener priorities from 1 to 50000, with CDP before Chat');
+    }
+    if (props.loadBalancerIdleSeconds !== undefined) throw new Error('Adopter owns shared ALB idle timeout; configure it on the ALB');
+  }
+  return { providedOrigin, ingressResources, outputScope: providedOrigin ?? chat, alb: props.ingress ?? providedOrigin?.alb };
+}
+
+function attachIngress(scope: Construct, service: ecs.FargateService, target: elb.ApplicationTargetGroup, props: PreviewChatServiceProps, alb: { loadBalancer: elb.IApplicationLoadBalancer; listener: elb.IApplicationListener }, providedOrigin: PreviewOriginStack | undefined): void {
+  // CDK automatically grants ALB egress when a service registers as a listener target.
+  // Import an immutable view so only the Chat Service's ingress can be changed.
+  const listener = props.ingress ? elb.ApplicationListener.fromApplicationListenerAttributes(scope, 'AdopterListener', {
+    listenerArn: props.ingress.listener.listenerArn,
+    securityGroup: ec2.SecurityGroup.fromSecurityGroupId(scope, 'AdopterIngress', props.ingress.securityGroup.securityGroupId, { mutable: false }),
+  }) : alb.listener;
+  if (providedOrigin?.alb) providedOrigin.alb.loadBalancer.setAttribute('idle_timeout.timeout_seconds', String(props.loadBalancerIdleSeconds ?? 3600));
+  service.attachToApplicationTargetGroup(target);
+  // The Agent Computer CDP channel is for the harness only, which reaches it over
+  // Cloud Map; the public listener answers it 404 before forwarding anything.
+  // Priorities 5 and 10 never collide with the forward rule's former 1 mid-update.
+  if (props.ingress) {
+    new elb.ApplicationListenerRule(scope, 'AgentComputerCdp', {
+      listener, priority: props.ingress.cdpRulePriority,
+      conditions: [elb.ListenerCondition.hostHeaders(props.hostnames), elb.ListenerCondition.pathPatterns(['/agent-computer/cdp*'])],
+      action: elb.ListenerAction.fixedResponse(404, { contentType: 'text/plain', messageBody: 'Not Found\n' }),
+    });
+    new elb.ApplicationListenerRule(scope, 'ChatService', {
+      listener, priority: props.ingress.chatRulePriority,
+      conditions: [elb.ListenerCondition.hostHeaders(props.hostnames)], targetGroups: [target],
+    });
+  } else {
     listener.addAction('AgentComputerCdp', {
       priority: 5, conditions: [elb.ListenerCondition.pathPatterns(['/agent-computer/cdp*'])],
       action: elb.ListenerAction.fixedResponse(404, { contentType: 'text/plain', messageBody: 'Not Found\n' }),
@@ -348,13 +451,16 @@ export class PreviewChatService extends Construct {
     listener.addTargetGroups('ChatService', {
       priority: 10, conditions: [elb.ListenerCondition.hostHeaders(props.hostnames)], targetGroups: [target],
     });
-    alarm('alb-5xx', loadBalancer.metrics.httpCodeElb(elb.HttpCodeElb.ELB_5XX_COUNT, { statistic: 'Sum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
-    alarm('target-5xx', target.metrics.httpCodeTarget(elb.HttpCodeTarget.TARGET_5XX_COUNT, { statistic: 'Sum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
-    alarm('unhealthy-hosts', target.metrics.unhealthyHostCount({ statistic: 'Minimum', period }), cloudwatch.TreatMissingData.NOT_BREACHING);
-    new CfnOutput(origin, 'TargetGroupArn', { value: target.targetGroupArn });
   }
 }
 
-function browserLiveViewArn(origin: PreviewOriginStack, browserId: string): string {
-  return origin.formatArn({ service: 'bedrock-agentcore', ...(browserId === 'aws.browser.v1' ? { account: 'aws', resource: 'browser' } : { resource: 'browser-custom' }), resourceName: browserId });
+function allowIngress(network: ec2.SecurityGroup, ingress: ec2.ISecurityGroup, port: number, adopterOwned: boolean): void {
+  if (adopterOwned) network.addIngressRule(ec2.Peer.securityGroupId(ingress.securityGroupId), ec2.Port.tcp(port), 'Preview ALB only');
+  else network.connections.allowFrom(ingress, ec2.Port.tcp(port), 'Preview ALB only');
+}
+
+function preserveTarget(service: ecs.FargateService, target: elb.ApplicationTargetGroup, providedOrigin: PreviewOriginStack | undefined): void {
+  // Preserve the provided origin's former listener target instead of replacing it.
+  if (providedOrigin) (target.node.defaultChild as elb.CfnTargetGroup).overrideLogicalId('OriginHttpsChatServiceGroup7CF46779');
+  service.node.addDependency(target);
 }

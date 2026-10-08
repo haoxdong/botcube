@@ -3,6 +3,9 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 compose_files=(-f "$script_dir/compose.yml")
+if [[ "${BOTCUBE_PRODUCTION_ARTIFACTS:-0}" == 1 ]]; then
+  compose_files+=(-f "$script_dir/compose.production.yml")
+fi
 if [[ -n "${BOTCUBE_BUILD_CA_CERTS:-}" ]]; then
   [[ -r "$BOTCUBE_BUILD_CA_CERTS" ]] || { echo "BOTCUBE_BUILD_CA_CERTS must name a readable CA bundle" >&2; exit 1; }
   compose_files+=(-f "$script_dir/compose.build-ca.yml")

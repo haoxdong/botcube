@@ -4,8 +4,8 @@ import { ListSchedulesCommand, SchedulerClient, ValidationException } from '@aws
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { inject } from 'vitest';
 import { Hono } from 'hono';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../../../tests/chat/fakes/stack.js';
-import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../../../tests/chat/fakes/scheduler.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
+import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { ScheduledTasks, schedulerConfigFromEnv } from './scheduled-tasks.js';

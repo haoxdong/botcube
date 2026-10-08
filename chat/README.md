@@ -22,8 +22,10 @@ Table provisioning is separate from serving; missing tables and storage failures
 propagate. Set `BOTCUBE_SESSION_API_FUNCTION_ARN` to invoke the deployed
 session API, or `BOTCUBE_LOCAL_SESSION_API_URL` for a local one; without
 either, replay returns HTTP 503. `AWS_ENDPOINT_URL_BEDROCK_AGENTCORE` overrides
-the AgentCore endpoint for invocations, warmup and live-view URLs; the Chat
-Service parity suite (`pnpm test:chat`) points it at a local fake.
+the AgentCore endpoint for invocations, warmup and live-view URLs; the generic Chat
+Service tests use a local fake. From the public repository root,
+`pnpm test:chat --reporter=verbose` runs generic unit tests and neutral HTTP
+smoke. `pnpm test:chat:unit` runs only the generic unit tests.
 
 Scheduled tasks (`/scheduled-tasks`, at most 10 per account) need
 `BOTCUBE_SCHEDULE_GROUP`, `BOTCUBE_SCHEDULER_ROLE_ARN`,

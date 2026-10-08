@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { DeleteTableCommand, DynamoDBClient, ResourceNotFoundException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../../../tests/chat/fakes/stack.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
 import { HttpError } from './cartridge.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';

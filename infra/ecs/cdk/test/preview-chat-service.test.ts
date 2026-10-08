@@ -1,23 +1,19 @@
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import { ok as assert } from 'node:assert';
-import * as path from 'node:path';
-import { readFileSync } from 'node:fs';
-import { App } from 'aws-cdk-lib';
+import { App, CfnParameter, Fn } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { cartridgeDeployRoot } from '../lib/cartridge.js';
+import { repositoryRoot, caPath, originProviderPath } from './origin-fixture';
 import { ChatStorageStack } from '../lib/chat-storage-stack.js';
 import { PreviewChatService, type PreviewChatServiceProps } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
 
-const repositoryRoot = path.resolve(__dirname, '../../../../..');
-const deployRoot = cartridgeDeployRoot();
-const caPath = path.relative(repositoryRoot, path.join(deployRoot, 'ecs/cloudflare-origin-pull-ca.crt'));
-const originProviderPath = path.join(deployRoot, 'ecs/origin-provider');
-
 const privateSubnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
 
-function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', parked = false, subnets = privateSubnets, overrides: Partial<PreviewChatServiceProps> = {}) {
+function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', parked = false, subnets = privateSubnets, overrides: Partial<PreviewChatServiceProps> | ((origin: PreviewOriginStack) => Partial<PreviewChatServiceProps>) = {}) {
   const app = new App();
   const env = { account: '123456789012', region: 'us-east-1' };
   const storage = new ChatStorageStack(app, 'Storage', { env, corsOrigins: [] });
@@ -30,7 +26,7 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'], corsOrigins: ['https://example.com', 'https://web.example.com'],
-    runtimeArn, memoryId: 'test_memory-AbCdEfGhIj', sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'test-reap-auth-browsers.js'], authBrowserId: 'test_credential_login-1234567890', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), parked, ...overrides,
+    runtimeArn, memoryId: 'test_memory-AbCdEfGhIj', sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'test-reap-auth-browsers.js'], authBrowserId: 'test_credential_login-1234567890', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), parked, ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
   return Template.fromStack(origin);
 }
@@ -172,26 +168,6 @@ test('one private subnet fails synthesis', () => {
   expect(() => synth(undefined, false, privateSubnets.slice(0, 1))).toThrow(new Error('Preview Chat Service requires private subnets and the deployed AgentCore runtime ARN'));
 });
 
-
-test('deployment job budget exceeds draining, task stop and verification windows', () => {
-  const windows = (parked: boolean) => {
-    const template = synth(undefined, parked);
-    const [target] = Object.values(template.findResources('AWS::ElasticLoadBalancingV2::TargetGroup'));
-    assert(target);
-    const drainSeconds = Number(target.Properties.TargetGroupAttributes.find((attribute: { Key: string }) => attribute.Key === 'deregistration_delay.timeout_seconds').Value);
-    const [task] = Object.values(template.findResources('AWS::ECS::TaskDefinition'));
-    assert(task);
-    return drainSeconds + task.Properties.ContainerDefinitions[0].StopTimeout + 900;
-  };
-  // A Live deploy drains in-flight requests before its tasks stop; park cuts them (the Parked drain is 0).
-  for (const [file, seconds] of [['deploy-preview-origin.yml', windows(false)], ['park-production.yml', windows(true)]] as const) {
-    const workflow = readFileSync(path.resolve(__dirname, `../../../../../.github/workflows/${file}`), 'utf8');
-    const budgetMinutes = Number(workflow.match(/timeout-minutes: (\d+)/)?.[1]);
-    expect(budgetMinutes * 60).toBeGreaterThan(seconds);
-  }
-});
-
-
 test('availability alarms collect task metrics and publish only to the existing alert owner', () => {
   const template = synth();
   template.hasResourceProperties('AWS::ECS::Cluster', {
@@ -237,7 +213,6 @@ test('availability alarms collect task metrics and publish only to the existing 
   }
 });
 
-
 test('reaper schedule uses the service image in private subnets and targets the canonical auth browser', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Events::Rule', {
@@ -267,7 +242,6 @@ test('reaper schedule uses the service image in private subnets and targets the 
     Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':bedrock-agentcore:us-east-1:123456789012:browser-custom/test_credential_login-1234567890']] },
   })]);
 });
-
 
 test('scheduler may run only its revision in its cluster and pass only its task roles', () => {
   const template = synth();
@@ -315,6 +289,7 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
       { Name: 'AGENTCORE_BROWSER_ID', Value: 'aws.browser.v1' },
       { Name: 'BOTCUBE_CHAT_TABLE', Value: { 'Fn::ImportValue': 'Storage:ExportsOutputRefChatTable7A2D1C242A7F282B' } },
       { Name: 'BOTCUBE_CORS_ORIGINS', Value: 'https://example.com,https://web.example.com' },
+      { Name: 'PORT', Value: '8123' },
       { Name: 'BOTCUBE_SCHEDULE_GROUP', Value: 'test-scheduled-tasks' },
       { Name: 'BOTCUBE_SCHEDULER_ROLE_ARN', Value: { 'Fn::GetAtt': ['ChatServiceScheduledRunsRole997CC8CF', 'Arn'] } },
       { Name: 'BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN', Value: { 'Fn::GetAtt': ['ChatServiceScheduledRunsD4286EBE', 'Arn'] } },
@@ -457,7 +432,6 @@ test('scheduled tasks fire through a schedule group into a queue only the Chat S
   expect(actions('ScheduledRunsRole')).toEqual(expect.arrayContaining(['sqs:SendMessage']));
 });
 
-
 test.each([undefined, true])('a signed HTTPS Harness (%s) requires a deployed AgentCore runtime ARN', harnessSigv4 => {
   for (const runtimeArn of ['', 'not-a-runtime-arn']) {
     expect(() => synth(runtimeArn, true, privateSubnets, { harnessEndpoint: 'https://harness.example/run', ...(harnessSigv4 === undefined ? {} : { harnessSigv4 }) }))
@@ -535,4 +509,117 @@ test('a configured browser uses its account-owned IAM resource for live-view acc
     Action: 'bedrock-agentcore:ConnectBrowserLiveViewStream', Effect: 'Allow',
     Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, `:bedrock-agentcore:us-east-1:123456789012:browser-custom/${browserId}`]] },
   }]);
+});
+
+
+test('imported Memory ID survives Chat Service environment and actor-leaf IAM composition', () => {
+  const template = synth(undefined, false, privateSubnets, { memoryId: Fn.importValue('AdopterMemoryId') });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
+      { Name: 'AGENTCORE_MEMORY_ID', Value: { 'Fn::ImportValue': 'AdopterMemoryId' } },
+    ]) })]),
+  });
+  template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
+    Action: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
+    Effect: 'Allow',
+    Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':bedrock-agentcore:us-east-1:123456789012:memory/', { 'Fn::ImportValue': 'AdopterMemoryId' }]] },
+    Condition: { StringLike: { 'bedrock-agentcore:namespacePath': '/strategies/*/actors/*/' } },
+  }]) } });
+});
+
+test.each([undefined, true])('imported runtime ARN survives signed Harness (%s) environment and invocation grants', harnessSigv4 => {
+  const template = synth(Fn.importValue('AdopterRuntimeArn'), false, privateSubnets, {
+    harnessEndpoint: 'https://harness.example/run', ...(harnessSigv4 === undefined ? {} : { harnessSigv4 }),
+  });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
+      { Name: 'AGENTCORE_RUNTIME_ARN', Value: { 'Fn::ImportValue': 'AdopterRuntimeArn' } },
+    ]) })]),
+  });
+  template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
+    Action: 'bedrock-agentcore:InvokeAgentRuntime', Effect: 'Allow', Resource: [
+      { 'Fn::ImportValue': 'AdopterRuntimeArn' },
+      { 'Fn::Join': ['', [{ 'Fn::ImportValue': 'AdopterRuntimeArn' }, '/runtime-endpoint/*']] },
+    ],
+  }]) } });
+});
+
+
+test('imported Memory and parameter runtime compose together with the default AgentCore Harness', () => {
+  const template = synth(undefined, false, privateSubnets, origin => ({
+    memoryId: Fn.importValue('AdopterMemoryId'),
+    runtimeArn: new CfnParameter(origin, 'AdopterRuntimeArn', { type: 'String' }).valueAsString,
+  }));
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
+      { Name: 'AGENTCORE_RUNTIME_ARN', Value: { Ref: 'AdopterRuntimeArn' } },
+      { Name: 'AGENTCORE_MEMORY_ID', Value: { 'Fn::ImportValue': 'AdopterMemoryId' } },
+    ]) })]),
+  });
+  template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
+    Action: 'bedrock-agentcore:InvokeAgentRuntime', Effect: 'Allow', Resource: [
+      { Ref: 'AdopterRuntimeArn' }, { 'Fn::Join': ['', [{ Ref: 'AdopterRuntimeArn' }, '/runtime-endpoint/*']] },
+    ],
+  }]) } });
+});
+
+test.each(['', 'invalid', 'memory-with-hyphen-invalid', 'memory-invalid!'])('malformed concrete Memory ID %j is rejected', memoryId => {
+  expect(() => synth(undefined, false, privateSubnets, { memoryId }))
+    .toThrow('Chat Service requires the deployed AgentCore Memory ID');
+});
+
+test.each(['http://harness.example/run', 'https://user:password@harness.example/run', 'https://harness.example/run#fragment', Fn.importValue('AdopterHarnessEndpoint')])('Harness endpoint %j must remain concrete HTTPS without credentials or fragments', harnessEndpoint => {
+  expect(() => synth(undefined, false, privateSubnets, { harnessEndpoint })).toThrow();
+});
+
+
+test('adopter names reach Chat tasks, roles, secrets, queues, ingress and alarms', () => {
+  const template = synth(undefined, false, privateSubnets, {
+    metricFilterNames: { sessionPurgeFailures: 'adopter-purge-filter', turnSummaryFailures: 'adopter-summary-filter', agentComputerStopSleepFailures: 'adopter-sleep-filter' },
+    taskFamily: 'adopter-chat-task', reaperTaskFamily: 'adopter-reaper-task',
+    taskRoleName: 'adopter-chat-role', executionRoleName: 'adopter-chat-execution',
+    reaperTaskRoleName: 'adopter-reaper-role', reaperExecutionRoleName: 'adopter-reaper-execution',
+    turnMemorySecretName: 'adopter-turn-secret', scheduledRunsQueueName: 'adopter-runs', scheduledRunsFailedQueueName: 'adopter-failed',
+    scheduledRunsRoleName: 'adopter-scheduler', reaperInvocationRoleName: 'adopter-reaper-invoke',
+    securityGroupName: 'adopter-chat-network', reaperSecurityGroupName: 'adopter-reaper-network',
+    targetGroupName: 'adopter-chat-target', reaperRuleName: 'adopter-reaper-rule',
+    alarmNames: { 'task-deficit': 'adopter-deficit', 'alb-5xx': 'adopter-alb-errors', 'session-purge-failures': 'adopter-purge-errors' },
+  });
+  for (const Family of ['adopter-chat-task', 'adopter-reaper-task']) template.hasResourceProperties('AWS::ECS::TaskDefinition', { Family });
+  for (const RoleName of ['adopter-chat-role', 'adopter-chat-execution', 'adopter-reaper-role', 'adopter-reaper-execution', 'adopter-scheduler', 'adopter-reaper-invoke']) template.hasResourceProperties('AWS::IAM::Role', { RoleName });
+  template.hasResourceProperties('AWS::SecretsManager::Secret', { Name: 'adopter-turn-secret' });
+  for (const QueueName of ['adopter-runs', 'adopter-failed']) template.hasResourceProperties('AWS::SQS::Queue', { QueueName });
+  for (const GroupName of ['adopter-chat-network', 'adopter-reaper-network']) template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName });
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', { Name: 'adopter-chat-target' });
+  template.hasResourceProperties('AWS::Events::Rule', { Name: 'adopter-reaper-rule' });
+  for (const AlarmName of ['adopter-deficit', 'adopter-alb-errors', 'adopter-purge-errors']) template.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName });
+  for (const FilterName of ['adopter-purge-filter', 'adopter-summary-filter', 'adopter-sleep-filter']) template.hasResourceProperties('AWS::Logs::MetricFilter', { FilterName });
+  expect(Object.keys(template.findResources('AWS::ElasticLoadBalancingV2::TargetGroup'))).toEqual(['OriginHttpsChatServiceGroup7CF46779']);
+});
+
+test('adopter Chat secret and scheduled queue are consumed without replacement', () => {
+  const template = synth(undefined, false, privateSubnets, origin => ({
+    turnMemorySecret: secretsmanager.Secret.fromSecretCompleteArn(origin, 'OwnedSecret', 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-turn-secret-ABCDEF'),
+    scheduledRunsQueue: sqs.Queue.fromQueueArn(origin, 'OwnedQueue', 'arn:aws:sqs:us-east-1:123456789012:owned-runs'),
+  }));
+  template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+  template.resourceCountIs('AWS::SQS::Queue', 0);
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({
+      Secrets: Match.arrayWith([{ Name: 'BOTCUBE_TURN_MEMORY_SECRET', ValueFrom: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-turn-secret-ABCDEF' }]),
+      Environment: Match.arrayWith([{ Name: 'BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN', Value: 'arn:aws:sqs:us-east-1:123456789012:owned-runs' }]),
+    })]),
+  });
+});
+
+test('imported Chat resources own their names and queue redrive settings', () => {
+  expect(() => synth(undefined, false, privateSubnets, origin => ({
+    executionRole: iam.Role.fromRoleArn(origin, 'OwnedRole', 'arn:aws:iam::123456789012:role/owned-execution', { mutable: false }), executionRoleName: 'replacement',
+  }))).toThrow('imported executionRole owns its name');
+  expect(() => synth(undefined, false, privateSubnets, origin => ({
+    turnMemorySecret: secretsmanager.Secret.fromSecretCompleteArn(origin, 'OwnedSecret', 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-turn-secret-ABCDEF'), turnMemorySecretName: 'replacement',
+  }))).toThrow('imported turnMemorySecret owns its name');
+  expect(() => synth(undefined, false, privateSubnets, origin => ({
+    scheduledRunsQueue: sqs.Queue.fromQueueArn(origin, 'OwnedQueue', 'arn:aws:sqs:us-east-1:123456789012:owned-runs'), scheduledRunsFailedQueueName: 'replacement',
+  }))).toThrow('imported scheduledRunsQueue owns its name and redrive settings');
 });

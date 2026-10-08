@@ -1,9 +1,9 @@
 import { DescribeTasksCommand, ECSClient, type DescribeTasksCommandOutput } from '@aws-sdk/client-ecs';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../../../tests/chat/fakes/credentials.js';
-import type { UpstreamScript } from '../../../tests/chat/fakes/fake-agentcore.js';
-import { SchedulerView, createScheduledRuns } from '../../../tests/chat/fakes/scheduler.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../test/fakes/credentials.js';
+import type { UpstreamScript } from '../test/fakes/fake-agentcore.js';
+import { SchedulerView, createScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { ecsTaskDraining, pollScheduledRuns, sqsRunQueue, type RunQueue } from './scheduled-runs.js';

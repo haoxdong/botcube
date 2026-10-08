@@ -23,13 +23,14 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from importlib.metadata import EntryPoint, EntryPoints
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any, NoReturn, TypedDict
 
 import boto3
 import httpx
 import pytest
 import uvicorn
+from botcube_cartridge import HarnessDefinition
 from fastapi.testclient import TestClient
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -165,7 +166,7 @@ def _prepare_invocation(run: Any) -> serving.InvocationAuth:
     )
 
 
-def _definition(prepared: list[Path]) -> SimpleNamespace:
+def _definition(prepared: list[Path]) -> HarnessDefinition:
     def prepare_root(root: Path) -> None:
         prepared.append(root)
         (root / 'prepared.txt').write_text('ready')
@@ -173,7 +174,7 @@ def _definition(prepared: list[Path]) -> SimpleNamespace:
         skill.mkdir(parents=True, exist_ok=True)
         (skill / 'SKILL.md').write_text('---\nname: grounding\ndescription: Cite a source for every fact.\n---\n')
 
-    return SimpleNamespace(
+    return HarnessDefinition(
         skills=('/skills/',),
         agent_name='test-agent',
         system_prompt='',

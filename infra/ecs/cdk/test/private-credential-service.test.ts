@@ -1,3 +1,4 @@
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { ok as assert } from 'node:assert';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
@@ -7,7 +8,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import { PrivateCredentialService, type PrivateCredentialServiceProps } from '../lib/private-credential-service';
 
-function synth(legacyVault?: PrivateCredentialServiceProps['legacyVault'], corporate = false, invocationTokenLength?: number) {
+function synth(legacyVault?: PrivateCredentialServiceProps['legacyVault'], corporate = false, invocationTokenLength?: number, overrides: Partial<PrivateCredentialServiceProps> | ((stack: Stack) => Partial<PrivateCredentialServiceProps>) = {}) {
   const stack = new Stack(new App(), 'Credentials', { env: { account: '123456789012', region: 'us-east-1' } });
   const vpc = ec2.Vpc.fromVpcAttributes(stack, 'Vpc', {
     vpcId: 'vpc-fixture12345678', availabilityZones: ['us-east-1a', 'us-east-1c'],
@@ -28,7 +29,7 @@ function synth(legacyVault?: PrivateCredentialServiceProps['legacyVault'], corpo
     ...(invocationTokenLength === undefined ? {} : { invocationTokenLength }),
     rpcPath: '/rpc', environmentKeys: { port: 'SERVICE_PORT', invocationToken: 'RPC_TOKEN', keyId: 'KEY', vaultTable: 'VAULT', legacyVaultTable: 'LEGACY_VAULT' },
     namespaceName: 'test.internal', alertsTopicName: 'existing-alerts', port: 8081, parked: false,
-    authBrowserId: 'test_auth_browser-1234567890', agentComputerBrowserId: 'test_agent_computer-1234567890',
+    authBrowserId: 'test_auth_browser-1234567890', agentComputerBrowserId: 'test_agent_computer-1234567890', ...(typeof overrides === 'function' ? overrides(stack) : overrides),
   });
   return Template.fromStack(stack);
 }
@@ -273,4 +274,26 @@ test('corporate resources supply the real execution role and vault key without g
   template.resourceCountIs('AWS::KMS::Key', 0);
   for (const role of Object.values(template.findResources('AWS::IAM::Role'))) expect(role.Properties.PermissionsBoundary).toBe('arn:aws:iam::123456789012:policy/boundary');
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('corporate-ecs');
+});
+
+test('adopter names reach Credential Service tasks, roles, network, secret and error alarm', () => {
+  const template = synth(undefined, false, undefined, {
+    errorMetricFilterName: 'adopter-vault-filter', taskFamily: 'adopter-vault-task', taskRoleName: 'adopter-vault-role', executionRoleName: 'adopter-vault-execution',
+    securityGroupName: 'adopter-vault-network', invocationSecretName: 'adopter-vault-secret', errorAlarmName: 'adopter-vault-errors',
+  });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', { Family: 'adopter-vault-task' });
+  for (const RoleName of ['adopter-vault-role', 'adopter-vault-execution']) template.hasResourceProperties('AWS::IAM::Role', { RoleName });
+  template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: 'adopter-vault-network' });
+  template.hasResourceProperties('AWS::SecretsManager::Secret', { Name: 'adopter-vault-secret' });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName: 'adopter-vault-errors' });
+  template.hasResourceProperties('AWS::Logs::MetricFilter', { FilterName: 'adopter-vault-filter' });
+});
+
+test('adopter invocation secret is reused and retains ownership of its name', () => {
+  const imported = (stack: Stack) => secretsmanager.Secret.fromSecretCompleteArn(stack, 'OwnedSecret', 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF');
+  const template = synth(undefined, false, undefined, stack => ({ invocationSecret: imported(stack) }));
+  template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: [Match.objectLike({ Secrets: [{ Name: 'RPC_TOKEN', ValueFrom: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF' }] })] });
+  expect(() => synth(undefined, false, undefined, stack => ({ invocationSecret: imported(stack), invocationSecretName: 'replacement' }))).toThrow('imported invocationSecret owns its name');
+  expect(() => synth(undefined, true, undefined, { executionRoleName: 'replacement' })).toThrow('imported executionRole owns its name');
 });

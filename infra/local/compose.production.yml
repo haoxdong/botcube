@@ -1,0 +1,53 @@
+# Exercise deployable images with the local neutral infrastructure.
+services:
+  chat-table-init:
+    image: botcube-production-harness
+    build: &production-harness
+      context: ../../harness/deepagents
+      dockerfile: Dockerfile
+  vault-table-init:
+    image: botcube-production-credential
+    build: &production-credential
+      dockerfile: template/deploy/credential-service/Dockerfile
+      args:
+        BOTCUBE_ROOT: .
+  fake-site:
+    image: botcube-production-credential
+    build: *production-credential
+  chat-service:
+    image: botcube-production-chat
+    build:
+      dockerfile: template/chat/Dockerfile
+      args:
+        BOTCUBE_ROOT: .
+    environment:
+      BOTCUBE_LOCAL_HARNESS_URL: http://harness:8080
+      BOTCUBE_LOCAL_SESSION_API_URL: http://session-api:8081
+      TEMPLATE_CREDENTIAL_SERVICE_URL: http://credential-service:8081
+  credential-service:
+    image: botcube-production-credential
+    build: *production-credential
+    environment:
+      PORT: "8081"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/health"]
+  harness:
+    image: botcube-production-harness
+    build: *production-harness
+    environment:
+      BOTCUBE_CARTRIDGE_MODULE: botcube_template.harness
+  session-api:
+    image: botcube-production-session-api
+    build:
+      context: ../../harness/deepagents
+      dockerfile: session-api.Dockerfile
+    # Production uses Lambda's adapter; locally exercise that same installed
+    # package's HTTP entrypoint against the Harness checkpoints.
+    entrypoint: ["python", "-m", "botcube_harness_deepagents.session_api"]
+    command: []
+  ui:
+    image: botcube-production-ui
+    build:
+      dockerfile: ui/web/Dockerfile
+      args:
+        NEXT_PUBLIC_CHAT_SERVICE_URL: ${NEXT_PUBLIC_CHAT_SERVICE_URL:-http://localhost:${BOTCUBE_LOCAL_CHAT_PORT:-8123}}

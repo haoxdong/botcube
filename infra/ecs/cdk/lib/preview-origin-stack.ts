@@ -1,3 +1,4 @@
+import { optionalPhysicalName } from './physical-name.js';
 import * as path from 'node:path';
 import { CfnOutput, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -14,6 +15,16 @@ import { Construct } from 'constructs';
 import { isIP } from 'node:net';
 
 export interface PreviewOriginProps extends StackProps {
+  securityGroupName?: string;
+  connectionLogsBucketName?: string;
+  trustStoreName?: string;
+  loadBalancerName?: string;
+  /** Names for our handlers; CDK Provider framework helpers keep generated names. */
+  providerNames?: Partial<Record<'on_event' | 'is_complete', {
+    functionName?: string;
+    logGroupName?: string;
+    roleName?: string;
+  }>>;
   providerTimeoutSeconds?: number;
   providerLogRetention?: logs.RetentionDays;
   connectionLogExpirationDays?: number;
@@ -64,32 +75,36 @@ export class PreviewOriginStack extends Stack {
       availabilityZones: props.publicSubnets.map(s => s.availabilityZone),
       publicSubnetIds: props.publicSubnets.map(s => s.id),
     });
-    const securityGroup = this.securityGroup = new ec2.SecurityGroup(this, 'OriginIngress', { vpc, allowAllOutbound: false });
+    const securityGroup = this.securityGroup = new ec2.SecurityGroup(this, 'OriginIngress', { vpc, allowAllOutbound: false, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
     for (const cidr of props.cloudflareCidrs) {
       securityGroup.addIngressRule(cidr.includes(':') ? ec2.Peer.ipv6(cidr) : ec2.Peer.ipv4(cidr), ec2.Port.tcp(443), 'Cloudflare HTTPS');
     }
     // aws-cdk-lib's Bucket declares `T | undefined` getters where IBucket declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
     const connectionLogs = new s3.Bucket(this, 'ConnectionLogs', {
+      ...optionalPhysicalName('bucketName', props.connectionLogsBucketName),
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED, enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
       lifecycleRules: [{ expiration: Duration.days(props.connectionLogExpirationDays ?? 30) }],
     }) as s3.IBucket;
     const ca = new assets.Asset(this, 'OriginPullCa', { path: path.join(props.repositoryRoot, props.caPath) });
-    const trustStore = new elb.TrustStore(this, 'OriginTrust', { bucket: ca.bucket, key: ca.s3ObjectKey });
+    const trustStore = new elb.TrustStore(this, 'OriginTrust', { bucket: ca.bucket, key: ca.s3ObjectKey, ...optionalPhysicalName('trustStoreName', props.trustStoreName) });
     const token = secrets.Secret.fromSecretNameV2(this, 'CloudflareToken', props.tokenSecretName);
     const client = secrets.Secret.fromSecretNameV2(this, 'OriginClient', props.clientSecretName);
     const providerCode = lambda.Code.fromAsset(props.originProviderPath, {
       exclude: ['__pycache__', 'test_handler.py', 'parked-worker.test.ts'],
     });
-    const providerHandler = (handler: string) => {
+    const providerHandler = (handler: 'on_event' | 'is_complete') => {
+      const names = props.providerNames?.[handler];
       const fn = new lambda.Function(this, handler, {
+        ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
         environment: { TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname].join(',') },
-        logGroup: new logs.LogGroup(this, `${handler}Logs`, { retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
+        logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
+      if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
       token.grantRead(fn);
       client.grantRead(fn);
       fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['acm:RequestCertificate'], resources: ['*'] }));
@@ -139,6 +154,7 @@ export class PreviewOriginStack extends Stack {
     }
     const loadBalancer = new elb.ApplicationLoadBalancer(this, 'Origin', {
       vpc, internetFacing: true,
+      ...optionalPhysicalName('loadBalancerName', props.loadBalancerName),
       ...(props.subnets ? { vpcSubnets: props.subnets } : {}),
       securityGroup,
       dropInvalidHeaderFields: true, clientKeepAlive: Duration.seconds(props.clientKeepAliveSeconds ?? 60),

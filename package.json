@@ -1,0 +1,27 @@
+{
+  "name": "botcube",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test:chat": "scripts/heavy.sh vitest run --config vitest.chat.config.ts",
+    "test:chat:unit": "scripts/heavy.sh vitest run --config chat/vitest.config.ts",
+    "build": "scripts/heavy.sh sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-template-chat build'",
+    "build:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
+    "screenshots:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
+    "pretest:chat": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet && pnpm --filter botcube-template-chat build && template/deploy/stage-tools.sh'",
+    "pretest:chat:unit": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet'",
+    "storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1146.0",
+    "@aws-sdk/lib-dynamodb": "^3.1146.0",
+    "@types/node": "^24.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "esbuild": "^0.28.2"
+  }
+}

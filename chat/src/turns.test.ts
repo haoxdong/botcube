@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { HttpFake } from '../../../tests/chat/fakes/http-fake.js';
+import { HttpFake } from '../test/fakes/http-fake.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { HttpError } from './cartridge.js';

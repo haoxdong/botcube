@@ -1,7 +1,7 @@
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
-import { FakeSessionApi } from '../../../tests/chat/fakes/fake-backends.js';
+import { FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpError } from './cartridge.js';
 import { sessionApi, type SessionApi } from './session-api.js';
 

@@ -1,3 +1,4 @@
+import { resolveRepositoryRoot } from '../src/config/repository-root.js';
 import type { StorybookConfig } from '@storybook/nextjs-vite';
 import { CHAT_SERVICE_ORIGIN } from './chat-origin';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repo = path.resolve(app, '../../..');
+const repo = resolveRepositoryRoot(app, process.env.BOTCUBE_REPOSITORY_ROOT);
 const modules = JSON.parse(
   readFileSync(path.join(repo, 'node_modules/.modules.yaml'), 'utf8')
 ) as { virtualStoreDir: string };

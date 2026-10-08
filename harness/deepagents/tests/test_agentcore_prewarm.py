@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, NoReturn
 
 import pytest
+from botcube_cartridge import HarnessDefinition, InvocationAuth
 
 from agentcore_fake import EXCEPTIONS, MEMORY_ID, FakeAgentCoreMemory
 from botcube_harness_deepagents import serving
@@ -28,14 +29,20 @@ def memory(monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(serving, 'utc_now', lambda: NOW)
     serving.configure_harness_definition(
-        SimpleNamespace(
+        HarnessDefinition(
             skills=(),
             agent_name='prewarm',
             system_prompt='',
             no_persistent_memory_prompt='',
             execute_description='',
-            prepare_invocation=None,
-            environment_cache_key=None,
+            prepare_invocation=lambda _: InvocationAuth(ACTOR, True, None),
+            environment_cache_key=lambda _: (),
+            command_validator=lambda _: None,
+            prepare_root=lambda _: None,
+            build_shell_env=dict,
+            shell_timeout=10,
+            max_output_bytes=10000,
+            session_id_env_var='TEST_SESSION_ID',
         )
     )
     return FakeAgentCoreMemory()

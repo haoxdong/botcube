@@ -4,13 +4,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, FileSystem } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { cartridgeDeployRoot } from '../lib/cartridge.js';
+import { repositoryRoot, caPath, originProviderPath } from './origin-fixture';
 import { PreviewOriginStack, type PreviewOriginProps } from '../lib/preview-origin-stack.js';
 
-const repositoryRoot = path.resolve(__dirname, '../../../../..');
-const deployRoot = cartridgeDeployRoot();
-const caPath = path.relative(repositoryRoot, path.join(deployRoot, 'ecs/cloudflare-origin-pull-ca.crt'));
-const originProviderPath = path.join(deployRoot, 'ecs/origin-provider');
 const props: PreviewOriginProps = {
   hostname: 'preview.example.com',
   production: { hostname: 'api.example.com' },
@@ -210,4 +206,27 @@ test('the stack outputs the ids later deploy steps read', () => {
     LoadBalancerArn: { Value: { Ref: 'OriginBCF5A9D0' } },
     OriginDnsName: { Value: { 'Fn::GetAtt': ['OriginBCF5A9D0', 'DNSName'] } },
   });
+});
+
+test('adopters name origin resources and both provider handlers without naming CDK helpers', () => {
+  const template = Template.fromStack(new PreviewOriginStack(new App(), 'NamedOrigin', {
+    ...props, securityGroupName: 'adopter-ingress', connectionLogsBucketName: 'adopter-origin-logs',
+    trustStoreName: 'adopter-trust', loadBalancerName: 'adopter-origin',
+    providerNames: {
+      on_event: { functionName: 'adopter-event', logGroupName: '/adopter/event', roleName: 'adopter-event-role' },
+      is_complete: { functionName: 'adopter-complete', logGroupName: '/adopter/complete', roleName: 'adopter-complete-role' },
+    },
+  }));
+  template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: 'adopter-ingress' });
+  template.hasResourceProperties('AWS::S3::Bucket', { BucketName: 'adopter-origin-logs' });
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TrustStore', { Name: 'adopter-trust' });
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', { Name: 'adopter-origin' });
+  for (const [functionName, logGroupName, roleName] of [
+    ['adopter-event', '/adopter/event', 'adopter-event-role'],
+    ['adopter-complete', '/adopter/complete', 'adopter-complete-role'],
+  ]) {
+    template.hasResourceProperties('AWS::Lambda::Function', { FunctionName: functionName });
+    template.hasResourceProperties('AWS::Logs::LogGroup', { LogGroupName: logGroupName });
+    template.hasResourceProperties('AWS::IAM::Role', { RoleName: roleName });
+  }
 });

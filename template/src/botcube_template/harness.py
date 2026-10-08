@@ -5,39 +5,15 @@ import json
 import re
 import shlex
 import shutil
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from botcube_cartridge import HarnessDefinition, InvocationAuth
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _IDENTITY = json.loads((_PACKAGE_ROOT / 'identity.json').read_text(encoding='utf8'))
 _SHELL_OPERATOR = re.compile(r'[;&|`$<>\r\n]')
-
-
-@dataclass(frozen=True)
-class InvocationAuth:
-    actor_id: str | None
-    persistent_memory: bool
-    environment: Mapping[str, str] | None
-    model_relay: None = None
-
-
-@dataclass(frozen=True)
-class HarnessDefinition:
-    skills: Sequence[str]
-    agent_name: str
-    system_prompt: str
-    no_persistent_memory_prompt: str
-    execute_description: str
-    prepare_invocation: Callable[[Any], InvocationAuth]
-    command_validator: Callable[[str], str | None]
-    prepare_root: Callable[[Path], None]
-    build_shell_env: Callable[[Mapping[str, str]], dict[str, str]]
-    shell_timeout: int
-    max_output_bytes: int
-    session_id_env_var: str
-    environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
 
 
 def _prepare_invocation(input_data: Any) -> InvocationAuth:

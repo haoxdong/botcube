@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpError } from './cartridge.js';
-import { HttpFake } from '../../../tests/chat/fakes/http-fake.js';
-import { RUNTIME_ARN } from '../../../tests/chat/fakes/stack.js';
+import { HttpFake } from '../test/fakes/http-fake.js';
+import { RUNTIME_ARN } from '../test/fakes/stack.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';

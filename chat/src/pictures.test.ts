@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { picture, pictureUrl } from './pictures.js';
 
-// Existing 1x1 PNG from agent-documents.test.ts. The padded-size shape already
-// appears in tests/chat/agent-documents.test.ts's oversized-picture refusal.
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const pngAtSize = (bytes: number) => {
   const data = Buffer.from(PNG.slice('data:image/png;base64,'.length), 'base64');

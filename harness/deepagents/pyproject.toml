@@ -5,6 +5,7 @@ description = "Deep Agents implementation of the BotCube Harness contract."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "botcube-cartridge",
   "aiosqlite>=0.22.1",
   "aws-opentelemetry-distro>=0.21.0",
   "opentelemetry-instrumentation-langchain>=0.62.4",
@@ -44,6 +45,9 @@ contract-pins = [
   "strands-agents-tools==0.8.9",
 ]
 
+[tool.uv.sources]
+botcube-cartridge = { path = "../../cartridge", editable = true }
+
 [tool.pyright]
 # Check against the oldest supported Python, which Presubmit runs.
 pythonVersion = "3.11"
@@ -52,12 +56,8 @@ reportMissingParameterType = "error"
 # Generic types carry their type arguments, and no parameter type is unknown.
 reportMissingTypeArgument = "error"
 reportUnknownParameterType = "error"
-# The loose scripts run in this environment (they import the Harness or
-# boto3), so its gate covers them too (ADR 0066: no unchecked Python).
 include = [
   ".",
-  "../../../scripts/check_prompt_caching.py",
-  "../../../scripts/history-credential-scan.py",
   "../../infra/local/init-chat-table.py",
 ]
 

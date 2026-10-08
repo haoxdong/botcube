@@ -128,6 +128,8 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
   securityGroups?: ec2.ISecurityGroup[];
+  /** Name for the fallback group created when securityGroups are omitted. */
+  runtimeSecurityGroupName?: string;
   kmsKey?: kms.IKey;
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
@@ -284,7 +286,12 @@ export class AgentCoreStack extends Stack {
         const subnetIds = props.vpc.selectSubnets(props.subnets).subnetIds;
         if (!subnetIds.length) throw new Error('Runtime VPC requires at least one subnet');
         const groups = props.securityGroups ?? [
-          new ec2.SecurityGroup(this, 'RuntimeSecurityGroup', { vpc: props.vpc }),
+          new ec2.SecurityGroup(this, 'RuntimeSecurityGroup', {
+            vpc: props.vpc,
+            ...(props.runtimeSecurityGroupName !== undefined
+              ? { securityGroupName: props.runtimeSecurityGroupName }
+              : {}),
+          }),
         ];
         if (!groups.length) throw new Error('Runtime VPC requires at least one security group');
         cfnRuntime.networkConfiguration = {

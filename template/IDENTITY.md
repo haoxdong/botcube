@@ -39,11 +39,16 @@ Every web UI plugin slot has a working default in `ui/web/src`, drawn with the a
 - the auth provider and Sign-ins tab link the template site.
 
 Restyle them through the theme, or replace a slot's component in `ui/web/src/index.ts`.
-Preview every slot on phone and desktop with the template Storybook:
+From the public repository root, preview every slot on phone and desktop with
+the template Storybook:
 
 ```sh
-CARTRIDGE_STORYBOOK_BUILD_CONFIG=botcube/template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook
+corepack pnpm storybook
 ```
+
+Screenshot capture requires Playwright Chromium or `CHROMIUM_PATH` pointing to
+your Chromium executable. Run `corepack pnpm screenshots:storybook -- <out-dir>`
+from the public repository root.
 
 The ECS CDK app also needs the latency event names emitted by your UI.
 The template does not include a latency budget file.
@@ -52,7 +57,7 @@ For example, after installing the CDK package dependencies, synthesize the found
 
 ```sh
 CARTRIDGE_DEPLOY_ROOT="$PWD/template/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
-  pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
+  corepack pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
   -c 'webLatencyMoments=["first-response","tool-result"]'
 ```
 

@@ -1,3 +1,4 @@
+import { optionalPhysicalName } from './physical-name.js';
 import { CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -5,6 +6,9 @@ import * as rum from 'aws-cdk-lib/aws-rum';
 import { Construct } from 'constructs';
 
 export interface WebLatencyStackProps extends StackProps {
+  identityPoolName?: string;
+  guestRoleName?: string;
+  readerRoleName?: string;
   sessionSampleRate?: number;
   appMonitorName: string;
   /** The hostnames whose pages report, each the web's own or its Dev environment's. */
@@ -26,8 +30,9 @@ const WEB_LATENCY_NAMESPACE = 'WebLatency';
 export class WebLatencyStack extends Stack {
   constructor(scope: Construct, id: string, props: WebLatencyStackProps) {
     super(scope, id, props);
-    const pool = new cognito.CfnIdentityPool(this, 'Guests', { allowUnauthenticatedIdentities: true });
+    const pool = new cognito.CfnIdentityPool(this, 'Guests', { allowUnauthenticatedIdentities: true, ...optionalPhysicalName('identityPoolName', props.identityPoolName) });
     const guest = new iam.Role(this, 'Guest', {
+      ...optionalPhysicalName('roleName', props.guestRoleName),
       assumedBy: new iam.FederatedPrincipal('cognito-identity.amazonaws.com', {
         StringEquals: { 'cognito-identity.amazonaws.com:aud': pool.ref },
         'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': 'unauthenticated' },
@@ -66,6 +71,7 @@ export class WebLatencyStack extends Stack {
     });
     // The daily Latency budgets workflow reads the metrics, and nothing else, from main.
     const reader = new iam.Role(this, 'Reader', {
+      ...optionalPhysicalName('roleName', props.readerRoleName),
       assumedBy: new iam.FederatedPrincipal(this.formatArn({ service: 'iam', region: '', resource: 'oidc-provider', resourceName: 'token.actions.githubusercontent.com' }), {
         StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': props.readerSubject },
       }, 'sts:AssumeRoleWithWebIdentity'),

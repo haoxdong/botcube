@@ -9,12 +9,12 @@ import { createChatService, type ChatServiceConfig } from '../src/server.js';
 import { DynamoDBSessionMetadata } from '../src/session-metadata.js';
 import { ScheduledTasks } from '../src/scheduled-tasks.js';
 import { sqsRunQueue, type RunQueue } from '../src/scheduled-runs.js';
-import { SchedulerView, createScheduledRuns } from '../../../tests/chat/fakes/scheduler.js';
-import { FakeAgentCore } from '../../../tests/chat/fakes/fake-agentcore.js';
-import { FakeBedrock, FakeSessionApi } from '../../../tests/chat/fakes/fake-backends.js';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from '../../../tests/chat/fakes/stack.js';
+import { SchedulerView, createScheduledRuns } from './fakes/scheduler.js';
+import { FakeAgentCore } from './fakes/fake-agentcore.js';
+import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 // Types the run's moto endpoint, which the shared global setup provides as `dynamodbEndpoint`.
-import type {} from '../../../tests/chat/fakes/global-setup.js';
+import type {} from './fakes/global-setup.js';
 
 /** The account every request acts as, unless a test's Cartridge resolves another. */
 const OWNER = 'account-1';

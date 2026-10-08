@@ -4,6 +4,7 @@ ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
 FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_IMAGE}
 COPY --from=uv /uv /usr/local/bin/uv
+COPY cartridge/ /opt/cartridge/
 COPY credential-service/ /opt/credential-service/
 COPY template/ /opt/template/
 WORKDIR /opt/template

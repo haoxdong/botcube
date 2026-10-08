@@ -1,17 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { CfnRuntime } from 'aws-cdk-lib/aws-bedrockagentcore';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { applyRuntimeNetwork } from '../lib/runtime-network';
 
 test('runtime uses private subnets and the service-owned group while retaining its artifact and identity', () => {
-  const regression = JSON.parse(
-    readFileSync(
-      resolve(__dirname, '../../../../../contract/regressions/agentcore-private-credential-path.json'),
-      'utf8'
-    )
-  );
   const stack = new Stack(new App(), 'Test');
   const runtime = new CfnRuntime(stack, 'Runtime', {
     agentRuntimeName: 'test_runtime',
@@ -19,7 +11,7 @@ test('runtime uses private subnets and the service-owned group while retaining i
     agentRuntimeArtifact: {
       containerConfiguration: { containerUri: '123456789012.dkr.ecr.us-east-1.amazonaws.com/test:unchanged' },
     },
-    networkConfiguration: { networkMode: regression.before.networkMode },
+    networkConfiguration: { networkMode: 'PUBLIC' },
   });
   applyRuntimeNetwork(runtime, {
     securityGroupParameterName: '/test/agent-network',
@@ -27,11 +19,12 @@ test('runtime uses private subnets and the service-owned group while retaining i
   });
   Template.fromStack(stack).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
     AgentRuntimeName: 'test_runtime',
+    RoleArn: 'arn:aws:iam::123456789012:role/test',
     AgentRuntimeArtifact: {
       ContainerConfiguration: { ContainerUri: '123456789012.dkr.ecr.us-east-1.amazonaws.com/test:unchanged' },
     },
     NetworkConfiguration: {
-      NetworkMode: regression.expectedNetworkMode,
+      NetworkMode: 'VPC',
       NetworkModeConfig: {
         Subnets: ['subnet-fixture11111111', 'subnet-fixture22222222'],
         SecurityGroups: [Match.anyValue()],

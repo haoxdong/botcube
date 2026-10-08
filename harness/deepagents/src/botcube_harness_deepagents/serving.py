@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, RunFinishedEvent
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
+from botcube_cartridge import HarnessDefinition, InvocationAuth, ModelRelay
 from deepagents.backends import LocalShellBackend
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -62,7 +63,7 @@ from .files_sync import (
     files_prompt,
     pop_files_sync,
 )
-from .llm import ModelRelay, PlanUsageError, build_model, resolve_effort, resolve_model
+from .llm import PlanUsageError, build_model, resolve_effort, resolve_model
 from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
@@ -102,15 +103,6 @@ LTM_SPILLOVER_NOTE = (
     'Use agent_core_memory retrieve to search beyond the startup memory block.'
 )
 
-@dataclass(frozen=True)
-class InvocationAuth:
-    actor_id: str | None
-    persistent_memory: bool
-    environment: Mapping[str, str] | None
-    # Where the Turn's plan model calls go; None when the Turn has no Credential Service binding.
-    model_relay: ModelRelay | None = None
-
-
 class MissingUserIdError(RuntimeError):
     """The invocation carries no user ID; only the Chat Service resolves identity (ADR 0068)."""
 
@@ -149,7 +141,7 @@ def configure_harness(cartridge: HarnessCartridge) -> None:
     _cartridge = cartridge
 
 
-def configure_harness_definition(definition: Any) -> None:
+def configure_harness_definition(definition: HarnessDefinition) -> None:
     """Adapt a framework-neutral Cartridge definition to this Harness."""
 
     def build_backend(environment: dict[str, str]) -> PolicyShellBackend:

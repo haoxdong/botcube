@@ -15,7 +15,7 @@
     "build": "next build --webpack",
     "start": "serve .next-standalone --listen ${PORT:-3001}",
     "storybook": "storybook dev --port 6006",
-    "build:storybook": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --max-old-space-size=4096\" ../../../scripts/heavy.sh storybook build --output-dir storybook-static",
+    "build:storybook": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --max-old-space-size=4096\" ../../scripts/heavy.sh storybook build --output-dir storybook-static",
     "screenshots:storybook": "sh screenshots.sh",
     "prestorybook": "msw init .storybook/public --save",
     "prebuild:storybook": "msw init .storybook/public --save"
@@ -64,7 +64,8 @@
     "storybook": "^10.6.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "supports-color": "^7.2.0"
   },
   "msw": {
     "workerDirectory": [

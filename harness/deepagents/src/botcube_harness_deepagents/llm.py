@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from botcube_cartridge import ModelRelay
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import SimpleChatModel
 from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
@@ -25,22 +25,6 @@ DEFAULT_MAX_TOKENS = 128
 PLAN_MODEL_PREFIX = 'openai-plan:'
 # The `type` of the classified Plan Usage errors the Credential Service relay answers.
 PLAN_USAGE_ERROR_TYPE = 'plan_usage'
-
-
-@dataclass(frozen=True)
-class ModelRelay:
-    """Where a plan model's calls go: the Credential Service relay, which attaches the plan's token.
-
-    The Harness holds only the Turn's invocation token, never a ChatGPT token (ADR 0078 decision 4).
-    """
-
-    base_url: str
-    # The Turn's Credential Service invocation token.
-    token: str
-    # The headers naming the Turn's account and Session to the relay.
-    headers: Mapping[str, str]
-    # The Turn's Session: each of its model calls asks for the prompt cache under it, as Codex does.
-    session_id: str
 
 
 class PlanUsageError(RuntimeError):

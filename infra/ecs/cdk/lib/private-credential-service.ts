@@ -1,3 +1,4 @@
+import { optionalPhysicalName } from './physical-name.js';
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
@@ -11,8 +12,19 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as discovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import { Construct } from 'constructs';
+import { nameTaskRoles } from './task-role-names.js';
 
 export interface PrivateCredentialServiceProps {
+  /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
+  environment?: Record<string, string>;
+  invocationSecret?: secretsmanager.ISecret;
+  errorMetricFilterName?: string;
+  taskFamily?: string;
+  taskRoleName?: string;
+  executionRoleName?: string;
+  securityGroupName?: string;
+  invocationSecretName?: string;
+  errorAlarmName?: string;
   executionRole?: iam.IRole;
   kmsKey?: kms.IKey;
   permissionsBoundary?: iam.IManagedPolicy;
@@ -65,12 +77,13 @@ export class PrivateCredentialService extends Construct {
   readonly task: ecs.FargateTaskDefinition;
   readonly container: ecs.ContainerDefinition;
   readonly url: string;
-  readonly invocationSecret: secretsmanager.Secret;
+  readonly invocationSecret: secretsmanager.Secret | secretsmanager.ISecret;
   /** The private DNS namespace the Harness resolves its callees in. */
   readonly namespace: discovery.PrivateDnsNamespace;
 
   constructor(scope: Construct, id: string, props: PrivateCredentialServiceProps) {
     super(scope, id);
+    if (props.invocationSecret && (props.invocationSecretName !== undefined || props.invocationTokenLength !== undefined)) throw new Error('An imported invocationSecret owns its name and value; omit secret creation options');
     const invocationTokenLength = props.invocationTokenLength ?? 64;
     // 32 alphanumeric characters provide about 190 bits of entropy for the owner-only ingest signing key.
     if (!Number.isInteger(invocationTokenLength) || invocationTokenLength < 32) {
@@ -78,14 +91,16 @@ export class PrivateCredentialService extends Construct {
     }
     const stack = Stack.of(this);
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
-    const network = new ec2.SecurityGroup(this, 'Network', { vpc: props.cluster.vpc });
+    const network = new ec2.SecurityGroup(this, 'Network', { vpc: props.cluster.vpc, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
     network.connections.allowFrom(props.chatNetwork, ec2.Port.tcp(props.port), 'Chat Service RPC');
     network.connections.allowFrom(props.agentNetwork, ec2.Port.tcp(props.port), 'Harness RPC');
     const task = this.task = new ecs.FargateTaskDefinition(this, 'Task', {
+      ...optionalPhysicalName('family', props.taskFamily),
       cpu: props.cpu ?? 512, memoryLimitMiB: props.memoryLimitMiB ?? 1024,
       ...(props.executionRole ? { executionRole: props.executionRole } : {}),
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
+    nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
     const key = props.kmsKey ?? new kms.Key(this, 'VaultKey', {
       enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN,
     });
@@ -130,7 +145,8 @@ export class PrivateCredentialService extends Construct {
       resources: [props.authBrowserId, props.agentComputerBrowserId].map(resourceName =>
         stack.formatArn({ service: 'bedrock-agentcore', resource: 'browser-custom', resourceName })),
     }));
-    this.invocationSecret = new secretsmanager.Secret(this, 'InvocationSecret', {
+    this.invocationSecret = props.invocationSecret ?? new secretsmanager.Secret(this, 'InvocationSecret', {
+      ...optionalPhysicalName('secretName', props.invocationSecretName),
       generateSecretString: { passwordLength: invocationTokenLength, excludePunctuation: true },
     });
     const logGroup = new logs.LogGroup(this, 'Logs', {
@@ -139,6 +155,7 @@ export class PrivateCredentialService extends Construct {
     this.container = task.addContainer('credential-service', {
       image: props.image, portMappings: [{ containerPort: props.port }],
       environment: {
+        ...props.environment,
         AWS_REGION: stack.region, [props.environmentKeys.port]: String(props.port),
         [props.environmentKeys.keyId]: key.keyArn, [props.environmentKeys.vaultTable]: table.tableName,
         ...(legacy && props.legacyVault?.mirrored ? { [props.environmentKeys.legacyVaultTable]: legacy.tableName } : {}),
@@ -169,10 +186,12 @@ export class PrivateCredentialService extends Construct {
     });
     this.url = `http://${props.dnsName ?? 'credentials'}.${props.namespaceName}:${props.port}${props.rpcPath}`;
     const errors = new logs.MetricFilter(this, 'Errors', {
+      ...optionalPhysicalName('filterName', props.errorMetricFilterName),
       logGroup, filterPattern: logs.FilterPattern.anyTerm('ERROR', 'Traceback'),
       metricNamespace: `${props.cluster.clusterName}/CredentialService`, metricName: 'Errors', metricValue: '1', defaultValue: 0,
     });
     const alarm = new cloudwatch.Alarm(this, 'ErrorAlarm', {
+      ...optionalPhysicalName('alarmName', props.errorAlarmName),
       metric: errors.metric({ period: Duration.seconds(props.errorAlarmPeriodSeconds ?? 300), statistic: 'Sum' }),
       threshold: props.errorAlarmThreshold ?? 1, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });

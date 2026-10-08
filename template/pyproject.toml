@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Neutral template Cartridge for BotCube."
 requires-python = ">=3.11"
 dependencies = [
+  "botcube-cartridge",
     "botcube-credential-service",
     "uvicorn>=0.34",
 ]
@@ -18,13 +19,14 @@ template = "botcube_template.harness:CARTRIDGE"
 [dependency-groups]
 dev = [
   "botcube-harness-deepagents",
-  "moto[dynamodb,kms]>=5",
+  "moto[dynamodb,kms,scheduler,sqs,server]>=5",
   "mutmut==3.8.0",
   "pyright==1.1.414",
   "pytest>=9.1.1",
 ]
 
 [tool.uv.sources]
+botcube-cartridge = { path = "../cartridge", editable = true }
 botcube-harness-deepagents = { path = "../harness/deepagents", editable = true }
 botcube-credential-service = { path = "../credential-service", editable = true }
 

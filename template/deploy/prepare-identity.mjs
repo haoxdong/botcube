@@ -28,16 +28,7 @@ const nameFields =
   "aws.agentCore.privateNatBrowser.name": "botcube_provider_link",
   "aws.agentCore.privateNatBrowser.extension.prefix": "botcube/browser-extensions/provider-user-agent/v2.zip",
   "aws.ecs.privateNamespace": "botcube.internal",
-  "aws.ecs.credentialService.rpcPath": "/botcube",
-  "aws.ecs.credentialService.environmentKeys.url": "BOTCUBE_CREDENTIAL_SERVICE_URL",
-  "aws.ecs.credentialService.environmentKeys.invocationToken": "BOTCUBE_CREDENTIAL_SERVICE_INVOCATION_TOKEN",
-  "aws.ecs.credentialService.environmentKeys.port": "BOTCUBE_CREDENTIAL_SERVICE_PORT",
-  "aws.ecs.credentialService.environmentKeys.keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
-  "aws.ecs.credentialService.environmentKeys.vaultTable": "BOTCUBE_VAULT_TABLE",
-  "aws.ecs.credentialService.environmentKeys.legacyVaultTable": "BOTCUBE_LEGACY_VAULT_TABLE",
   "aws.ecs.chatService.planUsageOwnerAccountParameter": "/botcube/plan-usage/owner-account-id",
-  "aws.ecs.chatService.environmentKeys.planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
-  "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "BOTCUBE_AGENT_COMPUTER_CDP_URL",
   "aws.ecs.chatService.environmentKeys.filesBucket": "BOTCUBE_FILES_BUCKET",
   "aws.ecs.chatService.environmentKeys.filesFileSystemArn": "BOTCUBE_FILES_FILE_SYSTEM_ARN",
   "aws.ecs.chatService.environmentKeys.agentComputerPolicyBucket": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
@@ -71,11 +62,23 @@ const nameFields =
   "github.environment": "botcube-production",
   "github.variables.ecsDeployRoleArn": "BOTCUBE_ECS_DEPLOY_ROLE_ARN"
 };
-for (const [path, pattern] of Object.entries(nameFields)) {
+// Runtime variable names belong to the Cartridge protocol, not its display name.
+const runtimeFields = {
+  "aws.ecs.credentialService.rpcPath": "",
+  "aws.ecs.credentialService.environmentKeys.url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
+  "aws.ecs.credentialService.environmentKeys.invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
+  "aws.ecs.credentialService.environmentKeys.port": "PORT",
+  "aws.ecs.credentialService.environmentKeys.keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
+  "aws.ecs.credentialService.environmentKeys.vaultTable": "BOTCUBE_VAULT_TABLE",
+  "aws.ecs.credentialService.environmentKeys.legacyVaultTable": "BOTCUBE_LEGACY_VAULT_TABLE",
+  "aws.ecs.chatService.environmentKeys.planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
+  "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "TEMPLATE_COMPUTER_CDP_URL"
+};
+for (const [path, pattern] of Object.entries({ ...nameFields, ...runtimeFields })) {
   const parts = path.split('.');
   const key = parts.pop();
   const owner = parts.reduce((value, part) => value[part], deployment);
-  owner[key] = pattern.replaceAll('BOTCUBE', upper).replace(/botcube(?=_)/g, underscore).replaceAll('botcube', kebab);
+  owner[key] = path in runtimeFields ? pattern : pattern.replaceAll('BOTCUBE', upper).replace(/botcube(?=_)/g, underscore).replaceAll('botcube', kebab);
 }
 const agentcore = read('deploy/agentcore/agentcore.json');
 agentcore.name = underscore.replaceAll('_', '');

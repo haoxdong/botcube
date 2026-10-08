@@ -16,6 +16,8 @@ def local_checkout(tmp_path: Path) -> Path:
         destination = cube / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / relative, destination)
+    shutil.copytree(source / 'cartridge/src', cube / 'cartridge/src')
+    shutil.copyfile(source / 'cartridge/pyproject.toml', cube / 'cartridge/pyproject.toml')
     deploy = cube / 'template/deploy'
     (deploy / 'bin').mkdir()
     (deploy / 'bin/template-cli').write_text('cli')
@@ -49,7 +51,7 @@ printf browser > "$2/agent-browser-linux-arm64"
 ''',
         'docker': '''#!/bin/sh
 set -eu
-for artifact in bin/template-cli package.json cartridge/template.whl agent-browser-linux-x64 agent-browser-linux-arm64; do
+for artifact in cartridge-contract/pyproject.toml cartridge-contract/src/botcube_cartridge/__init__.py bin/template-cli package.json cartridge/template.whl agent-browser-linux-x64 agent-browser-linux-arm64; do
   test -f "$LOCAL_CUBE/harness/deepagents/.tool-dist/$artifact" || exit 32
 done
 printf '%s\\n' "$@"

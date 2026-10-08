@@ -52,21 +52,21 @@
           "tableName": "credential-vault",
           "mirrored": false
         },
-        "rpcPath": "/bot-cube",
+        "rpcPath": "",
         "environmentKeys": {
-          "url": "BOT_CUBE_CREDENTIAL_SERVICE_URL",
-          "invocationToken": "BOT_CUBE_CREDENTIAL_SERVICE_INVOCATION_TOKEN",
-          "port": "BOT_CUBE_CREDENTIAL_SERVICE_PORT",
-          "keyId": "BOT_CUBE_VAULT_KMS_KEY_ID",
-          "vaultTable": "BOT_CUBE_VAULT_TABLE",
-          "legacyVaultTable": "BOT_CUBE_LEGACY_VAULT_TABLE"
+          "url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
+          "invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
+          "port": "PORT",
+          "keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
+          "vaultTable": "BOTCUBE_VAULT_TABLE",
+          "legacyVaultTable": "BOTCUBE_LEGACY_VAULT_TABLE"
         }
       },
       "chatService": {
         "planUsageOwnerAccountParameter": "/bot-cube/plan-usage/owner-account-id",
         "environmentKeys": {
-          "planUsageOwnerAccountId": "BOT_CUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
-          "agentComputerCdpUrl": "BOT_CUBE_AGENT_COMPUTER_CDP_URL",
+          "planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
+          "agentComputerCdpUrl": "TEMPLATE_COMPUTER_CDP_URL",
           "filesBucket": "BOT_CUBE_FILES_BUCKET",
           "filesFileSystemArn": "BOT_CUBE_FILES_FILE_SYSTEM_ARN",
           "agentComputerPolicyBucket": "BOT_CUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",

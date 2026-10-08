@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { HttpError } from './cartridge.js';
-import { HttpFake } from '../../../tests/chat/fakes/http-fake.js';
+import { HttpFake } from '../test/fakes/http-fake.js';
 
 // Each request acts as the account its x-account header names.
 let stack: InProcessStack;

@@ -10,8 +10,11 @@ fixture for BotCube's tests. It provides:
 - a fake HTTP site with a login page and authenticated data;
 - no external provider, product, or AWS credentials.
 
-Install workspace dependencies with `pnpm install --frozen-lockfile` and have
-`uv` available. Run the complete stack through `../infra/local/run.sh`; it stages
+Install Node.js 24 or newer, Corepack, npm, uv, and Docker with Compose. From the
+public repository root, use the pinned `pnpm@12.10.1` with
+`corepack pnpm install --frozen-lockfile`. Browser staging
+needs registry access or a populated npm cache. Run the complete stack through
+`infra/local/run.sh`; it stages
 the Harness CLI, Cartridge wheel and browser tools before building. Browser staging
 uses `npm ci` with the shipped release lockfile and needs Node.js 24 or newer,
 `npm`, and access to the npm registry or a populated npm cache. It works from
@@ -41,9 +44,9 @@ request. Neither the CLI nor the Harness receives a site credential. Unlinking
 deletes the vaulted credential; the next CLI call exits with sign-in needed.
 
 `deploy/stage-tools.sh` stages the CLI executable and Cartridge wheel for the
-Harness image. The packaged skill drives that executable. `pnpm test:chat` also
-runs the template Chat Service against a real local Harness with a scripted test
-model that reads the loaded skill and executes its command.
+Harness image. The packaged skill drives that executable. From the public repository root, `pnpm test:chat --reporter=verbose` runs generic
+Chat Service unit tests and neutral HTTP smoke. `pnpm test:chat:unit` runs only
+the generic unit tests.
 
 The Agent Computer is a real local Chromium browser with a private profile for
 each Account's Session. The Chat Service container installs Chromium and opens
@@ -75,7 +78,7 @@ unlinked, Main Chat reports that the task could not finish and the composer
 shows Sign in needed. Completing sign-in clears the chip. The local failure
 indicator resets when the Chat Service restarts, like local Account sessions.
 
-`pnpm test:chat tests/chat/template-stack.test.ts --reporter=verbose` exercises
-the scheduled proposal, HTTP confirmation, local queue delivery, CLI data read,
-and unlinked refusal with stand-ins. The scripted model is a test fixture; the
-local echo model does not propose tool calls.
+Run `pnpm test:chat --reporter=verbose` from the public repository root for
+generic Chat Service unit tests and neutral HTTP smoke. The local echo model
+does not propose tool calls. Exercise scheduled tool execution with your
+Cartridge's configured model and providers.

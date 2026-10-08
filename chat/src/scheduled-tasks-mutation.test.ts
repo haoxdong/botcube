@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { SchedulerClient, type UpdateScheduleCommandInput } from '@aws-sdk/client-scheduler';
 import { beforeEach, describe, expect, inject, it } from 'vitest';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../../../tests/chat/fakes/stack.js';
-import { createScheduledRuns, SchedulerView } from '../../../tests/chat/fakes/scheduler.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
+import { createScheduledRuns, SchedulerView } from '../test/fakes/scheduler.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
 
 const BRIEF = { title: 'Brief', prompt: 'Summarize overnight news', schedule: 'rate(1 day)', timezone: 'America/New_York' };

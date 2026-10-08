@@ -9,7 +9,7 @@ import { createChatService, type ChatServiceConfig } from './server.js';
 import type { SessionMetadata } from './session-metadata.js';
 import { buildDirectAgent } from '../../ui/web/src/app/conversations.js';
 import { defined } from '../test/defined.js';
-import { FakeBedrock } from '../../../tests/chat/fakes/fake-backends.js';
+import { FakeBedrock } from '../test/fakes/fake-backends.js';
 
 // The local-development path (BOTCUBE_LOCAL_HARNESS_URL), which the
 // parity suite cannot reach: it always runs against the AgentCore endpoint.

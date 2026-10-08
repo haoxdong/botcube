@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -10,8 +9,8 @@ let savedEnvironment: NodeJS.ProcessEnv;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'standalone-latency-'));
-  const archive = execFileSync('git', ['archive', 'HEAD:botcube'], { cwd: path.resolve(__dirname, '../../../../..'), maxBuffer: 16 * 1024 * 1024 });
-  execFileSync('tar', ['-xf', '-', '-C', root], { input: archive });
+  fs.mkdirSync(path.join(root, 'template/deploy'), { recursive: true });
+  fs.copyFileSync(path.resolve(__dirname, '../../../../template/deploy/identity.json'), path.join(root, 'template/deploy/identity.json'));
   savedEnvironment = { ...process.env };
   process.env.BOTCUBE_REPOSITORY_ROOT = root;
   process.env.CARTRIDGE_DEPLOY_ROOT = path.join(root, 'template/deploy');

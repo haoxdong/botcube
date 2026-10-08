@@ -1,3 +1,4 @@
+import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App, CfnOutput, Duration, Tags } from 'aws-cdk-lib';
@@ -90,9 +91,18 @@ interface DeployIdentity {
 }
 
 export interface ProductionOptions {
-  originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps, 'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds'>;
+  originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
+    'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
+    'securityGroupName' | 'connectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
+      agentNetworkSecurityGroupName?: string;
+      agentComputerSecurityGroupName?: string;
+      filesMountTargetsSecurityGroupName?: string;
+      agentComputerBrowserRoleName?: string;
+      filesSyncRoleName?: string;
+    };
+  storage?: Omit<import('./chat-storage-stack.js').ChatStorageProps, keyof import('aws-cdk-lib').StackProps | 'corsOrigins'>;
   apiHealth?: Pick<import('./api-health-stack.js').ApiHealthStackProps, 'requestIntervalSeconds' | 'failureThreshold' | 'evaluationPeriods'>;
-  webLatency?: Partial<Pick<import('./web-latency-stack.js').WebLatencyStackProps, 'sessionSampleRate' | 'moments'>>;
+  webLatency?: Partial<Pick<import('./web-latency-stack.js').WebLatencyStackProps, 'sessionSampleRate' | 'moments' | 'identityPoolName' | 'guestRoleName' | 'readerRoleName'>>;
   chatTableName?: string;
   executionRole?: iam.IRole;
   vpc?: ec2.IVpc;
@@ -133,7 +143,7 @@ export function parkedContext(value: unknown): boolean {
 export function defineProduction(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
-  const storage = new ChatStorageStack(app, 'ChatStorage', { env, corsOrigins: identity.domains.corsOrigins, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
+  const storage = createChatStorage(app, options);
   const egressConfig = identity.aws.ecs.privateEgress;
   const egress = new PrivateEgressStack(app, 'PrivateEgress', {
     env, stackName: egressConfig.stackName, natGateway: egressConfig.natGateway, routeTableId: egressConfig.routeTableId,
@@ -182,7 +192,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     ...options.chat,
     parked: options.parked,
   });
-  const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc });
+  const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
     parameterName: identity.aws.agentCore.runtimeNetworkParameter, stringValue: agentNetwork.securityGroupId,
   });
@@ -190,7 +200,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const chatKeys = identity.aws.ecs.chatService.environmentKeys;
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(chatKeys.planUsageOwnerAccountId, planUsageOwner);
-  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.deployRoot);
+  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.deployRoot, options.originConfig);
   const credentialConfig = identity.aws.ecs.credentialService;
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
     ...(options.executionRole ? { executionRole: options.executionRole } : {}),
@@ -209,7 +219,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   for (const task of [chat.task, credentials.task]) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
-  addFiles(origin, chat, storage, agentComputer, chatKeys, options.deployRoot);
+  addFiles(origin, chat, storage, agentComputer, chatKeys, options.deployRoot, options.originConfig);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
@@ -317,9 +327,11 @@ function addAgentComputerBrowser(
   storage: ChatStorageStack,
   agentCore: DeployIdentity['aws']['agentCore'],
   deployRoot: string,
+  names?: ProductionOptions['originConfig'],
 ) {
-  const network = new ec2.SecurityGroup(origin, 'AgentComputerBrowsers', { vpc: chat.cluster.vpc });
+  const network = new ec2.SecurityGroup(origin, 'AgentComputerBrowsers', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', names?.agentComputerSecurityGroupName) });
   const role = new iam.Role(origin, 'AgentComputerBrowserRole', {
+    ...optionalPhysicalName('roleName', names?.agentComputerBrowserRoleName),
     assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', { conditions: { StringEquals: { 'aws:SourceAccount': origin.account } } }),
   });
   const fileSystemArn = storage.filesFileSystem.attrFileSystemArn;
@@ -360,8 +372,9 @@ function addFiles(
   browsers: { network: ec2.ISecurityGroup; subnets: Subnet[] },
   keys: DeployIdentity['aws']['ecs']['chatService']['environmentKeys'],
   deployRoot: string,
+  names?: ProductionOptions['originConfig'],
 ) {
-  const mountTargets = new ec2.SecurityGroup(origin, 'FilesMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false });
+  const mountTargets = new ec2.SecurityGroup(origin, 'FilesMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false, ...optionalPhysicalName('securityGroupName', names?.filesMountTargetsSecurityGroupName) });
   mountTargets.addIngressRule(browsers.network, ec2.Port.tcp(2049), 'Agent Computer browsers mount Files');
   browsers.subnets.forEach((subnet, index) => new CfnMountTarget(origin, `FilesMountTarget${index}`, {
     fileSystemId: storage.filesFileSystem.attrFileSystemId, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
@@ -403,7 +416,7 @@ function addFiles(
   }));
   // The agent's workspace syncs through this role, which the Chat Service assumes per Turn with a
   // session policy narrowed to one account's directory; the Runtime's own role reaches no Files.
-  const sync = new iam.Role(origin, 'FilesSyncRole', { assumedBy: chat.task.taskRole, maxSessionDuration: Duration.hours(1) });
+  const sync = new iam.Role(origin, 'FilesSyncRole', { ...optionalPhysicalName('roleName', names?.filesSyncRoleName), assumedBy: chat.task.taskRole, maxSessionDuration: Duration.hours(1) });
   sync.addToPrincipalPolicy(new iam.PolicyStatement({
     actions: ['s3:ListBucket'],
     resources: [storage.filesBucket.bucketArn],
@@ -414,4 +427,11 @@ function addFiles(
     resources: [storage.filesBucket.arnForObjects('accounts/*')],
   }));
   chat.container.addEnvironment(keys.filesSyncRoleArn, sync.roleArn);
+}
+
+function createChatStorage(app: App, options: ProductionOptions): ChatStorageStack {
+  const { identity } = options;
+  const env = { account: identity.aws.account, region: identity.aws.region };
+  if (options.chatTableName !== undefined && options.storage?.tableName !== undefined) throw new Error('Choose chatTableName or storage.tableName, not both');
+  return new ChatStorageStack(app, 'ChatStorage', { env, corsOrigins: identity.domains.corsOrigins, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
 }

@@ -40,7 +40,11 @@ response=$(curl --fail --silent --show-error --no-buffer \
   -H 'content-type: application/json' --data "$payload" "$chat_url/")
 grep -Fq 'Echo: hello cube' <<<"$response"
 
-docker compose -f "$script_dir/compose.yml" restart harness
+compose_files=(-f "$script_dir/compose.yml")
+if [[ "${BOTCUBE_PRODUCTION_ARTIFACTS:-0}" == 1 ]]; then
+  compose_files+=(-f "$script_dir/compose.production.yml")
+fi
+docker compose "${compose_files[@]}" restart harness
 wait_for_chat
 curl --fail --silent --show-error "$chat_url/threads" | \
   python3 -c 'import json,sys; t=next(t for t in json.load(sys.stdin)["threads"] if t["id"]==sys.argv[1]); assert t["title"]=="hello cube"' "$thread_id"
@@ -58,6 +62,10 @@ test "$status" = 422
 for _ in {1..60}; do
   if page=$(curl --fail --silent --show-error --max-time 15 "$ui_url/" 2>/dev/null); then
     grep -Fq 'BotCube' <<<"$page"
+    if [[ "${BOTCUBE_PRODUCTION_ARTIFACTS:-0}" == 1 ]]; then
+      test "$(curl --silent --output /dev/null --write-out '%{http_code}' "$ui_url/browser-view")" = 200
+      test "$(curl --silent --output /dev/null --write-out '%{http_code}' "$ui_url/nonexistent")" = 404
+    fi
     echo 'Local Session smoke passed'
     exit 0
   fi

@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-dynamodb';
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, inject, it, vi } from 'vitest';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../../../tests/chat/fakes/stack.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
 import { DynamoDBSessionMetadata, SessionDeletedError, SessionProviderError, SessionClaimError } from './session-metadata.js';
 
 const T1 = '2026-01-02T03:04:05.678Z';
