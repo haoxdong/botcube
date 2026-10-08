@@ -2,7 +2,8 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
-import { Streamdown } from "streamdown";
+import { defaultRemarkPlugins, Streamdown } from "streamdown";
+import { remarkRepairedBracketMath } from "./remark-bracket-math";
 
 /** CopilotKit's side padding around the messages and the composer, inside the chat's container. */
 const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-6";
@@ -70,7 +71,9 @@ export function KeptChat({ messages, disclaimer, composerAccessory }: { messages
                         ) : (
                           <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>
                             <div className="cpk:prose cpk:max-w-full cpk:break-words cpk:dark:prose-invert">
-                              <Streamdown>{contentToText(message.content)}</Streamdown>
+                              <Streamdown remarkPlugins={[...Object.values(defaultRemarkPlugins), [remarkRepairedBracketMath, contentToText(message.content)]]}>
+                                {contentToText(message.content)}
+                              </Streamdown>
                             </div>
                           </div>
                         ),

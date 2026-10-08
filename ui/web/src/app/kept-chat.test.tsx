@@ -108,3 +108,45 @@ it('stops observing as it unmounts', () => {
 
   expect(observed.size).toBe(0);
 });
+
+it.each([
+  "\\[2\\",
+  "\\[\n2\n\\",
+  "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\",
+])('does not expose a generated repair URI when opening a saved reply: %j', (content) => {
+  const saved: Message[] = [{ id: 'saved', role: 'assistant', content }];
+  const view = render(<KeptChat messages={saved} disclaimer="" />);
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+  expect(view.container).toHaveTextContent(content.includes('formula') ? 'sum-of-squares formula' : '2');
+  view.unmount();
+  const reload = render(<KeptChat messages={saved} disclaimer="" />);
+  expect(reload.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it.each([
+  { content: '[pending', visible: 'pending' },
+  { content: '[pending\\', visible: '[pending\\' },
+  { content: '\\[2\\]', visible: '[2]' },
+  { content: 'Before \\[2\\] then [pending\\', visible: 'Before [2] then [pending\\' },
+  { content: '`\\[2\\](streamdown:incomplete-link)`', visible: '\\[2\\](streamdown:incomplete-link)' },
+  { content: String.raw`\\[literal\\]`, visible: String.raw`\[literal\]` },
+  { content: '\\[2\\](&#115;treamdown:incomplete-link)', visible: '[2](streamdown:incomplete-link)' },
+])('preserves saved reply text without eager math plugins: $content', ({ content, visible }) => {
+  const view = render(<KeptChat messages={[{ id: 'saved', role: 'assistant', content }]} disclaimer="" />);
+  expect(view.container.textContent).toBe(visible);
+  expect(view.container.querySelector('.katex')).toBeNull();
+});
+
+it('keeps a completed saved math reply visible on cold open without changing the raw question', () => {
+  const question = 'Explain \\[2\\](streamdown:incomplete-link)';
+  const content = "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\frac{20(20+1)(2\\cdot20+1)}{6}\n= \\frac{20\\cdot21\\cdot41}{6}\n= 70\\cdot41\n= \\boxed{2870}.\n\\]";
+  const saved: Message[] = [
+    { id: 'question', role: 'user', content: question },
+    { id: 'reply', role: 'assistant', content },
+  ];
+  const view = render(<KeptChat messages={saved} disclaimer="" />);
+  expect(view.container.querySelector('.copilotKitUserMessage')).toHaveTextContent(question);
+  expect(view.container.querySelector('.copilotKitAssistantMessage')).toHaveTextContent('2870');
+  expect(view.container.querySelector('.copilotKitAssistantMessage')).not.toHaveTextContent('streamdown:incomplete-link');
+  expect(view.container.querySelector('.katex')).toBeNull();
+});

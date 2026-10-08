@@ -275,6 +275,7 @@ Inline \(S-K\), dollars $$N \times S$$.`;
 });
 
 const streamedBracketMath = [
+  { content: "\\[2\\", text: "2" },
   { content: "\\[\n2\n\\", text: "2" },
   { content: "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\", text: "Using the sum-of-squares formula:" },
 ];
@@ -282,6 +283,7 @@ const streamedBracketMath = [
 it.each(streamedBracketMath)('renders incomplete bracket math: $content', ({ content, text }) => {
   const view = render(<MarkdownRenderer content={content} />);
   expect(view.container).toHaveTextContent(text);
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
 });
 
 it.each([
@@ -295,6 +297,7 @@ it.each([
   for (let end = 1; end <= content.length; end++) {
     view.rerender(<MarkdownRenderer content={content.slice(0, end)} />);
     expect(view.container.textContent.length).toBeGreaterThan(0);
+    expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
   }
   expect(view.container).toHaveTextContent(text);
   expect(view.container.querySelector('.katex')).not.toBeNull();
@@ -307,5 +310,59 @@ it.each([
 it.each(['\n', '\r', '\r\n'])('renders multiline bracket math with line ending %j', (lineEnding) => {
   const view = render(<MarkdownRenderer content={`\\[${lineEnding}2${lineEnding}\\]`} />);
   expect(view.container).toHaveTextContent('2');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+});
+
+it.each(['[pending', '[pending\\', 'Before \\[2\\] then [pending'])('keeps ordinary pending link text: %j', (content) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent('pending');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it.each([
+  '`streamdown:incomplete-link`',
+  '```text\n\\[2\\](streamdown:incomplete-link)\n```',
+  '\\[2\\](streamdown:incomplete-link)',
+])('preserves an explicitly written incomplete-link URI: %j', (content) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves escaped bracket text and code while repairing math', () => {
+  const content = "Escapes: \\\\[literal\\\\] and code `\\[2\\](streamdown:incomplete-link)`.";
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent(String.raw`\[literal\]`);
+  expect(view.container.querySelector('code')).toHaveTextContent(String.raw`\[2\](streamdown:incomplete-link)`);
+  expect(view.container.querySelector('.katex')).toBeNull();
+});
+
+it('keeps the escaped opening bracket visible before math content arrives', () => {
+  const view = render(<MarkdownRenderer content={"\\["} />);
+  expect(view.container).toHaveTextContent('[');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves the terminal escape in an ordinary unfinished link', () => {
+  const view = render(<MarkdownRenderer content={"[pending\\"} />);
+  expect(view.container).toHaveTextContent('[pending\\');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves entity-decoded literal marker text after completed math', () => {
+  const view = render(<MarkdownRenderer content={String.raw`\[2\](&#115;treamdown:incomplete-link)`} />);
+  expect(view.container).toHaveTextContent('(streamdown:incomplete-link)');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+});
+
+it('keeps an ordinary pending link label without source brackets', () => {
+  const view = render(<MarkdownRenderer content="[pending" />);
+  expect(view.container.textContent).toBe('pending');
+});
+
+it('preserves an unfinished terminal escape after completed math', () => {
+  const content = "Before \\[2\\] then [pending\\";
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent("then [pending\\");
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
   expect(view.container.querySelector('.katex')).not.toBeNull();
 });

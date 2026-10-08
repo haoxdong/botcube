@@ -1,3 +1,4 @@
+import type { Nodes, Root } from 'mdast';
 import type { Extension as FromMarkdownExtension } from 'mdast-util-from-markdown';
 import type { InlineMath } from 'mdast-util-math';
 import type { Extension, State, Tokenizer } from 'micromark-util-types';
@@ -108,3 +109,31 @@ export const remarkBracketMath: Plugin = function () {
   (data.micromarkExtensions ??= []).push(syntax);
   (data.fromMarkdownExtensions ??= []).push(fromMarkdown);
 };
+
+const incompleteLinkUri = 'streamdown:incomplete-link';
+const incompleteLinkSuffix = `(${incompleteLinkUri})`;
+
+// A repaired link close can be consumed as math or escaped text. Its remaining
+// protocol text is generated only when that URI never appeared in the input.
+export const remarkRepairedBracketMath: Plugin<[string], Root> = function (original) {
+  return (tree, file) => {
+    const repaired = String(file.value);
+    if (!repaired.endsWith(`]${incompleteLinkSuffix}`)) return;
+    if (original.includes(incompleteLinkUri)) return;
+    removeGeneratedSuffix(tree, original);
+  };
+};
+
+function removeGeneratedSuffix(node: Nodes, original: string) {
+  if (!('children' in node)) return;
+  const children = node.children;
+  const last = children.at(-1);
+  if (last?.type === 'text' && last.value.endsWith(incompleteLinkSuffix)) {
+    const followsMath = last.value === incompleteLinkSuffix && children.at(-2)?.type === 'inlineMath';
+    const generatedLength = incompleteLinkSuffix.length + (followsMath ? 0 : 1);
+    last.value = last.value.slice(0, -generatedLength) + (!followsMath && original.trimEnd().endsWith('\\') ? '\\' : '');
+    if (last.value.length === 0) children.pop();
+  } else if (last !== undefined) {
+    removeGeneratedSuffix(last, original);
+  }
+}
