@@ -154,3 +154,13 @@ def test_checkpoint_flush_persists_only_its_bound_session(monkeypatch: pytest.Mo
             asyncio.run(saver.aflush((session, session)))
     assert set(memory.events) == {('session-a', 'session-a'), ('session-b', 'session-b')}
     assert memory.create_event_calls == 2
+
+    async def listed(session: str) -> list[str]:
+        with turn_memory(MemoryCapability('https://chat.test/memory', session, session)):
+            config = {'configurable': {'thread_id': session, 'actor_id': session, 'checkpoint_ns': ''}}
+            return [item.checkpoint['id'] async for item in saver.alist(config)]
+
+    async def both() -> list[list[str]]:
+        return list(await asyncio.gather(listed('session-a'), listed('session-b')))
+
+    assert asyncio.run(both()) == [['session-a'], ['session-b']]

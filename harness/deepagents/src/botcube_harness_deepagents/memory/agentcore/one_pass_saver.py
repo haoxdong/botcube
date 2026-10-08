@@ -11,33 +11,95 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.runnables import RunnableConfig, run_in_executor
-from langgraph.checkpoint.base import CheckpointTuple, get_checkpoint_id
+from langgraph.checkpoint.base import (
+    ChannelVersions,
+    Checkpoint,
+    CheckpointMetadata,
+    CheckpointTuple,
+    get_checkpoint_id,
+)
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
+from langgraph_checkpoint_aws.checkpoint.agentcore.constants import EventNotFoundError
 from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import EventType
-from langgraph_checkpoint_aws.checkpoint.agentcore.models import CheckpointerConfig
+from langgraph_checkpoint_aws.checkpoint.agentcore.models import (
+    ChannelDataEvent,
+    CheckpointerConfig,
+    CheckpointEvent,
+    WritesEvent,
+)
+from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from ...messages_snapshot import MessagesSnapshot
 from .purge import _pace, purge_session
+from .session_record import _Checkpoint, _configurable, _events_by_session, _Writes
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import DeltaChannelHistory
 
 
 class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
+    def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        return next(self.list(config, limit=1), None)
+
+    def list(
+        self, config: RunnableConfig | None, *, filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None, limit: int | None = None,
+    ) -> Iterator[CheckpointTuple]:
+        checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config or {}))
+        if limit is not None and limit <= 0:
+            return
+        events = [event for page in self._iter_event_pages(checkpoint_config) for event in page]
+        record = self._tuples_by_checkpoint_id(events, checkpoint_config)
+        before_id = get_checkpoint_id(before) if before else None
+        count = 0
+        for checkpoint_id in sorted(record, reverse=True):
+            checkpoint_tuple = record[checkpoint_id]
+            if not _matches_checkpoint(checkpoint_id, checkpoint_tuple, checkpoint_config.checkpoint_id, before_id, filter):
+                continue
+            yield checkpoint_tuple
+            count += 1
+            if limit is not None and count >= limit:
+                return
+
+    def put_with_writes(
+        self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
+        new_versions: ChannelVersions, pending_writes: Sequence[PendingWrite],
+    ) -> RunnableConfig:
+        saved: RunnableConfig = {'configurable': {**_configurable(config), 'checkpoint_id': checkpoint['id']}}
+        writes = [_Writes(saved, list(entry.writes), entry.task_id, entry.task_path) for entry in pending_writes]
+        records = _events_by_session([_Checkpoint(config, checkpoint, metadata, new_versions)], writes)
+        for (actor_id, session_id), events in records.items():
+            self.checkpoint_event_client.store_blob_events_batch(events, session_id, actor_id)
+        return saved
+
+    async def alist(
+        self, config: RunnableConfig | None, *, filter: dict[str, Any] | None = None,
+        before: RunnableConfig | None = None, limit: int | None = None,
+    ) -> AsyncIterator[CheckpointTuple]:
+        items = await run_in_executor(None, list, self.list(config, filter=filter, before=before, limit=limit))
+        for item in items:
+            yield item
+
+    def put_writes(
+        self, config: RunnableConfig, writes: Sequence[tuple[str, Any]], task_id: str, task_path: str = '',
+    ) -> None:
+        records = _events_by_session([], [_Writes(config, list(writes), task_id, task_path)])
+        for (actor_id, session_id), events in records.items():
+            self.checkpoint_event_client.store_blob_events_batch(events, session_id, actor_id)
+
     def get_delta_channel_history(
         self, *, config: RunnableConfig, channels: Sequence[str]
     ) -> Mapping[str, DeltaChannelHistory]:
         """Replay the base parent-chain walk over bulk-paged events.
 
         The base implementation issues one `get_tuple` (one full ListEvents
-        pass) per ancestor checkpoint; this pages the thread's events once and
-        stops as soon as every channel is seeded.
+        pass) per ancestor checkpoint; this pages the complete Session record once.
         """
         if not channels:
             return {}
@@ -54,25 +116,20 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
         known: Mapping[str, CheckpointTuple],
         persisted: dict[str, CheckpointTuple] | None = None,
     ) -> dict[str, DeltaChannelHistory]:
-        """Walk `target`'s ancestors over `known` checkpoints (they win), then over
-        the record's events, paged once until the walk completes.
+        """Walk buffered checkpoints first, then the complete scoped record.
 
-        A requested persisted collector reads every page so cached pending writes
-        cannot omit writes stored after the replay seed's page."""
+        Later pages can hold channel blobs and pending writes for an earlier
+        checkpoint, so replay begins only after the record has been exhausted.
+        """
         result, complete = _replay_delta_channel_history(target, {**known}, channels)
         if complete:
             return result
         checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
-        all_events: list[EventType] = []
-        for page in self._iter_event_pages(checkpoint_config):
-            all_events.extend(page)
-            fetched = self._tuples_by_checkpoint_id(all_events, checkpoint_config)
-            result, complete = _replay_delta_channel_history(target, {**fetched, **known}, channels)
-            if complete and persisted is None:
-                break
+        events = [event for page in self._iter_event_pages(checkpoint_config) for event in page]
+        fetched = self._tuples_by_checkpoint_id(events, checkpoint_config)
         if persisted is not None:
-            persisted.update(self._tuples_by_checkpoint_id(all_events, checkpoint_config))
-        return result
+            persisted.update(fetched)
+        return _replay_delta_channel_history(target, {**fetched, **known}, channels)[0]
 
     async def aget_delta_channel_history(
         self, *, config: RunnableConfig, channels: Sequence[str]
@@ -187,7 +244,7 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
         params: dict[str, Any] = {
             'memoryId': event_client.memory_id,
             'actorId': checkpoint_config.actor_id,
-            'sessionId': checkpoint_config.session_id,
+            'sessionId': checkpoint_config.thread_id,
             'maxResults': self.max_results,
             'includePayloads': True,
         }
@@ -204,20 +261,25 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
             params['nextToken'] = response['nextToken']
 
     def _tuples_by_checkpoint_id(
-        self, events: Sequence[EventType], checkpoint_config: CheckpointerConfig
+        self, events: Sequence[EventType], checkpoint_config: CheckpointerConfig,
     ) -> dict[str, CheckpointTuple]:
-        checkpoints, writes_by_checkpoint, channel_data = self.processor.process_events(
-            list(events)
-        )
-        return {
-            checkpoint_id: self.processor.build_checkpoint_tuple(
+        scoped: list[EventType] = [event for event in events if isinstance(event, (CheckpointEvent, ChannelDataEvent)) and
+                  event.thread_id == checkpoint_config.thread_id and event.checkpoint_ns == checkpoint_config.checkpoint_ns]
+        checkpoint_ids = {event.checkpoint_id for event in scoped if isinstance(event, CheckpointEvent)}
+        scoped.extend(event for event in events if isinstance(event, WritesEvent) and event.checkpoint_id in checkpoint_ids)
+        checkpoints, writes_by_checkpoint, channel_data = self.processor.process_events(scoped)
+        tuples: dict[str, CheckpointTuple] = {}
+        for checkpoint_id, checkpoint_event in checkpoints.items():
+            self._check_read_format(checkpoint_event)
+            if self.processor.missing_channel_versions(checkpoint_event, scoped):
+                raise EventNotFoundError('Checkpoint read is missing referenced channel/version blobs. Event history was exhausted.')
+            tuples[checkpoint_id] = self.processor.build_checkpoint_tuple(
                 checkpoint_event,
                 writes_by_checkpoint.get(checkpoint_id, []),
                 channel_data,
                 checkpoint_config,
             )
-            for checkpoint_id, checkpoint_event in checkpoints.items()
-        }
+        return tuples
 
 
 # The snapshot's own session sits beside the Session's record, so reading the Session's state never lists it.
@@ -229,6 +291,17 @@ _EVENT_ITEMS = 10_000_000 // (2 * _MESSAGE_BYTES) - 1
 _SNAPSHOT_KIND = 'snapshot_kind'
 # Each snapshot event names the checkpoint it was taken at, so a write finds the copies it supersedes without their payloads.
 _CHECKPOINT = 'checkpoint'
+
+
+def _matches_checkpoint(
+    checkpoint_id: str, checkpoint: CheckpointTuple, expected_id: str | None,
+    before_id: str | None, metadata: dict[str, Any] | None,
+) -> bool:
+    if expected_id and checkpoint_id != expected_id:
+        return False
+    if before_id and checkpoint_id >= before_id:
+        return False
+    return not metadata or all(checkpoint.metadata.get(key) == value for key, value in metadata.items())
 
 
 def _snapshot_kind(event: dict[str, Any]) -> str | None:

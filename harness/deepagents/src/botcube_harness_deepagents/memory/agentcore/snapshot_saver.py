@@ -20,15 +20,17 @@ from typing import TYPE_CHECKING
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import CheckpointTuple, get_checkpoint_id
+from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import EventType
 from langgraph_checkpoint_aws.checkpoint.agentcore.models import CheckpointerConfig
 
 from .one_pass_saver import OnePassAgentCoreMemorySaver, _replay_delta_channel_history
+from .session_record import _session_key
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import DeltaChannelHistory
 
-# Each Session's checkpoints by ID, as the current `reading_once()` read them.
-_RECORDS: ContextVar[dict[tuple[str, str, str], dict[str, CheckpointTuple]] | None] = ContextVar(
+# Each physical Session's events, shared by all its checkpoint namespaces.
+_RECORDS: ContextVar[dict[tuple[str, str], list[EventType]] | None] = ContextVar(
     '_RECORDS', default=None
 )
 _LOCK = threading.Lock()
@@ -44,26 +46,20 @@ def reading_once() -> Iterator[None]:
         _RECORDS.reset(token)
 
 
-def _record_key(config: RunnableConfig) -> tuple[str, str, str]:
-    checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
-    return checkpoint_config.actor_id, checkpoint_config.session_id, checkpoint_config.checkpoint_ns
-
-
 class SnapshotAgentCoreMemorySaver(OnePassAgentCoreMemorySaver):
     def _record(self, config: RunnableConfig) -> dict[str, CheckpointTuple] | None:
         records = _RECORDS.get()
         if records is None:
             return None
-        key = _record_key(config)
+        key = _session_key(config)
         with _LOCK:
-            record = records.get(key)
-        if record is None:
-            checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
+            events = records.get(key)
+        checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
+        if events is None:
             events = [event for page in self._iter_event_pages(checkpoint_config) for event in page]
-            record = self._tuples_by_checkpoint_id(events, checkpoint_config)
             with _LOCK:
-                records[key] = record
-        return record
+                records[key] = events
+        return self._tuples_by_checkpoint_id(events, checkpoint_config)
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         record = self._record(config)
