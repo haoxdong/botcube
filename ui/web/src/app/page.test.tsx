@@ -4902,6 +4902,21 @@ describe('agent profile', () => {
     expect(within(openProfile()).getAllByRole('listitem')).toHaveLength(1);
   });
 
+  it('removes an absent scheduled task while reporting the deletion error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    service.scheduled = [MORNING_BRIEF];
+    service.failing.set('DELETE /scheduled-tasks/task-1', 404);
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    await deleteTask(sheet);
+
+    expect(await within(openProfile()).findByText("Couldn't delete Morning brief. Try again.")).toHaveClass('agent-profile-error');
+    expect(error).toHaveBeenCalledWith(new Error('Deleting Morning brief failed: 404'));
+    expect(within(openProfile()).queryByRole('listitem')).toBeNull();
+    expect(within(openProfile()).getByText('No scheduled tasks yet.')).toBeInTheDocument();
+  });
+
   it('keeps a scheduled task whose delete never reached the Chat Service, and says so', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     service.scheduled = [MORNING_BRIEF];

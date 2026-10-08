@@ -391,6 +391,10 @@ test('the Chat Service task role grants only the table, runtime, Memory broker, 
       Action: ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule', 'scheduler:GetSchedule'],
       Effect: 'Allow', Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':scheduler:us-east-1:123456789012:schedule/test-scheduled-tasks/*']] },
     },
+    {
+      Action: 'scheduler:GetScheduleGroup',
+      Effect: 'Allow', Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':scheduler:us-east-1:123456789012:schedule-group/test-scheduled-tasks']] },
+    },
     { Action: 'iam:PassRole', Effect: 'Allow', Resource: { 'Fn::GetAtt': ['ChatServiceScheduledRunsRole997CC8CF', 'Arn'] } },
   ]);
 });

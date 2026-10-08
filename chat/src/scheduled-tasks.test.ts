@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
-import { ListSchedulesCommand, SchedulerClient, ValidationException } from '@aws-sdk/client-scheduler';
+import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { CreateScheduleGroupCommand, DeleteScheduleCommand, ListSchedulesCommand, SchedulerClient, SchedulerServiceException, ValidationException } from '@aws-sdk/client-scheduler';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { inject } from 'vitest';
 import { Hono } from 'hono';
@@ -411,6 +412,101 @@ describe('PATCH /scheduled-tasks/:id', () => {
 });
 
 describe('DELETE /scheduled-tasks/:id', () => {
+  it('reports an absent schedule after removing its stale durable task', async () => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const task = await confirm(account, MORNING_BRIEF, proposalId);
+    const client = new SchedulerClient({
+      region: 'us-east-1', endpoint: inject('dynamodbEndpoint'),
+      credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+    });
+    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+
+    const response = await request(account, `/scheduled-tasks/${task.id}`, { method: 'DELETE' });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ detail: 'Scheduled task schedule not found' });
+    expect(await listed(account)).toEqual([]);
+    expect((await request(account, '/scheduled-tasks', { method: 'POST', body: { ...MORNING_BRIEF, proposalId } })).status).toBe(201);
+  });
+
+  it('deletes from its original group when the configured group is missing', async () => {
+    const isolated = await startInProcess({ scheduled: true });
+    const view = defined(isolated.scheduler, 'the stack schedules tasks');
+    const account = owner();
+    const proposalId = randomUUID();
+    const call = (method: string, path: string, body?: object) => isolated.app.request(path, {
+      method, headers: { 'content-type': 'application/json', 'x-test-owner': account },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    try {
+      const confirmed = await call('POST', '/scheduled-tasks', { ...MORNING_BRIEF, proposalId });
+      expect(confirmed.status).toBe(201);
+      const task = await confirmed.json() as Task;
+      const originalGroup = view.runs.group;
+      Object.assign(view.runs, { group: `missing-${randomUUID()}` });
+      const response = await call('DELETE', `/scheduled-tasks/${task.id}`);
+      Object.assign(view.runs, { group: originalGroup });
+
+      expect(await (await call('GET', '/scheduled-tasks')).json()).toEqual({ tasks: [] });
+      expect(response.status).toBe(204);
+      expect(await view.schedule(task.id)).toBeNull();
+      expect((await call('POST', '/scheduled-tasks', { ...MORNING_BRIEF, proposalId })).status).toBe(201);
+      for (let n = 1; n < 10; n += 1) {
+        // eslint-disable-next-line no-await-in-loop -- fill the cap to detect a lost durable count
+        expect((await call('POST', '/scheduled-tasks', { ...MORNING_BRIEF, proposalId: randomUUID() })).status).toBe(201);
+      }
+      expect((await call('POST', '/scheduled-tasks', { ...MORNING_BRIEF, proposalId: randomUUID() })).status).toBe(409);
+    } finally {
+      await isolated.stop();
+    }
+  });
+
+  it('deletes from the original group after configuration changes to another existing group', async () => {
+    const isolated = await startInProcess({ scheduled: true });
+    const view = defined(isolated.scheduler, 'the stack schedules tasks');
+    const account = owner();
+    const call = (method: string, path: string, body?: object) => isolated.app.request(path, {
+      method, headers: { 'content-type': 'application/json', 'x-test-owner': account },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    try {
+      const confirmed = await call('POST', '/scheduled-tasks', { ...MORNING_BRIEF, proposalId: randomUUID() });
+      expect(confirmed.status).toBe(201);
+      const task = await confirmed.json() as Task;
+      const originalGroup = view.runs.group;
+      const renamedGroup = `renamed-${randomUUID()}`;
+      const client = new SchedulerClient({
+        region: 'us-east-1', endpoint: inject('dynamodbEndpoint'),
+        credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+      });
+      await client.send(new CreateScheduleGroupCommand({ Name: renamedGroup }));
+      Object.assign(view.runs, { group: renamedGroup });
+      const response = await call('DELETE', `/scheduled-tasks/${task.id}`);
+      Object.assign(view.runs, { group: originalGroup });
+
+      expect(await view.schedule(task.id)).toBeNull();
+      expect(response.status).toBe(204);
+      expect(await (await call('GET', '/scheduled-tasks')).json()).toEqual({ tasks: [] });
+    } finally {
+      await isolated.stop();
+    }
+  });
+
+  it('reports an absent schedule to account deletion and permits the next retry', async () => {
+    const account = owner();
+    const task = await confirm(account);
+    const client = new SchedulerClient({
+      region: 'us-east-1', endpoint: inject('dynamodbEndpoint'),
+      credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+    });
+    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+
+    await expect(stack.history.delete(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found' });
+    expect(await listed(account)).toEqual([]);
+    await stack.history.delete(account);
+  });
+
   it('deletes the task and its schedule', async () => {
     const account = owner();
     const kept = await confirm(account, { ...MORNING_BRIEF, title: 'Kept' });
@@ -874,7 +970,7 @@ describe('ScheduledTasks', () => {
         expect((failure as AggregateError).errors[1]).toBe(storageOutage);
         expect(await tasks.list(account)).toEqual([pending]);
       }
-      if (metadataFails) await expect(history.delete(account)).rejects.toMatchObject({ name: 'ResourceNotFoundException' });
+      if (metadataFails) await expect(history.delete(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found', cause: { name: 'ResourceNotFoundException' } });
       await history.delete(account);
       expect(await tasks.list(account)).toEqual([]);
       expect(await view.schedule(id)).toBeNull();
@@ -1239,6 +1335,187 @@ describe('ScheduledTasks', () => {
 
     await expect(tasks.create('outage', randomUUID(), MORNING_BRIEF)).rejects.toBe(outage);
     expect(await tasks.list('outage')).toEqual([]);
+  });
+
+  it('finishes account deletion after storage fails with its schedule already deleted', async () => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const normal = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await normal.create(account, proposalId, MORNING_BRIEF);
+    const outage = new Error('DynamoDB is temporarily unavailable');
+    let refused = false;
+    const recovering = new DynamoDBClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    recovering.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName?.startsWith('TransactWrite') && !refused) {
+          refused = true;
+          throw outage;
+        }
+        return next(args);
+      },
+      { step: 'initialize' },
+    );
+    const tasks = new ScheduledTasks(table, runs, recovering, realScheduler);
+
+    await expect(tasks.deleteAll(account)).rejects.toBe(outage);
+    expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toBeNull();
+    expect(await tasks.get(account, task.id)).toEqual(task);
+
+    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found' });
+    expect(await tasks.list(account)).toEqual([]);
+    await tasks.deleteAll(account);
+    const replacement = await tasks.create(account, proposalId, MORNING_BRIEF);
+    expect(replacement.created).toBe(true);
+    for (let n = 1; n < 10; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- fill the cap to verify deletion decremented it exactly once
+      await tasks.create(account, randomUUID(), MORNING_BRIEF);
+    }
+    await expect(tasks.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('propagates a Scheduler deletion failure and keeps the task for retry', async () => {
+    const account = owner();
+    const { task } = await new ScheduledTasks(table, runs, dynamodb, realScheduler).create(account, randomUUID(), MORNING_BRIEF);
+    const outage = new Error('Scheduler is down');
+    const tasks = new ScheduledTasks(table, runs, dynamodb, refusingOnce(outage));
+
+    await expect(tasks.deleteAll(account)).rejects.toBe(outage);
+    expect(await tasks.get(account, task.id)).toEqual(task);
+    expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).not.toBeNull();
+
+    await tasks.deleteAll(account);
+    expect(await tasks.list(account)).toEqual([]);
+  });
+
+  it('propagates storage failure while cleaning up an absent schedule', async () => {
+    const account = owner();
+    const { task } = await new ScheduledTasks(table, runs, dynamodb, realScheduler).create(account, randomUUID(), MORNING_BRIEF);
+    await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    const outage = new Error('DynamoDB is down');
+    const recovering = new DynamoDBClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    let refused = false;
+    recovering.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName?.startsWith('TransactWrite') && !refused) {
+          refused = true;
+          throw outage;
+        }
+        return next(args);
+      },
+      { step: 'initialize' },
+    );
+    const tasks = new ScheduledTasks(table, runs, recovering, realScheduler);
+
+    const failure = await tasks.deleteAll(account).then(() => null, (error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors[0]).toMatchObject({ name: 'ResourceNotFoundException' });
+    expect((failure as AggregateError).errors[1]).toBe(outage);
+    expect(await tasks.get(account, task.id)).toEqual(task);
+    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 404 });
+    expect(await tasks.list(account)).toEqual([]);
+    await tasks.deleteAll(account);
+  });
+
+  it.each([
+    new Error('Scheduler group lookup network failure'),
+    new SchedulerServiceException({ name: 'AccessDeniedException', message: 'Group lookup denied', $fault: 'client', $metadata: { httpStatusCode: 403 } }),
+  ])('retains durable state when schedule group verification fails: %s', async (failure) => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const normal = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await normal.create(account, proposalId, MORNING_BRIEF);
+    await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: runs.group }));
+    const denied = new SchedulerClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    denied.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === 'GetScheduleGroupCommand') throw failure;
+        return next(args);
+      },
+      { step: 'initialize' },
+    );
+    const tasks = new ScheduledTasks(table, runs, dynamodb, denied);
+
+    await expect(tasks.deleteAll(account)).rejects.toBe(failure);
+    expect(await tasks.get(account, task.id)).toEqual(task);
+    expect((await normal.create(account, proposalId, MORNING_BRIEF)).created).toBe(false);
+    for (let n = 1; n < 10; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- verify a failed group read never frees capacity
+      await normal.create(account, randomUUID(), MORNING_BRIEF);
+    }
+    await expect(normal.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it.each(['missing', 'existing', 'unchanged'])('retains a legacy task on unproven absence in a %s configured group', async (configured) => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const normal = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await normal.create(account, proposalId, MORNING_BRIEF);
+    await DynamoDBDocumentClient.from(dynamodb).send(new UpdateCommand({
+      TableName: table, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${task.id}` }, UpdateExpression: 'REMOVE schedule_group',
+    }));
+    const group = configured === 'unchanged' ? runs.group : `legacy-${randomUUID()}`;
+    if (configured === 'existing') await realScheduler.send(new CreateScheduleGroupCommand({ Name: group }));
+    if (configured === 'unchanged') await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: group }));
+    const tasks = new ScheduledTasks(table, { ...runs, group }, dynamodb, realScheduler);
+
+    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 502, detail: 'Scheduled task schedule group is unknown' });
+    expect(await tasks.get(account, task.id)).toEqual(task);
+    expect((await normal.create(account, proposalId, MORNING_BRIEF)).created).toBe(false);
+    expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toEqual(
+      configured === 'unchanged' ? null : expect.objectContaining({ Name: task.id, State: 'ENABLED' }),
+    );
+    for (let n = 1; n < 10; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- a legacy identity failure must not free task capacity
+      await normal.create(account, randomUUID(), MORNING_BRIEF);
+    }
+    await expect(normal.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('deletes a legacy task when its configured group still contains its schedule', async () => {
+    const account = owner();
+    const proposalId = randomUUID();
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await tasks.create(account, proposalId, MORNING_BRIEF);
+    await DynamoDBDocumentClient.from(dynamodb).send(new UpdateCommand({
+      TableName: table, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${task.id}` }, UpdateExpression: 'REMOVE schedule_group',
+    }));
+
+    expect(await tasks.delete(account, task.id)).toBe(true);
+    expect(await tasks.list(account)).toEqual([]);
+    expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toBeNull();
+    expect((await tasks.create(account, proposalId, MORNING_BRIEF)).created).toBe(true);
+  });
+
+  it('decrements the task count only once when deletions overlap', async () => {
+    const account = owner();
+    const { task } = await new ScheduledTasks(table, runs, dynamodb, realScheduler).create(account, randomUUID(), MORNING_BRIEF);
+    let deleting = 0;
+    let release!: () => void;
+    const bothReadTheTask = new Promise<void>((resolve) => { release = resolve; });
+    const concurrentScheduler = new SchedulerClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    concurrentScheduler.middlewareStack.add(
+      (next, context) => async (args) => {
+        if (context.commandName === 'DeleteScheduleCommand') {
+          deleting += 1;
+          if (deleting === 2) release();
+          await bothReadTheTask;
+        }
+        return next(args);
+      },
+      { step: 'initialize' },
+    );
+    const tasks = new ScheduledTasks(table, runs, dynamodb, concurrentScheduler);
+
+    const deletions = await Promise.allSettled([tasks.delete(account, task.id), tasks.delete(account, task.id)]);
+    expect(deletions.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+    expect(deletions).toContainEqual({ status: 'rejected', reason: expect.objectContaining({ status: 404 }) });
+
+    expect(await tasks.list(account)).toEqual([]);
+    for (let n = 0; n < 10; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- fill the cap after overlapping deletion to expose a double decrement
+      await tasks.create(account, randomUUID(), MORNING_BRIEF);
+    }
+    await expect(tasks.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
   });
 
   it('answers a refused edit with 400 and keeps the task as it was', async () => {

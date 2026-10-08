@@ -13,8 +13,9 @@ import {
   CreateScheduleCommand,
   DeleteScheduleCommand,
   GetScheduleCommand,
-  SchedulerClient,
+  GetScheduleGroupCommand,
   ResourceNotFoundException,
+  SchedulerClient,
   UpdateScheduleCommand,
   ValidationException,
 } from '@aws-sdk/client-scheduler';
@@ -145,6 +146,7 @@ export class ScheduledTasks {
     proposalId: string,
     definition: ScheduledTaskDefinition,
   ): Promise<{ task: ScheduledTask; created: boolean }> {
+    const group = this.config.group;
     const id = randomUUID();
     const item: TaskItem = {
       ...taskKey(owner, id),
@@ -154,7 +156,7 @@ export class ScheduledTasks {
       created_at: new Date().toISOString(),
       proposal_id: proposalId,
       pending_creation: true,
-      schedule_group: this.config.group,
+      schedule_group: group,
     };
     try {
       await this.documents.send(
@@ -197,7 +199,7 @@ export class ScheduledTasks {
     }
     const created = task(item);
     try {
-      await this.scheduler.send(new CreateScheduleCommand(this.schedule(owner, item)));
+      await this.scheduler.send(new CreateScheduleCommand(this.schedule(owner, item, group)));
     } catch (error) {
       await this.rollbackCreation(owner, id, proposalId, error);
       throw schedulerRefusal(error);
@@ -340,8 +342,20 @@ export class ScheduledTasks {
   async delete(owner: string, id: string): Promise<boolean> {
     const item = await this.taskItem(owner, id);
     if (item === undefined) return false;
-    await this.removeScheduledTask(owner, id, item.proposal_id, item.schedule_group ?? this.config.group, item.pending_creation === false && item.schedule_group !== undefined);
-    return true;
+    try {
+      return await this.removeScheduledTask(owner, id, item.proposal_id, item.schedule_group ?? this.config.group, item.pending_creation === false && item.schedule_group !== undefined);
+    } catch (error) {
+      if (!(error instanceof ResourceNotFoundException)) throw error;
+      if (item.schedule_group === undefined) {
+        const failure = new HttpError(502, 'Scheduled task schedule group is unknown');
+        failure.cause = error;
+        throw failure;
+      }
+      if (item.pending_creation !== false) throw error;
+      const failure = new HttpError(404, 'Scheduled task schedule not found');
+      failure.cause = error;
+      throw failure;
+    }
   }
 
   /** Account deletion: every task goes, schedule first. */
@@ -439,12 +453,24 @@ export class ScheduledTasks {
     return true;
   }
 
-  private async removeScheduledTask(owner: string, id: string, proposalId: string, group: string, creationComplete: boolean): Promise<void> {
+  private async removeScheduledTask(owner: string, id: string, proposalId: string, group: string, creationComplete: boolean): Promise<boolean> {
     try {
       await this.scheduler.send(new DeleteScheduleCommand({ Name: id, GroupName: group }));
     } catch (error) {
       // An admitted create may still produce a schedule: only durable completion permits metadata repair.
       if (!(error instanceof ResourceNotFoundException) || !creationComplete) throw error;
+      // DeleteSchedule's 404 can name the group, not this task: verify its recorded group before durable cleanup.
+      // https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html
+      try {
+        await this.scheduler.send(new GetScheduleGroupCommand({ Name: group }));
+      } catch (groupError) {
+        if (groupError instanceof ResourceNotFoundException) {
+          const failure = new HttpError(502, 'Scheduled task schedule group not found');
+          failure.cause = groupError;
+          throw failure;
+        }
+        throw groupError;
+      }
       try {
         await this.remove(owner, id, proposalId);
       } catch (repairFailure) {
@@ -453,14 +479,14 @@ export class ScheduledTasks {
       // Repair retains the observed SDK failure; the next deletion retry sees the erased task.
       throw error;
     }
-    await this.remove(owner, id, proposalId);
+    return this.remove(owner, id, proposalId);
   }
 
-  private async remove(owner: string, id: string, proposalId: string): Promise<void> {
+  private async remove(owner: string, id: string, proposalId: string): Promise<boolean> {
     try {
       await this.documents.send(
-        new TransactWriteCommand({
-          TransactItems: [
+      new TransactWriteCommand({
+        TransactItems: [
           { Delete: { TableName: this.tableName, Key: taskKey(owner, id), ConditionExpression: 'attribute_exists(pk)' } },
           { Delete: { TableName: this.tableName, Key: proposalKey(owner, proposalId) } },
           {
@@ -471,16 +497,17 @@ export class ScheduledTasks {
               ExpressionAttributeValues: { ':minus': -1 },
             },
           },
-          ],
-        }),
+        ],
+      }),
       );
+      return true;
     } catch (error) {
-      // Concurrent cleanup already removed the task and freed its place; never decrement the count twice.
-      if (!cancelledOn(error, 0)) throw error;
+      if (cancelledOn(error, 0)) return false;
+      throw error;
     }
   }
 
-  private schedule(owner: string, { id, schedule, timezone, paused, created_at }: TaskItem) {
+  private schedule(owner: string, { id, schedule, timezone, paused, created_at }: TaskItem, group = this.config.group) {
     const message: ScheduledRunMessage = { owner, taskId: id };
     const rate = /^rate\(\s*([1-9]\d*)\s+(minute|hour|day)s?\s*\)$/.exec(schedule);
     let startDate: Date | undefined;
@@ -493,7 +520,7 @@ export class ScheduledTasks {
     }
     return {
       Name: id,
-      GroupName: this.config.group,
+      GroupName: group,
       ScheduleExpression: schedule,
       ScheduleExpressionTimezone: timezone,
       ...(startDate === undefined ? {} : { StartDate: startDate }),

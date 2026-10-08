@@ -238,6 +238,10 @@ export class PreviewChatService extends Construct {
       actions: ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule', 'scheduler:GetSchedule'],
       resources: [origin.formatArn({ service: 'scheduler', resource: 'schedule', resourceName: `${scheduleGroup}/*` })],
     }));
+    task.addToTaskRolePolicy(new iam.PolicyStatement({
+      actions: ['scheduler:GetScheduleGroup'],
+      resources: [origin.formatArn({ service: 'scheduler', resource: 'schedule-group', resourceName: scheduleGroup })],
+    }));
     runsRole.grantPassRole(task.taskRole);
     this.container.addEnvironment('BOTCUBE_SCHEDULE_GROUP', scheduleGroup);
     this.container.addEnvironment('BOTCUBE_SCHEDULER_ROLE_ARN', runsRole.roleArn);

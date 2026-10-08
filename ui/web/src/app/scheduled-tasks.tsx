@@ -360,7 +360,7 @@ export function ScheduledPanel({ chatServiceUrl }: { chatServiceUrl: string }) {
     }
     if (!response.ok) {
       failed(String(response.status));
-      return;
+      if (response.status !== 404) return;
     }
     setTasks((current) => (current ?? []).filter((task) => task.id !== id));
     setSheet((current) => (current?.task.id === id ? { ...current, open: false } : current));
