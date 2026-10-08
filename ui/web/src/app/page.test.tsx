@@ -30,6 +30,14 @@ const copilot = vi.hoisted(() => ({
   runAgent: undefined as unknown as ReturnType<typeof vi.fn<(options: { agent: HttpAgent | undefined }) => void>>,
 }));
 
+// The oversized-copy test owns storage reconciliation, not parsing its megabyte replies as markdown.
+// Every other page test, and kept-chat.test.tsx, keeps the real kept-view renderer.
+const copyBoundary = vi.hoisted(() => ({ isolateRendering: false }));
+vi.mock('./kept-chat', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./kept-chat')>();
+  return { ...original, KeptChat: (props: Parameters<typeof original.KeptChat>[0]) => copyBoundary.isolateRendering ? null : <original.KeptChat {...props} /> };
+});
+
 vi.mock('@copilotkit/react-core/v2', async () => {
   const { Streamdown } = await import('streamdown');
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
@@ -412,6 +420,7 @@ let fetchMock: ReturnType<typeof vi.fn<typeof chatService>>;
 let uuids: number;
 
 beforeEach(() => {
+  copyBoundary.isolateRendering = false;
   localStorage.clear();
   copilot.kits = [];
   copilot.mounts = 0;
@@ -1520,6 +1529,7 @@ describe('Main Chat kept in this browser', () => {
   });
 
   it('keeps no Turn too large for its copy', async () => {
+    copyBoundary.isolateRendering = true;
     service.mainChat = {
       id: 'main-1',
       messages: [
