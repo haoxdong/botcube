@@ -1,11 +1,26 @@
 import { ActivityDeltaEventSchema, RunStartedEventSchema, ToolCallArgsEventSchema } from '@ag-ui/core/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { relayTurn, stopTurn, turnCredentialGuard, turnCredentials } from './turn-stream.js';
+import { persistedTurnError, relayTurn, stopTurn, turnCredentialGuard, turnCredentials } from './turn-stream.js';
 import { recordTurnSummary } from './turn-summaries.js';
 import type { Upstream } from './upstream.js';
 import { defined } from '../test/defined.js';
 
 const encoder = new TextEncoder();
+
+describe('persisted Turn refusal reasons', () => {
+  it('preserves the exact UTF-8 limit without truncation', () => {
+    const message = '😀'.repeat(4096);
+    expect(persistedTurnError(message)).toBe(message);
+    expect(encoder.encode(persistedTurnError(message)).byteLength).toBe(16384);
+  });
+
+  it('retains complete Unicode characters and a truncation marker within the limit', () => {
+    const message = '😀'.repeat(4097);
+    expect(persistedTurnError(message)).toBe(`${'😀'.repeat(4095)}…`);
+    expect(encoder.encode(persistedTurnError(message)).byteLength).toBe(16383);
+  });
+});
+
 const incomplete = 'data: {"type":"RUN_ERROR","message":"Test upstream stream ended before the Turn finished","code":"AGENTCORE_UPSTREAM_STREAM_ERROR"}\n\n';
 
 type Step = string | Uint8Array | { error: unknown };
@@ -1022,16 +1037,16 @@ describe('a relayed Turn', () => {
   });
 
   it.each([
-    ['fails to start', async () => { throw new Error('connection refused'); }],
-    ['refuses', async () => new Response('busy', { status: 503 })],
-  ])('tells the end of a Turn the upstream %s', async (_label, respond) => {
+    ['fails to start', async () => { throw new Error('connection refused'); }, { code: 'AGENTCORE_UPSTREAM_REQUEST_ERROR', message: 'Test upstream request failed: Error: connection refused' }],
+    ['refuses', async () => new Response('busy', { status: 503 }), { code: 'AGENTCORE_UPSTREAM_HTTP_ERROR', message: 'Test upstream returned HTTP 503: busy' }],
+  ])('tells the end of a Turn the upstream %s', async (_label, respond, failure) => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const ended = vi.fn(async () => undefined);
 
     await relayTurn({ label: 'Test upstream', invoke: respond }, { ...turn, ended });
 
-    expect(ended.mock.calls).toEqual([[undefined]]);
+    expect(ended.mock.calls).toEqual([[failure]]);
   });
 
   it("fails the client's stream with an end it cannot record, and logs it", async () => {
@@ -1153,17 +1168,37 @@ describe('a Turn the upstream refuses', () => {
 
   it('answers 502 when the error body cannot be read', async () => {
     const failure = new Error('body reset');
+    const ended = vi.fn(async () => undefined);
     const response = await relayTurn(
       fakeUpstream(() => new Response(streamOf([{ error: failure }]), { status: 503 })).upstream,
-      turn,
+      { ...turn, ended },
     );
 
+    expect(ended).toHaveBeenCalledWith({ code: 'AGENTCORE_UPSTREAM_HTTP_ERROR', message: 'Test upstream returned HTTP 503 but its error body could not be read: Error: body reset' });
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: 'Test upstream returned HTTP 503 but its error body could not be read',
       details: 'Error: body reset',
     });
     expect(consoleError.mock.calls).toEqual([['Failed to read the Test upstream error body', failure]]);
+  });
+});
+
+describe('pre-stream credential failures', () => {
+  it.each(['request', 'body-read', 'http'])('withholds credentials from the %s response and persisted failure', async (mode) => {
+    const ended = vi.fn(async () => undefined);
+    const upstream: Upstream = { label: 'Test upstream', invoke: async () => {
+      if (mode === 'request') throw new Error('echo: private-token');
+      if (mode === 'body-read') return new Response(streamOf([{ error: new Error('echo: private-token') }]), { status: 503 });
+      return new Response('echo: private-token', { status: 503 });
+    } };
+    const response = await relayTurn(upstream, { ...turn, credentials: ['private-token'], ended });
+    expect(await response.json()).toMatchObject({ details: "The error body carried the Turn's credentials, so it was withheld" });
+    expect(ended).toHaveBeenCalledOnce();
+    expect(ended).toHaveBeenCalledWith({
+      code: mode === 'request' ? 'AGENTCORE_UPSTREAM_REQUEST_ERROR' : 'AGENTCORE_UPSTREAM_HTTP_ERROR',
+      message: `${mode === 'request' ? 'Test upstream request failed' : mode === 'body-read' ? 'Test upstream returned HTTP 503 but its error body could not be read' : 'Test upstream returned HTTP 503'}: The error body carried the Turn's credentials, so it was withheld`,
+    });
   });
 });
 

@@ -592,6 +592,11 @@ export function turnErrorDetails(details: string, credentials: readonly string[]
     : details;
 }
 
+export function persistedTurnError(message: string): string {
+  const characters = Array.from(message);
+  return characters.length <= 4096 ? message : `${characters.slice(0, 4095).join('')}…`;
+}
+
 /** One Turn to send upstream, and what its relay does with the answer. */
 interface RelayedTurn {
   body: string;
@@ -632,13 +637,16 @@ export async function relayTurn(upstream: Upstream, turn: RelayedTurn): Promise<
     response = await upstream.invoke(turn.body, turn.sessionId, { accept: turn.accept });
   } catch (error) {
     console.error(`${upstream.label} request failed before the stream opened`, error);
-    await tellEnd(turn);
-    return json({ error: `${upstream.label} request failed`, details: reason(error) }, 502);
+    const message = `${upstream.label} request failed`;
+    const details = turnErrorDetails(reason(error), turn.credentials);
+    await tellEnd(turn, { code: 'AGENTCORE_UPSTREAM_REQUEST_ERROR', message: persistedTurnError(`${message}: ${details}`) });
+    return json({ error: message, details }, 502);
   }
   // A bodiless success (a 204, say) carries no answer to relay.
   if (!response.ok || response.body === null) {
-    await tellEnd(turn);
-    return upstreamError(upstream, response, turn.credentials);
+    const failed = await upstreamError(upstream, response, turn.credentials);
+    await tellEnd(turn, failed.failure);
+    return failed.response;
   }
   return new Response(
     relayFrames(upstream, turn, response.body),
@@ -674,21 +682,25 @@ function lastRunError(out: string): TurnFailure | undefined {
   return { ...(typeof code === 'string' ? { code } : {}), message: String(message) };
 }
 
-async function upstreamError(upstream: Upstream, response: Response, credentials: readonly string[]): Promise<Response> {
+async function upstreamError(upstream: Upstream, response: Response, credentials: readonly string[]): Promise<{ response: Response; failure: TurnFailure }> {
   const error = `${upstream.label} returned HTTP ${response.status}`;
+  const failed = (error: string, details: string, status: number) => ({
+    response: json({ error, details }, status),
+    failure: { code: 'AGENTCORE_UPSTREAM_HTTP_ERROR', message: persistedTurnError(details ? `${error}: ${details}` : error) },
+  });
   let details: string;
   try {
     details = (await response.text()).trim();
   } catch (readError) {
     console.error(`Failed to read the ${upstream.label} error body`, readError);
-    return json({ error: `${error} but its error body could not be read`, details: reason(readError) }, 502);
+    return failed(`${error} but its error body could not be read`, turnErrorDetails(reason(readError), credentials), 502);
   }
   const safeDetails = turnErrorDetails(details, credentials);
   if (safeDetails !== details) {
     console.error(`${upstream.label} error status=${response.status} carried a Turn credential; its body was withheld`);
   }
   console.warn(`${upstream.label} error status=${response.status} details=${safeDetails}`);
-  return json({ error, details: safeDetails }, response.status >= 400 ? response.status : 502);
+  return failed(error, safeDetails, response.status >= 400 ? response.status : 502);
 }
 
 function snapshotAnswerTexts(messages: unknown): Map<string, string> {

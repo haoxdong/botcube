@@ -1,6 +1,6 @@
 import { positiveInteger } from './config.js';
 import { TurnMemory, awsMemoryBackend, turnMemoryRoutes } from './turn-memory.js';
-import type { TurnMemoryLease } from './session-metadata.js';
+import type { TurnFailure, TurnMemoryLease } from './session-metadata.js';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
@@ -35,7 +35,7 @@ import {
   type ScheduledTaskDefinition,
 } from './scheduled-tasks.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
-import { relayTurn, sseFrameData, stopTurn, turnCredentialGuard, turnCredentials, turnErrorDetails, type HeldIds } from './turn-stream.js';
+import { persistedTurnError, relayTurn, sseFrameData, stopTurn, turnCredentialGuard, turnCredentials, turnErrorDetails, type HeldIds } from './turn-stream.js';
 import {
   bedrockTurnSummarizer,
   recordTurnSummary,
@@ -56,6 +56,11 @@ import {
 } from './upstream.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
+
+function preparationFailure(error: unknown, credentials: readonly string[]): TurnFailure {
+  const message = error instanceof Error ? error.message : String(error);
+  return { code: 'TURN_PREPARATION_FAILED', message: persistedTurnError(turnErrorDetails(message, credentials)) };
+}
 
 /** A warmup streams nothing unless the Harness fails to build the requester's agent: its RUN_ERROR message, if any. */
 function runError(stream: string, credentials: readonly string[]): string | null {
@@ -300,8 +305,9 @@ export function createChatService(
   app.route('/internal/turn-memory', turnMemoryRoutes(turnMemory));
 
   /** What the Harness gets for a Turn on `input`, but its Session's filing ID: the Cartridge's payload with the Agent Documents. */
-  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel) => {
+  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void) => {
     const payload = await cartridge.invocationPayload(input, requester, model);
+    captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
     // Named to the Harness, so a Turn that names no model runs on the one resolved for it, not the Harness's own default.
     payload.forwardedProps.model = model.key;
     const documents = await agentDocuments.get(requester.owner, cartridge.agentDocuments);
@@ -346,11 +352,12 @@ export function createChatService(
       throw error;
     }
     let memoryLease: TurnMemoryLease | undefined;
-    const end = (failure: import('./session-metadata.js').TurnFailure | undefined) => turnMemory === null
+    const end = (failure: TurnFailure | undefined) => turnMemory === null
       ? sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure)
       : turnMemory.end(memoryLease, requester.owner, input.threadId, running, failure);
+    let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
     try {
-      const payload = await turnPayload(input, requester, model);
+      const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; });
       delete payload.forwardedProps.turnMemory;
       if (turnMemory !== null && config.turnMemory !== undefined) {
         const capability = await turnMemory.start({ owner: requester.owner,
@@ -358,6 +365,7 @@ export function createChatService(
           sessionId: input.threadId, runId: input.runId, startedAt: running.startedAt });
         memoryLease = capability.lease;
         payload.forwardedProps.turnMemory = { token: capability.token, url: config.turnMemory.url };
+        credentials = [...credentials, capability.token];
       }
       payload.forwardedProps.sessionUserId = filingUserId;
       cartridge.turnStarting?.(requester, input.threadId);
@@ -370,7 +378,7 @@ export function createChatService(
         browserEventName: cartridge.browserEventName,
         ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
         saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
-        credentials: turnCredentials(payload.forwardedProps, cartridge.credentialProps),
+        credentials,
         initialMessages,
         held,
         finished: async (answer) => {
@@ -392,7 +400,7 @@ export function createChatService(
       });
     } catch (error) {
       try {
-        await end(undefined);
+        await end(preparationFailure(error, credentials));
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
       }

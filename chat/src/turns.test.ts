@@ -86,7 +86,7 @@ describe('a Turn', () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({ detail: 'Turn credentials unavailable' });
       const after = await (await target.app.request(path)).json();
-      expect(after).toMatchObject({ running: false });
+      expect(after).toMatchObject({ running: false, failure: { runId: 'run-1', code: 'TURN_PREPARATION_FAILED', message: 'Turn credentials unavailable' } });
       expect(after).not.toHaveProperty('runId');
       expect(target.agentcore.invocations()).toEqual([]);
     } finally {
@@ -95,6 +95,119 @@ describe('a Turn', () => {
       await target.stop();
     }
   });
+
+  it('withholds newly issued payload credentials from a preparation failure on reload', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const target = await startInProcess({ cartridge: {
+      credentialProps: ['testToken'],
+      invocationPayload: async (input) => ({ ...input, forwardedProps: { testToken: 'issued-private-token' } }),
+      browserLiveView: async () => { throw new Error('echo: issued-private-token'); },
+    } });
+    const id = 'preparation-credential';
+    target.sessionApi.reply(id, 200, { messages: [] });
+    try {
+      const response = await postTurn(target, turn(id));
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe('Internal Server Error');
+      const after = await (await target.app.request(`/threads/${id}`)).json();
+      expect(after).toMatchObject({ running: false, failure: {
+        runId: 'run-1', code: 'TURN_PREPARATION_FAILED',
+        message: "The error body carried the Turn's credentials, so it was withheld",
+      } });
+      expect(JSON.stringify(after)).not.toContain('issued-private-token');
+      expect(target.agentcore.invocations()).toEqual([]);
+    } finally { await target.stop(); }
+  });
+
+  it.each(['Main', 'Side'].flatMap((kind) => [
+    { kind, mode: 'request' as const, status: 502, body: { error: 'Local Harness request failed', details: 'fetch failed: SocketError: other side closed' }, failure: { code: 'AGENTCORE_UPSTREAM_REQUEST_ERROR', message: 'Local Harness request failed: fetch failed: SocketError: other side closed' } },
+    { kind, mode: 'http' as const, status: 503, body: { error: 'Local Harness returned HTTP 503', details: 'Harness unavailable' }, failure: { code: 'AGENTCORE_UPSTREAM_HTTP_ERROR', message: 'Local Harness returned HTTP 503: Harness unavailable' } },
+    { kind, mode: 'bodiless' as const, status: 502, body: { error: 'Local Harness returned HTTP 204', details: '' }, failure: { code: 'AGENTCORE_UPSTREAM_HTTP_ERROR', message: 'Local Harness returned HTTP 204' } },
+  ]))('reloads the $kind Chat with why its $mode failed before opening the stream', async (scenario) => {
+    const { kind } = scenario;
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let mode: 'request' | 'http' | 'bodiless' | 'success' = scenario.mode;
+    const local = await new HttpFake((_request, response) => {
+      if (mode === 'request') { response.destroy(); return; }
+      if (mode === 'http') { response.writeHead(503); response.end('Harness unavailable'); return; }
+      if (mode === 'bodiless') { response.writeHead(204); response.end(); return; }
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
+    }).listen();
+    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
+    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : 'failed-before-stream-side';
+    const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
+    target.sessionApi.reply(id, 200, { messages: [] });
+    try {
+      const response = await postTurn(target, turn(id));
+      expect(response.status).toBe(scenario.status);
+      expect(await response.json()).toEqual(scenario.body);
+      const reloaded = await (await target.app.request(path)).json();
+      expect(reloaded).toMatchObject({ running: false, failure: { runId: 'run-1', ...scenario.failure } });
+      expect(reloaded).not.toHaveProperty('runId');
+      mode = 'success';
+      const retried = await postTurn(target, turn(id));
+      expect(retried.status).toBe(200);
+      expect(await retried.text()).toBe('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
+      const recovered = await (await target.app.request(path)).json();
+      expect(recovered).toMatchObject({ running: false });
+      expect(recovered).not.toHaveProperty('failure');
+    } finally {
+      await target.stop();
+      await local.close();
+    }
+  });
+
+  it.each(['Main', 'Side'].flatMap((kind) => ['http', 'preparation'].map((mode) => ({ kind, mode }))))(
+    'reloads the $kind Chat after an oversized $mode failure and permits a retry', async ({ kind, mode }) => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const details = kind === 'Main' ? 'x'.repeat(410 * 1024) : '😀'.repeat(105 * 1024);
+      let failing = true;
+      const local = await new HttpFake((_request, response) => {
+        if (failing && mode === 'http') { response.writeHead(503); response.end(details); return; }
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
+      }).listen();
+      const target = await startInProcess({
+        config: { localHarnessUrl: local.url },
+        cartridge: { invocationPayload: async (input) => {
+          if (failing && mode === 'preparation') throw new HttpError(503, `Turn credentials unavailable: ${details}`);
+          return { ...input, forwardedProps: { ...input.forwardedProps } };
+        } },
+      });
+      const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : `oversized-${mode}-side`;
+      const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
+      target.sessionApi.reply(id, 200, { messages: [] });
+      try {
+        const response = await postTurn(target, turn(id));
+        const reloaded = await (await target.app.request(path)).json();
+        expect(reloaded).toMatchObject({ running: false, failure: {
+          runId: 'run-1', code: mode === 'http' ? 'AGENTCORE_UPSTREAM_HTTP_ERROR' : 'TURN_PREPARATION_FAILED',
+        } });
+        expect(reloaded).not.toHaveProperty('runId');
+        expect(reloaded.failure.message).toMatch(mode === 'http' ? /^Local Harness returned HTTP 503: / : /^Turn credentials unavailable: /);
+        expect(Buffer.byteLength(reloaded.failure.message, 'utf8')).toBeLessThanOrEqual(16 * 1024);
+        expect(reloaded.failure.message).toMatch(/…$/);
+        expect(reloaded.failure.message).not.toContain('�');
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual(mode === 'http'
+          ? { error: 'Local Harness returned HTTP 503', details }
+          : { detail: `Turn credentials unavailable: ${details}` });
+        failing = false;
+        const retried = await postTurn(target, turn(id));
+        expect(retried.status).toBe(200);
+        expect(await retried.text()).toBe('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
+        const recovered = await (await target.app.request(path)).json();
+        expect(recovered).toMatchObject({ running: false });
+        expect(recovered).not.toHaveProperty('failure');
+      } finally {
+        await target.stop();
+        await local.close();
+      }
+    },
+  );
 
   // A reload or a closed tab stopped the Turn, leaving its reply cut off.
   it('runs on to its end when its client goes away, sending AgentCore no stop', async () => {
