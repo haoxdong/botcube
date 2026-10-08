@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
 import { awsFetch } from './aws.js';
 import { type TurnActivity, type TurnSummary } from './session-metadata.js';
 
@@ -37,7 +39,7 @@ export function bedrockTurnSummarizer({ region, url }: TurnSummaryModel): TurnSu
       body: JSON.stringify({
         system: [{ text: SYSTEM_PROMPT }],
         messages: [{ role: 'user', content: [{ text: JSON.stringify(turn) }] }],
-        inferenceConfig: { maxTokens: 200, temperature: 0 },
+        inferenceConfig: { maxTokens: 512, temperature: 0 },
         toolConfig: {
           tools: [
             {
@@ -62,8 +64,47 @@ export function bedrockTurnSummarizer({ region, url }: TurnSummaryModel): TurnSu
       }),
     });
     if (!response.ok) throw new Error(`The summary model answered HTTP ${response.status}`);
-    return summaryFrom(await response.json());
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const body: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    try {
+      return summaryFrom(body);
+    } catch (error) {
+      reportRejectedSummary(response, url, bytes, body);
+      throw error;
+    }
   };
+}
+
+const object = z.record(z.string(), z.unknown());
+const stopReason = z.enum(['max_tokens', 'tool_use', 'end_turn']);
+const tokenCount = z.number().int().nonnegative();
+const fields = (value: unknown) => object.safeParse(value).data ?? {};
+const valueType = (value: unknown) => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+const nonempty = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
+
+/** Failure-only metadata: no prompt, title, summary, arbitrary model strings or header dump. */
+function reportRejectedSummary(response: Response, url: string, bytes: Uint8Array, body: unknown): void {
+  const root = fields(body);
+  const content = fields(fields(root.output).message).content;
+  const tool = Array.isArray(content) ? content.map(fields).find((block) => fields(block.toolUse).name === SUMMARY_TOOL)?.toolUse : undefined;
+  const input = fields(fields(tool).input);
+  const usage = fields(root.usage);
+  const model = /\/model\/([^/]+)\/converse$/.exec(new URL(url).pathname)?.[1];
+  const requestId = response.headers.get('x-amzn-requestid');
+  console.error('Turn summary response rejected [DEBUG-3779]', {
+    modelId: model === undefined ? null : decodeURIComponent(model),
+    requestId: requestId !== null && /^[a-zA-Z0-9-]{1,128}$/.test(requestId) ? requestId : null,
+    rawResponseSHA256: createHash('sha256').update(bytes).digest('hex'),
+    stopReason: stopReason.safeParse(root.stopReason).data ?? null,
+    summaryToolPresent: tool !== undefined, toolInputType: valueType(fields(tool).input),
+    titleType: valueType(input.title), titleNonempty: nonempty(input.title),
+    summaryType: valueType(input.summary), summaryNonempty: nonempty(input.summary),
+    usage: {
+      inputTokens: tokenCount.safeParse(usage.inputTokens).data ?? null,
+      outputTokens: tokenCount.safeParse(usage.outputTokens).data ?? null,
+      totalTokens: tokenCount.safeParse(usage.totalTokens).data ?? null,
+    },
+  });
 }
 
 function summaryFrom(body: unknown): TurnSummary {
@@ -138,4 +179,3 @@ export function reportUnsavedTurnSummaries(): void {
     console.error(`${TURN_SUMMARY_FAILED} session_id=${sessionId}`, new Error('The Chat Service stopped before the Turn summary was saved'));
   }
 }
-
