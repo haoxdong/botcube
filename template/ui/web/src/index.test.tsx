@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { EventType } from '@ag-ui/client';
+import type { ComputerViewProps } from 'botcube-ui-web/cartridge';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,8 +122,16 @@ describe('the template web UI plugin', () => {
 });
 
 describe('the Computer tab', () => {
+  const activity: ComputerViewProps['activity'] = {
+    messages: [], running: false, stop: null,
+    subscribeToCustomEvents: (listener) => {
+      const receive = ({ event }: { event: { name: string; value: unknown } }) => listener({ type: EventType.CUSTOM, ...event });
+      kit.listeners.add(receive);
+      return () => { kit.listeners.delete(receive); };
+    },
+  };
   const show = (shown = true, chat = 'chat-1') =>
-    act(async () => root.render(<ComputerView agentId="template" agentName="BotCube" conversation={{ id: chat, service: 'chat-service' }} shown={shown} />));
+    act(async () => root.render(<ComputerView activity={activity} agentId="template" agentName="BotCube" conversation={{ id: chat, service: 'chat-service' }} shown={shown} />));
 
   it('wakes a sleeping computer when it shows, then shows its screen live', async () => {
     answers['GET /agent-computer'] = asleep;

@@ -1,3 +1,4 @@
+import type { CustomEvent, Message } from '@ag-ui/client';
 import type { ComponentType, ReactNode } from 'react';
 
 export type AuthStatus = 'unknown' | 'loading' | 'unauthed' | 'authed' | 'error';
@@ -49,6 +50,12 @@ export interface ComputerViewProps extends AuxiliaryPanelHostProps {
   agentName: string;
   /** Whether the Computer tab is showing; hidden, the view stays mounted for the user's return. */
   shown: boolean;
+  activity: {
+    messages: readonly Message[];
+    running: boolean;
+    stop: (() => void) | null;
+    subscribeToCustomEvents: (listener: (event: CustomEvent) => void) => () => void;
+  };
 }
 
 interface AgentOption {

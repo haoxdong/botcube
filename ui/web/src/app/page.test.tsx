@@ -40,6 +40,7 @@ vi.mock('./kept-chat', async (importOriginal) => {
 
 vi.mock('@copilotkit/react-core/v2', async () => {
   const { Streamdown } = await import('streamdown');
+  const copilotkit = { runAgent: (options: { agent: HttpAgent | undefined }) => copilot.runAgent(options) };
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
   // unless a `children` render prop lays out its
   // message elements.
@@ -182,7 +183,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     useDefaultRenderTool: (config: { render: typeof copilot.renderTool }, deps?: unknown[]) => {
       useEffect(() => { copilot.renderTool = config.render; }, [JSON.stringify(deps ?? [])]);
     },
-    useCopilotKit: () => ({ copilotkit: { runAgent: copilot.runAgent } }),
+    useCopilotKit: () => ({ copilotkit }),
   };
 });
 

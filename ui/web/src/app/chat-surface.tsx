@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode } from "react";
-import { CopilotKit } from "@copilotkit/react-core/v2";
+import { createContext, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref } from "react";
+import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
   CopilotChatInput,
@@ -753,6 +753,24 @@ function ChatThread({
   );
 }
 
-export default function ChatSurface({ children, ...props }: Omit<ComponentProps<typeof CopilotKit>, "children"> & { children: (Thread: typeof ChatThread) => ReactNode }) {
-  return <CopilotKit {...props}>{children(ChatThread)}</CopilotKit>;
+export interface ChatStop {
+  chatId: string;
+  stop: () => void;
+}
+
+function ComputerStop({ chatId, stopRef }: { chatId: string; stopRef: Ref<ChatStop> | undefined }) {
+  const { copilotkit } = useCopilotKit();
+  useImperativeHandle(stopRef, () => ({ chatId, stop: () => {
+    const agent = copilotkit.getAgent(AGENT_ID);
+    if (agent) copilotkit.stopAgent({ agent });
+  } }), [chatId, copilotkit]);
+  return null;
+}
+
+export default function ChatSurface({ children, chatId, stopRef, ...props }: Omit<ComponentProps<typeof CopilotKit>, "children"> & {
+  children: (Thread: typeof ChatThread) => ReactNode;
+  chatId: string;
+  stopRef?: Ref<ChatStop>;
+}) {
+  return <CopilotKit {...props}><ComputerStop chatId={chatId} stopRef={stopRef} />{children(ChatThread)}</CopilotKit>;
 }

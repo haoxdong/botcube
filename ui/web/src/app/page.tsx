@@ -29,6 +29,9 @@ import { webUiPlugin } from "@cartridge-ui";
 import type { AuthStatus, AuthUiState, AuthUser } from "../cartridge/index.js";
 import { SidebarRow } from "@/components/ui/sidebar-row";
 
+import { ChatComputers } from "./chat-computers";
+import type { ChatStop } from "./chat-surface";
+
 const ChatSurface = lazy(() => import("./chat-surface"));
 
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
@@ -427,11 +430,10 @@ function App({
   const agentProfile = loadedAgentProfile !== null && loadedAgentProfile.accountId === accountId ? loadedAgentProfile.profile : null;
   const [agentProfileError, setAgentProfileError] = useState<string | null>(null);
   const [agentProfileOpen, setAgentProfileOpen] = useState(false);
-  // The chat the profile was closed in: it stays mounted there, hidden, keeping its computer's live view connected.
-  const [agentProfileChat, setAgentProfileChat] = useState<string | null>(null);
+  const [profileKept, setProfileKept] = useState(false);
+  const [chatStop, setChatStop] = useState<ChatStop | null>(null);
   const closeAgentProfile = () => {
     setAgentProfileOpen(false);
-    setAgentProfileChat(activeId);
   };
   // A phone's left swipe across the chat slides it off the profile beneath, as its avatar opens it.
   const agentProfileRef = useRef<HTMLDivElement>(null);
@@ -441,6 +443,10 @@ function App({
     expanded: agentProfileOpen,
     onExpandedChange: (open) => { if (open) setAgentProfileOpen(true); else closeAgentProfile(); },
   });
+  useEffect(() => {
+    if (profileSwipe.visible) setProfileKept(true);
+  }, [profileSwipe.visible]);
+  const profileVisible = profileSwipe.visible || profileKept;
   usePageHold(isPhone && (swipe.visible || profileSwipe.visible));
   const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);
   usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });
@@ -708,6 +714,8 @@ function App({
           <Suspense fallback={<div className="app-chat app-chat-opening">{keptChat}</div>}>
           <ChatSurface
             key={activeId}
+            chatId={activeId}
+            stopRef={setChatStop}
             selfManagedAgents={selfManagedAgents}
             properties={properties}
           >
@@ -751,24 +759,6 @@ function App({
                 />
               ))}
               {webUiPlugin.toolResultRenderers.map((Renderer, index) => <Renderer key={index} />)}
-              {(profileSwipe.visible || agentProfileChat === activeId) && (
-                <AgentProfile
-                  key={accountId}
-                  ref={agentProfileRef}
-                  open={profileSwipe.visible}
-                  chatServiceUrl={CHAT_SERVICE_URL}
-                  profile={agentProfile}
-                  error={agentProfileError}
-                  computer={ComputerView && ((shown) => (
-                    <ComputerView agentId={AGENT_ID} agentName={agentName} conversation={{ id: activeId, service: "chat-service" }} shown={shown} />
-                  ))}
-                  onClose={profileSwipe.close}
-                  revision={agentDocumentsRevision}
-                  onSaved={() => void refreshAgentProfile()}
-                  isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
-                  tabs={webUiPlugin.agentProfileTabs}
-                />
-              )}
               {auth.overlay}
             </>, layoutElement)}
             </>}
@@ -776,6 +766,34 @@ function App({
           </Suspense>
         )}
       </main>
+      {layoutElement !== null && ready && profileVisible && createPortal(
+        <AgentProfile
+          key={accountId}
+          ref={agentProfileRef}
+          open={profileSwipe.visible}
+          chatServiceUrl={CHAT_SERVICE_URL}
+          profile={agentProfile}
+          error={agentProfileError}
+          computer={ComputerView && ((shown) => (
+            <ChatComputers
+              View={ComputerView}
+              agentId={AGENT_ID}
+              agentName={agentName}
+              current={activeId === null ? null : { conversation: { id: activeId, service: "chat-service" }, agent }}
+              shown={shown}
+              stop={chatStop?.chatId === activeId ? () => {
+                if (auth.isAccountCurrent?.(accountId) !== false) chatStop.stop();
+              } : null}
+            />
+          ))}
+          onClose={profileSwipe.close}
+          revision={agentDocumentsRevision}
+          onSaved={() => void refreshAgentProfile()}
+          isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
+          tabs={webUiPlugin.agentProfileTabs}
+        />,
+        layoutElement,
+      )}
     </div>
   );
 }

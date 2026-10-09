@@ -2433,7 +2433,6 @@ cpk-web-inspector,
   }
 }
 
-/* A right sidebar beside the chat, which narrows to make room; it slides open from the right edge. */
 .agent-profile {
   position: relative;
   flex: none;
@@ -2453,7 +2452,7 @@ cpk-web-inspector,
 
 @keyframes agentProfileOpen {
   from {
-    width: 0;
+    opacity: 0;
   }
 }
 

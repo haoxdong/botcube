@@ -7,7 +7,7 @@ import type { ComputerViewProps } from 'botcube-ui-web/cartridge';
 
 import { ChatNotStarted, loadComputer, popOut, screenUrl, wakeComputer, type Computer } from './computer';
 import { CHAT_SERVICE_URL } from './config';
-import { useLiveViewEvents } from './live-view-events';
+import { useComputerLiveViewEvents } from './live-view-events';
 import { Screen } from './screen';
 
 type Phase =
@@ -48,7 +48,7 @@ function Cover({ phase, agentName }: { phase: Phase; agentName: string }) {
  * The Computer tab: the open chat's browser, live while it is awake. Showing the tab wakes a sleeping computer once;
  * one that falls asleep under the open tab stays asleep until the user wakes it.
  */
-export function ComputerView({ agentId, agentName, conversation, shown }: ComputerViewProps) {
+export function ComputerView({ activity, agentName, conversation, shown }: ComputerViewProps) {
   const [phase, setPhase] = useState<Phase>({ name: 'loading' });
   // Each showing of the tab, or a chat the tab moved to, looks at the computer afresh.
   const [showing, setShowing] = useState({ chat: conversation.id, shown, count: 0 });
@@ -79,11 +79,11 @@ export function ComputerView({ agentId, agentName, conversation, shown }: Comput
   useEffect(
     () => (shown ? run(false) : undefined),
     // Stryker disable next-line ArrayDeclaration: `run` is a fresh closure each render; the showing names the look
-    [showing.chat, showing.count],
+    [shown, showing.chat, showing.count],
   );
 
   // A Turn that starts the browser wakes it under the open tab.
-  useLiveViewEvents(agentId, (event) => {
+  useComputerLiveViewEvents(activity.subscribeToCustomEvents, (event) => {
     if (event.open && shown) setPhase({ name: 'ready', computer: { state: 'awake', browserSessionId: event.sessionId } });
   });
 
