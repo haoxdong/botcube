@@ -50,6 +50,8 @@ export interface ComputerViewProps extends AuxiliaryPanelHostProps {
   agentName: string;
   /** Whether the Computer tab is showing; hidden, the view stays mounted for the user's return. */
   shown: boolean;
+  /** Whether this view has an established browser connection that survives chat navigation. */
+  onConnectionChange?: (connected: boolean) => void;
   activity: {
     messages: readonly Message[];
     running: boolean;

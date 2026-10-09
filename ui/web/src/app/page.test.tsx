@@ -223,9 +223,10 @@ vi.mock('@cartridge-ui', () => {
         return <p>panel for {props.conversation.id}</p>;
       },
     ],
-    ComputerView: ({ agentId, agentName, conversation }) => {
+    ComputerView: ({ agentId, agentName, conversation, onConnectionChange }) => {
       useEffect(() => {
         cartridge.computerMounts += 1;
+        onConnectionChange?.(true);
       }, []);
       return (
         <p>
