@@ -9,16 +9,24 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
       export CURL_CA_BUNDLE=/run/secrets/build_ca NODE_EXTRA_CA_CERTS=/run/secrets/build_ca APT_CONFIG=/tmp/botcube-build-apt.conf; \
       printf 'Acquire::https::CaInfo "/run/secrets/build_ca";\n' > "$APT_CONFIG"; \
     fi; \
-    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip && \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils \
+    libcairo2 libfreetype6 fontconfig fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji && \
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip && \
     unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscli.zip && \
-    apt-get purge -y unzip && apt-get autoremove -y && \
+    ln -s /usr/bin/fdfind /usr/local/bin/fd && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && rm -f /tmp/botcube-build-apt.conf
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /opt/python-tools
+COPY tools/pyproject.toml tools/uv.lock ./
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
+    uv sync --frozen --no-dev --no-cache
+COPY tools/smoke.py ./
 
 # Install the pre-staged Cartridge CLI package
 WORKDIR /opt/tools
@@ -49,9 +57,9 @@ RUN --mount=type=secret,id=build_ca \
     uv sync --frozen --no-dev --no-editable && \
     uv pip install --python /opt/harness/.venv/bin/python --no-deps /opt/tools/cartridge/*.whl
 
-ENV PATH="/opt/harness/.venv/bin:$PATH"
+ENV PATH="/opt/python-tools/.venv/bin:/opt/harness/.venv/bin:$PATH"
 ENV PORT=8080
 EXPOSE 8080
 # AgentCore runtime — serves /invocations via a hand-written FastAPI app (ADR 0029)
 # with AG-UI SSE streaming; main() runs uvicorn on :8080.
-CMD ["opentelemetry-instrument", "botcube-harness-deepagents"]
+CMD ["/opt/harness/.venv/bin/opentelemetry-instrument", "/opt/harness/.venv/bin/botcube-harness-deepagents"]

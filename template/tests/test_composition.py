@@ -11,6 +11,7 @@ from botcube_template.harness import CARTRIDGE as HARNESS_CARTRIDGE
 
 
 def test_template_harness_exposes_safe_tool_commands(tmp_path: Path) -> None:
+    assert HARNESS_CARTRIDGE.command_validator is not None
     assert HARNESS_CARTRIDGE.command_validator('echo hello') is None
     assert HARNESS_CARTRIDGE.command_validator('printf hello') == 'Only echo, template-cli data, or the documented agent-browser commands are allowed'
     assert HARNESS_CARTRIDGE.command_validator('echo hello; whoami') == 'Shell operators are not allowed'
@@ -48,6 +49,7 @@ def test_template_deploy_identity_is_placeholder_only() -> None:
 
 
 def test_browser_tool_commands_use_the_filtered_computer() -> None:
+    assert HARNESS_CARTRIDGE.command_validator is not None
     assert HARNESS_CARTRIDGE.command_validator('agent-browser get url') is None
     assert HARNESS_CARTRIDGE.command_validator('agent-browser open http://example.test/login') is None
     assert HARNESS_CARTRIDGE.command_validator('agent-browser get text h1') is None

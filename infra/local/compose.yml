@@ -26,7 +26,7 @@ services:
       BOTCUBE_CHAT_TABLE: ${BOTCUBE_CHAT_TABLE:-chat}
     volumes:
       - ./init-chat-table.py:/init-chat-table.py:ro
-    command: ["python", "/init-chat-table.py"]
+    command: ["/opt/harness/.venv/bin/python", "/init-chat-table.py"]
 
   vault-table-init:
     build:

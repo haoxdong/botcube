@@ -32,7 +32,7 @@ class HarnessDefinition:
     system_prompt: str
     execute_description: str
     prepare_invocation: Callable[[Any], InvocationAuth]
-    command_validator: Callable[[str], str | None]
+    command_validator: Callable[[str], str | None] | None
     prepare_root: Callable[[Path], object]
     build_shell_env: Callable[[Mapping[str, str]], dict[str, str]]
     shell_timeout: int

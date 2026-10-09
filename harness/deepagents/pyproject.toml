@@ -61,6 +61,8 @@ include = [
   "../../infra/local/init-chat-table.py",
 ]
 
+exclude = ["tools"]
+
 [build-system]
 requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
