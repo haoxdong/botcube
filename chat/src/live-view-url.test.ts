@@ -29,12 +29,18 @@ const unused = async (): Promise<never> => {
   throw new Error('not used');
 };
 const sessionMetadata: SessionMetadata = {
+  checkRuntimeNamespaceReady: async () => undefined,
   createMemoryLease: async () => { throw new Error('not used'); },
   memoryLease: async () => { throw new Error('not used'); },
   endMemoryLease: async () => { throw new Error('not used'); },
   memorySessionActive: async () => { throw new Error('not used'); },
   checkHealth: unused,
   recordTurn: unused,
+  beginDispatch: unused,
+  assertNoDispatch: unused,
+  rejectedDispatches: unused,
+  pendingPurges: async () => [],
+  completePurge: unused,
   list: unused,
   ownsMainChat: async () => false,
   mainChat: unused,

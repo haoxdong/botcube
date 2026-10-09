@@ -1,3 +1,4 @@
+import { SessionDeletedError } from './session-metadata.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 let stack: InProcessStack | undefined;
@@ -146,4 +147,18 @@ it.each(['new', 'existing'])('preserves the filing ID when Claim moves a %s Sess
   expect(paused).toBe(true);
   expect(await running.sessionMetadata.get('claim-source', sessionId)).toBeNull();
   expect(running.agentcore.invocationFor(sessionId).payload.forwardedProps.sessionUserId).toBe(filingId);
+});
+
+it.each(['source deletion', 'destination deletion', 'Session deletion', 'replacement Turn'])('refuses an accepted dispatch after Claim and %s', async (refusal) => {
+  stack = await startInProcess();
+  const running = { startedAt: '2026-10-07T00:00:00.000Z', runId: 'accepted-turn' };
+  await stack.sessionMetadata.recordTurn('claim-source', 'accepted-session', { filingUserId: 'filed-source', title: 'accepted', provider: 'anthropic', running });
+  await stack.history.transfer('claim-source', 'claim-destination');
+  if (refusal === 'source deletion') await stack.sessionMetadata.fenceOwner('claim-source');
+  if (refusal === 'destination deletion') await stack.sessionMetadata.fenceOwner('claim-destination');
+  if (refusal === 'Session deletion') await stack.sessionMetadata.fence('claim-destination', 'accepted-session');
+  if (refusal === 'replacement Turn') {
+    await stack.sessionMetadata.recordTurn('claim-destination', 'accepted-session', { filingUserId: 'filed-destination', title: 'replacement', provider: 'anthropic', running: { startedAt: running.startedAt, runId: 'replacement-turn' } });
+  }
+  await expect(stack.sessionMetadata.beginDispatch('claim-source', 'accepted-session', undefined, running)).rejects.toThrow(SessionDeletedError);
 });

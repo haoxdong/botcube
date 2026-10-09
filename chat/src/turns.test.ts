@@ -278,7 +278,7 @@ describe('a Turn', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
     const invocation = stack.agentcore.invocationFor('session-relayed');
-    expect(invocation.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe('session-relayed');
+    expect(invocation.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toMatch(/^runtime-[a-f0-9-]{36}$/);
     expect(invocation.payload).toEqual({
       threadId: 'session-relayed',
       runId: 'run-1',

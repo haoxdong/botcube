@@ -263,7 +263,9 @@ it(
   'retires an exited browser and its signed CDP capability before waking a replacement',
   { timeout: 15_000 },
   async () => {
-    const siteUrl = await fakeSite();
+    let releaseDocument: () => void = () => undefined;
+    const documentGate = new Promise<void>((resolve) => { releaseDocument = resolve; });
+    const siteUrl = await fakeSite(() => undefined, documentGate);
     const history: AccountHistory = {
       ownsMainChat: async () => false,
       owns: async () => true,
@@ -343,6 +345,14 @@ it(
       expect(
         await cdp.send('Runtime.evaluate', { expression: '6 * 7' }, pageSession)
       ).toMatchObject({ result: { result: { value: 42 } } });
+      // Page discovery precedes initial navigation completion. Cancel that
+      // document and wait for the fixture navigation before mutating its DOM.
+      await cdp.send('Page.enable', {}, pageSession);
+      await cdp.send('Page.stopLoading', {}, pageSession);
+      releaseDocument();
+      const loaded = cdp.event('Page.loadEventFired');
+      await cdp.send('Page.navigate', { url: siteUrl }, pageSession);
+      await loaded;
       executableDirectory = await mkdtemp(resolve(tmpdir(), 'template-upload-control-'));
       await Promise.all(
         ['Browser.setDownloadBehavior', 'Page.setDownloadBehavior'].map(async (method) => {
@@ -440,13 +450,15 @@ it(
         browserSessionId: expect.not.stringMatching(initialView.sessionId),
       });
     } finally {
+      releaseDocument();
       cdp.close();
     }
   }
 );
 
-async function fakeSite(visited: () => void = () => undefined) {
-  site = createServer((_request, response) => {
+async function fakeSite(visited: () => void = () => undefined, documentGate: Promise<void> = Promise.resolve()) {
+  site = createServer(async (_request, response) => {
+    await documentGate;
     visited();
     response.writeHead(200, {
       'content-type': 'text/html',

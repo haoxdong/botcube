@@ -21,14 +21,20 @@ import { cors } from './cors.js';
 import { picture, pictureUrl } from './pictures.js';
 import { accountDefaultModel, accountModelList, namedModel, requireAllowedModel } from './models.js';
 import { sessionOperations } from './sessions.js';
+import { purgeQueue } from './purges.js';
+import { sessionLifecycle } from './session-lifecycle.js';
 import { sessionApi, type SessionApi, type SessionApiConfig } from './session-api.js';
 import {
   DynamoDBSessionMetadata,
   SessionDeletedError,
+  SessionDispatchPendingError,
+  SessionNamespaceNotReadyError,
+  trackedRuntime,
   SessionClaimError,
   SessionProviderError,
   type SessionMetadata,
   type TurnActivity,
+  type SessionPurge,
 } from './session-metadata.js';
 import {
   ScheduledTasks,
@@ -53,7 +59,6 @@ import {
   httpsHarnessUpstream,
   type HarnessEndpoint,
   type AgentCoreRuntime,
-  type Upstream,
 } from './upstream.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
@@ -256,7 +261,60 @@ export function createChatService(
   scheduled: { tasks: ScheduledTasks; queue: RunQueue; draining: () => Promise<boolean>; onClose?: (stop: () => void) => void } | null = null,
 ): Hono {
   const scheduledTasks = scheduled?.tasks ?? null;
-  const sessions = sessionOperations(sessionMetadata, invokeSessionApi, agentDocuments, scheduledTasks);
+  const options = config.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: config.connectTimeoutMs };
+  const runtime = config.agentCore && agentCoreUpstream(config.agentCore, options);
+  const agentCore = runtime && sessionLifecycle(runtime, runtime.stop);
+  const httpsHarness = config.harnessEndpoint && httpsHarnessUpstream(config.harnessEndpoint, options, config.agentCore);
+  const upstream = httpsHarness ? sessionLifecycle(httpsHarness, httpsHarness.stop)
+    : config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, options)) : agentCore;
+  const runtimeNamespaceRequired = Boolean(httpsHarness) || (!config.localHarnessUrl && agentCore !== null);
+  const requireRuntimeNamespace = async () => {
+    if (!runtimeNamespaceRequired) return;
+    try {
+      await sessionMetadata.checkRuntimeNamespaceReady();
+    } catch (error) {
+      console.error('Session Runtime namespace readiness failed', error);
+      throw new HttpError(503, 'Session Runtime namespace is not ready');
+    }
+  };
+  const purge = purgeQueue(invokeSessionApi, async (session) => {
+    if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
+    if (!trackedRuntime(session)) await sessionMetadata.assertNoDispatch(session);
+    await requireRuntimeNamespace();
+    if (config.localHarnessUrl) {
+      await upstream.stop(session);
+      await sessionMetadata.assertNoDispatch(session);
+      return undefined;
+    }
+    upstream.restoreFailedDispatch(session, await sessionMetadata.rejectedDispatches(session, upstream.runtimeTarget));
+    await sessionMetadata.assertNoDispatch(session, upstream.failedDispatchTokens(session));
+    const settled = await upstream.settleFailedDispatch(session);
+    await sessionMetadata.assertNoDispatch(session);
+    if (settled) return undefined;
+    return upstream.stop(session);
+  }, undefined, (session) => sessionMetadata.completePurge(session));
+  const purgeSessions = (sessions: SessionPurge[], wait = false) => {
+    if (sessions.length > 0 && upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
+    if (sessions.length > 0 && httpsHarness && !httpsHarness.runtimeBound) throw new HttpError(503, 'HTTPS Harness Runtime stop identity is unproved; deletion remains pending');
+    upstream?.fence(sessions);
+    agentCore?.fence(sessions);
+    return wait ? purge.wait(sessions) : purge(sessions);
+  };
+  let recoveryError: unknown = new Error('Session purge recovery has not completed');
+  const recoverPurges = async () => {
+    try {
+      await purgeSessions(await sessionMetadata.pendingPurges());
+      await cartridge.recoverAccountDeletions?.();
+      recoveryError = undefined;
+    } catch (error) {
+      recoveryError = error;
+      console.error('Session purge failed; durable cleanup recovery failed', error);
+    } finally {
+      // Surviving tasks discover fences written by another task after their initial scan.
+      setTimeout(() => { void recoverPurges(); }, 120_000).unref();
+    }
+  };
+  const sessions = sessionOperations(sessionMetadata, invokeSessionApi, agentDocuments, scheduledTasks, purgeSessions, (owner) => cartridge.filingUserId(owner));
   const history: AccountHistory = {
     delete: sessions.removeOwner,
     transfer: async (source, destination) => {
@@ -270,16 +328,9 @@ export function createChatService(
     ownsMainChat: (owner, sessionId) => sessionMetadata.ownsMainChat(owner, sessionId),
   };
   const cartridge = cartridgeFactory(history);
+  const initialRecovery = recoverPurges();
   const memory = memoryEdits(invokeSessionApi, agentDocuments, (owner) => cartridge.filingUserId(owner));
   const summarizeTurn = bedrockTurnSummarizer(config.turnSummaryModel);
-  const options = config.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: config.connectTimeoutMs };
-  const agentCore = config.agentCore && agentCoreUpstream(config.agentCore, options);
-  const upstream: Upstream | null = config.harnessEndpoint
-    ? httpsHarnessUpstream(config.harnessEndpoint, options)
-    : config.localHarnessUrl
-      ? localAgentUpstream(config.localHarnessUrl, options)
-      : agentCore;
-
   if (config.turnMemory && !URL.canParse(config.turnMemory.url)) throw new Error('Turn Memory URL is required');
   const turnMemory = config.turnMemory === undefined ? null : new TurnMemory(
     sessionMetadata, config.turnMemory.secret, config.turnMemory.memoryId, awsMemoryBackend(config.region),
@@ -287,7 +338,7 @@ export function createChatService(
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, summarizeTurn, turnMemory, turnMemoryUrl: config.turnMemory?.url };
+    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, runtimeNamespaceRequired, summarizeTurn, turnMemory, turnMemoryUrl: config.turnMemory?.url };
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
     });
@@ -299,6 +350,8 @@ export function createChatService(
     if (!(error instanceof HttpError) || error.cause !== undefined) {
       console.error(`${c.req.method} ${c.req.path} failed`, error);
     }
+    if (error instanceof SessionDispatchPendingError) return c.json({ detail: error.message, status: 'pending' }, 503);
+    if (error instanceof SessionNamespaceNotReadyError) return c.json({ detail: error.message }, 503);
     if (error instanceof HttpError) return c.json({ detail: error.detail, ...(error.code === undefined ? {} : { code: error.code }) }, error.status as 400);
     return c.text('Internal Server Error', 500);
   });
@@ -318,12 +371,19 @@ export function createChatService(
     return payload;
   };
 
+  const sessionAccessError = (error: unknown): unknown => {
+    if (error instanceof SessionClaimError) return new HttpError(409, 'Account Claim is in progress. Finish signing in and retry.');
+    if (error instanceof SessionDeletedError) return new HttpError(410, 'The Session was deleted');
+    return error;
+  };
+
   app.post('/', async (c) => {
     const timing = new FirstAnswerTiming(performance.now());
     const body = withoutOptionalNulls(await c.req.json().catch(() => undefined));
     const parsed = RunAgentInputSchema.safeParse(body);
     if (!parsed.success) return c.json({ detail: parsed.error.issues }, 422);
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
+    await requireRuntimeNamespace();
     // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
     const input = body as RunAgentInput;
     const validatedInput = parsed.data as RunAgentInput;
@@ -343,15 +403,13 @@ export function createChatService(
         messageId: input.runId,
       });
     } catch (error) {
-      if (error instanceof SessionClaimError) throw new HttpError(409, 'Account Claim is in progress. Finish signing in and retry.');
-      if (error instanceof SessionDeletedError) throw new HttpError(410, 'The Session was deleted');
       if (error instanceof SessionProviderError) {
         throw new HttpError(
           409,
           `Model ${JSON.stringify(model.key)} is from ${model.provider}; this Session runs on ${error.provider} models`,
         );
       }
-      throw error;
+      throw sessionAccessError(error);
     }
     timing.admitted(input.runId, input.threadId, model.key, initialMessages);
     let memoryLease: TurnMemoryLease | undefined;
@@ -374,7 +432,8 @@ export function createChatService(
       cartridge.turnStarting?.(requester, input.threadId);
       const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
       const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
-      return await relayTurn(upstream, {
+      const complete = await sessionMetadata.beginDispatch(requester.owner, input.threadId, undefined, running);
+      return await relayTurn({ label: upstream.label, invoke: (body, sessionId, init) => upstream.invokeRegistered(body, complete.session ?? { session_id: sessionId, filing_user_id: filingUserId }, complete, init) }, {
         timing,
         body: JSON.stringify(payload),
         sessionId: input.threadId,
@@ -408,7 +467,7 @@ export function createChatService(
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
       }
-      throw error;
+      throw sessionAccessError(error);
     }
   });
 
@@ -433,7 +492,9 @@ export function createChatService(
       forwardedProps: { stop: true, sessionUserId: metadata.filing_user_id },
     });
     try {
-      await stopTurn(upstream, stop, sessionId);
+      await requireRuntimeNamespace();
+      const complete = await sessionMetadata.beginDispatch(owner, sessionId);
+      await stopTurn({ label: upstream.label, invoke: (body, id, init) => upstream.invokeRegistered(body, complete.session ?? metadata, complete, init) }, stop, sessionId);
     } catch (error) {
       console.error(`The Turn could not be stopped session_id=${sessionId}`, error);
       throw new HttpError(502, `The Turn could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
@@ -457,6 +518,8 @@ export function createChatService(
         return c.json({ error: 'Invalid warmup JSON', details: 'Expected JSON object.' }, 400);
       }
     }
+    await requireRuntimeNamespace();
+    let namedSession: { owner: string; accountActorId: string; session: SessionPurge } | undefined;
     const { threadId, mainChat, model: requestedModel, effort } = request as Record<string, unknown>;
     const input: RunAgentInput = {
       threadId: WARMUP_SESSION_ID,
@@ -471,7 +534,7 @@ export function createChatService(
     if (mainChat === true || (typeof threadId === 'string' && threadId)) {
       // The requester's own Turn invocation, with no message: the Harness builds their agent for the Turn to come.
       const requester = await cartridge.requester(c);
-      input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner) : (threadId as string);
+      input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner, cartridge.filingUserId(requester.owner)) : (threadId as string);
       input.forwardedProps = {
         // Unnamed, the model is the one the account's model selector starts on.
         model: requestedModel ?? accountDefaultModel(await accountModelList(cartridge, requester)).key,
@@ -485,30 +548,63 @@ export function createChatService(
         sessionUserId: recorded?.filing_user_id ?? cartridge.filingUserId(requester.owner),
       };
       const sessionId = input.threadId;
+      namedSession = { owner: requester.owner, accountActorId: cartridge.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
       warmSession = () => cartridge.warmSession(requester, sessionId);
     }
+    let warmupFailure: unknown;
     const warmAgent = async () => {
+      let warmupLease: TurnMemoryLease | undefined;
+      let warmupCredentials: string[] = [];
+      const revoke = async () => {
+        if (warmupLease !== undefined && turnMemory !== null) {
+          const lease = warmupLease;
+          warmupLease = undefined;
+          await turnMemory.revoke(lease);
+        }
+      };
       try {
-        const response = await upstream.invoke(JSON.stringify(input), input.threadId, {
-          signal: AbortSignal.timeout(config.warmupTimeoutMs),
-        });
+        const init = { signal: AbortSignal.timeout(config.warmupTimeoutMs) };
+        const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined })
+          : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
+        if (complete.session !== undefined) input.forwardedProps.sessionUserId = complete.session.filing_user_id;
+        if (namedSession !== undefined && turnMemory !== null && config.turnMemory !== undefined) {
+          try {
+            const capability = await turnMemory.start({ owner: namedSession.owner,
+              accountActorId: namedSession.accountActorId, filingUserId: input.forwardedProps.sessionUserId as string,
+              sessionId: input.threadId, runId: input.runId, startedAt: new Date().toISOString(), purpose: 'warmup' });
+            warmupLease = capability.lease;
+            warmupCredentials = [capability.token];
+            input.forwardedProps.turnMemory = { token: capability.token, url: config.turnMemory.url };
+          } catch (error) {
+            await complete();
+            throw error;
+          }
+        }
+        const response = await (namedSession === undefined
+          ? upstream.invoke(JSON.stringify(input), input.threadId, init)
+          : upstream.invokeRegistered(JSON.stringify(input), complete.session ?? namedSession.session, complete, init));
         if (response.status >= 400) {
           await response.body?.cancel();
           return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
         }
-        const credentials = turnCredentials(input.forwardedProps as Record<string, unknown>, cartridge.credentialProps);
+        const credentials = [...turnCredentials(input.forwardedProps as Record<string, unknown>, cartridge.credentialProps), ...warmupCredentials];
         const failure = runError(await response.text(), credentials);
         if (failure !== null) {
           return c.json({ error: 'AgentCore warmup failed', details: turnErrorDetails(failure, credentials) }, 502);
         }
       } catch (error) {
+        warmupFailure = error;
         console.warn('warmup failed', error);
         return c.json({ error: 'AgentCore warmup failed', details: String(error) }, 502);
-      }
+      } finally { await revoke(); }
       return c.json({ status: 'ok' });
     };
     // The Cartridge readies its own side of the chat, such as its browser, while the agent builds; its failure answers.
-    const agent = warmAgent().then((answer) => {
+    const agent = warmAgent().catch((error: unknown) => {
+      const failure = warmupFailure === undefined ? error : new AggregateError([warmupFailure, error], 'Warmup invocation and Memory revocation failed');
+      console.warn('warmup Memory revocation failed', failure);
+      return c.json({ error: 'Warmup Memory revocation failed', details: String(failure) }, 502);
+    }).then((answer) => {
       if (!answer.ok) throw new WarmupFailure(answer);
       return answer;
     });
@@ -522,6 +618,7 @@ export function createChatService(
   });
 
   app.get('/health', async (c) => {
+    await initialRecovery;
     if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
     try {
       await sessionMetadata.checkHealth();
@@ -529,6 +626,8 @@ export function createChatService(
       console.error('Session Metadata readiness probe failed', error);
       throw new HttpError(503, 'Session Metadata storage is unavailable');
     }
+    await requireRuntimeNamespace();
+    if (recoveryError !== undefined) throw new HttpError(503, 'Session purge recovery is unavailable');
     return c.json({ status: 'ok' });
   });
 

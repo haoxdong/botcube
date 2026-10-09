@@ -189,6 +189,9 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
             for item in payload['input']:
                 if isinstance(item, dict) and item.get('role') == 'system':
                     item['role'] = 'developer'
+            # LangChain has serialized the conversation to Responses JSON; avoid the SDK's
+            # repeated union traversal over every message in a long conversation.
+            payload['extra_body'] = {'input': payload.pop('input'), **(payload.get('extra_body') or {})}
             return payload
 
         async def _astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:

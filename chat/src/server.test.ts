@@ -36,6 +36,7 @@ describe('GET /health', () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({ detail: 'Session Metadata storage is unavailable' });
       expect(consoleError.mock.calls).toEqual([
+        ['Session purge failed; durable cleanup recovery failed', expect.objectContaining({ name: 'ResourceNotFoundException' })],
         ['Session Metadata readiness probe failed', expect.objectContaining({ name: 'ResourceNotFoundException' })],
       ]);
     } finally {
@@ -169,7 +170,7 @@ describe('Account History Session ownership', () => {
     const isolated = await startInProcess();
     try {
       const owner = 'account-1';
-      const sessionId = await isolated.sessionMetadata.mainChat(owner);
+      const sessionId = await isolated.sessionMetadata.mainChat(owner, `filed-${owner}`);
       await isolated.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'filed-account-1', title: 'Main Chat' });
       await isolated.sessionMetadata.recordTurn(owner, 'ordinary-turn', { filingUserId: 'filed-account-1', title: 'Ordinary Turn' });
       expect(await isolated.history.owns(owner, sessionId)).toBe(true);

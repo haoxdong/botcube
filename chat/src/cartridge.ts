@@ -40,7 +40,7 @@ export type InvocationPayload = Record<string, unknown> & {
  * account flows change the account; handed to the Cartridge when it is built.
  */
 export interface AccountHistory {
-  /** Account deletion: fence every Session the account answers for, then purge them in the background. */
+  /** Fence every owned Session and wait for proven Runtime settlement and purge before downstream account erasure. */
   delete(accountId: string): Promise<void>;
   /** Account Claim: the destination account owns the source account's Sessions from now on. */
   transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;
@@ -109,6 +109,8 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   authorizeBrowserLiveView(sessionId: string, c: Context): Promise<string | void>;
   /** Ready the Cartridge's own side of a chat the requester opened, alongside its agent's warmup, such as its browser. */
   warmSession(requester: R, sessionId: string): Promise<void>;
+  /** Discover durable authorized account deletions and enqueue their recovery without waiting for Session settlement. */
+  recoverAccountDeletions?(): Promise<void>;
 }
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */

@@ -23,7 +23,12 @@ from .pending_memory import utc_now
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore import BedrockAgentCoreClient
-    from types_boto3_bedrock_agentcore.type_defs import MemoryRecordSummaryTypeDef
+    from types_boto3_bedrock_agentcore.type_defs import (
+        EventTypeDef,
+        MemoryRecordSummaryTypeDef,
+    )
+
+    from .memory_broker import MemoryBrokerClient
 
 
 # Live, the listing showed an update after 71-73 s and a delete after 59-63 s.
@@ -50,7 +55,7 @@ def _newest_first(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[MemoryR
 
 
 def actor_memory_records(
-    client: BedrockAgentCoreClient,
+    client: BedrockAgentCoreClient | MemoryBrokerClient,
     *,
     memory_id: str,
     actor_id: str,
@@ -61,9 +66,36 @@ def actor_memory_records(
     Listing each actor leaf avoids semantic relevance cutoffs for durable preferences.
     """
     summaries = list_actor_memory_record_summaries(client, memory_id=memory_id, actor_id=actor_id)
+    return _actor_memory_records(summaries, _recent_saves(client, memory_id=memory_id, actor_id=actor_id), actor_id, belongs)
+
+
+def startup_memory_records(
+    client: MemoryBrokerClient,
+    *,
+    memory_id: str,
+    actor_id: str,
+    pending_session_ids: Sequence[str],
+    now: datetime,
+    belongs: Callable[[Mapping[str, Any], str], bool] = record_belongs_to_actor,
+) -> tuple[list[MemoryRecordSummaryTypeDef], list[MemoryRecordSummaryTypeDef], list[EventTypeDef]]:
+    """Read startup records and journals together, using the same Memory document rules."""
+    save_session_ids = _save_session_ids(now)
+    snapshot = client.startup_snapshot(memory_id, actor_id, [*save_session_ids, *pending_session_ids])
+    events = snapshot['eventsBySession']
+    saves = _saves_from_events([event for session in save_session_ids for event in events[session]], now)
+    preferences, facts = _actor_memory_records(snapshot['memoryRecordSummaries'], saves, actor_id, belongs)
+    return preferences, facts, [event for session in pending_session_ids for event in events[session]]
+
+
+def _actor_memory_records(
+    summaries: Sequence[MemoryRecordSummaryTypeDef],
+    saves: Mapping[str, str | None],
+    actor_id: str,
+    belongs: Callable[[Mapping[str, Any], str], bool],
+) -> tuple[list[MemoryRecordSummaryTypeDef], list[MemoryRecordSummaryTypeDef]]:
     actor_summaries = _with_saves(
         [summary for summary in summaries if belongs(summary, actor_id)],
-        _recent_saves(client, memory_id=memory_id, actor_id=actor_id),
+        saves,
     )
     preferences = [summary for summary in actor_summaries if _is_user_preference_record(summary)]
     facts = _newest_first([summary for summary in actor_summaries if _is_semantic_fact_record(summary)])
@@ -75,11 +107,15 @@ def _saves_session_id(at: datetime) -> str:
     return f'memory-saves-{int(at.timestamp() // MEMORY_SAVE_WINDOW.total_seconds())}'
 
 
-def _recent_saves(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> dict[str, str | None]:
+def _save_session_ids(now: datetime) -> tuple[str, str]:
+    return _saves_session_id(now - MEMORY_SAVE_WINDOW), _saves_session_id(now)
+
+
+def _recent_saves(client: BedrockAgentCoreClient | MemoryBrokerClient, *, memory_id: str, actor_id: str) -> dict[str, str | None]:
     """The actor's Memory saves of the last five minutes: each record's latest text, or None once deleted."""
     now = utc_now()
     events: list[Any] = []
-    for session_id in (_saves_session_id(now - MEMORY_SAVE_WINDOW), _saves_session_id(now)):
+    for session_id in _save_session_ids(now):
         kwargs: dict[str, Any] = {
             'memoryId': memory_id, 'actorId': actor_id, 'sessionId': session_id, 'includePayloads': True, 'maxResults': 100,
         }
@@ -89,6 +125,10 @@ def _recent_saves(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: s
             if 'nextToken' not in response:
                 break
             kwargs['nextToken'] = response['nextToken']
+    return _saves_from_events(events, now)
+
+
+def _saves_from_events(events: Sequence[Mapping[str, Any]], now: datetime) -> dict[str, str | None]:
     saves: dict[str, str | None] = {}
     for event in sorted(events, key=lambda event: event['eventTimestamp']):
         if now - event['eventTimestamp'] <= MEMORY_SAVE_WINDOW:

@@ -15,14 +15,15 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard, cast
 
 from ag_ui.core import (
+    CustomEvent,
     EventType,
     RunAgentInput,
     RunErrorEvent,
@@ -74,14 +75,15 @@ from .files_sync import (
     files_prompt,
     pop_files_sync,
 )
+from .lazy_files import turn_files
 from .llm import PlanUsageError, build_model, resolve_effort, resolve_model
 from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
 from .memory.agentcore.snapshot_saver import reading_once
 from .memory.agentcore.turn_saver import TurnCheckpointSaver
-from .memory_broker import MemoryCapability, turn_memory
-from .memory_document import actor_memory_records, record_text
+from .memory_broker import MemoryBrokerClient, MemoryCapability, turn_memory
+from .memory_document import actor_memory_records, record_text, startup_memory_records
 from .memory_files import MEMORY_FILENAME
 from .memory_tools import (
     AGENTCORE_MEMORY_ID,
@@ -243,8 +245,7 @@ app = FastAPI(title='BotCube DeepAgents Harness Runtime')
 class _RequestContext:
     """Minimal per-request context carrying the AgentCore session id.
 
-    Parity with the ``session_id`` attribute of AGUIApp's ``RequestContext``,
-    which is all ``_apply_session_env`` reads.
+    Parity with the ``session_id`` attribute of AGUIApp's ``RequestContext``.
     """
 
     def __init__(self, session_id: str | None) -> None:
@@ -388,7 +389,8 @@ class _SessionAgent(LangGraphAgent):
                 for call in message.tool_calls or []:
                     if call.function.arguments:
                         json.loads(call.function.arguments)
-        prepared = await super().prepare_stream(input, agent_state, config)
+        with answer_timing.phase('state_preparation'):
+            prepared = await super().prepare_stream(input, agent_state, config)
         self._graph_stream = prepared.get('stream')
         prepared['stream'] = await self._prime_initial_record(self._graph_stream, agent_state)
         return prepared
@@ -546,16 +548,23 @@ def _prewarm_ltm(
     yesterday's sessions) while asynchronous strategy extraction catches up.
     """
     current = utc_now()
-    preference_records, fact_records = actor_memory_records(
-        store.client,
-        memory_id=AGENTCORE_MEMORY_ID,
-        actor_id=actor_id,
-        belongs=lambda record, actor: _require_cartridge().record_belongs_to_actor(record, actor),  # pragma: no mutate: every cartridge owns records as actor_identity, the default
-    )
+    belongs = _require_cartridge().record_belongs_to_actor
+    if isinstance(store.client, MemoryBrokerClient):
+        preference_records, fact_records, pending_memory_events = startup_memory_records(
+            store.client,
+            memory_id=AGENTCORE_MEMORY_ID,
+            actor_id=actor_id,
+            pending_session_ids=pending_memory_session_ids(current, actor_id=actor_id, thread_id=thread_id),
+            now=current,
+            belongs=belongs,
+        )
+    else:
+        preference_records, fact_records = actor_memory_records(
+            store.client, memory_id=AGENTCORE_MEMORY_ID, actor_id=actor_id, belongs=belongs,
+        )
+        pending_memory_events = _list_pending_memory_events(store, actor_id, now=current, thread_id=thread_id)
     preferences = _record_texts(preference_records)
     facts = _record_texts(fact_records)
-
-    pending_memory_events = _list_pending_memory_events(store, actor_id, now=current, thread_id=thread_id)
 
     facts = [*pending_memory_texts(pending_memory_events, now=current), *facts]
 
@@ -652,6 +661,7 @@ def _get_agent(
     documents: AgentDocuments | None = None,
     memory_revision: int = 0,  # pragma: no mutate: any constant serves callers that never edit Memory
     syncs_files: bool = False,
+    preparing: bool = False,
 ) -> LangGraphAgent:
     """Return the cached agent for the requested model/effort, building on first use.
 
@@ -677,27 +687,33 @@ def _get_agent(
         syncs_files,
         invocation_prompt,
     )
+    cached = _AGENTS.get(key)
+    if preparing and cached is not None:
+        return cached
     if model_relay is not None:
         _MODEL_RELAYS[key] = model_relay
-    cached = _AGENTS.get(key)
     if cached is not None:
         backend = _AGENT_BACKENDS[key]
         _apply_environment(backend, environment)
         _BACKEND_BY_AGENT[cached] = backend
         return cached
 
-    store = _ensure_memory_backends()
-    backend = _backend_for((conversation_id, actor_id, environment_key), environment)
-    ltm_context = _thread_ltm_context(conversation_id, actor_id, memory_revision, store) if persistent_memory else None
+    with answer_timing.phase('memory_backends'):
+        store = _ensure_memory_backends()
+    with answer_timing.phase('workspace'):
+        backend = _backend_for((conversation_id, actor_id, environment_key), environment)
+    with answer_timing.phase('personal_memory'):
+        ltm_context = _thread_ltm_context(conversation_id, actor_id, memory_revision, store) if persistent_memory else None
 
-    m = install_prompt_cache_usage_callback(
-        build_model(
-            model=model,
-            effort=effort,
-            max_tokens=positive_int('BOTCUBE_TURN_MAX_TOKENS', 16000),
-            relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
+    with answer_timing.phase('model_client'):
+        m = install_prompt_cache_usage_callback(
+            build_model(
+                model=model,
+                effort=effort,
+                max_tokens=positive_int('BOTCUBE_TURN_MAX_TOKENS', 16000),
+                relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
+            )
         )
-    )
     prompt_cache_middleware = PromptCacheUsageMiddleware(
         thread_id=conversation_id,
         model=resolved_model,
@@ -720,23 +736,24 @@ def _get_agent(
     system_prompt = '\n\n'.join(
         part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
     )
-    graph = build_agent(
-        model=m,
-        tools=tools,
-        middleware=middleware,
-        system_prompt=system_prompt,
-        # AgentCore LTM is the only persistent memory store (ADR 0031);
-        # build_agent appends the prewarmed ltm.md render file as the sole
-        # memory source.
-        memory=[],
-        ltm_context=ltm_context,
-        memory_path=_ltm_memory_path(conversation_id, actor_id),
-        backend=backend,
-        skills=_require_cartridge().skills,
-        checkpointer=_CHECKPOINTER,
-        # Guests get no store: nothing in their graph may reach memory.
-        store=store if persistent_memory else None,
-    )
+    with answer_timing.phase('graph_build'):
+        graph = build_agent(
+            model=m,
+            tools=tools,
+            middleware=middleware,
+            system_prompt=system_prompt,
+            # AgentCore LTM is the only persistent memory store (ADR 0031);
+            # build_agent appends the prewarmed ltm.md render file as the sole
+            # memory source.
+            memory=[],
+            ltm_context=ltm_context,
+            memory_path=_ltm_memory_path(conversation_id, actor_id),
+            backend=backend,
+            skills=_require_cartridge().skills,
+            checkpointer=_CHECKPOINTER,
+            # Guests get no store: nothing in their graph may reach memory.
+            store=store if persistent_memory else None,
+        )
     config = {
         'recursion_limit': graph.config['recursion_limit'],
         'configurable': {'actor_id': session_user_id},
@@ -746,7 +763,8 @@ def _get_agent(
     # checkpoint or log carries it. The _SessionAgent call below stays mutated, and dropping
     # the name there fails the required argument.
     identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
-    agent = _SessionAgent(**identity, graph=graph, config=config)
+    with answer_timing.phase('stream_adapter'):
+        agent = _SessionAgent(**identity, graph=graph, config=config)
     _AGENTS[key] = agent
     _AGENT_BACKENDS[key] = backend
     _BACKEND_BY_AGENT[agent] = backend
@@ -824,15 +842,15 @@ def _apply_environment(backend: LocalShellBackend, environment: Mapping[str, str
         env[str(key)] = str(value)
 
 
-def _apply_session_env(context: Any, backend: LocalShellBackend) -> None:
-    """Update the invoking agent's backend env with the per-request session id.
+def _apply_session_env(backend: LocalShellBackend, session_id: str) -> None:
+    """Set the shell's logical Session ID, which its invocation token is issued for.
 
     Takes the backend bound to the selected agent, not the module global —
     a concurrent invocation for another thread/account can swap the global
     between agent selection and this call, and a stolen owner session id can
     break an invocation-token session match.
     """
-    _require_cartridge().apply_session_id(backend, context.session_id)
+    _require_cartridge().apply_session_id(backend, session_id)
 
 
 def _require_session_user_id(session_user_id: str | None) -> str:
@@ -851,7 +869,8 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     warmup = forwarded.get('warmup')
     session_user_id = forwarded.get('sessionUserId')
     if warmup and not session_user_id:
-        # A warmup that names no requester only boots the Sandbox.
+        if 'preparationScope' in forwarded:
+            _require_session_user_id(session_user_id)
         return
     if forwarded.get('stop'):
         session_user_id = _require_session_user_id(session_user_id)
@@ -863,7 +882,8 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     memory_revision = forwarded.pop('memoryRevision', 0)  # pragma: no mutate: any constant serves callers that never edit Memory
     if type(memory_revision) is not int:
         raise InvalidMemoryRevisionError('memoryRevision must be a whole number')
-    auth = _require_cartridge().prepare_invocation(input_data)
+    with answer_timing.phase('invocation_auth'):
+        auth = _require_cartridge().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
     if not auth.actor_id:
         raise MissingUserIdError(
@@ -871,8 +891,6 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         )
     session_user_id = _require_session_user_id(session_user_id)
     capability_data = forwarded.pop('turnMemory', None)
-    if warmup and AGENTCORE_MEMORY_ID:
-        return
     capability = None
     if AGENTCORE_MEMORY_ID:
         if not isinstance(capability_data, dict) or not all(
@@ -889,32 +907,50 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any, memory_revision: int,
                         files: FilesSync | None, warmup: Any):
-    agent = _get_agent(
-        actor_id=auth.actor_id,
-        session_user_id=session_user_id,
-        persistent_memory=auth.persistent_memory,
-        model=forwarded.get('model'),
-        effort=forwarded.get('effort'),
-        thread_id=input_data.thread_id,
-        invocation_prompt=auth.system_prompt,
-        environment=auth.environment,
-        model_relay=auth.model_relay,
-        documents=documents,
-        memory_revision=memory_revision,
-        syncs_files=files is not None,
-    )
-    if (timing := answer_timing.current()) is not None:
-        timing.prepared()
+    preparation = _SESSION_TURNS.preparation((session_user_id, input_data.thread_id)) if warmup else nullcontext(True)
+    async with preparation as allowed:
+        if allowed:
+            agent = _get_agent(
+                actor_id=auth.actor_id,
+                session_user_id=session_user_id,
+                persistent_memory=auth.persistent_memory,
+                model=forwarded.get('model'),
+                effort=forwarded.get('effort'),
+                thread_id=input_data.thread_id,
+                invocation_prompt=auth.system_prompt,
+                environment=auth.environment,
+                model_relay=auth.model_relay,
+                documents=documents,
+                memory_revision=memory_revision,
+                syncs_files=files is not None,
+                preparing=bool(warmup),
+            )
+            if (timing := answer_timing.current()) is not None:
+                timing.prepared()
+            if warmup:
+                if forwarded.get('preparationScope', 'recorded') != 'startup':
+                    with reading_once(), answer_timing.phase('warmup_history'):
+                        await agent.graph.aget_state(_session_config((session_user_id, input_data.thread_id)))
+            else:
+                backend = _BACKEND_BY_AGENT[agent]
+                _apply_session_env(backend, input_data.thread_id)
+                async with aclosing(_SESSION_TURNS.stream(
+                    (session_user_id, input_data.thread_id), agent, input_data, files, Path(backend.cwd), context,
+                )) as events:
+                    async for event in events:
+                        yield event
     if warmup:
-        # The requester's agent is cached for their next Turn, so it starts without the build.
-        return
-    backend = _BACKEND_BY_AGENT[agent]
-    _apply_session_env(context, backend)
-    async with aclosing(_SESSION_TURNS.stream(
-        (session_user_id, input_data.thread_id), agent, input_data, files, Path(backend.cwd), context,
-    )) as events:
-        async for event in events:
-            yield event
+        yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
+
+
+def _preparation_event(
+    run_input: RunAgentInput, outcome: Literal['prepared', 'skipped-busy', 'failed'],
+    error: RunErrorEvent | None = None,
+) -> CustomEvent:
+    value: dict[str, Any] = {'runId': run_input.run_id, 'sessionId': run_input.thread_id, 'outcome': outcome}
+    if error is not None:
+        value['error'] = {'code': error.code, 'message': error.message}
+    return CustomEvent(name='SESSION_PREPARATION', value=value)
 
 
 @dataclass
@@ -979,6 +1015,16 @@ class _SessionTurns:
         self._locks: dict[tuple[str, str | None], asyncio.Lock] = {}
         self._flush_failures: dict[tuple[str, str | None], Exception] = {}
         self._end = object()
+
+    @asynccontextmanager
+    async def preparation(self, session: tuple[str, str | None]) -> AsyncIterator[bool]:
+        lock = self._locks.setdefault(session, asyncio.Lock())
+        turn = self._turns.get(session)
+        if lock.locked() or (turn is not None and not turn.finished):
+            yield False
+            return
+        async with lock:
+            yield True
 
     def stop(self, session: tuple[str, str | None], run_id: str) -> None:
         turn = self._turns.get(session)
@@ -1060,14 +1106,15 @@ class _SessionTurns:
                         return
                     put(event)
                 # Graph work and settlement share one read of the Session record.
-                with reading_once():
+                with reading_once(), turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
                     with prompt_cache_turn(context.session_id):
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, files, root, reply.watching(publish)))
                     await asyncio.wait([turn.work])
                     try:
                         if not turn.work.cancelled():
                             turn.work.result()
-                            if files is not None and completion is not None and completion.type == EventType.RUN_FINISHED:
+                            readiness.raise_if_failed()
+                            if files is not None and readiness.ready and completion is not None and completion.type == EventType.RUN_FINISHED:
                                 started = perf_counter()
                                 await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
                                 log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
@@ -1141,9 +1188,6 @@ async def _turn_events(
     root: Path,
     put: Callable[[Any], None],
 ) -> None:
-    excluded = excluded_paths(_require_cartridge().skills)
-    if files is not None:
-        await asyncio.to_thread(files.pull, root, excluded)
     async for event in agent.run(input_data):
         # The graph's raw events and its state carry the Session's history, which no client reads.
         if event.type not in (EventType.RAW, EventType.STATE_SNAPSHOT):
@@ -1167,10 +1211,7 @@ def _empty_response_error() -> RunErrorEvent:
 
 
 async def _events_with_response_check(run_input: RunAgentInput, context: _RequestContext):
-    """Relay the run's events, failing a run that finished without assistant text.
-
-    A warmup invocation yields no events, so this check never fails it.
-    """
+    """Relay the run's events, failing a run that finished without assistant text."""
     saw_assistant_text = False
     async for event in invoke(run_input, context):
         saw_assistant_text |= _is_assistant_text(event)
@@ -1200,11 +1241,12 @@ async def invocations(request: Request) -> Any:
 
     context = _RequestContext(request.headers.get(SESSION_ID_HEADER))
     encoder = EventEncoder(accept=request.headers.get('accept', ''))
-    timing = answer_timing.AnswerTiming(run_input.run_id, context.session_id,
+    timing = answer_timing.AnswerTiming(run_input.run_id, run_input.thread_id,
         (run_input.forwarded_props or {}).get('model'), receipt)
 
     async def event_generator():
         token = answer_timing._current.set(timing)
+        error: RunErrorEvent | None = None
         try:
             async for event in _events_with_response_check(run_input, context):
                 frame = encoder.encode(event)
@@ -1220,12 +1262,16 @@ async def invocations(request: Request) -> Any:
             PlanUsageError,
         ) as e:
             log.error('Rejected invocation: %s', e)
-            yield encoder.encode(RunErrorEvent(message=str(e), code=e.code))
+            yield encoder.encode(error := RunErrorEvent(message=str(e), code=e.code))
         except Exception as e:
             log.exception('Error during AG-UI event streaming')
-            yield encoder.encode(RunErrorEvent(message=str(e), code='INTERNAL_ERROR'))
+            yield encoder.encode(error := RunErrorEvent(message=str(e), code='INTERNAL_ERROR'))
         finally:
             answer_timing._current.reset(token)
+        if error is None:
+            return
+        if (run_input.forwarded_props or {}).get('warmup'):
+            yield encoder.encode(_preparation_event(run_input, 'failed', error))
 
     return StreamingResponse(_kept_alive(event_generator(), timing), media_type=encoder.get_content_type())
 
@@ -1291,6 +1337,7 @@ def ping() -> JSONResponse:
 def main() -> None:
     import uvicorn
 
+    importlib.import_module('openai.resources')
     if _cartridge is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
         if module_name:

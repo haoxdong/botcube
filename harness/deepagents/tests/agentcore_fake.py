@@ -57,6 +57,7 @@ class FakeAgentCoreMemory:
         # ListEvents calls by Session ID.
         self.listed: Counter[str] = Counter()
         self.create_event_calls = 0
+        self.startup_snapshot_calls = 0
         # Each event's CreateEvent extractionMode, by Session ID: ListEvents does not return it.
         self.extraction_modes: dict[str, list[str | None]] = defaultdict(list)
         self.deleted_at: list[float] = []
@@ -132,6 +133,32 @@ class FakeAgentCoreMemory:
         self.records.remove(self._record(params['memoryRecordId'], 'DeleteMemoryRecord'))
         return {'memoryRecordId': params['memoryRecordId']}
 
+    def startup_snapshot(self, *, memoryId: str, actorId: str, sessionIds: list[str]) -> dict[str, Any]:
+        self.startup_snapshot_calls += 1
+        assert memoryId == MEMORY_ID
+        records = self.records if self.listing is None else self.listing
+        summaries = [record for record in records if all(f'/actors/{actorId}/' in ns for ns in record['namespaces'])]
+        events = {session: self._snapshot_events(memoryId, actorId, session) for session in sessionIds}
+        return {'memoryRecordSummaries': summaries, 'eventsBySession': events}
+
+    def _snapshot_events(self, memory_id: str, actor_id: str, session: str) -> list[Any]:
+        assert session.startswith(('pending-memory-', 'memory-saves-'))
+        events: list[Any] = []
+        params: dict[str, Any] = {'memoryId': memory_id, 'actorId': actor_id, 'sessionId': session,
+                                  'includePayloads': True, 'maxResults': 100}
+        while True:
+            try:
+                page = self.list_events(**params)
+            except self.exceptions.ResourceNotFoundException:
+                if session.startswith('pending-memory-'):
+                    break
+                raise
+            events.extend(page['events'])
+            if 'nextToken' not in page:
+                break
+            params['nextToken'] = page['nextToken']
+        return events
+
     def get_paginator(self, operation: str) -> Any:
         assert operation == 'list_memory_records', operation
 
@@ -150,35 +177,43 @@ def memory_capability_props(actor: str = 'user-1', filing: str = 'user-1') -> di
             'token': json.dumps({'actor': actor, 'filing': filing})}
 
 
+def _broker_response(memory: FakeAgentCoreMemory, operation: str, params: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+    actor = identity['actor']
+    if operation == 'actor_namespaces':
+        assert params['actorId'] == actor
+        strategies = {record['memoryStrategyId'] for record in memory.records}
+        return {'namespaces': [f'/strategies/{strategy}/actors/{actor}/' for strategy in sorted(strategies)]}
+    if operation == 'list_memory_records':
+        assert f'/actors/{actor}/' in params['namespacePath']
+        [response] = memory.get_paginator(operation).paginate(PaginationConfig={'PageSize': 100}, **params)
+        return response
+    if operation == 'startup_snapshot':
+        assert params['actorId'] == actor
+        return memory.startup_snapshot(**params)
+    if 'actorId' in params:
+        assert params['actorId'] in {actor, identity['filing']}
+    return getattr(memory, operation)(**params)
+
+
 def install_memory_broker_http(monkeypatch: Any, memory: FakeAgentCoreMemory) -> None:
     import httpx
     from botocore.exceptions import ClientError
 
     from botcube_harness_deepagents.memory_broker import _timestamps
 
-    def post(url: str, *, headers: dict[str, str], content: str, timeout: int) -> httpx.Response:
-        assert url == 'https://chat.test/internal/turn-memory'
-        identity = json.loads(headers['Authorization'].removeprefix('Bearer '))
-        request = json.loads(content)
+    def post(wire_request: httpx.Request) -> httpx.Response:
+        assert str(wire_request.url) == 'https://chat.test/internal/turn-memory'
+        identity = json.loads(wire_request.headers['Authorization'].removeprefix('Bearer '))
+        request = json.loads(wire_request.content)
         params = _timestamps(request['params'])
         operation = request['operation']
-        actor = identity['actor']
         try:
-            if operation == 'actor_namespaces':
-                assert params['actorId'] == actor
-                strategies = {record['memoryStrategyId'] for record in memory.records}
-                response = {'namespaces': [f'/strategies/{strategy}/actors/{actor}/' for strategy in sorted(strategies)]}
-            elif operation == 'list_memory_records':
-                assert f'/actors/{actor}/' in params['namespacePath']
-                [response] = memory.get_paginator(operation).paginate(PaginationConfig={'PageSize': 100}, **params)
-            else:
-                if 'actorId' in params:
-                    assert params['actorId'] in {actor, identity['filing']}
-                response = getattr(memory, operation)(**params)
+            response = _broker_response(memory, operation, params, identity)
         except ClientError as error:
             details = error.response.get('Error', {})
             return httpx.Response(400, json={'code': details.get('Code', 'MemoryBrokerError'),
                                            'detail': details.get('Message', 'Memory broker request failed')})
         return httpx.Response(200, content=json.dumps(response, default=lambda item: item.isoformat()))
 
-    monkeypatch.setattr(httpx, 'post', post)
+    from botcube_harness_deepagents import memory_broker
+    monkeypatch.setattr(memory_broker._http_client(), 'send', post)

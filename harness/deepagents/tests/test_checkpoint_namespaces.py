@@ -45,17 +45,18 @@ def scoped_memory(monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
     def no_aws(*args: Any, **kwargs: Any) -> None:
         raise AssertionError('The Harness must not discover AWS credentials')
 
-    def post(url: str, *, headers: dict[str, str], content: str, timeout: int) -> httpx.Response:
-        request = json.loads(content)
+    def post(wire_request: httpx.Request) -> httpx.Response:
+        request = json.loads(wire_request.content)
         params = _timestamps(request['params'])
-        assert headers == {'Authorization': 'Bearer literal-test-turn'}
+        assert wire_request.headers['Authorization'] == 'Bearer literal-test-turn'
         if params['actorId'] != 'filing-fixture' or params['sessionId'] not in (SESSION, SESSION + '-messages'):
             return httpx.Response(403, json={'detail': 'Memory access is outside this Turn'})
         response = getattr(memory, request['operation'])(**params)
         return httpx.Response(200, content=json.dumps(response, default=lambda value: value.isoformat()))
 
     monkeypatch.setattr(boto3, 'client', no_aws)
-    monkeypatch.setattr(httpx, 'post', post)
+    from botcube_harness_deepagents import memory_broker
+    monkeypatch.setattr(memory_broker._http_client(), 'send', post)
     return memory
 
 

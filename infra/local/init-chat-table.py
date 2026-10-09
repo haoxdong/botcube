@@ -23,6 +23,7 @@ for _ in range(60):
 else:
     raise TimeoutError(f'DynamoDB Local at {endpoint} did not accept connections within 60 seconds')
 name = os.environ['BOTCUBE_CHAT_TABLE']
+created = False
 try:
     client.describe_table(TableName=name)
 except client.exceptions.ResourceNotFoundException:
@@ -38,4 +39,16 @@ except client.exceptions.ResourceNotFoundException:
         ],
         BillingMode='PAY_PER_REQUEST',
     )
+    created = True
 client.get_waiter('table_exists').wait(TableName=name)
+if created:
+    client.put_item(
+        TableName=name,
+        Item={
+            'pk': {'S': 'RUNTIME_DISPATCHERS'},
+            'sk': {'S': 'CLOSED'},
+            'old_chat_retired': {'BOOL': True},
+            'memory_broker_only': {'BOOL': True},
+        },
+        ConditionExpression='attribute_not_exists(pk)',
+    )

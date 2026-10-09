@@ -268,10 +268,12 @@ class OnePassAgentCoreMemorySaver(AgentCoreMemorySaver):
         checkpoint_ids = {event.checkpoint_id for event in scoped if isinstance(event, CheckpointEvent)}
         scoped.extend(event for event in events if isinstance(event, WritesEvent) and event.checkpoint_id in checkpoint_ids)
         checkpoints, writes_by_checkpoint, channel_data = self.processor.process_events(scoped)
+        available = {(event.channel, str(event.version)) for event in scoped if isinstance(event, ChannelDataEvent)}
         tuples: dict[str, CheckpointTuple] = {}
         for checkpoint_id, checkpoint_event in checkpoints.items():
             self._check_read_format(checkpoint_event)
-            if self.processor.missing_channel_versions(checkpoint_event, scoped):
+            required = {(channel, str(version)) for channel, version in checkpoint_event.checkpoint_data.get('channel_versions', {}).items()}
+            if required - available:
                 raise EventNotFoundError('Checkpoint read is missing referenced channel/version blobs. Event history was exhausted.')
             tuples[checkpoint_id] = self.processor.build_checkpoint_tuple(
                 checkpoint_event,

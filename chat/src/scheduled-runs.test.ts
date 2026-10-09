@@ -1,14 +1,24 @@
 import { DescribeTasksCommand, ECSClient, type DescribeTasksCommandOutput } from '@aws-sdk/client-ecs';
-import { SQSClient } from '@aws-sdk/client-sqs';
+import { ChangeMessageVisibilityCommand, DeleteMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { DeleteCommand, DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../test/fakes/credentials.js';
 import type { UpstreamScript } from '../test/fakes/fake-agentcore.js';
 import { SchedulerView, createScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
-import { ecsTaskDraining, pollScheduledRuns, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
-import type { ScheduledRunMessage } from './scheduled-tasks.js';
-import type { AgentModel } from './cartridge.js';
+import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
+import { ScheduledTasks, type ScheduledRunMessage } from './scheduled-tasks.js';
+import { DynamoDBAgentDocuments } from './agent-documents.js';
+import { agentCoreUpstream } from './upstream.js';
+import { sessionApi } from './session-api.js';
+import { RUNTIME_ARN } from '../../../tests/chat/fakes/stack.js';
+import { DynamoDBSessionMetadata, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
+import { Hono } from 'hono';
+import { sessionLifecycle } from './session-lifecycle.js';
+import type { AgentDocuments } from './agent-documents.js';
+import type { AgentModel, ChatServiceCartridge } from './cartridge.js';
 
 const signInChecks: { owner: string; outputs: string[] }[] = [];
 /** Owners whose plan catalog cannot be fetched for their scheduled runs. */
@@ -111,6 +121,212 @@ const text = (messageId: string, ...deltas: string[]) => [
 ];
 
 describe('a scheduled run', () => {
+  it('dispatches an accepted scheduled Turn after Account Claim moves its Session and task', async () => {
+    const claimed = await startInProcess({ scheduled: true });
+    const source = owner();
+    const destination = owner();
+    const originalMain = await claimed.sessionMetadata.mainChat(source, `filed-${source}`);
+    let sideChat: string | undefined;
+    let admitted: ((error: unknown) => void) | undefined;
+    const admission = new Promise<unknown>((resolve) => { admitted = resolve; });
+    const recordTurn = claimed.sessionMetadata.recordTurn.bind(claimed.sessionMetadata);
+    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
+    const recording = vi.spyOn(claimed.sessionMetadata, 'recordTurn').mockImplementation(async (account, sessionId, turn) => {
+      const filingId = await recordTurn(account, sessionId, turn);
+      if (account === source && turn.running !== undefined) {
+        sideChat = sessionId;
+      }
+      return filingId;
+    });
+    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      try {
+        const complete = await beginDispatch(...args);
+        if (args[0] === source && args[1] === sideChat) {
+          await claimed.history.transfer(source, destination);
+          defined(admitted, 'admission result')(undefined);
+        }
+        return complete;
+      } catch (error) {
+        if (args[0] === source && args[1] === sideChat) defined(admitted, 'admission result')(error);
+        throw error;
+      }
+    });
+    try {
+      const prompt = 'Complete the accepted occurrence';
+      claimed.agentcore.scriptPrompt(prompt, stream(...text('claimed-answer', 'Accepted occurrence completed.')));
+      const response = await claimed.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': source },
+        body: JSON.stringify({ title: 'Claimed brief', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt }),
+      });
+      const { id } = (await response.json()) as { id: string };
+      await defined(claimed.scheduler, 'the Claim stack schedules tasks').fire(id);
+      expect(await admission).toBeUndefined();
+      const sessionId = defined(sideChat, 'accepted scheduled Side Chat');
+      await vi.waitFor(() => expect(claimed.agentcore.invocationFor(sessionId).payload.forwardedProps.sessionUserId).toBe(`filed-${source}`));
+      expect(await claimed.sessionMetadata.get(source, sessionId)).toBeNull();
+      expect(await claimed.sessionMetadata.get(destination, sessionId)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+      const tasks = (await (await claimed.app.request('/scheduled-tasks', { headers: { 'x-test-owner': destination } })).json()) as { tasks: { id: string }[] };
+      expect(tasks.tasks).toContainEqual(expect.objectContaining({ id }));
+      await vi.waitFor(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
+        operation: 'post', sessionId: originalMain, userId: `filed-${source}`, content: 'Scheduled task "Claimed brief": Accepted occurrence completed.',
+      })));
+    } finally {
+      recording.mockRestore();
+      dispatching.mockRestore();
+      await claimed.stop();
+    }
+  });
+
+  it.each(['accepted', 'destination deleted', 'replaced post', 'Claim starts during admission'] as const)('preserves the accepted Main Chat post through Account Claim: %s', async (outcome) => {
+    const claimed = await startInProcess({ scheduled: true });
+    const source = owner();
+    const destination = owner();
+    const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
+    let admitted: ((error: unknown) => void) | undefined;
+    const admission = new Promise<unknown>((resolve) => { admitted = resolve; });
+    let mainAccepted = false;
+    let claimStarted = false;
+    claimed.table.client.middlewareStack.add((next, context) => async (args) => {
+      const input = args.input as { Key?: { pk?: string | { S?: string }; sk?: string | { S?: string } } };
+      const pk = typeof input.Key?.pk === 'string' ? input.Key.pk : input.Key?.pk?.S;
+      const sk = typeof input.Key?.sk === 'string' ? input.Key.sk : input.Key?.sk?.S;
+      const result = await next(args);
+      if (outcome === 'Claim starts during admission' && mainAccepted && !claimStarted && context.commandName === 'GetItemCommand' && pk === `SESSIONS#${source}` && sk === 'CLAIM') {
+        claimStarted = true;
+        await claimed.history.transfer(source, destination);
+      }
+      return result;
+    }, { step: 'initialize', name: 'moveAfterAbsentClaimRead' });
+    const recordTurn = claimed.sessionMetadata.recordTurn.bind(claimed.sessionMetadata);
+    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
+    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      try {
+        if (args[0] === source && args[1] === main) {
+          mainAccepted = true;
+          if (outcome !== 'Claim starts during admission') await claimed.history.transfer(source, destination);
+          if (outcome === 'destination deleted') await claimed.sessionMetadata.fenceOwner(destination);
+          if (outcome === 'replaced post') await recordTurn(destination, main, { filingUserId: `filed-${destination}`, title: 'Newer post', messageId: 'replacement-message' });
+        }
+        const complete = await beginDispatch(...args);
+        if (args[0] === source && args[1] === main) defined(admitted, 'Main Chat admission')(undefined);
+        return complete;
+      } catch (error) {
+        if (args[0] === source && args[1] === main) defined(admitted, 'Main Chat admission')(error);
+        throw error;
+      }
+    });
+    try {
+      const prompt = 'Produce the accepted Main Chat result';
+      claimed.agentcore.scriptPrompt(prompt, stream(...text('main-answer', 'Preserved result.')));
+      const response = await claimed.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': source },
+        body: JSON.stringify({ title: 'Moved result', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt }),
+      });
+      const { id } = (await response.json()) as { id: string };
+      const runs = defined(claimed.scheduler, 'the Claim stack schedules tasks');
+      await runs.fire(id);
+      if (outcome === 'accepted' || outcome === 'Claim starts during admission') {
+        expect(await admission).toBeUndefined();
+        await vi.waitFor(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
+          operation: 'post', sessionId: main, userId: `filed-${source}`, content: 'Scheduled task "Moved result": Preserved result.',
+        })));
+        await vi.waitFor(async () => expect(await runs.queued()).toBe(0));
+        expect(await claimed.sessionMetadata.get(source, main)).toBeNull();
+        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+        expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_running_since');
+        expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_preparing');
+      } else {
+        expect(await admission).toBeInstanceOf(SessionDeletedError);
+        expect(claimed.sessionApi.events().filter((event) => event.operation === 'post' && event.sessionId === main)).toEqual([]);
+      }
+    } finally {
+      dispatching.mockRestore();
+      await claimed.stop();
+    }
+  });
+
+  it.each(['accepted', 'destination deleted', 'moves during admission'] as const)('preserves the accepted Main Chat post while Account Claim is still moving: %s', async (outcome) => {
+    const claimed = await startInProcess({ scheduled: true });
+    const source = owner();
+    const destination = owner();
+    const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
+    let admitted: ((error: unknown) => void) | undefined;
+    const admission = new Promise<unknown>((resolve) => { admitted = resolve; });
+    let claimEntered: (() => void) | undefined;
+    let releaseClaim: (() => void) | undefined;
+    const entered = new Promise<void>((resolve) => { claimEntered = resolve; });
+    const held = new Promise<void>((resolve) => { releaseClaim = resolve; });
+    let transfer: Promise<void> | undefined;
+    let claimStored = false;
+    let movedDuringAdmission = false;
+    claimed.table.client.middlewareStack.add((next, context) => async (args) => {
+      const input = args.input as { Item?: { pk?: string | { S?: string }; sk?: string | { S?: string } }; Key?: { pk?: string | { S?: string }; sk?: string | { S?: string } } };
+      const row = input.Item ?? input.Key;
+      const pk = typeof row?.pk === 'string' ? row.pk : row?.pk?.S;
+      const sk = typeof row?.sk === 'string' ? row.sk : row?.sk?.S;
+      const result = await next(args);
+      if (context.commandName === 'PutItemCommand' && pk === `SESSIONS#${source}` && sk === 'CLAIM') {
+        claimStored = true;
+        defined(claimEntered, 'durable Claim fence')();
+        await held;
+      }
+      if (outcome === 'moves during admission' && claimStored && !movedDuringAdmission && context.commandName === 'GetItemCommand' && pk === `SESSIONS#${destination}` && sk === `SESSION#${main}`) {
+        movedDuringAdmission = true;
+        defined(releaseClaim, 'move between identity reads')();
+        await transfer;
+      }
+      return result;
+    }, { step: 'initialize', name: 'holdClaimAfterMainPostAcceptance' });
+    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
+    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      try {
+        if (args[0] === source && args[1] === main) {
+          transfer = claimed.history.transfer(source, destination);
+          await entered;
+          if (outcome === 'destination deleted') await claimed.sessionMetadata.fenceOwner(destination);
+        }
+        const complete = await beginDispatch(...args);
+        if (args[0] === source && args[1] === main) defined(admitted, 'Main Chat admission')(undefined);
+        return complete;
+      } catch (error) {
+        if (args[0] === source && args[1] === main) defined(admitted, 'Main Chat admission')(error);
+        throw error;
+      }
+    });
+    try {
+      const prompt = 'Produce the accepted Main Chat result';
+      claimed.agentcore.scriptPrompt(prompt, stream(...text('main-answer', 'Preserved result.')));
+      const response = await claimed.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': source },
+        body: JSON.stringify({ title: 'Moved result', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt }),
+      });
+      const { id } = (await response.json()) as { id: string };
+      const runs = defined(claimed.scheduler, 'the Claim stack schedules tasks');
+      await runs.fire(id);
+      if (outcome !== 'destination deleted') {
+        expect(await admission).toBeUndefined();
+        await vi.waitFor(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
+          operation: 'post', sessionId: main, userId: `filed-${source}`, content: 'Scheduled task "Moved result": Preserved result.',
+        })));
+        await vi.waitFor(async () => expect(await runs.queued()).toBe(0));
+        defined(releaseClaim, 'finish Claim')();
+        await transfer;
+        expect(await claimed.sessionMetadata.get(source, main)).toBeNull();
+        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+        expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_running_since');
+        expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_preparing');
+      } else {
+        expect(await admission).toBeInstanceOf(SessionDeletedError);
+        expect(claimed.sessionApi.events().filter((event) => event.operation === 'post' && event.sessionId === main)).toEqual([]);
+      }
+    } finally {
+      defined(releaseClaim, 'release paused Claim')();
+      await transfer;
+      dispatching.mockRestore();
+      await claimed.stop();
+    }
+  });
+
   it.each(['finished', 'failed'])('omits the marker while a scheduled Turn prepares, then names it once %s', async (outcome) => {
     const account = owner();
     const main = await mainChat(account);
@@ -510,8 +726,23 @@ describe('a scheduled run', () => {
     expect(await (await request(account, '/threads')).json()).toEqual({ threads: [] });
 
     expect((await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: false } })).status).toBe(200);
-    await scheduler.deliver(delivery);
-    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 2_000 });
+    const sends = vi.spyOn(SQSClient.prototype, 'send');
+    try {
+      await scheduler.deliver(delivery);
+      // The resumed model, summary and Main post precede SQS acknowledgement.
+      // Observe that acknowledgement rather than imposing a queue-drain budget.
+      for (;;) {
+        const acknowledged = sends.mock.calls.findIndex(([command]) => command instanceof DeleteMessageCommand && command.input.QueueUrl === scheduler.runs.queueUrl);
+        if (acknowledged !== -1) {
+          // eslint-disable-next-line no-await-in-loop -- await the observed acknowledgement itself
+          await defined(sends.mock.results[acknowledged], 'resumed delivery acknowledgement').value;
+          break;
+        }
+        // eslint-disable-next-line no-await-in-loop -- wait for this queue's actual acknowledgement, bounded by the test timeout
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(await scheduler.queued()).toBe(0);
+    } finally { sends.mockRestore(); }
     expect(stack.agentcore.invocations().filter(({ body }) => body.includes(prompt))).toHaveLength(1);
     expect((await posted(main)).map(({ content }) => content)).toEqual(['Scheduled task "Paused brief": Resumed execution']);
   });
@@ -595,7 +826,7 @@ describe('pollScheduledRuns', () => {
 
   /** A queue holding these deliveries, then none until the poller stops. */
   function queue(...bodies: string[]) {
-    const deliveries = bodies.map((body, n) => [{ body, receipt: `receipt-${n}` }]);
+    const deliveries = bodies.map((body, n) => [{ body, receipt: `receipt-${n}`, deliveryId: `delivery-${n}` }]);
     const deleted: string[] = [];
     const signals: AbortSignal[] = [];
     let receives = 0;
@@ -630,8 +861,8 @@ describe('pollScheduledRuns', () => {
 
     await vi.waitFor(() => expect(deleted).toEqual(['receipt-0', 'receipt-1']));
     expect(runs).toEqual([
-      { owner: 'a', taskId: 't1' },
-      { owner: 'b', taskId: 't2' },
+      { owner: 'a', taskId: 't1', deliveryId: 'delivery-0' },
+      { owner: 'b', taskId: 't2', deliveryId: 'delivery-1' },
     ]);
     stop();
   });
@@ -794,11 +1025,12 @@ describe('the SQS run queue', () => {
   it.each([
     ['a body', { ReceiptHandle: 'receipt-1' }],
     ['a receipt handle', { Body: '{"owner":"a","taskId":"t1"}' }],
+    ['a stable message identity', { Body: '{"owner":"a","taskId":"t1"}', ReceiptHandle: 'receipt-1' }],
   ])('refuses a delivery without %s', async (_missing, message) => {
     const client = { send: async () => ({ Messages: [message] }) } as unknown as SQSClient;
 
     await expect(sqsRunQueue('https://queue.test/runs', client).receive(new AbortController().signal)).rejects.toThrow(
-      'Scheduled run delivery is missing its Body or ReceiptHandle',
+      'Scheduled run delivery is missing its Body, ReceiptHandle or MessageId',
     );
   });
 
@@ -816,5 +1048,427 @@ describe('the SQS run queue', () => {
     await expect(sqsRunQueue(runs.queueUrl, client).receive(AbortSignal.abort())).rejects.toThrow();
 
     expect(await view.queued()).toBe(1);
+  });
+});
+
+
+function interruptReservation(store: NonNullable<SessionMetadata['scheduledRuns']>, failure: string, entered: () => void, released: Promise<void>) {
+  const claim = store.claim.bind(store);
+  return vi.spyOn(store, 'claim').mockImplementation(async (...args) => {
+    const delivery = await claim(...args);
+    if (failure === 'before preparation') throw new Error('Replacement before preparation');
+    if (failure === 'after admission') {
+      await store.admit(delivery);
+      throw new Error('Replacement after admission');
+    }
+    if (failure === 'Claim before admission') await stack.history.transfer(delivery.owner, owner());
+    if (failure === 'paused reservation') { entered(); await released; }
+    return delivery;
+  });
+}
+
+async function seedSettledFailedDelivery(metadata: SessionMetadata, account: string, taskId: string, deliveryId: string): Promise<void> {
+  const store = defined(metadata.scheduledRuns, 'scheduled delivery store');
+  const main = await metadata.mainChat(account, `filed-${account}`);
+  const delivery = await store.claim(account, taskId, deliveryId, `filed-${account}`, main);
+  await store.admit(delivery);
+  await metadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Brief', messageId: delivery.postMessageId, postAcceptance: true });
+  const complete = await metadata.beginDispatch(account, main, undefined, { messageId: delivery.postMessageId });
+  const posting = await store.posting(delivery, complete, true);
+  await defined(complete.markSucceeded, 'registered post success proof')('session-post', store.postedTransaction(posting));
+  await complete();
+  await store.complete(posting);
+  await store.retryFailed(posting);
+}
+
+async function changeReservedClaimBoundary(claimed: InProcessStack, boundary: string, source: string, destination: string, taskId: string, originalMain: string, sameOwner: boolean): Promise<void> {
+  if (boundary === 'deleted destination') await claimed.sessionMetadata.fenceOwner(destination);
+  if (boundary === 'further Claim') await claimed.history.transfer(destination, owner());
+  if (boundary === 'changed source Claim') await DynamoDBDocumentClient.from(claimed.table.client).send(new PutCommand({ TableName: claimed.table.name,
+    Item: { pk: `SESSIONS#${source}`, sk: 'CLAIM', destination: owner() } }));
+  if (boundary === 'missing moved task' || boundary === 'paused moved task' || sameOwner) {
+    const changed = await claimed.app.request(`/scheduled-tasks/${taskId}`, { method: boundary.startsWith('missing') ? 'DELETE' : 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-owner': sameOwner ? source : destination },
+      ...(boundary.startsWith('paused') ? { body: JSON.stringify({ paused: true }) } : {}) });
+    expect(changed.status).toBe(boundary.startsWith('missing') ? 204 : 200);
+  }
+  if (boundary === 'missing original Main') await DynamoDBDocumentClient.from(claimed.table.client).send(new DeleteCommand({ TableName: claimed.table.name,
+    Key: { pk: `SESSIONS#${destination}`, sk: `SESSION#${originalMain}` } }));
+}
+
+describe('scheduled persistence dispatch admission', () => {
+  it.each(['valid transfer', 'original Main filing', 'missing original Main filing proof', 'concurrent replacements', 'deleted destination', 'further Claim', 'changed source Claim', 'missing moved task', 'paused moved task', 'missing original Main', 'fresh source delivery', 'missing same-owner task', 'paused same-owner task'] as const)('recovers the original reserved SQS delivery after its real scheduled task moves during Account Claim: %s', async (boundary) => {
+    const claimed = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const source = owner();
+    const destination = owner();
+    const endpoint = inject('dynamodbEndpoint');
+    const runs = defined(claimed.scheduler, 'the Claim stack schedules tasks');
+    const tasks = new ScheduledTasks(claimed.table.name, runs.runs, claimed.table.client,
+      new SchedulerClient({ region: 'us-east-1', endpoint, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+    const response = await claimed.app.request('/scheduled-tasks', { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': source },
+      body: JSON.stringify({ title: 'Reserved Claim', prompt: 'Preserve this occurrence', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'reserved-claim-proof' }) });
+    expect(response.status).toBe(201);
+    const { id: taskId } = await response.json() as { id: string };
+    const originalMainFiling = boundary === 'original Main filing' ? 'original-filing' : `filed-${source}`;
+    const originalMain = await claimed.sessionMetadata.mainChat(source, originalMainFiling);
+    const destinationMain = await claimed.sessionMetadata.mainChat(destination, `filed-${destination}`);
+    claimed.agentcore.scriptPrompt('Preserve this occurrence', stream(...text('reserved-answer', 'Recovered original occurrence.')));
+    const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: claimed.agentcore.url });
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+      models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+      browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: source }), scheduledRequester: async (account) => ({ owner: account }),
+      filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+    };
+    const deps = { runtimeNamespaceRequired: true, cartridge, sessionMetadata: claimed.sessionMetadata,
+      agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
+      upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
+      summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
+    };
+    await runs.fire(taskId);
+    const sqs = new SQSClient({ region: 'us-east-1', endpoint, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
+    const queue = sqsRunQueue(runs.runs.queueUrl, sqs);
+    const original = defined((await queue.receive(new AbortController().signal))[0], 'original SQS delivery');
+    const message = { ...JSON.parse(original.body) as ScheduledRunMessage, deliveryId: original.deliveryId };
+    const store = defined(claimed.sessionMetadata.scheduledRuns, 'original delivery store');
+    const claim = store.claim.bind(store);
+    const reservation = vi.spyOn(store, 'claim').mockImplementation(async (...args) => {
+      const delivery = await claim(...args);
+      if (boundary === 'missing same-owner task' || boundary === 'paused same-owner task') throw new Error('Interrupted before preparation');
+      await claimed.history.transfer(source, destination);
+      return delivery;
+    });
+    let restoreAdmission = () => {};
+    try {
+      await expect(runScheduledTask(deps, message)).rejects.toThrow();
+      reservation.mockRestore();
+      const sameOwner = boundary === 'missing same-owner task' || boundary === 'paused same-owner task';
+      if (sameOwner) expect(await tasks.get(source, taskId)).toMatchObject({ id: taskId });
+      else { expect(await tasks.get(source, taskId)).toBeNull(); expect(await tasks.get(destination, taskId)).toMatchObject({ id: taskId }); }
+      const reserved = defined(await store.get(source, message.deliveryId, taskId), 'original reservation');
+      expect(reserved).toMatchObject({ phase: 'reserved', mainChat: originalMain, filingUserId: `filed-${source}` });
+      await sqs.send(new ChangeMessageVisibilityCommand({ QueueUrl: runs.runs.queueUrl, ReceiptHandle: original.receipt, VisibilityTimeout: 0 }));
+      const redelivery = defined((await queue.receive(new AbortController().signal))[0], 'replacement SQS delivery');
+      expect(redelivery.deliveryId).toBe(original.deliveryId);
+      const replacement = new DynamoDBSessionMetadata(claimed.table.name, claimed.table.client);
+      const resume = () => runScheduledTask({ ...deps, sessionMetadata: replacement, upstream: sessionLifecycle(runtime, runtime.stop) },
+        { ...JSON.parse(redelivery.body) as ScheduledRunMessage, deliveryId: redelivery.deliveryId });
+      const validTransfer = boundary === 'valid transfer' || boundary === 'original Main filing';
+      const admissionRace = boundary === 'changed source Claim' || boundary === 'deleted destination';
+      if (admissionRace) {
+        const replacementStore = defined(replacement.scheduledRuns, 'replacement delivery store');
+        const admit = replacementStore.admit.bind(replacementStore);
+        const mutation = vi.spyOn(replacementStore, 'admit').mockImplementationOnce(async (...args) => {
+          await changeReservedClaimBoundary(claimed, boundary, source, destination, taskId, originalMain, sameOwner);
+          await admit(...args);
+        });
+        restoreAdmission = () => { mutation.mockRestore(); };
+      } else await changeReservedClaimBoundary(claimed, boundary, source, destination, taskId, originalMain, sameOwner);
+      if (boundary === 'missing original Main filing proof') await DynamoDBDocumentClient.from(claimed.table.client).send(new UpdateCommand({
+        TableName: claimed.table.name, Key: { pk: `SESSIONS#${source}`, sk: `SCHEDULED_DELIVERY#${message.deliveryId}` },
+        UpdateExpression: 'REMOVE mainFilingUserId',
+      }));
+      if (boundary === 'fresh source delivery') {
+        const freshId = `${message.deliveryId}-unreserved`;
+        await runScheduledTask({ ...deps, sessionMetadata: replacement }, { ...message, deliveryId: freshId });
+        expect(await defined(replacement.scheduledRuns, 'replacement delivery store').get(source, freshId, taskId)).toBeNull();
+      } else if (sameOwner) await resume();
+      else if (!validTransfer && boundary !== 'concurrent replacements') await expect(resume()).rejects.toThrow();
+      if (!validTransfer && boundary !== 'concurrent replacements') {
+        expect(claimed.agentcore.invocations()).toHaveLength(0);
+        expect(claimed.sessionApi.events().filter((event) => event.operation === 'post')).toEqual([]);
+        expect(await store.get(source, message.deliveryId, taskId)).toMatchObject({ phase: 'reserved', sideChat: reserved.sideChat, runId: reserved.runId });
+        expect(await replacement.mainChat(destination, `filed-${destination}`)).toBe(destinationMain);
+        return;
+      }
+      if (boundary === 'concurrent replacements') {
+        const replacementStore = defined(replacement.scheduledRuns, 'replacement delivery store');
+        const reclaim = replacementStore.reclaim.bind(replacementStore);
+        let entered = () => {};
+        let release = () => {};
+        const paused = new Promise<void>((resolve) => { entered = resolve; });
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        const pausedAttempt = vi.spyOn(replacementStore, 'reclaim').mockImplementationOnce(async (...args) => {
+          const next = await reclaim(...args); entered(); await released; return next;
+        });
+        const stale = resume();
+        const refused = expect(stale).rejects.toThrow();
+        try { await paused; await resume(); }
+        finally { release(); pausedAttempt.mockRestore(); }
+        await refused;
+      } else await resume();
+      await queue.delete(redelivery.receipt);
+      expect(await runs.queued()).toBe(0);
+      expect(await defined(replacement.scheduledRuns, 'replacement delivery store').get(source, message.deliveryId, taskId)).toMatchObject({ phase: 'completed', mainChat: originalMain, mainFilingUserId: originalMainFiling,
+        sideChat: reserved.sideChat, runId: reserved.runId, postMessageId: reserved.postMessageId });
+      await resume();
+      expect(claimed.agentcore.invocations()).toHaveLength(1);
+      expect(claimed.agentcore.invocationFor(reserved.sideChat).payload.forwardedProps.sessionUserId).toBe(`filed-${source}`);
+      expect(await replacement.mainChat(destination, `filed-${destination}`)).toBe(destinationMain);
+      expect(claimed.sessionApi.events().filter((event) => event.operation === 'post')).toEqual([expect.objectContaining({ sessionId: originalMain,
+        userId: originalMainFiling, messageId: reserved.postMessageId, content: 'Scheduled task "Reserved Claim": Recovered original occurrence.' })]);
+    } finally { restoreAdmission(); reservation.mockRestore(); await claimed.stop(); }
+  });
+
+  it.each(['deleted owner', 'Account Claim'] as const)('refuses a new durable delivery claim after %s', async (fence) => {
+    const account = owner();
+    const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
+    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    if (fence === 'deleted owner') await stack.sessionMetadata.fenceOwner(account);
+    else await DynamoDBDocumentClient.from(stack.table.client).send(new PutCommand({ TableName: stack.table.name,
+      Item: { pk: `SESSIONS#${account}`, sk: 'CLAIM', destination: owner() } }));
+    await expect(store.claim(account, 'task', 'fenced-occurrence', `filed-${account}`, main)).rejects.toThrow();
+    expect(await store.get(account, 'fenced-occurrence', 'task')).toBeNull();
+  });
+
+  it('retains one original durable delivery identity and refuses another task reusing it', async () => {
+    const account = owner();
+    const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
+    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    const original = await store.claim(account, 'task', 'same-occurrence', `filed-${account}`, main);
+    await expect(store.claim(account, 'task', 'same-occurrence', `filed-${account}`, main)).rejects.toThrow();
+    expect(await store.get(account, 'same-occurrence', 'task')).toMatchObject(original);
+    await expect(store.get(account, 'same-occurrence', 'different-task')).rejects.toThrow('Scheduled delivery identity is invalid');
+  });
+
+  it.each(['ack failure', 'success proof failure', 'uncertain post', 'failed run', 'settled failed retry', 'before preparation', 'running Main', 'paused reservation', 'after admission', 'Claim before admission'] as const)('recovers an accepted scheduled post on replacement without another Side Chat or Main result: %s', async (failure) => {
+    const account = owner();
+    const task = { id: 'post-recovery', proposalId: 'post-recovery', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false };
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
+      memoryEdited: async () => undefined, delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    const invoke = vi.fn(async () => {
+      if (failure === 'failed run' || failure === 'settled failed retry') throw new Error('Model invocation failed');
+      return new Response('data: {"type":"RUN_FINISHED"}\n\n');
+    });
+    const post = vi.fn(async () => {
+      if (failure === 'uncertain post') throw new Error('Post outcome unavailable');
+      return {};
+    });
+    const deps = {
+      runtimeNamespaceRequired: false,
+      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: { get: async () => task },
+      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
+      invokeSessionApi: post,
+    };
+    const begin = stack.sessionMetadata.beginDispatch.bind(stack.sessionMetadata);
+    const registration = vi.spyOn(stack.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      const complete = await begin(...args);
+      if (failure !== 'settled failed retry' && args[3] && 'messageId' in args[3]) {
+        if (failure === 'success proof failure') {
+          complete.markSucceeded = async () => { throw new Error('Success proof unavailable'); };
+          return complete;
+        }
+        return Object.assign(async () => { throw new Error('Dispatch acknowledgement unavailable'); }, complete);
+      }
+      return complete;
+    });
+    const message = { owner: account, taskId: task.id, deliveryId: 'stable-sqs-occurrence' };
+    const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
+    let mainRunningSnapshot: unknown;
+    if (failure === 'running Main') {
+      const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Ordinary Main Chat', messageId: 'ordinary-main-message', running: { runId: 'ordinary-main-run', startedAt: '2026-10-09T00:00:00Z' } });
+      invoke.mockImplementation(async () => {
+        mainRunningSnapshot = await stack.sessionMetadata.get(account, main);
+        return new Response('data: {"type":"RUN_FINISHED"}\n\n');
+      });
+    }
+    let enteredReservation!: () => void;
+    const reservationEntered = new Promise<void>((resolve) => { enteredReservation = resolve; });
+    let releaseReservation!: () => void;
+    const reservationReleased = new Promise<void>((resolve) => { releaseReservation = resolve; });
+    const reservation = interruptReservation(store, failure, enteredReservation, reservationReleased);
+    if (failure === 'paused reservation') {
+      const recording = vi.spyOn(stack.sessionMetadata, 'recordTurn');
+      const original = runScheduledTask(deps, message);
+      void original.catch(() => undefined);
+      try {
+        await reservationEntered;
+        const reserved = defined(await store.get(account, message.deliveryId, task.id), 'original reservation');
+        const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
+        await runScheduledTask({ ...deps, sessionMetadata: replacement,
+          upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+        const completed = await defined(replacement.scheduledRuns, 'replacement delivery store').get(account, message.deliveryId, task.id);
+        expect(completed).toMatchObject({ phase: 'completed', sideChat: reserved.sideChat, mainChat: reserved.mainChat, runId: reserved.runId, postMessageId: reserved.postMessageId });
+        releaseReservation();
+        await expect(original).rejects.toThrow();
+        expect(recording).not.toHaveBeenCalled();
+        expect(invoke).toHaveBeenCalledTimes(1);
+        expect(post).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseReservation(); await original.catch(() => undefined);
+        recording.mockRestore(); registration.mockRestore(); reservation.mockRestore();
+      }
+      return;
+    }
+    const expectedErrors = {
+      'ack failure': 'Dispatch acknowledgement unavailable', 'success proof failure': 'Success proof unavailable',
+      'uncertain post': 'Post outcome unavailable', 'failed run': 'Dispatch acknowledgement unavailable',
+      'settled failed retry': 'Model invocation failed',
+      'before preparation': 'Replacement before preparation', 'running Main': 'Dispatch acknowledgement unavailable',
+      'after admission': 'Replacement after admission',
+      'Claim before admission': 'Transaction',
+    };
+    let settledRetry: unknown;
+    let restoreFailedRetry = () => {};
+    if (failure === 'settled failed retry') {
+      await seedSettledFailedDelivery(stack.sessionMetadata, account, task.id, message.deliveryId);
+      const reset = store.retryFailed.bind(store);
+      const completed = vi.spyOn(store, 'retryFailed').mockImplementation(async (record) => {
+        settledRetry = await store.get(account, message.deliveryId, task.id);
+        await reset(record);
+      });
+      restoreFailedRetry = () => { completed.mockRestore(); };
+    }
+    try {
+      await expect(runScheduledTask(deps, message)).rejects.toThrow(expectedErrors[failure]);
+    } finally { restoreFailedRetry(); registration.mockRestore(); reservation.mockRestore(); }
+    if (failure === 'settled failed retry') {
+      expect(invoke).toHaveBeenCalledTimes(1); expect(post).toHaveBeenCalledTimes(1);
+      expect(settledRetry).toMatchObject({ phase: 'completed', failed: true });
+      expect(await store.get(account, message.deliveryId, task.id)).toBeNull();
+      return;
+    }
+    if (failure === 'Claim before admission') {
+      const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
+      await runScheduledTask({ ...deps, sessionMetadata: replacement }, message);
+      expect(invoke).toHaveBeenCalledTimes(1); expect(post).toHaveBeenCalledTimes(1);
+      return;
+    }
+    if (failure === 'after admission') {
+      const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
+      await expect(runScheduledTask({ ...deps, sessionMetadata: replacement }, message)).rejects.toThrow('Scheduled delivery outcome is unproved');
+      expect(invoke).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
+      return;
+    }
+    if (failure === 'running Main') expect(mainRunningSnapshot).toMatchObject({ turn_run_id: 'ordinary-main-run', turn_latest_run_id: 'ordinary-main-run', turn_running_since: '2026-10-09T00:00:00Z' });
+    if (failure === 'before preparation') {
+      expect(invoke).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+      const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
+      await runScheduledTask({ ...deps, sessionMetadata: replacement,
+        upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(post).toHaveBeenCalledTimes(1);
+      return;
+    }
+    expect(post).toHaveBeenCalledTimes(1);
+    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    const address = defined(await stack.sessionMetadata.get(account, main), 'accepted Main result');
+    if (failure === 'success proof failure' || failure === 'uncertain post') {
+      await expect(stack.sessionMetadata.assertNoDispatch(address)).rejects.toThrow('Session dispatch is still registered');
+    } else await expect(stack.sessionMetadata.assertNoDispatch(address)).resolves.toBeUndefined();
+    const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
+    const retry = () => runScheduledTask({ ...deps, sessionMetadata: replacement,
+      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+    if (failure === 'success proof failure' || failure === 'uncertain post') {
+      await expect(retry()).rejects.toThrow('Scheduled delivery outcome is unproved');
+    } else if (failure === 'failed run') {
+      await expect(retry()).rejects.toThrow('Scheduled delivery previously failed');
+      expect(await store.get(account, message.deliveryId, task.id)).toBeNull();
+    }
+    else { await retry(); await retry(); }
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    if (failure === 'success proof failure' || failure === 'uncertain post') {
+      await expect(replacement.assertNoDispatch(address)).rejects.toThrow('Session dispatch is still registered');
+    } else await expect(replacement.assertNoDispatch(address)).resolves.toBeUndefined();
+  });
+
+  it('propagates account deletion during scheduled preparation without posting to Main Chat', async () => {
+    const account = owner();
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }),
+      scheduledRequester: async (value) => {
+        await stack.sessionMetadata.fenceOwner(value);
+        return { owner: value };
+      },
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
+      memoryEdited: async () => undefined, delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
+    const post = vi.fn(async () => ({}));
+    await expect(runScheduledTask({
+      runtimeNamespaceRequired: false,
+      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false }) },
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
+      invokeSessionApi: post,
+    }, { owner: account, taskId: 'deleted-run', deliveryId: 'deleted-run-occurrence' })).rejects.toThrow(SessionDeletedError);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('keeps account deletion blocked until the scheduled Main Chat post finishes', async () => {
+    const account = owner();
+    const task = { id: 'scheduled-dispatch', proposalId: 'proposal-dispatch', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false };
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
+      memoryEdited: async () => undefined, delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    let posting: string | undefined;
+    let enteredPost: (() => void) | undefined;
+    const postEntered = new Promise<void>((resolve) => { enteredPost = resolve; });
+    let finish: (() => void) | undefined;
+    const run = runScheduledTask({
+      runtimeNamespaceRequired: false,
+      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: { get: async () => task },
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),
+      invokeSessionApi: async (event) => {
+        if (event.operation === 'post') {
+          posting = event.sessionId;
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+            defined(enteredPost, 'post entry')();
+          });
+        }
+        return {};
+      },
+    }, { owner: account, taskId: task.id, deliveryId: 'pending-post-occurrence' });
+    await Promise.race([postEntered, run.then(() => { throw new Error('Scheduled run finished without posting to Main Chat'); })]);
+    const sessionId = defined(posting, 'scheduled Main Chat');
+    const address = defined(await stack.sessionMetadata.get(account, sessionId), 'scheduled Main Chat metadata');
+    await stack.sessionMetadata.fenceOwner(account);
+    await expect(stack.sessionMetadata.assertNoDispatch(address)).rejects.toThrow('Session dispatch is still registered');
+    defined(finish, 'post completion')();
+    await run;
+    await expect(stack.sessionMetadata.assertNoDispatch(address)).resolves.toBeUndefined();
   });
 });

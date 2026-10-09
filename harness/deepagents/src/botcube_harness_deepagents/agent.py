@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, NotRequired
 
@@ -16,9 +16,13 @@ from langchain.agents.middleware.types import (
     OmitFromOutput,
     PrivateStateAttr,
 )
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.types import Command
 from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
+from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
 from .memory_files import build_memory_sources, write_ltm_source
 
@@ -54,6 +58,24 @@ class _SkillsState(AgentState):
     skills_metadata: NotRequired[Annotated[list[_SkillMetadata] | None, OmitFromOutput]]
     skills_load_errors: NotRequired[Annotated[list[str], PrivateStateAttr]]
     _skill_tools_disclosed: NotRequired[Annotated[dict[str, str], PrivateStateAttr]]
+
+
+class _FilesMiddleware(FilesystemMiddleware):
+    @property
+    def name(self) -> str:
+        return 'FilesystemMiddleware'
+
+    def wrap_tool_call(
+        self, request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
 
 
 class _SchemaSkillsMiddleware(SkillsMiddleware):
@@ -167,7 +189,7 @@ def build_agent(
         'system_prompt': resolved_system_prompt,
     }
     kwargs['middleware'] = [
-        FilesystemMiddleware(
+        _FilesMiddleware(
             backend=resolved_backend,
             tools=_FILESYSTEM_TOOLS,
         ),
@@ -196,7 +218,7 @@ def build_agent(
 def _subagent_spec(spec: dict[str, Any], backend: Any, skills: list[str]) -> dict[str, Any]:
     if 'runnable' in spec:
         return spec
-    middleware: list[Any] = [FilesystemMiddleware(backend=backend, tools=_FILESYSTEM_TOOLS)]
+    middleware: list[Any] = [_FilesMiddleware(backend=backend, tools=_FILESYSTEM_TOOLS)]
     sources = skills if spec.get('mode') == 'fork' else spec.get('skills')
     if sources is not None and (sources or spec.get('mode') == 'fork'):
         middleware.append(_SchemaSkillsMiddleware(backend=backend, sources=sources))

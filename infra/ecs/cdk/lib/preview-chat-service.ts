@@ -163,6 +163,10 @@ export class PreviewChatService extends Construct {
       actions: ['bedrock-agentcore:InvokeAgentRuntime'],
       resources: [props.runtimeArn, `${props.runtimeArn}/runtime-endpoint/*`],
     }));
+    if (props.runtimeArn) task.addToTaskRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:StopRuntimeSession'],
+      resources: [props.runtimeArn, `${props.runtimeArn}/runtime-endpoint/*`],
+    }));
     const memoryArn = origin.formatArn({ service: 'bedrock-agentcore', resource: 'memory', resourceName: props.memoryId });
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:GetMemory', 'bedrock-agentcore:ListEvents', 'bedrock-agentcore:GetEvent',

@@ -407,7 +407,7 @@ describe('POST /threads/{id}/stop', () => {
   // A reloaded chat has no streaming client: its replay must identify the Turn that Stop sends to the server.
   it.each(['Main', 'Side'])('replays the running %s Chat identity for Stop under its original filing user', async (kind) => {
     const owner = `detached-${kind}`;
-    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner) : 'detached-side';
+    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner, 'original-filing-user') : 'detached-side';
     const runId = `running-${kind}`;
     const since = new Date().toISOString();
     await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'original-filing-user', title: 'running', running: { startedAt: since, runId } });
@@ -442,7 +442,7 @@ describe('POST /threads/{id}/stop', () => {
   // A page that opens the chat after its Turn failed unseen shows why.
   it.each(['Main', 'Side'])("replays why the %s Chat's latest Turn failed, with its run ID", async (kind) => {
     const owner = `failed-${kind}`;
-    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner) : 'failed-side';
+    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner, `filed-${owner}`) : 'failed-side';
     const running = { startedAt: new Date().toISOString(), runId: `failed-${kind}-run` };
     await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'f', title: 'failing', running });
     await stack.sessionMetadata.turnEnded(owner, sessionId, running, { code: 'PROVIDER_ERROR', message: 'The provider failed' });

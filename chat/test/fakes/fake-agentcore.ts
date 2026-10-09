@@ -43,6 +43,16 @@ export class FakeAgentCore extends HttpFake {
         sendJson(response, 404, { message: `No runtime route ${request.path}` });
         return;
       }
+    if (request.path.startsWith('/runtimes/') && new URL(request.path, 'http://localhost').pathname.endsWith('/stopruntimesession')) {
+      const sessionId = request.headers['x-amzn-bedrock-agentcore-runtime-session-id'];
+      if (request.method !== 'POST' || typeof sessionId !== 'string' || !sessionId) {
+        sendJson(response, 400, { message: 'ValidationException: Runtime Session stop needs a Session ID' });
+        return;
+      }
+      response.writeHead(200, { 'x-amzn-bedrock-agentcore-runtime-session-id': sessionId });
+      response.end();
+      return;
+    }
       const payload = JSON.parse(request.body) as { threadId: string; forwardedProps: Record<string, unknown>; messages: { content: unknown }[] };
       playRuntime(this.scripts.get(payload.threadId) ?? this.promptScripts.get(String(payload.messages.at(-1)?.content)) ?? { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'] }, payload.forwardedProps, response);
     });
@@ -65,7 +75,7 @@ export class FakeAgentCore extends HttpFake {
     if (matches.length !== 1 || !invocation) throw new Error(`Expected one invocation for ${threadId}, got ${matches.length}`);
     return invocation;
   }
-  invocations(): RecordedRequest[] { return this.requests.filter((request) => request.path.startsWith('/runtimes/')); }
+  invocations(): RecordedRequest[] { return this.requests.filter((request) => request.path.startsWith('/runtimes/') && request.path.includes('/invocations')); }
 }
 
 export function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, response: ServerResponse): void {

@@ -1,10 +1,9 @@
 import { positiveInteger } from './config.js';
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError } from './cartridge.js';
-import { purgeQueue } from './purges.js';
 import type { ScheduledTasks } from './scheduled-tasks.js';
 import type { SessionApi } from './session-api.js';
-import type { SessionMetadata, SessionSummary } from './session-metadata.js';
+import { trackedRuntime, type SessionMetadata, type SessionPurge, type SessionSummary } from './session-metadata.js';
 
 const threadSummary = ({ session_id, title, created_at, updated_at }: SessionSummary) => ({
   id: session_id,
@@ -45,18 +44,19 @@ export function sessionOperations(
   invokeSessionApi: SessionApi,
   agentDocuments: AgentDocuments,
   scheduledTasks: ScheduledTasks | null,
+  purge: (sessions: SessionPurge[], wait?: boolean) => Promise<void> | void,
+  filingUserId: (owner: string) => string = (owner) => owner,
 ) {
-  const purge = purgeQueue(invokeSessionApi);
   return {
     async sideChats(owner: string) {
-      const [sessions, mainChat] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.mainChat(owner)]);
+      const [sessions, mainChat] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.mainChat(owner, filingUserId(owner))]);
       const sideChats = sessions.filter((session) => session.session_id !== mainChat);
       return sideChats.map(threadSummary);
     },
     async mainChat(owner: string) {
-      const id = await sessionMetadata.mainChat(owner);
+      const id = await sessionMetadata.mainChat(owner, filingUserId(owner));
       const metadata = await sessionMetadata.get(owner, id);
-      if (metadata === null) return { id, messages: [], running: false };
+      if (metadata === null || metadata.title === undefined) return { id, messages: [], running: false };
       const { messages } = await invokeSessionApi(historyRead(id, metadata));
       return { id, provider: metadata.provider, messages, ...runningTurn(metadata), failure: metadata.turn_failure };
     },
@@ -86,15 +86,27 @@ export function sessionOperations(
       return { ...threadSummary(metadata), provider: metadata.provider, messages, ...runningTurn(metadata), failure: metadata.turn_failure };
     },
     async removeSideChat(owner: string, sessionId: string): Promise<void> {
-      if (sessionId === (await sessionMetadata.mainChat(owner))) {
+      if (sessionId === (await sessionMetadata.mainChat(owner, filingUserId(owner)))) {
         throw new HttpError(409, 'The Main Chat cannot be deleted');
       }
       const metadata = await sessionMetadata.fence(owner, sessionId);
-      if (metadata !== null) purge([metadata]);
+      if (metadata !== null) await purge([metadata]);
     },
     /** Account History deletion includes its documents and tasks, after fencing and enqueueing Sessions. */
     async removeOwner(accountId: string): Promise<void> {
-      purge(await sessionMetadata.fenceOwner(accountId));
+      const sessions = await sessionMetadata.fenceOwner(accountId);
+      if (sessions.some((session) => !trackedRuntime(session))) {
+        await purge(sessions);
+        throw new HttpError(503, 'Session legacy settlement is unproved; account history deletion remains pending');
+      }
+      try {
+        await purge(sessions, true);
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        const pending = new HttpError(503, `Account history deletion remains pending: ${error instanceof Error ? error.message : String(error)}`);
+        pending.cause = error;
+        throw pending;
+      }
       await agentDocuments.delete(accountId);
       await scheduledTasks?.deleteAll(accountId);
     },

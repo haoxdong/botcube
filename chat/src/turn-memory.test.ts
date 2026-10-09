@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
-import type { SessionMetadata, TurnMemoryLease } from './session-metadata.js';
+import { SessionDeletedError, type SessionMetadata, type TurnMemoryLease } from './session-metadata.js';
 import { TurnMemory, turnMemoryRoutes, type MemoryBackend } from './turn-memory.js';
 
 const secret = 'shared-chat-service-signing-secret-for-tests';
@@ -11,10 +11,18 @@ const otherNamespace = '/strategies/preferences/actors/account_b/';
 function fixture() {
   let now = Date.parse(startedAt);
   const leases = new Map<string, TurnMemoryLease>();
+  const dispatches = new Set<symbol>();
   const sessions = new Map<string, { owner: string; filingUserId: string; fenced: boolean; latestRunId?: string }>();
   sessions.set('session_a', { owner: 'owner_a', filingUserId: 'filing_a', fenced: false });
   sessions.set('session_b', { owner: 'owner_a', filingUserId: 'filing_a', fenced: false });
   const metadata = {
+    async beginDispatch(owner: string, sessionId: string) {
+      const session = sessions.get(sessionId);
+      if (session?.owner !== owner || session.fenced) throw new SessionDeletedError(sessionId);
+      const registration = Symbol(sessionId);
+      dispatches.add(registration);
+      return Object.assign(async () => { dispatches.delete(registration); }, { markSucceeded: async () => undefined });
+    },
     async createMemoryLease(lease: TurnMemoryLease) {
       leases.set(lease.jti, lease);
       const session = sessions.get(lease.sessionId);
@@ -60,10 +68,59 @@ function fixture() {
   const request = (token: string, operation: string, params: Record<string, unknown>, service = memory) => app(service).request('/memory', {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, params: { memoryId: 'memory', ...params } }),
   });
-  return { app, memory, metadata, instance, identity, request, sessions, mutations: () => mutations, advance: () => { now += 3_600_000; } };
+  return { app, memory, metadata, backend, dispatches, instance, identity, request, sessions, mutations: () => mutations, advance: () => { now += 3_600_000; } };
 }
 
 describe('Turn Memory HTTP account boundary', () => {
+  it('settles event writes before releasing their deletion barrier', async () => {
+    const f = fixture();
+    const { token } = await f.memory.start(f.identity());
+    const call = f.backend.call.bind(f.backend);
+    vi.spyOn(f.backend, 'call').mockImplementation(async (operation, params) => {
+      expect(f.dispatches.size).toBe(1);
+      return call(operation, params);
+    });
+    const response = await f.request(token, 'create_event', { actorId: 'filing_a', sessionId: 'session_a', eventTimestamp: startedAt, payload: [{ blob: 'checkpoint' }] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: 'create_event', actorId: 'filing_a', sessionId: 'session_a' });
+    expect(f.dispatches.size).toBe(0);
+    expect(f.mutations()).toBe(1);
+  });
+
+  it('keeps deletion blocked and reports an uncertain event write failure', async () => {
+    const f = fixture();
+    const { token } = await f.memory.start(f.identity());
+    vi.spyOn(f.backend, 'call').mockRejectedValue(Object.assign(new Error('Connection interrupted'), { name: 'TimeoutError', $metadata: { httpStatusCode: 504 } }));
+    const response = await f.request(token, 'create_event', { actorId: 'filing_a', sessionId: 'session_a', eventTimestamp: startedAt, payload: [{ blob: 'checkpoint' }] });
+    expect(response.status).toBe(504);
+    expect(await response.json()).toEqual({ code: 'TimeoutError', detail: 'AgentCore Memory request failed' });
+    expect(f.dispatches.size).toBe(1);
+  });
+
+  it('does not submit an event write when durable admission fails', async () => {
+    const f = fixture();
+    const { token } = await f.memory.start(f.identity());
+    const failure = new Error('DynamoDB admission failed');
+    vi.spyOn(f.metadata, 'beginDispatch').mockRejectedValue(failure);
+    await expect(f.memory.request(token, { operation: 'create_event', params: { memoryId: 'memory', actorId: 'filing_a', sessionId: 'session_a', eventTimestamp: startedAt, payload: [{ blob: 'checkpoint' }] } })).rejects.toBe(failure);
+    expect(f.mutations()).toBe(0);
+    expect(f.dispatches.size).toBe(0);
+  });
+
+  it('reports failed durable settlement after an event write succeeds', async () => {
+    const f = fixture();
+    const { token } = await f.memory.start(f.identity());
+    const beginDispatch = f.metadata.beginDispatch.bind(f.metadata);
+    const failure = new Error('DynamoDB settlement failed');
+    vi.spyOn(f.metadata, 'beginDispatch').mockImplementation(async (...args) => {
+      await beginDispatch(...args);
+      return Object.assign(async () => { throw failure; }, { markSucceeded: async () => undefined });
+    });
+    await expect(f.memory.request(token, { operation: 'create_event', params: { memoryId: 'memory', actorId: 'filing_a', sessionId: 'session_a', eventTimestamp: startedAt, payload: [{ blob: 'checkpoint' }] } })).rejects.toBe(failure);
+    expect(f.mutations()).toBe(1);
+    expect(f.dispatches.size).toBe(1);
+  });
+
   it('preserves the running Turn and fails loudly when durable revocation fails', async () => {
     const f = fixture();
     const { token, lease } = await f.memory.start(f.identity());

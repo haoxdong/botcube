@@ -6,6 +6,7 @@ import { inject } from 'vitest';
 import { DynamoDBAgentDocuments } from '../src/agent-documents.js';
 import type { AccountHistory, ChatServiceCartridge } from '../src/cartridge.js';
 import { createChatService, type ChatServiceConfig } from '../src/server.js';
+import type { SessionApi } from '../src/session-api.js';
 import { DynamoDBSessionMetadata } from '../src/session-metadata.js';
 import { ScheduledTasks } from '../src/scheduled-tasks.js';
 import { sqsRunQueue, type RunQueue } from '../src/scheduled-runs.js';
@@ -20,12 +21,14 @@ import type {} from './fakes/global-setup.js';
 const OWNER = 'account-1';
 
 export interface InProcessOptions {
+  invokeSessionApi?: SessionApi;
   /** Overrides of the test Cartridge, which acts for OWNER (or the x-test-owner header's account) and forwards each Turn as sent. */
   cartridge?: Partial<ChatServiceCartridge>;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
   table?: 'created' | 'missing';
+  runtimeNamespaceReady?: boolean;
   /** Scheduled tasks: unconfigured (default), or a schedule group and run queue of the stack's own in moto. */
   scheduled?: boolean;
   /** The drain check used by this stack's scheduled-runs poller. */
@@ -54,7 +57,9 @@ export interface InProcessStack {
 export async function startInProcess(options: InProcessOptions = {}): Promise<InProcessStack> {
   const endpoint = inject('dynamodbEndpoint');
   const table = `chat-${Math.random().toString(36).slice(2)}`;
-  if ((options.table ?? 'created') === 'created') await createChatTable(endpoint, table);
+  if ((options.table ?? 'created') === 'created') {
+    await createChatTable(endpoint, table, options.runtimeNamespaceReady !== false);
+  }
   const client = new DynamoDBClient({
     region: 'us-east-1',
     endpoint,
@@ -117,7 +122,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     config,
     sessionMetadata,
     new DynamoDBAgentDocuments(table, client),
-    undefined,
+    options.invokeSessionApi,
     runs && runQueue && { tasks: new ScheduledTasks(table, runs, client, new SchedulerClient(aws)), queue: runQueue, draining: options.scheduledDraining ?? (async () => false) },
   );
   return {

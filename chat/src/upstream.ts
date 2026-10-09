@@ -1,5 +1,6 @@
 import { Agent } from 'undici';
 import { awsFetch } from './aws.js';
+import { HttpError } from './cartridge.js';
 
 /** The header that names the Session a Runtime invocation belongs to. */
 const SESSION_ID_HEADER = 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id';
@@ -18,6 +19,7 @@ const turnDispatcher = ({ connectTimeoutMs = CONNECT_TIMEOUT_MS }: UpstreamOptio
 export interface Upstream {
   /** How client-facing errors name this upstream. */
   readonly label: string;
+  readonly runtimeTarget?: string;
   invoke(body: string, sessionId: string, init?: { accept?: string | undefined; signal?: AbortSignal | undefined }): Promise<Response>;
 }
 
@@ -38,12 +40,32 @@ export function agentCoreEndpointFromEnv(env: NodeJS.ProcessEnv): { region: stri
   return { region, endpoint: endpoint.replace(/\/+$/, '') };
 }
 
+const runtimeInvocationUrl = (runtime: AgentCoreRuntime): string => `${runtime.endpoint}/runtimes/${encodeURIComponent(runtime.arn)}/invocations?qualifier=DEFAULT`;
+
 /** Invokes the AgentCore Runtime over SigV4-signed HTTPS, as botocore signs it. */
-export function agentCoreUpstream(runtime: AgentCoreRuntime, options: UpstreamOptions = {}): Upstream {
-  const url = `${runtime.endpoint}/runtimes/${encodeURIComponent(runtime.arn)}/invocations?qualifier=DEFAULT`;
+export function agentCoreUpstream(runtime: AgentCoreRuntime, options: UpstreamOptions = {}): Upstream & { readonly runtimeTarget: string; stop(sessionId: string): Promise<void | 'absent'> } {
+  const url = runtimeInvocationUrl(runtime);
   const dispatcher = turnDispatcher(options);
   return {
     label: 'AgentCore upstream',
+    runtimeTarget: JSON.stringify([runtime.region, url]),
+    async stop(sessionId) {
+      const response = await awsFetch('bedrock-agentcore', runtime.region,
+        `${runtime.endpoint}/runtimes/${encodeURIComponent(runtime.arn)}/stopruntimesession?qualifier=DEFAULT`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', [SESSION_ID_HEADER]: sessionId },
+          body: '{}',
+          signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
+          dispatcher,
+        });
+      await response.arrayBuffer();
+      // AWS reports an already terminated or absent Session as 404; the purge queue reports it.
+      if (response.status === 404) return 'absent';
+      if (!response.ok) {
+        throw new Error(`AgentCore Session stop failed: HTTP ${response.status}`);
+      }
+      return undefined;
+    },
     invoke(body, sessionId, init = {}) {
       return awsFetch('bedrock-agentcore', runtime.region, url, {
         method: 'POST',
@@ -106,10 +128,18 @@ export function harnessEndpointFromEnv(env: NodeJS.ProcessEnv): HarnessEndpoint 
   return { url, sigv4: signing !== 'false', region: env.AGENTCORE_REGION || 'us-east-1' };
 }
 
-export function httpsHarnessUpstream(endpoint: HarnessEndpoint, options: UpstreamOptions = {}): Upstream {
+export function httpsHarnessUpstream(endpoint: HarnessEndpoint, options: UpstreamOptions = {}, runtime?: AgentCoreRuntime | null): Upstream & { readonly runtimeBound: boolean; stop(sessionId: string): Promise<void | 'absent'> } {
   validateHarnessUrl(endpoint.url);
   const dispatcher = turnDispatcher(options);
+  const bound = runtime != null && endpoint.region === runtime.region && endpoint.url === runtimeInvocationUrl(runtime)
+    ? agentCoreUpstream(runtime, options) : null;
   return {
+    runtimeBound: bound !== null,
+    ...(bound === null ? {} : { runtimeTarget: bound.runtimeTarget }),
+    async stop(sessionId) {
+      if (bound === null) throw new HttpError(503, 'HTTPS Harness Runtime stop identity is unproved; deletion remains pending');
+      return bound.stop(sessionId);
+    },
     label: 'Harness upstream',
     invoke(body, sessionId, init = {}) {
       const request = {

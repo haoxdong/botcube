@@ -301,7 +301,7 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Service]:
+def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Iterator[_Service]:
     home = tmp_path / 'home'
     home.mkdir()
     monkeypatch.setenv('HOME', str(home))
@@ -320,7 +320,9 @@ def service(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Servic
 
     monkeypatch.setattr(serving, 'build_model', build_model)
     prepared: list[Path] = []
-    serving.configure_harness_definition(_definition(prepared))
+    definition = _definition(prepared)
+    definition = replace(definition, session_id_env_var=getattr(request, 'param', 'TEST_SESSION_ID'))
+    serving.configure_harness_definition(definition)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', '')
     monkeypatch.setattr(session_api, '_GRAPH', None)
     with TestClient(serving.app) as client:
@@ -487,14 +489,37 @@ def test_the_sandbox_shell_truncates_output_at_the_cartridges_limit(service: _Se
     )
 
 
-def test_the_sandbox_shell_carries_the_agentcore_session_id(service: _Service) -> None:
+def test_the_sandbox_shell_carries_the_logical_session_id(service: _Service) -> None:
     first = service.turn('run: echo "[$TEST_SESSION_ID]"', session='agentcore-session-1')
-    second = service.turn('run: echo "[$TEST_SESSION_ID]"', session='agentcore-session-2')
-    third = service.turn('run: echo "[$TEST_SESSION_ID]"')
+    second = service.turn('run: echo "[$TEST_SESSION_ID]"', thread='thread-2', session='agentcore-session-2')
+    third = service.turn('run: echo "[$TEST_SESSION_ID]"', thread='thread-3')
 
-    assert _tool_output(first) == '[agentcore-session-1]\n\n[Command succeeded with exit code 0]'
-    assert _tool_output(second) == '[agentcore-session-2]\n\n[Command succeeded with exit code 0]'
-    assert _tool_output(third) == '[]\n\n[Command succeeded with exit code 0]'
+    assert _tool_output(first) == '[thread-1]\n\n[Command succeeded with exit code 0]'
+    assert _tool_output(second) == '[thread-2]\n\n[Command succeeded with exit code 0]'
+    assert _tool_output(third) == '[thread-3]\n\n[Command succeeded with exit code 0]'
+
+
+@pytest.mark.parametrize(
+    ('service', 'variable'),
+    [('CARTRIDGE_OWNER_SESSION_ID', 'CARTRIDGE_OWNER_SESSION_ID'),
+     ('BOTCUBE_EXAMPLE_SESSION_ID', 'BOTCUBE_EXAMPLE_SESSION_ID')],
+    indirect=['service'],
+)
+def test_scoped_runtime_identity_keeps_the_shells_logical_invocation_token_session(
+    service: _Service, variable: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache')
+    events = service.turn(
+        f'run: test "${variable}" = "$TOKEN_SESSION_ID" && echo "session matched"',
+        thread='logical-owner-session',
+        session='session-282076aaa1a2e054f6baa24fb8a8a70ff7c4752db6070b1318cc7bff29598c3c',
+        env={'TOKEN_SESSION_ID': 'logical-owner-session'},
+    )
+
+    assert _tool_output(events) == 'session matched\n\n[Command succeeded with exit code 0]'
+    assert {entry['agentcore_session_id'] for entry in _cache_usage(caplog)} == {
+        'session-282076aaa1a2e054f6baa24fb8a8a70ff7c4752db6070b1318cc7bff29598c3c'
+    }
 
 
 def test_a_rotated_token_reaches_the_cached_agents_sandbox(service: _Service) -> None:
@@ -742,7 +767,9 @@ def test_a_warmup_builds_the_requesters_agent_for_their_next_turn_without_runnin
     # The first Turn on a fresh VM no longer waits for the agent build.
     events = service.turn('hello', model='opus-4.6', effort='high', warmup=True)
 
-    assert events == []
+    assert events == [{'type': 'CUSTOM', 'name': 'SESSION_PREPARATION', 'value': {
+        'runId': 'run-0', 'sessionId': 'thread-1', 'outcome': 'prepared',
+    }}]
     assert service.recorder.prompts == []
     assert len(service.recorder.builds) == 1
 
@@ -1046,7 +1073,7 @@ def test_an_overlong_files_name_fails_with_a_classified_file_error_issue_3487(
 ) -> None:
     files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=b'from Files')
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1] == {
         'type': 'RUN_ERROR',
@@ -1061,7 +1088,7 @@ def test_bounded_files_path_components_reach_the_workspace_issue_3487(
 ) -> None:
     files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=b'from Files')
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert (service.home / name).read_bytes() == b'from Files'
@@ -1161,7 +1188,7 @@ def test_an_edit_within_the_second_of_the_last_sync_reaches_files(service: _Serv
     # The agent's edit lands within the second Files stamped on the last sync.
     os.utime(plan, (synced + 0.5, synced + 0.5))
 
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
 
     assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt')['Body'].read() == b'edited at once'
 
@@ -1171,7 +1198,7 @@ def test_a_workspace_clock_ahead_of_s3_never_hides_an_edit_made_in_files(service
     plan = service.home / 'plan.txt'
     plan.write_text('old')
     os.utime(plan, (time.time() + 3600, time.time() + 3600))
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
     time.sleep(1.1)
     files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'edited in Files')
 
@@ -1214,7 +1241,7 @@ def test_a_file_deleted_in_files_then_uploaded_again_reaches_the_workspace(servi
     files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv', Body=b'date,close,volume')
 
     events = service.turn('read: /report.csv', files=_files())
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
 
     assert 'date,close,volume' in _tool_output(events)
     assert (service.home / 'report.csv').read_text() == 'date,close,volume'
@@ -1238,7 +1265,7 @@ def test_a_file_deleted_in_files_and_by_the_agent_ends_the_next_turn_cleanly(ser
     (service.home / 'report.csv').unlink()
     files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
@@ -1257,7 +1284,7 @@ def _deny_puts(s3: Any) -> None:
 def test_a_file_pulled_by_a_turn_whose_push_failed_still_leaves_once_deleted_in_files(
     service: _Service, files_bucket: Any
 ) -> None:
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
     files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}upload.txt', Body=b'from the Files app')
     _deny_puts(files_bucket)
     failed = service.turn('write: /report.csv: date,close', files=_files())
@@ -1273,7 +1300,7 @@ def test_a_file_pulled_by_a_turn_whose_push_failed_still_leaves_once_deleted_in_
     assert reported[-1]['type'] == 'RUN_ERROR'
     assert reported[-1]['code'] == 'INTERNAL_ERROR'
     assert 'PutObject operation: Forbidden' in reported[-1]['message']
-    recovered = service.turn('hello', files=_files())
+    recovered = service.turn('ls: /', files=_files())
     assert recovered[-1]['type'] == 'RUN_FINISHED'
 
     assert not (service.home / 'upload.txt').exists()
@@ -1319,7 +1346,7 @@ def test_a_file_the_sync_never_recorded_reaches_files_however_old(service: _Serv
     archived.write_text('date,close')
     os.utime(archived, (1_500_000_000, 1_500_000_000))
 
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
 
     assert f'{FILES_PREFIX}archive/2019.csv' in _keys(files_bucket)
     assert archived.exists()
@@ -1330,7 +1357,7 @@ def test_a_turn_whose_files_sync_record_is_unreadable_fails_loudly(service: _Ser
     (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text('{"report.csv": ')
     files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1] == {
         'type': 'RUN_ERROR',
@@ -1349,7 +1376,7 @@ def test_a_turn_whose_files_sync_record_is_not_names_to_seconds_fails_loudly(
     service.turn('write: /report.csv: date,close', files=_files())
     (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(record)
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1] == {
         'type': 'RUN_ERROR',
@@ -1367,7 +1394,7 @@ def test_a_turn_whose_files_sync_record_names_a_path_outside_the_workspace_fails
     service.turn('write: /report.csv: date,close', files=_files())
     (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(json.dumps({str(runtime): 9999999999}))
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1] == {
         'type': 'RUN_ERROR',
@@ -1387,7 +1414,7 @@ def test_a_files_pull_removes_nothing_through_a_link_out_of_the_workspace(
     (service.home / 'bin').symlink_to(outside, target_is_directory=True)
     (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(json.dumps({'bin/node': 9999999999}))
 
-    events = service.turn('hello', files=_files())
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert (outside / 'node').exists()
@@ -1418,7 +1445,7 @@ def test_a_file_deleted_in_files_during_a_turn_is_not_put_back_when_it_ends(
     assert 'date,close' in _tool_output(events)
     assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
 
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
 
     assert not (service.home / 'report.csv').exists()
     assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
@@ -1436,43 +1463,34 @@ def test_touching_a_file_deleted_in_files_during_a_turn_keeps_it_deleted_issue_3
     assert (service.home / 'report.csv').read_text() == 'date,close'
     assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
 
-    service.turn('hello', files=_files())
+    service.turn('ls: /', files=_files())
 
     assert not (service.home / 'report.csv').exists()
     assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
 
 
-def test_no_tool_turns_never_upload_unchanged_files_issue_3500(
+def test_no_tool_turns_never_access_unchanged_files_issue_3500(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service.turn('hello', files=_files())
     names = [f'unchanged-{index}.txt' for index in range(17)]
     for name in names:
         files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=name.encode())
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    pull = files_sync.FilesSync.pull
-    uploads: list[str] = []
-    upload = files_bucket.upload_file
+    refreshed = service.turn('ls: /', files=_files())
+    assert refreshed[-1]['type'] == 'RUN_FINISHED'
+    for name in names:
+        local = service.home / name
+        stamp = local.stat().st_mtime + 0.5
+        os.utime(local, (stamp, stamp))
 
-    def pull_with_timestamp_drift(self: files_sync.FilesSync, root: Path, excluded: Any) -> None:
-        pull(self, root, excluded)
-        for name in names:
-            local = root / name
-            stamp = local.stat().st_mtime + 0.5
-            os.utime(local, (stamp, stamp))
+    def unexpected_files_client(self: files_sync.FilesSync) -> Any:
+        raise AssertionError('A plain answer accessed Files')
 
-    def record_upload(filename: str, bucket: str, key: str) -> None:
-        uploads.append(key)
-        upload(filename, bucket, key)
-
-    monkeypatch.setattr(files_sync.FilesSync, 'pull', pull_with_timestamp_drift)
-    monkeypatch.setattr(files_bucket, 'upload_file', record_upload)
+    monkeypatch.setattr(files_sync.FilesSync, '_client', unexpected_files_client)
 
     for _ in range(2):
         events = service.turn('hello', files=_files())
         assert events[-1]['type'] == 'RUN_FINISHED'
         assert not any(event['type'].startswith('TOOL_CALL') for event in events)
-        assert uploads == []
         for name in names:
             assert (service.home / name).read_bytes() == name.encode()
             assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name)['Body'].read() == name.encode()
@@ -1556,15 +1574,35 @@ def test_an_invocation_with_malformed_files_is_rejected(
     assert service.recorder.builds == []
 
 
-def test_a_turn_whose_files_cannot_sync_fails_loudly(service: _Service, files_bucket: Any) -> None:
+def test_a_plain_answer_with_an_unavailable_files_bucket_succeeds_without_s3(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     files_bucket.delete_bucket(Bucket=FILES_BUCKET)
+    calls: list[str] = []
+    client = files_sync.FilesSync._client
+
+    def observed_client(self: files_sync.FilesSync) -> Any:
+        calls.append(self.bucket)
+        return client(self)
+
+    monkeypatch.setattr(files_sync.FilesSync, '_client', observed_client)
 
     events = service.turn('hello', files=_files())
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert _said(events) == 'Echo: hello'
+    assert calls == []
+
+
+def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service, files_bucket: Any) -> None:
+    files_bucket.delete_bucket(Bucket=FILES_BUCKET)
+
+    events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_ERROR'
     assert 'NoSuchBucket' in events[-1]['message']
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
-    assert service.recorder.heard == []
+    assert service.recorder.heard == [['ls: /']]
 
 
 # -- Conversation state ----------------------------------------------------------
@@ -1598,10 +1636,10 @@ def _assert_broker_event_scope(params: dict[str, Any], identity: dict[str, str])
 def _broker_http(monkeypatch: pytest.MonkeyPatch, memory: FakeAgentCoreMemory) -> None:
     from botcube_harness_deepagents.memory_broker import _timestamps
 
-    def post(url: str, *, headers: dict[str, str], content: str, timeout: int) -> httpx.Response:
-        assert url == 'https://chat.test/internal/turn-memory'
-        identity = json.loads(headers['Authorization'].removeprefix('Bearer '))
-        request = json.loads(content)
+    def post(wire_request: httpx.Request) -> httpx.Response:
+        assert str(wire_request.url) == 'https://chat.test/internal/turn-memory'
+        identity = json.loads(wire_request.headers['Authorization'].removeprefix('Bearer '))
+        request = json.loads(wire_request.content)
         params = _timestamps(request['params'])
         operation = request['operation']
         actor = identity['actor']
@@ -1613,12 +1651,16 @@ def _broker_http(monkeypatch: pytest.MonkeyPatch, memory: FakeAgentCoreMemory) -
             assert f'/actors/{actor}/' in params['namespacePath']
             listed = memory.get_paginator(operation).paginate(PaginationConfig={'PageSize': 100}, **params)
             [response] = listed
+        elif operation == 'startup_snapshot':
+            assert params['actorId'] == actor
+            response = memory.startup_snapshot(**params)
         else:
             _assert_broker_event_scope(params, identity)
             response = getattr(memory, operation)(**params)
         return httpx.Response(200, content=json.dumps(response, default=lambda item: item.isoformat()))
 
-    monkeypatch.setattr(httpx, 'post', post)
+    from botcube_harness_deepagents import memory_broker
+    monkeypatch.setattr(memory_broker._http_client(), 'send', post)
 
 
 class _RegionalMemory(FakeAgentCoreMemory):
@@ -1643,6 +1685,64 @@ def agentcore_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> _Reg
     monkeypatch.setattr(serving, 'AGENTCORE_REGION', 'eu-west-1')
     monkeypatch.setattr(memory_tools, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return memory
+
+
+def test_named_warmup_requires_memory_capability_and_reads_original_history(
+    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents import memory_broker
+
+    payload: dict[str, Any] = {
+        'threadId': 'original-logical-session', 'runId': 'named-warmup',
+        'messages': [], 'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'current-owner', 'sessionUserId': 'original-filing',
+                           'memory': True, 'warmup': True, 'model': 'opus-4.6'},
+    }
+    events = service.post(payload, session='opaque-runtime-binding')
+    error = {'code': 'MISSING_USER_ID', 'message': 'Invocation carries no Turn Memory capability'}
+    assert events == [{'type': 'RUN_ERROR', **error},
+                      {'type': 'CUSTOM', 'name': 'SESSION_PREPARATION', 'value': {
+                          'runId': 'named-warmup', 'sessionId': 'original-logical-session',
+                          'outcome': 'failed', 'error': error,
+                      }}]
+    assert service.recorder.builds == []
+    assert agentcore_memory.startup_snapshot_calls == 0
+
+    service.turn('original visible history', thread='original-logical-session',
+                 actor='current-owner', user='original-filing', memory=True,
+                 session='opaque-runtime-binding')
+    for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None,
+                        '_THREAD_LTM_CONTEXTS': {}, '_DEFERRED_SAVER': None}.items():
+        monkeypatch.setattr(serving, name, value)
+    operations: list[dict[str, Any]] = []
+    client = memory_broker._http_client()
+    original_send = client.send
+
+    def record(request: httpx.Request) -> httpx.Response:
+        operations.append(json.loads(request.content))
+        return original_send(request)
+
+    monkeypatch.setattr(client, 'send', record)
+    prompts = list(service.recorder.prompts)
+    snapshots = agentcore_memory.startup_snapshot_calls
+    payload['forwardedProps']['turnMemory'] = {
+        'url': 'https://chat.test/internal/turn-memory',
+        'token': json.dumps({'actor': 'current-owner', 'filing': 'original-filing',
+                             'thread': 'original-logical-session'}),
+    }
+    events = service.post(payload, session='opaque-runtime-binding')
+    assert events == [{'type': 'CUSTOM', 'name': 'SESSION_PREPARATION', 'value': {
+        'runId': 'named-warmup', 'sessionId': 'original-logical-session', 'outcome': 'prepared',
+    }}]
+    assert service.recorder.prompts == prompts
+    assert agentcore_memory.startup_snapshot_calls == snapshots + 1
+    assert all(operation['operation'] not in {'create_event', 'delete_event'} for operation in operations)
+    session_reads = [operation['params'] for operation in operations
+                     if operation['operation'] == 'list_events']
+    assert session_reads
+    assert all(read['actorId'] == 'original-filing' for read in session_reads)
+    assert all(read['sessionId'] in {'original-logical-session', 'original-logical-session-messages'}
+               for read in session_reads)
 
 
 def _memory_record(text: str, strategy_id: str, actor_id: str, record_id: str | None = None) -> dict[str, Any]:
@@ -2087,6 +2187,33 @@ def test_same_session_id_isolates_each_filing_user(
         ]
 
 
+def test_opaque_runtime_continuation_restores_original_history_through_broker_issue_2822(
+    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    original = service.turn(
+        'before continuation', actor='original-owner', user='original-filing',
+        thread='legacy-session', session='legacy-session',
+    )
+    assert original[-1]['type'] == 'RUN_FINISHED'
+    serving._AGENTS.clear()
+    serving._AGENT_BACKENDS.clear()
+    serving._BACKEND_BY_AGENT.clear()
+    serving._DEFERRED_SAVER = None
+    serving._CHECKPOINTER = serving._build_checkpointer()
+
+    continued = service.turn(
+        'after continuation', actor='claimed-owner', user='original-filing',
+        thread='legacy-session', session='runtime-00000000-0000-4000-8000-000000000001',
+    )
+    assert continued[-1]['type'] == 'RUN_FINISHED'
+    assert service.recorder.heard[-1] == ['before continuation', 'after continuation']
+    assert _replay('original-filing', 'legacy-session') == [
+        ('user', 'before continuation'), ('assistant', 'Echo: before continuation'),
+        ('user', 'after continuation'), ('assistant', 'Echo: after continuation'),
+    ]
+
+
 def test_a_turn_without_a_thread_finishes_on_agentcore_issue_3354(
     service: _Service, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2148,6 +2275,9 @@ def test_a_new_session_is_readable_while_its_first_turn_runs_issue_3470(
         def observed(event: Any) -> None:
             publish(event)
             if event.type == 'RUN_STARTED':
+                session = ('user-1', 'thread-1')
+                assert serving._SESSION_TURNS._turns[session].run_id == input_data.run_id
+                assert serving._SESSION_TURNS._locks[session].locked()
                 opened.append(records.post('/invocations', json={
                     'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1',
                 }))
@@ -2294,3 +2424,83 @@ def test_upgraded_write_file_replaces_existing_content(service: _Service) -> Non
     assert (service.prepared[0] / 'plan.txt').read_text() == 'revised draft'
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert 'Error' not in _tool_output(events)
+
+
+@pytest.mark.parametrize('stopped', [False, True])
+@pytest.mark.parametrize('settlement', ['flush', 'snapshot'])
+def test_invocation_eof_waits_for_real_record_settlement_before_purge_issue_2822(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, stopped: bool, settlement: str,
+) -> None:
+    memory = FakeAgentCoreMemory()
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    _broker_http(monkeypatch, memory)
+    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    service.turn('seed', session='physical-runtime')
+    entered = threading.Event()
+    release = threading.Event()
+    model_started = threading.Event()
+    if stopped:
+        async def unfinished(self: _ScriptedModel, *_args: Any, **_kwargs: Any):
+            yield _text('Visible unfinished answer')
+            model_started.set()
+            await asyncio.Future()
+
+        monkeypatch.setattr(_ScriptedModel, '_astream', unfinished)
+    if settlement == 'flush':
+        saver = serving._DEFERRED_SAVER
+        assert saver is not None
+        original = saver.aflush
+
+        async def held_flush(session: tuple[str, str] | None = None) -> None:
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5), 'Checkpoint settlement was never released'
+            await original(session)
+
+        monkeypatch.setattr(saver, 'aflush', held_flush)
+    else:
+        checkpointer = serving._CHECKPOINTER
+        assert checkpointer is not None
+        original_snapshot = checkpointer.awrite_messages_snapshot
+
+        async def held_snapshot(*args: Any) -> None:
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5), 'Messages snapshot was never released'
+            await original_snapshot(*args)
+
+        monkeypatch.setattr(checkpointer, 'awrite_messages_snapshot', held_snapshot)
+    payload = {
+        'threadId': 'thread-1', 'runId': 'held-turn',
+        'messages': [{'id': 'held-question', 'role': 'user', 'content': 'next question'}],
+        'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'memory': False,
+                          'turnMemory': {'url': 'https://chat.test/internal/turn-memory',
+                                         'token': json.dumps({'actor': 'actor-1', 'filing': 'user-1', 'thread': 'thread-1'})}},
+    }
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        response = pool.submit(service.client.post, '/invocations', json=payload,
+                               headers={SESSION_HEADER: 'physical-runtime'})
+        try:
+            if stopped:
+                assert model_started.wait(5), 'The graph never reached its unfinished answer'
+                acknowledgement = service.client.post('/invocations', json={
+                    **payload, 'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
+                }, headers={SESSION_HEADER: 'physical-runtime'})
+                assert acknowledgement.status_code == 200
+            assert entered.wait(5), 'The Turn never reached record settlement'
+            with pytest.raises(TimeoutError):
+                response.result(timeout=0.2)
+        finally:
+            release.set()
+            answer = response.result(timeout=10)
+    events = _sse_events(answer.text)
+    if stopped:
+        assert events[-1]['code'] == 'TURN_STOPPED'
+        assert _replay('user-1', 'thread-1')[-1] == ('assistant', 'Visible unfinished answer')
+    else:
+        assert events[-1]['type'] == 'RUN_FINISHED'
+        assert _replay('user-1', 'thread-1')[-1] == ('assistant', 'Echo: next question')
+    assert _memory_operation('purge', user='user-1', sessionId='thread-1') == {}
+    with pytest.raises(session_api.SessionNotFoundError, match='has no record'):
+        _replay('user-1', 'thread-1')
+    assert not any(memory.events.values())

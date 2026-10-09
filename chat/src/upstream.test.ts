@@ -109,6 +109,35 @@ describe('the AgentCore upstream', () => {
     ]);
   });
 
+  it('stops the exact Runtime Session before its record is erased', async () => {
+    const { baseUrl, received } = await recordingServer((response) => response.end());
+
+    await agentCore(baseUrl).stop('session-1');
+
+    expect(received).toEqual([{
+      method: 'POST',
+      url: '/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-west-2%3A123456789012%3Aruntime%2Fagent-1/stopruntimesession?qualifier=DEFAULT',
+      headers: expect.objectContaining({
+        'content-type': 'application/json',
+        'x-amzn-bedrock-agentcore-runtime-session-id': 'session-1',
+        authorization: expect.stringContaining('/us-west-2/bedrock-agentcore/aws4_request'),
+      }),
+      body: '{}',
+    }]);
+  });
+
+  it('can erase a Session whose Sandbox is already gone', async () => {
+    const { baseUrl } = await recordingServer((response) => response.writeHead(404).end());
+
+    await expect(agentCore(baseUrl).stop('session-1')).resolves.toBe('absent');
+  });
+
+  it.each([302, 403, 409, 500])('reports a failed Runtime stop with status %i', async (status) => {
+    const { baseUrl } = await recordingServer((response) => response.writeHead(status).end('provider detail'));
+
+    await expect(agentCore(baseUrl).stop('session-1')).rejects.toThrow(`AgentCore Session stop failed: HTTP ${status}`);
+  });
+
   it('does not follow a redirect', async () => {
     const { baseUrl, received } = await recordingServer(redirect);
 
@@ -206,6 +235,28 @@ describe('the local Harness upstream', () => {
 });
 
 describe('a configured HTTPS Harness', () => {
+  it.each([
+    ['no Runtime identity', null, 'https://wrapper.example/turn', 'us-west-2'],
+    ['another ARN', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://runtime.example/runtimes/${encodeURIComponent(RUNTIME_ARN + '-other')}/invocations?qualifier=DEFAULT`, 'us-west-2'],
+    ['another qualifier', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://runtime.example/runtimes/${encodeURIComponent(RUNTIME_ARN)}/invocations?qualifier=LIVE`, 'us-west-2'],
+    ['another region', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://runtime.example/runtimes/${encodeURIComponent(RUNTIME_ARN)}/invocations?qualifier=DEFAULT`, 'us-east-1'],
+    ['another origin', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://wrapper.example/runtimes/${encodeURIComponent(RUNTIME_ARN)}/invocations?qualifier=DEFAULT`, 'us-west-2'],
+    ['wrapper path', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, 'https://runtime.example/turn', 'us-west-2'],
+    ['extra query', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://runtime.example/runtimes/${encodeURIComponent(RUNTIME_ARN)}/invocations?qualifier=DEFAULT&target=other`, 'us-west-2'],
+    ['duplicate qualifier', { arn: RUNTIME_ARN, region: 'us-west-2', endpoint: 'https://runtime.example' }, `https://runtime.example/runtimes/${encodeURIComponent(RUNTIME_ARN)}/invocations?qualifier=DEFAULT&qualifier=LIVE`, 'us-west-2'],
+  ] as const)('refuses unsupported HTTPS Runtime stop for %s without sending any request', async (_case, runtime, url, region) => {
+    const requests: unknown[] = [];
+    vi.stubGlobal('fetch', async (target: unknown) => { requests.push(target); return new Response('{}'); });
+    await Promise.all([true, false].map(async (sigv4) => {
+      const upstream = httpsHarnessUpstream({ url, region, sigv4 }, {}, runtime);
+      expect(upstream.runtimeBound).toBe(false);
+      await expect(upstream.stop('runtime-11111111-1111-4111-8111-111111111111')).rejects.toMatchObject({
+        status: 503, message: 'HTTPS Harness Runtime stop identity is unproved; deletion remains pending',
+      });
+    }));
+    expect(requests).toEqual([]);
+  });
+
   it.each(['true', 'false'])('posts to the full URL with SigV4 %s and streams the response', async (signing) => {
     const requests: { url: unknown; init: RequestInit }[] = [];
     vi.stubGlobal('fetch', async (url: unknown, init: RequestInit) => {

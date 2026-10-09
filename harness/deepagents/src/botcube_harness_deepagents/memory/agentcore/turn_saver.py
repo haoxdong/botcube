@@ -139,10 +139,18 @@ class TurnCheckpointSaver(BaseCheckpointSaver[str]):
             return self._tuple(checkpoint_id)
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
-        return self._buffered_tuple(config) or self._saver.get_tuple(config)
+        return self._buffered_tuple(config) or self._remember_read(config, self._saver.get_tuple(config))
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
-        return self._buffered_tuple(config) or await self._saver.aget_tuple(config)
+        return self._buffered_tuple(config) or self._remember_read(config, await self._saver.aget_tuple(config))
+
+    def _remember_read(self, config: RunnableConfig, target: CheckpointTuple | None) -> CheckpointTuple | None:
+        if target is not None:
+            self._retain_history(target, [], {})
+            if get_checkpoint_id(config) is None:
+                with self._lock:
+                    self._latest.setdefault(_latest_key(config), target.checkpoint['id'])
+        return target
 
     def get_delta_channel_history(
         self, *, config: RunnableConfig, channels: Sequence[str]

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { SignatureV4 } from '@smithy/signature-v4';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -7,6 +8,8 @@ import type { AddressInfo, Socket } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { httpsHarnessUpstream } from './upstream.js';
 import { defined } from '../test/defined.js';
+import { startInProcess } from '../test/in-process.js';
+import type { SessionApi } from './session-api.js';
 
 const dispatchers = vi.hoisted(() => ({ agents: [] as import('undici').Agent[], trustFixtureCertificate: true }));
 vi.mock('undici', async (importOriginal) => {
@@ -76,6 +79,114 @@ async function recordingServer(answer: (response: ServerResponse) => void) {
 }
 
 describe('HTTPS Harness transport', () => {
+  it('keeps unsigned HTTPS readiness closed until the dispatcher prerequisite exists', async () => {
+    const { url, received } = await recordingServer((response) => response.end('data: {"type":"RUN_FINISHED"}\n\n'));
+    const stack = await startInProcess({ runtimeNamespaceReady: false, config: {
+      agentCore: null,
+      harnessEndpoint: { url, region: 'us-west-2', sigv4: false },
+    } });
+    try {
+      expect((await stack.app.request('/health')).status).toBe(503);
+      expect(received).toEqual([]);
+      await DynamoDBDocumentClient.from(stack.table.client).send(new PutCommand({
+        TableName: stack.table.name,
+        Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true },
+      }));
+      expect((await stack.app.request('/health')).status).toBe(200);
+    } finally { await stack.stop(); }
+  });
+
+  it.each([true, false])('registered HTTP deletion stops the exact direct TLS Runtime before event purge with signing %s', async (sigv4) => {
+    const order: string[] = [];
+    const sessionId = 'https-registered';
+    const { url, received } = await recordingServer((response) => {
+      if (response.req.url?.includes('/stopruntimesession?')) {
+        order.push('stop');
+        response.end('{}');
+      } else {
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: sessionId, runId: 'https-run' })}\n\ndata: ${JSON.stringify({ type: 'RUN_FINISHED', threadId: sessionId, runId: 'https-run' })}\n\n`);
+      }
+    });
+    const arn = 'arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/agent-1';
+    const runtime = { arn, region: 'us-west-2', endpoint: new URL(url).origin };
+    const invoke = vi.fn<SessionApi>(async (event) => { if (event.operation === 'purge') order.push('purge'); return {}; });
+    const stack = await startInProcess({ config: {
+      harnessEndpoint: { url: `${runtime.endpoint}/runtimes/${encodeURIComponent(arn)}/invocations?qualifier=DEFAULT`, region: runtime.region, sigv4 },
+      agentCore: runtime,
+    }, invokeSessionApi: invoke });
+    try {
+      const turn = await stack.app.request('/', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ threadId: sessionId, runId: 'https-run', state: {}, messages: [{ id: 'https-message', role: 'user', content: 'Hello' }], tools: [], context: [], forwardedProps: {} }),
+      });
+      expect(turn.status).toBe(200);
+      expect(await turn.text()).toContain('RUN_FINISHED');
+      const admitted = defined(await stack.sessionMetadata.get('account-1', sessionId), 'registered Session');
+      expect(admitted.runtime_binding).toMatch(/^runtime-[0-9a-f-]{36}$/);
+      expect((await stack.app.request(`/threads/${sessionId}`, { method: 'DELETE' })).status).toBe(204);
+      await expect.poll(() => invoke.mock.calls).toContainEqual([{ operation: 'purge', sessionId, userId: 'filed-account-1' }, 900]);
+      expect(order).toEqual(['stop', 'purge']);
+      expect(received.map(({ path }) => path)).toEqual([
+        `/runtimes/${encodeURIComponent(arn)}/invocations?qualifier=DEFAULT`,
+        `/runtimes/${encodeURIComponent(arn)}/stopruntimesession?qualifier=DEFAULT`,
+      ]);
+      expect(received.map(({ headers }) => headers['x-amzn-bedrock-agentcore-runtime-session-id'])).toEqual([admitted.runtime_binding, admitted.runtime_binding]);
+      await expect.poll(() => stack.sessionMetadata.pendingPurges()).toEqual([]);
+    } finally { await stack.stop(); }
+  });
+
+  it.each([true, false])('registered HTTP completed wrapper Turn keeps deletion pending with signing %s', async (sigv4) => {
+    const sessionId = 'https-wrapper';
+    const { url, received } = await recordingServer((response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: sessionId, runId: 'https-run' })}\n\ndata: ${JSON.stringify({ type: 'RUN_FINISHED', threadId: sessionId, runId: 'https-run' })}\n\n`);
+    });
+    const invoke = vi.fn<SessionApi>(async () => ({}));
+    const stack = await startInProcess({ config: {
+      harnessEndpoint: { url, region: 'us-west-2', sigv4 },
+      agentCore: { arn: 'arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/agent-1', region: 'us-west-2', endpoint: new URL(url).origin },
+    }, invokeSessionApi: invoke });
+    try {
+      const turn = await stack.app.request('/', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ threadId: sessionId, runId: 'https-run', state: {}, messages: [{ id: 'https-message', role: 'user', content: 'Hello' }], tools: [], context: [], forwardedProps: {} }),
+      });
+      expect(turn.status).toBe(200);
+      expect(await turn.text()).toContain('RUN_FINISHED');
+      const admitted = defined(await stack.sessionMetadata.get('account-1', sessionId), 'registered Session');
+      const deleted = await stack.app.request(`/threads/${sessionId}`, { method: 'DELETE' });
+      expect(deleted.status).toBe(503);
+      expect(await deleted.json()).toEqual({ detail: 'HTTPS Harness Runtime stop identity is unproved; deletion remains pending' });
+      expect(await stack.sessionMetadata.pendingPurges()).toContainEqual(expect.objectContaining({ session_id: sessionId, filing_user_id: 'filed-account-1', runtime_binding: admitted.runtime_binding }));
+      expect(received.filter(({ path }) => path.includes('/stopruntimesession'))).toEqual([]);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(received.map(({ path }) => path)).toEqual(['/custom/turn?version=2&tag=a&tag=b']);
+    } finally { await stack.stop(); }
+  });
+
+  it.each([200, 404, 503])('stops the configured direct HTTPS Runtime over verified TLS with status %s', async (status) => {
+    const { url, received } = await recordingServer((response) => {
+      if (response.req.url?.includes('/stopruntimesession?')) response.writeHead(status).end('{}');
+      else response.end('data: {"type":"RUN_FINISHED"}\n\n');
+    });
+    const arn = 'arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/agent-1';
+    const runtime = { arn, region: 'us-west-2', endpoint: new URL(url).origin };
+    const invocationUrl = `${runtime.endpoint}/runtimes/${encodeURIComponent(arn)}/invocations?qualifier=DEFAULT`;
+    const upstream = httpsHarnessUpstream({ url: invocationUrl, sigv4: true, region: runtime.region }, {}, runtime);
+    const binding = 'runtime-11111111-1111-4111-8111-111111111111';
+    expect(await (await upstream.invoke('{}', binding)).text()).toBe('data: {"type":"RUN_FINISHED"}\n\n');
+    expect(upstream.runtimeBound).toBe(true);
+    if (status === 503) await expect(upstream.stop(binding)).rejects.toThrow('AgentCore Session stop failed: HTTP 503');
+    else expect(await upstream.stop(binding)).toBe(status === 404 ? 'absent' : undefined);
+    expect(received.map(({ path }) => path)).toEqual([
+      `/runtimes/${encodeURIComponent(arn)}/invocations?qualifier=DEFAULT`,
+      `/runtimes/${encodeURIComponent(arn)}/stopruntimesession?qualifier=DEFAULT`,
+    ]);
+    expect(received.map(({ headers }) => headers['x-amzn-bedrock-agentcore-runtime-session-id'])).toEqual([binding, binding]);
+    expect(received[1]?.headers.authorization).toMatch(/us-west-2\/bedrock-agentcore\/aws4_request/);
+  });
+
   it('rejects an HTTPS Harness whose certificate is not trusted', async () => {
     dispatchers.trustFixtureCertificate = false;
     const { url } = await recordingServer((response) => response.end('untrusted'));

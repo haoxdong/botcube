@@ -5,12 +5,13 @@ import { Hono } from 'hono';
 import * as aws from '@aws-sdk/client-bedrock-agentcore';
 import { BedrockAgentCoreControlClient, GetMemoryCommand } from '@aws-sdk/client-bedrock-agentcore-control';
 import { HttpError } from './cartridge.js';
-import type { SessionMetadata, TurnMemoryLease, TurnFailure, RunningTurn } from './session-metadata.js';
+import type { SessionMetadata, TurnMemoryLease, TurnFailure, RunningTurn, RegisteredDispatch } from './session-metadata.js';
 
 const issuer = 'botcube-chat';
 const audience = 'botcube-turn-memory';
 const lifetimeSeconds = 3600;
 const leaseSchema = z.object({
+  purpose: z.literal('warmup').optional(),
   owner: z.string().min(1), accountActorId: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   filingUserId: z.string().regex(/^[a-zA-Z0-9_-]+$/), sessionId: z.string().min(1),
   runId: z.string().min(1), jti: z.string().uuid(), startedAt: z.string(), expiresAt: z.number().int(),
@@ -27,6 +28,7 @@ const requestSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('get_event'), params: z.object({ ...eventAddress, eventId: z.string() }).strict() }).strict(),
   z.object({ operation: z.literal('create_event'), params: z.object({ ...eventAddress, eventTimestamp: z.string().datetime({ offset: true }), payload, metadata: metadata.optional(), clientToken: z.string().optional(), extractionMode: z.enum(['SKIP', 'EXTRACT']).optional() }).strict() }).strict(),
   z.object({ operation: z.literal('delete_event'), params: z.object({ ...eventAddress, eventId: z.string() }).strict() }).strict(),
+  z.object({ operation: z.literal('startup_snapshot'), params: z.object({ memoryId: z.string(), actorId: z.string(), sessionIds: z.array(z.string()).max(5) }).strict() }).strict(),
   z.object({ operation: z.literal('actor_namespaces'), params: z.object({ memoryId: z.string(), actorId: z.string() }).strict() }).strict(),
   z.object({ operation: z.literal('list_memory_records'), params: z.object({ memoryId: z.string(), namespacePath: z.string(), ...pagination }).strict() }).strict(),
   z.object({ operation: z.literal('retrieve_memory_records'), params: z.object({ memoryId: z.string(), namespacePath: z.string(), searchCriteria: z.object({ searchQuery: z.string(), topK: z.number().optional() }).strict(), ...pagination }).strict() }).strict(),
@@ -36,6 +38,9 @@ const requestSchema = z.discriminatedUnion('operation', [
 ]);
 
 type Request = z.infer<typeof requestSchema>;
+const recordSummaries = z.array(z.object({ namespaces: z.array(z.string()).min(1) }).passthrough());
+const recordPage = z.object({ memoryRecordSummaries: recordSummaries, nextToken: z.string().optional() });
+const eventPage = z.object({ events: z.array(z.record(z.string(), z.unknown())), nextToken: z.string().optional() });
 export interface MemoryBackend {
   call(operation: string, params: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
@@ -74,6 +79,14 @@ function eventAllowed(lease: TurnMemoryLease, params: Record<string, unknown>, a
   return [...pending, `memory-saves-${bucket - 1}`, `memory-saves-${bucket}`].includes(String(params.sessionId));
 }
 
+function warmupAllowed(lease: TurnMemoryLease, request: Request): boolean {
+  return request.operation === 'startup_snapshot' || (
+    (request.operation === 'list_events' || request.operation === 'get_event') &&
+    request.params.actorId === lease.filingUserId &&
+    (request.params.sessionId === lease.sessionId || request.params.sessionId === `${lease.sessionId}-messages`)
+  );
+}
+
 export class TurnMemory {
   private readonly key: Uint8Array;
   constructor(
@@ -95,6 +108,10 @@ export class TurnMemory {
     return { token, lease };
   }
 
+  async revoke(lease: TurnMemoryLease): Promise<void> {
+    await this.metadata.endMemoryLease(lease.owner, lease.jti);
+  }
+
   async end(lease: TurnMemoryLease | undefined, owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void> {
     if (lease !== undefined) await this.metadata.endMemoryLease(lease.owner, lease.jti);
     await this.metadata.turnEnded(owner, sessionId, running, failure);
@@ -109,7 +126,7 @@ export class TurnMemory {
       throw new HttpError(401, 'Invalid Turn Memory token');
     }
     const stored = await this.metadata.memoryLease(claims.owner, claims.jti);
-    if (stored === null || Object.entries(claims).some(([key, value]) => stored[key as keyof TurnMemoryLease] !== value) ||
+    if (stored === null || stored.purpose !== claims.purpose || Object.entries(claims).some(([key, value]) => stored[key as keyof TurnMemoryLease] !== value) ||
         !await this.metadata.memorySessionActive(claims.owner, claims.sessionId, claims.filingUserId)) forbidden();
     return claims;
   }
@@ -133,11 +150,76 @@ export class TurnMemory {
     if (!parsed.success) throw new HttpError(400, 'Invalid Turn Memory operation');
     const request = parsed.data;
     if (request.params.memoryId !== this.memoryId) forbidden();
+    if (lease.purpose === 'warmup' && !warmupAllowed(lease, request)) forbidden();
+    if (request.operation === 'startup_snapshot') return this.startupSnapshot(lease, request.params);
     if ('actorId' in request.params && request.operation !== 'actor_namespaces') {
       if (!eventAllowed(lease, request.params, this.now())) forbidden();
-      return this.backend.call(request.operation, { ...request.params, ...('eventTimestamp' in request.params ? { eventTimestamp: new Date(request.params.eventTimestamp) } : {}) });
+      const complete = request.operation === 'create_event' ? await this.metadata.beginDispatch(lease.owner, lease.sessionId, undefined, { startedAt: lease.startedAt, runId: lease.runId }) : undefined;
+      const response = await this.backend.call(request.operation, { ...request.params, ...('eventTimestamp' in request.params ? { eventTimestamp: new Date(request.params.eventTimestamp) } : {}) });
+      if (complete !== undefined) await this.completeWriter(complete);
+      return response;
     }
     return this.records(lease, request);
+  }
+
+  private async completeWriter(complete: RegisteredDispatch): Promise<void> {
+    if (complete.markSucceeded === undefined) throw new Error('Durable Memory writer settlement is not configured');
+    await complete.markSucceeded('memory-event');
+    await complete();
+  }
+
+  private async startupSnapshot(lease: TurnMemoryLease, params: Extract<Request, { operation: 'startup_snapshot' }>['params']): Promise<Record<string, unknown>> {
+    const at = this.now();
+    if (params.actorId !== lease.accountActorId || params.sessionIds.some((sessionId) =>
+      !/^(memory-saves-\d+|pending-memory-\d{8})$/.test(sessionId) ||
+      !eventAllowed(lease, { actorId: params.actorId, sessionId }, at))) forbidden();
+    const records = this.namespaces(lease).then(async (namespaces) => {
+      const startupNamespaces = namespaces.filter((namespace) => /^\/strategies\/[^/]*(?:userpreference|semantic)[^/]*\//i.test(namespace));
+      return (await Promise.all(startupNamespaces.map((namespace) => this.recordPages(namespace, namespaces)))).flat();
+    });
+    const events = Promise.all(params.sessionIds.map(async (sessionId) =>
+      [sessionId, await this.eventPages(params.actorId, sessionId)] as const));
+    const [memoryRecordSummaries, eventEntries] = await Promise.all([records, events]);
+    return { memoryRecordSummaries, eventsBySession: Object.fromEntries(eventEntries) };
+  }
+
+  private async recordPages(namespacePath: string, namespaces: string[]): Promise<z.infer<typeof recordSummaries>> {
+    const records: z.infer<typeof recordSummaries> = [];
+    let nextToken: string | undefined;
+    do {
+      // Each page supplies the token required by the next request.
+      // eslint-disable-next-line no-await-in-loop
+      const page = recordPage.parse(await this.backend.call('list_memory_records', {
+        memoryId: this.memoryId, namespacePath, maxResults: 100, ...(nextToken === undefined ? {} : { nextToken }),
+      }));
+      records.push(...page.memoryRecordSummaries.filter((record) =>
+        record.namespaces.every((path) => namespaces.some((prefix) => path.startsWith(prefix)))));
+      nextToken = page.nextToken;
+    } while (nextToken !== undefined);
+    return records;
+  }
+
+  private async eventPages(actorId: string, sessionId: string): Promise<z.infer<typeof eventPage>['events']> {
+    const events: z.infer<typeof eventPage>['events'] = [];
+    let nextToken: string | undefined;
+    do {
+      let response: Record<string, unknown>;
+      try {
+        // Each page supplies the token required by the next request.
+        // eslint-disable-next-line no-await-in-loop
+        response = await this.backend.call('list_events', {
+          memoryId: this.memoryId, actorId, sessionId, maxResults: 100, includePayloads: true,
+          ...(nextToken === undefined ? {} : { nextToken }),
+        });
+      } catch (error) {
+        if (sessionId.startsWith('pending-memory-') && error instanceof Error && error.name === 'ResourceNotFoundException') return events;
+        throw error;
+      }
+      const page = eventPage.parse(response);
+      events.push(...page.events);
+      nextToken = page.nextToken;
+    } while (nextToken !== undefined);
+    return events;
   }
 
   private async records(lease: TurnMemoryLease, request: Request): Promise<Record<string, unknown>> {

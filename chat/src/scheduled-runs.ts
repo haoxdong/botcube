@@ -1,28 +1,29 @@
 import type { TurnMemory } from './turn-memory.js';
 import type { TurnMemoryLease } from './session-metadata.js';
-import { randomUUID } from 'node:crypto';
 import { contentToText, type RunAgentInput, type ToolCallResultEvent } from '@ag-ui/client';
 import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { AgentDocuments } from './agent-documents.js';
-import type { ChatServiceCartridge } from './cartridge.js';
+import { HttpError, type ChatServiceCartridge } from './cartridge.js';
 import { accountDefaultModel, accountModelList, namedModel } from './models.js';
 import type { ScheduledRunMessage, ScheduledTask, ScheduledTasks } from './scheduled-tasks.js';
 import type { SessionApi } from './session-api.js';
-import type { SessionMetadata } from './session-metadata.js';
+import { SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { sseFrameData, turnCredentialGuard, turnCredentials, turnErrorDetails } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
-import type { Upstream } from './upstream.js';
+import type { sessionLifecycle } from './session-lifecycle.js';
+import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
 
 export interface ScheduledRunDeps {
+  runtimeNamespaceRequired: boolean;
   turnMemory?: TurnMemory | null;
   turnMemoryUrl?: string | undefined;
   cartridge: ChatServiceCartridge;
   sessionMetadata: SessionMetadata;
   agentDocuments: AgentDocuments;
   invokeSessionApi: SessionApi;
-  scheduledTasks: ScheduledTasks;
-  upstream: Upstream | null;
+  scheduledTasks: Pick<ScheduledTasks, 'get'>;
+  upstream: ReturnType<typeof sessionLifecycle> | null;
   summarizeTurn: TurnSummarizer;
 }
 
@@ -73,27 +74,88 @@ async function readRun(response: Response, label: string, credentials: readonly 
  * a summary of the outcome is posted to the account's Main Chat. A run that
  * fails, or needs the user to sign in, says so there (ADR 0030).
  */
-export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId }: ScheduledRunMessage): Promise<void> {
+export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, deliveryId }: ScheduledRunMessage & { deliveryId?: string }): Promise<void> {
   const { cartridge, sessionMetadata, invokeSessionApi } = deps;
-  const task = await deps.scheduledTasks.get(owner, taskId);
-  // A deleted or paused schedule may still deliver a run it had queued.
-  if (task === null || task.paused) return;
-  const filingUserId = cartridge.filingUserId(owner);
-  const post = async (summary: string) => {
-    const mainChat = await sessionMetadata.mainChat(owner);
-    const messageId = randomUUID();
-    const userId = await sessionMetadata.recordTurn(owner, mainChat, { filingUserId, title: task.title, messageId });
+  if (typeof deliveryId !== 'string' || deliveryId.trim() === '') throw new HttpError(503, 'Scheduled delivery identity is unavailable');
+  const store = sessionMetadata.scheduledRuns;
+  if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
+  const previous = await store.get(owner, deliveryId, taskId);
+  if (previous !== null && previous.phase !== 'reserved') {
+    await resumeScheduledDelivery(sessionMetadata, previous);
+    return;
+  }
+  const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous);
+  if (admission === null) return;
+  const { executionOwner, task } = admission;
+  if (deps.runtimeNamespaceRequired) {
+    try {
+      await sessionMetadata.checkRuntimeNamespaceReady();
+    } catch (error) {
+      console.error('Session Runtime namespace readiness failed', error);
+      throw new HttpError(503, 'Session Runtime namespace is not ready');
+    }
+  }
+  const filingUserId = previous?.filingUserId ?? cartridge.filingUserId(owner);
+  const mainChat = previous?.mainChat ?? await sessionMetadata.mainChat(owner, filingUserId);
+  await assertReservedMainIdentity(sessionMetadata, owner, executionOwner, mainChat, previous?.mainFilingUserId);
+  const delivery = previous === null ? await store.claim(owner, taskId, deliveryId, filingUserId, mainChat) : await store.reclaim(previous, executionOwner);
+  await store.admit(delivery, executionOwner);
+  await sessionMetadata.recordTurn(executionOwner, mainChat, { filingUserId: delivery.mainFilingUserId ?? filingUserId, title: task.title, messageId: delivery.postMessageId, postAcceptance: true });
+  const post = async (summary: string, failed = false) => {
+    const messageId = delivery.postMessageId;
+    const complete = await sessionMetadata.beginDispatch(executionOwner, mainChat, undefined, { messageId });
+    if (complete.session === undefined) throw new HttpError(503, 'Scheduled post filing identity is unavailable');
+    const userId = complete.session.filing_user_id;
+    if (complete.markSucceeded === undefined) throw new HttpError(503, 'Scheduled post success registration is unavailable');
+    const posting = await store.posting(delivery, complete, failed);
     await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: summary, messageId });
+    await complete.markSucceeded('session-post', store.postedTransaction(posting));
+    await complete();
+    await store.complete(posting);
+    if (failed) await store.retryFailed(posting);
   };
   let summary: string;
   try {
-    summary = await runInSideChat(deps, owner, task, filingUserId);
+    summary = await runInSideChat(deps, executionOwner, task, filingUserId, delivery);
   } catch (error) {
+    if (error instanceof SessionDeletedError) throw error;
     // The Main Chat hears of every failed run; the delivery still fails, so the queue redelivers it.
-    await post(`Scheduled task "${task.title}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    await post(`Scheduled task "${task.title}" failed: ${error instanceof Error ? error.message : String(error)}`, true);
     throw error;
   }
   await post(summary);
+}
+
+async function scheduledTaskAdmission(deps: ScheduledRunDeps, store: ScheduledRunStore, owner: string, taskId: string, previous: ScheduledDelivery | null) {
+  const executionOwner = previous === null ? owner : await store.executionOwner(previous);
+  const task = await deps.scheduledTasks.get(executionOwner, taskId);
+  if (task === null || task.paused) {
+    if (executionOwner !== owner) throw new HttpError(503, 'Reserved scheduled task is unavailable; delivery remains pending');
+    return null;
+  }
+  return { executionOwner, task };
+}
+
+async function assertReservedMainIdentity(sessionMetadata: SessionMetadata, owner: string, executionOwner: string, mainChat: string, filingUserId: string | undefined): Promise<void> {
+  if (executionOwner === owner) return;
+  const main = await sessionMetadata.get(executionOwner, mainChat);
+  if (filingUserId === undefined || main?.filing_user_id !== filingUserId) throw new HttpError(503, 'Reserved scheduled Main Chat identity is unavailable; delivery remains pending');
+}
+
+async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previous: ScheduledDelivery): Promise<void> {
+  const store = sessionMetadata.scheduledRuns;
+  if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
+  if (previous.phase !== 'completed') {
+    if (previous.phase !== 'posted' || previous.postSession === undefined || previous.postToken === undefined || sessionMetadata.acknowledgeSuccessfulDispatch === undefined) {
+      throw new HttpError(503, 'Scheduled delivery outcome is unproved; delivery remains pending');
+    }
+    await sessionMetadata.acknowledgeSuccessfulDispatch(previous.postSession, previous.postToken, 'session-post');
+    await store.complete(previous);
+  }
+  if (previous.failed) {
+    await store.retryFailed(previous);
+    throw new HttpError(503, 'Scheduled delivery previously failed; its Main Chat notification is complete');
+  }
 }
 
 /** Run the task's prompt as the first Turn of a fresh Side Chat; answers the Main Chat summary of its outcome. */
@@ -102,11 +164,12 @@ async function runInSideChat(
   owner: string,
   task: ScheduledTask,
   filingUserId: string,
+  delivery: ScheduledDelivery,
 ): Promise<string> {
   const { cartridge, sessionMetadata } = deps;
   if (deps.upstream === null) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
-  const sideChat = randomUUID();
-  const messageId = randomUUID();
+  const sideChat = delivery.sideChat;
+  const messageId = delivery.inputMessageId;
   const requester = await cartridge.scheduledRequester(owner);
   // The task's chosen model, else the account's default.
   const model =
@@ -115,7 +178,7 @@ async function runInSideChat(
       : await namedModel(cartridge, requester, task.model);
   const input: RunAgentInput = {
     threadId: sideChat,
-    runId: randomUUID(),
+    runId: delivery.runId,
     messages: [{ id: messageId, role: 'user', content: task.prompt }],
     tools: [],
     context: [],
@@ -123,7 +186,7 @@ async function runInSideChat(
     forwardedProps: { model: model.key },
   };
   const initialMessages = structuredClone(input.messages);
-  const running = { startedAt: new Date().toISOString(), runId: input.runId };
+  const running = { startedAt: delivery.startedAt, runId: input.runId };
   const sessionUserId = await sessionMetadata.recordTurn(owner, sideChat, {
     filingUserId,
     title: task.title,
@@ -146,8 +209,9 @@ async function runInSideChat(
       memoryLease = capability.lease;
       payload.forwardedProps.turnMemory = { token: capability.token, url: deps.turnMemoryUrl };
     }
+    const complete = await sessionMetadata.beginDispatch(owner, sideChat, undefined, running);
     output = await readRun(
-      await deps.upstream.invoke(JSON.stringify(payload), sideChat),
+      await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session ?? { session_id: sideChat, filing_user_id: sessionUserId }, complete),
       deps.upstream.label,
       turnCredentials(payload.forwardedProps, cartridge.credentialProps),
       initialMessages,
@@ -179,7 +243,7 @@ async function runInSideChat(
 
 /** The queue that schedules deliver their runs to. */
 export interface RunQueue {
-  receive(signal: AbortSignal): Promise<{ body: string; receipt: string }[]>;
+  receive(signal: AbortSignal): Promise<{ body: string; receipt: string; deliveryId: string }[]>;
   delete(receipt: string): Promise<void>;
 }
 
@@ -194,11 +258,11 @@ export function sqsRunQueue(
         new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 20 }),
         { abortSignal: signal },
       );
-      return (Messages ?? []).map(({ Body, ReceiptHandle }) => {
-        if (Body === undefined || ReceiptHandle === undefined) {
-          throw new Error('Scheduled run delivery is missing its Body or ReceiptHandle');
+      return (Messages ?? []).map(({ Body, ReceiptHandle, MessageId }) => {
+        if (Body === undefined || ReceiptHandle === undefined || MessageId === undefined) {
+          throw new Error('Scheduled run delivery is missing its Body, ReceiptHandle or MessageId');
         }
-        return { body: Body, receipt: ReceiptHandle };
+        return { body: Body, receipt: ReceiptHandle, deliveryId: MessageId };
       });
     },
     async delete(receipt) {
@@ -240,7 +304,7 @@ export function ecsTaskDraining(
  */
 export function pollScheduledRuns(
   queue: RunQueue,
-  run: (message: ScheduledRunMessage) => Promise<void>,
+  run: (message: ScheduledRunMessage & { deliveryId: string }) => Promise<void>,
   draining: () => Promise<boolean>,
   onFailure?: (error: unknown) => void,
 ): () => void {
@@ -264,9 +328,9 @@ export function pollScheduledRuns(
       // Stryker disable next-line BlockStatement: an emptied try spins synchronously forever, hanging any test as a timeout
       try {
         // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-        for (const { body, receipt } of await queue.receive(stop.signal)) {
+        for (const { body, receipt, deliveryId } of await queue.receive(stop.signal)) {
           // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-          await run(JSON.parse(body) as ScheduledRunMessage);
+          await run({ ...JSON.parse(body) as ScheduledRunMessage, deliveryId });
           // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
           await queue.delete(receipt);
         }

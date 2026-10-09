@@ -4,6 +4,8 @@ import type { RunAgentInput } from '@ag-ui/client';
 import { runScheduledTask, type ScheduledRunDeps } from './scheduled-runs.js';
 import type { SessionMetadata, TurnMemoryLease } from './session-metadata.js';
 import { TurnMemory, turnMemoryRoutes } from './turn-memory.js';
+import { sessionLifecycle } from './session-lifecycle.js';
+import type { ScheduledDelivery } from './scheduled-run-store.js';
 
 function scheduledFixture(fail: boolean) {
   const leases = new Map<string, TurnMemoryLease>();
@@ -13,6 +15,18 @@ function scheduledFixture(fail: boolean) {
   let invokedUrl = '';
   let duringTurn: unknown;
   const metadata = {
+    scheduledRuns: {
+      async get() { return null; },
+      async claim(owner: string, taskId: string, deliveryId: string, filingUserId: string, mainChat: string): Promise<ScheduledDelivery> {
+        return { owner, taskId, deliveryId, filingUserId, mainChat, sideChat: 'scheduled-side', runId: 'scheduled-run', inputMessageId: 'scheduled-input', postMessageId: 'scheduled-post', startedAt: new Date().toISOString(), attempt: 'scheduled-attempt', phase: 'reserved' };
+      },
+      async admit() {},
+      async posting(record: ScheduledDelivery, registration: { session: ScheduledDelivery['postSession']; token: string }, failed: boolean) { return { ...record, phase: 'posting', postSession: registration.session, postToken: registration.token, failed }; },
+      postedTransaction() { return {}; },
+      async complete() {},
+      async retryFailed() {},
+    },
+    async beginDispatch(_owner: string, sessionId: string) { return Object.assign(async () => undefined, { token: '00000000-0000-4000-8000-000000000002', markSucceeded: async () => undefined, session: { session_id: sessionId, filing_user_id: 'account_actor', runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001' } }); },
     async createMemoryLease(lease: TurnMemoryLease) { leases.set(lease.jti, lease); },
     async memoryLease(owner: string, jti: string) { const lease = leases.get(jti); return lease?.owner === owner ? lease : null; },
     async endMemoryLease(_owner: string, jti: string) { leases.delete(jti); },
@@ -28,6 +42,7 @@ function scheduledFixture(fail: boolean) {
   const app = new Hono().route('/memory', turnMemoryRoutes(memory));
   const request = () => app.request('/memory', { method: 'POST', headers: { Authorization: `Bearer ${invokedToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'actor_namespaces', params: { memoryId: 'memory', actorId: 'account_actor' } }) });
   const deps = {
+    runtimeNamespaceRequired: false,
     turnMemory: memory,
     turnMemoryUrl: 'https://chat.example/internal/turn-memory',
     sessionMetadata: metadata,
@@ -44,7 +59,7 @@ function scheduledFixture(fail: boolean) {
     scheduledTasks: { get: async () => ({ title: 'Morning brief', prompt: 'Recall my preference', paused: false }) },
     invokeSessionApi: async (event: { content: string }) => { posts.push(event.content); return {}; },
     summarizeTurn: async () => ({ title: 'Recalled preference', summary: 'Recalled tea preference.' }),
-    upstream: {
+    upstream: sessionLifecycle({
       label: 'Fake AgentCore',
       invoke: async (wire: string) => {
         const payload = JSON.parse(wire) as { forwardedProps: { turnMemory: { token: string; url: string } } };
@@ -55,7 +70,7 @@ function scheduledFixture(fail: boolean) {
         if (fail) throw new Error('Upstream disconnected');
         return new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"You prefer tea."}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
       },
-    },
+    }, async () => undefined),
   } as unknown as ScheduledRunDeps;
   return { deps, metadata, request, posts, during: () => duringTurn, url: () => invokedUrl };
 }
@@ -66,7 +81,7 @@ describe('scheduled Turn Memory lifecycle', () => {
     const failure = new Error('DynamoDB lease deletion failed');
     vi.spyOn(f.metadata, 'endMemoryLease').mockRejectedValue(failure);
     const ended = vi.spyOn(f.metadata, 'turnEnded');
-    await expect(runScheduledTask(f.deps, { owner: 'owner', taskId: 'task' })).rejects.toBe(failure);
+    await expect(runScheduledTask(f.deps, { owner: 'owner', taskId: 'task', deliveryId: 'scheduled-lease-failure' })).rejects.toBe(failure);
     expect(ended).not.toHaveBeenCalled();
     expect((await f.request()).status).toBe(200);
     expect(f.posts).toEqual(['Scheduled task "Morning brief" failed: DynamoDB lease deletion failed']);
@@ -74,7 +89,7 @@ describe('scheduled Turn Memory lifecycle', () => {
 
   it.each([false, true])('passes an account capability and revokes it after upstream failure=%s', async (fail) => {
     const f = scheduledFixture(fail);
-    const run = runScheduledTask(f.deps, { owner: 'owner', taskId: 'task' });
+    const run = runScheduledTask(f.deps, { owner: 'owner', taskId: 'task', deliveryId: 'scheduled-memory' });
     if (fail) await expect(run).rejects.toThrow('Upstream disconnected');
     else await run;
     expect(f.url()).toBe('https://chat.example/internal/turn-memory');

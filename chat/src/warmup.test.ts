@@ -18,34 +18,29 @@ const postWarmup = (target: InProcessStack, body?: BodyInit) =>
 
 describe('POST /warmup', () => {
   it("sends the requester's Turn invocation with no message, so the Harness builds their agent before the Turn", async () => {
-    const target = await startInProcess({ config: { warmupTimeoutMs: 200 } });
-    try {
-        const response = await postWarmup(target, '{"threadId":"warm-session","model":"thorough","effort":"high"}');
+    const response = await postWarmup(stack, '{"threadId":"warm-session","model":"thorough","effort":"high"}');
 
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ status: 'ok' });
-      const invocation = target.agentcore.invocationFor('warm-session');
-      expect(invocation.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe('warm-session');
-      expect(invocation.payload).toEqual({
-        threadId: 'warm-session',
-        runId: '__warmup__',
-        messages: [],
-        tools: [],
-        context: [],
-        state: {},
-        forwardedProps: {
-          model: 'thorough',
-          effort: 'high',
-          warmup: true,
-          agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
-          soul: 'Be brief.',
-          memoryRevision: 0,
-          sessionUserId: 'filed-account-1',
-        },
-      });
-    } finally {
-      await target.stop();
-    }
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
+    const invocation = stack.agentcore.invocationFor('warm-session');
+    expect(invocation.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toMatch(/^runtime-[0-9a-f-]{36}$/);
+    expect(invocation.payload).toEqual({
+      threadId: 'warm-session',
+      runId: '__warmup__',
+      messages: [],
+      tools: [],
+      context: [],
+      state: {},
+      forwardedProps: {
+        model: 'thorough',
+        effort: 'high',
+        warmup: true,
+        agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
+        soul: 'Be brief.',
+        memoryRevision: 0,
+        sessionUserId: 'filed-account-1',
+      },
+    });
   });
 
   it("warms the account's default model, the one its model selector starts on, when the warmup names none", async () => {

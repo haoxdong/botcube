@@ -442,6 +442,91 @@ def test_upgraded_main_and_subagent_keep_file_tools_without_recursive_delete(
     assert 'write_todos' in bound_tools[2]
 
 
+@pytest.mark.parametrize('files_available', [True, False])
+def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files_available: bool,
+) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    import boto3
+    from ag_ui.core import EventType, RunAgentInput, UserMessage
+    from botocore.exceptions import ClientError
+    from langchain_core.messages import ToolMessage
+    from langchain_core.outputs import ChatResult
+    from langgraph.checkpoint.memory import InMemorySaver
+    from moto import mock_aws
+
+    from botcube_harness_deepagents import serving
+    from botcube_harness_deepagents.files_sync import FilesSync
+    from conftest import ToolBindableFakeMessagesModel
+
+    tool_results: list[str] = []
+
+    class CapturingModel(ToolBindableFakeMessagesModel):
+        def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> ChatResult:
+            tool_results.extend(message.text for message in messages if isinstance(message, ToolMessage))
+            return super()._generate(messages, *args, **kwargs)
+
+    async def snapshot(*args: Any) -> None:
+        pass
+
+    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
+    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
+    model = CapturingModel(responses=[
+        AIMessage(content='', tool_calls=[{
+            'id': 'delegate', 'name': 'task', 'args': {
+                'description': 'Read source.txt and write answer.txt.', 'subagent_type': 'general-purpose',
+            },
+        }]),
+        AIMessage(content='', tool_calls=[{
+            'id': 'read-source', 'name': 'read_file', 'args': {'file_path': '/source.txt'},
+        }]),
+        AIMessage(content='', tool_calls=[{
+            'id': 'write-answer', 'name': 'write_file', 'args': {'file_path': '/answer.txt', 'content': 'Copied from Files'},
+        }]),
+        AIMessage(content='Read the source and wrote the answer.'),
+        AIMessage(content='The delegated work is complete.'),
+    ])
+    graph = build_agent(
+        model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
+        skills=[], memory=[], checkpointer=InMemorySaver(),
+    )
+    agent = serving._SessionAgent(name='delegated-files', graph=graph)
+    request = RunAgentInput(
+        thread_id='delegated-files', run_id='delegated-run',
+        messages=[UserMessage(id='question', role='user', content='Delegate reading source.txt and writing answer.txt.')],
+        tools=[], context=[], state={}, forwarded_props={},
+    )
+
+    with mock_aws():
+        s3 = boto3.client('s3', region_name='us-east-1')
+        s3.create_bucket(Bucket='delegated-files')
+        if files_available:
+            s3.put_object(Bucket='delegated-files', Key='owner/source.txt', Body=b'Original from Files')
+        else:
+            s3.delete_bucket(Bucket='delegated-files')
+        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
+        files = FilesSync('delegated-files', 'owner/', 'us-east-1', {})
+
+        async def exercise() -> None:
+            stream = serving._SessionTurns().stream(
+                ('owner', 'delegated-files'), agent, request, files, tmp_path, serving._RequestContext(None),
+            )
+            if not files_available:
+                with pytest.raises(ClientError, match='NoSuchBucket'):
+                    _ = [event async for event in stream]
+                assert not (tmp_path / 'answer.txt').exists()
+                return
+            events = [event async for event in stream]
+            assert events[-1].type == EventType.RUN_FINISHED
+            assert any('Original from Files' in result for result in tool_results), tool_results
+            assert s3.get_object(Bucket='delegated-files', Key='owner/answer.txt')['Body'].read() == b'Copied from Files'
+
+        asyncio.run(exercise())
+
+
 @pytest.mark.parametrize('helper', [
     None,
     {'name': 'helper', 'description': 'Checks the result.', 'system_prompt': 'Check.', 'skills': ['/helper-skills/']},

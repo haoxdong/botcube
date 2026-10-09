@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,85 @@ from langchain_core.messages import HumanMessage
 from botcube_harness_deepagents import answer_timing
 from botcube_harness_deepagents.llm import build_model
 from relay_fake import RECORDED_STREAM, RelayReply, serving_relay
+
+
+def test_startup_phases_measure_nested_wall_and_thread_cpu_time(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=answer_timing.__name__)
+    clock = {"wall": 10.0, "cpu": 1.0}
+    monkeypatch.setattr(answer_timing.time, "perf_counter", lambda: clock["wall"])
+    monkeypatch.setattr(answer_timing.time, "thread_time", lambda: clock["cpu"])
+    timing = answer_timing.AnswerTiming("run", "session", "model", receipt=0)
+    with answer_timing.use(timing), answer_timing.phase("memory_backends"):
+        clock.update(wall=11.0, cpu=1.25)
+        with answer_timing.phase("workspace"):
+            clock.update(wall=13.0, cpu=1.5)
+        clock.update(wall=15.0, cpu=2.0)
+    assert [json.loads(record.message) for record in caplog.records] == [
+        {
+            "event": "harness_startup_phase",
+            "phase": "workspace",
+            "wallMs": 2000.0,
+            "threadCpuMs": 250.0,
+            "runId": "run",
+            "sessionId": "session",
+        },
+        {
+            "event": "harness_startup_phase",
+            "phase": "memory_backends",
+            "wallMs": 5000.0,
+            "threadCpuMs": 1000.0,
+            "runId": "run",
+            "sessionId": "session",
+        },
+    ]
+
+
+def test_startup_phase_records_failure_without_logging_its_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=answer_timing.__name__)
+    failure = RuntimeError("private invocation payload")
+    timing = answer_timing.AnswerTiming("__warmup__", "session", None)
+    with (
+        pytest.raises(RuntimeError) as caught,
+        answer_timing.use(timing),
+        answer_timing.phase("invocation_auth"),
+    ):
+        raise failure
+    assert caught.value is failure
+    record = json.loads(caplog.records[0].message)
+    assert record["runId"] == "__warmup__"
+    assert record["phase"] == "invocation_auth"
+    assert record["wallMs"] >= 0
+    assert record["threadCpuMs"] >= 0
+    assert "private" not in caplog.text
+
+
+def test_startup_phase_without_a_turn_does_not_read_clocks_or_log(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def unexpected_clock() -> float:
+        raise AssertionError("No timing context")
+
+    monkeypatch.setattr(answer_timing.time, "perf_counter", unexpected_clock)
+    monkeypatch.setattr(answer_timing.time, "thread_time", unexpected_clock)
+    with answer_timing.phase("graph_build"):
+        pass
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("name", ["", "private prompt", "workspace\nsecret"])
+def test_startup_phase_rejects_names_outside_the_fixed_stages(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    with (
+        pytest.raises(ValueError, match="Unknown startup timing phase"),
+        answer_timing.phase(name),
+    ):
+        pytest.fail("Unknown phase must not enter")
+    assert caplog.records == []
 
 
 def test_native_sdk_response_alias_and_actual_dispatch(

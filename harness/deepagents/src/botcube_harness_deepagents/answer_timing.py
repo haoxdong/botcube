@@ -15,6 +15,19 @@ from typing import Any
 log = logging.getLogger(__name__)
 _current: ContextVar[AnswerTiming | None] = ContextVar("answer_timing", default=None)
 _step: ContextVar[str | None] = ContextVar("answer_model_step", default=None)
+_PHASES = frozenset(
+    {
+        "invocation_auth",
+        "memory_backends",
+        "workspace",
+        "personal_memory",
+        "model_client",
+        "graph_build",
+        "stream_adapter",
+        "state_preparation",
+        "warmup_history",
+    }
+)
 
 
 def _id(value: Any) -> str | None:
@@ -246,6 +259,35 @@ def use(timing: AnswerTiming) -> Iterator[None]:
 
 def current() -> AnswerTiming | None:
     return _current.get()
+
+
+@contextmanager
+def phase(name: str) -> Iterator[None]:
+    if name not in _PHASES:
+        raise ValueError("Unknown startup timing phase")
+    timing = current()
+    if timing is None:
+        yield
+        return
+    wall, cpu = time.perf_counter(), time.thread_time()
+    try:
+        yield
+    finally:
+        wall_ms = (time.perf_counter() - wall) * 1000
+        cpu_ms = (time.thread_time() - cpu) * 1000
+        log.info(
+            json.dumps(
+                {
+                    "event": "harness_startup_phase",
+                    "phase": name,
+                    "wallMs": wall_ms,
+                    "threadCpuMs": cpu_ms,
+                    "runId": timing.run,
+                    "sessionId": timing.session,
+                },
+                separators=(",", ":"),
+            )
+        )
 
 
 async def dispatched(request: Any) -> None:

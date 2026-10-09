@@ -11,6 +11,8 @@ import boto3
 import pytest
 from botocore.stub import Stubber
 
+from botcube_harness_deepagents import serving
+from botcube_harness_deepagents.actor_identity import record_belongs_to_actor
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import purge as purge_module
 from botcube_harness_deepagents.memory_tools import agent_core_memory
@@ -78,10 +80,13 @@ class _PendingMemoryClient:
         ('jane.doe_ny', 'thread-1', None),
     ],
 )
-def test_prewarm_reads_the_pending_memory_of_the_actors_thread(actor_id: str, thread_id: str, expected: str | None) -> None:
+def test_prewarm_reads_the_pending_memory_of_the_actors_thread(
+    actor_id: str, thread_id: str, expected: str | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # An anonymous actor's Pending Memory is filed per thread.
     session_id = pending_memory_session_id(actor_id='anonymous', thread_id='thread-1')
     store: Any = SimpleNamespace(client=_PendingMemoryClient({('anonymous', session_id): 'Prefers copper'}))
+    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(record_belongs_to_actor=record_belongs_to_actor))
 
     assert agentcore.prewarm_ltm(store, actor_id, thread_id=thread_id) == expected
 

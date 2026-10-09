@@ -41,6 +41,7 @@ const EMPTY_REPLIES: Record<SessionOperation, unknown> = {
  */
 export class FakeSessionApi extends HttpFake {
   private readonly replies = new Map<string, { status: number; body: unknown }>();
+  beforePurgeReply: (() => Promise<void>) | undefined;
   /** Each user's Memory, by user ID. */
   readonly memories = new Map<string, MemoryLine[]>();
   /**
@@ -53,6 +54,7 @@ export class FakeSessionApi extends HttpFake {
   constructor() {
     super(async (request, response) => {
       const event = JSON.parse(request.body) as SessionApiEvent;
+      if (event.operation === 'purge') await this.beforePurgeReply?.();
       if ('sessionId' in event || 'sessions' in event) {
         if (this.concurrencyLimit !== undefined) {
           if (this.inFlight >= this.concurrencyLimit) {

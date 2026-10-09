@@ -80,6 +80,17 @@ test('private service replaces before stopping, rolls back failure and uses stor
   expect(JSON.stringify(statements)).not.toMatch(/kms:|credential-vault|secretsmanager:/);
 });
 
+test('the Chat Service alone stops Sessions on its configured runtime before purging', () => {
+  const runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/purge-runtime';
+  const template = synth(runtimeArn);
+  const statements = Object.entries(template.findResources('AWS::IAM::Policy'))
+    .flatMap(([id, policy]) => policy.Properties.PolicyDocument.Statement.map((statement: object) => ({ id, ...statement })))
+    .filter(statement => JSON.stringify(statement).includes('bedrock-agentcore:StopRuntimeSession'));
+  expect(statements).toEqual([
+    expect.objectContaining({ id: expect.stringContaining('ChatServiceTaskTaskRole'), Action: 'bedrock-agentcore:StopRuntimeSession', Resource: [runtimeArn, `${runtimeArn}/runtime-endpoint/*`] }),
+  ]);
+});
+
 test('the Chat Service alone invokes the session API, through the alias kept initialized', () => {
   const template = synth();
   const functionArn = { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] };
@@ -362,6 +373,7 @@ test('the Chat Service task role grants only the table, runtime, Memory broker, 
   const statements = named(template, 'ChatServiceTaskTaskRoleDefaultPolicy').Properties.PolicyDocument.Statement;
   expect(statements.slice(2)).toEqual([
     { Action: 'bedrock-agentcore:InvokeAgentRuntime', Effect: 'Allow', Resource: ['arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime/runtime-endpoint/*'] },
+    { Action: 'bedrock-agentcore:StopRuntimeSession', Effect: 'Allow', Resource: ['arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime/runtime-endpoint/*'] },
     {
       Action: ['bedrock-agentcore:GetMemory', 'bedrock-agentcore:ListEvents', 'bedrock-agentcore:GetEvent',
         'bedrock-agentcore:CreateEvent', 'bedrock-agentcore:DeleteEvent', 'bedrock-agentcore:GetMemoryRecord',

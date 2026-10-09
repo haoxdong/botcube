@@ -16,6 +16,7 @@ import contextlib
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from langchain_core.runnables import RunnableConfig
@@ -29,8 +30,15 @@ from .session_record import _session_key
 if TYPE_CHECKING:
     from langgraph.checkpoint.base import DeltaChannelHistory
 
+@dataclass
+class _Record:
+    events: list[EventType] | None = None
+    namespaces: dict[str, dict[str, CheckpointTuple]] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 # Each physical Session's events, shared by all its checkpoint namespaces.
-_RECORDS: ContextVar[dict[tuple[str, str], list[EventType]] | None] = ContextVar(
+_RECORDS: ContextVar[dict[tuple[str, str, str], _Record] | None] = ContextVar(
     '_RECORDS', default=None
 )
 _LOCK = threading.Lock()
@@ -51,15 +59,17 @@ class SnapshotAgentCoreMemorySaver(OnePassAgentCoreMemorySaver):
         records = _RECORDS.get()
         if records is None:
             return None
-        key = _session_key(config)
+        key = (self.memory_id, *_session_key(config))
         with _LOCK:
-            events = records.get(key)
+            record = records.setdefault(key, _Record())
         checkpoint_config = CheckpointerConfig.from_runnable_config(dict(config))
-        if events is None:
-            events = [event for page in self._iter_event_pages(checkpoint_config) for event in page]
-            with _LOCK:
-                records[key] = events
-        return self._tuples_by_checkpoint_id(events, checkpoint_config)
+        with record.lock:
+            if record.events is None:
+                record.events = [event for page in self._iter_event_pages(checkpoint_config) for event in page]
+            namespace = checkpoint_config.checkpoint_ns
+            if namespace not in record.namespaces:
+                record.namespaces[namespace] = self._tuples_by_checkpoint_id(record.events, checkpoint_config)
+            return record.namespaces[namespace]
 
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         record = self._record(config)

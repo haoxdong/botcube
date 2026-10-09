@@ -11,18 +11,34 @@ import pytest
 from ag_ui.core import EventType, RunAgentInput
 from ag_ui_langgraph import LangGraphAgent
 from langchain.agents import AgentState
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt.tool_node import ToolCallRequest, ToolRuntime
 from moto import mock_aws
 
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.files_sync import FilesSync
+from botcube_harness_deepagents.lazy_files import LazyFilesMiddleware
 
 
-def _agent() -> serving._SessionAgent:
+def _use_workspace() -> None:
+    request = ToolCallRequest(
+        tool_call={'name': 'write_file', 'args': {}, 'id': 'file-tool', 'type': 'tool_call'},
+        tool=None, state={},
+        runtime=ToolRuntime(state={}, context=None, config={}, stream_writer=lambda _: None, tool_call_id='file-tool', store=None),
+    )
+    LazyFilesMiddleware().wrap_tool_call(request, lambda call: ToolMessage('Done', tool_call_id=call.tool_call['id']))
+
+
+def _agent(*, use_files: bool = False) -> serving._SessionAgent:
+    def reply(state: Any) -> dict[str, Any]:
+        if use_files:
+            _use_workspace()
+        return {'messages': [AIMessage('Done', id='answer')]}
+
     graph = StateGraph(AgentState)
-    graph.add_node('reply', lambda state: {'messages': [AIMessage('Done', id='answer')]})
+    graph.add_node('reply', reply)
     graph.add_edge(START, 'reply')
     graph.add_edge('reply', END)
     return serving._SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
@@ -89,6 +105,7 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
         graph = StateGraph(AgentState)
 
         def reply(state: Any) -> dict[str, Any]:
+            _use_workspace()
             (tmp_path / 'chart.svg').write_text(chart)
             return {'messages': [AIMessage('![Chart](chart.svg)', id='answer')]}
 
@@ -216,7 +233,7 @@ def test_failed_files_settlement_preserves_history_and_fails_the_current_turn(
         received = []
         with pytest.raises(serving.FilesSyncError) as caught:
             async for event in turns.stream(
-                ('owner', 'session'), _agent(), _input(), files, tmp_path, serving._RequestContext(None),
+                ('owner', 'session'), _agent(use_files=True), _input(), files, tmp_path, serving._RequestContext(None),
             ):
                 received.extend([event.type])
         assert EventType.RUN_FINISHED not in received
@@ -241,6 +258,7 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
         class Agent:
             async def run(self, input: RunAgentInput):
                 try:
+                    _use_workspace()
                     yield RunFinishedEvent(thread_id=input.thread_id or '', run_id=input.run_id)
                 finally:
                     closing.set()
@@ -279,6 +297,7 @@ def test_an_errored_graph_does_not_publish_files(monkeypatch: pytest.MonkeyPatch
 
     class Agent:
         async def run(self, input: RunAgentInput):
+            _use_workspace()
             yield RunErrorEvent(message='Graph failed', code='GRAPH_FAILED')
 
     async def snapshot(*args: Any) -> None:
@@ -326,6 +345,7 @@ def test_files_completion_waits_for_checkpoint_flush_and_stop_keeps_the_upload_l
 
         class Agent:
             async def run(self, input: RunAgentInput):
+                _use_workspace()
                 started.append(input.run_id)
                 yield RunFinishedEvent(thread_id=input.thread_id or '', run_id=input.run_id)
 
