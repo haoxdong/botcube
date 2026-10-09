@@ -4568,6 +4568,122 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Activity' }));
   };
 
+  // Main hid the chat under the open phone profile, out of focus and the accessibility tree. Slid in over it (#3694), the
+  // profile leaves it on screen beneath, inert. Beside the desktop profile, the chat stays in use.
+  it.each([
+    ['a phone', { width: 390, height: 844 }, true],
+    ['a desktop', { width: 1024, height: 768 }, false],
+  ])("leaves the chat under the open profile on %s inert as it was hidden (#3694)", async (_, viewport, covered) => {
+    const { happyDOM } = window as unknown as HappyDomWindow;
+    happyDOM.setViewport(viewport);
+    onTestFinished(() => {
+      happyDOM.setViewport({ width: 1024, height: 768 });
+    });
+    await renderPage();
+    const chat = present(document.querySelector('.app-shell:not([hidden])'), 'the chat');
+    // The collapsed sidebar behind the phone profile, whose menu button a Tab out of the profile reached.
+    const sidebar = present(document.querySelector('aside.sidebar'), 'the sidebar');
+    expect(chat).not.toHaveAttribute('inert');
+    expect(sidebar).not.toHaveAttribute('inert');
+
+    await userEvent.click(avatar());
+    expect(openProfile()).toBeInTheDocument();
+    expect(chat.hasAttribute('inert')).toBe(covered);
+    expect(sidebar.hasAttribute('inert')).toBe(covered);
+
+    await userEvent.click(screen.getByLabelText('Close agent profile'));
+    expect(chat).not.toHaveAttribute('inert');
+    expect(sidebar).not.toHaveAttribute('inert');
+  });
+
+  // Inert under the open phone profile, the chat let go of the opener's focus to the page: a keyboard's next Tab, not
+  // the open, reached the profile, and closing it left focus nowhere (#3694).
+  describe('keyboard focus on a phone', () => {
+    beforeEach(() => {
+      const { happyDOM } = window as unknown as HappyDomWindow;
+      happyDOM.setViewport({ width: 390, height: 844 });
+      onTestFinished(() => {
+        happyDOM.setViewport({ width: 1024, height: 768 });
+      });
+    });
+    const close = () => screen.getByLabelText('Close agent profile');
+
+    it.each([
+      ['its Close', async () => { await userEvent.click(close()); }],
+      ['Escape', async () => { await userEvent.keyboard('{Escape}'); }],
+    ])('moves into the open profile, and back to the avatar once %s closes it', async (_, shut) => {
+      await renderPage();
+      avatar().focus();
+      await userEvent.keyboard('{Enter}');
+      expect(openProfile()).toBeInTheDocument();
+      expect(close()).toHaveFocus();
+
+      await shut();
+      expect(profile()).toBeNull();
+      expect(avatar()).toHaveFocus();
+    });
+
+    // A fresh page's first open portaled the profile in some 330ms after it opened, as the chat rendered it, once the
+    // open's focus had found no profile: focus stayed on the page. happy-dom mounts it at once, so here it mounts a tick
+    // late.
+    it('moves into a profile that mounts after it opens', async () => {
+      (await renderPage()).unmount();
+      vi.resetModules();
+      vi.doMock('./agent-profile', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('./agent-profile')>();
+        function LateAgentProfile(props: Parameters<typeof actual.AgentProfile>[0]) {
+          const [mounted, setMounted] = useState(false);
+          useEffect(() => {
+            const timer = setTimeout(() => setMounted(true), 20);
+            return () => clearTimeout(timer);
+          }, []);
+          return mounted ? createElement(actual.AgentProfile, props) : null;
+        }
+        return { ...actual, AgentProfile: LateAgentProfile };
+      });
+      try {
+        const { default: FreshPage } = await import('./page');
+        cartridge.auth = auth();
+        render(<FreshPage />);
+        await settle();
+        avatar().focus();
+        await userEvent.keyboard('{Enter}');
+        await waitFor(() => expect(openProfile()).toBeInTheDocument());
+        await waitFor(() => expect(close()).toHaveFocus());
+
+        await userEvent.keyboard('{Escape}');
+        expect(profile()).toBeNull();
+        expect(avatar()).toHaveFocus();
+      } finally {
+        vi.doUnmock('./agent-profile');
+      }
+    });
+
+    it('returns focus from anywhere in the profile, and lets go of a profile open as the page unmounts', async () => {
+      const page = await renderPage();
+      await userEvent.click(avatar());
+      expect(close()).toHaveFocus();
+      within(openProfile()).getByRole('tab', { name: 'Activity' }).focus();
+      await userEvent.keyboard('{Escape}');
+      expect(avatar()).toHaveFocus();
+
+      await userEvent.click(avatar());
+      expect(close()).toHaveFocus();
+      page.unmount();
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+
+  it("keeps the desktop profile beside the chat out of the keyboard's way", async () => {
+    await renderPage();
+    avatar().focus();
+    await userEvent.keyboard('{Enter}');
+    expect(openProfile()).toBeInTheDocument();
+    expect(avatar()).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    expect(openProfile()).toBeInTheDocument();
+  });
+
   it("opens from the agent's avatar and name in the chat's header", async () => {
     await renderPage();
     expect(avatar()).toHaveTextContent(/^Ada Bot$/);

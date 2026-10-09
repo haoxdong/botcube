@@ -52,6 +52,65 @@ it('lets go of the page when the app unmounts with the phone drawer open (#3613)
   expect(pageHeld()).toBe(false);
 });
 
+// iOS Safari paints the strip behind the clock one flat colour while the page sits at its top; the held page, which
+// clamped to its top, showed the drawer's grey there, not the drawer and the card beside it. Held, the page now
+// scrolls past a runway above the screen, which the drawer and the card reach up into.
+it('scrolls the held page past its runway, and lets go of it on release (#3640)', () => {
+  const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+  const root = document.documentElement;
+  root.style.setProperty('--page-runway', '62px');
+  const { rerender } = render(<Fixture held={false} />);
+  scrollPage(1200);
+
+  rerender(<Fixture held />);
+  expect(root).toHaveAttribute('data-page-held');
+  expect(scrollTo).toHaveBeenLastCalledWith(0, 62);
+
+  rerender(<Fixture held={false} />);
+  expect(root).not.toHaveAttribute('data-page-held');
+  expect(scrollTo).toHaveBeenLastCalledWith(0, 1200);
+  root.style.removeProperty('--page-runway');
+});
+
+// A real finger's swipe scrolled the held page on the maintainer's iPhone, from its runway toward its top, where Safari
+// draws the strip behind the clock flat again. The held page goes back past its runway; once let go, it scrolls freely.
+it('puts the held page back past its runway when something scrolls it (#3640)', () => {
+  const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+  const root = document.documentElement;
+  root.style.setProperty('--page-runway', '62px');
+  const { rerender } = render(<Fixture held={false} />);
+  scrollPage(1200);
+  rerender(<Fixture held />);
+  scrollPage(62);
+  scrollTo.mockClear();
+
+  scrollPage(20);
+  expect(scrollTo).toHaveBeenCalledWith(0, 62);
+
+  rerender(<Fixture held={false} />);
+  scrollTo.mockClear();
+  scrollPage(900);
+  expect(scrollTo).not.toHaveBeenCalled();
+  root.style.removeProperty('--page-runway');
+});
+
+// On the maintainer's iPhone the open drawer's grey and the card stopped above Safari's bottom bar, over a white band.
+// Held, the page also runs a runway below its viewport, as tall as the screen left under it: Safari's bar and the
+// home bar.
+it("runs the held page's runway under Safari's bottom bar (#3640)", () => {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+  const root = document.documentElement;
+  root.style.setProperty('--page-runway', '62px');
+  Object.defineProperty(window.screen, 'height', { value: 956, configurable: true });
+  Object.defineProperty(window, 'innerHeight', { value: 796, configurable: true });
+  const { rerender } = render(<Fixture held />);
+  expect(root.style.getPropertyValue('--page-runway-bottom')).toBe('98px');
+
+  rerender(<Fixture held={false} />);
+  expect(root.style.getPropertyValue('--page-runway-bottom')).toBe('');
+  root.style.removeProperty('--page-runway');
+});
+
 it('leaves the page alone until the drawer first opens', () => {
   const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
   const { rerender } = render(<Fixture held={false} />);

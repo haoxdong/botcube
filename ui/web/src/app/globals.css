@@ -1362,7 +1362,7 @@ cpk-web-inspector,
     transform: translateX(80vw);
     z-index: 91;
     overflow: hidden;
-    border-radius: var(--radius-4xl) 0 0 var(--radius-4xl);
+    border-radius: var(--radius-4xl) var(--radius-4xl) 0 0;
     box-shadow: var(--shadow-soft);
     pointer-events: none;
   }
@@ -2123,23 +2123,86 @@ cpk-web-inspector,
     background: var(--color-surface);
   }
 
-  /* The open drawer holds the page (usePageHold): the card beside it is the screen, with its header and composer,
-     and shows the chat where the page had scrolled it. */
-  .app-layout:has(> .sidebar-expanded) .app-shell {
-    position: fixed;
-    inset: 0;
+  /* The open drawer or Agent Profile holds the page (usePageHold): the card beside it is the screen, with its header
+     and composer, and shows the chat where the page had scrolled it.
+
+     A Safari tab draws the strip behind the clock flat while the page sits at its top, and from the page's own pixels
+     once it has scrolled, fixed elements left out (#3640). So the held page is the screen with a runway above it,
+     scrolled past the runway, and the card and the drawer stand on the page, reaching up into the runway, the card's
+     corner and all, as Muse's do, and down into a runway under Safari's bottom bar (usePageHold measures it). 62px is
+     the status bar of a Dynamic Island iPhone. */
+  :root {
+    --page-runway: 62px;
+  }
+
+  html[data-page-held] .app-layout {
+    min-height: calc(100dvh + var(--page-runway) + var(--page-runway-bottom, 0px));
+  }
+
+  html[data-page-held] :is(.app-shell, .sidebar-expanded, .agent-profile) {
+    position: absolute;
+    top: 0;
+    height: calc(100dvh + var(--page-runway) + var(--page-runway-bottom, 0px));
+    max-height: none;
+    border-top: var(--page-runway) solid var(--color-white);
+    border-bottom: var(--page-runway-bottom, 0px) solid var(--color-white);
+  }
+
+  /* The card clips the chat it offsets, which would otherwise run up into the runway (#3694). */
+  html[data-page-held] :is(.app-shell, .agent-profile) {
+    left: 0;
+    right: 0;
     min-height: 0;
     margin-top: 0;
+    overflow: hidden;
   }
 
-  .app-layout:has(> .sidebar-expanded) :is(.app-chat, .plugins) {
+  /* Its background runs on behind the clock and the home bar, its controls keep to the safe area, as an installed or
+     fullscreen iPhone's insets ask (#3694). */
+  html[data-page-held] .agent-profile {
+    padding-top: var(--app-safe-top);
+    padding-bottom: var(--app-safe-bottom);
+  }
+
+  html[data-page-held] .sidebar-expanded {
+    border-top-color: var(--color-surface);
+    border-bottom-color: var(--color-surface);
+  }
+
+  /* The card's runways hold the chat, which runs on behind the clock and under Safari's bar as it does at rest: over
+     a white border there, the maintainer's iPhone showed the chat stopping 62px down (#3640). */
+  html[data-page-held] .app-shell {
+    border-width: 0;
+    padding-top: var(--page-runway);
+    padding-bottom: var(--page-runway-bottom, 0px);
+  }
+
+  /* With the card mid-swipe, Safari drew that strip flat again while the header stood fixed or the name pill kept its
+     blur, in the iOS 26.2 Simulator. Held, the header stands in the card below its runway, and the pill, over a chat
+     that stays still, drops its blur. */
+  html[data-page-held] .chat-header {
+    position: absolute;
+    top: var(--page-runway);
+  }
+
+  /* Safari spreads a fixed element's colour at the screen's bottom edge under its bar (WebKit's
+     LocalFrameView::fixedContainerEdges), which the iPhone showed as a white band there (#3640). Held, the composer
+     stands in the chat, which the page's scroll raises above the screen's top, and ends at the screen's bottom as
+     before. */
+  html[data-page-held] .app-chat [data-testid='copilot-input-overlay'] {
+    position: absolute;
+    top: calc(var(--page-scroll, 0px) + 100dvh - var(--app-safe-bottom));
+    bottom: auto;
+    translate: 0 -100%;
+  }
+
+  html[data-page-held] .chat-header-name {
+    backdrop-filter: none;
+  }
+
+  html[data-page-held] :is(.app-chat, .plugins) {
     position: relative;
     top: calc(-1 * var(--page-scroll, 0px));
-  }
-
-  /* A swipe over the Agent Profile sheet scrolls the sheet, never the chat it covers. */
-  html:has(.agent-profile:not([hidden])) {
-    overflow: hidden;
   }
 
   .chat-page-jump {
@@ -3029,52 +3092,49 @@ cpk-web-inspector,
   }
 }
 
-/* Phones: the profile is a full-screen sheet beneath the chat, which slides off it to the left as the drawer's card
-   does to the right. */
+/* Phones: the profile is a full-screen sheet that slides in over the chat from the right (#3694), the mirror of the
+   drawer's card. */
 @media (max-width: 640px) {
   /* Within the safe area, as a phone's layout runs under the status and home bars */
+  /* The drawer's card's shape: its top corners round as the screen's do, its square bottom runs on behind Safari's
+     bar (#3694), casting the card's shadow on the chat beside it. */
   .agent-profile {
     position: fixed;
     inset: var(--app-safe-top) 0 var(--app-safe-bottom);
     z-index: 100;
     width: auto;
     border-left: none;
-    animation: none;
-  }
-
-  /* Over the profile, the chat is the drawer's card: its trailing edge rounded and casting the same shadow. With
-     the profile open it leaves the screen, as the Computer view needs the full width. */
-  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell,
-  .app-layout[data-profile-swiping] .app-shell {
-    z-index: 101;
-    overflow: hidden;
-    border-radius: 0 var(--radius-4xl) var(--radius-4xl) 0;
+    border-radius: var(--radius-4xl) var(--radius-4xl) 0 0;
     box-shadow: var(--shadow-soft);
+    animation: none;
+    transition: transform var(--transition-layout);
   }
 
-  /* The card hides once it has slid off, or its shadow would grey the profile's left edge; it stays visible until the
-     slide ends. */
-  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell {
-    transform: translateX(-100%);
-    visibility: hidden;
-    transition:
-      transform var(--transition-layout),
-      visibility var(--transition-layout);
+  /* Opened with a tap, it slides in from the screen's edge as a released swipe settles. */
+  @starting-style {
+    .agent-profile {
+      transform: translateX(100%);
+    }
   }
 
-  /* A left swipe across the chat slides the card off the profile under the finger, and a right swipe on the profile
-     brings it back; on release, or the profile's ✕, it settles (the mirror of the drawer's swipe). The chat fades
-     with the card's travel, as it does with the drawer's. */
-  .app-layout[data-profile-swiping] .app-shell {
-    transform: translateX(calc(-1 * var(--profile-drag-offset)));
+  /* A left swipe across the chat slides the profile in under the finger, and a right swipe on it slides it back off;
+     on release, or the profile's ✕, it settles (the mirror of the drawer's swipe). The chat under it stays and fades
+     with the profile's travel, as it does beside the drawer. */
+  .app-layout[data-profile-swiping] > .agent-profile {
+    transform: translateX(calc(100% - var(--profile-drag-offset)));
     transition: transform 180ms ease-out;
+  }
+
+  /* The fade stays inside the chat, under the profile, as the chat's old stacking kept it (#3694). */
+  .app-layout[data-profile-swiping] .app-shell {
+    isolation: isolate;
   }
 
   .app-layout[data-profile-swiping] .app-shell::after {
     opacity: var(--profile-drag-progress);
   }
 
-  .app-layout[data-profile-dragging] .app-shell {
+  .app-layout[data-profile-dragging] > .agent-profile {
     transition: none;
   }
 
@@ -3096,8 +3156,7 @@ cpk-web-inspector,
 
 @media (prefers-reduced-motion: reduce) {
   .agent-profile,
-  .app-layout:not([data-profile-swiping]):has(> .agent-profile:not([hidden])) .app-shell,
-  .app-layout[data-profile-swiping] .app-shell {
+  .app-layout[data-profile-swiping] > .agent-profile {
     animation: none;
     transition: none;
   }

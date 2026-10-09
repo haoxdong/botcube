@@ -686,7 +686,7 @@ it("slides the chat right by the phone drawer's width as a rounded, shadowed car
   // happy-dom leaves :has() and vw unresolved, so this reads the sheet.
   expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) \{\s*overflow: hidden;/);
   expect(sheet).toMatch(
-    /\.app-layout:has\(> \.sidebar-expanded\) \.app-shell \{\s*transform: translateX\(80vw\);[^}]*border-radius: var\(--radius-4xl\) 0 0 var\(--radius-4xl\);\s*box-shadow: var\(--shadow-soft\);/,
+    /\.app-layout:has\(> \.sidebar-expanded\) \.app-shell \{\s*transform: translateX\(80vw\);[^}]*border-radius: var\(--radius-4xl\) var\(--radius-4xl\) 0 0;\s*box-shadow: var\(--shadow-soft\);/,
   );
 });
 
@@ -922,9 +922,57 @@ it('scrolls the phone chat with the page, up under the status bar, under no band
   // Android Chrome leaves fixed elements under its keyboard and keeps the lift, and the chat's room for it.
   expect(sheet).toMatch(/@supports \(-webkit-touch-callout: none\) \{\s*@media \(max-width: 640px\) \{\s*\.app-chat \[data-testid='copilot-input-overlay'\] > \[data-copilotkit\] \{\s*transform: none !important;\s*\}\s*\.chat-keyboard-room \{\s*display: none;/);
   expect(sheet).not.toMatch(/\}\s*\.app-chat \[data-testid='copilot-input-overlay'\] > \[data-copilotkit\] \{\s*transform: none/);
-  // The open drawer holds the page (usePageHold): the card beside it is the screen, its chat where the page had it.
-  expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) \.app-shell \{\s*position: fixed;\s*inset: 0;\s*min-height: 0;\s*margin-top: 0;/);
-  expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) :is\(\.app-chat, \.plugins\) \{\s*position: relative;\s*top: calc\(-1 \* var\(--page-scroll, 0px\)\);/);
+  // The open drawer or Agent Profile holds the page (usePageHold): the card beside it is the screen, its chat where the
+  // page had it.
+  expect(sheet).toMatch(/html\[data-page-held\] :is\(\.app-shell, \.sidebar-expanded, \.agent-profile\) \{\s*position: absolute;\s*top: 0;\s*height: calc\(100dvh \+ var\(--page-runway\) \+ var\(--page-runway-bottom, 0px\)\);\s*max-height: none;\s*border-top: var\(--page-runway\) solid var\(--color-white\);/);
+  expect(sheet).toMatch(/html\[data-page-held\] :is\(\.app-chat, \.plugins\) \{\s*position: relative;\s*top: calc\(-1 \* var\(--page-scroll, 0px\)\);/);
+});
+
+// A Safari tab draws the strip behind the clock from the page's pixels only once the page has scrolled, and leaves fixed
+// elements out of it. The held page scrolls past a runway (usePageHold), which the card and the drawer, standing on
+// the page, reach up into. happy-dom resolves neither the phone query nor calc(), so the sheet is read.
+it('draws the held phone card and drawer up into the runway behind the clock (#3640)', () => {
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*:root \{\s*--page-runway: 62px;/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.sidebar-expanded \{\s*border-top-color: var\(--color-surface\);/);
+  // Mid-swipe, a fixed header or the pill's blur turned the strip flat again.
+  expect(sheet).toMatch(/html\[data-page-held\] \.chat-header \{\s*position: absolute;/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.chat-header-name \{\s*backdrop-filter: none;/);
+});
+
+// The maintainer found the profile under the sliding chat backwards (#3694): the profile now slides in over the still
+// chat, and it and the drawer's card take one shape, top corners rounded as the screen's, a square bottom running on
+// behind Safari's bar.
+it('slides the phone profile in over the chat in the drawer card\'s shape (#3694)', () => {
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.agent-profile \{\s*position: fixed;[^}]*border-radius: var\(--radius-4xl\) var\(--radius-4xl\) 0 0;\s*box-shadow: var\(--shadow-soft\);/);
+  expect(sheet).toMatch(/\.app-layout\[data-profile-swiping\] > \.agent-profile \{\s*transform: translateX\(calc\(100% - var\(--profile-drag-offset\)\)\);/);
+  expect(sheet).toMatch(/@starting-style \{\s*\.agent-profile \{\s*transform: translateX\(100%\);/);
+  // The chat no longer moves for the profile, nor rises over it.
+  expect(sheet).not.toMatch(/\.app-layout\[data-profile-swiping\] \.app-shell \{[^}]*(transform|z-index)/);
+  // Its fade dims the chat under the profile, not the profile.
+  expect(sheet).toMatch(/\.app-layout\[data-profile-swiping\] \.app-shell \{\s*isolation: isolate;\s*\}/);
+});
+
+// The drawer's grey and the card ran up under the status bar but stopped above Safari's bottom bar, over a white band.
+it("runs the held phone card and drawer down behind Safari's bottom bar (#3640)", () => {
+  expect(sheet).toMatch(/html\[data-page-held\] \.app-layout \{\s*min-height: calc\(100dvh \+ var\(--page-runway\) \+ var\(--page-runway-bottom, 0px\)\);/);
+  expect(sheet).toMatch(/html\[data-page-held\] :is\(\.app-shell, \.sidebar-expanded, \.agent-profile\) \{[^}]*height: calc\(100dvh \+ var\(--page-runway\) \+ var\(--page-runway-bottom, 0px\)\);[^}]*border-bottom: var\(--page-runway-bottom, 0px\) solid var\(--color-white\);/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.sidebar-expanded \{\s*border-top-color: var\(--color-surface\);\s*border-bottom-color: var\(--color-surface\);/);
+});
+
+// The maintainer's iPhone, mid-swipe on 5f64597bf: the chat stopped 62pt down, over the held card's white border, with
+// no chat behind the clock, and Safari's bottom bar showed a white band. The held card's runways are padding the chat
+// runs on into, as it does at rest, and the composer, no longer fixed, gives Safari no fixed container at the bottom
+// edge whose white it would spread under its bar (WebKit's LocalFrameView::fixedContainerEdges).
+it('runs the held chat on behind the clock and under Safari\'s bar, mid-swipe and open (#3640)', () => {
+  expect(sheet).toMatch(/html\[data-page-held\] \.app-shell \{\s*border-width: 0;\s*padding-top: var\(--page-runway\);\s*padding-bottom: var\(--page-runway-bottom, 0px\);/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.chat-header \{\s*position: absolute;\s*top: var\(--page-runway\);/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.app-chat \[data-testid='copilot-input-overlay'\] \{\s*position: absolute;\s*top: calc\(var\(--page-scroll, 0px\) \+ 100dvh - var\(--app-safe-bottom\)\);\s*bottom: auto;\s*translate: 0 -100%;/);
+});
+
+// Held, the profile stands at the screen's top for its background to run on behind the clock, which left its Close 16px
+// from the top under the status bar of an installed or fullscreen iPhone, whose safe area insets are not 0 (#3694).
+it("keeps the held phone profile's controls inside the safe area, its background edge to edge (#3694)", () => {
+  expect(sheet).toMatch(/html\[data-page-held\] \.agent-profile \{\s*padding-top: var\(--app-safe-top\);\s*padding-bottom: var\(--app-safe-bottom\);/);
 });
 
 // iOS Safari tints the strip behind the clock with the page's colour, so the open drawer's grey reaches up to the clock

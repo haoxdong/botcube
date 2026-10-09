@@ -49,6 +49,55 @@ function useCloseOnEscape(open: boolean, setOpen: (open: boolean) => void, trigg
   }, [open, setOpen, triggerRef]);
 }
 
+/**
+ * The phone's Agent Profile covers the chat, which goes inert under it: the profile takes the keyboard's focus at its
+ * Close as it opens, closes on Escape, and once shut gives focus back to its opener, unless the user moved it elsewhere
+ * or the opener is gone (#3694).
+ */
+function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, close }: {
+  /** The profile stands open over the chat on a phone. */
+  open: boolean;
+  /** The profile is open, a swipe moving it or not. */
+  expanded: boolean;
+  profileRef: RefObject<HTMLElement | null>;
+  openerRef: RefObject<HTMLButtonElement | null>;
+  close: () => void;
+}) {
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    opened.current = true;
+    const focusClose = () => {
+      const close = profileRef.current?.querySelector<HTMLElement>(".agent-profile-close");
+      close?.focus();
+      return close !== undefined && close !== null;
+    };
+    if (focusClose()) return undefined;
+    // A fresh page's chat portals the profile in after it opens, so its Close takes focus as it mounts.
+    const mounted = new MutationObserver(() => {
+      if (focusClose()) mounted.disconnect();
+    });
+    mounted.observe(document.body, { childList: true, subtree: true });
+    return () => mounted.disconnect();
+  }, [open, profileRef]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [open, close]);
+  useEffect(() => {
+    if (expanded || !opened.current) return;
+    opened.current = false;
+    const opener = openerRef.current;
+    const focused = document.activeElement;
+    const left = focused === null || focused === document.body || profileRef.current?.contains(focused) === true;
+    if (left && opener?.isConnected && !opener.disabled) opener.focus();
+  }, [expanded, openerRef, profileRef]);
+}
+
 const menuIcon = (
   <svg className="sidebar-icon-menu" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
     <path d="M2 8h20" />
@@ -322,7 +371,6 @@ function App({
   useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
-  usePageHold(isPhone && swipe.visible);
   // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
   const [pluginsOpen, setPluginsOpen] = useState(false);
   // The kept Main Chat shows in the chat's place until the chat surface opens at its latest message (#3697).
@@ -393,6 +441,9 @@ function App({
     expanded: agentProfileOpen,
     onExpandedChange: (open) => { if (open) setAgentProfileOpen(true); else closeAgentProfile(); },
   });
+  usePageHold(isPhone && (swipe.visible || profileSwipe.visible));
+  const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);
+  usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });
   const agentName = agentProfile?.name ?? UI_CONFIG.agentName;
   // Bumped when the agent edits its Agent Identity or Soul, so the Identity tab reloads them.
   const [agentDocumentsRevision, setAgentDocumentsRevision] = useState(0);
@@ -491,7 +542,7 @@ function App({
   // the Agent Profile opens on a chat, so its button waits for one.
   const chatHeader = (
     <header className="chat-header">
-      <button className="chat-header-agent" disabled={activeId === null} onClick={() => setAgentProfileOpen(true)} aria-label="Agent profile" title="Agent profile">
+      <button ref={agentProfileOpenerRef} className="chat-header-agent" disabled={activeId === null} onClick={() => setAgentProfileOpen(true)} aria-label="Agent profile" title="Agent profile">
         <Avatar picture={agentProfile?.picture ?? undefined} emoji={agentProfile?.avatar} name={agentName} agent size={72} />
         <span className="chat-header-name">{agentName}</span>
       </button>
@@ -519,7 +570,8 @@ function App({
       if (!isPhone && event.target instanceof Element && event.target.closest(".app-shell")) setSidebarExpanded(false);
     }} ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style }}>
       {/* ── Sidebar (outside CopilotKit so it doesn't remount on conversation switch) ── */}
-      <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`}>
+      {/* Behind the open phone profile too, like the chat (#3694). */}
+      <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`} inert={profileSwipe.open}>
         <div className="sidebar-top">
           {/* Brand row */}
           <div className="sidebar-brand">
@@ -649,7 +701,8 @@ function App({
       )}
       {/* One shell for the chat however far it has loaded, so its header, and the press of a tap on its avatar,
           outlast the chat controls replacing their stand-in. */}
-      <main className="app-shell" hidden={pluginsOpen}>
+      {/* Under the open phone profile, the chat takes no focus or input and leaves the accessibility tree (#3694). */}
+      <main className="app-shell" hidden={pluginsOpen} inert={profileSwipe.open}>
         {chatHeader}
         {activeId === null ? noChat : (
           <Suspense fallback={<div className="app-chat app-chat-opening">{keptChat}</div>}>

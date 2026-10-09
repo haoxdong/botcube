@@ -178,5 +178,6 @@ export function usePhoneSidebarSwipe({ layoutRef, drawerRef, side, name, enabled
     if (enabled && expanded && width > 0) changeSession({ phase: 'settling', targetExpanded: false, width, offset: width });
     onExpandedChange(false);
   };
-  return { visible: expanded || swiping, dragging, swiping, style, close };
+  // `open`: the panel stands open on a phone, no swipe moving it.
+  return { visible: expanded || swiping, open: enabled && expanded && !swiping, dragging, swiping, style, close };
 }
