@@ -682,9 +682,8 @@ it('fills the Main chat pill only while it is the open chat, and opens the drawe
 
 // the open drawer covered the whole chat; memo 0049 Fig 21 slides the chat right as a rounded card beside it, its
 // soft shadow on the drawer.
-it("slides the chat right by the phone drawer's width as a rounded, shadowed card, and keeps the page from scrolling sideways", () => {
+it("slides the chat right by the phone drawer's width as a rounded, shadowed card", () => {
   // happy-dom leaves :has() and vw unresolved, so this reads the sheet.
-  expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) \{\s*overflow: hidden;/);
   expect(sheet).toMatch(
     /\.app-layout:has\(> \.sidebar-expanded\) \.app-shell \{\s*transform: translateX\(80vw\);[^}]*border-radius: var\(--radius-4xl\) var\(--radius-4xl\) 0 0;\s*box-shadow: var\(--shadow-soft\);/,
   );

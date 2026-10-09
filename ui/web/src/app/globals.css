@@ -1325,6 +1325,8 @@ cpk-web-inspector,
     margin: 0 var(--app-safe-right) 0 var(--app-safe-left);
     padding-top: var(--app-safe-top);
     transform: none;
+    position: relative;
+    overflow-x: clip;
   }
 
   .app-shell {
@@ -1353,7 +1355,6 @@ cpk-web-inspector,
   /* The chat slides right by the drawer's width as a rounded card, its strip still in view, the drawer's grey
      showing past its corners (memo 0049 Fig 21) */
   .app-layout:has(> .sidebar-expanded) {
-    overflow: hidden;
     background: var(--color-surface);
   }
 
