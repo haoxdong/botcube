@@ -429,14 +429,16 @@ class OpenAIProvider:
         account_id: str,
         request_context: Mapping[str, str],
     ) -> Response:
-        self._audit.record_upstream_relay(account_id, OPENAI_PROVIDER, request_context)
+        context = _timing_context(request, request_context) if path == _RESPONSES_PATH else None
+        self._audit.record_upstream_relay(
+            account_id, OPENAI_PROVIDER, request_context if context is None else context,
+        )
         headers = {name: request.headers[name] for name in _FORWARDED_HEADERS if name in request.headers}
         client = self._client()
         upstream_request = client.build_request(
             request.method, f'{self._settings.api_origin}/{path}', params=request.url.query or None,
             headers={**headers, 'authorization': f'Bearer {access}'}, content=await request.body(),
         )
-        context = _timing_context(request, request_context) if path == _RESPONSES_PATH else None
         timing = None if context is None else _ProviderTiming(
             self._audit, account_id, context, time.time(), time.monotonic(),
         )

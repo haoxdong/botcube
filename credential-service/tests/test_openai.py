@@ -1482,6 +1482,14 @@ def test_credential_receipt_precedes_authenticated_access_and_upstream_dispatch(
                  'traceparent': '00-' + 'a' * 32 + '-' + 'b' * 16 + '-01'},
     )
     assert response.status_code == 200
+    [relay] = [event for event in sink.events if event['event'] == 'upstream_relay']
+    assert {key: relay[key] for key in (
+        'accountId', 'provider', 'sessionId', 'method', 'path', 'modelId', 'runId', 'modelStepId', 'traceId',
+    )} == {
+        'accountId': 'acct-1', 'provider': 'openai', 'sessionId': 'thread-1',
+        'method': 'POST', 'path': 'v1/responses', 'modelId': 'gpt-6-astra',
+        'runId': 'run-safe', 'modelStepId': 'step-safe', 'traceId': 'a' * 32,
+    }
     [boundary] = [event for event in sink.events if event['event'] == 'credential_first_answer_boundary']
     assert boundary['status'] == 'complete'
     assert boundary['offsetsMs'] == pytest.approx({
