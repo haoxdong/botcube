@@ -1316,11 +1316,15 @@ cpk-web-inspector,
   }
 
   /* The drawer and the screens beside it run under the status and home bars (memo 0049 Fig 21); their contents
-     keep to the safe area. */
+     keep to the safe area. The page scrolls the chat, not a box of its own, so iOS Safari draws it under the status
+     bar behind its own fade (#3613): the layout grows with the chat, and holds no transform, which would hold
+     the fixed header and composer to it as it scrolls away. */
   .app-layout {
-    height: 100dvh;
+    height: auto;
+    min-height: 100dvh;
     margin: 0 var(--app-safe-right) 0 var(--app-safe-left);
     padding-top: var(--app-safe-top);
+    transform: none;
   }
 
   .app-shell {
@@ -1522,8 +1526,8 @@ cpk-web-inspector,
   /* The chat's menu chip, where it sits with the drawer shut (the collapsed brand's padding), faded with the chat */
   .sidebar-strip-close-menu {
     position: absolute;
-    top: calc(var(--app-safe-top) + 26px);
-    left: 12px;
+    top: calc(var(--app-safe-top) + 2px);
+    left: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2052,30 +2056,155 @@ cpk-web-inspector,
   }
 
   .app-shell {
-    --chat-header-height: calc(120px + var(--chat-header-safe-top));
+    --chat-header-height: calc(109px + var(--chat-header-safe-top));
   }
 
   .app-shell:has(> .chat-header) {
     margin-top: calc(-1 * var(--app-safe-top));
   }
 
+  /* The chat grows with the page that scrolls it (#3613); the header and the composer stay on screen. */
+  .app-shell {
+    min-height: 100dvh;
+  }
+
+  .app-chat {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    /* The chat keeps its own place on the page (PageScrollView, MessageRows): WebKit's scroll anchoring moved the page
+       up the opening chat, which took it for the user's scroll. */
+    overflow-anchor: none;
+  }
+
+  .app-chat .chat-wrapper,
+  .app-chat .copilotKitChat {
+    flex: 1 0 auto;
+    height: auto;
+  }
+
+  /* The kept Main Chat holds the screen at its latest message, as the opening chat under it grows and scrolls the page
+     to its own (#3697). */
+  .app-chat .kept-chat {
+    position: fixed;
+    inset: 0 var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  }
+
+  .app-chat .kept-chat :is(.chat-wrapper, .copilotKitChat) {
+    height: 100%;
+  }
+
+  /* As the page that scrolls the chat, its scroll view keeps no scrollbar gutter. */
+  .app-chat .kept-chat .copilotKitChat > :first-child > div {
+    scrollbar-width: none;
+  }
+
+  /* Clear of the home bar, as the shell's padding kept the composer when its own box held the chat */
+  .app-chat [data-testid='copilot-input-overlay'] {
+    position: fixed;
+    bottom: var(--app-safe-bottom);
+  }
+
+  /* The page colour below the composer, under iOS Safari's keyboard bars, where the page showed the chat
+     (useComposerBacking), and main's chat box, which ended above the composer, left the page. */
+  .chat-composer-backing {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: var(--color-white);
+    pointer-events: none;
+  }
+
+  /* The open drawer's grey reaches up behind the clock: iOS Safari tints its status bar strip with the page's
+     colour. */
+  html:has(.sidebar-expanded),
+  html:has(.sidebar-expanded) body {
+    background: var(--color-surface);
+  }
+
+  /* The open drawer holds the page (usePageHold): the card beside it is the screen, with its header and composer,
+     and shows the chat where the page had scrolled it. */
+  .app-layout:has(> .sidebar-expanded) .app-shell {
+    position: fixed;
+    inset: 0;
+    min-height: 0;
+    margin-top: 0;
+  }
+
+  .app-layout:has(> .sidebar-expanded) :is(.app-chat, .plugins) {
+    position: relative;
+    top: calc(-1 * var(--page-scroll, 0px));
+  }
+
+  /* A swipe over the Agent Profile sheet scrolls the sheet, never the chat it covers. */
+  html:has(.agent-profile:not([hidden])) {
+    overflow: hidden;
+  }
+
+  .chat-page-jump {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+
+  /* Marq's hat, which rises 1px above his box, and the menu button's top meet the top of the screen below the status
+     bar, where Muse's avatar and menu stand (memo 0049 Fig 11). */
   .chat-header {
-    padding-top: calc(12px + var(--chat-header-safe-top));
+    position: fixed;
+    padding-top: calc(1px + var(--chat-header-safe-top));
+  }
+
+  /* Muse's 44px menu sits 24px in from the screen's edge, its centre about 12px above the avatar's (memo 0049 Fig 11).
+     It stands 2px below the sidebar's safe area: at the top edge, iOS Safari paints its status bar white over the
+     chat. */
+  .sidebar-collapsed .sidebar-brand {
+    padding: 2px 12px 12px 24px;
   }
 
   .chat-header-agent .avatar-agent {
     overflow: visible;
   }
 
+  /* Marq stands 68px tall, hat included, as Muse's avatar disc (memo 0049 Fig 11), with his hat where the larger
+     figure had it, and in front of the pill. */
   .chat-header-agent .avatar-agent svg {
+    position: relative;
+    z-index: 1;
     flex-shrink: 0;
-    width: 99px;
-    height: 99px;
-    transform: translateY(-3px);
+    width: 88px;
+    height: 88px;
+    transform: translateY(-5.5px);
   }
 
+  /* The pill tucks about 6px behind the bottom of Marq's body (memo 0049 Fig 11). The chat runs beneath the header
+     undimmed, under iOS Safari's own fade alone, as Muse's does: a band of ours, which must start below the status
+     bar, left a strip of undimmed text between the two fades (#3613). So the pill carries its own crisp white
+     backing, as Muse's does, which keeps the name readable over the text. */
   .chat-header-agent .chat-header-name {
     margin-top: -12px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: none;
+  }
+}
+
+/* iOS Safari keeps a phone's fixed composer above its keyboard itself. CopilotKit's lift by the keyboard's height,
+   which its own box-scrolled chat needs, threw it up to the top of the screen with the page scrolled mid-chat. Only
+   iOS WebKit knows -webkit-touch-callout: Android Chrome leaves fixed elements under its keyboard and keeps the lift,
+   and the room for it below the chat (PageScrollView). */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 640px) {
+    .app-chat [data-testid='copilot-input-overlay'] > [data-copilotkit] {
+      transform: none !important;
+    }
+
+    .chat-keyboard-room {
+      display: none;
+    }
   }
 }
 
@@ -2226,6 +2355,18 @@ cpk-web-inspector,
   text-align: center;
   font-size: var(--font-detail);
   color: var(--color-danger);
+}
+
+/* A phone's chat scrolls the page (#3613): the alerts stay on screen just under the fixed header, on the page's
+   white over the chat. */
+@media (max-width: 640px) {
+  .chat-alerts {
+    position: sticky;
+    top: var(--chat-header-height);
+    z-index: 20;
+    display: flow-root;
+    background: var(--color-white);
+  }
 }
 
 /* A right sidebar beside the chat, which narrows to make room; it slides open from the right edge. */

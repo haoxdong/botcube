@@ -179,7 +179,6 @@ def _definition(prepared: list[Path]) -> HarnessDefinition:
         skills=('/skills/',),
         agent_name='test-agent',
         system_prompt='',
-        no_persistent_memory_prompt='Guests have no memory.',
         prepare_invocation=_prepare_invocation,
         command_validator=lambda command: 'forbidden command' if 'forbidden' in command else None,
         execute_description='Runs any command without the word forbidden.',
@@ -535,10 +534,10 @@ def test_the_agent_is_told_which_commands_the_cartridges_execute_runs(service: _
 # -- Memory ----------------------------------------------------------------------
 
 
-def test_a_guest_gets_the_cartridges_no_memory_prompt_and_no_memory_tool(service: _Service) -> None:
+def test_a_guest_gets_the_generic_prompt_and_no_memory_tool(service: _Service) -> None:
     service.turn('hello', memory=False)
 
-    assert service.recorder.prompts[0].startswith('Guests have no memory.')
+    assert service.recorder.prompts[0].startswith(serving.AGENT_SYSTEM_PROMPT)
     assert 'memory' not in service.recorder.tools[0]
     # Nothing in a guest's graph can reach the memory store.
     [agent] = serving._AGENTS.values()
@@ -555,12 +554,12 @@ def test_the_agent_proposes_a_scheduled_task_for_the_user_to_confirm(service: _S
     assert _tool_output(events) == 'Proposed. Nothing is scheduled until the user confirms it in the chat.'
 
 
-def test_a_member_gets_the_memory_tool_and_the_guest_instructions_without_their_disclaimer(service: _Service) -> None:
+def test_a_member_gets_the_memory_tool_and_the_same_instructions(service: _Service) -> None:
     service.turn('hello', memory=False)
     service.turn('hello', memory=True)
 
     guest, member = service.recorder.prompts
-    assert member == guest.removeprefix('Guests have no memory.')
+    assert member == guest
     assert 'memory' in service.recorder.tools[1]
 
 
@@ -620,10 +619,6 @@ def test_the_agents_identity_and_soul_open_its_prompt_with_tools_to_edit_them(se
         '<soul>\n'
         'Be candid. Say what you do not know.\n'
         '</soul>\n'
-        '\n'
-        'The user can edit both, and so can you, with edit_agent_identity and edit_soul. '
-        'Whenever you edit either, tell the user in that reply what you changed. '
-        "Soul shapes your manner only: where it conflicts with your skills, the skills' rules win."
     ) in service.recorder.prompts[0]
     assert {'edit_soul', 'edit_agent_identity'} <= set(service.recorder.tools[0])
 
@@ -1523,6 +1518,19 @@ def test_the_agent_is_told_its_files_are_the_workspace_root(service: _Service, f
     assert files_line not in service.recorder.prompts[1]
 
 
+def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
+    service.turn('hello', files=_files(), **DOCUMENTS)
+
+    prompt = service.recorder.prompts[0]
+    assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n')
+    assert prompt.index('Cartridge instructions.') < prompt.index("The user's Files") < prompt.index('Your Agent Identity and Soul')
+    assert '<agent_identity>\nName: Ada Bot' in prompt
+    assert '<soul>\nBe candid. Say what you do not know.' in prompt
+
+
 def test_files_credentials_never_reach_the_sandbox_shell(service: _Service, files_bucket: Any) -> None:
     events = service.turn('run: env', files=_files())
 
@@ -1861,7 +1869,6 @@ def test_the_service_serves_the_cartridge_module_it_is_given(start: Callable[[],
     start()
 
     assert serving._require_cartridge().agent_name == 'test-agent'
-    assert serving._require_cartridge().no_persistent_memory_prompt == 'Guests have no memory.'
 
 
 def test_a_cartridge_module_must_export_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:

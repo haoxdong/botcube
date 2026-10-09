@@ -119,6 +119,7 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     readonly detail: string,
+    readonly code?: string,
   ) {
     super(detail);
   }

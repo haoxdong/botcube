@@ -72,7 +72,6 @@ CARTRIDGE = HarnessDefinition(
     skills=('/skills/',),
     agent_name=_IDENTITY['name'],
     system_prompt='',
-    no_persistent_memory_prompt='Persistent memory is unavailable for anonymous sessions.',
     execute_description='Runs echo, template-cli data, or documented agent-browser commands, with no shell operators. Returns its output and exit code.',
     prepare_invocation=_prepare_invocation,
     command_validator=_validate_command,

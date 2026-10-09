@@ -86,12 +86,12 @@ from `botcube-ui-web/ui`.
   title centred); its actions full-width Buttons, one under another. A destructive action asks first, as iOS does: the
   actions give way to a `destructive` confirm (Delete task) over Cancel.
 - **Chat header** (`.chat-header`): a centered avatar over scrolling messages (memo 0049 Figs 1, 7, and 11).
-  Messages remain clear behind it and extend under the phone status bar.
-  On desktop Marq's hat sits 1.5px under the chat card's top, as dots' avatar under its card's (Fig 1), in front of a
+  A shared safe content frame keeps controls clear of every screen inset.
+  On desktop, messages stay clear behind the header. Marq's hat sits 1.5px under the chat card's top, as dots' avatar under its card's (Fig 1), in front of a
   crisp `white` name capsule tucked 6px behind his body, as on the phone, with no frost or shadow at rest.
-  A shared safe content frame keeps controls clear of every screen inset while phone chat alone extends to the top.
-  On a phone the name capsule and closed menu use 4px blur on 60% white, with no saturation boost.
-  The phone menu has no shadow and centers on the avatar. The default figure is about 66px wide, with the capsule overlapping its bottom edge.
+  On phones, the chat scrolls the page, so messages run undimmed up under the status bar behind iOS Safari's own fade, as in Muse Fig 11.
+  The closed-phone menu uses 4px blur on 60% white, with no saturation boost; on phones the capsule is a crisp 92% white, and neither has a shadow.
+  The phone menu stands at Muse's spot, 24px in at the top of the safe area. On phones the default figure stands 68px tall, hat included, like Muse's avatar disc, in front of the capsule, which tucks about 6px behind his body.
 - **Chat card** (`.app-shell`): on desktop the chat, or Plugins, is a `white` card inside the sidebar's `frame`, 4px clear of the window's other edges, with `radius-lg` corners and the `card` edge (memo 0049 Fig 1). Beside
   the chat, the open Agent Profile shares the card, as dots' computer panel does (Fig 3).
 - **Button** (`<Button>`, `.button`): a pill, `detail` at medium, 6px × 14px. Secondary is `text` on `surface-hover` (hover `border`); primary

@@ -18,6 +18,10 @@ import type { ModelList } from "./model-selection";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
 import MarkdownRenderer from "./markdown-renderer";
 import { ReplyImageTurnRunning } from "./reply-image-turn";
+import { pageHeld } from "./phone-page-hold";
+import { useComposerBacking } from "./phone-composer-backing";
+import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
+import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
 import { Tool, ToolHeader, ToolContent, ToolOutput } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
@@ -147,8 +151,19 @@ const couldNotAnswer = (message: string): TurnFailure => ({ message: `The agent 
 
 const JUMP_SETTLE_FRAMES = 3;
 
+/** Where `scroller`'s scroll events fire: the page's own scroller fires them on the window. */
+function eventsOf(scroller: Element): EventTarget {
+  return scroller === document.scrollingElement ? window : scroller;
+}
+
+/** The top of what `scroller` shows, on screen: the page's is the screen's top. */
+function viewTop(scroller: Element): number {
+  return scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;
+}
+
 function holdAtBottom(scroller: Element) {
   let still = 0;
+  const events = eventsOf(scroller);
   const hold = () => {
     const bottom = scroller.scrollHeight - scroller.clientHeight;
     if (scroller.scrollTop < bottom) {
@@ -157,16 +172,16 @@ function holdAtBottom(scroller: Element) {
     }
   };
   const release = () => {
-    scroller.removeEventListener("scroll", hold);
-    scroller.removeEventListener("pointerdown", release);
+    events.removeEventListener("scroll", hold);
+    events.removeEventListener("pointerdown", release);
   };
   const frame = () => {
     still += 1;
     if (still < JUMP_SETTLE_FRAMES) requestAnimationFrame(frame);
     else release();
   };
-  scroller.addEventListener("scroll", hold);
-  scroller.addEventListener("pointerdown", release);
+  events.addEventListener("scroll", hold);
+  events.addEventListener("pointerdown", release);
   hold();
   requestAnimationFrame(frame);
 }
@@ -185,12 +200,143 @@ function JumpToBottom({ onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElem
   );
 }
 
+type ScrollViewProps = ComponentProps<typeof CopilotChatView.ScrollView>;
+
+/** How far the page can scroll. */
+function pageBottom(page: Element): number {
+  return page.scrollHeight - page.clientHeight;
+}
+
 /**
- * CopilotChat's scroll view props: open a chat at its latest message, and stay there as the chat grows, not
- * smooth-scrolled down to it; jump to it with JumpToBottom. A constant, since CopilotKit re-renders a slot whose value
- * changes.
+ * How far CopilotKit lifts the composer above a keyboard that shrinks only the visual viewport, as Android Chrome's
+ * does: by the keyboard's height, once it passes 150px, as CopilotKit's useKeyboardHeight measures it.
  */
-const CHAT_SCROLL_VIEW = { initial: "instant", resize: "instant", scrollToBottomButton: JumpToBottom } as const;
+function useKeyboardLift(): number {
+  const [lift, setLift] = useState(0);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return undefined;
+    const measure = () => {
+      const keyboard = Math.max(0, window.innerHeight - viewport.height);
+      setLift(keyboard > 150 ? keyboard : 0);
+    };
+    measure();
+    viewport.addEventListener("resize", measure);
+    return () => viewport.removeEventListener("resize", measure);
+  }, []);
+  return lift;
+}
+
+/**
+ * The phone's scroll view: the chat in the page's flow, which scrolls it. As CopilotKit's own view does on its box, it
+ * opens at the latest message, keeps to the bottom as the chat grows until the user scrolls up, and shows the jump to
+ * the bottom while away from it, above the composer. Scrolling it up closes the keyboard, and the composer's lift above
+ * the keyboard gets its room below the chat.
+ */
+function PageScrollView({ children, inputContainerHeight = 0, isResizing = false }: ScrollViewProps) {
+  const content = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const follows = useRef<() => void>(undefined);
+  const backing = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const lift = useKeyboardLift();
+  useComposerBacking(backing);
+  useScrollUpClosesKeyboard();
+  useLayoutEffect(() => {
+    const page = document.scrollingElement;
+    const box = content.current;
+    const shell = box?.closest(".app-shell");
+    if (page === null || !box || !shell) throw new Error("The phone chat needs the page's scroller, its content and its screen");
+    let last = page.scrollTop;
+    let input = false;
+    let away = false;
+    // Whether the page is the chat's: neither held by the drawer nor Plugins's, under which the chat stays mounted.
+    // Back from Plugins, the chat takes its own place again.
+    const ours = () => {
+      if (pageHeld()) return false;
+      if (box.closest("[hidden]") !== null) {
+        away = true;
+        return false;
+      }
+      if (away) {
+        away = false;
+        page.scrollTop = pinned.current ? pageBottom(page) : last;
+      }
+      return true;
+    };
+    const follow = () => {
+      if (!ours()) return;
+      if (pinned.current) page.scrollTop = pageBottom(page);
+      last = page.scrollTop;
+      setAtBottom(pageBottom(page) - page.scrollTop < 2);
+    };
+    const scrolled = () => {
+      if (!ours()) return;
+      const now = page.scrollTop;
+      const bottom = pageBottom(page) - now < 2;
+      if (bottom) pinned.current = true;
+      else if (now < last && input) pinned.current = false;
+      else if (pinned.current) page.scrollTop = pageBottom(page);
+      last = page.scrollTop;
+      input = false;
+      setAtBottom(pageBottom(page) - page.scrollTop < 2);
+    };
+    // A finger, wheel or key on the chat's screen. Typing in or scrolling a field, such as the composer, and a gesture
+    // on another surface, such as the Agent Profile sheet, scroll no chat.
+    const intends = (event: Event) => {
+      const { target } = event;
+      if (target instanceof Element) {
+        if (!target.contains(shell) && !shell.contains(target)) return;
+        if (target.closest("input, textarea, [contenteditable]") !== null) return;
+      }
+      input = true;
+    };
+    follows.current = follow;
+    follow();
+    const observer = new ResizeObserver(follow);
+    observer.observe(box);
+    window.addEventListener("scroll", scrolled, { passive: true });
+    for (const type of ["wheel", "touchmove", "keydown"]) window.addEventListener(type, intends, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", scrolled);
+      for (const type of ["wheel", "touchmove", "keydown"]) window.removeEventListener(type, intends);
+    };
+  }, []);
+  // CopilotKit pads the chat by the composer's height once it measures it, after the chat opens, and the keyboard's
+  // room comes and goes with the keyboard: the chat keeps to its bottom in that same update, as no frame should show it
+  // short of its end.
+  useLayoutEffect(() => follows.current?.(), [inputContainerHeight, lift]);
+  return (
+    <>
+      {/* CopilotKit's own scroll view's gutter. */}
+      <div ref={content} className="cpk:px-4 cpk:@3xl:px-0">{children}</div>
+      <div className="chat-keyboard-room" style={{ height: `${lift}px` }} aria-hidden="true" />
+      <div ref={backing} className="chat-composer-backing" aria-hidden="true" />
+      {!atBottom && !isResizing && (
+        <div className="chat-page-jump" style={{ bottom: `${inputContainerHeight + 16}px` }}>
+          <JumpToBottom onClick={() => {
+            pinned.current = true;
+          }} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** StickToBottom's own props, which CopilotChatView.ScrollView passes on to it but does not type. */
+const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
+
+/**
+ * CopilotChat's scroll view: open a chat at its latest message, and stay there as the chat grows, not smooth-scrolled
+ * down to it; jump to it with JumpToBottom. On a phone, the page scrolls. A constant, since CopilotKit re-renders a slot
+ * whose value changes.
+ */
+function ChatScrollView(props: ScrollViewProps) {
+  if (useIsPhone()) return <PageScrollView {...props} />;
+  return <CopilotChatView.ScrollView {...props} {...STICK_INSTANTLY} scrollToBottomButton={JumpToBottom} />;
+}
+const CHAT_SCROLL_VIEW = ChatScrollView;
 
 /**
  * The assistant message slot: render markdown and reply images. The renderer loads with this lazy chat surface: loaded
@@ -232,7 +378,9 @@ function scrollParent(element: Element): Element | null {
   for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
     if (/auto|scroll/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return parent;
   }
-  return null;
+  // A phone's chat scrolls the page (PageScrollView).
+  const page = document.scrollingElement;
+  return page !== null && page.scrollHeight > page.clientHeight ? page : null;
 }
 
 /** The element that scrolls the messages of the chat in `wrapper`, while there is more to scroll than it shows. */
@@ -249,7 +397,7 @@ type ReadRow = { row: Element; scroller: Element; at: number };
  * as a tool's result, is no row to read: rows rendering below it would move the row the user sees.
  */
 function rowRead(list: Element, scroller: Element): ReadRow | null {
-  const top = scroller.getBoundingClientRect().top;
+  const top = viewTop(scroller);
   const row = [...list.children].find((child) => {
     const box = child.getBoundingClientRect();
     return box.bottom > Math.max(box.top, top);
@@ -355,10 +503,11 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
       if (now !== null) Object.assign(read, now);
     };
     observer.observe(list);
-    read.scroller.addEventListener("scroll", scrolled);
+    const events = eventsOf(read.scroller);
+    events.addEventListener("scroll", scrolled);
     return () => {
       observer.disconnect();
-      read.scroller.removeEventListener("scroll", scrolled);
+      events.removeEventListener("scroll", scrolled);
     };
   }, [first]);
 

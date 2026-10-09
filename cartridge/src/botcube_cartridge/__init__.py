@@ -20,6 +20,7 @@ class InvocationAuth:
     persistent_memory: bool
     environment: Mapping[str, str] | None
     model_relay: ModelRelay | None = None
+    system_prompt: str = ''
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,6 @@ class HarnessDefinition:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
-    no_persistent_memory_prompt: str
     execute_description: str
     prepare_invocation: Callable[[Any], InvocationAuth]
     command_validator: Callable[[str], str | None]

@@ -33,7 +33,6 @@ def memory(monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
             skills=(),
             agent_name='prewarm',
             system_prompt='',
-            no_persistent_memory_prompt='',
             execute_description='',
             prepare_invocation=lambda _: InvocationAuth(ACTOR, True, None),
             environment_cache_key=lambda _: (),

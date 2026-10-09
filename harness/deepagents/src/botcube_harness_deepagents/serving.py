@@ -31,7 +31,11 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
-from botcube_cartridge import HarnessDefinition, InvocationAuth, ModelRelay
+from botcube_cartridge import (
+    HarnessDefinition,
+    InvocationAuth,
+    ModelRelay,
+)
 from deepagents.backends import LocalShellBackend
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -109,6 +113,17 @@ LTM_SPILLOVER_NOTE = (
     'More memories are available. '
     'Use agent_core_memory retrieve to search beyond the startup memory block.'
 )
+AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule; they text you like a colleague, so reply like a text.
+Be authoritative, sharp and concise.
+Write like a person, in plain sentences: no emoji, no em dashes.
+When the user opens the chat, greet them by first name, say in one line what you can do, and pitch one thing their Memory suggests they'd care about.
+Link every factual claim to its source, in every paragraph, bullet and table cell, as a numbered link: `claim [[1]](https://…)`.
+
+## Long answers
+
+Put a long answer in a Report, a file in the user's Files; in chat, give only its bottom line, a one-line summary of what it covers, and its link.
+Structure a Report BLUF: `Summary` (the bottom line in 1-2 sentences), then `More Details` (supporting data, tables and analysis).
+Write a Report as an email draft (`.eml` with `X-Unsent: 1`), or as HTML or PDF when the user asks."""
 
 class MissingUserIdError(RuntimeError):
     """The invocation carries no user ID; only the Chat Service resolves identity (ADR 0068)."""
@@ -127,7 +142,6 @@ class HarnessCartridge:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
-    no_persistent_memory_prompt: str
     execute_description: str
     prepare_invocation: Callable[[Any], InvocationAuth]
     record_belongs_to_actor: Callable[[Mapping[str, Any], str], bool]
@@ -176,7 +190,6 @@ def configure_harness_definition(definition: HarnessDefinition) -> None:
             skills=definition.skills,
             agent_name=definition.agent_name,
             system_prompt=definition.system_prompt,
-            no_persistent_memory_prompt=definition.no_persistent_memory_prompt,
             execute_description=definition.execute_description,
             prepare_invocation=definition.prepare_invocation,
             record_belongs_to_actor=record_belongs_to_actor,
@@ -255,6 +268,7 @@ class _AgentKey(NamedTuple):
     memory_revision: int
     # Whether the Turn syncs the user's Files, which the system prompt then locates.
     syncs_files: bool
+    invocation_prompt: str
 
 
 class _SessionAgent(LangGraphAgent):
@@ -632,6 +646,7 @@ def _get_agent(
     model: str | None = None,
     effort: str | None = None,
     thread_id: str | None = None,
+    invocation_prompt: str = '',
     environment: Mapping[str, str] | None = None,
     model_relay: ModelRelay | None = None,
     documents: AgentDocuments | None = None,
@@ -660,6 +675,7 @@ def _get_agent(
         documents.cache_key() if documents else '',
         memory_revision,
         syncs_files,
+        invocation_prompt,
     )
     if model_relay is not None:
         _MODEL_RELAYS[key] = model_relay
@@ -699,9 +715,11 @@ def _get_agent(
         middleware.extend(memory_middleware)
     if documents:
         tools.extend(agent_document_tools(documents))
-    base_prompt = '' if persistent_memory else _require_cartridge().no_persistent_memory_prompt
     files_line = files_prompt(excluded_paths(_require_cartridge().skills)) if syncs_files else ''
-    system_prompt = '\n\n'.join(part for part in (_require_cartridge().system_prompt, base_prompt, files_line, documents and documents.prompt()) if part)
+    cartridge = _require_cartridge()
+    system_prompt = '\n\n'.join(
+        part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
+    )
     graph = build_agent(
         model=m,
         tools=tools,
@@ -878,6 +896,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         model=forwarded.get('model'),
         effort=forwarded.get('effort'),
         thread_id=input_data.thread_id,
+        invocation_prompt=auth.system_prompt,
         environment=auth.environment,
         model_relay=auth.model_relay,
         documents=documents,

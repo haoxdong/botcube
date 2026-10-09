@@ -20,8 +20,17 @@ afterEach(async (context) => {
     });
   }
   if (inject('compareScreenshots') && context.task.result?.state !== 'fail') {
-    await expect
-      .element(page.elementLocator(document.body))
-      .toMatchScreenshot(`${context.task.name}-${inject('screen')}`);
+    // A phone's chat scrolls the page (#3613), so the body can run far past the screen. Compare what the screen
+    // shows: an element screenshot of a see-through box over the viewport.
+    const viewport = document.createElement('div');
+    viewport.style.cssText = 'position: fixed; inset: 0; pointer-events: none';
+    document.body.append(viewport);
+    try {
+      await expect
+        .element(page.elementLocator(viewport))
+        .toMatchScreenshot(`${context.task.name}-${inject('screen')}`);
+    } finally {
+      viewport.remove();
+    }
   }
 });

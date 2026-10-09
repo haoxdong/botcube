@@ -1,5 +1,6 @@
 import type { Message } from '@ag-ui/client';
 import { act, render, screen, waitFor } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import { KeptChat } from './kept-chat';
@@ -67,6 +68,24 @@ it("ends the messages the composer's height plus 32px above the bottom, as the c
   resize(composer);
 
   expect(content.style.paddingBottom).toBe('192px');
+});
+
+// The kept Main Chat that replaces the Suspense fallback's as the chat surface mounts: a browser re-rendered it with its
+// composer's room only after the chat had opened, which a phone's page had scrolled by that room (#3697).
+it("ends the messages the composer's height plus 32px above the bottom from the commit that mounts it", () => {
+  const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120);
+  let mounted: string | undefined;
+  // Its layout effect runs after the kept chat's, in the same commit, before any update the kept chat makes.
+  function AfterKeptChat() {
+    useLayoutEffect(() => {
+      mounted = document.querySelector('.copilotKitMessages')?.closest<HTMLElement>('[style*="padding-bottom"]')?.style.paddingBottom;
+    }, []);
+    return null;
+  }
+  render(<><KeptChat messages={messages} disclaimer="Check important info." /><AfterKeptChat /></>);
+  height.mockRestore();
+
+  expect(mounted).toBe('152px');
 });
 
 it('opens at the latest message, and stays there as the messages grow', () => {

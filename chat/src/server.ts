@@ -299,7 +299,7 @@ export function createChatService(
     if (!(error instanceof HttpError) || error.cause !== undefined) {
       console.error(`${c.req.method} ${c.req.path} failed`, error);
     }
-    if (error instanceof HttpError) return c.json({ detail: error.detail }, error.status as 400);
+    if (error instanceof HttpError) return c.json({ detail: error.detail, ...(error.code === undefined ? {} : { code: error.code }) }, error.status as 400);
     return c.text('Internal Server Error', 500);
   });
   app.route('/', cartridge.routes);

@@ -297,8 +297,9 @@ it("fills the visible viewport, so iOS Safari's toolbars never let the page scro
   // happy-dom drops the dvh unit, so this reads the sheet itself.
   expect(sheet).toMatch(/\n\.app-layout \{[^}]*height: calc\(100dvh - var\(--app-safe-top\) - var\(--app-safe-bottom\)\);/);
   expect(sheet).toMatch(/\n\.sidebar \{[^}]*height: 100dvh;/);
-  // A phone's layout runs under the status and home bars (memo 0049 Fig 21), its contents padded clear of them.
-  expect(sheet).toMatch(/\n {2}\.app-layout \{\s*height: 100dvh;\s*margin: 0 var\(--app-safe-right\) 0 var\(--app-safe-left\);\s*padding-top: var\(--app-safe-top\);/);
+  // A phone's layout runs under the status and home bars (memo 0049 Fig 21), its contents padded clear of them, and
+  // grows with the chat that scrolls the page (#3613).
+  expect(sheet).toMatch(/\n {2}\.app-layout \{\s*height: auto;\s*min-height: 100dvh;\s*margin: 0 var\(--app-safe-right\) 0 var\(--app-safe-left\);\s*padding-top: var\(--app-safe-top\);\s*transform: none;/);
 });
 
 it("keeps a phone's messages one gutter from the screen edge (dots Fig 7), with the column's own padding dropped", () => {
@@ -583,6 +584,30 @@ it('starts an alert under the header below it, and the chat below the alert with
   expect(styleOf(container, '.copilotKitMessages').paddingTop).toBe('20px');
 });
 
+// A phone's chat scrolls the page, so alerts above the chat sat at the page's top, off screen below a long chat.
+it('keeps the alerts on screen under the phone header as the chat scrolls the page (#3613)', () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 390, height: 844 });
+  try {
+    const { container } = render(
+      <main className="app-shell">
+        <header className="chat-header" />
+        <div className="chat-alerts">
+          <p className="chat-account-error" role="alert" />
+        </div>
+        <div className="app-chat" />
+      </main>,
+    );
+    const alerts = styleOf(container, '.chat-alerts');
+    expect(alerts.position).toBe('sticky');
+    expect(alerts.backgroundColor).not.toBe('');
+  } finally {
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+  // happy-dom leaves var() unresolved, so this reads the sheet: they stand just under the fixed header.
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-alerts \{\s*position: sticky;\s*top: var\(--chat-header-height\);/);
+});
+
 it('stacks the Identity tab\'s file cards, one per row at full width', () => {
   const { container } = render(<div className="agent-file-cards" />);
 
@@ -802,7 +827,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
 });
 
 
-it('floats translucent phone controls over clear chat with the pill overlapping the avatar', () => {
+it('floats translucent phone controls over the scrolling chat with the pill overlapping the avatar', () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   happyDOM.setViewport({ width: 440, height: 956 });
   const { container, unmount } = render(
@@ -814,11 +839,122 @@ it('floats translucent phone controls over clear chat with the pill overlapping 
   try {
     expect(styleOf(container, '.sidebar-logo-btn').backgroundColor).toBe('rgba(255, 255, 255, 0.6)');
     expect(styleOf(container, '.sidebar-logo-btn').boxShadow).toBe('none');
-    expect(parseFloat(styleOf(container, '.chat-header-name').marginTop)).toBeLessThanOrEqual(-12);
-    expect(styleOf(container, '.chat-header-agent .avatar-agent svg').width).toBe('99px');
     expect(styleOf(container, '.app-chat').paddingTop || '0px').toBe('0px');
   } finally {
     unmount();
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+// Muse's chat runs up under the iPhone status bar, behind its fade, and beside the avatar at full strength, its name on
+// a pill of its own (memo 0049 Fig 11). In an iOS Safari tab only the page's own scroll runs under the status bar, so a
+// phone's chat scrolls the page, its header and composer fixed on screen. A dimming band of ours had to start below
+// the status bar, as iOS Safari paints the bar white over a fixed fill at its edge, and left a strip of undimmed text
+// between Safari's fade and its own. Desktop keeps the chat's own scroll view.
+it('scrolls the phone chat with the page, up under the status bar, under no band of its own, and leaves desktop its own scroll view (#3613)', () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  // A fresh layout per viewport, as happy-dom keeps an element's computed style.
+  const chat = () => {
+    const { container, unmount } = render(
+      <div className="app-layout">
+        <main className="app-shell">
+          <header className="chat-header">
+            <span className="pseudo-before" />
+            <button className="chat-header-agent"><span className="chat-header-name">Marq</span></button>
+          </header>
+          <div className="app-chat">
+            <div data-testid="copilot-input-overlay" />
+          </div>
+        </main>
+      </div>,
+    );
+    const { backdropFilter, backgroundImage } = styleOf(container, '.pseudo-before');
+    const pill = styleOf(container, '.chat-header-name');
+    const result = {
+      layout: styleOf(container, '.app-layout').transform,
+      scroll: styleOf(container, '.app-chat').overflow,
+      header: styleOf(container, '.chat-header').position,
+      composer: styleOf(container, "[data-testid='copilot-input-overlay']").position || 'static',
+      band: { backdropFilter: backdropFilter || 'none', backgroundImage: backgroundImage || 'none' },
+      pill: { backgroundColor: pill.backgroundColor, boxShadow: pill.boxShadow },
+    };
+    unmount();
+    return result;
+  };
+
+  expect(chat()).toMatchObject({ layout: 'translateZ(0)', scroll: 'auto', header: 'absolute', composer: 'static', band: { backdropFilter: 'none', backgroundImage: 'none' } });
+  happyDOM.setViewport({ width: 440, height: 956 });
+  try {
+    expect(chat()).toEqual({
+      // A transform would hold the fixed header and composer to the layout, which scrolls away.
+      layout: 'none',
+      scroll: 'visible',
+      header: 'fixed',
+      composer: 'fixed',
+      band: { backdropFilter: 'none', backgroundImage: 'none' },
+      // The name's own crisp white backing, over the text that runs beneath it, with no glow around Marq.
+      pill: { backgroundColor: 'rgba(255, 255, 255, 0.92)', boxShadow: 'none' },
+    });
+  } finally {
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+  // happy-dom leaves calc(), dvh and :has() unresolved, so this reads the sheet: the phone header starts at the
+  // shell's top, which the shell pulls up over the status bar inset; the layout grows with the chat (the viewport test
+  // above reads it).
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-shell:has\(> \.chat-header\) \{\s*margin-top: calc\(-1 \* var\(--app-safe-top\)\);/);
+  // WebKit's scroll anchoring moved the page 103px up the chat as it opened, which the chat took for the user's scroll
+  // and stopped keeping to its bottom: the chat keeps its own place, as on desktop (.copilotKitMessages).
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-chat \{\s*display: flex;\s*flex-direction: column;\s*overflow: visible;\s*\/\*[^*]*\*\/\s*overflow-anchor: none;/);
+  // The kept Main Chat stays on the screen at its latest message while the opening chat, laid out unseen under it, grows
+  // and scrolls the page to its own: neither moves as the chat takes over (#3697). The cold open check measures them.
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-chat \.kept-chat \{\s*position: fixed;\s*inset: 0 var\(--app-safe-right\) var\(--app-safe-bottom\) var\(--app-safe-left\);\s*\}\s*\.app-chat \.kept-chat :is\(\.chat-wrapper, \.copilotKitChat\) \{\s*height: 100%;/);
+  // The page that scrolls a phone's chat keeps no scrollbar gutter, so the kept Main Chat's scroll view keeps none.
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-chat \.kept-chat \.copilotKitChat > :first-child > div \{\s*scrollbar-width: none;/);
+  // Muse's avatar and 44pt menu, 24pt in, stand at the top of the screen below the status bar (Fig 11), where Marq's hat,
+  // 1px above his box, and the menu button, 2px below the sidebar's safe area, meet it. The drawer's strip keeps the
+  // menu's faded copy where the menu stood. The layout check measures them.
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-header \{\s*position: fixed;\s*padding-top: calc\(1px \+ var\(--chat-header-safe-top\)\);/);
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.sidebar-collapsed \.sidebar-brand \{\s*padding: 2px 12px 12px 24px;/);
+  expect(sheet).toMatch(/\.sidebar-strip-close-menu \{\s*position: absolute;\s*top: calc\(var\(--app-safe-top\) \+ 2px\);\s*left: 24px;/);
+  // The page colour below the composer, which useComposerBacking places, over the chat the page runs on with there.
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-composer-backing \{\s*position: absolute;\s*left: 0;\s*right: 0;\s*z-index: 10;\s*background: var\(--color-white\);/);
+  // iOS Safari keeps the fixed composer above its keyboard, so CopilotKit's keyboard lift is dropped there alone;
+  // Android Chrome leaves fixed elements under its keyboard and keeps the lift, and the chat's room for it.
+  expect(sheet).toMatch(/@supports \(-webkit-touch-callout: none\) \{\s*@media \(max-width: 640px\) \{\s*\.app-chat \[data-testid='copilot-input-overlay'\] > \[data-copilotkit\] \{\s*transform: none !important;\s*\}\s*\.chat-keyboard-room \{\s*display: none;/);
+  expect(sheet).not.toMatch(/\}\s*\.app-chat \[data-testid='copilot-input-overlay'\] > \[data-copilotkit\] \{\s*transform: none/);
+  // The open drawer holds the page (usePageHold): the card beside it is the screen, its chat where the page had it.
+  expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) \.app-shell \{\s*position: fixed;\s*inset: 0;\s*min-height: 0;\s*margin-top: 0;/);
+  expect(sheet).toMatch(/\.app-layout:has\(> \.sidebar-expanded\) :is\(\.app-chat, \.plugins\) \{\s*position: relative;\s*top: calc\(-1 \* var\(--page-scroll, 0px\)\);/);
+});
+
+// iOS Safari tints the strip behind the clock with the page's colour, so the open drawer's grey reaches up to the clock
+// only when the page itself turns grey. happy-dom resolves neither :has nor the phone query, so the sheet is read.
+it("turns the page the drawer's grey while the phone drawer is open, up behind the clock (#3613)", () => {
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*html:has\(\.sidebar-expanded\),\s*html:has\(\.sidebar-expanded\) body \{\s*background: var\(--color-surface\);/);
+});
+
+// #3564 drew a 99px Marq, about 77px tall with his hat, behind a shadowed pill over his body. Muse's 68px avatar sits
+// in front of its pill, which tucks about 6px behind it (memo 0049 Fig 11). The layout check measures the heights and
+// the tuck; #3624 gives the desktop its own.
+it("draws the phone's Marq 68px tall in front of the pill tucked behind him (#3614)", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  happyDOM.setViewport({ width: 440, height: 956 });
+  try {
+    const { container, unmount } = render(
+      <div className="app-layout">
+        <aside className="sidebar sidebar-collapsed"><div className="sidebar-brand"><button className="sidebar-logo-btn" /></div></aside>
+        <main className="app-shell"><header className="chat-header"><button className="chat-header-agent"><span className="avatar avatar-agent"><svg /></span><span className="chat-header-name">Marq</span></button></header></main>
+      </div>,
+    );
+    const pill = { marginTop: styleOf(container, '.chat-header-name').marginTop };
+    const { width, height, position, zIndex, transform } = styleOf(container, '.chat-header-agent .avatar-agent svg');
+    const marq = { width, height, position, zIndex, transform };
+    unmount();
+    // 120 viewBox units hold his 93-unit height, hat to body, so 88px draws him 68px tall. His hat, 17 units (12.5px)
+    // down the 88px svg, which overhangs his 72px box, set 1px down, by 8px, meets the screen's top 5.5px higher.
+    expect(marq).toEqual({ width: '88px', height: '88px', position: 'relative', zIndex: '1', transform: 'translateY(-5.5px)' });
+    expect(pill.marginTop).toBe('-12px');
+  } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
 });
@@ -968,9 +1104,10 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
       const card = styleOf(shut.container, '.app-shell');
       expect({ margin: zero(card.margin), radius: card.borderRadius || '0px', shadow: card.boxShadow || 'none' }).toEqual({ margin: '0px', radius: '0px', shadow: 'none' });
       expect(styleOf(shut.container, '.app-layout').backgroundColor || 'transparent').toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+      // The phone's own crisp pill over the page-scrolled chat (#3613), not the desktop's white one.
       const pill = styleOf(shut.container, '.chat-header-name');
       expect({ background: pill.backgroundColor, frost: pill.backdropFilter, top: pill.marginTop })
-        .toEqual({ background: 'rgba(255, 255, 255, 0.6)', frost: 'blur(4px)', top: '-12px' });
+        .toEqual({ background: 'rgba(255, 255, 255, 0.92)', frost: 'blur(4px)', top: '-12px' });
       expect(zero(styleOf(shut.container, '.chat-header-agent .avatar-agent').marginTop)).toBe('0px');
     } finally {
       shut.unmount();

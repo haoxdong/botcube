@@ -24,6 +24,9 @@ const config: StorybookConfig = {
   previewAnnotations: cartridge.previewAnnotations ?? [],
   addons: ['@storybook/addon-a11y', '@storybook/addon-vitest'],
   staticDirs: ['public', ...(cartridge.staticDirs ?? [])],
+  // The app's viewport (src/app/layout.tsx): viewport-fit=cover, so an iPhone draws the phone chat under its status bar.
+  previewHead: (head) =>
+    `${head}<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />`,
   async viteFinal(config) {
     const aliases = config.resolve?.alias ?? [];
     config.resolve = {

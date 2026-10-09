@@ -1,11 +1,13 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
+import { Children, lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Blocks, ChevronDown, ChevronRight, MessageCircle, Pencil, Plus } from "lucide-react";
 import "@copilotkit/react-core/v2/styles.css";
 import { KeptChat } from "./kept-chat";
 import { usePhoneSidebarSwipe } from "./phone-sidebar-swipe";
+import { usePageHold } from "./phone-page-hold";
+import { useIsPhone } from "./phone-query";
 import { ChatServiceError } from "./conversations";
 import {
   AGENT_DOCUMENT_EDITED,
@@ -32,19 +34,6 @@ const ChatSurface = lazy(() => import("./chat-surface"));
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
 const CHAT_SERVICE_URL = process.env.NEXT_PUBLIC_CHAT_SERVICE_URL ?? UI_CONFIG.chatServiceUrl;
-// Phones (globals.css's 640px breakpoint) show the expanded sidebar as a drawer beside the chat.
-const PHONE_QUERY = "(max-width: 640px)";
-
-const subscribeToPhoneQuery = (onChange: () => void) => {
-  const query = window.matchMedia(PHONE_QUERY);
-  query.addEventListener("change", onChange);
-  return () => query.removeEventListener("change", onChange);
-};
-
-/** Whether the window is phone-sized (PHONE_QUERY), following resizes; a server render is not. */
-function useIsPhone() {
-  return useSyncExternalStore(subscribeToPhoneQuery, () => window.matchMedia(PHONE_QUERY).matches, () => false);
-}
 
 /** Closes an open menu on Escape, returning focus to its trigger. */
 function useCloseOnEscape(open: boolean, setOpen: (open: boolean) => void, triggerRef: RefObject<HTMLButtonElement | null>) {
@@ -308,6 +297,13 @@ function ModelEffortPicker({
   );
 }
 
+/** The chat's alerts, together, so on a phone, where the chat scrolls the page, they stay on screen as one (#3613). */
+function ChatAlerts({ children }: { children: ReactNode }) {
+  // An alert whose condition fails leaves false, null or an empty string.
+  const alerts = Children.toArray(children).filter((alert) => alert !== "");
+  return alerts.length > 0 ? <div className="chat-alerts">{alerts}</div> : null;
+}
+
 function App({
   auth,
   opening,
@@ -326,6 +322,7 @@ function App({
   useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
+  usePageHold(isPhone && swipe.visible);
   // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
   const [pluginsOpen, setPluginsOpen] = useState(false);
   // The kept Main Chat shows in the chat's place until the chat surface opens at its latest message (#3697).
@@ -663,12 +660,14 @@ function App({
           >
             {(ChatThread) => <>
             {/* ADR 0030: a failed sign-in, sign-out or Sheet action shows why, even with the Sheet closed. */}
-            {auth.error && <p className="chat-account-error" role="alert">{auth.error}</p>}
-            {mainChatError !== null && <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />}
-            {mainChatRefreshError !== null && <p className="chat-account-error" role="alert">{mainChatRefreshError}</p>}
-            {stopError !== null && <p className="chat-account-error" role="alert">{stopError}</p>}
-            {choiceError !== null && <p className="chat-account-error" role="alert">{choiceError}</p>}
-            {warmupError !== null && warmupError.accountId === accountId && <p className="chat-account-error" role="alert">{warmupError.message}</p>}
+            <ChatAlerts>
+              {auth.error && <p className="chat-account-error" role="alert">{auth.error}</p>}
+              {mainChatError !== null && <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />}
+              {mainChatRefreshError !== null && <p className="chat-account-error" role="alert">{mainChatRefreshError}</p>}
+              {stopError !== null && <p className="chat-account-error" role="alert">{stopError}</p>}
+              {choiceError !== null && <p className="chat-account-error" role="alert">{choiceError}</p>}
+              {warmupError !== null && warmupError.accountId === accountId && <p className="chat-account-error" role="alert">{warmupError.message}</p>}
+            </ChatAlerts>
             <div className={keptChatShown ? "app-chat app-chat-opening" : "app-chat"}>
               <ChatThread
                 key={activeId}

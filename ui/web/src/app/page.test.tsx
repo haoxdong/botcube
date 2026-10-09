@@ -3,8 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import type { ButtonHTMLAttributes, ComponentType, ReactElement, ReactNode } from 'react';
-import { Component, Fragment, createElement, useEffect, useLayoutEffect, useSyncExternalStore } from 'react';
-import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import { afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { AuthUiState, AuxiliaryPanelHostProps, WebUiPlugin } from '../cartridge/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
@@ -130,34 +130,55 @@ vi.mock('@copilotkit/react-core/v2', async () => {
       }, []);
       return <>{children}</>;
     },
-    // Like CopilotChat: its message view slot, CopilotChatMessageView unless replaced, scrolls in its scroll view
-    // slot above an overlay pinned to the chat's bottom, which holds its input slot, CopilotChatInput unless replaced.
+    // Like CopilotChat, in its .copilotKitChat box: its message view slot, CopilotChatMessageView unless replaced,
+    // scrolls in its scroll view slot above an overlay pinned to the chat's bottom, which holds its input slot,
+    // CopilotChatInput unless replaced. Once it measures the overlay, it pads its content by the overlay's height, which
+    // its scroll view slot is told.
+    // A slot is a component, or an object of props for CopilotKit's own.
     CopilotChat: (
-      props: { input?: ComponentType<{ isRunning: boolean }>; messageView?: ComponentType; scrollView?: Record<string, unknown> } & Record<string, unknown>,
+      props: {
+        input?: ComponentType<{ isRunning: boolean }>;
+        messageView?: ComponentType;
+        scrollView?: ComponentType<{ children: ReactNode }> | Record<string, unknown>;
+      } & Record<string, unknown>,
     ) => {
       copilot.chat = props;
       const MessageView = props.messageView ?? CopilotChatMessageView;
       const Input = props.input ?? CopilotChatInput;
+      const slot = props.scrollView;
+      const ScrollView = (typeof slot === 'function' ? slot : CopilotChatScrollView) as ComponentType<{ children: ReactNode; inputContainerHeight: number }>;
+      const scrollProps = typeof slot === 'function' ? {} : slot;
+      const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
+      const [inputContainerHeight, setInputContainerHeight] = useState(0);
+      useEffect(() => {
+        if (overlay === null) return undefined;
+        const observer = new ResizeObserver(([entry]) => {
+          if (entry !== undefined) setInputContainerHeight(entry.contentRect.height);
+        });
+        observer.observe(overlay);
+        setInputContainerHeight(overlay.offsetHeight);
+        return () => observer.disconnect();
+      }, [overlay]);
       return (
-        <>
-          <CopilotChatScrollView {...props.scrollView}>
-            <div data-testid="copilot-scroll-content" style={{ overflowY: 'auto' }}>
+        <div className="copilotKitChat">
+          <ScrollView {...scrollProps} inputContainerHeight={inputContainerHeight}>
+            <div data-testid="copilot-scroll-content" style={{ overflowY: 'auto', paddingBottom: `${inputContainerHeight + 32}px` }}>
               <MessageView />
             </div>
-          </CopilotChatScrollView>
-          <div data-testid="copilot-input-overlay">
+          </ScrollView>
+          <div ref={setOverlay} data-testid="copilot-input-overlay">
             <Input isRunning={copilot.running} onSubmitMessage={(content: string) => {
               const submittedAgent = copilot.kits.at(-1)?.selfManagedAgents['research-agent'];
               submittedAgent?.addMessage({ id: 'submitted', role: 'user', content });
               copilot.runAgent({ agent: submittedAgent });
             }} />
           </div>
-        </>
+        </div>
       );
     },
     CopilotChatInput,
     CopilotChatMessageView,
-    CopilotChatView: { ScrollToBottomButton },
+    CopilotChatView: { ScrollToBottomButton, ScrollView: CopilotChatScrollView },
     useDefaultRenderTool: (config: { render: typeof copilot.renderTool }, deps?: unknown[]) => {
       useEffect(() => { copilot.renderTool = config.render; }, [JSON.stringify(deps ?? [])]);
     },
@@ -789,7 +810,9 @@ describe('account errors in a conversation', () => {
 
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent(new RegExp(`^${error}$`));
-    expect(header().nextElementSibling).toBe(alert);
+    // In the chat's alerts, which stay on screen under a phone's header as its chat scrolls the page (#3613).
+    expect(header().nextElementSibling).toHaveClass('chat-alerts');
+    expect(header().nextElementSibling).toContainElement(alert);
   });
 
   it('shows the account error on the empty chat too', async () => {
@@ -3990,6 +4013,256 @@ describe('Side chats disclosure', () => {
     expect(copilot.chat?.threadId).toBe('new-1');
     expect(disclosure()).toHaveAttribute('aria-expanded', 'false');
     expect(sidebar().queryByRole('button', { name: 'First' })).toBeNull();
+  });
+});
+
+// A phone's chat scrolls the page, so iOS Safari draws it under its status bar (#3613): as CopilotKit's own view does on
+// its box, the page opens at the latest message, keeps to the bottom as the chat grows until the user scrolls up, and
+// shows the jump to the bottom while away from it.
+describe('phone chat scrolling the page', () => {
+  const happyDOM = () => (window as unknown as HappyDomWindow).happyDOM;
+  const page = () => present(document.scrollingElement, 'the page scroller');
+  const jumpButton = () => screen.queryByTestId('copilot-scroll-to-bottom');
+  let height = 2000;
+  // Like a ResizeObserver: the chat reports each time it grows.
+  const resized: ResizeObserverCallback[] = [];
+  const observed = new Map<Element, ResizeObserverCallback[]>();
+  const grow = (to: number) => act(async () => {
+    height = to;
+    for (const callback of [...resized]) callback([], {} as ResizeObserver);
+  });
+  const scrollTo = (top: number) => act(async () => {
+    page().scrollTop = top;
+    window.dispatchEvent(new Event('scroll'));
+  });
+
+  beforeEach(() => {
+    happyDOM().setViewport({ width: 440, height: 956 });
+    height = 2000;
+    resized.length = 0;
+    observed.clear();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe(target: Element) {
+          resized.push(this.callback);
+          observed.set(target, [...(observed.get(target) ?? []), this.callback]);
+        }
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(page(), 'clientHeight', { configurable: true, value: 796 });
+    Object.defineProperty(page(), 'scrollHeight', { configurable: true, get: () => height });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    page().scrollTop = 0;
+    Reflect.deleteProperty(page(), 'clientHeight');
+    Reflect.deleteProperty(page(), 'scrollHeight');
+    happyDOM().setViewport({ width: 1024, height: 768 });
+  });
+
+  it('opens at the bottom of the page and follows the chat as it grows, until the user scrolls up', async () => {
+    await renderPage();
+    expect(screen.queryByTestId('copilot-scroll-view')).toBeNull();
+    expect(page().scrollTop).toBe(1204);
+    expect(jumpButton()).toBeNull();
+
+    await grow(2400);
+    expect(page().scrollTop).toBe(1604);
+
+    fireEvent.wheel(window, { deltaY: -100 });
+    await scrollTo(1000);
+    expect(jumpButton()).not.toBeNull();
+    await grow(2600);
+    expect(page().scrollTop).toBe(1000);
+
+    await scrollTo(1804);
+    expect(jumpButton()).toBeNull();
+    await grow(2800);
+    expect(page().scrollTop).toBe(2004);
+  });
+
+  it('restores the bottom after a 103px scroll up without input while the page height is unchanged', async () => {
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    await scrollTo(1101);
+    expect(page().scrollTop).toBe(1204);
+    expect(jumpButton()).toBeNull();
+
+    await grow(2400);
+    expect(page().scrollTop).toBe(1604);
+    expect(jumpButton()).toBeNull();
+  });
+
+  it.each(['wheel', 'touchmove', 'keydown'])('stops following an upward %s scroll while the page height is unchanged', async (input) => {
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    if (input === 'wheel') fireEvent.wheel(window, { deltaY: -103 });
+    else if (input === 'touchmove') fireEvent.touchMove(window, { touches: [{ clientY: 340 }] });
+    else fireEvent.keyDown(window, { key: 'ArrowUp' });
+    await scrollTo(1101);
+    expect(page().scrollTop).toBe(1101);
+    expect(jumpButton()).not.toBeNull();
+
+    await grow(2400);
+    expect(page().scrollTop).toBe(1101);
+    expect(jumpButton()).not.toBeNull();
+  });
+
+  // WebKit clamped the page up as the opening chat's content shifted, and reported that scroll only once the chat had
+  // grown again, before the chat's own resize: the chat took it for the user's and opened 133px short of its end.
+  it('keeps to the bottom through a scroll up the page makes itself as the chat grows, not one the user makes', async () => {
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    height = 2130;
+    await scrollTo(1137);
+    expect(page().scrollTop).toBe(1334);
+    expect(jumpButton()).toBeNull();
+    await grow(2200);
+    expect(page().scrollTop).toBe(1404);
+
+    // The user's wheel over the chat as it grows, or a key on the page, lets it go.
+    height = 2300;
+    fireEvent.wheel(screen.getByTestId('copilot-scroll-content'), { deltaY: -100 });
+    await scrollTo(1000);
+    expect(page().scrollTop).toBe(1000);
+    expect(jumpButton()).not.toBeNull();
+
+    await scrollTo(1504);
+    expect(jumpButton()).toBeNull();
+    height = 2400;
+    fireEvent.keyDown(document.body, { key: 'PageUp' });
+    await scrollTo(1300);
+    expect(page().scrollTop).toBe(1300);
+    expect(jumpButton()).not.toBeNull();
+  });
+
+  // Typing in the composer, scrolling a long draft in it and swiping the Agent Profile scroll no chat, but each latched
+  // as the user's scroll intent until the next scroll: then a scroll up the page made itself as the chat grew unpinned
+  // the chat.
+  it.each([
+    ['typing in the composer', async () => {
+      fireEvent.keyDown(screen.getByLabelText('Message'), { key: 'a' });
+    }],
+    ['wheeling a draft in the composer', async () => {
+      fireEvent.wheel(screen.getByLabelText('Message'), { deltaY: -100 });
+    }],
+    ['dragging a draft in the composer', async () => {
+      fireEvent.touchMove(screen.getByLabelText('Message'), { touches: [{ clientX: 200, clientY: 900 }] });
+    }],
+    ['swiping the Agent Profile', async () => {
+      await userEvent.click(screen.getByLabelText('Agent profile', { selector: 'button' }));
+      fireEvent.touchMove(screen.getByRole('dialog', { name: 'Agent profile' }), { touches: [{ clientX: 200, clientY: 340 }] });
+      await userEvent.click(screen.getByLabelText('Close agent profile'));
+    }],
+  ])('keeps to the bottom through a scroll up the page makes itself after %s', async (_, interact) => {
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    await interact();
+    height = 2130;
+    await scrollTo(1137);
+    expect(page().scrollTop).toBe(1334);
+    expect(jumpButton()).toBeNull();
+  });
+
+  // Android Chrome's keyboard shrinks only the visual viewport, and CopilotKit lifts the composer above it: the page
+  // makes the keyboard's room below the chat, so its latest message clears the lifted composer.
+  it("makes the keyboard's room below the chat while the composer is lifted above it", async () => {
+    const viewport = Object.assign(new EventTarget(), { height: 956, offsetTop: 0 });
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    onTestFinished(() => {
+      Reflect.deleteProperty(window, 'visualViewport');
+    });
+    // The page's content includes the room the chat makes for the keyboard.
+    Object.defineProperty(page(), 'scrollHeight', {
+      configurable: true,
+      get: () => height + parseFloat(document.querySelector<HTMLElement>('.chat-keyboard-room')?.style.height || '0'),
+    });
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    await act(async () => {
+      viewport.height = 656;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    expect(page().scrollTop).toBe(1504);
+
+    await act(async () => {
+      viewport.height = 956;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    expect(page().scrollTop).toBe(1204);
+  });
+
+  // CopilotKit pads the chat by the composer's height once it measures it, after the chat opens: the chat kept to the
+  // bottom only at its own resize, later, and in between the page sat 146px short of its end.
+  it("keeps to the bottom as the composer's space arrives, in the same update", async () => {
+    await renderPage();
+    expect(page().scrollTop).toBe(1204);
+
+    const overlay = screen.getByTestId('copilot-input-overlay');
+    await act(async () => {
+      height = 2146;
+      const entry = { target: overlay, contentRect: { height: 146 } } as unknown as ResizeObserverEntry;
+      for (const callback of observed.get(overlay) ?? []) callback([entry], {} as ResizeObserver);
+    });
+    expect(screen.getByTestId('copilot-scroll-content').style.paddingBottom).toBe('178px');
+    expect(page().scrollTop).toBe(1350);
+  });
+
+  // The chat stays mounted under Plugins, which scrolls the same page: Plugins's shorter page clamped the page to
+  // its end, which the hidden chat took for its own bottom and jumped back to on return.
+  it("keeps the user's place in the chat while Plugins covers it", async () => {
+    await renderPage();
+    fireEvent.wheel(window, { deltaY: -100 });
+    await scrollTo(1000);
+    expect(jumpButton()).not.toBeNull();
+
+    await userEvent.click(screen.getByLabelText('Toggle sidebar'));
+    await userEvent.click(within(present(document.querySelector('aside'), 'the sidebar')).getByRole('button', { name: 'Plugins' }));
+    height = 900;
+    await scrollTo(104);
+
+    await userEvent.click(screen.getByLabelText('Toggle sidebar'));
+    await userEvent.click(within(present(document.querySelector('aside'), 'the sidebar')).getByRole('button', { name: 'Main Chat' }));
+    height = 2000;
+    await grow(2000);
+    expect(page().scrollTop).toBe(1000);
+    expect(jumpButton()).not.toBeNull();
+  });
+
+  it("jumps to the page's bottom and follows the chat from there", async () => {
+    await renderPage();
+    fireEvent.wheel(window, { deltaY: -100 });
+    await scrollTo(1000);
+    // The jump holds the bottom until frames pass without movement; here none pass.
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    fireEvent.click(present(jumpButton(), 'the jump to the bottom'));
+    expect(page().scrollTop).toBe(1204);
+
+    // Momentum that scrolls the page up as it jumps does not stop it.
+    await scrollTo(1100);
+    expect(page().scrollTop).toBe(1204);
+    await grow(2400);
+    expect(page().scrollTop).toBe(1604);
+  });
+
+  it('backs the page below the composer, and closes the keyboard as the chat is dragged up', async () => {
+    await renderPage();
+    expect(present(document.querySelector<HTMLElement>('.chat-composer-backing'), 'the backing').style.top).toBe('0px');
+
+    const composer = screen.getByLabelText('Message');
+    composer.focus();
+    const chat = screen.getByTestId('copilot-scroll-content');
+    fireEvent.touchStart(chat, { touches: [{ clientX: 200, clientY: 300 }] });
+    fireEvent.touchMove(chat, { touches: [{ clientX: 200, clientY: 340 }] });
+    expect(document.activeElement).not.toBe(composer);
   });
 });
 

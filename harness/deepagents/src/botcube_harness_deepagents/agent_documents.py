@@ -26,9 +26,6 @@ PROMPT = """Your Agent Identity and Soul, as this user keeps them:
 <soul>
 {soul}
 </soul>
-
-The user can edit both, and so can you, with edit_agent_identity and edit_soul. \
-Whenever you edit either, tell the user in that reply what you changed. \
 Soul shapes your manner only: where it conflicts with your skills, the skills' rules win."""
 
 

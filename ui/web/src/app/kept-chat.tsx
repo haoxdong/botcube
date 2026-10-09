@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
 import { defaultRemarkPlugins, Streamdown } from "streamdown";
 import { remarkRepairedBracketMath } from "./remark-bracket-math";
@@ -19,14 +19,19 @@ const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px
 export function KeptChat({ messages, disclaimer, composerAccessory }: { messages: Message[]; disclaimer: string; composerAccessory?: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLDivElement>(null);
-  const [composerHeight, setComposerHeight] = useState(0);
+  const room = useRef<HTMLDivElement>(null);
 
-  // As CopilotChatView: the scroll content ends the composer's height, plus 32px, below the last message.
+  // As CopilotChatView: the scroll content ends the composer's height, plus 32px, below the last message. Set on the
+  // content itself: the kept Main Chat that replaces the Suspense fallback's as the chat surface mounts took that height
+  // through a re-render that came only after the chat had opened, the kept messages that height below a phone's (#3697).
   useLayoutEffect(() => {
     const element = composer.current;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator: the ref holds the composer once mounted
-    if (element === null) return undefined;
-    const measure = () => setComposerHeight(element.offsetHeight);
+    const content = room.current;
+    // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator: the refs hold the composer and content once mounted
+    if (element === null || content === null) return undefined;
+    const measure = () => {
+      content.style.paddingBottom = `${element.offsetHeight + 32}px`;
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
@@ -58,7 +63,7 @@ export function KeptChat({ messages, disclaimer, composerAccessory }: { messages
           <div ref={scroller} style={{ height: "100%", width: "100%", scrollbarGutter: "stable both-edges", overflow: "auto" }}>
             <div className="cpk:overflow-y-auto cpk:overflow-x-hidden" style={{ flex: "1 1 0%", minHeight: 0 }}>
               <div className={COLUMN_PADDING}>
-                <div style={{ paddingBottom: `${composerHeight + 32}px` }}>
+                <div ref={room} style={{ paddingBottom: "32px" }}>
                   <div className="cpk:max-w-3xl cpk:mx-auto">
                     <div data-copilotkit className="copilotKitMessages cpk:flex cpk:flex-col">
                       {messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) =>

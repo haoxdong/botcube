@@ -556,7 +556,6 @@ def _serve_session(
             system_prompt='',
             skills=[],
             agent_name='round-trip',
-            no_persistent_memory_prompt='',
             execute_description='Runs shell commands.',
             prepare_invocation=lambda _input: serving.InvocationAuth('user-1', False, None),
             record_belongs_to_actor=lambda _record, _actor: False,
