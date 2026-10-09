@@ -400,7 +400,7 @@ function App({
     }
   }
   const {
-    current: { id: activeId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
+    current: { id: activeId, newChat, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
     mainChatId,
     sideChats: { entries: sideChats, error: sideChatsError },
     failures: { mainChat: mainChatError, linkedChat: linkedChatError, refresh: mainChatRefreshError, stop: stopError },
@@ -494,13 +494,13 @@ function App({
 
   // Pre-warm the Session's Sandbox and the requester's agent for its model, so the first message starts without either.
   // Only the latest warmup, the one for the open chat, its model and account, may report or clear a failure.
-  const warmup = (target: { threadId: string } | { mainChat: true }) => {
+  const warmup = (target: { threadId: string; newChat?: true } | { mainChat: true }) => {
     const request = ++warmupRequest.current;
     // Replay names the same Main Chat that boot used before its id was known. Its Sandbox must
     // finish provisioning before another warmup invokes it; other chats and accounts stay independent.
     const runtime = "mainChat" in target || target.threadId === mainChatId ? { mainChat: true } : target;
     const key = JSON.stringify({ accountId, ...runtime });
-    const prepare = () => fetch(`${CHAT_SERVICE_URL}/warmup`, {
+    const prepare = () => auth.isAccountCurrent?.(accountId) === false ? Promise.resolve() : fetch(`${CHAT_SERVICE_URL}/warmup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -516,7 +516,7 @@ function App({
     const previous = pendingWarmups.current.get(key);
     const pending = previous === undefined ? prepare() : previous.then(() => {
       // A chat, model or account switch can make a queued request obsolete before it starts.
-      if (request === warmupRequest.current && accountId === agentProfileAccount.current && auth.isAccountCurrent?.(accountId) !== false) return prepare();
+      if (request === warmupRequest.current && accountId === agentProfileAccount.current) return prepare();
       return undefined;
     });
     pendingWarmups.current.set(key, pending);
@@ -529,8 +529,8 @@ function App({
     if (ready) warmup({ mainChat: true });
   }, [ready, accountId]);
   useEffect(() => {
-    if (ready && activeId !== null) warmup({ threadId: activeId });
-  }, [ready, activeId, offeredModel, effort]);
+    if (ready && activeId !== null) warmup({ threadId: activeId, ...(newChat && { newChat: true }) });
+  }, [ready, activeId, newChat, offeredModel, effort]);
 
   useEffect(() => {
     const subscription = agent.subscribe({

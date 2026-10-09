@@ -573,7 +573,18 @@ describe('cartridge wiring', () => {
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
-    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","model":"deep","effort":"max"}');
+    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"max"}');
+  });
+
+  it("does not allocate the previous account's new Side Chat after an account switch", async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
+    const before = warmups().length;
+    cartridge.auth = auth({ accountId: 'acct-second' });
+    view.rerender(<Page />);
+    await settle();
+    expect(warmups().slice(before).map(([, init]) => JSON.parse(String(init.body)))).not.toContainEqual(expect.objectContaining({ threadId: 'new-1', newChat: true }));
   });
 
   it('serializes Main Chat warmups while its Sandbox provisions, then prepares the selected model', async () => {
@@ -623,6 +634,27 @@ describe('cartridge wiring', () => {
     expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"main-1","model":"deep","effort":"high"}');
   });
 
+  it('does not dispatch an immediate new Side warmup when old models load during an account switch', async () => {
+    let current = true;
+    let finishModels = () => {};
+    const models = new Promise<void>((resolve) => { finishModels = resolve; });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === 'http://chat.test/agent/models') await models;
+      return chatService(url, init);
+    });
+    await renderPage(Object.assign(auth({ accountId: 'acct-first' }), { isAccountCurrent: () => current }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
+    await settle();
+    const before = warmups().length;
+    current = false;
+    await act(async () => { finishModels(); });
+    await settle();
+
+    expect(copilot.chat?.threadId).toBe('new-1');
+    expect(warmups()).toHaveLength(before);
+  });
+
   it('does not dispatch a queued warmup after an account switch starts before rerender', async () => {
     let current = true;
     let finishBoot!: (response: Response) => void;
@@ -653,7 +685,7 @@ describe('cartridge wiring', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await settle();
 
-    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","model":"deep","effort":"max"}');
+    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"max"}');
     const before = warmups().length;
     await act(async () => { finishBoot(answer(200)); });
     await settle();
@@ -1663,6 +1695,7 @@ describe('Main Chat kept in this browser', () => {
     expect(screen.queryByTestId('copilot-message-list')).toBeNull();
     expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeInTheDocument();
     expect(kept()).toBeNull();
+    expect(warmups().map(([, init]) => JSON.parse(String(init.body)))).not.toContainEqual(expect.objectContaining({ threadId: 'main-other', newChat: true }));
   });
 
   it.each(['error', 'parked'] as const)('takes the copy off screen for the session gate when the session is %s', async (sessionStatus) => {

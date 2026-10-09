@@ -74,6 +74,7 @@ export function useSessionNavigation({
   /** Why the Side Chat the URL names could not open; the user goes on to the Main Chat from it. */
   const [linkedChatError, setLinkedChatError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [newChatOwner, setNewChatOwner] = useState<{ accountId: typeof accountId } | null>(null);
   // Only the latest navigation may open a chat or report a load failure.
   const navigation = useRef(0);
   const navigationDestination = useRef<string | null>(null);
@@ -164,6 +165,7 @@ export function useSessionNavigation({
     setActiveInitialMessages(messages);
     setActiveProvider(provider);
     setActiveId(id);
+    setNewChatOwner(null);
     setUserSentMessage(false);
     setHasMessages(false);
   };
@@ -202,6 +204,7 @@ export function useSessionNavigation({
   const closeChat = () => {
     copiedAccount.current = undefined;
     setActiveId(null);
+    setNewChatOwner(null);
     setActiveInitialMessages([]);
     setActiveProvider(undefined);
     setUserSentMessage(false);
@@ -331,6 +334,7 @@ export function useSessionNavigation({
   const handleNewConversation = () => {
     ++navigation.current;
     openChat(crypto.randomUUID(), { messages: [] });
+    setNewChatOwner({ accountId });
   };
 
   useEffect(() => {
@@ -492,7 +496,7 @@ export function useSessionNavigation({
     });
 
   return {
-    current: { id: activeId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
+    current: { id: activeId, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
     mainChatId,
     sideChats: { entries: sideChats, error: sideChatsError },
     failures: { mainChat: mainChatError, linkedChat: linkedChatError, refresh: mainChatRefreshError, stop: stopError },
