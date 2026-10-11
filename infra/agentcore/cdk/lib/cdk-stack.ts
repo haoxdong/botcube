@@ -349,6 +349,7 @@ export class AgentCoreStack extends Stack {
       functionName: identity.sessionApiFunction,
       code: lambda.DockerImageCode.fromImageAsset(codeLocation, {
         file: 'session-api.Dockerfile',
+        exclude: ['tools'],
         platform: Platform.LINUX_ARM64,
       }),
       architecture: lambda.Architecture.ARM_64,

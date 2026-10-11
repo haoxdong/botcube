@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js';
 import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -35,7 +36,7 @@ const turbopackRoot = commonAncestor(repoRoot, nextPackageRoot);
 const turbopackTarget = (target: string) =>
   path.isAbsolute(target) ? path.relative(appRoot, target) : target;
 
-export default async function createConfig(): Promise<NextConfig> {
+export default async function createConfig(phase: string): Promise<NextConfig> {
   const cartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG
     ? await import(path.resolve(repoRoot, process.env.CARTRIDGE_UI_BUILD_CONFIG))
       .then((module) => (module.default ?? module)({ appRoot, repoRoot }) as CartridgeBuildConfig)
@@ -45,7 +46,9 @@ export default async function createConfig(): Promise<NextConfig> {
 
   const config: NextConfig = {
     output: 'export',
-    distDir: process.env.CARTRIDGE_UI_PACKAGE ? '.next-cartridge' : '.next-standalone',
+    distDir: phase === PHASE_DEVELOPMENT_SERVER
+      ? '.next'
+      : process.env.CARTRIDGE_UI_PACKAGE ? '.next-cartridge' : '.next-standalone',
     devIndicators: {
       position: 'top-right',
     },

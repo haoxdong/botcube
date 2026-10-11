@@ -1,7 +1,8 @@
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
-import { readFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import type { AgentCoreStack } from '../lib/cdk-stack';
@@ -208,4 +209,37 @@ test.each(['yes', '', 1, null])('rejects malformed Memory migration context %s',
   expect(() => addAgentCoreStacks(app, deployConfig(), COMMIT)).toThrow(
     'retainLegacyRuntimeMemory must be true or false'
   );
+});
+
+test('stages the session API source without the Sandbox tools virtualenv', () => {
+  const fixture = mkdtempSync(resolve(tmpdir(), 'session-api-staging-'));
+  try {
+    const source = resolve(fixture, 'source');
+    mkdirSync(resolve(source, 'tools/.venv/lib'), { recursive: true });
+    mkdirSync(resolve(source, 'src'), { recursive: true });
+    writeFileSync(resolve(source, 'session-api.Dockerfile'), 'FROM scratch\nCOPY src/ /src/\n');
+    writeFileSync(resolve(source, 'src/session_api.py'), 'source fixture');
+    writeFileSync(resolve(source, 'tools/.venv/lib/numpy-fixture.py'), 'installed dependency');
+    mkdirSync(resolve(source, '.tool-dist/cartridge-contract'), { recursive: true });
+    for (const file of ['pyproject.toml', 'uv.lock', '.tool-dist/cartridge-contract/contract.py']) {
+      writeFileSync(resolve(source, file), file);
+    }
+    const app = new App({ outdir: resolve(fixture, 'out') });
+
+    addAgentCoreStacks(app, deployConfig(), COMMIT, { harnessCodeLocation: source });
+
+    const assets = readdirSync(app.outdir).filter(name => name.startsWith('asset.'));
+    const sessionAsset = assets.find(name => existsSync(resolve(app.outdir, name, 'src/session_api.py')));
+    if (sessionAsset === undefined) throw new Error('Session API asset missing');
+    expect(readFileSync(resolve(app.outdir, sessionAsset, 'src/session_api.py'), 'utf8')).toBe('source fixture');
+    for (const file of ['pyproject.toml', 'uv.lock', '.tool-dist/cartridge-contract/contract.py']) {
+      expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);
+    }
+    expect(readFileSync(resolve(app.outdir, sessionAsset, 'session-api.Dockerfile'), 'utf8')).toBe(
+      'FROM scratch\nCOPY src/ /src/\n'
+    );
+    expect(existsSync(resolve(app.outdir, sessionAsset, 'tools/.venv/lib/numpy-fixture.py'))).toBe(false);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
