@@ -347,7 +347,7 @@ export class ScheduledTasks {
     } catch (error) {
       if (!(error instanceof ResourceNotFoundException)) throw error;
       if (item.schedule_group === undefined) {
-        const failure = new HttpError(502, 'Scheduled task schedule group is unknown');
+        const failure = new HttpError(503, 'Scheduled task schedule group is unknown');
         failure.cause = error;
         throw failure;
       }

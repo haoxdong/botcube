@@ -1458,7 +1458,7 @@ describe('ScheduledTasks', () => {
     if (configured === 'unchanged') await realScheduler.send(new DeleteScheduleCommand({ Name: task.id, GroupName: group }));
     const tasks = new ScheduledTasks(table, { ...runs, group }, dynamodb, realScheduler);
 
-    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 502, detail: 'Scheduled task schedule group is unknown' });
+    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 503, detail: 'Scheduled task schedule group is unknown', cause: { name: 'ResourceNotFoundException' } });
     expect(await tasks.get(account, task.id)).toEqual(task);
     expect((await normal.create(account, proposalId, MORNING_BRIEF)).created).toBe(false);
     expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toEqual(
