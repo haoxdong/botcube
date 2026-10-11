@@ -221,3 +221,87 @@ it('records first-answer attribution receipt, admission and actual dispatch arou
     expect(boundary).not.toContain('private');
   } finally { await target.stop(); }
 });
+
+function admissionGate<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+const admissionInput = { threadId: '55555555-5555-4555-8555-555555555555', runId: '66666666-6666-4666-8666-666666666666', state: {}, messages: [], tools: [], context: [], forwardedProps: {} };
+const admissionPost = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(admissionInput) };
+
+describe('independent Turn admission', () => {
+  it('starts requester and namespace together and reports readiness failure while requester is pending', async () => {
+    const requester = admissionGate<{ owner: string }>();
+    const resolving = vi.fn(() => requester.promise);
+    const target = await startInProcess({ cartridge: { requester: resolving } });
+    const namespace = admissionGate<void>();
+    vi.spyOn(target.sessionMetadata, 'checkRuntimeNamespaceReady').mockImplementation(() => namespace.promise);
+    const record = vi.spyOn(target.sessionMetadata, 'recordTurn');
+    const response = target.app.request('/', admissionPost);
+    try {
+      await vi.waitFor(() => expect(resolving).toHaveBeenCalledTimes(1));
+      expect(record).not.toHaveBeenCalled();
+      let answered = false;
+      void Promise.resolve(response).then(() => { answered = true; });
+      namespace.reject(new Error('namespace offline'));
+      await vi.waitFor(() => expect(answered).toBe(true));
+      expect((await response).status).toBe(503);
+      expect(record).not.toHaveBeenCalled();
+    } finally { requester.resolve({ owner: 'account-1' }); namespace.resolve(); await response; await target.stop(); }
+  });
+
+  it('reports a documents failure while payload preparation is pending', async () => {
+    const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
+    const payload = admissionGate<{ forwardedProps: { token: string } }>();
+    const constructing = vi.fn(async () => ({ ...admissionInput, ...await payload.promise }));
+    const documents = admissionGate<never>();
+    const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockImplementation(() => documents.promise);
+    const target = await startInProcess({ cartridge: { invocationPayload: constructing, credentialProps: ['token'] } });
+    const ending = vi.spyOn(target.sessionMetadata, 'turnEnded');
+    const dispatch = vi.spyOn(target.sessionMetadata, 'beginDispatch');
+    const response = target.app.request('/', admissionPost);
+    try {
+      await vi.waitFor(() => expect(constructing).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+      documents.reject(new HttpError(503, 'Documents failed'));
+      let answered = false;
+      void Promise.resolve(response).then(() => { answered = true; });
+      await vi.waitFor(() => expect(answered).toBe(true));
+      expect((await response).status).toBe(503);
+      payload.resolve({ forwardedProps: { token: 'private-issued-token' } });
+      expect(ending).toHaveBeenCalledWith('account-1', admissionInput.threadId, expect.anything(), expect.objectContaining({ message: expect.not.stringContaining('private-issued-token') }));
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally { payload.resolve({ forwardedProps: { token: 'private-issued-token' } }); documents.reject(new HttpError(503, 'failed')); await response; await target.stop(); }
+  });
+});
+
+it('preserves the first classified failure and reports a second preparation failure', async () => {
+  const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
+  const payload = admissionGate<never>();
+  const documents = admissionGate<never>();
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const constructing = vi.fn(() => payload.promise);
+  const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockImplementation(() => documents.promise);
+  const target = await startInProcess({ cartridge: { invocationPayload: constructing } });
+  const ending = vi.spyOn(target.sessionMetadata, 'turnEnded');
+  const response = target.app.request('/', admissionPost);
+  const primary = new HttpError(503, 'Documents refused');
+  const secondary = new HttpError(502, 'Payload refused');
+  try {
+    await vi.waitFor(() => expect(constructing).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+    documents.reject(primary);
+    let answered = false;
+    void Promise.resolve(response).then(() => { answered = true; });
+    await vi.waitFor(() => expect(answered).toBe(true));
+    const result = await response;
+    payload.reject(secondary);
+    expect(result.status).toBe(503);
+    expect(await result.json()).toEqual({ detail: 'Documents refused' });
+    await vi.waitFor(() => expect(logged).toHaveBeenCalledWith('Concurrent Turn preparation failed', secondary));
+    expect(ending).toHaveBeenCalledTimes(1);
+  } finally { payload.reject(secondary); documents.reject(primary); await response; await target.stop(); }
+});

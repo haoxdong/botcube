@@ -334,8 +334,8 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
         tmp_path,
         [f'Answer {turn}' for turn in range(TURNS)],
     )
-    writer_saver = serving._DEFERRED_SAVER
-    assert writer_saver is not None
+    writer_saver = writer.checkpointer
+    assert isinstance(writer_saver, TurnCheckpointSaver)
 
     async def run_turns() -> list[AnyMessage]:
         messages: list[AnyMessage] = []
@@ -360,8 +360,8 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
     # A restarted Harness (empty buffer) continues the Session from the record.
     monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
     restarted = _graph(serving._build_checkpointer(), tmp_path, ['Answer after restart'])
-    restarted_saver = serving._DEFERRED_SAVER
-    assert restarted_saver is not None
+    restarted_saver = restarted.checkpointer
+    assert isinstance(restarted_saver, TurnCheckpointSaver)
 
     async def run_turn_after_restart() -> list[AnyMessage]:
         async with restarted_saver.aflush_on_exit():
@@ -468,19 +468,21 @@ class _HeldModel(_ToolCallingModel):
 def _slow_flush(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> tuple[asyncio.Event, asyncio.Event]:
     """Hold each checkpoint flush until released, logging when it persists: (flushing, persisted)."""
     flushing, persisted = asyncio.Event(), asyncio.Event()
-    aflush = TurnCheckpointSaver.aflush
+    from botcube_harness_deepagents.turn_publication import _PublishingTurnSaver
 
-    async def persist(saver: TurnCheckpointSaver, session: tuple[str, str] | None = None) -> None:
+    aflush = _PublishingTurnSaver.aflush
+
+    async def persist(saver: _PublishingTurnSaver, session: tuple[str, str] | None = None) -> None:
         await persisted.wait()
         await aflush(saver, session)
         log.append('flushed')
 
-    async def slow_flush(saver: TurnCheckpointSaver, session: tuple[str, str] | None = None) -> None:
+    async def slow_flush(saver: _PublishingTurnSaver, session: tuple[str, str] | None = None) -> None:
         flushing.set()
         # The persistence call runs on in its executor however its caller is cancelled.
         await asyncio.shield(persist(saver, session))
 
-    monkeypatch.setattr(TurnCheckpointSaver, 'aflush', slow_flush)
+    monkeypatch.setattr(_PublishingTurnSaver, 'aflush', slow_flush)
     return flushing, persisted
 
 

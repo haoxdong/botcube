@@ -2174,6 +2174,7 @@ def test_same_session_id_isolates_each_filing_user(
         serving._BACKEND_BY_AGENT.clear()
         serving._DEFERRED_SAVER = None
         serving._CHECKPOINTER = serving._build_checkpointer()
+        serving._DEFERRED_SAVER = serving._CHECKPOINTER if isinstance(serving._CHECKPOINTER, serving.TurnCheckpointSaver) else None
         cold = service.turn(
             "synthetic B cold",
             actor="owner-b",
@@ -2201,6 +2202,7 @@ def test_opaque_runtime_continuation_restores_original_history_through_broker_is
     serving._BACKEND_BY_AGENT.clear()
     serving._DEFERRED_SAVER = None
     serving._CHECKPOINTER = serving._build_checkpointer()
+    serving._DEFERRED_SAVER = serving._CHECKPOINTER
 
     continued = service.turn(
         'after continuation', actor='claimed-owner', user='original-filing',
@@ -2363,7 +2365,7 @@ def test_a_new_turn_waits_for_its_record_and_reports_publication_failure_issue_3
         try:
             assert persisting.wait(5), 'Initial publication did not reach the record'
             assert not started.wait(0.2), 'RUN_STARTED published before initial record was durable'
-            assert not answering.is_set(), 'Model work started before initial publication'
+            assert answering.wait(5), 'Model work did not overlap initial publication'
         finally:
             release_record.set()
             events = running.result(timeout=10)
@@ -2373,8 +2375,8 @@ def test_a_new_turn_waits_for_its_record_and_reports_publication_failure_issue_3
         assert events[-1] == {
             'type': 'RUN_ERROR', 'message': 'Initial record publication failed', 'code': 'INTERNAL_ERROR',
         }
-        assert service.recorder.heard == []
-        assert _replay('user-1', 'thread-1') == [('user', 'First question')]
+        assert service.recorder.heard == [['First question']]
+        assert _replay('user-1', 'thread-1')[0] == ('user', 'First question')
     else:
         assert started.is_set()
         assert events[-1]['type'] == 'RUN_FINISHED'
@@ -2382,6 +2384,70 @@ def test_a_new_turn_waits_for_its_record_and_reports_publication_failure_issue_3
         assert _replay('user-1', 'thread-1') == [
             ('user', 'First question'), ('assistant', 'Echo: First question'),
         ]
+
+
+def test_stopped_initial_publication_settles_before_replacement_issue_3701(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory = FakeAgentCoreMemory()
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    _broker_http(monkeypatch, memory)
+    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    persisting = threading.Event()
+    release = threading.Event()
+    answering = threading.Event()
+    replacement_started = threading.Event()
+    create_event = memory.create_event
+
+    def held_record(**params: Any) -> dict[str, Any]:
+        if not persisting.is_set():
+            persisting.set()
+            assert release.wait(10), 'Initial publication was never released'
+        return create_event(**params)
+
+    async def unfinished(model: _ScriptedModel, messages: list[BaseMessage], *_args: Any, **_kwargs: Any):
+        model.recorder.prompts.append('')
+        if any(message.content == 'replacement' for message in messages):
+            replacement_started.set()
+            yield _text('Replacement answer')
+            return
+        answering.set()
+        await asyncio.Future()
+        yield _text('Unreachable answer')
+
+    monkeypatch.setattr(memory, 'create_event', held_record)
+    monkeypatch.setattr(_ScriptedModel, '_astream', unfinished)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.turn, 'First question', session='runtime-session-1')
+        replacement = None
+        try:
+            assert persisting.wait(5)
+            assert answering.wait(5), 'Model did not overlap the initial write'
+            for _ in range(3):
+                stopped = service.client.post('/invocations', json={
+                    'threadId': 'thread-1', 'runId': 'stop', 'messages': [],
+                    'tools': [], 'context': [], 'state': {},
+                    'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
+                }, headers={SESSION_HEADER: 'runtime-session-1'})
+                assert stopped.status_code == 200
+            replacement = pool.submit(service.turn, 'replacement', session='runtime-session-1')
+            assert not replacement_started.wait(0.2), 'Replacement entered before the initial worker settled'
+            with pytest.raises(TimeoutError):
+                first.result(timeout=0.2)
+            with pytest.raises(TimeoutError):
+                replacement.result(timeout=0.2)
+        finally:
+            release.set()
+            first_events = first.result(timeout=10)
+            replacement_events = replacement.result(timeout=10) if replacement is not None else []
+    assert first_events[-1]['code'] == 'TURN_STOPPED'
+    assert not any(event['type'] == 'RUN_STARTED' for event in first_events)
+    assert replacement_started.is_set()
+    assert replacement_events[-1]['type'] == 'RUN_FINISHED'
+    assert _replay('user-1', 'thread-1') == [
+        ('user', 'First question'), ('user', 'replacement'), ('assistant', 'Replacement answer'),
+    ]
 
 
 def test_claimed_session_keeps_its_filing_record_on_the_in_memory_backend(
@@ -2504,3 +2570,47 @@ def test_invocation_eof_waits_for_real_record_settlement_before_purge_issue_2822
     with pytest.raises(session_api.SessionNotFoundError, match='has no record'):
         _replay('user-1', 'thread-1')
     assert not any(memory.events.values())
+
+
+def test_a_sandbox_isolated_by_session_filing_keeps_its_own_rotating_token(service: _Service) -> None:
+    service.turn('hello', user='first-filing', env={'TOKEN': 'first'})
+    first_agent = next(iter(serving._AGENTS.values()))
+    first_backend = serving._BACKEND_BY_AGENT[first_agent]
+    service.turn('hello', user='second-filing', env={'TOKEN': 'second'})
+    second_agent = list(serving._AGENTS.values())[-1]
+    second_backend = serving._BACKEND_BY_AGENT[second_agent]
+
+    assert first_backend is not second_backend
+    assert first_backend._env['TOKEN'] == 'first'
+    assert second_backend._env['TOKEN'] == 'second'
+    service.turn('hello', user='first-filing', env={'TOKEN': 'refreshed'})
+    assert first_backend._env['TOKEN'] == 'refreshed'
+    assert second_backend._env['TOKEN'] == 'second'
+
+
+def test_cached_warmup_skips_history_for_startup_and_leaves_live_token_unchanged(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service.turn('hello', env={'TOKEN': 'live'})
+    agent = next(iter(serving._AGENTS.values()))
+    backend = serving._BACKEND_BY_AGENT[agent]
+    builds = len(service.recorder.builds)
+    reads: list[Any] = []
+    assert serving._CHECKPOINTER is not None
+    original = serving._CHECKPOINTER.aget_tuple
+
+    async def read(config: Any) -> Any:
+        reads.append(config)
+        return await original(config)
+
+    monkeypatch.setattr(serving._CHECKPOINTER, 'aget_tuple', read)
+    startup = service.turn('hello', warmup=True, preparationScope='startup', env={'TOKEN': 'warmup'})
+    assert startup[-1]['value']['outcome'] == 'prepared'
+    assert reads == []
+    recorded = service.turn('hello', warmup=True, preparationScope='recorded', env={'TOKEN': 'warmup'})
+    assert recorded[-1]['value']['outcome'] == 'prepared'
+    assert reads
+    expected = serving._session_config(('user-1', 'thread-1')).get('configurable', {})
+    assert all(all(config['configurable'][key] == value for key, value in expected.items()) for config in reads)
+    assert backend._env['TOKEN'] == 'live'
+    assert len(service.recorder.builds) == builds

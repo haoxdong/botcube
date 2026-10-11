@@ -116,7 +116,7 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
 
         async def exercise() -> None:
             stream = serving._SessionTurns().stream(
-                ('owner', 'session'), agent, _input(), files, tmp_path, serving._RequestContext(None),
+                ('owner', 'session'), lambda: agent, _input(), files, tmp_path, serving._RequestContext(None),
             )
 
             async def read_chart_on_completion() -> str:
@@ -156,7 +156,7 @@ def test_turn_without_files_finishes_after_history_settlement(
         monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
         monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
         stream = serving._SessionTurns().stream(
-            ('owner', 'session'), _agent(), _input(), None, tmp_path, serving._RequestContext(None),
+            ('owner', 'session'), lambda: _agent(), _input(), None, tmp_path, serving._RequestContext(None),
         )
         try:
             async def collect() -> list[EventType]:
@@ -233,7 +233,7 @@ def test_failed_files_settlement_preserves_history_and_fails_the_current_turn(
         received = []
         with pytest.raises(serving.FilesSyncError) as caught:
             async for event in turns.stream(
-                ('owner', 'session'), _agent(use_files=True), _input(), files, tmp_path, serving._RequestContext(None),
+                ('owner', 'session'), lambda: _agent(use_files=True), _input(), files, tmp_path, serving._RequestContext(None),
             ):
                 received.extend([event.type])
         assert EventType.RUN_FINISHED not in received
@@ -272,11 +272,11 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
         monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
         files = cast(FilesSync, SimpleNamespace(pull=lambda *args: None, push=lambda *args: pushed.append('files')))
         turns = serving._SessionTurns()
-        stream = turns.stream(('owner', 'session'), cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None))
+        stream = turns.stream(('owner', 'session'), lambda: cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None))
         completion = asyncio.create_task(anext(stream))
         await closing.wait()
         assert not completion.done()
-        next_stream = turns.stream(('owner', 'session'), _agent(), _input('next'), None, tmp_path, serving._RequestContext(None))
+        next_stream = turns.stream(('owner', 'session'), lambda: _agent(), _input('next'), None, tmp_path, serving._RequestContext(None))
         next_event = asyncio.create_task(anext(next_stream))
         await asyncio.sleep(0.02)
         assert not next_event.done()
@@ -310,7 +310,7 @@ def test_an_errored_graph_does_not_publish_files(monkeypatch: pytest.MonkeyPatch
 
     async def exercise() -> None:
         events = [event async for event in serving._SessionTurns().stream(
-            ('owner', 'session'), cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None),
+            ('owner', 'session'), lambda: cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None),
         )]
         assert [(event.type, event.code) for event in events] == [(EventType.RUN_ERROR, 'GRAPH_FAILED')]
         assert pushed == []
@@ -356,9 +356,9 @@ def test_files_completion_waits_for_checkpoint_flush_and_stop_keeps_the_upload_l
         turns = serving._SessionTurns()
         session = ('owner', 'session')
         agent = cast(LangGraphAgent, Agent())
-        stream = turns.stream(session, agent, _input(), files, tmp_path, serving._RequestContext(None))
+        stream = turns.stream(session, lambda: agent, _input(), files, tmp_path, serving._RequestContext(None))
         completion = asyncio.create_task(anext(stream))
-        next_stream = turns.stream(session, agent, _input('next'), None, tmp_path, serving._RequestContext(None))
+        next_stream = turns.stream(session, lambda: agent, _input('next'), None, tmp_path, serving._RequestContext(None))
         try:
             assert await asyncio.to_thread(uploading.wait, 2)
             turns.stop(session, 'run')

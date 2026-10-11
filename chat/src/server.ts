@@ -360,11 +360,13 @@ export function createChatService(
 
   /** What the Harness gets for a Turn on `input`, but its Session's filing ID: the Cartridge's payload with the Agent Documents. */
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void) => {
-    const payload = await cartridge.invocationPayload(input, requester, model);
-    captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
+    const preparing = cartridge.invocationPayload(input, requester, model).then((payload) => {
+      captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
+      return payload;
+    });
+    const [payload, documents] = await admissionResults([preparing, agentDocuments.get(requester.owner, cartridge.agentDocuments)]);
     // Named to the Harness, so a Turn that names no model runs on the one resolved for it, not the Harness's own default.
     payload.forwardedProps.model = model.key;
-    const documents = await agentDocuments.get(requester.owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
     payload.forwardedProps.memoryRevision = documents.memoryRevision;
@@ -383,11 +385,10 @@ export function createChatService(
     const parsed = RunAgentInputSchema.safeParse(body);
     if (!parsed.success) return c.json({ detail: parsed.error.issues }, 422);
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
-    await requireRuntimeNamespace();
+    const [, requester] = await Promise.all([requireRuntimeNamespace(), cartridge.requester(c)]);
     // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
     const input = body as RunAgentInput;
     const validatedInput = parsed.data as RunAgentInput;
-    const requester = await cartridge.requester(c);
     const initialMessages = structuredClone(input.messages);
     const held = takeHeldIds(input.forwardedProps ?? {});
     const model = await requireAllowedModel(input, cartridge, requester);
@@ -870,4 +871,17 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
     process.off('exit', reportUnsavedTurnSummaries);
   });
   return server;
+}
+
+async function admissionResults<const T extends readonly Promise<unknown>[]>(tasks: T) {
+  try {
+    return await Promise.all(tasks);
+  } catch (error) {
+    void Promise.allSettled(tasks).then((results) => {
+      for (const result of results) {
+        if (result.status === 'rejected' && result.reason !== error) console.error('Concurrent Turn preparation failed', result.reason);
+      }
+    });
+    throw error;
+  }
 }

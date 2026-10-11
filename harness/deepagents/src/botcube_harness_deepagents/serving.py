@@ -7,6 +7,7 @@ import json
 import logging
 import logging.config
 import os
+import threading
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -15,12 +16,12 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import aclosing, asynccontextmanager, nullcontext
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard, TypeVar, cast
 
 from ag_ui.core import (
     CustomEvent,
@@ -102,6 +103,7 @@ from .prompt_cache_observability import (
 )
 from .scheduled_tasks import propose_scheduled_task
 from .shell_backend import PolicyShellBackend
+from .turn_publication import _PublishingTurnSaver
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore.type_defs import EventTypeDef
@@ -392,20 +394,21 @@ class _SessionAgent(LangGraphAgent):
         with answer_timing.phase('state_preparation'):
             prepared = await super().prepare_stream(input, agent_state, config)
         self._graph_stream = prepared.get('stream')
-        prepared['stream'] = await self._prime_initial_record(self._graph_stream, agent_state)
+        prepared['stream'] = await self._prime_initial_record(self._graph_stream, agent_state, config)
         return prepared
 
-    async def _prime_initial_record(self, stream: Any, agent_state: Any) -> Any:
+    async def _prime_initial_record(self, stream: Any, agent_state: Any, config: RunnableConfig) -> Any:
         if stream is None or getattr(self.graph, 'checkpointer', None) is None or agent_state.values.get('messages'):
             return stream
         buffered = []
-        # The library emits RUN_STARTED before iterating the lazy graph. With sync
-        # durability, the first node starts only after the initial question is durable.
         async for event in stream:
             buffered.append(event)
             metadata = event.get('metadata', {})
             if len(event.get('parent_ids', [])) == 1 and metadata.get('langgraph_step', -1) >= 1:
                 break
+        if isinstance(self.graph.checkpointer, _PublishingTurnSaver):
+            configurable = config.get('configurable', {})
+            await self.graph.checkpointer.await_initial_record((configurable['actor_id'], configurable['thread_id']))
 
         async def replay() -> AsyncGenerator[Any, None]:
             for event in buffered:
@@ -493,12 +496,13 @@ _CHECKPOINTER: Any | None = None
 _STORE: AgentCoreMemoryStore | InMemoryStore | None = None
 _THREAD_LTM_CONTEXTS: dict[tuple[str, str, int], str | None] = {}
 _DEFERRED_SAVER: TurnCheckpointSaver | None = None
-_BACKENDS: dict[tuple[str, str, tuple[tuple[str, str], ...]], LocalShellBackend] = {}
+_BACKENDS: dict[tuple[str, str, str, tuple[tuple[str, str], ...]], LocalShellBackend] = {}
 _AGENT_BACKENDS: dict[_AgentKey, LocalShellBackend] = {}
 # The backend each agent's graph was built with, looked up by the invoking agent.
 _BACKEND_BY_AGENT: dict[Any, LocalShellBackend] = {}
 # The latest Turn's relay per agent: its invocation token rotates without a rebuild, as the shell's does.
 _MODEL_RELAYS: dict[_AgentKey, ModelRelay] = {}
+_CACHE_LOCK = threading.RLock()
 
 
 def _build_checkpointer() -> Any:
@@ -508,15 +512,13 @@ def _build_checkpointer() -> Any:
     all of them in one batch on flush, instead of one API call per LangGraph
     super-step (~62 per Turn, ~8-15 s of checkpoint overhead).
     """
-    global _DEFERRED_SAVER
     if AGENTCORE_MEMORY_ID:
-        _DEFERRED_SAVER = agentcore_memory_backend.build_checkpointer(
+        return agentcore_memory_backend.build_checkpointer(
             AGENTCORE_MEMORY_ID,
             region_name=AGENTCORE_REGION,
-            wrapper=TurnCheckpointSaver,
+            wrapper=_PublishingTurnSaver,
             broker=True,
         )
-        return _DEFERRED_SAVER
     checkpoint_path = os.getenv('BOTCUBE_CHECKPOINT_PATH', '').strip()
     if checkpoint_path:
         return local_memory_backend.build_checkpointer(checkpoint_path)
@@ -670,123 +672,126 @@ def _get_agent(
     Memory is the requester's (actor_id). The Chat Service forwards both; they
     are never resolved here (ADR 0068).
     """
-    conversation_id = thread_id or 'default'
-    resolved_model = resolve_model(model)
-    resolved_effort = resolve_effort(effort)
-    environment_key = _require_cartridge().environment_cache_key(environment)
-    key = _AgentKey(
-        conversation_id,
-        actor_id,
-        session_user_id,
-        persistent_memory,
-        resolved_model,
-        resolved_effort,
-        environment_key,
-        documents.cache_key() if documents else '',
-        memory_revision,
-        syncs_files,
-        invocation_prompt,
-    )
-    cached = _AGENTS.get(key)
-    if preparing and cached is not None:
-        return cached
-    if model_relay is not None:
-        _MODEL_RELAYS[key] = model_relay
-    if cached is not None:
-        backend = _AGENT_BACKENDS[key]
-        _apply_environment(backend, environment)
-        _BACKEND_BY_AGENT[cached] = backend
-        return cached
+    with _CACHE_LOCK:
+        conversation_id = thread_id or 'default'
+        resolved_model = resolve_model(model)
+        resolved_effort = resolve_effort(effort)
+        environment_key = _require_cartridge().environment_cache_key(environment)
+        key = _AgentKey(
+            conversation_id,
+            actor_id,
+            session_user_id,
+            persistent_memory,
+            resolved_model,
+            resolved_effort,
+            environment_key,
+            documents.cache_key() if documents else '',
+            memory_revision,
+            syncs_files,
+            invocation_prompt,
+        )
+        cached = _AGENTS.get(key)
+        if preparing and cached is not None:
+            return cached
+        if model_relay is not None:
+            _MODEL_RELAYS[key] = model_relay
+        if cached is not None:
+            backend = _AGENT_BACKENDS[key]
+            _apply_environment(backend, environment)
+            _BACKEND_BY_AGENT[cached] = backend
+            return cached
 
-    with answer_timing.phase('memory_backends'):
-        store = _ensure_memory_backends()
-    with answer_timing.phase('workspace'):
-        backend = _backend_for((conversation_id, actor_id, environment_key), environment)
-    with answer_timing.phase('personal_memory'):
-        ltm_context = _thread_ltm_context(conversation_id, actor_id, memory_revision, store) if persistent_memory else None
+        with answer_timing.phase('memory_backends'):
+            store = _ensure_memory_backends()
+        with answer_timing.phase('workspace'):
+            backend = _backend_for((conversation_id, session_user_id, actor_id, environment_key), environment)
+        with answer_timing.phase('personal_memory'):
+            ltm_context = _thread_ltm_context(conversation_id, actor_id, memory_revision, store) if persistent_memory else None
 
-    with answer_timing.phase('model_client'):
-        m = install_prompt_cache_usage_callback(
-            build_model(
-                model=model,
-                effort=effort,
-                max_tokens=positive_int('BOTCUBE_TURN_MAX_TOKENS', 16000),
-                relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
+        with answer_timing.phase('model_client'):
+            m = install_prompt_cache_usage_callback(
+                build_model(
+                    model=model,
+                    effort=effort,
+                    max_tokens=positive_int('BOTCUBE_TURN_MAX_TOKENS', 16000),
+                    relay=None if model_relay is None else lambda: _MODEL_RELAYS[key],
+                )
             )
+        prompt_cache_middleware = PromptCacheUsageMiddleware(
+            thread_id=conversation_id,
+            model=resolved_model,
+            effort=resolved_effort,
         )
-    prompt_cache_middleware = PromptCacheUsageMiddleware(
-        thread_id=conversation_id,
-        model=resolved_model,
-        effort=resolved_effort,
-    )
-    middleware = [
-        _AnsweredToolResultsMiddleware(),
-        _ExecuteDescriptionMiddleware(_require_cartridge().execute_description),
-        prompt_cache_middleware,
-    ]
-    tools: list[Any] = [propose_scheduled_task]
-    if persistent_memory:
-        memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
-        tools.extend(memory_tools)
-        middleware.extend(memory_middleware)
-    if documents:
-        tools.extend(agent_document_tools(documents))
-    files_line = files_prompt(excluded_paths(_require_cartridge().skills)) if syncs_files else ''
-    cartridge = _require_cartridge()
-    system_prompt = '\n\n'.join(
-        part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
-    )
-    with answer_timing.phase('graph_build'):
-        graph = build_agent(
-            model=m,
-            tools=tools,
-            middleware=middleware,
-            system_prompt=system_prompt,
-            # AgentCore LTM is the only persistent memory store (ADR 0031);
-            # build_agent appends the prewarmed ltm.md render file as the sole
-            # memory source.
-            memory=[],
-            ltm_context=ltm_context,
-            memory_path=_ltm_memory_path(conversation_id, actor_id),
-            backend=backend,
-            skills=_require_cartridge().skills,
-            checkpointer=_CHECKPOINTER,
-            # Guests get no store: nothing in their graph may reach memory.
-            store=store if persistent_memory else None,
+        middleware = [
+            _AnsweredToolResultsMiddleware(),
+            _ExecuteDescriptionMiddleware(_require_cartridge().execute_description),
+            prompt_cache_middleware,
+        ]
+        tools: list[Any] = [propose_scheduled_task]
+        if persistent_memory:
+            memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
+            tools.extend(memory_tools)
+            middleware.extend(memory_middleware)
+        if documents:
+            tools.extend(agent_document_tools(documents))
+        files_line = files_prompt(excluded_paths(_require_cartridge().skills)) if syncs_files else ''
+        cartridge = _require_cartridge()
+        system_prompt = '\n\n'.join(
+            part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
         )
-    config = {
-        'recursion_limit': graph.config['recursion_limit'],
-        'configurable': {'actor_id': session_user_id},
-    }
-    # LangGraphAgent requires a name but reads it only in clone() and ag_ui's
-    # add_langgraph_fastapi_endpoint, neither of which the Harness calls; no event,
-    # checkpoint or log carries it. The _SessionAgent call below stays mutated, and dropping
-    # the name there fails the required argument.
-    identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
-    with answer_timing.phase('stream_adapter'):
-        agent = _SessionAgent(**identity, graph=graph, config=config)
-    _AGENTS[key] = agent
-    _AGENT_BACKENDS[key] = backend
-    _BACKEND_BY_AGENT[agent] = backend
-    return agent
+        with answer_timing.phase('graph_build'):
+            graph = build_agent(
+                model=m,
+                tools=tools,
+                middleware=middleware,
+                system_prompt=system_prompt,
+                # AgentCore LTM is the only persistent memory store (ADR 0031);
+                # build_agent appends the prewarmed ltm.md render file as the sole
+                # memory source.
+                memory=[],
+                ltm_context=ltm_context,
+                memory_path=_ltm_memory_path(conversation_id, actor_id),
+                backend=backend,
+                skills=_require_cartridge().skills,
+                checkpointer=_CHECKPOINTER,
+                # Guests get no store: nothing in their graph may reach memory.
+                store=store if persistent_memory else None,
+            )
+        config = {
+            'recursion_limit': graph.config['recursion_limit'],
+            'configurable': {'actor_id': session_user_id},
+        }
+        # LangGraphAgent requires a name but reads it only in clone() and ag_ui's
+        # add_langgraph_fastapi_endpoint, neither of which the Harness calls; no event,
+        # checkpoint or log carries it. The _SessionAgent call below stays mutated, and dropping
+        # the name there fails the required argument.
+        identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
+        with answer_timing.phase('stream_adapter'):
+            agent = _SessionAgent(**identity, graph=graph, config=config)
+        _AGENTS[key] = agent
+        _AGENT_BACKENDS[key] = backend
+        _BACKEND_BY_AGENT[agent] = backend
+        return agent
 
 
 def _ensure_memory_backends() -> AgentCoreMemoryStore | InMemoryStore:
-    global _CHECKPOINTER, _STORE
-    if _STORE is not None:
-        return _STORE
-    # Build core dependencies into locals first — publish only if they
-    # succeed, so a transient failure is retried on the next request
-    # instead of leaving the checkpointer/store permanently None.
-    checkpointer = _build_checkpointer()
-    store = _build_store()
-    _CHECKPOINTER = checkpointer
-    _STORE = store
-    return store
+    with _CACHE_LOCK:
+        global _CHECKPOINTER, _STORE, _DEFERRED_SAVER
+        if _STORE is not None:
+            return _STORE
+        # Build core dependencies into locals first — publish only if they
+        # succeed, so a transient failure is retried on the next request
+        # instead of leaving the checkpointer/store permanently None.
+        checkpointer = _build_checkpointer()
+        store = _build_store()
+        _CHECKPOINTER = checkpointer
+        _STORE = store
+        _DEFERRED_SAVER = checkpointer if isinstance(checkpointer, TurnCheckpointSaver) else None
+        return store
 
 
 def _backend_for(
-    backend_key: tuple[str, str, tuple[tuple[str, str], ...]],
+    backend_key: tuple[str, str, str, tuple[tuple[str, str], ...]],
     environment: Mapping[str, str] | None,
 ) -> LocalShellBackend:
     backend = _BACKENDS.get(backend_key)
@@ -853,6 +858,14 @@ def _apply_session_env(backend: LocalShellBackend, session_id: str) -> None:
     _require_cartridge().apply_session_id(backend, session_id)
 
 
+def _session_root(agent: LangGraphAgent, session_id: str, root: Path | None) -> Path:
+    if root is not None:
+        return root
+    backend = _BACKEND_BY_AGENT[agent]
+    _apply_session_env(backend, session_id)
+    return Path(backend.cwd)
+
+
 def _require_session_user_id(session_user_id: str | None) -> str:
     if not session_user_id:
         raise MissingUserIdError(
@@ -907,40 +920,32 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any, memory_revision: int,
                         files: FilesSync | None, warmup: Any):
-    preparation = _SESSION_TURNS.preparation((session_user_id, input_data.thread_id)) if warmup else nullcontext(True)
-    async with preparation as allowed:
-        if allowed:
-            agent = _get_agent(
-                actor_id=auth.actor_id,
-                session_user_id=session_user_id,
-                persistent_memory=auth.persistent_memory,
-                model=forwarded.get('model'),
-                effort=forwarded.get('effort'),
-                thread_id=input_data.thread_id,
-                invocation_prompt=auth.system_prompt,
-                environment=auth.environment,
-                model_relay=auth.model_relay,
-                documents=documents,
-                memory_revision=memory_revision,
-                syncs_files=files is not None,
-                preparing=bool(warmup),
-            )
-            if (timing := answer_timing.current()) is not None:
-                timing.prepared()
-            if warmup:
-                if forwarded.get('preparationScope', 'recorded') != 'startup':
-                    with reading_once(), answer_timing.phase('warmup_history'):
-                        await agent.graph.aget_state(_session_config((session_user_id, input_data.thread_id)))
-            else:
-                backend = _BACKEND_BY_AGENT[agent]
-                _apply_session_env(backend, input_data.thread_id)
-                async with aclosing(_SESSION_TURNS.stream(
-                    (session_user_id, input_data.thread_id), agent, input_data, files, Path(backend.cwd), context,
-                )) as events:
-                    async for event in events:
-                        yield event
+    def factory() -> LangGraphAgent:
+        return _get_agent(
+            actor_id=auth.actor_id,
+            session_user_id=session_user_id,
+            persistent_memory=auth.persistent_memory,
+            model=forwarded.get('model'),
+            effort=forwarded.get('effort'),
+            thread_id=input_data.thread_id,
+            invocation_prompt=auth.system_prompt,
+            environment=auth.environment,
+            model_relay=auth.model_relay,
+            documents=documents,
+            memory_revision=memory_revision,
+            syncs_files=files is not None,
+            preparing=bool(warmup),
+        )
     if warmup:
-        yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
+        async for event in _SESSION_TURNS.warmup((session_user_id, input_data.thread_id), factory, input_data,
+                                                recorded=forwarded.get('preparationScope', 'recorded') != 'startup'):
+            yield event
+    else:
+        async with aclosing(_SESSION_TURNS.stream(
+            (session_user_id, input_data.thread_id), factory, input_data, files, None, context,
+        )) as events:
+            async for event in events:
+                yield event
 
 
 def _preparation_event(
@@ -961,6 +966,7 @@ class _Turn:
     work: asyncio.Task[None] | None = None
     stopped: bool = False
     finished: bool = False
+    preparation_failed: bool = False
 
     def stop(self) -> None:
         if self.stopped:
@@ -1005,6 +1011,77 @@ class _OpenReply:
         await agent.graph.aupdate_state(config, {'messages': [AIMessage(self.text, id=self.message_id)]}, as_node='model')
 
 
+_PreparationResult = TypeVar('_PreparationResult')
+
+
+async def _join_preparation(work: asyncio.Future[_PreparationResult]) -> tuple[_PreparationResult, bool]:
+    cancelled = False
+    while True:
+        try:
+            return await asyncio.shield(work), cancelled
+        except asyncio.CancelledError:
+            if work.cancelled():
+                raise
+            cancelled = True
+            if work.done():
+                return work.result(), cancelled
+
+
+async def _warm_agent(
+    session: tuple[str, str | None], factory: Callable[[], LangGraphAgent], *, recorded: bool,
+    on_failure: Callable[[BaseException], None] | None = None,
+) -> None:
+    with reading_once(), answer_timing.phase('warmup_history'):
+        agent = await _prepare_agent(session, factory, recorded=recorded, on_failure=on_failure)
+        if recorded and agent is not None:
+            _, cancelled = await _join_preparation(asyncio.create_task(agent.graph.aget_state(_session_config(session))))
+            if cancelled:
+                raise asyncio.CancelledError
+
+
+async def _prepare_history(session: tuple[str, str | None], recorded: bool) -> None:
+    if recorded and session[1] and _CHECKPOINTER is not None:
+        await _CHECKPOINTER.aget_tuple(_session_config(session))
+
+
+async def _prepare_agent(
+    session: tuple[str, str | None], factory: Callable[[], LangGraphAgent], *, recorded: bool = True,
+    turn: _Turn | None = None, on_failure: Callable[[BaseException], None] | None = None,
+) -> LangGraphAgent | None:
+    with answer_timing.phase('memory_backends'):
+        backends = asyncio.create_task(asyncio.to_thread(_ensure_memory_backends))
+        _, cancelled = await _join_preparation(backends)
+        if cancelled:
+            raise asyncio.CancelledError
+    if turn is not None and turn.stopped:
+        return None
+
+    failures: list[BaseException] = []
+
+    def rejected(work: asyncio.Future[Any]) -> None:
+        failure = asyncio.CancelledError() if work.cancelled() else work.exception()
+        if failure is not None:
+            failures.append(failure)
+            if len(failures) == 1 and on_failure is not None:
+                on_failure(failure)
+            log.error('Harness preparation failed code=%s', getattr(failure, 'code', 'INTERNAL_ERROR'),
+                      exc_info=(type(failure), failure, failure.__traceback__))
+
+    preparing = asyncio.create_task(asyncio.to_thread(factory))
+    history = asyncio.create_task(_prepare_history(session, recorded))
+    preparing.add_done_callback(rejected)
+    history.add_done_callback(rejected)
+    settlement = asyncio.gather(preparing, history, return_exceptions=True)
+    (prepared, _), cancelled = await _join_preparation(settlement)
+    if failures:
+        raise failures[0]
+    if cancelled:
+        raise asyncio.CancelledError
+    if (timing := answer_timing.current()) is not None:
+        timing.prepared()
+    return cast(LangGraphAgent, prepared)
+
+
 class _SessionTurns:
     """Own replacement, Stop and streaming until each Turn's checkpoint flush settles."""
 
@@ -1031,13 +1108,61 @@ class _SessionTurns:
         if turn is not None and turn.run_id == run_id:
             turn.stop()
 
+    async def warmup(
+        self, session: tuple[str, str | None], factory: Callable[[], LangGraphAgent],
+        input_data: RunAgentInput, *, recorded: bool,
+    ) -> AsyncGenerator[Any, None]:
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+        reported = False
+
+        def rejected(failure: BaseException) -> None:
+            nonlocal reported
+            if not reported:
+                reported = True
+                error = RunErrorEvent(message=str(failure), code=getattr(failure, 'code', 'INTERNAL_ERROR'))
+                queue.put_nowait(error)
+
+        work = asyncio.create_task(self._run_warmup(session, factory, input_data, recorded, queue, rejected))
+        work.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        try:
+            while (event := await queue.get()) is not self._end:
+                yield event
+                if reported and isinstance(event, CustomEvent):
+                    return
+            work.result()
+        finally:
+            if not reported:
+                _, cancelled = await _join_preparation(work)
+                if cancelled:
+                    raise asyncio.CancelledError
+
+    async def _run_warmup(
+        self, session: tuple[str, str | None], factory: Callable[[], LangGraphAgent],
+        input_data: RunAgentInput, recorded: bool, queue: asyncio.Queue[Any],
+        rejected: Callable[[BaseException], None],
+    ) -> None:
+        try:
+            async with self.preparation(session) as allowed:
+                if allowed:
+                    await _warm_agent(session, factory, recorded=recorded, on_failure=rejected)
+            queue.put_nowait(_preparation_event(input_data, 'prepared' if allowed else 'skipped-busy'))
+        except Exception as failure:
+            rejected(failure)
+            error = RunErrorEvent(message=str(failure), code=getattr(failure, 'code', 'INTERNAL_ERROR'))
+            queue.put_nowait(_preparation_event(input_data, 'failed', error))
+            log.error('Harness warmup failed code=%s', getattr(failure, 'code', 'INTERNAL_ERROR'), exc_info=True)
+            raise
+        finally:
+            queue.put_nowait(self._end)
+
+
     async def stream(
         self,
         session: tuple[str, str | None],
-        agent: LangGraphAgent,
+        factory: Callable[[], LangGraphAgent],
         input_data: RunAgentInput,
         files: FilesSync | None,
-        root: Path,
+        root: Path | None,
         context: _RequestContext,
     ) -> AsyncGenerator[Any, None]:
         previous = self._turns.get(session)
@@ -1045,7 +1170,7 @@ class _SessionTurns:
             previous.stop()
         self._turns[session] = turn = _Turn(input_data.run_id)
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        run = asyncio.create_task(self._run(session, turn, agent, input_data, files, root, context, queue.put_nowait))
+        run = asyncio.create_task(self._run(session, turn, factory, input_data, files, root, context, queue.put_nowait))
         def completed(work: asyncio.Task[None]) -> None:
             if not work.cancelled() and (failure := work.exception()) is not None:
                 log.error(
@@ -1058,7 +1183,7 @@ class _SessionTurns:
         try:
             while (event := await queue.get()) is not self._end:
                 yield event
-                if event.type == EventType.RUN_FINISHED:
+                if event.type == EventType.RUN_FINISHED or turn.preparation_failed:
                     return
             run.result()
         finally:
@@ -1069,10 +1194,10 @@ class _SessionTurns:
         self,
         session: tuple[str, str | None],
         turn: _Turn,
-        agent: LangGraphAgent,
+        factory: Callable[[], LangGraphAgent],
         input_data: RunAgentInput,
         files: FilesSync | None,
-        root: Path,
+        root: Path | None,
         context: _RequestContext,
         put: Callable[[Any], None],
     ) -> None:
@@ -1088,43 +1213,53 @@ class _SessionTurns:
         trace_context = baggage.set_baggage('run.id', input_data.run_id, context=trace_context)
         trace_token = otel_context.attach(trace_context)
         try:
-            async with self._locks.setdefault(session, asyncio.Lock()):
-                if turn.stopped:
-                    put(_stopped())
-                    return
-                if (failure := self._flush_failures.pop(session, None)) is not None:
-                    raise failure
-                reply = _OpenReply()
-
-                completion: RunFinishedEvent | None = None
-
-                def publish(event: Any) -> None:
-                    nonlocal completion
-                    if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
-                        turn.finished = event.type == EventType.RUN_FINISHED
-                        completion = event
+            with reading_once():
+                async with self._locks.setdefault(session, asyncio.Lock()):
+                    if turn.stopped:
+                        put(_stopped())
                         return
-                    put(event)
-                # Graph work and settlement share one read of the Session record.
-                with reading_once(), turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
-                    with prompt_cache_turn(context.session_id):
-                        turn.work = asyncio.create_task(_turn_events(agent, input_data, files, root, reply.watching(publish)))
-                    await asyncio.wait([turn.work])
-                    try:
-                        if not turn.work.cancelled():
-                            turn.work.result()
-                            readiness.raise_if_failed()
-                            if files is not None and readiness.ready and completion is not None and completion.type == EventType.RUN_FINISHED:
-                                started = perf_counter()
-                                await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
-                                log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
-                                         turn.run_id, (perf_counter() - started) * 1000)
-                    finally:
-                        await self._settle(session, turn, agent, reply if turn.work.cancelled() else None)
-                if turn.work.cancelled():
-                    put(_stopped())
-                elif completion is not None:
-                    put(completion)
+                    if (failure := self._flush_failures.pop(session, None)) is not None:
+                        raise failure
+                    def preparation_failed(failure: BaseException) -> None:
+                        turn.preparation_failed = True
+                        put(RunErrorEvent(message=str(failure), code=getattr(failure, 'code', 'INTERNAL_ERROR')))
+
+                    agent = await _prepare_agent(session, factory, turn=turn, on_failure=preparation_failed)
+                    if turn.stopped:
+                        put(_stopped())
+                        return
+                    assert agent is not None
+                    root = _session_root(agent, input_data.thread_id, root)
+                    reply = _OpenReply()
+
+                    completion: RunFinishedEvent | None = None
+
+                    def publish(event: Any) -> None:
+                        nonlocal completion
+                        if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
+                            turn.finished = event.type == EventType.RUN_FINISHED
+                            completion = event
+                            return
+                        put(event)
+                    with turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
+                        with prompt_cache_turn(context.session_id):
+                            turn.work = asyncio.create_task(_turn_events(agent, input_data, files, root, reply.watching(publish)))
+                        await asyncio.wait([turn.work])
+                        try:
+                            if not turn.work.cancelled():
+                                turn.work.result()
+                                readiness.raise_if_failed()
+                                if files is not None and readiness.ready and completion is not None and completion.type == EventType.RUN_FINISHED:
+                                    started = perf_counter()
+                                    await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
+                                    log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
+                                             turn.run_id, (perf_counter() - started) * 1000)
+                        finally:
+                            await self._settle(session, turn, agent, reply if turn.work.cancelled() else None)
+                    if turn.work.cancelled():
+                        put(_stopped())
+                    elif completion is not None:
+                        put(completion)
         except Exception as failure:
             if turn.finished:
                 self._flush_failures[session] = failure

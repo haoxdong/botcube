@@ -55,7 +55,7 @@ async def exercise(session_id: str, mode: str) -> None:
     graph.add_edge('model', END)
     agent = serving._SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
     inputs = RunAgentInput(thread_id=session_id, run_id=mode, messages=[UserMessage(id='question', role='user', content='question')], tools=[], context=[], state={}, forwarded_props={})
-    stream = turns.stream(('owner', session_id), agent, inputs, None, Path('.'), serving._RequestContext(session_id))
+    stream = turns.stream(('owner', session_id), lambda: agent, inputs, None, Path('.'), serving._RequestContext(session_id))
     events = []
 
     async def drain() -> None:

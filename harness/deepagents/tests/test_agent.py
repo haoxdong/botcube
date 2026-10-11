@@ -512,7 +512,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
 
         async def exercise() -> None:
             stream = serving._SessionTurns().stream(
-                ('owner', 'delegated-files'), agent, request, files, tmp_path, serving._RequestContext(None),
+                ('owner', 'delegated-files'), lambda: agent, request, files, tmp_path, serving._RequestContext(None),
             )
             if not files_available:
                 with pytest.raises(ClientError, match='NoSuchBucket'):
