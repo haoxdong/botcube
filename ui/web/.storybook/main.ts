@@ -57,6 +57,12 @@ const config: StorybookConfig = {
         allow: [...(config.server?.fs?.allow ?? []), repo, virtualStore],
       },
     };
+    // Optimized in one pass so both entries share CopilotKit's context; found separately, the cartridge's headless
+    // import got its own copy and threw "useCopilotKit must be used within CopilotKitProvider".
+    config.optimizeDeps = {
+      ...config.optimizeDeps,
+      include: [...(config.optimizeDeps?.include ?? []), '@copilotkit/react-core/v2', '@copilotkit/react-core/v2/headless'],
+    };
     return config;
   },
 };
