@@ -366,6 +366,11 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
     return answer(200, { threads: service.sideChats });
   }
   const thread = /^\/threads\/([^/]+)/.exec(pathname)?.[1];
+  if (route.startsWith('PATCH /threads/') && thread !== undefined) {
+    const { title } = JSON.parse(init?.body as string) as { title: string };
+    service.sideChats = service.sideChats.map((entry) => entry.id === thread ? { ...entry, title } : entry);
+    return answer(200, present(service.sideChats.find(({ id }) => id === thread), 'the renamed Side Chat'));
+  }
   if (route.startsWith('GET /threads/') && thread !== undefined) {
     return answer(200, { provider: service.providers.get(thread), messages: service.replies.get(thread) ?? [], running: service.running.has(thread), runId: service.runIds.get(thread) });
   }
@@ -3697,6 +3702,82 @@ describe('Side Chats', () => {
     expect(recents()).toEqual([]);
     expect(copilot.chat?.threadId).toBe('new-1');
     expect(welcome()).not.toBeNull();
+  });
+
+  describe('renaming', () => {
+    const row = (title: string) => within(present(sidebar().getByText(title).closest<HTMLElement>('.sidebar-item'), `the ${title} row`));
+    const nameField = () => sidebar().getByRole<HTMLInputElement>('textbox', { name: 'Side chat name' });
+    const renames = () => fetchMock.mock.calls
+      .filter(([, init]) => init?.method === 'PATCH')
+      .map(([url, init]) => [url.replace('http://chat.test', ''), init?.body]);
+
+    beforeEach(() => {
+      service.sideChats = [sideChat('rates', 'Rates question'), sideChat('other', 'Other question')];
+    });
+
+    it('renames a Side Chat from its row, keeping the name through switching and a reload', async () => {
+      const view = await renderPage();
+      await openSidebar();
+
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      expect(nameField()).toHaveValue('Rates question');
+      expect(nameField()).toHaveFocus();
+      await userEvent.clear(nameField());
+      await userEvent.type(nameField(), 'Rates desk{Enter}');
+
+      expect(recents()).toEqual(['Rates desk', 'Other question']);
+      expect(sidebar().queryByRole('textbox')).toBeNull();
+      expect(renames()).toEqual([['/threads/rates', JSON.stringify({ title: 'Rates desk' })]]);
+      await userEvent.click(sidebar().getByText('Other question'));
+      await userEvent.click(sidebar().getByText('Rates desk'));
+      expect(copilot.chat?.threadId).toBe('rates');
+      expect(recents()).toEqual(['Rates desk', 'Other question']);
+      view.unmount();
+      await renderPage();
+      expect(recents()).toEqual(['Rates desk', 'Other question']);
+    });
+
+    it('cancels on Escape, and saves nothing for an unchanged or blank name', async () => {
+      await renderPage();
+      await openSidebar();
+
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      await userEvent.type(nameField(), ' edited{Escape}');
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      await userEvent.type(nameField(), '{Enter}');
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      await userEvent.clear(nameField());
+      await userEvent.type(nameField(), '   {Enter}');
+
+      expect(recents()).toEqual(['Rates question', 'Other question']);
+      expect(renames()).toEqual([]);
+    });
+
+    it('saves the name as typed when the field loses focus', async () => {
+      await renderPage();
+      await openSidebar();
+
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      await userEvent.clear(nameField());
+      await userEvent.type(nameField(), ' Rates desk ');
+      await userEvent.click(sidebar().getByText('Other question'));
+
+      expect(recents()).toEqual([' Rates desk ', 'Other question']);
+      expect(renames()).toEqual([['/threads/rates', JSON.stringify({ title: ' Rates desk ' })]]);
+    });
+
+    it('shows a failed rename and keeps the saved name', async () => {
+      service.failing.set('PATCH /threads/rates', 503);
+      await renderPage();
+      await openSidebar();
+
+      await userEvent.click(row('Rates question').getByRole('button', { name: 'Rename side chat' }));
+      await userEvent.clear(nameField());
+      await userEvent.type(nameField(), 'Rates desk{Enter}');
+
+      expect(sidebar().getByRole('alert')).toHaveTextContent('Rates question could not be renamed: Failed to rename thread: 503');
+      expect(recents()).toEqual(['Rates question', 'Other question']);
+    });
   });
 
   it('shows a delete failure and keeps the Side Chat', async () => {

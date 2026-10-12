@@ -176,6 +176,26 @@ export async function stopTurn({
   });
 }
 
+/** Name a Side Chat; the Chat Service answers with the name it saved. */
+export async function renameSideChat({
+  id,
+  title,
+  chatServiceUrl,
+  fetchImpl = fetch,
+}: {
+  id: string;
+  title: string;
+  chatServiceUrl: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ConversationEntry> {
+  const response = await request(fetchImpl, `${chatServiceUrl}/threads/${id}`, "rename thread", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  return (await response.json()) as ConversationEntry;
+}
+
 export async function deleteConversation({
   id,
   chatServiceUrl,

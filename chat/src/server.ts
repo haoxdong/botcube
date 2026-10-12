@@ -727,6 +727,14 @@ export function createChatService(
     return c.json(await sessions.replay(owner, sessionId));
   });
 
+  app.patch('/threads/:id', async (c) => {
+    const { owner } = await cartridge.requester(c);
+    const body: unknown = await c.req.json().catch(() => undefined);
+    const title = isRecord(body) ? body.title : undefined;
+    if (typeof title !== 'string' || !title.trim()) throw new HttpError(422, 'title must be a non-empty string');
+    return c.json(await sessions.renameSideChat(owner, c.req.param('id'), title).catch((error: unknown) => { throw sessionAccessError(error); }));
+  });
+
   // Fence the Session at once, then purge its events in the background (ADR 0067 §6).
   app.delete('/threads/:id', async (c) => {
     const { owner } = await cartridge.requester(c);

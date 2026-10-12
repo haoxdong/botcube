@@ -8,7 +8,7 @@ import { KeptChat } from "./kept-chat";
 import { usePhoneSidebarSwipe } from "./phone-sidebar-swipe";
 import { usePageHold } from "./phone-page-hold";
 import { PHONE_QUERY, useIsPhone } from "./phone-query";
-import { ChatServiceError } from "./conversations";
+import { ChatServiceError, type ConversationEntry } from "./conversations";
 import {
   AGENT_DOCUMENT_EDITED,
   AgentProfile,
@@ -107,6 +107,31 @@ const menuIcon = (
     <path d="M2 16h12.5" />
   </svg>
 );
+
+/** A Side Chat's name, edited in its row: Enter or leaving the field ends with its value, Escape with none. */
+function SideChatNameField({ title, onDone }: { title: string; onDone: (name: string | null) => void }) {
+  const done = useRef(false);
+  const finish = (name: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(name);
+  };
+  return (
+    <input
+      className="sidebar-item-name"
+      aria-label="Side chat name"
+      defaultValue={title}
+      autoFocus
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        if (e.nativeEvent.isComposing) return;
+        if (e.key === "Enter") finish(e.currentTarget.value);
+        else if (e.key === "Escape") finish(null);
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+    />
+  );
+}
 
 const SIDEBAR_EXPANDED_KEY = 'botcube.sidebar-expanded';
 
@@ -419,6 +444,7 @@ function App({
     selectMainChat,
     newSideChat: handleNewConversation,
     selectSideChat: handleSelectConversation,
+    renameSideChat,
     deleteSideChat: handleDeleteConversation,
     messageSubmitted,
   } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening });
@@ -426,6 +452,12 @@ function App({
     ready, accountId, activeProvider, showWelcome, chatServiceUrl: CHAT_SERVICE_URL,
   });
   const { model: offeredModel, effort } = picker;
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  /** A changed, non-blank name is saved as typed; any other leaves the Side Chat's name as it was. */
+  const finishRename = (conversation: ConversationEntry, name: string | null) => {
+    setRenamingId(null);
+    if (name !== null && name.trim() && name !== conversation.title) void renameSideChat(conversation, name);
+  };
 
   // The opening's history moment ends in the frame after the commit that first shows the Main Chat, its rows or its
   // welcome screen: the chat renders its agent's messages as it mounts. An opening that first shows another chat or a
@@ -656,12 +688,26 @@ function App({
                 key={c.id}
                 className={`sidebar-item ${!pluginsOpen && c.id === activeId ? "sidebar-item-active" : ""}`}
               >
-                <button
-                  className="sidebar-item-btn"
-                  onClick={() => { showMain('chat'); void handleSelectConversation(c); }}
-                >
-                  {c.title}
-                </button>
+                {renamingId === c.id ? (
+                  <SideChatNameField title={c.title} onDone={(name) => finishRename(c, name)} />
+                ) : (
+                  <>
+                    <button
+                      className="sidebar-item-btn"
+                      onClick={() => { showMain('chat'); void handleSelectConversation(c); }}
+                    >
+                      {c.title}
+                    </button>
+                    <button
+                      className="sidebar-item-rename"
+                      onClick={() => setRenamingId(c.id)}
+                      aria-label="Rename side chat"
+                      title="Rename side chat"
+                    >
+                      <Pencil size={16} aria-hidden />
+                    </button>
+                  </>
+                )}
                 <button
                   className="sidebar-item-delete"
                   onClick={() => { void handleDeleteConversation(c); }}

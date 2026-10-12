@@ -100,6 +100,7 @@ const sessionMetadata: SessionMetadata = {
   ownsMainChat: async () => false,
   mainChat: async () => 'main-chat',
   get: async () => null,
+  rename: async () => null,
   fence: async () => null,
   fenceOwner: async () => [],
   transferOwner: async () => undefined,

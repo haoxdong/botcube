@@ -1724,11 +1724,26 @@ button.worklog-step-head:hover {
   font-family: inherit;
 }
 
+/* The row's name being edited, where its title button stood: a field (DESIGN.md), as tall as the row */
+.sidebar-item-name {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  line-height: 22px;
+  font-size: var(--font-body);
+  font-family: inherit;
+  color: var(--color-text);
+}
+
 .sidebar-item-active .sidebar-item-btn {
   padding-left: 8px;
 }
 
-/* A muted glyph, AA on surface */
+/* Muted glyphs, AA on surface */
+.sidebar-item-rename,
 .sidebar-item-delete {
   appearance: none;
   background: none;
@@ -1746,16 +1761,24 @@ button.worklog-step-head:hover {
   transition: opacity var(--transition-fast), color var(--transition-fast);
 }
 
-/* Only a mouse reveals delete on hover: iOS Safari spends a tap on any hover that reveals content, so a
-   touch screen shows it at rest and one tap opens the chat. */
+/* Only a mouse reveals rename and delete on hover: iOS Safari spends a tap on any hover that reveals content, so
+   a touch screen shows them at rest and one tap opens the chat. The keyboard reveals them as they take focus. */
 @media (hover: hover) {
+  .sidebar-item-rename,
   .sidebar-item-delete {
     opacity: 0;
   }
 
-  .sidebar-item:hover .sidebar-item-delete {
+  .sidebar-item:hover .sidebar-item-rename,
+  .sidebar-item:hover .sidebar-item-delete,
+  .sidebar-item-rename:focus-visible,
+  .sidebar-item-delete:focus-visible {
     opacity: 1;
   }
+}
+
+.sidebar-item-rename:hover {
+  color: var(--color-text);
 }
 
 .sidebar-item-delete:hover {

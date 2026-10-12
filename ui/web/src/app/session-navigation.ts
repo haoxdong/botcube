@@ -9,6 +9,7 @@ import {
   fetchMainChat,
   fetchSideChats,
   openConversation,
+  renameSideChat,
   stopFailure,
   stopTurn,
   type ConversationEntry,
@@ -495,6 +496,12 @@ export function useSessionNavigation({
       if (conversation.id === navigationDestination.current) handleNewConversation();
     });
 
+  const handleRenameSideChat = (conversation: ConversationEntry, title: string) =>
+    sideChatAction(`${conversation.title} could not be renamed`, async () => {
+      const renamed = await renameSideChat({ id: conversation.id, title, chatServiceUrl });
+      setSideChats((prev) => prev.map((entry) => entry.id === conversation.id ? { ...entry, title: renamed.title } : entry));
+    });
+
   return {
     current: { id: activeId, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
     mainChatId,
@@ -504,6 +511,7 @@ export function useSessionNavigation({
     selectMainChat,
     newSideChat: handleNewConversation,
     selectSideChat: handleSelectConversation,
+    renameSideChat: handleRenameSideChat,
     deleteSideChat: handleDeleteConversation,
     messageSubmitted() {
       setUserSentMessage(true);

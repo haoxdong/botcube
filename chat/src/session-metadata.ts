@@ -223,6 +223,11 @@ export interface SessionMetadata {
   /** The owner's Session, unless it is fenced. */
   get(owner: string, sessionId: string): Promise<SessionSummary | null>;
   /**
+   * Name the owner's listed Session, which later Turns keep; null when the owner or Session is deleted or
+   * the owner has no such Session. Throws SessionClaimError when its owner is transferring.
+   */
+  rename(owner: string, sessionId: string, title: string): Promise<SessionSummary | null>;
+  /**
    * Set the deletion fence on the owner's Session; null when the owner has no
    * such Session. Fencing a fenced Session keeps its first fence, so a repeated
    * delete can retry the purge.
@@ -995,6 +1000,28 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       new GetCommand({ TableName: this.tableName, Key: key(owner, sessionId), ConsistentRead: true }),
     );
     return Item === undefined || fenced(Item as SessionItem) ? null : summaryOf(Item as SessionItem);
+  }
+
+  async rename(owner: string, sessionId: string, title: string): Promise<SessionSummary | null> {
+    // Fenced with the Account Claim, whose transfer would move a snapshot taken before the rename.
+    try {
+      await this.documents.send(new TransactWriteCommand({ TransactItems: [
+        { Update: {
+          TableName: this.tableName, Key: key(owner, sessionId),
+          UpdateExpression: 'SET title = :title',
+          ConditionExpression: 'attribute_exists(title) AND attribute_not_exists(deleted_at)',
+          ExpressionAttributeValues: { ':title': title },
+        } },
+        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
+        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
+      ] }));
+    } catch (error) {
+      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(owner);
+      if (reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) return null;
+      throw error;
+    }
+    return this.get(owner, sessionId);
   }
 
   private async claimDestination(owner: string): Promise<string | null> {

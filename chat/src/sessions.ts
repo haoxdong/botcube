@@ -46,6 +46,11 @@ export function sessionOperations(
   purge: (sessions: SessionPurge[], wait?: boolean) => Promise<void> | void,
   filingUserId: (owner: string) => string = (owner) => owner,
 ) {
+  const refuseMainChat = async (owner: string, sessionId: string, action: 'renamed' | 'deleted') => {
+    if (sessionId === (await sessionMetadata.mainChat(owner, filingUserId(owner)))) {
+      throw new HttpError(409, `The Main Chat cannot be ${action}`);
+    }
+  };
   return {
     async sideChats(owner: string) {
       const [sessions, mainChat] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.mainChat(owner, filingUserId(owner))]);
@@ -84,10 +89,14 @@ export function sessionOperations(
       const { messages } = await invokeSessionApi(historyRead(sessionId, metadata));
       return { ...threadSummary(metadata), provider: metadata.provider, messages, ...runningTurn(metadata), failure: metadata.turn_failure };
     },
+    async renameSideChat(owner: string, sessionId: string, title: string) {
+      await refuseMainChat(owner, sessionId, 'renamed');
+      const renamed = await sessionMetadata.rename(owner, sessionId, title);
+      if (renamed === null) throw new HttpError(404, 'Session not found');
+      return threadSummary(renamed);
+    },
     async removeSideChat(owner: string, sessionId: string): Promise<void> {
-      if (sessionId === (await sessionMetadata.mainChat(owner, filingUserId(owner)))) {
-        throw new HttpError(409, 'The Main Chat cannot be deleted');
-      }
+      await refuseMainChat(owner, sessionId, 'deleted');
       const metadata = await sessionMetadata.fence(owner, sessionId);
       if (metadata !== null) await purge([metadata]);
     },

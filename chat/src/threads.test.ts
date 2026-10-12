@@ -1,4 +1,4 @@
-import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
@@ -298,6 +298,78 @@ describe('DELETE /threads/{id}', () => {
     expect(stack.sessionApi.events().filter(({ operation }) => operation === 'purge')).not.toContainEqual(
       expect.objectContaining({ sessionId: 'not-yours-to-delete' }),
     );
+  });
+});
+
+describe('PATCH /threads/{id}', () => {
+  const rename = (account: string, sessionId: string, body: unknown) =>
+    stack.app.request(`/threads/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-account': account },
+      body: JSON.stringify(body),
+    });
+  const titles = async (account: string) =>
+    ((await (await as(account, '/threads')).json()) as { threads: { id: string; title: string }[] }).threads
+      .map(({ id, title }) => [id, title]);
+
+  it('renames the Side Chat as typed, keeping the name through later Turns', async () => {
+    await chat('renamer', 'renamed', 'other');
+
+    const response = await rename('renamer', 'renamed', { title: ' Rates desk' });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: 'renamed', title: ' Rates desk' });
+    await chat('renamer', 'renamed');
+    expect(await titles('renamer')).toEqual([['renamed', ' Rates desk'], ['other', 'about other']]);
+    expect(await (await as('renamer', '/threads/renamed')).json()).toMatchObject({ title: ' Rates desk' });
+  });
+
+  it.each([[{ title: '   ' }], [{ title: 7 }], [{}]])('refuses %j as a name', async (body) => {
+    await chat('blank-renamer', 'unnamed');
+
+    const response = await rename('blank-renamer', 'unnamed', body);
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ detail: 'title must be a non-empty string' });
+    expect(await titles('blank-renamer')).toEqual([['unnamed', 'about unnamed']]);
+  });
+
+  it("does not reveal or rename another account's or a deleted Session", async () => {
+    await chat('name-keeper', 'not-yours-to-rename', 'deleted-before-rename');
+    await as('name-keeper', '/threads/deleted-before-rename', 'DELETE');
+
+    const intruder = await rename('name-intruder', 'not-yours-to-rename', { title: 'Mine now' });
+    const deleted = await rename('name-keeper', 'deleted-before-rename', { title: 'Back again' });
+
+    expect(intruder.status).toBe(404);
+    expect(deleted.status).toBe(404);
+    expect(await titles('name-keeper')).toEqual([['not-yours-to-rename', 'about not-yours-to-rename']]);
+    expect(await threadIds('name-intruder')).toEqual([]);
+  });
+
+  // A rename after an Account Claim's snapshot would be lost as the stale row moves to the destination.
+  it('refuses a rename while an Account Claim transfers the account', async () => {
+    await mainChat('claimed-namer');
+    await chat('claimed-namer', 'claimed-side');
+    await DynamoDBDocumentClient.from(stack.table.client).send(
+      new PutCommand({ TableName: stack.table.name, Item: { pk: 'SESSIONS#claimed-namer', sk: 'CLAIM', destination: 'claim-destination' } }),
+    );
+
+    const response = await rename('claimed-namer', 'claimed-side', { title: 'Lost name' });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ detail: 'Account Claim is in progress. Finish signing in and retry.' });
+    expect(await stack.sessionMetadata.get('claimed-namer', 'claimed-side')).toMatchObject({ title: 'about claimed-side' });
+  });
+
+  it('refuses to rename the Main Chat', async () => {
+    const { id } = await mainChat('main-namer');
+    await chat('main-namer', id);
+
+    const response = await rename('main-namer', id, { title: 'Not main' });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ detail: 'The Main Chat cannot be renamed' });
   });
 });
 

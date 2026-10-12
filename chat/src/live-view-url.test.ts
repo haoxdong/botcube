@@ -42,6 +42,7 @@ const sessionMetadata: SessionMetadata = {
   ownsMainChat: async () => false,
   mainChat: unused,
   get: unused,
+  rename: unused,
   fence: unused,
   fenceOwner: unused,
   transferOwner: unused,
