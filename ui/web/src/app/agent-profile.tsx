@@ -6,7 +6,6 @@ import { useEffect, useId, useRef, useState, type ComponentType, type FormEvent,
 import type { AgentProfileTab } from "../cartridge/index.js";
 import { Button } from "../components/ui/button";
 import { Field } from "../components/ui/field";
-import { FileCard } from "../components/ui/file-card";
 import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { Avatar } from "./avatar";
 import { endMoment, startMoment } from "./latency";
@@ -119,13 +118,12 @@ const ABOUT_USE =
   "The agent reads it at the start of every message and uses your edits from your next message on. " +
   "It may change this file itself, and tells you in the chat when it does.";
 
-/** The agent's files, in the order the Identity tab shows them. */
-type AgentFile = "Agent Identity" | "Soul" | "Memory";
-const AGENT_FILES: readonly AgentFile[] = ["Agent Identity", "Soul", "Memory"];
+/** The agent's files: Identity opens from the avatar's pencil, Soul and Memory from the Personalization tab. */
+type AgentFile = "Identity" | "Soul" | "Memory";
 
 /** What each file is and how the agent uses it, shown above the file. */
 const ABOUT: Record<AgentFile, string> = {
-  "Agent Identity": `Who your agent is to you: its name, character, vibe, and avatar (an emoji, or blank for the default avatar). ${ABOUT_USE}`,
+  Identity: `Who your agent is to you: its name, character, vibe, and avatar (an emoji, or blank for the default avatar). ${ABOUT_USE}`,
   Soul:
     `The values and habits your agent keeps in every chat. ${ABOUT_USE} ` +
     "Soul shapes only its manner: its rules for grounding answers and running commands live in its skills, which Soul cannot change.",
@@ -135,27 +133,20 @@ const ABOUT: Record<AgentFile, string> = {
     "Edit a line to correct it, or delete it to make the agent forget it.",
 };
 
-/** The line under each file's name on its card. */
-const CARD_HINT: Record<AgentFile, string> = {
-  "Agent Identity": "Name, character, vibe, avatar",
-  Soul: "Values and habits",
-  Memory: "What it knows about you",
-};
-
-/** Each file's card: its own tint (a CSS class) and icon, as Muse's file cards have. */
-const CARD_LOOK: Record<AgentFile, { tint: string; Icon: LucideIcon }> = {
-  "Agent Identity": { tint: "agent-file-card-identity", Icon: IdCard },
-  Soul: { tint: "agent-file-card-soul", Icon: Heart },
-  Memory: { tint: "agent-file-card-memory", Icon: MessageSquare },
+/** Each file's tint (a CSS class) and icon, on its card in the Personalization tab and its page's header tile. */
+const FILE_LOOK: Record<AgentFile, { tint: string; Icon: LucideIcon }> = {
+  Identity: { tint: "agent-file-tint-identity", Icon: IdCard },
+  Soul: { tint: "agent-file-tint-soul", Icon: Heart },
+  Memory: { tint: "agent-file-tint-memory", Icon: MessageSquare },
 };
 
 const IDENTITY_FIELDS = ["name", "character", "vibe", "avatar"] as const;
 const fieldLabel = (field: (typeof IDENTITY_FIELDS)[number]) => field.charAt(0).toUpperCase() + field.slice(1);
 
+/** What the file is, as a quiet caption under its header. */
 function About({ file, children }: { file: string; children: string }) {
   return (
     <section className="agent-file-about" aria-label={`About ${file}`}>
-      <h4>About this file</h4>
       <p>{children}</p>
     </section>
   );
@@ -164,7 +155,7 @@ function About({ file, children }: { file: string; children: string }) {
 /** Runs one change to a file, saying whether it worked. */
 type RunChange = (change: () => Promise<void>) => Promise<boolean>;
 
-/** What every open file gets from the Identity tab. */
+/** What every open file gets from the Personalization tab. */
 interface FileProps {
   run: RunChange;
   /** Called when the file switches between reading and editing. */
@@ -197,12 +188,16 @@ function FileDocument({
   children: ReactNode;
 }) {
   const formId = useId();
+  const { tint, Icon } = FILE_LOOK[file];
   return (
-    <article className="agent-file" aria-label={file}>
+    <article className={`agent-file ${tint}`} aria-label={file}>
       <header className="agent-file-header">
-        <Button type="button" className="agent-file-back" aria-label="Back to files" onClick={onBack}>
+        <Button type="button" className="agent-file-back" aria-label="Back" onClick={onBack}>
           <ChevronLeft size={16} aria-hidden />
         </Button>
+        <span className="agent-file-icon">
+          <Icon aria-hidden="true" />
+        </span>
         <h3>{file}</h3>
         {saved && (
           <p className="agent-file-saved" role="status">
@@ -265,70 +260,47 @@ interface IdentityDraft {
   picture: string | null;
 }
 
+/** Agent Identity, always editing: it opens from the avatar's pencil, and Cancel, Back or a save closes it. */
 function IdentityFile({
   identity,
   picture,
   onSave,
   onError,
-  onBack,
+  onClose,
   run,
-  onModeChange,
-  saved,
-}: FileProps & {
+}: {
   identity: AgentIdentityData;
   picture: string | null;
   /** Saves the fields, and the picture unless it is undefined for unchanged. */
   onSave: (identity: AgentIdentityData, picture: string | null | undefined) => Promise<void>;
   onError: (message: string) => void;
-  onBack: () => void;
+  onClose: () => void;
+  run: RunChange;
 }) {
-  const { draft, setDraft, edit, cancel } = useDraft<IdentityDraft>(onModeChange);
+  const [draft, setDraft] = useState<IdentityDraft>({ identity, picture });
   const save = async () => {
-    if (draft && (await run(() => onSave(draft.identity, draft.picture === picture ? undefined : draft.picture)))) {
-      setDraft(null);
-    }
+    if (await run(() => onSave(draft.identity, draft.picture === picture ? undefined : draft.picture))) onClose();
   };
   return (
-    <FileDocument
-      file="Agent Identity"
-      saved={saved}
-      onBack={onBack}
-      mode={draft ? { kind: "editing", onSave: save, onCancel: cancel } : { kind: "editable", onEdit: () => edit({ identity, picture }) }}
-    >
-      {draft ? (
-        <>
-          <PictureField
-            picture={draft.picture ?? undefined}
-            emoji={draft.identity.avatar}
-            name={draft.identity.name}
-            agent
-            noun="picture"
-            onChange={(chosen) => setDraft({ ...draft, picture: chosen })}
-            onError={onError}
+    <FileDocument file="Identity" saved={false} onBack={onClose} mode={{ kind: "editing", onSave: save, onCancel: onClose }}>
+      <PictureField
+        picture={draft.picture ?? undefined}
+        emoji={draft.identity.avatar}
+        name={draft.identity.name}
+        agent
+        noun="picture"
+        size={80}
+        onChange={(chosen) => setDraft({ ...draft, picture: chosen })}
+        onError={onError}
+      />
+      {IDENTITY_FIELDS.map((field) => (
+        <Field key={field} label={fieldLabel(field)}>
+          <input
+            value={draft.identity[field]}
+            onChange={(event) => setDraft({ ...draft, identity: { ...draft.identity, [field]: event.target.value } })}
           />
-          {IDENTITY_FIELDS.map((field) => (
-            <Field key={field} label={fieldLabel(field)}>
-              <input
-                value={draft.identity[field]}
-                onChange={(event) => setDraft({ ...draft, identity: { ...draft.identity, [field]: event.target.value } })}
-              />
-            </Field>
-          ))}
-        </>
-      ) : (
-        <>
-          <Avatar picture={picture ?? undefined} emoji={identity.avatar} name={identity.name} agent size={64} />
-          <dl className="agent-file-fields">
-            {/* With no emoji the avatar above shows the picture or the default figure, so only editing names the unset field. */}
-            {IDENTITY_FIELDS.filter((field) => field !== "avatar" || identity.avatar !== "").map((field) => (
-              <div key={field} className="agent-file-entry">
-                <dt>{fieldLabel(field)}</dt>
-                <dd>{identity[field] || <span className="agent-file-unset">Not set</span>}</dd>
-              </div>
-            ))}
-          </dl>
-        </>
-      )}
+        </Field>
+      ))}
     </FileDocument>
   );
 }
@@ -353,7 +325,7 @@ function SoulFile({
       mode={draft === null ? { kind: "editable", onEdit: () => edit(soul) } : { kind: "editing", onSave: save, onCancel: cancel }}
     >
       {draft === null ? (
-        <div className="agent-file-text">{soul}</div>
+        <div className="agent-file-group agent-file-text">{soul}</div>
       ) : (
         <Field label="Soul">
           <textarea rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
@@ -401,9 +373,9 @@ function MemoryFile({
     <FileDocument file="Memory" saved={saved} onBack={onBack} mode={mode}>
       {draft === null && lines.length === 0 && <p className="agent-profile-empty">No memories yet.</p>}
       {draft === null && lines.length > 0 && (
-        <ol className="agent-memory">
+        <ol className="agent-file-group">
           {lines.map((line) => (
-            <li key={line.id} className="agent-memory-line">
+            <li key={line.id} className="agent-file-row">
               {line.text}
             </li>
           ))}
@@ -456,29 +428,98 @@ function LoadedFile<T>({
   );
 }
 
-/**
- * The Identity tab: Agent Identity, Soul, and Memory as cards. Each opens as a read-only document with Edit;
- * each file loads on its own, so one that fails says why without hiding the others, and they reload whenever `revision` changes.
- */
-function IdentityPanel({
+/** Agent Identity's load, which the profile's header and its editor share. */
+type IdentityLoad = ReturnType<typeof useLoad<AgentIdentityData>>;
+
+function loadIdentity(chatServiceUrl: string) {
+  return loadDocument(chatServiceUrl, "identity", "Identity") as Promise<AgentIdentityData>;
+}
+
+/** Agent Identity's editor, opened from the avatar's pencil in place of the tab the user was on, which closing returns to. */
+function IdentityEditor({
   chatServiceUrl,
+  identityFile,
   picture,
-  revision,
   onSaved,
   isAccountCurrent,
+  onClose,
 }: {
   chatServiceUrl: string;
+  identityFile: IdentityLoad;
   /** The agent's picture, from the profile that `onSaved` reloads. */
   picture: string | null;
-  revision: number;
   onSaved: () => void;
   isAccountCurrent?: (() => boolean) | undefined;
+  onClose: () => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+  const run: RunChange = async (change) => {
+    setError(null);
+    try {
+      await change();
+      return true;
+    } catch (failure) {
+      setError((failure as Error).message);
+      return false;
+    }
+  };
+  const save = async (identity: AgentIdentityData, changedPicture: string | null | undefined) => {
+    await saveDocument(chatServiceUrl, "identity", identity, "Identity");
+    if (!active.current) throw new Error("Saving Identity cancelled: its editor closed.");
+    if (isAccountCurrent?.() === false) throw new Error("Saving Identity cancelled: its account changed or is switching.");
+    identityFile.update(() => identity);
+    try {
+      if (changedPicture !== undefined) await savePicture(chatServiceUrl, changedPicture);
+    } finally {
+      onSaved();
+    }
+  };
+  return (
+    <div className="agent-files">
+      {error && (
+        <p className="agent-profile-error" role="alert">
+          {error}
+        </p>
+      )}
+      <LoadedFile file="Identity" load={identityFile} onBack={onClose}>
+        {(identity) => <IdentityFile identity={identity} picture={picture} onSave={save} onError={setError} onClose={onClose} run={run} />}
+      </LoadedFile>
+    </div>
+  );
+}
+
+/** A listed file's one-line preview of its content; until it loads, or when it says nothing, what the file holds. */
+/** The line under each card's title, on what its file holds. */
+const CARD_HINT = { Soul: "Values and habits", Memory: "What it knows" } as const;
+
+/** How much a card's file holds once it loads: Soul's lines, Memory's memories; until then nothing. */
+function count(file: "Soul" | "Memory", soul: LoadState<string>, memory: LoadState<MemoryLine[]>): string {
+  if (file === "Soul") {
+    if (soul.status !== "loaded") return "";
+    const lines = soul.value.split("\n").filter((line) => line.trim() !== "").length;
+    return lines === 0 ? "Empty" : `${lines} ${lines === 1 ? "line" : "lines"}`;
+  }
+  if (memory.status !== "loaded") return "";
+  const memories = memory.value.length;
+  return memories === 0 ? "No memories yet" : `${memories} ${memories === 1 ? "memory" : "memories"}`;
+}
+
+/**
+ * The Personalization tab: Soul and Memory as side-by-side cards (Muse Fig 16), each opening its file as a read-only document with Edit;
+ * each file loads on its own, so one that fails says why without hiding the other, and they reload whenever `revision` changes.
+ */
+function PersonalizationPanel({ chatServiceUrl, revision, onSaved }: { chatServiceUrl: string; revision: number; onSaved: () => void }) {
   const key = `${chatServiceUrl} ${revision}`;
-  const identityFile = useLoad(async () => (await loadDocument(chatServiceUrl, "identity", "Agent Identity")) as AgentIdentityData, key);
   const soulFile = useLoad(async () => ((await loadDocument(chatServiceUrl, "soul", "Soul")) as { content: string }).content, key);
   const memoryFile = useLoad(async () => ((await loadDocument(chatServiceUrl, "memory", "Memory")) as { lines: MemoryLine[] }).lines, key);
-  const [open, setOpen] = useState<AgentFile | null>(null);
+  const [open, setOpen] = useState<"Soul" | "Memory" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [memoryRecovery, setMemoryRecovery] = useState<{ key: string; lines: MemoryLine[] } | null>(null);
@@ -508,24 +549,9 @@ function IdentityPanel({
       return false;
     }
   };
-  const show = (file: AgentFile | null) => {
+  const show = (file: "Soul" | "Memory" | null) => {
     clear();
     setOpen(file);
-  };
-  const saveIdentity = async (identity: AgentIdentityData, changedPicture: string | null | undefined) => {
-    await saveDocument(chatServiceUrl, "identity", identity, "Agent Identity");
-    if (!active.current) throw new Error("Saving Agent Identity cancelled: its editor closed.");
-    if (isAccountCurrent?.() === false) throw new Error("Saving Agent Identity cancelled: its account changed or is switching.");
-    identityFile.update(() => identity);
-    try {
-      if (changedPicture !== undefined) await savePicture(chatServiceUrl, changedPicture);
-    } finally {
-      onSaved();
-    }
-  };
-  const fail = (message: string) => {
-    setSaved(false);
-    setError(message);
   };
   const saveSoul = async (soul: string) => {
     await saveDocument(chatServiceUrl, "soul", { content: soul }, "Soul");
@@ -555,27 +581,16 @@ function IdentityPanel({
   };
 
   const fileProps = { run, onModeChange: clear, saved, onBack: () => show(null) };
-  const openFile = (file: AgentFile) => {
-    if (file === "Agent Identity") {
-      return (
-        <LoadedFile file={file} load={identityFile} onBack={fileProps.onBack}>
-          {(identity) => <IdentityFile identity={identity} picture={picture} onSave={saveIdentity} onError={fail} {...fileProps} />}
-        </LoadedFile>
-      );
-    }
-    if (file === "Soul") {
-      return (
-        <LoadedFile file={file} load={soulFile} onBack={fileProps.onBack}>
-          {(soul) => <SoulFile soul={soul} onSave={saveSoul} {...fileProps} />}
-        </LoadedFile>
-      );
-    }
-    return (
+  const openFile = (file: "Soul" | "Memory") =>
+    file === "Soul" ? (
+      <LoadedFile file={file} load={soulFile} onBack={fileProps.onBack}>
+        {(soul) => <SoulFile soul={soul} onSave={saveSoul} {...fileProps} />}
+      </LoadedFile>
+    ) : (
       <LoadedFile file={file} load={memoryFile} onBack={fileProps.onBack}>
         {(lines) => <MemoryFile lines={lines} pending={memoryRecovery?.key === key ? memoryRecovery.lines : []} onSave={saveMemory} {...fileProps} />}
       </LoadedFile>
     );
-  };
 
   return (
     <div className="agent-files">
@@ -588,10 +603,15 @@ function IdentityPanel({
         openFile(open)
       ) : (
         <div className="agent-file-cards">
-          {AGENT_FILES.map((file) => {
-            const { tint, Icon } = CARD_LOOK[file];
+          {(["Soul", "Memory"] as const).map((file) => {
+            const { tint, Icon } = FILE_LOOK[file];
             return (
-              <FileCard key={file} className={tint} name={file} hint={CARD_HINT[file]} Icon={Icon} aria-label={`Open ${file}`} onClick={() => show(file)} />
+              <button key={file} type="button" className={`agent-file-card ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
+                <span className="agent-file-card-title">{file}</span>
+                <span className="agent-file-card-hint">{CARD_HINT[file]}</span>
+                <span className="agent-file-card-count">{count(file, soulFile.state, memoryFile.state)}</span>
+                <Icon className="agent-file-card-icon" fill="currentColor" aria-hidden="true" />
+              </button>
             );
           })}
         </div>
@@ -699,7 +719,7 @@ const TABS: readonly (readonly [AgentProfileTab, LucideIcon])[] = [
   ["Sign-ins", ShieldCheck],
   ["Computer", Monitor],
   ["Scheduled", Clock],
-  ["Identity", Fingerprint],
+  ["Personalization", Fingerprint],
 ];
 
 /**
@@ -726,7 +746,7 @@ export function AgentProfile({
   /** The Computer tab's content, the Cartridge's Agent Computer for the open chat, told whether the tab is showing. */
   computer?: ((shown: boolean) => ReactNode) | undefined;
   onClose: () => void;
-  /** Bumped when the agent edits its files, so the Identity tab reloads them. */
+  /** Bumped when the agent edits its files, so the header and Personalization tab reload them. */
   revision: number;
   /** Called after the user saves Agent Identity or Soul. */
   onSaved: () => void;
@@ -738,18 +758,24 @@ export function AgentProfile({
   // A bot with an Agent Computer opens on it; one without, on its Activity. Each opening starts there again.
   const firstTab: AgentProfileTab = computer === undefined ? "Activity" : "Computer";
   const [tab, setTab] = useState<AgentProfileTab>(firstTab);
+  // The avatar's pencil opens Agent Identity's editor in the tab's place; closing it shows the tab again.
+  const [editing, setEditing] = useState(false);
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) setTab(firstTab);
+    if (open) {
+      setTab(firstTab);
+      setEditing(false);
+    }
   }
-  const keptComputer = computer !== undefined && tab === "Computer";
+  const identityFile = useLoad(() => loadIdentity(chatServiceUrl), `${chatServiceUrl} ${revision}`);
+  const character = identityFile.state.status === "loaded" ? identityFile.state.value.character.trim() : "";
+  const editor = editing && profile !== null;
+  const keptComputer = computer !== undefined && tab === "Computer" && !editor;
   const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
     Activity: <ActivityPanel chatServiceUrl={chatServiceUrl} />,
     Scheduled: <ScheduledPanel chatServiceUrl={chatServiceUrl} />,
-    Identity: profile === null ? <p role="status">Loading Agent profile…</p> : (
-      <IdentityPanel chatServiceUrl={chatServiceUrl} picture={profile.picture} revision={revision} onSaved={onSaved} isAccountCurrent={isAccountCurrent} />
-    ),
+    Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} />,
   };
   const panel = (name: AgentProfileTab) => {
     const Panel = tabs[name];
@@ -766,11 +792,12 @@ export function AgentProfile({
           <>
             <div className="agent-profile-avatar">
               <Avatar picture={profile.picture ?? undefined} emoji={profile.avatar} name={profile.name} agent size={96} />
-              <button className="agent-profile-edit" onClick={() => setTab("Identity")} aria-label="Edit agent">
+              <button className="agent-profile-edit" onClick={() => setEditing(true)} aria-label="Edit agent">
                 <Pencil size={16} aria-hidden />
               </button>
             </div>
             <h2 className="agent-profile-name">{profile.name}</h2>
+            {character && <p className="agent-profile-character">{character}</p>}
             <p className={`agent-profile-status agent-profile-status-${profile.status}`}>
               <Zap size={14} aria-hidden />
               {profile.status === "online" ? "Connected" : "Not connected"}
@@ -784,11 +811,14 @@ export function AgentProfile({
           <button
             key={name}
             role="tab"
-            aria-selected={name === tab}
+            aria-selected={name === tab && !editor}
             aria-label={name}
             title={name}
             className="agent-profile-tab"
-            onClick={() => setTab(name)}
+            onClick={() => {
+              setTab(name);
+              setEditing(false);
+            }}
           >
             <Icon size={20} aria-hidden />
           </button>
@@ -799,8 +829,20 @@ export function AgentProfile({
           {computer(open && keptComputer)}
         </div>
       )}
+      {open && editor && (
+        <div className="agent-profile-panel">
+          <IdentityEditor
+            chatServiceUrl={chatServiceUrl}
+            identityFile={identityFile}
+            picture={profile.picture}
+            onSaved={onSaved}
+            isAccountCurrent={isAccountCurrent}
+            onClose={() => setEditing(false)}
+          />
+        </div>
+      )}
       {/* The other tabs load afresh each time they show. */}
-      {open && !keptComputer && (
+      {open && !editor && !keptComputer && (
         <div className="agent-profile-panel" role="tabpanel" aria-label={tab}>
           {panel(tab)}
         </div>

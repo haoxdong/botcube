@@ -25,7 +25,6 @@ body {
   --color-surface-hover: #f4f4f4;
   --color-composer: #fbfbfb;
   --color-selected: #efefef;
-  --color-frame: #ebebec;
   --color-border: #e0e0e0;
   --color-control: #bfbfbf;
   --color-white: #fff;
@@ -35,6 +34,14 @@ body {
   --color-danger: #dc2626;
   --color-danger-soft: #fef2f2;
   --color-black: #000;
+
+  /* The agent's colours for its Soul and Memory cards, a cartridge `theme` hook (DESIGN.md); by default a neutral grey. */
+  --agent-soul-from: var(--color-text-muted);
+  --agent-soul-to: var(--color-text);
+  --agent-soul-glow: var(--color-control);
+  --agent-memory-from: var(--color-text-muted);
+  --agent-memory-to: var(--color-text);
+  --agent-memory-glow: var(--color-control);
 
   /* The type scale (DESIGN.md): ChatGPT's Mac app here, iOS's defaults in the 640px query below */
   --font-title: 1.5rem;
@@ -66,7 +73,6 @@ body {
   --shadow-elevated: 0 4px 20px rgba(0,0,0,0.15);
   --shadow-composer: 0 8px 36px rgba(0,0,0,0.11);
   --shadow-soft: 0 0 40px rgba(0,0,0,0.23);
-  --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06);
 
   --transition-fast: 0.1s;
   --transition-layout: 0.2s ease;
@@ -669,18 +675,17 @@ cpk-web-inspector,
    Sidebar — ChatGPT-style collapsed/expanded
    ══════════════════════════════════════════ */
 
+/* Shut to its menu chip over the chat at every width */
 .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 90;
   height: 100dvh;
   background: var(--color-surface);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
   overflow: visible;
-  transition: width var(--transition-layout);
-}
-
-.sidebar-collapsed {
-  width: 60px;
 }
 
 .sidebar-expanded {
@@ -760,16 +765,26 @@ cpk-web-inspector,
   display: none;
 }
 
+/* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
+.sidebar-collapsed .sidebar-logo-btn,
+.sidebar-strip-close-menu {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(4px);
+  box-shadow: none;
+}
+
 /* ── Sidebar nav ── */
 .sidebar-nav {
   display: flex;
   flex-direction: column;
   padding: var(--sidebar-pad-y) var(--sidebar-pad-x);
   gap: 1px;
-}
-
-.sidebar-collapsed .sidebar-nav {
-  padding: 0 8px;
 }
 
 .sidebar-nav-item {
@@ -807,20 +822,9 @@ cpk-web-inspector,
   background: var(--color-selected);
 }
 
-.sidebar-collapsed .sidebar-nav-item {
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-}
-
 .sidebar-nav-label {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sidebar-collapsed .sidebar-nav-label {
-  display: none;
 }
 
 /* Main chat and Plugins: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
@@ -846,12 +850,6 @@ cpk-web-inspector,
 .sidebar-expanded .sidebar-nav-item {
   padding: 9px 12px;
   border-radius: var(--radius-pill);
-}
-
-.sidebar-collapsed .sidebar-main {
-  --divider-inset: 8px;
-  gap: 8px;
-  padding-bottom: 5px;
 }
 
 /* ── Sidebar recents (conversation list) ── */
@@ -880,20 +878,6 @@ cpk-web-inspector,
   flex-shrink: 0;
 }
 
-.sidebar-collapsed .sidebar-section-header {
-  justify-content: center;
-  padding: var(--sidebar-pad-y) var(--sidebar-pad-x);
-}
-
-.sidebar-collapsed .sidebar-section-header .header-btn {
-  padding: 0;
-  color: var(--color-text);
-}
-
-.sidebar-collapsed .sidebar-section-header .header-btn:hover {
-  background: var(--color-border);
-}
-
 @media (min-width: 641px) {
   .sidebar-expanded .sidebar-brand {
     padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3) calc(var(--spacing) * 2) calc(var(--spacing) * 5);
@@ -908,15 +892,6 @@ cpk-web-inspector,
   .sidebar-expanded .sidebar-main {
     gap: 0;
     padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
-  }
-
-  /* The rail keeps only Main chat and Plugins (#3604), so nothing follows a divider */
-  .sidebar-collapsed .sidebar-main {
-    gap: 0;
-  }
-
-  .sidebar-collapsed .sidebar-main::after {
-    display: none;
   }
 
   .sidebar-expanded .sidebar-nav-item {
@@ -1292,7 +1267,6 @@ cpk-web-inspector,
   background: transparent;
 }
 
-.sidebar-icon-menu,
 .sidebar-strip-close {
   display: none;
 }
@@ -1339,10 +1313,6 @@ cpk-web-inspector,
   }
 
   .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 90;
     padding-top: var(--app-safe-top);
     padding-bottom: var(--app-safe-bottom);
   }
@@ -1481,32 +1451,13 @@ cpk-web-inspector,
 
   .sidebar-collapsed .sidebar-nav,
   .sidebar-collapsed .sidebar-section-header,
-  .sidebar-collapsed .sidebar-bottom,
-  .sidebar-icon-panel {
+  .sidebar-collapsed .sidebar-bottom {
     display: none;
-  }
-
-  .sidebar-icon-menu {
-    display: block;
   }
 
   /* New side chat keeps its 44px, the column of the rows' × marks */
   .sidebar-new-chat {
     flex: none;
-  }
-
-  /* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
-  .sidebar-collapsed .sidebar-logo-btn,
-  .sidebar-strip-close-menu {
-    flex: none;
-    width: 44px;
-    height: 44px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-pill);
-    color: var(--color-text);
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(4px);
-    box-shadow: none;
   }
 
   /* Over the peeking chat, which lets taps through to it: a tap on the strip closes the drawer */
@@ -1684,13 +1635,6 @@ cpk-web-inspector,
 
 .user-menu-trigger:hover {
   background: var(--color-border);
-}
-
-.sidebar-collapsed .user-menu-trigger {
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
 }
 
 /* On the nav rows' columns: the avatar centred on their 20px icons, the name on their labels' 52px edge */
@@ -2189,12 +2133,19 @@ cpk-web-inspector,
   /* Safari spreads a fixed element's colour at the screen's bottom edge under its bar (WebKit's
      LocalFrameView::fixedContainerEdges), which the iPhone showed as a white band there (#3640). Held, the composer
      stands in the chat, which the page's scroll raises above the screen's top, and ends at the screen's bottom as
-     before. */
+     before. Safari keeps spreading the colour of the last element it found there while that element stays visible
+     (WebKit's Page::updateFixedContainerEdges, bug 296454), so the composer's own box hides, its contents still
+     showing. */
   html[data-page-held] .app-chat [data-testid='copilot-input-overlay'] {
     position: absolute;
     top: calc(var(--page-scroll, 0px) + 100dvh - var(--app-safe-bottom));
     bottom: auto;
     translate: 0 -100%;
+    visibility: hidden;
+  }
+
+  html[data-page-held] .app-chat [data-testid='copilot-input-overlay'] > * {
+    visibility: visible;
   }
 
   html[data-page-held] .chat-header-name {
@@ -2217,9 +2168,15 @@ cpk-web-inspector,
   }
 
   /* Marq's hat, which rises 1px above his box, and the menu button's top meet the top of the screen below the status
-     bar, where Muse's avatar and menu stand (memo 0049 Fig 11). */
+     bar, where Muse's avatar and menu stand (memo 0049 Fig 11). The header keeps to Marq's width: Safari fills the
+     strip behind the clock with the colour of a fixed element spanning the screen's top edge, and keeps that colour
+     while a `header` stays rendered, held or not (WebKit's LocalFrameView::fixedContainerEdges and
+     Page::updateFixedContainerEdges), which hid the chat and the drawer there. */
   .chat-header {
     position: fixed;
+    left: 50%;
+    right: auto;
+    translate: -50% 0;
     padding-top: calc(1px + var(--chat-header-safe-top));
   }
 
@@ -2272,27 +2229,46 @@ cpk-web-inspector,
   }
 }
 
-/* Desktop: the chat is a rounded white card inside the sidebar's grey frame, 4px clear of the window's other edges
-   (memo 0049 Fig 1). Marq's hat, 9.5px into his 72px box, sits 1.5px under the card's top as dots' avatar does, in
-   front of a crisp name pill tucked about 6px behind his body, as on the phone (#3614); the chat scrolls beneath
-   them with no band. */
+/* Desktop: the chat fills the window, square, as only a panel that reaches a rounded screen corner rounds. Open, the
+   sidebar docks beside it in the chat's white, a hairline seam between them, as the profile's on its other side, as
+   ChatGPT's does; shut, only its round
+   menu chip shows, over the chat. Marq's hat, 9.5px into his 72px box,
+   sits 1.5px under the window's top as dots' avatar does, in front of a crisp name pill tucked about 6px behind his
+   body, as on the phone (#3614); the chat scrolls beneath them with no band. */
 @media (min-width: 641px) {
-  .app-layout,
   .sidebar {
-    background: var(--color-frame);
-  }
-
-  /* The open row is white on the frame, as dots' rail (memo 0049 Fig 1) */
-  .sidebar-nav-item-active,
-  .sidebar-item-active {
     background: var(--color-white);
   }
 
-  .app-shell {
-    margin: 4px 4px 4px 0;
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-card);
-    overflow: hidden;
+  /* The seam lies outside the 260px, so the rows keep their places */
+  .sidebar-expanded {
+    position: relative;
+    flex-shrink: 0;
+    box-sizing: content-box;
+    border-right: 1px solid var(--color-border);
+  }
+
+  /* Shut, only the menu chip shows, over the chat's top left */
+  .sidebar-collapsed {
+    height: auto;
+    background: none;
+  }
+
+  .sidebar-collapsed :is(.sidebar-nav, .sidebar-recents, .sidebar-bottom) {
+    display: none;
+  }
+
+  /* Open, the menu chip closes the sidebar from beside its title */
+  .sidebar-expanded .sidebar-logo-btn {
+    display: flex;
+    order: 1;
+    margin-left: auto;
+  }
+
+  /* The open row takes the profile controls' hover grey, which shows on the white */
+  .sidebar-nav-item-active,
+  .sidebar-item-active {
+    background: var(--color-border);
   }
 
   .chat-header-agent .avatar-agent {
@@ -2309,27 +2285,6 @@ cpk-web-inspector,
     background: var(--color-white);
     backdrop-filter: none;
     box-shadow: none;
-  }
-}
-
-/* Beside the chat, the open profile shares its card, as dots' computer panel does (memo 0049 Fig 3); each clips its
-   shadow at the seam, except while the profile holds the full-window computer sheet, which a clip would cut. */
-@media (min-width: 1140px) {
-  .app-shell:has(~ .agent-profile:not([hidden])) {
-    margin-right: 0;
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-    clip-path: inset(-24px 0 -24px -24px);
-  }
-
-  .agent-profile {
-    margin: 4px 4px 4px 0;
-    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
-    box-shadow: var(--shadow-card);
-  }
-
-  .agent-profile:not(:has(.agent-computer-sheet)) {
-    clip-path: inset(-24px -24px -24px 0);
   }
 }
 
@@ -2491,6 +2446,16 @@ cpk-web-inspector,
   font-weight: var(--weight-name);
 }
 
+/* Agent Identity's character, one muted line under the name. */
+.agent-profile-character {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .agent-profile-status {
   display: flex;
   align-items: center;
@@ -2591,71 +2556,30 @@ cpk-web-inspector,
   gap: 8px;
 }
 
-.agent-file-cards {
-  display: grid;
-  /* One card per row, at the panel's full width. */
-  grid-template-columns: 1fr;
-  gap: 12px;
+/* Each file's tint, after Muse's file cards (Fig 16), on its card in the Personalization tab and its page's header
+   tile: deep under the white type on the left, lifting to `from` at the bottom right with a `glow` in the top right
+   corner. The colours are the agent's, a cartridge `theme` hook (DESIGN.md); Identity wears Soul's. `--file-shadow`
+   colours the card's shadow. */
+.agent-file-tint-identity,
+.agent-file-tint-soul {
+  --file-from: var(--agent-soul-from);
+  --file-to: var(--agent-soul-to);
+  --file-glow: var(--agent-soul-glow);
 }
 
-/* Each file a soft tinted tile with its icon, after Muse's file cards (Fig 16), in our light palette. */
-.file-card {
-  appearance: none;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-height: 112px;
-  padding: 16px;
-  border: 1px solid var(--card-edge, var(--color-border));
-  border-radius: var(--radius-xl);
-  background: var(--card-tint, var(--color-surface));
-  color: var(--color-text);
-  text-align: left;
-  cursor: pointer;
-  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+.agent-file-tint-memory {
+  --file-from: var(--agent-memory-from);
+  --file-to: var(--agent-memory-to);
+  --file-glow: var(--agent-memory-glow);
 }
 
-.file-card:hover {
-  box-shadow: var(--shadow-subtle);
-  transform: translateY(-1px);
-}
-
-.agent-file-card-identity {
-  --card-tint: linear-gradient(140deg, #eff6ff 0%, #dbeafe 100%);
-  --card-edge: #bfdbfe;
-  --card-ink: #2563eb;
-}
-
-.agent-file-card-soul {
-  --card-tint: linear-gradient(140deg, #faf5ff 0%, #f3e8ff 55%, #fce7f3 100%);
-  --card-edge: #e9d5ff;
-  --card-ink: #9333ea;
-}
-
-.agent-file-card-memory {
-  --card-tint: linear-gradient(140deg, #fefce8 0%, #fef3c7 55%, #ecfccb 100%);
-  --card-edge: #fde68a;
-  --card-ink: #b45309;
-}
-
-.file-card-name {
-  font-size: var(--font-headline);
-  font-weight: var(--weight-headline);
-}
-
-.file-card-hint {
-  font-size: var(--font-detail);
-  color: var(--color-text-subtle);
-}
-
-.file-card-icon {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  width: 24px;
-  height: 24px;
-  color: var(--card-ink, var(--color-text-muted));
+.agent-file-tint-identity,
+.agent-file-tint-soul,
+.agent-file-tint-memory {
+  --file-tint:
+    radial-gradient(55% 65% at 100% 0%, var(--file-glow) 0%, transparent 70%),
+    linear-gradient(135deg, var(--file-to) 50%, var(--file-from) 120%);
+  --file-shadow: color-mix(in srgb, var(--file-from) 45%, transparent);
 }
 
 /* The header keeps a button's height in every state, with Edit, Cancel and Save, or none, so the file never
@@ -2673,6 +2597,31 @@ cpk-web-inspector,
   font-weight: var(--weight-headline);
 }
 
+/* The file's icon, white on its tint, beside the title, so an open file reads as its card carried over. */
+.agent-file-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--font-headline) * 2);
+  height: calc(var(--font-headline) * 2);
+  margin-left: 4px;
+  border-radius: var(--radius-md);
+  background: var(--file-tint);
+  color: var(--color-white);
+}
+
+.agent-file-icon svg {
+  width: calc(var(--font-headline) * 1.15);
+  height: calc(var(--font-headline) * 1.15);
+}
+
+/* Solid, as on their cards; Identity's card outline would fill to a blank slab. */
+.agent-file-tint-soul .agent-file-icon svg,
+.agent-file-tint-memory .agent-file-icon svg {
+  fill: currentColor;
+}
+
 /* Back is a round chevron as tall as the header's buttons. */
 .agent-file-back {
   display: flex;
@@ -2683,40 +2632,129 @@ cpk-web-inspector,
   padding: 0;
 }
 
-/* The default figure starts 19/120 into its box (avatar.tsx); pulled back by that much at the file's 64px avatar,
-   it lines up with the text. */
-.agent-file > .avatar-agent {
-  margin-left: calc(64px * -19 / 120);
+/* A grouped list, as iOS Settings and Contacts: one white card, rows split by hairlines inset to the text. */
+.agent-file-group {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-white);
+  font-size: var(--font-body);
+  line-height: 1.4;
 }
 
-.agent-file-fields {
+.agent-file-row {
+  position: relative;
+  padding: 12px 16px;
+  overflow-wrap: anywhere;
+}
+
+.agent-file-row + .agent-file-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* Personalization's files as Muse's side-by-side cards (Fig 16): white type over a grained mesh, the whole card a button. */
+.agent-file-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.agent-file-card {
+  appearance: none;
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: var(--font-body);
+  aspect-ratio: 4 / 3;
+  min-width: 0;
+  padding: 16px;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--radius-2xl);
+  background: var(--file-tint);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 24px -14px var(--file-shadow);
+  color: var(--color-white);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--transition-layout),
+    box-shadow var(--transition-layout);
 }
 
-.agent-file-entry {
-  display: flex;
-  gap: 6px;
+/* A fine film grain over the mesh, as Muse's cards have. */
+.agent-file-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.9 -0.35'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  pointer-events: none;
 }
 
-.agent-file-entry dt {
-  font-weight: var(--weight-semibold);
+.agent-file-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 16px 28px -14px var(--file-shadow);
 }
 
-.agent-file-entry dt::after {
-  content: ":";
+.agent-file-card:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
 }
 
-.agent-file-unset {
-  color: var(--color-text-muted);
-  font-style: italic;
+.agent-file-card-title {
+  font-size: var(--font-name);
+  font-weight: var(--weight-bold);
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.agent-file-card-hint,
+.agent-file-card-count {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: rgba(255, 255, 255, 0.9);
+  text-transform: uppercase;
+}
+
+.agent-file-card-hint {
+  margin-top: 6px;
+  font-size: var(--font-label);
+  letter-spacing: 0.14em;
+}
+
+/* Clear of the icon, so a long count ("No memories yet") wraps rather than runs under it. */
+.agent-file-card-count {
+  margin-top: auto;
+  padding-right: 32px;
+  font-size: var(--font-detail);
+  letter-spacing: 0.06em;
+}
+
+.agent-file-card-icon {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 24px;
+  height: 24px;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .agent-file-text {
-  font-size: var(--font-body);
-  line-height: 1.5;
+  padding: 14px 16px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2727,18 +2765,24 @@ cpk-web-inspector,
   gap: 12px;
 }
 
-/* The note is a preface: the file's own content starts 24px below it (Muse Figs 17-19). */
-.agent-file-about {
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  font-size: var(--font-detail);
-  color: var(--color-text-muted);
+/* Editing Identity centres its avatar, its picture buttons centred under it. */
+.agent-file-form .picture-field {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 12px;
+  padding: 8px 0;
 }
 
-.agent-file-about h4 {
-  font-weight: var(--weight-semibold);
+.agent-file-form .picture-field > .avatar {
+  margin-inline: calc(50% - 40px);
+}
+
+/* A quiet caption under the header; the file's own content starts 16px below it. */
+.agent-file-about {
+  margin-bottom: 8px;
+  font-size: var(--font-detail);
+  line-height: 1.45;
+  color: var(--color-text-muted);
 }
 
 .picture-field {
@@ -2788,21 +2832,6 @@ cpk-web-inspector,
 .agent-memory-line input {
   flex: 1;
   min-width: 0;
-}
-
-/* Read, each memory is a bullet whose wrapped lines hang under its first (Muse Fig 19); editing keeps plain rows. */
-.agent-file > .agent-memory {
-  display: block;
-  padding-left: 1.25em;
-  list-style: disc;
-}
-
-.agent-file > .agent-memory .agent-memory-line {
-  display: list-item;
-}
-
-.agent-file > .agent-memory .agent-memory-line + .agent-memory-line {
-  margin-top: 12px;
 }
 
 /* ── List rows (Muse Fig 13, 15): a round icon tile, then a headline over muted detail lines ── */
@@ -3013,7 +3042,8 @@ cpk-web-inspector,
   width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  padding: 40px 20px 48px;
+  /* Clear of the round menu button at the top left */
+  padding: 72px 20px 48px;
 }
 
 .plugins-title {
@@ -3049,11 +3079,6 @@ cpk-web-inspector,
 @media (max-width: 640px) {
   .list-row {
     --row-icon: 44px;
-  }
-
-  /* Clear of the round menu button at the top left */
-  .plugins {
-    padding-top: 72px;
   }
 
   /* Coming soon sits under the title, so the description takes the card's full width */
@@ -3158,6 +3183,13 @@ cpk-web-inspector,
   .agent-profile,
   .app-layout[data-profile-swiping] > .agent-profile {
     animation: none;
+    transition: none;
+  }
+
+  /* A hovered card keeps still. */
+  .agent-file-card,
+  .agent-file-card:hover {
+    transform: none;
     transition: none;
   }
 

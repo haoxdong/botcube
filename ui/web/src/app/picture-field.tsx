@@ -13,6 +13,7 @@ export function PictureField({
   name,
   agent = false,
   noun,
+  size = 64,
   onChange,
   onError,
 }: {
@@ -22,6 +23,8 @@ export function PictureField({
   /** The agent's picture: with no picture or emoji it shows the agent's own avatar. */
   agent?: boolean;
   noun: string;
+  /** The avatar's size in pixels. */
+  size?: number;
   onChange: (picture: string | null) => void;
   onError: (message: string) => void;
 }) {
@@ -35,7 +38,7 @@ export function PictureField({
   };
   return (
     <div className="picture-field">
-      <Avatar picture={picture} emoji={emoji} name={name} agent={agent} size={64} />
+      <Avatar picture={picture} emoji={emoji} name={name} agent={agent} size={size} />
       <label className="button picture-upload">
         Upload {noun}
         <input type="file" accept="image/*" onChange={(event) => void choose(event.target.files?.[0])} />

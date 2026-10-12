@@ -1,6 +1,5 @@
 export { Button } from "./button"
 export { Field } from "./field"
-export { FileCard } from "./file-card"
 export { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "./list-row"
 export { SectionLabel } from "./section-label"
 export { Sheet } from "./sheet"

@@ -114,10 +114,10 @@ export const SignInNeeded: Story = {
     await noPageScroll(canvasElement);
   }),
 };
-export const ProfileIdentity: Story = {
-  name: 'profile-identity',
+export const ProfilePersonalization: Story = {
+  name: 'profile-personalization',
   play: resting(async ({ canvasElement }) => {
-    await profile(canvasElement, 'Identity');
+    await profile(canvasElement, 'Personalization');
     await visible(canvasElement.ownerDocument.body, '.agent-file-cards');
   }),
 };

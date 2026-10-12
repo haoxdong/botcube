@@ -6,9 +6,9 @@ new design there as a board or page, and refresh its screenshot boards after a U
 
 Every value below is a custom property in `:root` of `src/app/globals.css`; a cartridge's own
 stylesheet uses the same properties. A component's colour, type size, weight and radius name a
-token, never a literal. The exceptions: the Agent Computer's simulated desktop, which scales with its screen; the file
-cards' tints (Card, below); and the translucent fills of the frosted header and overlays. Spacing has no tokens (see
-Spacing).
+token, never a literal. The exceptions: the Agent Computer's simulated desktop, which scales with its screen; the agent
+files' tints, which draw on the agent's colours (Agent colours, below); and the translucent fills of the frosted header
+and overlays. Spacing has no tokens (see Spacing).
 
 Components are plain CSS on these tokens. Tailwind serves the few that use its classes and any copied-in shadcn
 component: the `@theme inline` block in `globals.css` sets shadcn's color names (`background`, `muted-foreground`,
@@ -24,15 +24,15 @@ desktop follows ChatGPT", "lets use their newest". To change a size, re-measure 
 Sans, and measuring it against SF Pro gave wrong sizes. Each token is its desktop size in `:root` and its phone size in
 the `max-width: 640px` query, as are `--weight-title`, `--weight-name` and `--weight-headline`; name the role, never a pixel size.
 
-| Token      | CSS var           | Desktop  | Phone (≤640px) | Use                                                                                                                                                                    |
-| ---------- | ----------------- | -------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `title`    | `--font-title`    | 24px/500 | 22px/700       | A screen's title (`.plugins-title`, `.welcome-title`)                                                                                                                  |
-| `name`     | `--font-name`     | 18px/600 | 22px/700       | The sidebar brand and the Agent Profile's name, as ChatGPT's identity-panel hero name (`text-lg font-semibold`)                                                        |
-| `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's, card's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.file-card-name`, `.agent-file h3`, `.profile-editor-title`, sign-ins) |
-| `message`  | `--font-message`  | 16px/400 | 17px/400       | The chat: messages, the composer's text, the agent's name pill under the avatar                                                                                        |
-| `body`     | `--font-body`     | 14px/400 | 17px/400       | Sidebar rows, menus (account, model), fields, file text, the welcome's description, the agent computer's file list                                                     |
-| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Secondary lines (summary, time, account), intros, errors, field labels, buttons, the model picker, code                                                                |
-| `label`    | `--font-label`    | 11px/600 | 13px/600       | Section labels, uppercase with 0.04em tracking (`SIDE CHATS`); status and Coming soon pills                                                                            |
+| Token      | CSS var           | Desktop  | Phone (≤640px) | Use                                                                                                                                         |
+| ---------- | ----------------- | -------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`    | `--font-title`    | 24px/500 | 22px/700       | A screen's title (`.plugins-title`, `.welcome-title`)                                                                                       |
+| `name`     | `--font-name`     | 18px/600 | 22px/700       | The sidebar brand and the Agent Profile's name, as ChatGPT's identity-panel hero name (`text-lg font-semibold`)                             |
+| `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.agent-file h3`, `.profile-editor-title`, sign-ins) |
+| `message`  | `--font-message`  | 16px/400 | 17px/400       | The chat: messages, the composer's text, the agent's name pill under the avatar                                                             |
+| `body`     | `--font-body`     | 14px/400 | 17px/400       | Sidebar rows, menus (account, model), fields, file text, the welcome's description, the agent computer's file list                          |
+| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Secondary lines (summary, time, account), intros, errors, field labels, buttons, the model picker, code                                     |
+| `label`    | `--font-label`    | 11px/600 | 13px/600       | Section labels, uppercase with 0.04em tracking (`SIDE CHATS`); status and Coming soon pills                                                 |
 
 The weights are each role's own. Sidebar rows are regular on a desktop, as in ChatGPT, and medium on a phone
 (`--sidebar-row-weight`). The name pill is medium on a desktop, as ChatGPT's dot name under its avatar (`text-[16px] font-medium`), and semibold on a phone. The account menu's name stays semibold; a model
@@ -43,20 +43,19 @@ Font stack: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Ar
 
 ## Components
 
-All but the Info box and Close are React components in `src/components/ui/`, each over one CSS rule; the cartridge imports them
+All but the File page and Close are React components in `src/components/ui/`, each over one CSS rule; the cartridge imports them
 from `botcube-ui-web/ui`.
 
 - **Sidebar row** (`<SidebarRow>`, `.sidebar-nav-item`): icon, then `body` label, a full-width pill filled while its screen is open.
   Phone: 44px tall, 24px icon viewport, 18px gap, the icon 20px from the screen edge under the brand (Muse Fig 21).
-  The desktop rail is 60px wide, with every control centred in a 44px square, 20px glyphs (the account avatar stays 28px),
-  at a 44px pitch, as dots' rail (memo 0049 Fig 1). It holds only Main chat, Plugins and Account, with no divider
-  (#3604).
   Sidebar menu and New side chat controls have 44px square targets with 20px glyphs. The phone menu has a 24px
   viewport and 22px drawn width, matching dots; the phone plus is a plain `text-muted` glyph, like the ×s.
-  Desktop navigation and Account controls keep their x/y positions when the sidebar opens or closes.
-  New side chat sits at the expanded header’s right at x204, y161, and leaves the rail.
-  Main chat expands the desktop sidebar; a click on the main stage collapses it. The brand row has no control and
-  keeps its 64px in both states, so the rail's icons stay level with their expanded rows.
+  New side chat sits at the expanded header’s right at x204, y161.
+  The desktop sidebar is shut by default, so the chat has the window: only the phone's round menu chip shows, over
+  the chat's top left. The chip docks the 260px sidebar beside the chat, which narrows to make room, with a 1px
+  `border` seam outside its 260px and no shadow, as the Agent Profile's on the chat's other side. It stays open
+  until the menu control beside the open brand shuts it, without motion either way; a desktop opens it as the viewer
+  last left it. The brand row keeps its 64px.
   Navigation icons stay centred in the first 44px. Side chats has a disclosure in the `label` role at semibold, in
   capitals (Muse Fig 21's SIDE CHATS), with a down/right chevron and one plus control. The list collapse preference
   is remembered per viewer.
@@ -68,10 +67,10 @@ from `botcube-ui-web/ui`.
   same pitch; content 20px from each side, the plus and each × in one 44px column; the Account row 8px above the
   bottom, on the rows' grid: a 29px avatar (iOS's list icon) at 20px and the name at the labels' 62px.
   The drawer and the chat card beside it run under the status and home bars; their contents keep to the safe area.
-  The desktop sidebar takes the drawer's layout at its own positions on the `frame`: Main chat and Plugins at a 44px
-  pitch, the open row (nav or Side Chat) `white`, as dots' (Fig 1); 5px under them to the divider, then the header's 4px, in both states; the
+  The desktop sidebar takes the drawer's layout at its own positions on the chat's `white`, as ChatGPT's: Main chat
+  and Plugins at a 44px pitch, the open row (nav or Side Chat) on `border`, the profile controls' hover grey; 5px under them to the divider, then the header's 4px, in both states; the
   Side Chats header's label at 20px, its rows at the same 44px pitch right under it, each × in the plus's column; the
-  Account row 4px above the bottom, on the chat card's bottom inset, as dots' account (Fig 1).
+  Account row 4px above the bottom, as dots' account (Fig 1).
 - **List row** (`<ListRow>` and its parts, `.list-row`): a round icon tile (`--row-icon`, 40px desktop, 44px phone) on `surface-hover`, a 14px gap,
   then a `headline` title over `detail` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Plugins use
   it (a Plugins placeholder adds a dashed `border` edge); a failed row tints its tile `danger-soft` with a `danger`
@@ -87,13 +86,14 @@ from `botcube-ui-web/ui`.
   actions give way to a `destructive` confirm (Delete task) over Cancel.
 - **Chat header** (`.chat-header`): a centered avatar over scrolling messages (memo 0049 Figs 1, 7, and 11).
   A shared safe content frame keeps controls clear of every screen inset.
-  On desktop, messages stay clear behind the header. Marq's hat sits 1.5px under the chat card's top, as dots' avatar under its card's (Fig 1), in front of a
+  On desktop, messages stay clear behind the header. Marq's hat sits 1.5px under the window's top, as dots' avatar under its card's (Fig 1), in front of a
   crisp `white` name capsule tucked 6px behind his body, as on the phone, with no frost or shadow at rest.
   On phones, the chat scrolls the page, so messages run undimmed up under the status bar behind iOS Safari's own fade, as in Muse Fig 11.
   The closed-phone menu uses 4px blur on 60% white, with no saturation boost; on phones the capsule is a crisp 92% white, and neither has a shadow.
   The phone menu stands at Muse's spot, 24px in at the top of the safe area. On phones the default figure stands 68px tall, hat included, like Muse's avatar disc, in front of the capsule, which tucks about 6px behind his body.
-- **Chat card** (`.app-shell`): on desktop the chat, or Plugins, is a `white` card inside the sidebar's `frame`, 4px clear of the window's other edges, with `radius-lg` corners and the `card` edge (memo 0049 Fig 1). Beside
-  the chat, the open Agent Profile shares the card, as dots' computer panel does (Fig 3).
+- **Chat stage** (`.app-shell`): on desktop the chat, or Plugins, fills the window, `white` and square with no edge,
+  as it meets no rounded screen corner (Border Radius). Beside the chat, the open Agent Profile shares it, as dots'
+  computer panel does (Fig 3).
 - **Button** (`<Button>`, `.button`): a pill, `detail` at medium, 6px × 14px. Secondary is `text` on `surface-hover` (hover `border`); primary
   (Save, Confirm) is `white` on `text`; a destructive one (Delete) sets its text `danger`. Disabled primary is
   `control`. Its height is `--button-height`. **Back** (`.agent-file-back`, an open file's header) is a round
@@ -107,25 +107,43 @@ from `botcube-ui-web/ui`.
   90px box with a `composer` fill and shadow. Send has a 44px target; the phone draws a 32px circle inside it.
 - **Status pill** (`<StatusPill>`, `.status-pill`; Sign-ins, Scheduled's Paused, Coming soon): `label` at medium, 3px × 10px, on a soft tint of its colour: `blue` on
   `blue-soft`, `danger` on `danger-soft`, `text-muted` on `surface-hover`.
-- **Card** (`<FileCard>`, `.file-card`; Agent files): `radius-xl`, 16px padding, `headline` name over a `detail` hint. Each
-  carries its own tint (`--card-tint`, `--card-edge`, `--card-ink`: blue Identity, violet Soul, amber Memory).
-- **Info box** (About this file): `detail` in `text-muted` on `surface`, 12px × 14px, `radius-lg`.
+- **Profile header** (`.agent-profile-header`): the 96px avatar with a pencil badge (`.agent-profile-edit`, Edit agent)
+  that opens Identity's editor, the `name`, Identity's character as one `detail` line in `text-muted` cut short with an
+  ellipsis (`.agent-profile-character`, left out when blank), then the Connected status.
+- **File tint** (`.agent-file-tint-*`; Agent files): each file's gradient, after Muse's file cards (Fig 16), in the
+  agent's colours (Agent colours, below): deep `to` under the white type on the left, lifting to `from` at the bottom
+  right, with a `glow` in the top right corner (`--file-tint`), and a shadow of `from` (`--file-shadow`). Identity wears
+  Soul's colours. It fills the file's card and its page's `radius-md` header tile (`headline` × 2 square), each with a
+  white glyph; Soul's and Memory's glyphs are solid.
+- **File cards** (`.agent-file-cards`; the Personalization tab, under the fingerprint icon): Soul and Memory side by
+  side as Muse's (Fig 16), a two-column grid with a 12px gap. Each card is one 4:3 `radius-2xl` button in its tint under
+  a fine SVG grain, no border, a soft `--file-shadow`; inside 16px of padding, white type: the `name` title bold
+  and uppercase, under it a monospace `label` hint tracked 0.14em (Values and habits, What it knows), and bottom-left a
+  monospace `detail` count (3 lines, Empty; 3 memories, No memories yet), both uppercase at 90% white (at least 4.5:1
+  on the tint, measured on the rendered card); the count stops 32px short of the icon and wraps. A solid 24px heart or
+  speech bubble at 80% white sits bottom-right. Hover lifts the card 2px, except under reduced motion; keyboard focus
+  draws a 2px `text` ring.
+- **File page** (`.agent-file`; an opened Soul or Memory card, or Identity from the pencil): Back, then the file's tinted tile,
+  then the `headline` title. Under it a caption on what the file is, `detail` in `text-muted`. The
+  content is a grouped list, as iOS Settings: one `white` `radius-xl` group with a `border` edge, its rows 12px × 16px
+  and split by `border` hairlines inset to the text. Memory has one row per memory; Soul's text sits in the group as it
+  is. Identity opens straight into its editor: an 80px avatar centred over its fields; Cancel, Back or Save returns to
+  the tab the user was on.
 
 ## Color Palette
 
 | Token           | Hex       | Use                                                                                                    |
 | --------------- | --------- | ------------------------------------------------------------------------------------------------------ |
 | `text`          | `#0d0d0d` | Primary text, primary buttons, the selected tab                                                        |
-| `text-subtle`   | `#555`    | Picker pill text (in-input), card hints, sheet notes                                                   |
+| `text-subtle`   | `#555`    | Picker pill text (in-input), sheet notes                                                               |
 | `text-muted`    | `#6b6b6b` | Secondary lines, placeholders, section labels, muted icons (AA on `surface`), the fallback avatar disc |
-| `surface`       | `#f7f7f8` | App and sidebar background, tab bar, info boxes                                                        |
+| `surface`       | `#f7f7f8` | App and sidebar background, tab bar                                                                    |
 | `surface-hover` | `#f4f4f4` | Secondary buttons, icon tiles, hover states, code blocks                                               |
 | `composer`      | `#fbfbfb` | The phone composer's fill (ChatGPT Work's)                                                             |
 | `selected`      | `#efefef` | The open row in the phone drawer (Muse Fig 21)                                                         |
-| `frame`         | `#ebebec` | The desktop sidebar and the frame round the chat card (memo 0049 Fig 1)                                |
-| `border`        | `#e0e0e0` | Borders, separators, secondary button hover                                                            |
+| `border`        | `#e0e0e0` | Borders, separators, secondary button hover, the desktop sidebar's open row                            |
 | `control`       | `#bfbfbf` | Scrollbar thumbs, disabled send and primary buttons                                                    |
-| `white`         | `#fff`    | Cards, dropdowns, field background                                                                     |
+| `white`         | `#fff`    | Cards, dropdowns, field background, the desktop sidebar (as ChatGPT's)                                 |
 | `blue`          | `#2563eb` | Checkmarks, selection, focus rings, Linked                                                             |
 | `blue-soft`     | `#eff6ff` | The Linked pill, the composer's sign-in chip                                                           |
 | `success`       | `#22c55e` | The Connected badge, a finished tool call                                                              |
@@ -133,35 +151,51 @@ from `botcube-ui-web/ui`.
 | `danger-soft`   | `#fef2f2` | A failed row's icon tile, the Re-link required pill                                                    |
 | `black`         | `#000`    | CopilotKit primary, active send button                                                                 |
 
+**Agent colours** (`--agent-soul-*`, `--agent-memory-*`): the Soul and Memory cards' colours, a cartridge `theme` hook,
+so each agent brings its own; the defaults are a neutral grey, which the template keeps. Each card's white captions keep
+4.5:1 on its `to`, measured on the rendered card.
+
+| Token               | Default      | Marq (from its avatar)              |
+| ------------------- | ------------ | ----------------------------------- |
+| `agent-soul-from`   | `text-muted` | `#6c90bc`, its outline periwinkle   |
+| `agent-soul-to`     | `text`       | `#3f5f8a`, a deeper navy periwinkle |
+| `agent-soul-glow`   | `control`    | `#acc4e0`, its body                 |
+| `agent-memory-from` | `text-muted` | `#3f5f8a`, Soul's navy              |
+| `agent-memory-to`   | `text`       | `#1c2b45`, a deeper navy            |
+| `agent-memory-glow` | `control`    | `#acc4e0`, its body, as Soul's      |
+
 ## Border Radius
 
-| Token  | Value  | Use                                                                                               |
-| ------ | ------ | ------------------------------------------------------------------------------------------------- |
-| `sm`   | 4px    | Inline code, the sidebar's delete button                                                          |
-| `md`   | 8px    | Header and sidebar icon buttons, the computer's window                                            |
-| `lg`   | 12px   | Fields, dropdowns, info boxes, chat error, proposal card, the desktop chat card (memo 0049 Fig 1) |
-| `xl`   | 16px   | Agent file cards, Plugin placeholders                                                             |
-| `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet                                           |
-| `3xl`  | 26px   | The composer                                                                                      |
-| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile                                    |
-| `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)                                             |
+A panel rounds only where it reaches into the safe zone, following an iPhone's rounded screen corners, as the phone's
+chat card beside the drawer does; a panel that meets no rounded corner, such as the desktop chat stage, stays square.
+Controls inside a panel, such as the composer and message bubbles, keep their own radius.
+
+| Token  | Value  | Use                                                                 |
+| ------ | ------ | ------------------------------------------------------------------- |
+| `sm`   | 4px    | Inline code, the sidebar's delete button                            |
+| `md`   | 8px    | Header and sidebar icon buttons, the computer's window              |
+| `lg`   | 12px   | Fields, dropdowns, chat error, proposal card                        |
+| `xl`   | 16px   | Agent files' grouped lists, Plugin placeholders                     |
+| `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet, file cards |
+| `3xl`  | 26px   | The composer                                                        |
+| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile      |
+| `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)               |
 
 ## Shadows
 
-| Token      | Value                                                     | Use                                                                  |
-| ---------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
-| `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`                              | The desktop composer (resting)                                       |
-| `elevated` | `0 4px 20px rgba(0,0,0,0.15)`                             | Dropdowns, popovers, the Scheduled sheet                             |
-| `composer` | `0 8px 36px rgba(0,0,0,0.11)`                             | The phone composer, focused or not (ChatGPT Work's)                  |
-| `soft`     | `0 0 40px rgba(0,0,0,0.23)`                               | The chat card beside the phone drawer (Muse Fig 21) or profile       |
-| `card`     | `0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06)` | The desktop chat card's edge on the sidebar's grey (memo 0049 Fig 1) |
+| Token      | Value                         | Use                                                            |
+| ---------- | ----------------------------- | -------------------------------------------------------------- |
+| `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`  | The desktop composer (resting)                                 |
+| `elevated` | `0 4px 20px rgba(0,0,0,0.15)` | Dropdowns, popovers, the Scheduled sheet                       |
+| `composer` | `0 8px 36px rgba(0,0,0,0.11)` | The phone composer, focused or not (ChatGPT Work's)            |
+| `soft`     | `0 0 40px rgba(0,0,0,0.23)`   | The chat card beside the phone drawer (Muse Fig 21) or profile |
 
 ## Transitions
 
-| Token    | Value       | Use                                                      |
-| -------- | ----------- | -------------------------------------------------------- |
-| `fast`   | `0.1s`      | Hover backgrounds, opacity, color changes                |
-| `layout` | `0.2s ease` | Sidebar width, border-color, the phone chat card's slide |
+| Token    | Value       | Use                                       |
+| -------- | ----------- | ----------------------------------------- |
+| `fast`   | `0.1s`      | Hover backgrounds, opacity, color changes |
+| `layout` | `0.2s ease` | Border-color, the phone chat card's slide |
 
 ## Spacing
 

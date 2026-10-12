@@ -101,4 +101,4 @@ export interface WebUiPlugin {
   theme: Record<string, string>;
 }
 
-export type AgentProfileTab = 'Activity' | 'Sign-ins' | 'Computer' | 'Scheduled' | 'Identity';
+export type AgentProfileTab = 'Activity' | 'Sign-ins' | 'Computer' | 'Scheduled' | 'Personalization';

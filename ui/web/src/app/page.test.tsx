@@ -397,6 +397,7 @@ const agent = () => {
   return researchAgent;
 };
 const sidebar = () => within(present(document.querySelector('aside'), 'the sidebar'));
+const openSidebar = () => userEvent.click(sidebar().getByRole('button', { name: 'Toggle sidebar' }));
 const recents = () => [...document.querySelectorAll('.sidebar-item-btn')].map((item) => item.textContent);
 const welcome = () => document.querySelector('.welcome-screen');
 const picker = () => present(present(screen.getByText('Deep').closest('.chat-model-picker'), 'the model picker').parentElement, 'the model picker cell');
@@ -2463,7 +2464,6 @@ describe('Main Chat', () => {
 
     expect(copilot.chat?.threadId).toBe('main-1');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item-active');
-    expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveAttribute('aria-expanded', 'true');
     expect(document.querySelector('.sidebar-item-active')).toBeNull();
   });
 
@@ -2861,7 +2861,7 @@ describe("a scheduled run's Side Chat", () => {
   it('says why the Side Chats could not load, until they load', async () => {
     service.sideChats = [sideChat('side', 'Side question')];
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
     service.failing.set('GET /threads', 503);
 
     await userComesBack();
@@ -2881,7 +2881,7 @@ describe("a scheduled run's Side Chat", () => {
       throw new TypeError('Failed to fetch');
     });
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
     expect(copilot.kits).toEqual([]);
     expect(sidebar().getByRole('alert')).toHaveTextContent('Side Chats could not load: Failed to fetch');
     const initialMainLoads = mainChatLoads();
@@ -2903,7 +2903,7 @@ describe("a scheduled run's Side Chat", () => {
   it('loads the Side Chats again once the connection is back', async () => {
     service.sideChats = [sideChat('side', 'Side question')];
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
     fetchMock.mockImplementation(async () => {
       throw new TypeError('Failed to fetch');
     });
@@ -3580,9 +3580,9 @@ describe('Side Chats', () => {
     service.sideChats = [sideChat('first', 'First question')];
     service.failing.set('GET /threads/first', 503);
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(sidebar().getByText('First question'));
     await settle();
+    await openSidebar();
     expect(sidebar().getByRole('alert')).toHaveTextContent('First question could not be opened: Failed to replay thread: 503');
     expect(copilot.chat?.threadId).toBe('main-1');
     service.failing.delete('GET /threads/first');
@@ -3703,7 +3703,7 @@ describe('Side Chats', () => {
     service.sideChats = [sideChat('stuck', 'Stuck')];
     service.failing.set('DELETE /threads/stuck', 409);
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
 
     await userEvent.click(sidebar().getByLabelText('Delete conversation'));
 
@@ -3715,7 +3715,7 @@ describe('Side Chats', () => {
     service.failing.set('GET /threads', 503);
 
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
 
     expect(sidebar().getByRole('alert')).toHaveTextContent('Side Chats could not load: Failed to fetch threads: 503');
     expect(sidebar().queryByText('Start a side chat')).toBeNull();
@@ -3785,7 +3785,7 @@ describe("a Side Chat's URL", () => {
 });
 
 describe('sidebar', () => {
-  it('retries a failed Main Chat load from its active browser copy when expanding the sidebar', async () => {
+  it('retries a failed Main Chat load from its active browser copy when Main Chat is chosen', async () => {
     localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [{ id: 'saved-question', role: 'user', content: 'Saved question' }] }));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     service.failing.set('GET /main-chat', 503);
@@ -3794,15 +3794,15 @@ describe('sidebar', () => {
     expect(screen.getByText('Your Main Chat could not be opened.')).toBeInTheDocument();
 
     service.failing.delete('GET /main-chat');
+    await openSidebar();
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await settle();
 
-    expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveAttribute('aria-expanded', 'true');
     expect(copilot.chat?.threadId).toBe('main-1');
     expect(screen.queryByText('Your Main Chat could not be opened.')).toBeNull();
   });
 
-  it('keeps the active Main Chat Turn streaming when its rail control expands the sidebar', async () => {
+  it('keeps the active Main Chat Turn streaming when the sidebar opens and Main Chat is chosen', async () => {
     await renderPage();
     const current = agent();
     let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -3811,33 +3811,31 @@ describe('sidebar', () => {
         ? new Response(new ReadableStream<Uint8Array>({
             start(controller) {
               stream = controller;
-              controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'rail-run' })}\n\n`));
+              controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'open-run' })}\n\n`));
             },
           }), { headers: { 'content-type': 'text/event-stream' } })
         : chatService(url, init),
     );
     let turn: Promise<unknown> | undefined;
     await act(async () => {
-      current.addMessage({ id: 'rail-question', role: 'user', content: 'Keep answering while I open the sidebar' });
-      turn = current.runAgent({ runId: 'rail-run' });
+      current.addMessage({ id: 'open-question', role: 'user', content: 'Keep answering while I open the sidebar' });
+      turn = current.runAgent({ runId: 'open-run' });
     });
     await settle();
     try {
       expect(current.isRunning).toBe(true);
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
-      expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveAttribute('aria-expanded', 'false');
-      await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+      await openSidebar();
       await settle();
-      expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveAttribute('aria-expanded', 'true');
+      expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
       expect(agent()).toBe(current);
-      expect(agent().messages).toContainEqual({ id: 'rail-question', role: 'user', content: 'Keep answering while I open the sidebar' });
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
 
       await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
       await settle();
-      expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveAttribute('aria-expanded', 'true');
+      expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
       expect(agent()).toBe(current);
-      expect(agent().messages).toContainEqual({ id: 'rail-question', role: 'user', content: 'Keep answering while I open the sidebar' });
+      expect(agent().messages).toContainEqual({ id: 'open-question', role: 'user', content: 'Keep answering while I open the sidebar' });
       expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
     } finally {
       await act(async () => {
@@ -3847,82 +3845,74 @@ describe('sidebar', () => {
     }
   });
 
-  it('expands from Main Chat and collapses from the desktop stage while sidebar clicks stay expanded', async () => {
+  // Docked beside the chat, the desktop sidebar opens and shuts only from its menu button.
+  it('opens and shuts the desktop sidebar only from its menu button', async () => {
     await renderPage(auth({ user: { name: 'Ada Lovelace' } }));
     const aside = present(document.querySelector('aside'), 'the sidebar');
-    const mainChat = sidebar().getByRole('button', { name: 'Main Chat' });
+    const menu = sidebar().getByRole('button', { name: 'Toggle sidebar' });
     expect(aside).toHaveClass('sidebar', 'sidebar-collapsed');
-    expect(mainChat).toHaveAttribute('aria-expanded', 'false');
-    expect(sidebar().queryByRole('button', { name: 'Toggle sidebar' })).toBeNull();
+    expect(menu).toHaveAttribute('aria-expanded', 'false');
     expect(document.querySelector('.user-menu .sidebar-nav-label')).toBeNull();
 
-    mainChat.focus();
+    menu.focus();
     await userEvent.keyboard('{Enter}');
-    await settle();
     expect(aside).toHaveClass('sidebar', 'sidebar-expanded');
-    expect(mainChat).toHaveAttribute('aria-expanded', 'true');
-    expect(copilot.chat?.threadId).toBe('main-1');
+    expect(menu).toHaveAttribute('aria-expanded', 'true');
     expect(document.querySelector('.user-menu .sidebar-nav-label')).toHaveTextContent(/^Ada$/);
 
-    await userEvent.click(mainChat);
-    expect(aside).toHaveClass('sidebar-expanded');
     await userEvent.click(sidebar().getByRole('button', { name: 'Account' }));
     expect(aside).toHaveClass('sidebar-expanded');
-    expect(screen.queryByLabelText('Collapse sidebar')).toBeNull();
     await userEvent.click(screen.getByRole('textbox'));
-    expect(aside).toHaveClass('sidebar-collapsed');
     expect(screen.getByRole('textbox')).toHaveFocus();
-    expect(mainChat).toHaveAttribute('aria-expanded', 'false');
-
-    mainChat.focus();
-    await userEvent.keyboard(' ');
+    await userEvent.keyboard('{Escape}');
     expect(aside).toHaveClass('sidebar-expanded');
-    expect(mainChat).toHaveAttribute('aria-expanded', 'true');
+
+    menu.focus();
+    await userEvent.keyboard(' ');
+    expect(aside).toHaveClass('sidebar-collapsed');
+    expect(menu).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(menu);
+    expect(aside).toHaveClass('sidebar-expanded');
   });
 
-  it('collapses from the Plugins stage without treating sidebar navigation as a stage click', async () => {
+  it('remembers whether the desktop sidebar was left open', async () => {
+    localStorage.setItem('botcube.sidebar-expanded', 'true');
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
+
+    const menu = sidebar().getByRole('button', { name: 'Toggle sidebar' });
+    await userEvent.click(menu);
+    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
+    expect(localStorage.getItem('botcube.sidebar-expanded')).toBe('false');
+    await userEvent.click(menu);
+    expect(localStorage.getItem('botcube.sidebar-expanded')).toBe('true');
+  });
+
+  it('stays open when Plugins is chosen, and over a click on the Plugins stage', async () => {
+    await renderPage();
+    await openSidebar();
     await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
+    expect(screen.getByRole('heading', { name: 'Plugins' })).toBeVisible();
     expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
     await userEvent.click(screen.getByRole('heading', { name: 'Plugins' }));
-    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
-    expect(screen.getByRole('heading', { name: 'Plugins' })).toBeVisible();
+    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
   });
 
-  it('collapses from the failed Main Chat stage while its Retry still restores the chat', async () => {
+  it('stays open over the failed Main Chat stage while its Retry restores the chat', async () => {
     service.failing.set('GET /main-chat', 503);
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
-    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
+    await openSidebar();
     service.failing.delete('GET /main-chat');
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await settle();
-    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
+    expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
     expect(screen.getByRole('textbox')).toBeVisible();
     expect(copilot.chat?.threadId).toBe('main-1');
   });
 
-  it('keeps only Main Chat and Plugins in the collapsed primary rail and restores New side chat when expanded', async () => {
-    const hidden = document.createElement('style');
-    hidden.textContent = '.sidebar-collapsed .sidebar-nav-label { display: none; }'; // as globals.css hides them
-    document.head.append(hidden);
-    try {
-      await renderPage();
-
-      expect(sidebar().getByRole('button', { name: 'Main Chat' })).toBeInTheDocument();
-      expect(sidebar().getByRole('button', { name: 'Plugins' })).toBeInTheDocument();
-      expect(sidebar().queryByRole('button', { name: 'New side chat' })).toBeNull();
-      await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
-      expect(sidebar().getByRole('button', { name: 'New side chat' })).toBeInTheDocument();
-    } finally {
-      hidden.remove();
-    }
-  });
-
   it('names the account menu after the cartridge account when there is no user', async () => {
     await renderPage(auth({ status: 'unauthed' }));
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
 
     expect(document.querySelector('.user-menu .sidebar-nav-label')).toHaveTextContent(/^Research Account$/);
     expect(screen.getByLabelText('Account')).not.toHaveAttribute('data-tooltip');
@@ -3941,7 +3931,7 @@ describe('sidebar', () => {
   it('stays open beside the chat on a desktop when a chat is chosen', async () => {
     service.sideChats = [sideChat('a', 'First')];
     await renderPage();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
 
     await userEvent.click(sidebar().getByText('First'));
 
@@ -3959,7 +3949,7 @@ describe('Side chats disclosure', () => {
     service.failing.set('GET /threads', 503);
     await renderPage(auth({ accountId: 'acct-first' }));
     expect(sidebar().queryByRole('alert')).toBeNull();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await openSidebar();
 
     expect(disclosure()).toHaveAttribute('aria-expanded', 'false');
     expect(sidebar().getByRole('alert')).toBeVisible();
@@ -5467,8 +5457,8 @@ describe('agent profile', () => {
     await renderPage();
     await userEvent.click(avatar());
 
-    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Identity' }));
-    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Identity');
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Personalization' }));
+    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Personalization');
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));
     await userEvent.click(screen.getByLabelText('Close agent profile'));
     expect(profile()).toBeNull();
@@ -5489,207 +5479,239 @@ describe('agent profile', () => {
     expect(openProfile().querySelector('.agent-profile-error')).toHaveTextContent(/^Agent profile failed: 503$/);
   });
 
-  const openIdentity = async () => {
+  const openPersonalization = async () => {
     await userEvent.click(avatar());
-    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Identity' }));
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Personalization' }));
     await settle();
     return within(openProfile().querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])') as HTMLElement);
   };
+  /** Agent Identity's editor, opened from the pencil on the agent's avatar in the open profile. */
+  const editIdentity = async () => {
+    await userEvent.click(within(openProfile()).getByRole('button', { name: 'Edit agent' }));
+    await settle();
+    return within(openProfile().querySelector<HTMLElement>('.agent-profile-panel:not([hidden])') as HTMLElement);
+  };
+  const identityArticle = () => document.querySelector('article[aria-label="Identity"]');
 
-  it("opens the Identity tab from the edit badge on the agent's avatar", async () => {
+  it("opens Agent Identity's editor from the edit badge on the agent's avatar, in place of the tab it returns to", async () => {
     await renderPage();
     await userEvent.click(avatar());
 
-    await userEvent.click(within(openProfile()).getByRole('button', { name: 'Edit agent' }));
-    await settle();
+    const editor = await editIdentity();
 
-    expect(within(openProfile()).getByRole('tab', { name: 'Identity' })).toHaveAttribute('aria-selected', 'true');
-    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Identity');
-    expect(within(openProfile()).getByRole('button', { name: 'Open Agent Identity' })).toBeInTheDocument();
+    expect(within(openProfile()).queryByRole('tab', { selected: true })).toBeNull();
+    expect(within(openProfile()).queryByRole('tabpanel')).toBeNull();
+    expect(editor.getByLabelText<HTMLInputElement>('Name').value).toBe('Ada Bot');
+    expect(editor.getByLabelText<HTMLInputElement>('Character').value).toBe('A research assistant');
+    expect(editor.getByLabelText<HTMLInputElement>('Vibe').value).toBe('Warm');
+    expect(editor.getByLabelText<HTMLInputElement>('Avatar').value).toBe('');
+    expect(editor.queryByRole('button', { name: 'Edit Identity' })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/identity', { credentials: 'include', cache: 'no-store' });
+    expect(editor.getByRole('region', { name: 'About Identity' })).toHaveTextContent(
+      /^Who your agent is to you: its name, character, vibe, and avatar \(an emoji, or blank for the default avatar\)\. The agent reads it at the start of every message and uses your edits from your next message on\. It may change this file itself, and tells you in the chat when it does\.$/,
+    );
+
+    await click(editor, 'Cancel editing Identity');
+
+    expect(identityArticle()).toBeNull();
+    expect(within(openProfile()).getByRole('tab', { selected: true })).toHaveAccessibleName('Computer');
+    expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Ada Bot: research-agent computer for main-1$/);
+    expect(cartridge.computerMounts).toBe(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0);
   });
 
-  it('shows Agent Identity, Soul, and Memory as cards in the Identity tab', async () => {
+  it.each(['Back', 'tab'])('closes Agent Identity unsaved with %s, back to the tab the user was on', async (way) => {
+    await renderPage();
+    await openPersonalization();
+    const editor = await editIdentity();
+    await userEvent.type(editor.getByLabelText('Name'), '!');
+
+    if (way === 'Back') await click(editor, 'Back');
+    else await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Personalization' }));
+    await settle();
+
+    expect(identityArticle()).toBeNull();
+    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Personalization');
+    expect(service.agentIdentity.name).toBe('Ada Bot');
+  });
+
+  it.each([
+    { character: 'A research assistant', line: 'A research assistant' },
+    { character: '  ', line: null },
+  ])("shows Agent Identity's character $character under the agent's name, above its status, only when set", async ({ character, line }) => {
+    service.agentIdentity = { ...service.agentIdentity, character };
+    await renderPage();
+    await userEvent.click(avatar());
+    await settle();
+
+    const name = present(openProfile().querySelector('.agent-profile-name'), 'the name');
+    if (line === null) {
+      expect(openProfile().querySelector('.agent-profile-character')).toBeNull();
+      expect(name.nextElementSibling).toHaveClass('agent-profile-status');
+    } else {
+      expect(name.nextElementSibling).toHaveClass('agent-profile-character');
+      expect(name.nextElementSibling).toHaveTextContent(new RegExp(`^${line}$`));
+      expect(name.nextElementSibling?.nextElementSibling).toHaveClass('agent-profile-status');
+    }
+  });
+
+  it('shows Soul and Memory as side-by-side cards, each counting what it holds', async () => {
+    service.soul = '\n  Be candid.  \n\nAlways.';
     await renderPage();
 
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
 
-    expect(identity.getAllByRole('button').map((card) => card.getAttribute('aria-label'))).toEqual([
-      'Open Agent Identity',
-      'Open Soul',
-      'Open Memory',
+    expect(panel.getAllByRole('button').map((card) => card.getAttribute('aria-label'))).toEqual(['Open Soul', 'Open Memory']);
+    expect(panel.getAllByRole('button').map((card) => card.textContent)).toEqual([
+      'SoulValues and habits2 lines',
+      'MemoryWhat it knows2 memories',
     ]);
-    expect(identity.queryByRole('textbox')).toBeNull();
+    expect(panel.queryByRole('textbox')).toBeNull();
+  });
+
+  it.each([
+    { soul: 'Be candid.', lines: [], counts: ['1 line', 'No memories yet'] },
+    { soul: '  ', lines: [{ id: 'mem-paris', text: 'Lives in Paris' }], counts: ['Empty', '1 memory'] },
+  ])('counts $counts', async ({ soul, lines, counts }) => {
+    service.soul = soul;
+    service.memory = lines;
+    await renderPage();
+
+    await openPersonalization();
+
+    expect([...openProfile().querySelectorAll('.agent-file-card-count')].map((count) => count.textContent)).toEqual(counts);
   });
 
   type Panel = ReturnType<typeof within>;
-  const openFile = async (identity: Panel, file: string) => {
-    await userEvent.click(identity.getByRole('button', { name: `Open ${file}` }));
-    return within(identity.getByRole('article', { name: file }));
+  const openFile = async (panel: Panel, file: string) => {
+    await userEvent.click(panel.getByRole('button', { name: `Open ${file}` }));
+    return within(panel.getByRole('article', { name: file }));
   };
-  const editFile = async (identity: Panel, file: string) => {
-    const opened = await openFile(identity, file);
+  const editFile = async (panel: Panel, file: string) => {
+    const opened = await openFile(panel, file);
     await userEvent.click(opened.getByRole('button', { name: `Edit ${file}` }));
     return opened;
   };
-  const click = async (identity: Panel, name: string) => {
-    await userEvent.click(identity.getByRole('button', { name }));
+  const click = async (panel: Panel, name: string) => {
+    await userEvent.click(panel.getByRole('button', { name }));
     await settle();
   };
 
-  it("lists Agent Identity's Avatar field once it names an emoji", async () => {
-    service.agentIdentity = { ...service.agentIdentity, avatar: '🪶' };
+  it('opens Soul read-only, with a note on what it is, and edits it from its saved text', async () => {
     await renderPage();
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
 
-    const agentIdentity = await openFile(identity, 'Agent Identity');
+    const soul = await openFile(panel, 'Soul');
 
-    expect(agentIdentity.getAllByRole('term').map((term) => term.textContent)).toEqual(['Name', 'Character', 'Vibe', 'Avatar']);
-    expect(agentIdentity.getAllByRole('definition').at(-1)).toHaveTextContent(/^🪶$/);
-  });
-
-  it('opens Agent Identity and Soul read-only, each with a note on what it is', async () => {
-    await renderPage();
-    const identity = await openIdentity();
-
-    const agentIdentity = await openFile(identity, 'Agent Identity');
-
-    expect(identity.queryByRole('textbox')).toBeNull();
-    // With no emoji, the avatar shows the default, so read-only Agent Identity lists no Avatar field.
-    expect(agentIdentity.getAllByRole('term').map((term) => term.textContent)).toEqual(['Name', 'Character', 'Vibe']);
-    expect(agentIdentity.getAllByRole('definition').map((value) => value.textContent)).toEqual([
-      'Ada Bot',
-      'A research assistant',
-      'Warm',
-    ]);
-    expect(identity.queryByRole('status')).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/identity', { credentials: 'include', cache: 'no-store' });
-    expect(agentIdentity.getByRole('region', { name: 'About Agent Identity' })).toHaveTextContent(
-      /^About this fileWho your agent is to you: its name, character, vibe, and avatar \(an emoji, or blank for the default avatar\)\. The agent reads it at the start of every message and uses your edits from your next message on\. It may change this file itself, and tells you in the chat when it does\.$/,
-    );
-
-    await click(identity, 'Back to files');
-    const soul = await openFile(identity, 'Soul');
-
-    expect(identity.queryByRole('textbox')).toBeNull();
+    expect(panel.queryByRole('textbox')).toBeNull();
     expect(soul.getByText('Be candid.')).toHaveClass('agent-file-text');
     expect(soul.getByRole('region', { name: 'About Soul' })).toHaveTextContent(
-      /^About this fileThe values and habits your agent keeps in every chat\. The agent reads it at the start of every message and uses your edits from your next message on\. It may change this file itself, and tells you in the chat when it does\. Soul shapes only its manner: its rules for grounding answers and running commands live in its skills, which Soul cannot change\.$/,
+      /^The values and habits your agent keeps in every chat\. The agent reads it at the start of every message and uses your edits from your next message on\. It may change this file itself, and tells you in the chat when it does\. Soul shapes only its manner: its rules for grounding answers and running commands live in its skills, which Soul cannot change\.$/,
     );
+
+    await click(panel, 'Edit Soul');
+
+    expect(panel.getByRole<HTMLTextAreaElement>('textbox', { name: 'Soul' }).value).toBe('Be candid.');
   });
 
-  it('edits Agent Identity and Soul from their saved text', async () => {
+  it('renames the agent, updating its header and profile, and closes the editor', async () => {
     await renderPage();
-    const identity = await openIdentity();
+    await openPersonalization();
+    const editor = await editIdentity();
 
-    await editFile(identity, 'Agent Identity');
-
-    expect(identity.getByLabelText<HTMLInputElement>('Name').value).toBe('Ada Bot');
-    expect(identity.getByLabelText<HTMLInputElement>('Character').value).toBe('A research assistant');
-    expect(identity.getByLabelText<HTMLInputElement>('Vibe').value).toBe('Warm');
-    expect(identity.getByLabelText<HTMLInputElement>('Avatar').value).toBe('');
-    expect(identity.queryByRole('button', { name: 'Edit Agent Identity' })).toBeNull();
-
-    await click(identity, 'Back to files');
-    await editFile(identity, 'Soul');
-
-    expect(identity.getByRole<HTMLTextAreaElement>('textbox', { name: 'Soul' }).value).toBe('Be candid.');
-  });
-
-  it('renames the agent, updating its header and profile', async () => {
-    await renderPage();
-    const identity = await openIdentity();
-    const agentIdentity = await editFile(identity, 'Agent Identity');
-
-    await userEvent.clear(identity.getByLabelText('Name'));
-    await userEvent.type(identity.getByLabelText('Name'), 'Quill');
-    await click(identity, 'Save Agent Identity');
+    await userEvent.clear(editor.getByLabelText('Name'));
+    await userEvent.type(editor.getByLabelText('Name'), 'Quill');
+    await userEvent.clear(editor.getByLabelText('Character'));
+    await userEvent.type(editor.getByLabelText('Character'), 'A poet');
+    await click(editor, 'Save Identity');
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/identity', {
       method: 'PUT',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Quill', character: 'A research assistant', vibe: 'Warm', avatar: '' }),
+      body: JSON.stringify({ name: 'Quill', character: 'A poet', vibe: 'Warm', avatar: '' }),
     });
     expect(avatar()).toHaveTextContent(/^Quill$/);
     expect(openProfile().querySelector('.agent-profile-name')).toHaveTextContent(/^Quill$/);
-    expect(identity.queryByRole('textbox')).toBeNull();
-    expect(agentIdentity.getAllByRole('definition')[0]).toHaveTextContent(/^Quill$/);
+    expect(openProfile().querySelector('.agent-profile-character')).toHaveTextContent(/^A poet$/);
+    expect(identityArticle()).toBeNull();
+    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Personalization');
   });
 
   it('saves an edited Soul and shows it read-only again', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const soul = await editFile(identity, 'Soul');
+    const panel = await openPersonalization();
+    const soul = await editFile(panel, 'Soul');
 
-    await userEvent.clear(identity.getByRole('textbox', { name: 'Soul' }));
-    await userEvent.type(identity.getByRole('textbox', { name: 'Soul' }), 'Answer in haiku.');
-    await click(identity, 'Save Soul');
+    await userEvent.clear(panel.getByRole('textbox', { name: 'Soul' }));
+    await userEvent.type(panel.getByRole('textbox', { name: 'Soul' }), 'Answer in haiku.');
+    await click(panel, 'Save Soul');
 
     expect(service.soul).toBe('Answer in haiku.');
     // Saved sits in the file's header, just before Edit, so the document does not move down a line.
     const saved = soul.getByRole('status');
     expect(saved).toHaveTextContent(/^Saved$/);
     expect(saved.nextElementSibling).toBe(soul.getByRole('button', { name: 'Edit Soul' }));
-    expect(identity.queryByRole('textbox')).toBeNull();
+    expect(panel.queryByRole('textbox')).toBeNull();
     expect(soul.getByText('Answer in haiku.')).toHaveClass('agent-file-text');
   });
 
   it('discards an edit on Cancel', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const soul = await editFile(identity, 'Soul');
+    const panel = await openPersonalization();
+    const soul = await editFile(panel, 'Soul');
 
-    await userEvent.type(identity.getByRole('textbox', { name: 'Soul' }), ' Always.');
-    await click(identity, 'Cancel editing Soul');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Soul' }), ' Always.');
+    await click(panel, 'Cancel editing Soul');
 
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0);
-    expect(identity.queryByRole('textbox')).toBeNull();
+    expect(panel.queryByRole('textbox')).toBeNull();
     expect(soul.getByText('Be candid.')).toHaveClass('agent-file-text');
 
-    await click(identity, 'Edit Soul');
+    await click(panel, 'Edit Soul');
 
-    expect(identity.getByRole<HTMLTextAreaElement>('textbox', { name: 'Soul' }).value).toBe('Be candid.');
+    expect(panel.getByRole<HTMLTextAreaElement>('textbox', { name: 'Soul' }).value).toBe('Be candid.');
   });
 
-  const memoryLines = (identity: Panel) =>
-    identity.getAllByRole('textbox', { name: /^Memory line \d+$/ }).map((line: HTMLElement) => (line as HTMLInputElement).value);
-  const memoryText = (identity: Panel) => identity.getAllByRole('listitem').map((line: HTMLElement) => line.textContent);
+  const memoryLines = (panel: Panel) =>
+    panel.getAllByRole('textbox', { name: /^Memory line \d+$/ }).map((line: HTMLElement) => (line as HTMLInputElement).value);
+  const memoryText = (panel: Panel) => panel.getAllByRole('listitem').map((line: HTMLElement) => line.textContent);
 
   it('shows Memory as one line per memory, with a note on what it is', async () => {
     await renderPage();
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
 
-    const memory = await openFile(identity, 'Memory');
+    const memory = await openFile(panel, 'Memory');
 
     expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in Paris']);
-    expect(identity.queryByRole('textbox')).toBeNull();
+    expect(panel.queryByRole('textbox')).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory', { credentials: 'include', cache: 'no-store' });
     expect(memory.getByRole('region', { name: 'About Memory' })).toHaveTextContent(
-      /^About this fileWhat your agent has learned about you and keeps from chat to chat, one memory per line\. The agent reads it at the start of every message and uses your edits from your next message on\. Edit a line to correct it, or delete it to make the agent forget it\.$/,
+      /^What your agent has learned about you and keeps from chat to chat, one memory per line\. The agent reads it at the start of every message and uses your edits from your next message on\. Edit a line to correct it, or delete it to make the agent forget it\.$/,
     );
 
-    await click(identity, 'Edit Memory');
+    await click(panel, 'Edit Memory');
 
-    expect(memoryLines(identity)).toEqual(['Trades copper futures', 'Lives in Paris']);
+    expect(memoryLines(panel)).toEqual(['Trades copper futures', 'Lives in Paris']);
   });
 
   const memoryPuts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT');
 
   it('saves the Memory lines the user edited, and only those', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const memory = await editFile(identity, 'Memory');
+    const panel = await openPersonalization();
+    const memory = await editFile(panel, 'Memory');
 
-    await userEvent.clear(identity.getByRole('textbox', { name: 'Memory line 2' }));
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), 'Lives in London');
-    await click(identity, 'Save Memory');
+    await userEvent.clear(panel.getByRole('textbox', { name: 'Memory line 2' }));
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), 'Lives in London');
+    await click(panel, 'Save Memory');
 
     expect(memoryText(memory)).toEqual(['Trades copper futures', 'Lives in London']);
-    expect(identity.getByRole('status')).toHaveTextContent(/^Saved$/);
+    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
 
     // A saved line is no longer an edit: saving again sends nothing.
-    await click(identity, 'Edit Memory');
-    await click(identity, 'Save Memory');
+    await click(panel, 'Edit Memory');
+    await click(panel, 'Save Memory');
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory/mem-paris', {
       method: 'PUT',
@@ -5705,16 +5727,16 @@ describe('agent profile', () => {
 
   it('deletes a Memory line on Save', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const memory = await editFile(identity, 'Memory');
+    const panel = await openPersonalization();
+    const memory = await editFile(panel, 'Memory');
 
-    await click(identity, 'Delete Memory line 1');
+    await click(panel, 'Delete Memory line 1');
 
     expect(memoryDeletes()).toHaveLength(0);
-    expect(memoryLines(identity)).toEqual(['Lives in Paris']);
+    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
 
     // The lines left after a delete are not edits.
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory/mem-copper', { method: 'DELETE', credentials: 'include' });
     expect(memoryPuts()).toHaveLength(0);
@@ -5724,12 +5746,12 @@ describe('agent profile', () => {
 
   it('keeps a deleted Memory line when the edit is cancelled', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const memory = await editFile(identity, 'Memory');
+    const panel = await openPersonalization();
+    const memory = await editFile(panel, 'Memory');
 
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await click(identity, 'Delete Memory line 1');
-    await click(identity, 'Cancel editing Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    await click(panel, 'Delete Memory line 1');
+    await click(panel, 'Cancel editing Memory');
 
     expect(memoryPuts()).toHaveLength(0);
     expect(memoryDeletes()).toHaveLength(0);
@@ -5738,71 +5760,71 @@ describe('agent profile', () => {
 
   it('says a saved Memory line was already removed and refreshes the list', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
     service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
     service.failing.set('PUT /agent/memory/mem-paris', 404);
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^This Memory line was already removed\.$/);
-    await waitFor(() => expect(memoryText(identity)).toEqual(['Trades copper futures']));
-    expect(identity.queryByText('Saved')).toBeNull();
-    expect(identity.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
+    expect(panel.getByRole('alert')).toHaveTextContent(/^This Memory line was already removed\.$/);
+    await waitFor(() => expect(memoryText(panel)).toEqual(['Trades copper futures']));
+    expect(panel.queryByText('Saved')).toBeNull();
+    expect(panel.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
   });
 
   it.each([false, true])('preserves an unsent Memory draft after a removed first edit and refresh failure %s', async (refreshFails) => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
     service.memory = service.memory.filter((line) => line.id !== 'mem-copper');
     service.failing.set('PUT /agent/memory/mem-copper', 404);
     if (refreshFails) service.failing.set('GET /agent/memory', 503);
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    expect(identity.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
+    expect(panel.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
     expect(memoryPuts().map(([url]) => url)).toEqual(['http://chat.test/agent/memory/mem-copper']);
     expect(service.memory).toEqual([{ id: 'mem-paris', text: 'Lives in Paris' }]);
     if (refreshFails) {
-      expect(await identity.findByText('Memory could not be loaded.')).toBeInTheDocument();
+      expect(await panel.findByText('Memory could not be loaded.')).toBeInTheDocument();
       service.failing.delete('GET /agent/memory');
-      await click(identity, 'Retry');
+      await click(panel, 'Retry');
     }
-    await waitFor(() => expect(memoryLines(identity)).toEqual(['Lives in Paris and London']));
-    expect(identity.queryByText('Trades copper futures and gold')).toBeNull();
-    expect(identity.queryByText('Saved')).toBeNull();
+    await waitFor(() => expect(memoryLines(panel)).toEqual(['Lives in Paris and London']));
+    expect(panel.queryByText('Trades copper futures and gold')).toBeNull();
+    expect(panel.queryByText('Saved')).toBeNull();
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
     expect(service.memory).toEqual([{ id: 'mem-paris', text: 'Lives in Paris and London' }]);
     expect(memoryPuts().map(([url]) => url)).toEqual([
       'http://chat.test/agent/memory/mem-copper',
       'http://chat.test/agent/memory/mem-paris',
     ]);
-    expect(memoryText(identity)).toEqual(['Lives in Paris and London']);
-    expect(identity.getByRole('status')).toHaveTextContent(/^Saved$/);
+    expect(memoryText(panel)).toEqual(['Lives in Paris and London']);
+    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
   });
 
   it('recovers only unsent edits and retains fresh remote lines after a middle Memory edit disappears', async () => {
     service.memory.push({ id: 'mem-third', text: 'Prefers tea' });
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 3' }), ' and coffee');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 3' }), ' and coffee');
     service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
     service.memory.push({ id: 'mem-new', text: 'Works remotely' });
     service.failing.set('PUT /agent/memory/mem-paris', 404);
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    await waitFor(() => expect(memoryLines(identity)).toEqual([
+    await waitFor(() => expect(memoryLines(panel)).toEqual([
       'Trades copper futures and gold', 'Prefers tea and coffee', 'Works remotely',
     ]));
     expect(memoryPuts().map(([url]) => url)).toEqual([
@@ -5812,7 +5834,7 @@ describe('agent profile', () => {
       'Trades copper futures and gold', 'Prefers tea', 'Works remotely',
     ]);
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
     expect(memoryPuts().map(([url]) => url)).toEqual([
       'http://chat.test/agent/memory/mem-copper', 'http://chat.test/agent/memory/mem-paris',
@@ -5826,92 +5848,92 @@ describe('agent profile', () => {
 
   it('discards recovered Memory edits when cancelling', async () => {
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 1' }), ' and gold');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
     service.memory = service.memory.filter((line) => line.id !== 'mem-copper');
     service.failing.set('PUT /agent/memory/mem-copper', 404);
-    await click(identity, 'Save Memory');
-    await waitFor(() => expect(memoryLines(identity)).toEqual(['Lives in Paris and London']));
+    await click(panel, 'Save Memory');
+    await waitFor(() => expect(memoryLines(panel)).toEqual(['Lives in Paris and London']));
 
-    await click(identity, 'Cancel editing Memory');
-    await click(identity, 'Edit Memory');
+    await click(panel, 'Cancel editing Memory');
+    await click(panel, 'Edit Memory');
 
-    expect(memoryLines(identity)).toEqual(['Lives in Paris']);
+    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
   });
 
   it('shows a failed refresh after a removed Memory line without claiming it was saved', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
     service.memory = service.memory.filter((line) => line.id !== 'mem-paris');
     service.failing.set('PUT /agent/memory/mem-paris', 404);
     service.failing.set('GET /agent/memory', 503);
 
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    expect(identity.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
-    expect(await identity.findByText('Memory could not be loaded.')).toBeInTheDocument();
-    expect(identity.queryByText('Saved')).toBeNull();
-    expect(identity.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
+    expect(panel.getByText('This Memory line was already removed.')).toHaveAttribute('role', 'alert');
+    expect(await panel.findByText('Memory could not be loaded.')).toBeInTheDocument();
+    expect(panel.queryByText('Saved')).toBeNull();
+    expect(panel.queryByRole('textbox', { name: 'Memory line 2' })).toBeNull();
     service.failing.delete('GET /agent/memory');
-    await click(identity, 'Retry');
-    await waitFor(() => expect(memoryText(identity)).toEqual(['Trades copper futures']));
-    expect(identity.queryByText('Saved')).toBeNull();
+    await click(panel, 'Retry');
+    await waitFor(() => expect(memoryText(panel)).toEqual(['Trades copper futures']));
+    expect(panel.queryByText('Saved')).toBeNull();
   });
 
   it('says why a Memory edit could not be saved, until the next save', async () => {
     service.failing.set('PUT /agent/memory/mem-paris', 503);
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
 
-    await userEvent.type(identity.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
-    await click(identity, 'Save Memory');
+    await userEvent.type(panel.getByRole('textbox', { name: 'Memory line 2' }), ' and London');
+    await click(panel, 'Save Memory');
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^Saving Memory failed: 503$/);
-    expect(identity.queryByRole('status')).toBeNull();
+    expect(panel.getByRole('alert')).toHaveTextContent(/^Saving Memory failed: 503$/);
+    expect(panel.queryByRole('status')).toBeNull();
 
     service.failing.delete('PUT /agent/memory/mem-paris');
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    expect(identity.queryByRole('alert')).toBeNull();
-    expect(identity.getByRole('status')).toHaveTextContent(/^Saved$/);
+    expect(panel.queryByRole('alert')).toBeNull();
+    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
     expect(service.memory.map((line) => line.text)).toEqual(['Trades copper futures', 'Lives in Paris and London']);
   });
 
   it('says why a Memory line could not be deleted', async () => {
     service.failing.set('DELETE /agent/memory/mem-copper', 502);
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Memory');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Memory');
 
-    await click(identity, 'Delete Memory line 1');
-    await click(identity, 'Save Memory');
+    await click(panel, 'Delete Memory line 1');
+    await click(panel, 'Save Memory');
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^Deleting a Memory line failed: 502$/);
-    expect(memoryLines(identity)).toEqual(['Lives in Paris']);
+    expect(panel.getByRole('alert')).toHaveTextContent(/^Deleting a Memory line failed: 502$/);
+    expect(memoryLines(panel)).toEqual(['Lives in Paris']);
 
     service.failing.delete('DELETE /agent/memory/mem-copper');
-    await click(identity, 'Save Memory');
+    await click(panel, 'Save Memory');
 
-    expect(identity.queryByRole('alert')).toBeNull();
+    expect(panel.queryByRole('alert')).toBeNull();
     expect(service.memory.map((line) => line.text)).toEqual(['Lives in Paris']);
   });
 
   it('says when the agent has no Memory yet', async () => {
     service.memory = [];
     await renderPage();
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
 
-    await openFile(identity, 'Memory');
+    await openFile(panel, 'Memory');
 
-    expect(identity.getByText('No memories yet.')).toBeInTheDocument();
-    expect(identity.queryByRole('button', { name: 'Edit Memory' })).toBeNull();
-    expect(identity.queryByRole('button', { name: 'Save Memory' })).toBeNull();
+    expect(panel.getByText('No memories yet.')).toBeInTheDocument();
+    expect(panel.queryByRole('button', { name: 'Edit Memory' })).toBeNull();
+    expect(panel.queryByRole('button', { name: 'Save Memory' })).toBeNull();
   });
 
   it('shows a file loading until it arrives, while the other files open', async () => {
@@ -5919,120 +5941,141 @@ describe('agent profile', () => {
       url === 'http://chat.test/agent/soul' ? new Promise<Response>(() => {}) : chatService(url, init),
     );
     await renderPage();
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
 
-    const soul = await openFile(identity, 'Soul');
+    const soul = await openFile(panel, 'Soul');
 
     expect(soul.getByRole('status')).toHaveAccessibleName('Loading Soul');
     expect(soul.queryByRole('button', { name: 'Edit Soul' })).toBeNull();
-    await click(identity, 'Back to files');
-    const memory = await openFile(identity, 'Memory');
+    await click(panel, 'Back');
+    const memory = await openFile(panel, 'Memory');
     expect(memory.getAllByRole('listitem').map((line) => line.textContent)).toEqual(['Trades copper futures', 'Lives in Paris']);
   });
 
   it('says why one file could not load on that file only, and loads it on Retry', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    service.failing.set('GET /agent/soul', 500);
+    await renderPage();
+    const panel = await openPersonalization();
+
+    expect(panel.queryByRole('alert')).toBeNull();
+    expect(panel.getByRole('button', { name: 'Open Soul' })).toHaveTextContent(/^SoulValues and habits$/);
+    const memory = await openFile(panel, 'Memory');
+    expect(memory.getAllByRole('listitem').map((line) => line.textContent)).toEqual(['Trades copper futures', 'Lives in Paris']);
+    await click(panel, 'Back');
+    const soul = await openFile(panel, 'Soul');
+    expect(soul.getByRole('alert')).toHaveTextContent(/^Soul could not be loaded\.$/);
+    expect(error).toHaveBeenCalledWith(new Error('Loading Soul failed: 500'));
+    expect(soul.queryByRole('button', { name: 'Edit Soul' })).toBeNull();
+
+    service.failing.delete('GET /agent/soul');
+    await click(panel, 'Retry');
+
+    const loaded = within(panel.getByRole('article', { name: 'Soul' }));
+    expect(loaded.queryByRole('alert')).toBeNull();
+    expect(loaded.getByText('Be candid.')).toHaveClass('agent-file-text');
+  });
+
+  it("says why Agent Identity could not load in its editor, without a character line, and loads both on Retry", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     service.failing.set('GET /agent/identity', 500);
     await renderPage();
-    const identity = await openIdentity();
+    await userEvent.click(avatar());
+    await settle();
+    expect(openProfile().querySelector('.agent-profile-character')).toBeNull();
 
-    expect(identity.queryByRole('alert')).toBeNull();
-    const memory = await openFile(identity, 'Memory');
-    expect(memory.getAllByRole('listitem').map((line) => line.textContent)).toEqual(['Trades copper futures', 'Lives in Paris']);
-    await click(identity, 'Back to files');
-    const agentIdentity = await openFile(identity, 'Agent Identity');
-    expect(agentIdentity.getByRole('alert')).toHaveTextContent(/^Agent Identity could not be loaded\.$/);
-    expect(error).toHaveBeenCalledWith(new Error('Loading Agent Identity failed: 500'));
-    expect(agentIdentity.queryByRole('button', { name: 'Edit Agent Identity' })).toBeNull();
+    const editor = await editIdentity();
+
+    expect(editor.getByRole('alert')).toHaveTextContent(/^Identity could not be loaded\.$/);
+    expect(error).toHaveBeenCalledWith(new Error('Loading Identity failed: 500'));
+    expect(editor.queryByRole('button', { name: 'Save Identity' })).toBeNull();
 
     service.failing.delete('GET /agent/identity');
-    await click(identity, 'Retry');
+    await click(editor, 'Retry');
 
-    const loaded = within(identity.getByRole('article', { name: 'Agent Identity' }));
-    expect(loaded.queryByRole('alert')).toBeNull();
-    expect(loaded.getAllByRole('definition')[0]).toHaveTextContent(/^Ada Bot$/);
+    expect(editor.queryByRole('alert')).toBeNull();
+    expect(editor.getByLabelText<HTMLInputElement>('Name').value).toBe('Ada Bot');
+    expect(openProfile().querySelector('.agent-profile-character')).toHaveTextContent(/^A research assistant$/);
   });
 
   it.each(['Soul', 'Memory'])('saves %s in place, without submitting the page', async (file) => {
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, file);
+    const panel = await openPersonalization();
+    await editFile(panel, file);
 
     // Save sits in the file's header, outside the form it submits.
-    const form = present(identity.getByRole<HTMLButtonElement>('button', { name: `Save ${file}` }).form, `the ${file} form`);
+    const form = present(panel.getByRole<HTMLButtonElement>('button', { name: `Save ${file}` }).form, `the ${file} form`);
     expect(fireEvent.submit(form)).toBe(false);
     await settle();
   });
 
   it('says why an edit could not be saved, until the next save', async () => {
     await renderPage();
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
     const saveSoul = async () => {
-      await click(identity, 'Save Soul');
+      await click(panel, 'Save Soul');
     };
-    await editFile(identity, 'Soul');
+    await editFile(panel, 'Soul');
 
     await saveSoul();
     service.failing.set('PUT /agent/soul', 503);
-    await click(identity, 'Edit Soul');
+    await click(panel, 'Edit Soul');
     await saveSoul();
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^Saving Soul failed: 503$/);
-    expect(identity.queryByRole('status')).toBeNull();
+    expect(panel.getByRole('alert')).toHaveTextContent(/^Saving Soul failed: 503$/);
+    expect(panel.queryByRole('status')).toBeNull();
 
     service.failing.delete('PUT /agent/soul');
     await saveSoul();
 
-    expect(identity.queryByRole('alert')).toBeNull();
-    expect(identity.getByRole('status')).toHaveTextContent(/^Saved$/);
+    expect(panel.queryByRole('alert')).toBeNull();
+    expect(panel.getByRole('status')).toHaveTextContent(/^Saved$/);
   });
 
   it('drops a failed save message once the edit is cancelled', async () => {
     service.failing.set('PUT /agent/soul', 503);
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Soul');
+    const panel = await openPersonalization();
+    await editFile(panel, 'Soul');
 
-    await click(identity, 'Save Soul');
-    await click(identity, 'Cancel editing Soul');
+    await click(panel, 'Save Soul');
+    await click(panel, 'Cancel editing Soul');
 
-    expect(identity.queryByRole('alert')).toBeNull();
+    expect(panel.queryByRole('alert')).toBeNull();
   });
 
-  const identityArticle = () => document.querySelector('article[aria-label="Agent Identity"]');
-
-  const choosePicture = async (identity: Panel, name: string) => {
-    await userEvent.upload(identity.getByLabelText('Upload picture'), new File(['png'], name, { type: 'image/png' }));
+  const choosePicture = async (panel: Panel, name: string) => {
+    await userEvent.upload(panel.getByLabelText('Upload picture'), new File(['png'], name, { type: 'image/png' }));
     await settle();
   };
 
-  it("shows the agent's picture in the chat header, the profile header, and Agent Identity", async () => {
+  it("shows the agent's picture in the chat header, the profile header, and Identity", async () => {
     service.agentPicture = PICTURE;
     await renderPage();
 
     expect(pictureIn(avatar())).toBe(PICTURE);
-    const identity = await openIdentity();
+    await userEvent.click(avatar());
     expect(pictureIn(openProfile().querySelector('.agent-profile-header'))).toBe(PICTURE);
-    await openFile(identity, 'Agent Identity');
+    await editIdentity();
 
     expect(pictureIn(identityArticle())).toBe(PICTURE);
   });
 
-  it('uploads a picture for the agent, resized small, from the Agent Identity edit view', async () => {
+  it('uploads a picture for the agent, resized small, from the Identity edit view', async () => {
     const resized = 'data:image/webp;base64,UklGRg==';
     const canvas = resizing(resized);
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
 
-    await choosePicture(identity, 'quill.png');
+    await choosePicture(panel, 'quill.png');
 
     expect(canvas.drawImage).toHaveBeenCalledWith(canvas.image, 0, 0, 256, 128);
     expect(canvas.toDataURL).toHaveBeenCalledWith('image/webp', 0.9);
     expect(pictureIn(identityArticle())).toBe(resized);
     expect(requestsTo('/agent/picture')).toEqual([]);
 
-    await click(identity, 'Save Agent Identity');
+    await click(panel, 'Save Identity');
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/picture', {
       method: 'PUT',
@@ -6041,8 +6084,8 @@ describe('agent profile', () => {
       body: JSON.stringify({ picture: resized }),
     });
     expect(pictureIn(avatar())).toBe(resized);
-    expect(identity.queryByRole('textbox')).toBeNull();
-    expect(pictureIn(identityArticle())).toBe(resized);
+    expect(identityArticle()).toBeNull();
+    expect(pictureIn(openProfile().querySelector('.agent-profile-header'))).toBe(resized);
   });
 
   it.each([
@@ -6060,10 +6103,10 @@ describe('agent profile', () => {
       return chatService(url, init);
     });
     const view = await renderPage(auth({ accountId: 'acct-first' }));
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
-    await choosePicture(identity, 'first-account.png');
-    await userEvent.click(identity.getByRole('button', { name: 'Save Agent Identity' }));
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
+    await choosePicture(panel, 'first-account.png');
+    await userEvent.click(panel.getByRole('button', { name: 'Save Identity' }));
     expect(requestsTo('/agent/identity')).toContain('PUT');
     expect(pictureOwners).toEqual([]);
 
@@ -6091,24 +6134,24 @@ describe('agent profile', () => {
       return chatService(url, init);
     });
     await renderPage(Object.assign(auth({ accountId: 'acct-first' }), { isAccountCurrent: () => current }));
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
-    await choosePicture(identity, 'first-account.png');
-    await userEvent.click(identity.getByRole('button', { name: 'Save Agent Identity' }));
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
+    await choosePicture(panel, 'first-account.png');
+    await userEvent.click(panel.getByRole('button', { name: 'Save Identity' }));
     // The switch request starts before its response installs the cookie; React has not rerendered.
     current = false;
     cookieAccount = 'acct-second';
     finishIdentity(answer(200, { status: 'saved' }));
     await settle();
     expect(pictureOwners).toEqual([]);
-    expect(identity.getByRole('alert')).toHaveTextContent('Saving Agent Identity cancelled');
-    expect(identity.queryByText('Saved')).toBeNull();
+    expect(panel.getByRole('alert')).toHaveTextContent('Saving Identity cancelled');
+    expect(panel.queryByText('Saved')).toBeNull();
   });
 
   it.each(['save', 'event'])('refuses an old profile %s before a switching account rerenders', async (trigger) => {
     let current = true;
     await renderPage(Object.assign(auth({ accountId: 'acct-first' }), { isAccountCurrent: () => current }));
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
     const subscribers = [...agent().subscribers];
     let finishSave!: (response: Response) => void;
     const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve; });
@@ -6117,8 +6160,8 @@ describe('agent profile', () => {
       return chatService(url, init);
     });
     if (trigger === 'save') {
-      await editFile(identity, 'Soul');
-      await userEvent.click(identity.getByRole('button', { name: 'Save Soul' }));
+      await editFile(panel, 'Soul');
+      await userEvent.click(panel.getByRole('button', { name: 'Save Soul' }));
     }
     const before = requestsTo('/agent').length;
     current = false;
@@ -6132,7 +6175,7 @@ describe('agent profile', () => {
 
   it.each(['save', 'event'])('does not let an old account %s supersede the new profile load', async (trigger) => {
     const view = await renderPage(auth({ accountId: 'acct-first' }));
-    const identity = await openIdentity();
+    const panel = await openPersonalization();
     const oldSubscribers = [...agent().subscribers];
     let finishSave!: (response: Response) => void;
     const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve; });
@@ -6143,8 +6186,8 @@ describe('agent profile', () => {
       return chatService(url, init);
     });
     if (trigger === 'save') {
-      await editFile(identity, 'Soul');
-      await userEvent.click(identity.getByRole('button', { name: 'Save Soul' }));
+      await editFile(panel, 'Soul');
+      await userEvent.click(panel.getByRole('button', { name: 'Save Soul' }));
     }
     cartridge.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
@@ -6159,9 +6202,9 @@ describe('agent profile', () => {
     await act(async () => { present(profiles[0], 'new account profile')(answer(200, { name: 'Second account agent', picture: null })); });
     await settle();
     expect(openProfile().querySelector('.agent-profile-name')).toHaveTextContent('Second account agent');
-    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Identity' }));
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Personalization' }));
     await settle();
-    expect(screen.getByRole('button', { name: 'Open Agent Identity' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Soul' })).toBeInTheDocument();
     await emit('botcube:agent-document-edited');
     expect(profiles).toHaveLength(2);
     await act(async () => { present(profiles[1], 'current account profile')(answer(200, { name: 'Updated second account agent', picture: null })); });
@@ -6172,7 +6215,7 @@ describe('agent profile', () => {
   it.each([null, 'data:image/png;base64,c2Vjb25k'])('keeps the new account picture %s while its profile loads', async (picture) => {
     service.agentPicture = PICTURE;
     const view = await renderPage(auth({ accountId: 'acct-first' }));
-    let identity = await openIdentity();
+    await userEvent.click(avatar());
     let finishProfile!: (response: Response) => void;
     const pendingProfile = new Promise<Response>((resolve) => { finishProfile = resolve; });
     const ordinaryFetch = fetchMock.getMockImplementation();
@@ -6185,13 +6228,13 @@ describe('agent profile', () => {
     cartridge.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
-    identity = await openIdentity();
-    expect(identity.queryByRole('button', { name: 'Edit Agent Identity' })).toBeNull();
-    expect(identity.getByRole('status')).toHaveTextContent('Loading Agent profile');
+    if (!profile()) await userEvent.click(avatar());
+    // Until the new account's profile loads, there is no pencil to edit with.
+    expect(within(openProfile()).queryByRole('button', { name: 'Edit agent' })).toBeNull();
     finishProfile(answer(200, { name: 'Second account agent', picture }));
     await settle();
-    await editFile(identity, 'Agent Identity');
-    await userEvent.click(identity.getByRole('button', { name: 'Save Agent Identity' }));
+    const panel = await editIdentity();
+    await userEvent.click(panel.getByRole('button', { name: 'Save Identity' }));
     await settle();
     expect(requestsTo('/agent/picture')).not.toContain('PUT');
     expect(service.agentPicture).toBe(picture);
@@ -6200,15 +6243,15 @@ describe('agent profile', () => {
   it("clears the agent's picture back to its default avatar", async () => {
     service.agentPicture = PICTURE;
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
 
-    await click(identity, 'Remove picture');
+    await click(panel, 'Remove picture');
 
-    expect(identity.queryByRole('button', { name: 'Remove picture' })).toBeNull();
+    expect(panel.queryByRole('button', { name: 'Remove picture' })).toBeNull();
     expect(pictureIn(identityArticle())).toBeUndefined();
 
-    await click(identity, 'Save Agent Identity');
+    await click(panel, 'Save Identity');
 
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/picture', { method: 'DELETE', credentials: 'include' });
     expect(pictureIn(avatar())).toBeUndefined();
@@ -6219,11 +6262,11 @@ describe('agent profile', () => {
   it('leaves the picture alone when only the name changes', async () => {
     service.agentPicture = PICTURE;
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
 
-    await userEvent.type(identity.getByLabelText('Name'), '!');
-    await click(identity, 'Save Agent Identity');
+    await userEvent.type(panel.getByLabelText('Name'), '!');
+    await click(panel, 'Save Identity');
 
     expect(requestsTo('/agent/picture')).toEqual([]);
     expect(pictureIn(avatar())).toBe(PICTURE);
@@ -6237,14 +6280,14 @@ describe('agent profile', () => {
         : chatService(url, init),
     );
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
 
-    await choosePicture(identity, 'huge.png');
-    await click(identity, 'Save Agent Identity');
+    await choosePicture(panel, 'huge.png');
+    await click(panel, 'Save Identity');
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^Saving the picture failed: The agent's picture must be at most 256 KB$/);
-    expect(identity.getByLabelText('Upload picture')).toBeInTheDocument();
+    expect(panel.getByRole('alert')).toHaveTextContent(/^Saving the picture failed: The agent's picture must be at most 256 KB$/);
+    expect(panel.getByLabelText('Upload picture')).toBeInTheDocument();
   });
 
   it('says when the chosen file is not an image', async () => {
@@ -6253,21 +6296,21 @@ describe('agent profile', () => {
       vi.fn(async () => Promise.reject(new DOMException('undecodable', 'InvalidStateError'))),
     );
     await renderPage();
-    const identity = await openIdentity();
-    await editFile(identity, 'Agent Identity');
+    await userEvent.click(avatar());
+    const panel = await editIdentity();
 
-    await choosePicture(identity, 'notes.png');
+    await choosePicture(panel, 'notes.png');
 
-    expect(identity.getByRole('alert')).toHaveTextContent(/^notes\.png is not an image$/);
+    expect(panel.getByRole('alert')).toHaveTextContent(/^notes\.png is not an image$/);
     expect(requestsTo('/agent/picture')).toEqual([]);
   });
 
-  it("shows the agent's own edit in the header, profile, and Identity tab", async () => {
+  it("shows the agent's own edit in the header, profile, and Personalization tab", async () => {
     await renderPage();
-    const identity = await openIdentity();
-    const soul = await openFile(identity, 'Soul');
+    const panel = await openPersonalization();
+    const soul = await openFile(panel, 'Soul');
 
-    service.agentIdentity = { ...service.agentIdentity, name: 'Quill', avatar: '🪶' };
+    service.agentIdentity = { ...service.agentIdentity, name: 'Quill', character: 'A haiku poet', avatar: '🪶' };
     service.soul = 'Answer in haiku.';
     await act(async () => {
       for (const subscriber of agent().subscribers) {
@@ -6280,6 +6323,7 @@ describe('agent profile', () => {
 
     expect(avatar()).toHaveTextContent(/^🪶Quill$/);
     expect(openProfile().querySelector('.agent-profile-name')).toHaveTextContent(/^Quill$/);
+    expect(openProfile().querySelector('.agent-profile-character')).toHaveTextContent(/^A haiku poet$/);
     expect(soul.getByText('Answer in haiku.')).toHaveClass('agent-file-text');
   });
 
@@ -7349,6 +7393,7 @@ describe('a pending Side Chat deletion', () => {
     await act(async () => { present(replays[0], 'replay response')(answer(status, { messages: [] })); });
     await settle();
     expect(copilot.chat?.threadId).toBe(status === 200 ? 'next' : 'new-1');
+    await openSidebar();
     if (status === 503) expect(sidebar().getByRole('alert')).toHaveTextContent('Next chat could not be opened');
     else expect(sidebar().queryByRole('alert')).toBeNull();
   });
@@ -7357,7 +7402,7 @@ describe('a pending Side Chat deletion', () => {
 describe('an Agent Profile draft across account changes', () => {
   async function editSoul() {
     await userEvent.click(screen.getByRole('button', { name: 'Agent profile' }));
-    await userEvent.click(screen.getByRole('tab', { name: 'Identity' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Personalization' }));
     await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Open Soul' }));
     await userEvent.click(screen.getByRole('button', { name: 'Edit Soul' }));
@@ -7376,7 +7421,7 @@ describe('an Agent Profile draft across account changes', () => {
     if (oldSave) await userEvent.click(oldSave);
     expect(service.soul).toBe('Second account instructions');
     expect(screen.queryByRole('textbox', { name: 'Soul' })).toBeNull();
-    await userEvent.click(screen.getByRole('tab', { name: 'Identity' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Personalization' }));
     await settle();
     await userEvent.click(screen.getByRole('button', { name: 'Open Soul' }));
     expect(screen.getByRole('article', { name: 'Soul' })).toHaveTextContent('Second account instructions');

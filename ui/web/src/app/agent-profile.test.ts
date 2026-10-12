@@ -58,7 +58,7 @@ describe('AgentProfile', () => {
     });
 
     const tabs = within(profile).getAllByRole('tab');
-    expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual(['Activity', 'Sign-ins', 'Computer', 'Scheduled', 'Identity']);
+    expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual(['Activity', 'Sign-ins', 'Computer', 'Scheduled', 'Personalization']);
     for (const tab of tabs) {
       expect(tab).toHaveTextContent(/^$/);
       expect(tab.querySelector('svg')).not.toBeNull();

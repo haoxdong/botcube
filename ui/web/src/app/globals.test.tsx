@@ -608,10 +608,27 @@ it('keeps the alerts on screen under the phone header as the chat scrolls the pa
   expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-alerts \{\s*position: sticky;\s*top: var\(--chat-header-height\);/);
 });
 
-it('stacks the Identity tab\'s file cards, one per row at full width', () => {
+it("cuts the agent's character to one line with an ellipsis", () => {
+  const { container } = render(<p className="agent-profile-character" />);
+
+  const style = styleOf(container, '.agent-profile-character');
+  expect([style.whiteSpace, style.overflow, style.textOverflow]).toEqual(['nowrap', 'hidden', 'ellipsis']);
+});
+
+it("sets Personalization's file cards side by side, as Muse's (Fig 16)", () => {
   const { container } = render(<div className="agent-file-cards" />);
 
-  expect(styleOf(container, '.agent-file-cards').gridTemplateColumns).toBe('1fr');
+  expect(styleOf(container, '.agent-file-cards').gridTemplateColumns).toBe('1fr 1fr');
+});
+
+it("paints the file cards in a neutral grey unless a cartridge's theme brings the agent's colours", () => {
+  // happy-dom leaves var() unresolved, so this reads the sheet.
+  for (const file of ['soul', 'memory']) {
+    expect(sheet).toMatch(
+      new RegExp(`:root \\{[^}]*--agent-${file}-from: var\\(--color-text-muted\\);\\s*--agent-${file}-to: var\\(--color-text\\);\\s*--agent-${file}-glow: var\\(--color-control\\);`),
+    );
+    expect(sheet).toMatch(new RegExp(`\\.agent-file-tint-${file} \\{[^}]*--file-from: var\\(--agent-${file}-from\\);`));
+  }
 });
 
 // a Side Chat row revealed its delete button on hover, so iOS Safari spent the first tap on that hover and
@@ -757,28 +774,50 @@ it("sets each type role at ChatGPT's desktop size and weight and iOS's phone one
   }
 });
 
-it('centres every desktop rail control on one 44px target with an aligned divider', () => {
-  const { container, unmount } = render(
+// Shut, the desktop sidebar leaves the window to the chat but for its round menu chip; open, it docks beside the chat
+// with the profile's hairline seam, mirrored.
+it('shows only the round menu chip while the desktop sidebar is shut, and docks the open one beside the chat', () => {
+  const shut = render(
     <aside className="sidebar sidebar-collapsed">
-      <div className="sidebar-brand" />
-      <nav className="sidebar-nav sidebar-main"><button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /></button></nav>
-      <div className="sidebar-section-header"><button className="header-btn sidebar-new-chat"><svg /></button></div>
-      <div className="sidebar-bottom"><button className="user-menu-trigger"><span className="user-avatar" /></button></div>
+      <div className="sidebar-brand"><button className="sidebar-logo-btn"><svg className="sidebar-icon-menu" /></button></div>
+      <nav className="sidebar-nav sidebar-main" />
+      <div className="sidebar-recents" />
+      <div className="sidebar-bottom" />
     </aside>,
   );
   try {
-    expect(styleOf(container, '.sidebar').width).toBe('60px');
-    for (const selector of ['.sidebar-nav-item', '.sidebar-new-chat', '.user-menu-trigger']) {
-      const control = styleOf(container, selector);
-      expect({ width: control.width, height: control.height, padding: control.padding }).toEqual({ width: '44px', height: '44px', padding: '0px' });
+    const sidebar = styleOf(shut.container, '.sidebar');
+    expect({ position: sidebar.position, top: zero(sidebar.top), left: zero(sidebar.left), zIndex: sidebar.zIndex }).toEqual({ position: 'fixed', top: '0px', left: '0px', zIndex: '90' });
+    for (const selector of ['.sidebar-nav', '.sidebar-recents', '.sidebar-bottom']) {
+      expect(styleOf(shut.container, selector).display).toBe('none');
     }
-    // Dots' rail steps at 44pt (memo 0049 Fig 1, #3624)
-    expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
-    expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('5px');
-    expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('4px');
-    expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
+    expect(styleOf(shut.container, '.sidebar-icon-menu').display).not.toBe('none');
+    const chip = styleOf(shut.container, '.sidebar-logo-btn');
+    expect({ width: chip.width, height: chip.height, radius: chip.borderRadius }).toEqual({ width: '44px', height: '44px', radius: '9999px' });
   } finally {
-    unmount();
+    shut.unmount();
+  }
+  const open = render(
+    <div className="app-layout">
+      <aside className="sidebar sidebar-expanded"><div className="sidebar-brand"><button className="sidebar-logo-btn" /></div></aside>
+      <main className="app-shell" />
+      <aside className="agent-profile" />
+    </div>,
+  );
+  try {
+    const sidebar = styleOf(open.container, '.sidebar');
+    // The seam lies outside the 260px, so the rows keep their places
+    expect({ position: sidebar.position, width: sidebar.width, boxSizing: sidebar.boxSizing, flexShrink: sidebar.flexShrink, background: sidebar.backgroundColor }).toEqual({ position: 'relative', width: '260px', boxSizing: 'content-box', flexShrink: '0', background: '#fff' });
+    // The chat's white, so only the seam parts them, as ChatGPT's sidebar
+    expect(sidebar.backgroundColor).toBe(styleOf(open.container, '.app-shell').backgroundColor);
+    expect(sidebar.boxShadow || 'none').toBe('none');
+    expect(sidebar.animation || 'none').toBe('none');
+    expect(sidebar.borderRight).toBe('1px solid #e0e0e0');
+    expect(sidebar.borderRight).toBe(styleOf(open.container, '.agent-profile').borderLeft);
+    // Open, the chip shuts it from beside the title
+    expect(styleOf(open.container, '.sidebar-logo-btn').display).toBe('flex');
+  } finally {
+    open.unmount();
   }
 });
 
@@ -912,7 +951,7 @@ it('scrolls the phone chat with the page, up under the status bar, under no band
   // Muse's avatar and 44pt menu, 24pt in, stand at the top of the screen below the status bar (Fig 11), where Marq's hat,
   // 1px above his box, and the menu button, 2px below the sidebar's safe area, meet it. The drawer's strip keeps the
   // menu's faded copy where the menu stood. The layout check measures them.
-  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-header \{\s*position: fixed;\s*padding-top: calc\(1px \+ var\(--chat-header-safe-top\)\);/);
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-header \{\s*position: fixed;[^}]*padding-top: calc\(1px \+ var\(--chat-header-safe-top\)\);/);
   expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.sidebar-collapsed \.sidebar-brand \{\s*padding: 2px 12px 12px 24px;/);
   expect(sheet).toMatch(/\.sidebar-strip-close-menu \{\s*position: absolute;\s*top: calc\(var\(--app-safe-top\) \+ 2px\);\s*left: 24px;/);
   // The page colour below the composer, which useComposerBacking places, over the chat the page runs on with there.
@@ -968,6 +1007,17 @@ it('runs the held chat on behind the clock and under Safari\'s bar, mid-swipe an
   expect(sheet).toMatch(/html\[data-page-held\] \.app-chat \[data-testid='copilot-input-overlay'\] \{\s*position: absolute;\s*top: calc\(var\(--page-scroll, 0px\) \+ 100dvh - var\(--app-safe-bottom\)\);\s*bottom: auto;\s*translate: 0 -100%;/);
 });
 
+// iOS 26.2 Simulator, Safari tab: the strip behind the clock and the band under Safari's bar showed flat white, drawer
+// open or shut, over the runways the page had scrolled into view (#3702). Safari spreads the colour of a fixed element
+// found at the middle of the screen's top or bottom edge, and keeps spreading it while that element stays rendered and
+// visible, a `header` even hidden (WebKit's LocalFrameView::fixedContainerEdges, Page::updateFixedContainerEdges): the
+// full-width fixed header at the top, the fixed composer at the bottom. The header keeps to Marq's width, too narrow to
+// count, and the held composer hides its own empty box.
+it("leaves Safari no fixed edge colour to spread behind the clock or, held, under its bar (#3702)", () => {
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-header \{\s*position: fixed;\s*left: 50%;\s*right: auto;\s*translate: -50% 0;/);
+  expect(sheet).toMatch(/html\[data-page-held\] \.app-chat \[data-testid='copilot-input-overlay'\] \{[^}]*visibility: hidden;\s*\}\s*html\[data-page-held\] \.app-chat \[data-testid='copilot-input-overlay'\] > \* \{\s*visibility: visible;/);
+});
+
 // Held, the profile stands at the screen's top for its background to run on behind the clock, which left its Close 16px
 // from the top under the status bar of an installed or fullscreen iPhone, whose safe area insets are not 0 (#3694).
 it("keeps the held phone profile's controls inside the safe area, its background edge to edge (#3694)", () => {
@@ -1006,9 +1056,8 @@ it("draws the phone's Marq 68px tall in front of the pill tucked behind him (#36
   }
 });
 
-// #3624: the desktop takes the phone's chat card, top of chat and drawer layout (#3613, #3614, #3616), measured
-// against memo 0049 Fig 1 (dots desktop): a rounded white card 4px inside the sidebar's grey frame, the avatar's top
-// 1.5pt under the card's, a 44pt rail pitch and the account row on the card's bottom inset.
+// #3624: the desktop takes the phone's top of chat and drawer layout (#3613, #3614, #3616), measured against memo 0049
+// Fig 1 (dots desktop): the avatar's top 1.5pt under the window's, a 44pt row pitch and the account row 4px up.
 // happy-dom reports an unset length as '' and a written `0` as '0'.
 const zero = (value: string) => (value === '' || value === '0' ? '0px' : value);
 const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
@@ -1042,25 +1091,19 @@ const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
   </div>
 );
 
-it("sets the desktop chat as a rounded white card 4px inside the sidebar's grey frame, its edge soft (memo 0049 Fig 1, #3624)", () => {
+// Only a panel that reaches a rounded screen corner rounds; a desktop window has none, so its chat and profile are
+// square, edge to edge.
+it('sets the desktop chat square and edge to edge, as it meets no rounded screen corner', () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   happyDOM.setViewport({ width: 1440, height: 900 });
   const { container, unmount } = render(desktopApp('sidebar-collapsed'));
   try {
-    // The frame is Fig 1's grey, the sidebar on it (#3604)
-    expect(styleOf(container, '.app-layout').backgroundColor).toBe('#ebebec');
-    expect(styleOf(container, '.sidebar').backgroundColor).toBe('#ebebec');
-    const card = styleOf(container, '.app-shell');
-    expect(card.backgroundColor).toBe('#fff');
-    expect(card.margin).toBe('4px 4px 4px 0px');
-    expect(card.borderRadius).toBe('12px');
-    expect(card.overflow).toBe('hidden');
-    expect(card.boxShadow).toBe('0 0 0 0.5px rgba(0,0,0,0.06), 0 0 20px rgba(0,0,0,0.06)');
-    // happy-dom matches no :has(), so this reads the sheet: beside the chat, the open profile shares its card (Fig 3).
-    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.app-shell:has\(~ \.agent-profile:not\(\[hidden\]\)\) \{\s*margin-right: 0;\s*border-top-right-radius: 0;\s*border-bottom-right-radius: 0;/);
-    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.agent-profile \{\s*margin: 4px 4px 4px 0;\s*border-radius: 0 var\(--radius-lg\) var\(--radius-lg\) 0;\s*box-shadow: var\(--shadow-card\);\s*\}/);
-    // A clip would cut the full-window computer sheet the profile holds, so the seam clip waits for it to close
-    expect(sheet).toMatch(/@media \(min-width: 1140px\) \{[^@]*\.agent-profile:not\(:has\(\.agent-computer-sheet\)\) \{\s*clip-path: inset\(-24px -24px -24px 0\);/);
+    const chat = styleOf(container, '.app-shell');
+    expect(chat.backgroundColor).toBe('#fff');
+    expect({ margin: zero(chat.margin), radius: chat.borderRadius || '0px', shadow: chat.boxShadow || 'none' }).toEqual({ margin: '0px', radius: '0px', shadow: 'none' });
+    // Only the phone's profile, which runs up behind the clock, rounds (#3694)
+    expect(sheet.match(/\.agent-profile \{[^}]*border-radius[^}]*\}/g)?.length).toBe(1);
+    expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.agent-profile \{[^}]*border-radius: var\(--radius-4xl\) var\(--radius-4xl\) 0 0;/);
   } finally {
     unmount();
     happyDOM.setViewport({ width: 1024, height: 768 });
@@ -1092,30 +1135,20 @@ it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name
   }
 });
 
-it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHATS label, a white selected fill, a plain plus and the account row on the card's bottom inset (memo 0049 Fig 1, #3624)", () => {
+it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHATS label, a grey selected fill, a plain plus and the account row 4px off the bottom (memo 0049 Fig 1, #3624)", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   happyDOM.setViewport({ width: 1440, height: 900 });
   try {
-    for (const state of ['sidebar-expanded', 'sidebar-collapsed'] as const) {
-      const { container, unmount } = render(desktopApp(state));
-      try {
-        // Fig 1's rail steps at 44pt, so the rows meet with no gap in both states and keep their places (#3555).
-        expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
-        // The open row is white, which shows on the frame (memo 0049 Fig 1, #3604)
-        expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#fff');
-        // The brand row keeps its 64px in both states, so nothing under it moves (#3555)
-        expect(styleOf(container, '.sidebar-brand').minHeight).toBe('64px');
-        // The rail keeps only Main chat and Plugins, so it drops the divider under them (#3604)
-        expect(styleOf(container, '.sidebar-main > .pseudo-after').display === 'none').toBe(state === 'sidebar-collapsed');
-        // The account row ends 4px above the bottom, on the card's bottom inset, as Fig 1's does.
-        expect(styleOf(container, '.sidebar-bottom').paddingBottom).toBe('4px');
-        expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('4px');
-      } finally {
-        unmount();
-      }
-    }
     const { container, unmount } = render(desktopApp('sidebar-expanded'));
     try {
+      // Fig 1's rows step at 44pt, meeting with no gap (#3555).
+      expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
+      // The open row takes the profile controls' hover grey, which shows on the white sidebar
+      expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#e0e0e0');
+      expect(styleOf(container, '.sidebar-brand').minHeight).toBe('64px');
+      // The account row ends 4px above the window's bottom, as Fig 1's does.
+      expect(styleOf(container, '.sidebar-bottom').paddingBottom).toBe('4px');
+      expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('4px');
       // The label 20px in, on the title and the icons' edge; the plus at the header's right, as before (#3555).
       expect(styleOf(container, '.sidebar-section-header').padding).toBe('4px 12px 0px 20px');
       const label = styleOf(container, '.sidebar-side-chats-toggle');
@@ -1128,7 +1161,7 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHA
       // Side chats step at the rows' 44px pitch, the text on the labels' 20px, each × in the plus's 44px column.
       expect(styleOf(container, '.sidebar-list').padding).toBe('0px 12px 0px 8px');
       expect(zero(styleOf(container, '.sidebar-item').marginBottom)).toBe('0px');
-      expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#fff');
+      expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#e0e0e0');
       const row = styleOf(container, '.sidebar-item-btn');
       expect({ top: row.paddingTop, bottom: row.paddingBottom, lineHeight: row.lineHeight }).toEqual({ top: '11px', bottom: '11px', lineHeight: '22px' });
       const remove = styleOf(container, '.sidebar-item-delete');

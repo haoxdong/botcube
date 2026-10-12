@@ -7,7 +7,7 @@ import "@copilotkit/react-core/v2/styles.css";
 import { KeptChat } from "./kept-chat";
 import { usePhoneSidebarSwipe } from "./phone-sidebar-swipe";
 import { usePageHold } from "./phone-page-hold";
-import { useIsPhone } from "./phone-query";
+import { PHONE_QUERY, useIsPhone } from "./phone-query";
 import { ChatServiceError } from "./conversations";
 import {
   AGENT_DOCUMENT_EDITED,
@@ -107,6 +107,8 @@ const menuIcon = (
     <path d="M2 16h12.5" />
   </svg>
 );
+
+const SIDEBAR_EXPANDED_KEY = 'botcube.sidebar-expanded';
 
 function UserMenu({
   expanded,
@@ -374,6 +376,15 @@ function App({
   useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
   const drawerRef = useRef<HTMLElement>(null);
   const swipe = usePhoneSidebarSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
+  // A desktop opens with the sidebar as it was last left; a phone's drawer always starts shut.
+  useEffect(() => {
+    if (!window.matchMedia(PHONE_QUERY).matches && withStorage(() => localStorage.getItem(SIDEBAR_EXPANDED_KEY)) === 'true') setSidebarExpanded(true);
+  }, []);
+  // Only the menu button opens or shuts the docked desktop sidebar.
+  const toggleSidebar = () => {
+    setSidebarExpanded(!sidebarExpanded);
+    if (!isPhone) withStorage(() => localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(!sidebarExpanded)));
+  };
   // The sidebar's Plugins screen shows in the chat's place, which stays mounted under it.
   const [pluginsOpen, setPluginsOpen] = useState(false);
   // The kept Main Chat shows in the chat's place until the chat surface opens at its latest message (#3697).
@@ -451,7 +462,7 @@ function App({
   const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);
   usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });
   const agentName = agentProfile?.name ?? UI_CONFIG.agentName;
-  // Bumped when the agent edits its Agent Identity or Soul, so the Identity tab reloads them.
+  // Bumped when the agent edits its Agent Identity or Soul, so the Agent Profile reloads them.
   const [agentDocumentsRevision, setAgentDocumentsRevision] = useState(0);
 
   const agentProfileAccount = useRef(accountId);
@@ -570,29 +581,22 @@ function App({
   );
 
   return (
-    // A desktop click on the main stage collapses the sidebar (#3604); a phone closes its drawer from the chat
-    // strip beside it (memo 0049 Fig 21).
-    <div onClickCapture={(event) => {
-      if (!isPhone && event.target instanceof Element && event.target.closest(".app-shell")) setSidebarExpanded(false);
-    }} ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style }}>
+    <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style }}>
       {/* ── Sidebar (outside CopilotKit so it doesn't remount on conversation switch) ── */}
       {/* Behind the open phone profile too, like the chat (#3694). */}
       <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`} inert={profileSwipe.open}>
         <div className="sidebar-top">
           {/* Brand row */}
           <div className="sidebar-brand">
-            {isPhone && <button
+            <button
               className="sidebar-logo-btn"
-              onClick={() => setSidebarExpanded((v) => !v)}
+              onClick={toggleSidebar}
               aria-label="Toggle sidebar"
+              aria-expanded={sidebarExpanded}
               title={sidebarExpanded ? "Collapse sidebar" : "Expand sidebar"}
             >
-              <svg className="sidebar-icon-panel" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M9 3v18" />
-              </svg>
               {menuIcon}
-            </button>}
+            </button>
             <span className="sidebar-brand-text">{UI_CONFIG.title}</span>
           </div>
 
@@ -603,11 +607,9 @@ function App({
               active={!pluginsOpen && activeId !== null && activeId === mainChatId}
               onClick={() => {
                 showMain('chat');
-                if (!isPhone) setSidebarExpanded(true);
                 if (isPhone) void openMainChat();
                 else selectMainChat();
               }}
-              aria-expanded={isPhone ? undefined : sidebarExpanded}
               aria-label="Main Chat"
             >
               <MessageCircle className="sidebar-nav-icon" aria-hidden />
@@ -631,10 +633,9 @@ function App({
               <span>Side chats</span>
               {sideChatsCollapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
             </button>
-            {/* The collapsed desktop rail keeps only Main chat and Plugins (#3604) */}
-            {(isPhone || sidebarExpanded) && <button className="header-btn sidebar-new-chat" onClick={() => { showMain('chat'); handleNewConversation(); }} aria-label="New side chat" title="New side chat">
+            <button className="header-btn sidebar-new-chat" onClick={() => { showMain('chat'); handleNewConversation(); }} aria-label="New side chat" title="New side chat">
               <Plus aria-hidden />
-            </button>}
+            </button>
           </div>
           {sideChatsError !== null && (
             <div className="sidebar-error" role="alert" hidden={!swipe.visible}>{sideChatsError}</div>
