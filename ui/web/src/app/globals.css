@@ -310,13 +310,13 @@ body {
   padding: 2px;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) button {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"]) button {
   padding: 4px;
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) button:hover {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"]) button:hover {
   color: var(--color-text);
   background: var(--color-selected);
 }
@@ -343,6 +343,65 @@ body {
     order: 2;
     margin-top: 2px;
   }
+}
+
+/* A message's fenced code: a header row of its language and its download and copy buttons, then the code in a framed
+   box across the bubble, on its grey as DESIGN.md has code blocks. streamdown 2.7 lays `div[data-streamdown="code-block"]` out with Tailwind
+   classes this app compiles only some of (`flex-col` not, so the three parts sat in one row; #3899), and puts the
+   buttons in their own floating wrapper between header and body; the grid places that wrapper at the header's right. Its `pointer-events-none` compiles but the buttons'
+   `pointer-events-auto` does not, so the wrapper takes pointer events back. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-header"] {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding-left: 12px;
+  background: none;
+  font-family: var(--font-code);
+  font-size: var(--font-detail);
+  color: var(--color-text-muted);
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"] > div:has(> [data-streamdown="code-block-actions"]) {
+  position: static;
+  pointer-events: auto;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-actions"] {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"] {
+  grid-column: 1 / -1;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"] pre {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
 }
 
 /* ── Message entrance animation ── */
@@ -404,6 +463,11 @@ body {
   border-radius: var(--radius-2xl);
   padding: 12px 18px;
   margin-block: 4px;
+}
+
+/* An answer with code spans the column, so a short snippet is no narrow chip in a narrow bubble. */
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div:has(> [data-streamdown="code-block"]) {
+  width: 100%;
 }
 
 /* Rhythm: blocks space by a 12px bottom margin, which collapses into a heading's 20px above and 8px below; a table or
