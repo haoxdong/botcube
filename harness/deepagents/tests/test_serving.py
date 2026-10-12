@@ -252,6 +252,15 @@ class _Service:
             session=session,
         )
 
+    def fed(self) -> None:
+        """Wait for finished Turns' Memory feeds, which land off the response path."""
+        async def wait() -> None:
+            if feeds := list(serving._SESSION_TURNS._feeds.values()):
+                await asyncio.wait(feeds)
+
+        assert self.client.portal is not None
+        self.client.portal.call(wait)
+
     def post(self, run: dict[str, Any], *, session: str | None = None) -> list[dict[str, Any]]:
         return _sse_events(self.post_raw(run, session=session))
 
@@ -1830,14 +1839,7 @@ def test_named_warmup_requires_a_turn_identity_and_reads_original_history(
     service.turn('original visible history', thread='original-logical-session',
                  actor='current-owner', user='original-filing', memory=True,
                  session='opaque-runtime-binding')
-
-    async def fed() -> None:
-        # The Turn feeds Memory off its response path; let it land before counting warmup's calls.
-        if feeds := list(serving._SESSION_TURNS._feeds.values()):
-            await asyncio.wait(feeds)
-
-    assert service.client.portal is not None
-    service.client.portal.call(fed)
+    service.fed()
     for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
         monkeypatch.setattr(serving, name, value)
     operations = agentcore_memory.sts.memory_calls

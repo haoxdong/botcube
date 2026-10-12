@@ -45,6 +45,7 @@ def test_authorized_warmup_restores_an_existing_conversation_before_the_next_tur
 ) -> None:
     member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     assert service.turn('first message', **member)[-1]['type'] == 'RUN_FINISHED'
+    service.fed()
     for name in ('_AGENTS', '_BACKENDS', '_AGENT_BACKENDS', '_BACKEND_BY_AGENT'):
         monkeypatch.setattr(serving, name, {})
     for name in ('_CHECKPOINTER', '_STORE'):

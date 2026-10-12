@@ -747,11 +747,12 @@ describe('a Turn against a local Harness', () => {
       const other = new DynamoDBSessionMetadata(table, client());
       await other.recordTurn('acct_owner', TURN.threadId, { filingUserId: 'filed-acct_owner', title: 'hello' });
       await other.fence('acct_owner', TURN.threadId);
-      const retryIndex = timers.mock.calls.findIndex(([, delay]) => delay === 120_000);
-      if (retryIndex !== -1) {
-        clearTimeout(defined(timers.mock.results[retryIndex], 'recovery timer').value as NodeJS.Timeout);
-        defined(timers.mock.calls[retryIndex], 'periodic recovery')[0]();
-      }
+      // Initial recovery schedules its periodic rescan only after it settles.
+      const retry = () => timers.mock.calls.findIndex(([, delay]) => delay === 120_000);
+      await expect.poll(retry).toBeGreaterThanOrEqual(0);
+      const retryIndex = retry();
+      clearTimeout(defined(timers.mock.results[retryIndex], 'recovery timer').value as NodeJS.Timeout);
+      defined(timers.mock.calls[retryIndex], 'periodic recovery')[0]();
       await expect.poll(() => purged, { timeout: 1_000 }).toEqual([TURN.threadId]);
       await expect.poll(() => other.pendingPurges()).toEqual([]);
     } finally { timers.mockRestore(); discovery.mockRestore(); }
