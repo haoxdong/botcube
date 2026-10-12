@@ -1830,6 +1830,14 @@ def test_named_warmup_requires_a_turn_identity_and_reads_original_history(
     service.turn('original visible history', thread='original-logical-session',
                  actor='current-owner', user='original-filing', memory=True,
                  session='opaque-runtime-binding')
+
+    async def fed() -> None:
+        # The Turn feeds Memory off its response path; let it land before counting warmup's calls.
+        if feeds := list(serving._SESSION_TURNS._feeds.values()):
+            await asyncio.wait(feeds)
+
+    assert service.client.portal is not None
+    service.client.portal.call(fed)
     for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
         monkeypatch.setattr(serving, name, value)
     operations = agentcore_memory.sts.memory_calls
