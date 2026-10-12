@@ -50,7 +50,6 @@ describe('Agent Identity and Soul', () => {
       sessionUserId: 'filed-docs-template',
       agentIdentity: TEMPLATE_IDENTITY,
       soul: TEMPLATE_SOUL,
-      memoryRevision: 0,
       model: 'plan',
     });
   });
@@ -332,12 +331,11 @@ describe('Memory', () => {
     expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory', userId: 'filed-memory-read' });
   });
 
-  it('edits and deletes lines through the session API, each bumping the revision the next Turn carries', async () => {
+  it('edits and deletes lines through the session API', async () => {
     const user = remembering('memory-edited');
 
     expect((await user.put('/agent/memory/mem-paris', { text: 'Lives in London' })).status).toBe(204);
     expect((await user.request('/agent/memory/mem-copper', { method: 'DELETE' })).status).toBe(204);
-    await user.turn('memory-edited-turn');
 
     expect(stack.sessionApi.events()).toEqual(
       expect.arrayContaining([
@@ -345,79 +343,20 @@ describe('Memory', () => {
         { operation: 'memory-delete', userId: 'filed-memory-edited', recordId: 'mem-copper' },
       ]),
     );
-    expect(forwarded('memory-edited-turn')).toMatchObject({ memoryRevision: 2 });
     expect(await (await user.request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
   });
 
-  it('refreshes Memory when a delete finds no line, preserving its 404', async () => {
+  it('answers 404 for a delete or edit of a line Memory does not have', async () => {
     const user = remembering('memory-missing');
 
     const response = await user.request('/agent/memory/mem-gold', { method: 'DELETE' });
-    await user.turn('memory-missing-turn');
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ detail: 'Memory has no line mem-gold' });
-    expect(forwarded('memory-missing-turn')).toMatchObject({ memoryRevision: 1 });
-  });
-
-  it('keeps the revision when the session API refuses a PUT to a missing line', async () => {
-    const user = remembering('memory-missing-put');
     expect((await user.put('/agent/memory/mem-gold', { text: 'Trades gold' })).status).toBe(404);
-    await user.turn('memory-missing-put-turn');
-    expect(forwarded('memory-missing-put-turn')).toMatchObject({ memoryRevision: 0 });
   });
 
-  it('refreshes the same thread after retrying a committed deletion whose revision write failed', async () => {
-    const user = remembering('memory-recovery');
-    const threadId = 'memory-recovery-turn';
-    await user.turn(threadId);
-    expect(forwarded(threadId)).toMatchObject({ memoryRevision: 0 });
-    const revision = vi.spyOn(DynamoDBAgentDocuments.prototype, 'memoryEdited').mockRejectedValueOnce(new Error('revision write unavailable'));
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      expect((await user.request('/agent/memory/mem-copper', { method: 'DELETE' })).status).toBe(500);
-      expect(stack.sessionApi.memories.get('filed-memory-recovery')).toEqual([{ id: 'mem-paris', text: 'Lives in Paris' }]);
-      expect((await user.request('/agent/memory/mem-copper', { method: 'DELETE' })).status).toBe(404);
-      await user.turn(threadId);
-      const invocation = stack.agentcore.invocations().at(-1);
-      if (invocation === undefined) throw new Error('The retry must produce a subsequent Turn invocation');
-      const latest = JSON.parse(invocation.body);
-      expect(latest.threadId).toBe(threadId);
-      expect(latest.forwardedProps.memoryRevision).toBe(1);
-    } finally {
-      revision.mockRestore();
-      errors.mockRestore();
-    }
-  });
-
-  it('classifies a missing-line refresh failure and preserves both failures', async () => {
-    const isolated = await startInProcess();
-    let reported: Error | undefined;
-    isolated.app.onError((error, c) => {
-      reported = error;
-      return error instanceof HttpError ? c.json({ detail: error.detail }, error.status as 400) : c.text('Internal Server Error', 500);
-    });
-    const failure = new Error('revision write unavailable');
-    const revision = vi.spyOn(DynamoDBAgentDocuments.prototype, 'memoryEdited').mockRejectedValueOnce(failure);
-    try {
-      const response = await isolated.app.request('/agent/memory/mem-gold', {
-        method: 'DELETE', headers: { 'x-test-owner': 'memory-double-failure' },
-      });
-      expect(response.status).toBe(503);
-      expect(await response.json()).toEqual({ detail: 'Memory refresh failed after its line was not found' });
-      expect(reported?.cause).toBeInstanceOf(AggregateError);
-      const [missing, refresh] = (reported?.cause as AggregateError).errors;
-      expect(missing).toBeInstanceOf(HttpError);
-      expect(missing.status).toBe(404);
-      expect(missing.detail).toBe('Memory has no line mem-gold');
-      expect(refresh).toBe(failure);
-    } finally {
-      revision.mockRestore();
-      await isolated.stop();
-    }
-  });
-
-  it('does not refresh Memory when deletion fails without a missing-line result', async () => {
+  it('surfaces a failed deletion with the session API diagnostics', async () => {
     const user = remembering('memory-upstream-failure');
     const diagnostics = { error: 'Memory unavailable', stackTrace: ['at memory_delete (/var/task/session_api.py:3484)'] };
     const originalFetch = globalThis.fetch;
@@ -428,7 +367,6 @@ describe('Memory', () => {
       }
       return originalFetch(input, init);
     });
-    const revision = vi.spyOn(DynamoDBAgentDocuments.prototype, 'memoryEdited');
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const response = await user.request('/agent/memory/mem-copper', { method: 'DELETE' });
@@ -437,13 +375,9 @@ describe('Memory', () => {
       expect(errors).toHaveBeenCalledWith('DELETE /agent/memory/mem-copper failed', expect.objectContaining({
         status: 503, detail: 'Session API returned HTTP 503', cause: diagnostics,
       }));
-      expect(revision).not.toHaveBeenCalled();
       expect(stack.sessionApi.memories.get('filed-memory-upstream-failure')).toHaveLength(2);
-      await user.turn('memory-upstream-failure-turn');
-      expect(forwarded('memory-upstream-failure-turn')).toMatchObject({ memoryRevision: 0 });
     } finally {
       transport.mockRestore();
-      revision.mockRestore();
       errors.mockRestore();
     }
   });
@@ -465,7 +399,7 @@ describe('Memory', () => {
 
 
 describe('bounded document recovery probes', () => {
-  it('keeps concurrent Soul Identity and Memory revision updates in one account without losing fields', async () => {
+  it('keeps concurrent Soul, Identity and Memory updates in one account without losing fields', async () => {
     const user = as('probe-concurrent');
     stack.sessionApi.memories.set('filed-probe-concurrent', [{ id: 'line', text: 'old' }]);
     const responses = await Promise.all([
@@ -475,7 +409,8 @@ describe('bounded document recovery probes', () => {
     ]);
     expect(responses.map((response) => response.status)).toEqual([204, 204, 204]);
     await user.turn('probe-concurrent-turn');
-    expect(forwarded('probe-concurrent-turn')).toMatchObject({ soul: 'Concurrent instructions', agentIdentity: { name: 'Concurrent Agent' }, memoryRevision: 1 });
+    expect(forwarded('probe-concurrent-turn')).toMatchObject({ soul: 'Concurrent instructions', agentIdentity: { name: 'Concurrent Agent' } });
+    expect(stack.sessionApi.memories.get('filed-probe-concurrent')).toEqual([{ id: 'line', text: 'new' }]);
     expect(await (await as('probe-concurrent-other').request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
   });
 
@@ -490,23 +425,6 @@ describe('bounded document recovery probes', () => {
       expect((await user.put('/agent/soul', { content: 'New instructions' })).status).toBe(204);
       await user.turn('probe-save-recovery-turn');
       expect(forwarded('probe-save-recovery-turn')).toMatchObject({ soul: 'New instructions' });
-    } finally {
-      failure.mockRestore();
-      errors.mockRestore();
-    }
-  });
-
-  it('recovers a committed Memory edit after revision storage fails by explicit retry', async () => {
-    const user = as('probe-memory-edit-recovery');
-    stack.sessionApi.memories.set('filed-probe-memory-edit-recovery', [{ id: 'line', text: 'old' }]);
-    const failure = vi.spyOn(DynamoDBAgentDocuments.prototype, 'memoryEdited').mockRejectedValueOnce(new Error('revision unavailable'));
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      expect((await user.put('/agent/memory/line', { text: 'new' })).status).toBe(500);
-      expect(await (await user.request('/agent/memory')).json()).toEqual({ lines: [{ id: 'line', text: 'new' }] });
-      expect((await user.put('/agent/memory/line', { text: 'new' })).status).toBe(204);
-      await user.turn('probe-memory-edit-recovery-turn');
-      expect(forwarded('probe-memory-edit-recovery-turn')).toMatchObject({ memoryRevision: 1 });
     } finally {
       failure.mockRestore();
       errors.mockRestore();

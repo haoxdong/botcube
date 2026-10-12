@@ -229,7 +229,7 @@ describe('GET /threads/{id}', () => {
       messages,
       running: false,
     });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: 'replayed', userId: 'filed-replayer', contains: 'run-1' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: 'replayed', userId: 'filed-replayer' });
   });
 
   // A page reloaded mid-Turn waited for a focus to see its reply; it polls while the Session's Turn runs.
@@ -249,7 +249,6 @@ describe('GET /threads/{id}', () => {
       operation: 'get',
       sessionId,
       userId: 'filed-runner',
-      ...(running ? {} : { contains: 'run-1' }),
     });
   });
 
@@ -336,7 +335,7 @@ describe('GET /main-chat', () => {
     stack.sessionApi.reply(id, 200, { messages });
 
     expect(await mainChat('main-replayer')).toEqual({ id, provider: 'openai', messages, running: false });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: 'filed-main-replayer', contains: 'run-1' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: 'filed-main-replayer' });
   });
 });
 

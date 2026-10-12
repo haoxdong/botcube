@@ -36,7 +36,6 @@ def test_fresh_local_table_admits_tracked_sessions(local_table: MagicMock) -> No
             'pk': {'S': 'RUNTIME_DISPATCHERS'},
             'sk': {'S': 'CLOSED'},
             'old_chat_retired': {'BOOL': True},
-            'memory_broker_only': {'BOOL': True},
         },
     )
 

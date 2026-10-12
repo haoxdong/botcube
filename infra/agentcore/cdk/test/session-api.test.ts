@@ -85,7 +85,7 @@ test('a purge fits in one invocation at the per-Session delete rate', () => {
   expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);
 });
 
-test("the session API may only list, create and delete events, list, update and delete the memory's records, and read its LangSmith key", () => {
+test("the session API may only list, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
   const synthesized = template();
   const roles = synthesized.findResources('AWS::IAM::Role', {
     Properties: { RoleName: IDENTITY.aws.iam.sessionApiRole },
@@ -100,13 +100,18 @@ test("the session API may only list, create and delete events, list, update and 
 
   expect(statements).toEqual([
     {
-      Action: ['bedrock-agentcore:ListEvents', 'bedrock-agentcore:CreateEvent', 'bedrock-agentcore:DeleteEvent'],
+      Action: [
+        'bedrock-agentcore:ListEvents',
+        'bedrock-agentcore:CreateEvent',
+        'bedrock-agentcore:DeleteEvent',
+        'bedrock-agentcore:ListSessions',
+      ],
       Effect: 'Allow',
       Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },
     },
     {
       Action: 'bedrock-agentcore:ListMemoryRecords',
-      Condition: { StringEquals: { 'bedrock-agentcore:namespacePath': '/strategies/' } },
+      Condition: { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } },
       Effect: 'Allow',
       Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },
     },

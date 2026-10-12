@@ -19,6 +19,7 @@ _PHASES = frozenset(
     {
         "invocation_auth",
         "memory_backends",
+        "memory_credentials",
         "workspace",
         "personal_memory",
         "model_client",

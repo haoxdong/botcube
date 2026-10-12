@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +16,7 @@ from langgraph.checkpoint.base import (
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from ...messages_snapshot import MessagesSnapshot
-from ..inmem import build_memory_tools, build_store, prewarm_ltm
+from ..inmem import build_memory_tools, build_store
 
 
 class UserScopedSqliteSaver(BaseCheckpointSaver[str]):
@@ -106,29 +103,9 @@ class UserScopedSqliteSaver(BaseCheckpointSaver[str]):
     get_next_version = AsyncSqliteSaver.get_next_version
 
     async def adelete_session(self, user_id: str, session_id: str) -> None:
-        """Delete every checkpoint of the user's Session, and its messages snapshot."""
+        """Delete every checkpoint of the user's Session."""
         saver = await self._saver({'configurable': {'actor_id': user_id}})
         await saver.adelete_thread(session_id)
-        self._messages_path(user_id, session_id).unlink(missing_ok=True)
-
-    async def aread_messages_snapshot(self, user_id: str, session_id: str) -> MessagesSnapshot | None:
-        path = self._messages_path(user_id, session_id)
-        return MessagesSnapshot(**json.loads(path.read_text())) if path.exists() else None
-
-    async def awrite_messages_snapshot(self, user_id: str, session_id: str, snapshot: MessagesSnapshot) -> None:
-        """Keep the snapshot in its own file beside the user's record, unless it holds a newer checkpoint's."""
-        async with self._lock:
-            kept = await self.aread_messages_snapshot(user_id, session_id)
-            if kept is not None and not snapshot.supersedes(kept):
-                return
-            path = self._messages_path(user_id, session_id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            written = path.with_suffix('.tmp')
-            written.write_text(json.dumps(asdict(snapshot)))
-            written.replace(path)
-
-    def _messages_path(self, user_id: str, session_id: str) -> Path:
-        return self._directory / f'{user_id.encode().hex()}.messages' / f'{session_id.encode().hex()}.json'
 
     async def aclose(self) -> None:
         for saver in self._savers.values():
@@ -163,5 +140,4 @@ __all__ = [
     'build_checkpointer',
     'build_memory_tools',
     'build_store',
-    'prewarm_ltm',
 ]

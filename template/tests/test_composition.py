@@ -131,7 +131,7 @@ def test_shared_invocation_preserves_each_templates_filing_identity(monkeypatch:
     serving.configure_harness_definition(HARNESS_CARTRIDGE)
 
     async def selected_agent(input_data: Any, context: Any, forwarded: Any, auth: Any, session_user_id: str,
-                             documents: Any, memory_revision: int, files: Any, warmup: Any):
+                             documents: Any, files: Any, warmup: Any, turn_identity: str):
         yield (auth.actor_id, session_user_id, auth.persistent_memory)
 
     monkeypatch.setattr(serving, '_invoke_agent', selected_agent)

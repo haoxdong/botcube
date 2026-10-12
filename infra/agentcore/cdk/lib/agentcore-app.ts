@@ -18,17 +18,6 @@ export function addAgentCoreStacks(
   commit: string,
   overrides: Omit<Partial<AgentCoreStackProps>, 'spec' | 'physicalIdentity' | 'env'> = {}
 ): void {
-  const legacyMemoryContext: unknown = app.node.tryGetContext('retainLegacyRuntimeMemory');
-  if (
-    legacyMemoryContext !== undefined &&
-    legacyMemoryContext !== true &&
-    legacyMemoryContext !== false &&
-    legacyMemoryContext !== 'true' &&
-    legacyMemoryContext !== 'false'
-  ) {
-    throw new Error('retainLegacyRuntimeMemory must be true or false');
-  }
-  const retainLegacyRuntimeMemory = legacyMemoryContext === true || legacyMemoryContext === 'true';
   const physicalIdentity: AgentCorePhysicalIdentity = {
     runtime: identity.aws.agentCore.runtime,
     memory: identity.aws.agentCore.memory,
@@ -54,8 +43,12 @@ export function addAgentCoreStacks(
     new AgentCoreStack(app, toStackName(identity.aws.cloudFormation.stackFamily, target.name), {
       spec,
       physicalIdentity,
-      retainLegacyRuntimeMemory,
       commit,
+      // The Chat Service serves OIDC discovery on the hostname its ALB answers, as BOTCUBE_PUBLIC_ORIGIN.
+      userMemoryRole: {
+        issuer: `https://${new URL(identity.domains.chatService).hostname}`,
+        roleName: identity.aws.iam.userMemoryRole,
+      },
       privateNatBrowser: agentCore.privateNatBrowser,
       harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
       runtimeNetwork: agentCore.runtimeNetworkParameter

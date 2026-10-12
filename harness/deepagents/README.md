@@ -19,8 +19,9 @@ uv sync
 uv run pytest
 ```
 
-Both memory implementations expose the four documented factory slots:
-checkpointer, store, memory tools, and prewarm-to-`ltm.md`. A Cartridge can use
+Both memory implementations expose the three documented factory slots:
+checkpointer, store, and memory tools (the `memory` tool and the middleware that
+loads Memory once per Session). A Cartridge can use
 the Harness with fake tools and an empty skill list in deterministic tests.
 
 The serving shell implements `POST /invocations` and `GET /ping` on port 8080

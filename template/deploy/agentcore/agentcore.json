@@ -59,33 +59,23 @@
         {
           "type": "USER_PREFERENCE",
           "name": "UserPreferences",
-          "namespaceTemplates": [
-            "/strategies/{memoryStrategyId}/actors/{actorId}/"
-          ]
+          "namespaceTemplates": ["/actors/{actorId}/preferences/"]
         },
         {
           "type": "SEMANTIC",
           "name": "SemanticFacts",
-          "namespaceTemplates": [
-            "/strategies/{memoryStrategyId}/actors/{actorId}/"
-          ]
+          "namespaceTemplates": ["/actors/{actorId}/facts/"]
         },
         {
           "type": "SUMMARIZATION",
           "name": "SessionSummary",
-          "namespaceTemplates": [
-            "/strategies/{memoryStrategyId}/actors/{actorId}/sessions/{sessionId}/summary/"
-          ]
+          "namespaceTemplates": ["/actors/{actorId}/summaries/{sessionId}/"]
         },
         {
           "type": "EPISODIC",
           "name": "EpisodicLearning",
-          "namespaceTemplates": [
-            "/strategies/{memoryStrategyId}/actors/{actorId}/episodes/{sessionId}/"
-          ],
-          "reflectionNamespaceTemplates": [
-            "/strategies/{memoryStrategyId}/actors/{actorId}/episodes/"
-          ]
+          "namespaceTemplates": ["/actors/{actorId}/episodes/{sessionId}/"],
+          "reflectionNamespaceTemplates": ["/actors/{actorId}/episodes/"]
         }
       ]
     }

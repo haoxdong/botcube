@@ -290,7 +290,6 @@ describe('a Turn', () => {
         sessionUserId: 'filed-account-1',
         agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
         soul: 'Be brief.',
-        memoryRevision: 0,
         model: 'plan',
       },
     });
@@ -309,32 +308,6 @@ describe('a Turn', () => {
         'data: {"type":"CUSTOM","name":"test:browser-live-view","value":{"open":true,"sessionId":"S-1"}}\n\n' +
         'data: {"type":"RUN_ERROR","message":"AgentCore upstream stream ended before the Turn finished","code":"AGENTCORE_UPSTREAM_STREAM_ERROR"}\n\n',
     );
-  });
-
-  it('forwards the fixed isolation opt-in with a genuine capability and relays its CUSTOM receipt', async () => {
-    const target = await startInProcess({ config: { turnMemory: {
-      secret: 'fixed-isolation-test-signing-key-32-characters', memoryId: 'memory',
-      url: 'https://chat.fixture/internal/turn-memory',
-    } } });
-    const receipt = { version: 1, runId: 'run-1', ownBefore: 200, foreignActor: 403,
-      foreignSession: 403, ownNamespaces: 200, foreignNamespaces: 403, ownAfter: 200 };
-    const frames = ['data: {"type":"RUN_STARTED"}',
-      `data: ${JSON.stringify({ type: 'CUSTOM', name: 'MEMORY_ISOLATION_CHECK', value: receipt })}`,
-      'data: {"type":"RUN_FINISHED"}'];
-    target.agentcore.script('session-isolation', { kind: 'stream', frames });
-    try {
-      const input = JSON.parse(turn('session-isolation'));
-      input.forwardedProps = { memoryIsolationCheck: 'v1', turnMemory: { token: 'caller-spoof', url: 'https://caller.invalid' } };
-      const response = await postTurn(target, JSON.stringify(input));
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe(frames.map((frame) => `${frame}\n\n`).join(''));
-      const props = target.agentcore.invocationFor('session-isolation').payload.forwardedProps;
-      expect(props.memoryIsolationCheck).toBe('v1');
-      expect(props.sessionUserId).toBe('filed-account-1');
-      expect(props.turnMemory).toEqual({ url: 'https://chat.fixture/internal/turn-memory', token: expect.stringMatching(/^eyJ/) });
-    } finally {
-      await target.stop();
-    }
   });
 
   it('answers 503 when no Harness is configured', async () => {

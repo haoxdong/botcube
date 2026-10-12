@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
 from hashlib import sha256
-from typing import Any
 
 ANONYMOUS_ACTOR_ID = 'anonymous'
 
@@ -41,36 +39,9 @@ def actor_path_segment(value: str) -> str:
     return f'{prefix}_{digest}'
 
 
-def record_belongs_to_actor(record: Mapping[str, Any], actor_id: str) -> bool:
-    return bool(actor_namespace_paths(record, actor_id))
+def actor_namespace(actor_id: str, kind: str = '') -> str:
+    """Where AgentCore files the actor's long-term records, or one kind of them (ADR 0033).
 
-
-def actor_namespace_paths(record: Mapping[str, Any], actor_id: str) -> list[str]:
-    paths: list[str] = []
-    for namespace in _record_namespaces(record):
-        path = _actor_namespace_path(namespace, actor_id)
-        if path is not None and path not in paths:
-            paths.append(path)
-    return paths
-
-
-def _record_namespaces(record: Mapping[str, Any]) -> list[str]:
-    namespaces: list[str] = []
-    namespace = record.get('namespace')
-    if isinstance(namespace, str):
-        namespaces.append(namespace)
-    raw_namespaces = record.get('namespaces')
-    if (
-        isinstance(raw_namespaces, Sequence)
-        and not isinstance(raw_namespaces, str | bytes | bytearray)
-    ):
-        namespaces.extend(ns for ns in raw_namespaces if isinstance(ns, str))
-    return namespaces
-
-
-def _actor_namespace_path(namespace: str, actor_id: str) -> str | None:
-    segments = [part for part in namespace.split('/') if part]
-    for index, segment in enumerate(segments[:-1]):
-        if segment in {'actor', 'actors'} and segments[index + 1] == actor_id:
-            return '/' + '/'.join(segments[:index + 2]) + '/'
-    return None
+    The trailing slash keeps one actor's prefix from reaching an actor whose ID extends it.
+    """
+    return f'/actors/{actor_id}/{kind}/' if kind else f'/actors/{actor_id}/'

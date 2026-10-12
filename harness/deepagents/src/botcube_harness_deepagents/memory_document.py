@@ -1,6 +1,6 @@
 """Memory as one document: a member's memory records, one line each, as the agent opens a conversation with them.
 
-The agent's startup memory and the document the member edits are the same records:
+The Memory a Session opens with and the document the member edits are the same records:
 the member's user preferences, then their semantic facts newest first. Editing a line
 updates its record; deleting a line deletes it.
 
@@ -12,14 +12,15 @@ the last five minutes of saves over the listing.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from ._env import positive_int
-from .actor_identity import record_belongs_to_actor
-from .memory_tools import _extract_text, list_actor_memory_record_summaries
-from .pending_memory import utc_now
+from .actor_identity import actor_namespace
+from .memory_tools import extract_text, list_memory_record_summaries
+from .pending_memory import pending_memory_session_ids, pending_memory_texts, utc_now
+from .session_memory import render_memory
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore import BedrockAgentCoreClient
@@ -27,8 +28,6 @@ if TYPE_CHECKING:
         EventTypeDef,
         MemoryRecordSummaryTypeDef,
     )
-
-    from .memory_broker import MemoryBrokerClient
 
 
 # Live, the listing showed an update after 71-73 s and a delete after 59-63 s.
@@ -39,67 +38,49 @@ class MemoryLineNotFoundError(LookupError):
     """The member's Memory has no line for this record."""
 
 
-def _is_user_preference_record(record: Mapping[str, Any]) -> bool:
-    # Case-insensitive: console default names strategies 'UserPreferences-...',
-    # but the CDK L3 default formats USER_PREFERENCE as 'Userpreference'.
-    return 'userpreference' in record['memoryStrategyId'].lower()
-
-
-def _is_semantic_fact_record(record: Mapping[str, Any]) -> bool:
-    return 'semantic' in record['memoryStrategyId'].lower()
-
-
 def _newest_first(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[MemoryRecordSummaryTypeDef]:
     # createdAt is a timezone-aware datetime; the stable sort keeps listing order for ties.
     return sorted(records, key=lambda record: record['createdAt'], reverse=True)
 
 
 def actor_memory_records(
-    client: BedrockAgentCoreClient | MemoryBrokerClient,
+    client: BedrockAgentCoreClient,
     *,
     memory_id: str,
     actor_id: str,
-    belongs: Callable[[Mapping[str, Any], str], bool] = record_belongs_to_actor,
 ) -> tuple[list[MemoryRecordSummaryTypeDef], list[MemoryRecordSummaryTypeDef]]:
     """The actor's user preference records, and their semantic fact records newest first.
 
-    Listing each actor leaf avoids semantic relevance cutoffs for durable preferences.
+    Listing each kind's namespace avoids semantic relevance cutoffs for durable preferences.
     """
-    summaries = list_actor_memory_record_summaries(client, memory_id=memory_id, actor_id=actor_id)
-    return _actor_memory_records(summaries, _recent_saves(client, memory_id=memory_id, actor_id=actor_id), actor_id, belongs)
+    preferences, facts = (
+        list_memory_record_summaries(client, memory_id=memory_id, namespace=actor_namespace(actor_id, kind))
+        for kind in ('preferences', 'facts')
+    )
+    return _actor_memory_records(preferences, facts, _recent_saves(client, memory_id=memory_id, actor_id=actor_id))
 
 
-def startup_memory_records(
-    client: MemoryBrokerClient,
-    *,
-    memory_id: str,
-    actor_id: str,
-    pending_session_ids: Sequence[str],
-    now: datetime,
-    belongs: Callable[[Mapping[str, Any], str], bool] = record_belongs_to_actor,
-) -> tuple[list[MemoryRecordSummaryTypeDef], list[MemoryRecordSummaryTypeDef], list[EventTypeDef]]:
-    """Read startup records and journals together, using the same Memory document rules."""
-    save_session_ids = _save_session_ids(now)
-    snapshot = client.startup_snapshot(memory_id, actor_id, [*save_session_ids, *pending_session_ids])
-    events = snapshot['eventsBySession']
-    saves = _saves_from_events([event for session in save_session_ids for event in events[session]], now)
-    preferences, facts = _actor_memory_records(snapshot['memoryRecordSummaries'], saves, actor_id, belongs)
-    return preferences, facts, [event for session in pending_session_ids for event in events[session]]
+def opening_memory(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> str:
+    """The Memory block a Session opens with (ADR 0031): preferences, then facts with Pending Memory first, newest first."""
+    now = utc_now()
+    preferences, facts = actor_memory_records(client, memory_id=memory_id, actor_id=actor_id)
+    pending = pending_memory_texts(
+        _session_events(client, memory_id=memory_id, actor_id=actor_id, session_ids=pending_memory_session_ids(now)),
+        now=now,
+    )
+    return render_memory(_record_texts(_newest_first(preferences)), [*pending, *_record_texts(facts)])
+
+
+def _record_texts(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[str]:
+    return [text for record in records if (text := record_text(record))]
 
 
 def _actor_memory_records(
-    summaries: Sequence[MemoryRecordSummaryTypeDef],
+    preferences: Sequence[MemoryRecordSummaryTypeDef],
+    facts: Sequence[MemoryRecordSummaryTypeDef],
     saves: Mapping[str, str | None],
-    actor_id: str,
-    belongs: Callable[[Mapping[str, Any], str], bool],
 ) -> tuple[list[MemoryRecordSummaryTypeDef], list[MemoryRecordSummaryTypeDef]]:
-    actor_summaries = _with_saves(
-        [summary for summary in summaries if belongs(summary, actor_id)],
-        saves,
-    )
-    preferences = [summary for summary in actor_summaries if _is_user_preference_record(summary)]
-    facts = _newest_first([summary for summary in actor_summaries if _is_semantic_fact_record(summary)])
-    return preferences, facts
+    return _with_saves(preferences, saves), _newest_first(_with_saves(facts, saves))
 
 
 def _saves_session_id(at: datetime) -> str:
@@ -111,11 +92,20 @@ def _save_session_ids(now: datetime) -> tuple[str, str]:
     return _saves_session_id(now - MEMORY_SAVE_WINDOW), _saves_session_id(now)
 
 
-def _recent_saves(client: BedrockAgentCoreClient | MemoryBrokerClient, *, memory_id: str, actor_id: str) -> dict[str, str | None]:
+def _recent_saves(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> dict[str, str | None]:
     """The actor's Memory saves of the last five minutes: each record's latest text, or None once deleted."""
     now = utc_now()
-    events: list[Any] = []
-    for session_id in _save_session_ids(now):
+    return _saves_from_events(
+        _session_events(client, memory_id=memory_id, actor_id=actor_id, session_ids=_save_session_ids(now)), now,
+    )
+
+
+def _session_events(
+    client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, session_ids: Sequence[str],
+) -> list[EventTypeDef]:
+    """Every event of the actor's sessions; a session never written to has none."""
+    events: list[EventTypeDef] = []
+    for session_id in session_ids:
         kwargs: dict[str, Any] = {
             'memoryId': memory_id, 'actorId': actor_id, 'sessionId': session_id, 'includePayloads': True, 'maxResults': 100,
         }
@@ -125,7 +115,7 @@ def _recent_saves(client: BedrockAgentCoreClient | MemoryBrokerClient, *, memory
             if 'nextToken' not in response:
                 break
             kwargs['nextToken'] = response['nextToken']
-    return _saves_from_events(events, now)
+    return events
 
 
 def _saves_from_events(events: Sequence[Mapping[str, Any]], now: datetime) -> dict[str, str | None]:
@@ -166,7 +156,7 @@ def _journal_save(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: s
 
 def record_text(record: Mapping[str, Any]) -> str:
     """The text a record shows the agent and the member."""
-    return _extract_text(record['content']['text'])
+    return extract_text(record['content']['text'])
 
 
 def memory_lines(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> list[dict[str, str]]:

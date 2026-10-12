@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from pydantic import SecretStr
 
 from botcube_harness_deepagents.agent import AgentResponseError, ask, build_agent
-from conftest import KwargsRecorder, ToolBindableFakeModel
+from conftest import KwargsRecorder, ToolBindableFakeModel, prepared
 
 
 def test_agent_answers_simple_query_with_injected_cube_dependencies(tmp_path: Path) -> None:
@@ -468,12 +468,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
             tool_results.extend(message.text for message in messages if isinstance(message, ToolMessage))
             return super()._generate(messages, *args, **kwargs)
 
-    async def snapshot(*args: Any) -> None:
-        pass
-
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-    monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
     model = CapturingModel(responses=[
         AIMessage(content='', tool_calls=[{
             'id': 'delegate', 'name': 'task', 'args': {
@@ -512,7 +507,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
 
         async def exercise() -> None:
             stream = serving._SessionTurns().stream(
-                ('owner', 'delegated-files'), lambda: agent, request, files, tmp_path, serving._RequestContext(None),
+                ('owner', 'delegated-files'), prepared(agent, tmp_path), request, files, serving._RequestContext(None),
             )
             if not files_available:
                 with pytest.raises(ClientError, match='NoSuchBucket'):

@@ -1,4 +1,4 @@
-"""Tests for memory_tools — agent_core_memory parity with Strands AgentCoreMemoryToolProvider.
+"""Tests for memory_tools — the `memory` tool's parity with Strands AgentCoreMemoryToolProvider.
 
 Contract: contract/parity/agent-core-memory-tool.md
 """
@@ -6,10 +6,9 @@ Contract: contract/parity/agent-core-memory-tool.md
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,32 +17,20 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
-from botcube_harness_deepagents import memory_tools
+from agentcore_fake import MEMORY_ID as FAKE_MEMORY_ID
+from agentcore_fake import FakeAgentCoreMemory
 from botcube_harness_deepagents.memory_tools import (
+    RECORD_REPLY,
     VALID_ACTIONS,
     MemoryToolResult,
-    _extract_text,
-    agent_core_memory,
+    extract_text,
+    memory_tool,
 )
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore.type_defs import MemoryRecordSummaryTypeDef
 
 # -- helpers ------------------------------------------------------------------
-
-def _make_record_summary(
-    content_text: str,
-    record_id: str = 'rec-1',
-    *,
-    actor_id: str = 'botcube_harness_deepagents',
-) -> dict[str, object]:
-    """Build a memoryRecordSummary matching boto3 retrieve_memory_records response."""
-    return {
-        'memoryRecordId': record_id,
-        'content': {'text': content_text},
-        'namespace': f'/strategies/Semantic-1/actors/{actor_id}/',
-    }
-
 
 EPISODIC_XML = (
     '<summary>'
@@ -112,23 +99,20 @@ SUMMARY_TEXT = (
 
 
 def _invoke(action: str, *, store: Any = None, query: str = '', content: str = '',
-            actor_id: str = 'botcube_harness_deepagents', thread_id: str = 'default',
-            memory_record_id: str = '') -> MemoryToolResult:
-    """Call agent_core_memory's underlying function directly with mocked config."""
-    with patch('botcube_harness_deepagents.memory_tools.get_config', return_value={
-        'configurable': {'actor_id': actor_id, 'thread_id': thread_id},
-    }):
-        kwargs: dict[str, Any] = {
-            'action': action,
-            'query': query,
-            'content': content,
-        }
-        if store is not None:
-            kwargs['store'] = store
-        if memory_record_id:
-            kwargs['memory_record_id'] = memory_record_id
-        assert isinstance(agent_core_memory, StructuredTool) and agent_core_memory.func is not None
-        return agent_core_memory.func(**kwargs)
+            actor_id: str = 'botcube_harness_deepagents', memory_record_id: str = '') -> MemoryToolResult:
+    """Call the actor's memory tool function directly."""
+    kwargs: dict[str, Any] = {
+        'action': action,
+        'query': query,
+        'content': content,
+    }
+    if store is not None:
+        kwargs['store'] = store
+    if memory_record_id:
+        kwargs['memory_record_id'] = memory_record_id
+    tool = memory_tool(actor_id)
+    assert isinstance(tool, StructuredTool) and tool.func is not None
+    return tool.func(**kwargs)
 
 
 # -- return envelope ----------------------------------------------------------
@@ -164,17 +148,17 @@ class TestReturnEnvelope:
 
 
 def test_tool_description_warns_about_pii_extraction_limits() -> None:
-    description = agent_core_memory.description or ''
+    description = memory_tool('actor').description or ''
 
     assert 'PII-like content' in description
     assert 'should not promise durable storage' in description
 
 
-# -- _extract_text -----------------------------------------------------------
+# -- extract_text -----------------------------------------------------------
 
 class TestExtractText:
     def test_plain_semantic_text(self) -> None:
-        assert _extract_text('The user is based in New York.') == 'The user is based in New York.'
+        assert extract_text('The user is based in New York.') == 'The user is based in New York.'
 
     def test_user_preference_json(self) -> None:
         raw = json.dumps({
@@ -182,7 +166,7 @@ class TestExtractText:
             'preference': 'Prefers copper analysis',
             'categories': ['commodities'],
         })
-        assert _extract_text(raw) == 'Prefers copper analysis'
+        assert extract_text(raw) == 'Prefers copper analysis'
 
     @pytest.mark.parametrize('key', ['fact', 'summary', 'episode', 'reflection'])
     def test_json_text_record_shapes(self, key: str) -> None:
@@ -190,7 +174,7 @@ class TestExtractText:
             key: 'The deploy runbook is at wiki/runbook-v2.',
             'source': 'agentcore',
         })
-        assert _extract_text(raw) == 'The deploy runbook is at wiki/runbook-v2.'
+        assert extract_text(raw) == 'The deploy runbook is at wiki/runbook-v2.'
 
     def test_nested_json_fact_shape(self) -> None:
         raw = json.dumps({
@@ -198,23 +182,23 @@ class TestExtractText:
                 'fact': 'The deploy runbook is at wiki/runbook-v2.',
             },
         })
-        assert _extract_text(raw) == 'The deploy runbook is at wiki/runbook-v2.'
+        assert extract_text(raw) == 'The deploy runbook is at wiki/runbook-v2.'
 
     def test_episodic_xml_shape(self) -> None:
-        assert _extract_text(EPISODIC_XML) == EPISODIC_TEXT
+        assert extract_text(EPISODIC_XML) == EPISODIC_TEXT
 
     def test_reflection_xml_shape(self) -> None:
-        assert _extract_text(REFLECTION_XML) == REFLECTION_TEXT
+        assert extract_text(REFLECTION_XML) == REFLECTION_TEXT
 
     def test_summary_xml_shape(self) -> None:
-        assert _extract_text(SUMMARY_XML) == SUMMARY_TEXT
+        assert extract_text(SUMMARY_XML) == SUMMARY_TEXT
 
     def test_json_without_preference_key(self) -> None:
         raw = json.dumps({'foo': 'bar'})
-        assert _extract_text(raw) == raw
+        assert extract_text(raw) == raw
 
     def test_empty_string(self) -> None:
-        assert _extract_text('') == ''
+        assert extract_text('') == ''
 
 
 # -- record ------------------------------------------------------------------
@@ -225,7 +209,7 @@ class TestRecord:
         with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             result = _invoke('record', store=store, content='User prefers dark mode')
 
-        assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
+        assert result == {'status': 'success', 'content': [{'text': RECORD_REPLY}]}
         store.put.assert_called_once()
         call_args = store.put.call_args
         assert call_args[0][0] == ('botcube_harness_deepagents', 'pending-memory-20260702')
@@ -240,7 +224,6 @@ class TestRecord:
                 'record',
                 store=store,
                 content='Runbook URL is wiki/runbook-v2',
-                thread_id='conversation-thread',
             )
 
         assert store.put.call_args[0][0] == ('botcube_harness_deepagents', 'pending-memory-20260702')
@@ -260,327 +243,118 @@ class TestRecord:
             _invoke('record', store=store, content='test', actor_id='custom-actor')
         assert store.put.call_args[0][0] == ('custom-actor', 'pending-memory-20260702')
 
-    def test_blank_actor_id_falls_back_to_anonymous(self) -> None:
-        store = MagicMock()
-        _invoke('record', store=store, content='test', actor_id='', thread_id='Thread 42')
-        assert store.put.call_args[0][0][0] == 'anonymous'
-        assert re.fullmatch(
-            r'pending-memory-\d{8}-thread_42-[0-9a-f]{12}',
-            store.put.call_args[0][0][1],
-        )
 
-    def test_anonymous_record_scopes_pending_memory_session_to_thread_id(self) -> None:
-        store = MagicMock()
+# -- retrieve, list, get and delete against AgentCore ----------------------------
+#
+# A user's records live under `/actors/<actor>/` (ADR 0033); the tool reads only that prefix
+# and does no client-side actor filtering (ADR 0032 §3).
 
-        _invoke(
-            'record',
-            store=store,
-            content='Desk URL is wiki/private',
-            actor_id='anonymous',
-            thread_id='Thread 42',
-        )
-
-        assert re.fullmatch(
-            r'pending-memory-\d{8}-thread_42-[0-9a-f]{12}',
-            store.put.call_args[0][0][1],
-        )
-
-    def test_anonymous_record_bounds_long_thread_pending_memory_session_id(self) -> None:
-        class BoundSessionStore:
-            def __init__(self) -> None:
-                self.namespaces: list[tuple[str, str]] = []
-
-            def put(self, namespace: tuple[str, str], key: str, value: object) -> None:
-                self.namespaces.append(namespace)
-                if len(namespace[1]) > 100:
-                    raise ValueError('sessionId must be at most 100 characters')
-
-        store = BoundSessionStore()
-
-        result = _invoke(
-            'record',
-            store=store,
-            content='Desk URL is wiki/private',
-            actor_id='anonymous',
-            thread_id='Thread ' + 'A' * 160,
-        )
-
-        assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
-        session_id = store.namespaces[0][1]
-        assert len(session_id) <= 100
-        assert re.fullmatch(r'pending-memory-\d{8}-thread_a+-[0-9a-f]{12}', session_id)
-
-    def test_anonymous_record_uses_agentcore_session_id_charset(self) -> None:
-        class AgentCoreSessionStore:
-            def __init__(self) -> None:
-                self.namespaces: list[tuple[str, str]] = []
-
-            def put(self, namespace: tuple[str, str], key: str, value: object) -> None:
-                self.namespaces.append(namespace)
-                if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]*', namespace[1]):
-                    raise ValueError('SessionId failed validation')
-
-        store = AgentCoreSessionStore()
-
-        result = _invoke(
-            'record',
-            store=store,
-            content='Desk URL is wiki/private',
-            actor_id='anonymous',
-            thread_id='Thread:42',
-        )
-
-        assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
-        session_id = store.namespaces[0][1]
-        assert ':' not in session_id
-        assert len(session_id) <= 100
-        assert re.fullmatch(r'pending-memory-\d{8}-thread_42-[0-9a-f]{12}', session_id)
-
-    def test_anonymous_record_separates_threads_with_same_sanitized_id(self) -> None:
-        store = MagicMock()
-
-        with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
-            for thread_id in ('Thread:42', 'Thread 42'):
-                result = _invoke('record', store=store, content='test', actor_id='anonymous', thread_id=thread_id)
-                assert result == {'status': 'success', 'content': [{'text': 'Saved to memory.'}]}
-
-        assert store.put.call_count == 2
-        namespaces = [call.args[0] for call in store.put.call_args_list]
-        for actor_id, session_id in namespaces:
-            assert actor_id == 'anonymous'
-            assert re.fullmatch(r'pending-memory-20260702-thread_42-[0-9a-f]{12}', session_id)
-        assert namespaces[0] != namespaces[1]
+ACTOR = 'member_ab'
+# An actor whose ID starts with ACTOR's: the trailing slash keeps their records apart.
+LONGER_ACTOR = 'member_abc'
+SUMMARY_ID = 'mem-' + 's' * 36
+SAVED_ID = 'mem-' + '4' * 36
+TEXTLESS_ID = 'mem-' + '9' * 36
 
 
-# -- retrieve ----------------------------------------------------------------
+@pytest.fixture
+def memory(monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
+    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
+    return FakeAgentCoreMemory()
+
+
+def _store(memory: FakeAgentCoreMemory) -> AgentCoreMemoryStore:
+    store = AgentCoreMemoryStore(memory_id=FAKE_MEMORY_ID, region_name='us-east-1')
+    # The fake stands in for the boto3 client the store builds.
+    store.client = cast(Any, memory)
+    return store
+
+
+def _saved(memory: FakeAgentCoreMemory, text: str, record_id: str, *, actor_id: str = ACTOR, kind: str = 'facts') -> None:
+    memory.records.append({
+        'memoryRecordId': record_id,
+        'content': {'text': text},
+        'memoryStrategyId': 'SemanticFacts-1',
+        'namespaces': [f'/actors/{actor_id}/{kind}/'],
+        'createdAt': datetime(2026, 7, 2, 12, 0, tzinfo=UTC),
+    })
+
 
 class TestRetrieve:
-    def test_success_with_results(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('The user is based in New York.', 'rec-1'),
-            ],
-        }
-        store.client.retrieve_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('The user is based in New York.', 'rec-1'),
-                _make_record_summary(json.dumps({
-                    'context': '...',
-                    'preference': 'Prefers copper analysis',
-                    'categories': [],
-                }), 'rec-2'),
-            ],
-        }
+    def test_finds_only_the_actors_own_records(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Prefers copper analysis.', 'rec-own', kind='preferences')
+        _saved(memory, 'Trades copper futures.', 'rec-fact')
+        _saved(memory, 'Prefers copper too.', 'rec-longer', actor_id=LONGER_ACTOR)
+        _saved(memory, 'Copper desk lead.', 'rec-other', actor_id='member_zz')
 
-        result = _invoke('retrieve', store=store, query='user location')
+        result = _invoke('retrieve', store=_store(memory), query='copper', actor_id=ACTOR)
 
         assert result == {
             'status': 'success',
-            'content': [
-                {'text': 'The user is based in New York.'},
-                {'text': 'Prefers copper analysis'},
-            ],
-        }
-        call_kwargs = store.client.retrieve_memory_records.call_args[1]
-        assert call_kwargs['namespacePath'] == '/strategies/Semantic-1/actors/botcube_harness_deepagents/'
-
-    def test_filters_results_to_current_actor(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('Jane prefers dark mode.', 'rec-1', actor_id='jane.doe_ny'),
-                _make_record_summary('Other user prefers light mode.', 'rec-2', actor_id='other_user'),
-            ],
-        }
-        store.client.retrieve_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('Jane prefers dark mode.', 'rec-1', actor_id='jane.doe_ny'),
-                _make_record_summary('Other user prefers light mode.', 'rec-2', actor_id='other_user'),
-            ],
+            'content': [{'text': 'Prefers copper analysis.'}, {'text': 'Trades copper futures.'}],
         }
 
-        result = _invoke('retrieve', store=store, query='mode', actor_id='jane.doe_ny')
+    def test_unwraps_strategy_record_shapes(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, json.dumps({'fact': 'The deploy runbook is at wiki/runbook-v2.'}), 'rec-fact')
+        _saved(memory, json.dumps({'context': 'runbook', 'preference': 'Prefers the runbook', 'categories': []}), 'rec-pref',
+               kind='preferences')
+        _saved(memory, EPISODIC_XML, 'rec-episode', kind='episodes/s-1')
+        _saved(memory, REFLECTION_XML, 'rec-reflection', kind='episodes')
+        _saved(memory, SUMMARY_XML.replace('memory strategy', 'runbook'), 'rec-summary', kind='summaries/s-1')
 
-        assert result == {
-            'status': 'success',
-            'content': [{'text': 'Jane prefers dark mode.'}],
-        }
-
-    def test_scopes_search_to_actor_namespaces_before_top_k(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('Jane prefers dark mode.', 'rec-1', actor_id='jane.doe_ny'),
-                _make_record_summary('Other user prefers light mode.', 'rec-2', actor_id='other_user'),
-            ],
-        }
-        store.client.retrieve_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('Jane prefers dark mode.', 'rec-1', actor_id='jane.doe_ny'),
-            ],
-        }
-
-        result = _invoke('retrieve', store=store, query='mode', actor_id='jane.doe_ny')
-
-        assert result == {
-            'status': 'success',
-            'content': [{'text': 'Jane prefers dark mode.'}],
-        }
-        call_kwargs = store.client.retrieve_memory_records.call_args.kwargs
-        assert call_kwargs['namespacePath'] == '/strategies/Semantic-1/actors/jane.doe_ny/'
-        assert call_kwargs['maxResults'] == 10
-
-    def test_success_unwraps_strategy_record_shapes(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('The deploy runbook is at wiki/runbook-v2.', 'rec-fact'),
-            ],
-        }
-        store.client.retrieve_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary(json.dumps({
-                    'fact': 'The deploy runbook is at wiki/runbook-v2.',
-                }), 'rec-fact'),
-                _make_record_summary(json.dumps({
-                    'context': '...',
-                    'preference': 'Prefers copper analysis',
-                    'categories': [],
-                }), 'rec-pref'),
-                _make_record_summary(EPISODIC_XML, 'rec-episode'),
-                _make_record_summary(REFLECTION_XML, 'rec-reflection'),
-                _make_record_summary(SUMMARY_XML, 'rec-summary'),
-            ],
-        }
-
-        result = _invoke('retrieve', store=store, query='runbook')
+        result = _invoke('retrieve', store=_store(memory), query='runbook', actor_id=ACTOR)
 
         assert result == {
             'status': 'success',
             'content': [
                 {'text': 'The deploy runbook is at wiki/runbook-v2.'},
-                {'text': 'Prefers copper analysis'},
+                {'text': 'Prefers the runbook'},
                 {'text': EPISODIC_TEXT},
                 {'text': REFLECTION_TEXT},
-                {'text': SUMMARY_TEXT},
+                {'text': SUMMARY_TEXT.replace('memory strategy', 'runbook')},
             ],
         }
 
-    def test_success_no_results(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {'memoryRecordSummaries': []}
-        store.client.retrieve_memory_records.return_value = {'memoryRecordSummaries': []}
+    def test_no_results(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Unknown to this actor.', 'rec-other', actor_id=LONGER_ACTOR)
 
-        result = _invoke('retrieve', store=store, query='unknown')
+        result = _invoke('retrieve', store=_store(memory), query='unknown', actor_id=ACTOR)
 
         assert result == {'status': 'success', 'content': [{'text': 'No relevant memories found.'}]}
 
-    def test_error(self) -> None:
-        store = MagicMock()
-        store.client.list_memory_records.return_value = {
-            'memoryRecordSummaries': [
-                _make_record_summary('The user is based in New York.', 'rec-1'),
-            ],
-        }
-        store.client.retrieve_memory_records.side_effect = RuntimeError('boom')
-
-        result = _invoke('retrieve', store=store, query='anything')
-
-        assert result == {'status': 'error', 'content': [{'text': 'Memory search unavailable.'}]}
-
-
-# -- list --------------------------------------------------------------------
 
 class TestList:
-    def test_success_with_records(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [
-            {
-                'memoryRecordSummaries': [
-                    _make_record_summary('The user is based in New York.', 'rec-1'),
-                    _make_record_summary(json.dumps({
-                        'context': '...',
-                        'preference': 'Prefers copper analysis',
-                        'categories': [],
-                    }), 'rec-2'),
-                ],
-            }
-        ]
-        store.client.get_paginator.return_value = paginator
+    def test_lists_only_the_actors_own_records(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Lives in New York.', 'rec-1')
+        _saved(memory, json.dumps({'context': '...', 'preference': 'Prefers copper analysis', 'categories': []}), 'rec-2',
+               kind='preferences')
+        _saved(memory, 'Lives in Paris.', 'rec-longer', actor_id=LONGER_ACTOR)
+        _saved(memory, 'Lives in Tokyo.', 'rec-other', actor_id='member_zz')
 
-        result = _invoke('list', store=store)
+        result = _invoke('list', store=_store(memory), actor_id=ACTOR)
 
         assert result == {
             'status': 'success',
             'content': [
-                {'text': '[rec-1] The user is based in New York.'},
+                {'text': '[rec-1] Lives in New York.'},
                 {'text': '[rec-2] Prefers copper analysis'},
             ],
         }
 
-    def test_filters_records_to_current_actor(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [
-            {
-                'memoryRecordSummaries': [
-                    _make_record_summary('Jane prefers dark mode.', 'rec-1', actor_id='jane.doe_ny'),
-                    _make_record_summary('Other user prefers light mode.', 'rec-2', actor_id='other_user'),
-                ],
-            }
-        ]
-        store.client.get_paginator.return_value = paginator
+    def test_the_longer_actor_does_not_see_the_shorter_ones_records(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Lives in New York.', 'rec-1')
 
-        result = _invoke('list', store=store, actor_id='jane.doe_ny')
+        result = _invoke('list', store=_store(memory), actor_id=LONGER_ACTOR)
 
-        assert result == {
-            'status': 'success',
-            'content': [{'text': '[rec-1] Jane prefers dark mode.'}],
-        }
+        assert result == {'status': 'success', 'content': [{'text': 'No memories stored.'}]}
 
-    def test_finds_current_actor_records_on_later_pages(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [
-            {
-                'memoryRecordSummaries': [
-                    _make_record_summary('Other user prefers light mode.', 'rec-1', actor_id='other_user'),
-                ],
-            },
-            {
-                'memoryRecordSummaries': [
-                    _make_record_summary('Jane prefers dark mode.', 'rec-2', actor_id='jane.doe_ny'),
-                ],
-            },
-        ]
-        store.client.get_paginator.return_value = paginator
+    def test_unwraps_strategy_record_shapes(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, json.dumps({'fact': 'The deploy runbook is at wiki/runbook-v2.'}), 'rec-fact')
+        _saved(memory, EPISODIC_XML, 'rec-episode', kind='episodes/s-1')
+        _saved(memory, SUMMARY_XML, 'rec-summary', kind='summaries/s-1')
 
-        result = _invoke('list', store=store, actor_id='jane.doe_ny')
-
-        assert result == {
-            'status': 'success',
-            'content': [{'text': '[rec-2] Jane prefers dark mode.'}],
-        }
-
-    def test_success_unwraps_strategy_record_shapes(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [
-            {
-                'memoryRecordSummaries': [
-                    _make_record_summary(json.dumps({
-                        'fact': 'The deploy runbook is at wiki/runbook-v2.',
-                    }), 'rec-fact'),
-                    _make_record_summary(EPISODIC_XML, 'rec-episode'),
-                    _make_record_summary(SUMMARY_XML, 'rec-summary'),
-                ],
-            }
-        ]
-        store.client.get_paginator.return_value = paginator
-
-        result = _invoke('list', store=store)
+        result = _invoke('list', store=_store(memory), actor_id=ACTOR)
 
         assert result == {
             'status': 'success',
@@ -591,159 +365,65 @@ class TestList:
             ],
         }
 
-    def test_success_empty(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [{'memoryRecordSummaries': []}]
-        store.client.get_paginator.return_value = paginator
-
-        result = _invoke('list', store=store)
-
-        assert result == {'status': 'success', 'content': [{'text': 'No memories stored.'}]}
-
-    def test_error(self) -> None:
-        store = MagicMock()
-        store.client.get_paginator.side_effect = RuntimeError('fail')
-
-        result = _invoke('list', store=store)
-
-        assert result == {'status': 'error', 'content': [{'text': 'Failed to list memories.'}]}
-
-    def test_malformed_page_is_error(self) -> None:
-        store = MagicMock()
-        paginator = MagicMock()
-        paginator.paginate.return_value = [{'unexpected': []}]
-        store.client.get_paginator.return_value = paginator
-
-        result = _invoke('list', store=store)
-
-        assert result == {'status': 'error', 'content': [{'text': 'Failed to list memories.'}]}
-
-
-# -- get ---------------------------------------------------------------------
 
 class TestGet:
-    def test_success(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {
-            'memoryRecord': {
-                'memoryRecordId': 'rec-42',
-                'content': {'text': 'The user is based in New York.'},
-                'namespace': '/strategies/Semantic-1/actors/botcube_harness_deepagents/',
-            },
-        }
+    def test_reads_the_record_by_id(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, SUMMARY_XML, SUMMARY_ID, kind='summaries/s-1')
 
-        result = _invoke('get', store=store, memory_record_id='rec-42')
-
-        assert result == {'status': 'success', 'content': [{'text': 'The user is based in New York.'}]}
-
-    def test_denies_cross_actor_record(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {
-            'memoryRecord': {
-                'memoryRecordId': 'rec-42',
-                'content': {'text': 'Other user prefers light mode.'},
-                'namespace': '/strategies/Semantic-1/actors/other_user/',
-            },
-        }
-
-        result = _invoke('get', store=store, memory_record_id='rec-42')
-
-        assert result == {'status': 'error', 'content': [{'text': 'Failed to get memory record rec-42.'}]}
-
-    def test_success_unwraps_strategy_record_shape(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {
-            'memoryRecord': {
-                'memoryRecordId': 'rec-summary',
-                'content': {'text': SUMMARY_XML},
-                'namespace': '/strategies/Summary-1/actors/botcube_harness_deepagents/',
-            },
-        }
-
-        result = _invoke('get', store=store, memory_record_id='rec-summary')
+        result = _invoke('get', store=_store(memory), memory_record_id=SUMMARY_ID, actor_id=ACTOR)
 
         assert result == {'status': 'success', 'content': [{'text': SUMMARY_TEXT}]}
 
-    def test_error_missing_id(self) -> None:
-        store = MagicMock()
-
-        result = _invoke('get', store=store)
+    def test_error_missing_id(self, memory: FakeAgentCoreMemory) -> None:
+        result = _invoke('get', store=_store(memory))
 
         assert result == {'status': 'error', 'content': [{'text': 'memory_record_id is required for get action.'}]}
 
 
-# -- a record without text ----------------------------------------------------
+class TestDelete:
+    def test_deletes_the_record_by_id(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Lives in New York.', SAVED_ID)
 
-def _textless_summary() -> dict[str, object]:
-    return {'memoryRecordId': 'rec-9', 'content': {}, 'namespace': '/strategies/Semantic-1/actors/botcube_harness_deepagents/'}
+        result = _invoke('delete', store=_store(memory), memory_record_id=SAVED_ID, actor_id=ACTOR)
+
+        assert result == {'status': 'success', 'content': [{'text': f'Deleted memory record {SAVED_ID}.'}]}
+        assert memory.records == []
+
+    def test_error_missing_id(self, memory: FakeAgentCoreMemory) -> None:
+        result = _invoke('delete', store=_store(memory))
+
+        assert result == {'status': 'error', 'content': [{'text': 'memory_record_id is required for delete action.'}]}
 
 
 class TestRecordWithoutText:
     """A record the tool reports but that carries no text fails loud, naming the record (ADR 0030)."""
 
+    @pytest.fixture(autouse=True)
+    def textless(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, '', TEXTLESS_ID)
+        memory.records[0]['content'] = {}
+
+    def test_list(self, memory: FakeAgentCoreMemory) -> None:
+        with pytest.raises(ValueError, match=f'^Memory record {TEXTLESS_ID} has no text content$'):
+            _invoke('list', store=_store(memory), actor_id=ACTOR)
+
+    def test_get(self, memory: FakeAgentCoreMemory) -> None:
+        with pytest.raises(ValueError, match=f'^Memory record {TEXTLESS_ID} has no text content$'):
+            _invoke('get', store=_store(memory), memory_record_id=TEXTLESS_ID, actor_id=ACTOR)
+
     def test_retrieve(self) -> None:
         store = MagicMock()
-        store.client.list_memory_records.return_value = {'memoryRecordSummaries': [_textless_summary()]}
-        store.client.retrieve_memory_records.return_value = {'memoryRecordSummaries': [_textless_summary()]}
-        with pytest.raises(ValueError, match='^Memory record rec-9 has no text content$'):
+        store.client.retrieve_memory_records.return_value = {'memoryRecordSummaries': [{'memoryRecordId': TEXTLESS_ID, 'content': {}}]}
+        with pytest.raises(ValueError, match=f'^Memory record {TEXTLESS_ID} has no text content$'):
             _invoke('retrieve', store=store, query='anything')
-
-    def test_list(self) -> None:
-        store = MagicMock()
-        store.client.get_paginator.return_value.paginate.return_value = [{'memoryRecordSummaries': [_textless_summary()]}]
-        with pytest.raises(ValueError, match='^Memory record rec-9 has no text content$'):
-            _invoke('list', store=store)
-
-    def test_get(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {'memoryRecord': _textless_summary()}
-        with pytest.raises(ValueError, match='^Memory record rec-9 has no text content$'):
-            _invoke('get', store=store, memory_record_id='rec-9')
-
-
-# -- delete ------------------------------------------------------------------
-
-class TestDelete:
-    def test_success(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {
-            'memoryRecord': {
-                'memoryRecordId': 'rec-42',
-                'content': {'text': 'The user is based in New York.'},
-                'namespace': '/strategies/Semantic-1/actors/botcube_harness_deepagents/',
-            },
-        }
-        store.client.delete_memory_record.return_value = {}
-
-        result = _invoke('delete', store=store, memory_record_id='rec-42')
-
-        assert result == {'status': 'success', 'content': [{'text': 'Deleted memory record rec-42.'}]}
-
-    def test_denies_cross_actor_record(self) -> None:
-        store = MagicMock()
-        store.client.get_memory_record.return_value = {
-            'memoryRecord': {
-                'memoryRecordId': 'rec-42',
-                'content': {'text': 'Other user prefers light mode.'},
-                'namespace': '/strategies/Semantic-1/actors/other_user/',
-            },
-        }
-
-        result = _invoke('delete', store=store, memory_record_id='rec-42')
-
-        assert result == {'status': 'error', 'content': [{'text': 'Failed to delete memory record rec-42.'}]}
-        store.client.delete_memory_record.assert_not_called()
-
-    def test_error_missing_id(self) -> None:
-        store = MagicMock()
-
-        result = _invoke('delete', store=store)
-
-        assert result == {'status': 'error', 'content': [{'text': 'memory_record_id is required for delete action.'}]}
 
 
 # -- unknown action ----------------------------------------------------------
+
+class TestToolName:
+    def test_the_tool_is_named_memory(self) -> None:
+        assert memory_tool('actor').name == 'memory'
+
 
 class TestUnknownAction:
     def test_returns_error(self) -> None:
@@ -782,20 +462,19 @@ def _api_record(
     record_id: str = RECORD_ID,
     *,
     actor_id: str = 'botcube_harness_deepagents',
-    strategies: tuple[str, ...] = ('Semantic-1',),
+    kinds: tuple[str, ...] = ('facts',),
 ) -> MemoryRecordSummaryTypeDef:
     return {
         'memoryRecordId': record_id,
         'content': {'text': text},
-        'memoryStrategyId': strategies[0],
-        'namespaces': [f'/strategies/{strategy}/actors/{actor_id}/' for strategy in strategies],
+        'memoryStrategyId': 'SemanticFacts-1',
+        'namespaces': [f'/actors/{actor_id}/{kind}/' for kind in kinds],
         'createdAt': CREATED_AT,
     }
 
 
 @pytest.fixture
 def agentcore(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[AgentCoreMemoryStore, Stubber]]:
-    monkeypatch.setattr(memory_tools, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
     store = AgentCoreMemoryStore(memory_id=MEMORY_ID, region_name='us-east-1')
@@ -805,9 +484,9 @@ def agentcore(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[AgentCoreMemory
 
 
 class TestAgentCoreMemoryRequests:
-    def test_list_pages_through_every_strategy_record(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    def test_list_pages_through_the_actors_records(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
-        request = {'memoryId': MEMORY_ID, 'namespacePath': '/strategies/', 'maxResults': 100}
+        request = {'memoryId': MEMORY_ID, 'namespace': '/actors/botcube_harness_deepagents/', 'maxResults': 100}
         stubber.add_response(
             'list_memory_records',
             {'memoryRecordSummaries': [_api_record('Lives in New York.')], 'nextToken': 'page-2'},
@@ -829,40 +508,18 @@ class TestAgentCoreMemoryRequests:
             ],
         }
 
-    def test_retrieve_searches_each_actor_namespace_and_returns_each_record_once(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    def test_retrieve_searches_under_the_actor_prefix(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
-        listing = {'memoryId': MEMORY_ID, 'namespacePath': '/strategies/', 'maxResults': 100}
-        shared = _api_record('Prefers copper.', strategies=('Semantic-1', 'UserPreference-1'))
-        someone_else = _api_record('Someone else.', OTHER_RECORD_ID, actor_id='other_user')
-        new_york = _api_record('Lives in New York.', 'mem-' + 'c' * 36)
-        stubber.add_response(
-            'list_memory_records',
-            {'memoryRecordSummaries': [someone_else, new_york], 'nextToken': 'page-2'},
-            listing,
-        )
-        stubber.add_response(
-            'list_memory_records',
-            {'memoryRecordSummaries': [shared]},
-            {**listing, 'nextToken': 'page-2'},
-        )
-        search = {'memoryId': MEMORY_ID, 'searchCriteria': {'searchQuery': 'copper'}, 'maxResults': 10}
         stubber.add_response(
             'retrieve_memory_records',
-            {'memoryRecordSummaries': [someone_else, shared, new_york]},
-            {**search, 'namespacePath': '/strategies/Semantic-1/actors/botcube_harness_deepagents/'},
-        )
-        stubber.add_response(
-            'retrieve_memory_records',
-            {'memoryRecordSummaries': [shared, _api_record('Trades metals.', 'mem-' + 'd' * 36)]},
-            {**search, 'namespacePath': '/strategies/UserPreference-1/actors/botcube_harness_deepagents/'},
+            {'memoryRecordSummaries': [_api_record('Prefers copper.'), _api_record('Trades metals.', OTHER_RECORD_ID)]},
+            {'memoryId': MEMORY_ID, 'namespace': '/actors/botcube_harness_deepagents/',
+             'searchCriteria': {'searchQuery': 'copper'}, 'maxResults': 10},
         )
 
         result = _invoke('retrieve', store=store, query='copper')
 
-        assert result == {
-            'status': 'success',
-            'content': [{'text': 'Prefers copper.'}, {'text': 'Lives in New York.'}, {'text': 'Trades metals.'}],
-        }
+        assert result == {'status': 'success', 'content': [{'text': 'Prefers copper.'}, {'text': 'Trades metals.'}]}
 
     def test_get_reads_the_record_by_id(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
@@ -876,10 +533,9 @@ class TestAgentCoreMemoryRequests:
 
         assert result == {'status': 'success', 'content': [{'text': 'Lives in New York.'}]}
 
-    def test_delete_checks_ownership_then_deletes_the_record(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    def test_delete_deletes_the_record_by_id(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
         request = {'memoryId': MEMORY_ID, 'memoryRecordId': RECORD_ID}
-        stubber.add_response('get_memory_record', {'memoryRecord': _api_record('Lives in New York.')}, request)
         stubber.add_response('delete_memory_record', {'memoryRecordId': RECORD_ID}, request)
 
         result = _invoke('delete', store=store, memory_record_id=RECORD_ID)
@@ -889,14 +545,14 @@ class TestAgentCoreMemoryRequests:
     @pytest.mark.parametrize(
         ('action', 'operation', 'kwargs', 'message', 'text'),
         [
-            ('record', 'create_event', {'content': 'Prefers copper.'}, 'agent_core_memory record failed',
+            ('record', 'create_event', {'content': 'Prefers copper.'}, 'memory record failed',
              'Failed to save memory.'),
-            ('retrieve', 'list_memory_records', {'query': 'copper'}, 'agent_core_memory retrieve failed',
+            ('retrieve', 'retrieve_memory_records', {'query': 'copper'}, 'memory retrieve failed',
              'Memory search unavailable.'),
-            ('list', 'list_memory_records', {}, 'agent_core_memory list failed', 'Failed to list memories.'),
-            ('get', 'get_memory_record', {'memory_record_id': RECORD_ID}, 'agent_core_memory get failed',
+            ('list', 'list_memory_records', {}, 'memory list failed', 'Failed to list memories.'),
+            ('get', 'get_memory_record', {'memory_record_id': RECORD_ID}, 'memory get failed',
              f'Failed to get memory record {RECORD_ID}.'),
-            ('delete', 'get_memory_record', {'memory_record_id': RECORD_ID}, 'agent_core_memory delete failed',
+            ('delete', 'delete_memory_record', {'memory_record_id': RECORD_ID}, 'memory delete failed',
              f'Failed to delete memory record {RECORD_ID}.'),
         ],
     )
@@ -918,8 +574,8 @@ class TestAgentCoreMemoryRequests:
 
 class TestExtractTextFallbacks:
     def test_an_empty_text_key_falls_through_to_the_next(self) -> None:
-        assert _extract_text(json.dumps({'preference': '', 'fact': 'Trades copper.'})) == 'Trades copper.'
+        assert extract_text(json.dumps({'preference': '', 'fact': 'Trades copper.'})) == 'Trades copper.'
 
     def test_episodic_xml_without_a_situation_keeps_the_later_tags(self) -> None:
         raw = '<summary><intent>Recall the runbook.</intent><reflection>Ask less.</reflection></summary>'
-        assert _extract_text(raw) == 'Intent: Recall the runbook.\nReflection: Ask less.'
+        assert extract_text(raw) == 'Intent: Recall the runbook.\nReflection: Ask less.'

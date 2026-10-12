@@ -19,6 +19,7 @@ from opentelemetry import baggage, trace
 from opentelemetry.sdk.trace import TracerProvider
 
 from botcube_harness_deepagents import serving
+from conftest import prepared
 
 
 @tool
@@ -32,7 +33,6 @@ async def lookup(value: str) -> str:
 
 async def exercise(session_id: str, mode: str) -> None:
     entered = asyncio.Event()
-    settled = asyncio.Event()
     turns = serving._SessionTurns()
 
     async def reply(state: Any) -> dict[str, Any]:
@@ -43,11 +43,6 @@ async def exercise(session_id: str, mode: str) -> None:
         result = await lookup.ainvoke({'value': mode})
         return {'messages': [AIMessage(result)]}
 
-    async def snapshot(*args: Any) -> None:
-        assert baggage.get_baggage('session.id') == session_id
-        settled.set()
-
-    serving._snapshot_messages = snapshot
     serving._require_cartridge = lambda: SimpleNamespace(skills=())
     graph = StateGraph(AgentState)
     graph.add_node('model', reply)
@@ -55,7 +50,7 @@ async def exercise(session_id: str, mode: str) -> None:
     graph.add_edge('model', END)
     agent = serving._SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
     inputs = RunAgentInput(thread_id=session_id, run_id=mode, messages=[UserMessage(id='question', role='user', content='question')], tools=[], context=[], state={}, forwarded_props={})
-    stream = turns.stream(('owner', session_id), lambda: agent, inputs, None, Path('.'), serving._RequestContext(session_id))
+    stream = turns.stream(('owner', session_id), prepared(agent, Path('.')), inputs, None, serving._RequestContext(session_id))
     events = []
 
     async def drain() -> None:
@@ -68,7 +63,6 @@ async def exercise(session_id: str, mode: str) -> None:
     await drain()
     if mode.endswith('error'):
         assert events[-1] == EventType.RUN_ERROR
-    await asyncio.wait_for(settled.wait(), 5)
     while turns._turns:
         await asyncio.sleep(0)
     if mode == 'success':

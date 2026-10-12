@@ -112,12 +112,29 @@ test('names every resource from identity.json and builds the session API from th
   for (const roleName of [
     identity.aws.iam.runtimeRole,
     identity.aws.iam.memoryRole,
+    identity.aws.iam.userMemoryRole,
     identity.aws.iam.lambdaRole,
     identity.aws.iam.codeBuildRole,
     identity.aws.iam.sessionApiRole,
   ]) {
     template.hasResourceProperties('AWS::IAM::Role', { RoleName: roleName });
   }
+});
+
+test("registers the Chat Service's https origin from identity.json as the Memory role's OIDC provider", () => {
+  const app = new App();
+  const { identity } = deployConfig();
+
+  addAgentCoreStacks(app, deployConfig(), COMMIT);
+
+  const template = Template.fromStack(onlyStack(app));
+  template.hasResourceProperties('AWS::IAM::OIDCProvider', {
+    Url: `https://${new URL(identity.domains.chatService).hostname}`,
+  });
+  template.hasResourceProperties('AWS::IAM::Role', {
+    RoleName: identity.aws.iam.userMemoryRole,
+    MaxSessionDuration: 3600,
+  });
 });
 
 test('keeps the runtime on the public network without a runtime network parameter', () => {
@@ -158,57 +175,26 @@ test('puts the runtime in the private NAT browser subnets behind the parameteriz
   template.hasOutput('PrivateNatBrowserId', { Value: PRIVATE_NAT_BROWSER.id });
 });
 
-test.each([undefined, false, 'false', true, 'true'])('validates the explicit Memory migration context %s', context => {
-  const app = new App({ context: context === undefined ? {} : { retainLegacyRuntimeMemory: context } });
+test('the deployed runtime role keeps no Memory, log-read or configuration-bundle permission', () => {
+  const app = new App();
   addAgentCoreStacks(app, deployConfig(), COMMIT);
   const template = Template.fromStack(onlyStack(app));
-  const retained = context === true || context === 'true';
-  template.hasOutput('LegacyRuntimeMemoryRetained', { Value: String(retained) });
   const roleId = Object.keys(template.findResources('AWS::IAM::Role')).find(id => id.includes('RuntimeExecutionRole'));
   const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter(policy =>
     policy.Properties.Roles.some((role: { Ref: string }) => role.Ref === roleId)
   );
-  const statements = policies.flatMap(policy => policy.Properties.PolicyDocument.Statement);
-  const actions = [...new Set<string>(statements.flatMap(statement => [statement.Action].flat()))];
-  expect(
-    actions.filter(action => ['logs:GetLogEvents', 'logs:FilterLogEvents', 'logs:PutResourcePolicy'].includes(action))
-  ).toEqual([]);
-  expect(actions.some(action => action.includes('ConfigurationBundle'))).toBe(false);
-  const memoryActions = actions.filter(action => action.startsWith('bedrock-agentcore:'));
-  if (!retained) expect(memoryActions).toEqual([]);
-  else {
-    expect(memoryActions.sort()).toEqual(
-      [
-        'bedrock-agentcore:CreateEvent',
-        'bedrock-agentcore:DeleteEvent',
-        'bedrock-agentcore:DeleteMemoryRecord',
-        'bedrock-agentcore:GetEvent',
-        'bedrock-agentcore:GetMemory',
-        'bedrock-agentcore:GetMemoryRecord',
-        'bedrock-agentcore:ListActors',
-        'bedrock-agentcore:ListEvents',
-        'bedrock-agentcore:ListMemoryRecords',
-        'bedrock-agentcore:ListSessions',
-        'bedrock-agentcore:RetrieveMemoryRecords',
-      ].sort()
-    );
-    expect(statements).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          Action: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
-          Condition: { StringEquals: { 'bedrock-agentcore:namespacePath': '/strategies/' } },
-          Resource: expect.objectContaining({ 'Fn::GetAtt': expect.arrayContaining(['MemoryArn']) }),
-        }),
-      ])
-    );
-  }
-});
-
-test.each(['yes', '', 1, null])('rejects malformed Memory migration context %s', context => {
-  const app = new App({ context: { retainLegacyRuntimeMemory: context } });
-  expect(() => addAgentCoreStacks(app, deployConfig(), COMMIT)).toThrow(
-    'retainLegacyRuntimeMemory must be true or false'
+  const actions = policies.flatMap(policy =>
+    policy.Properties.PolicyDocument.Statement.flatMap((statement: { Action: string | string[] }) =>
+      [statement.Action].flat()
+    )
   );
+
+  expect(
+    actions.filter(action =>
+      /^(bedrock-agentcore:|logs:(GetLogEvents|FilterLogEvents|PutResourcePolicy)$)|ConfigurationBundle/.test(action)
+    )
+  ).toEqual([]);
+  expect(template.findOutputs('LegacyRuntimeMemoryRetained')).toEqual({});
 });
 
 test('stages the session API source without the Sandbox tools virtualenv', () => {

@@ -155,7 +155,7 @@ test('private browser adopts pre-provisioned network identity without recreating
   expect(JSON.stringify(template.toJSON())).not.toContain('ec2:ModifyInstanceAttribute');
 });
 
-test('botcube_harness_deepagents memory enables all built-in extraction strategies under /strategies/', () => {
+test('botcube_harness_deepagents memory enables all built-in extraction strategies under actor-first namespaces', () => {
   const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
   const app = new cdk.App();
   const stack = new AgentCoreStack(app, 'MemoryStrategyStack', {
@@ -168,27 +168,27 @@ test('botcube_harness_deepagents memory enables all built-in extraction strategi
       {
         UserPreferenceMemoryStrategy: {
           Name: 'UserPreferences',
-          NamespaceTemplates: ['/strategies/{memoryStrategyId}/actors/{actorId}/'],
+          NamespaceTemplates: ['/actors/{actorId}/preferences/'],
         },
       },
       {
         SemanticMemoryStrategy: {
           Name: 'SemanticFacts',
-          NamespaceTemplates: ['/strategies/{memoryStrategyId}/actors/{actorId}/'],
+          NamespaceTemplates: ['/actors/{actorId}/facts/'],
         },
       },
       {
         SummaryMemoryStrategy: {
           Name: 'SessionSummary',
-          NamespaceTemplates: ['/strategies/{memoryStrategyId}/actors/{actorId}/sessions/{sessionId}/summary/'],
+          NamespaceTemplates: ['/actors/{actorId}/summaries/{sessionId}/'],
         },
       },
       {
         EpisodicMemoryStrategy: {
           Name: 'EpisodicLearning',
-          NamespaceTemplates: ['/strategies/{memoryStrategyId}/actors/{actorId}/episodes/{sessionId}/'],
+          NamespaceTemplates: ['/actors/{actorId}/episodes/{sessionId}/'],
           ReflectionConfiguration: {
-            NamespaceTemplates: ['/strategies/{memoryStrategyId}/actors/{actorId}/episodes/'],
+            NamespaceTemplates: ['/actors/{actorId}/episodes/'],
           },
         },
       },
@@ -259,7 +259,7 @@ test('runtime IAM denies every Memory operation and retains only audited harmles
     'BatchDeleteMemoryRecords',
   ];
   for (const action of memoryActions) {
-    for (const namespace of ['/strategies/', '/strategies/test/actors/own/', '/strategies/test/actors/other/']) {
+    for (const namespace of ['/actors/', '/actors/own/', '/actors/other/']) {
       expect(
         allows(
           `bedrock-agentcore:${action}`,

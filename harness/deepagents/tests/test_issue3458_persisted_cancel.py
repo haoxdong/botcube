@@ -15,12 +15,11 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from opentelemetry.instrumentation.langchain import LangchainInstrumentor
 
-from agentcore_fake import memory_capability_props
+from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.llm import ModelRelay, build_model
 from botcube_harness_deepagents.memory import agentcore
-from botcube_harness_deepagents.memory.agentcore.turn_saver import TurnCheckpointSaver
 from relay_fake import RECORDED_STREAM, serving_relay
 from test_session_resume import (
     MEMORY_ID,
@@ -166,7 +165,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
     followup = RunAgentInput.model_validate_json(FOLLOWUP.read_text())
     assert isinstance(followup.forwarded_props, dict)
     followup.forwarded_props['sessionUserId'] = 'user-1'
-    followup.forwarded_props['turnMemory'] = memory_capability_props()
+    followup.forwarded_props['turnIdentity'] = turn_identity('user-1', 'user-1', followup.thread_id)
     memory = _FakeAgentCoreMemory()
     session = _serve_session(tmp_path, monkeypatch, memory, session_id=followup.thread_id)
     (tmp_path / 'probe.txt').write_text('persisted content')
@@ -202,27 +201,31 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
             }]))
             try:
                 await _await_fixture_admission_or_public_completion(running, admitted)
-                assert isinstance(serving._DEFERRED_SAVER, TurnCheckpointSaver)
                 config: RunnableConfig = {'configurable': {'actor_id': 'user-1', 'thread_id': followup.thread_id}}
-                current = await next(iter(serving._AGENTS.values())).graph.aget_state(config)
+                # Read as the session API does, under its own role.
+                reader = original_build(model=model, backend=LocalShellBackend(
+                    root_dir=tmp_path, virtual_mode=True, inherit_env=False,
+                ), skills=[], tools=[], memory=[], checkpointer=agentcore.build_checkpointer(
+                    MEMORY_ID, region_name='us-east-1',
+                ))
+                current = await reader.aget_state(config)
                 assert _tool_call_ids(current.values['messages']) == [READ_ID, TODO_ID, *TASK_IDS]
                 stop = RunAgentInput.model_validate({
                     'threadId': followup.thread_id, 'runId': 'run-1', 'messages': [],
                     'tools': [], 'context': [], 'state': {},
-                    'forwardedProps': {'stop': True, 'sessionUserId': 'user-1', 'turnMemory': memory_capability_props()},
+                    'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
                 })
                 assert [event async for event in serving.invoke(stop, serving._RequestContext('agentcore-session-1'))] == []
                 stopped = await running
                 assert (stopped[-1].type, stopped[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
-                reader = original_build(model=model, backend=LocalShellBackend(
-                    root_dir=tmp_path, virtual_mode=True, inherit_env=False,
-                ), skills=[], tools=[], memory=[], checkpointer=agentcore.build_checkpointer(
-                    MEMORY_ID, region_name='us-east-1', wrapper=TurnCheckpointSaver,
-                ))
                 persisted = (await reader.aget_state(config)).values['messages']
                 assert _tool_call_ids(persisted) == [READ_ID, TODO_ID, *TASK_IDS]
-                assert [message.tool_call_id for message in persisted if isinstance(message, ToolMessage)] == [READ_ID, TODO_ID]
-                for name, value in {'_AGENTS': {}, '_DEFERRED_SAVER': None, '_CHECKPOINTER': None, '_STORE': None}.items():
+                results = [message for message in persisted if isinstance(message, ToolMessage)]
+                # The saver answers each cut task with a placeholder result on load.
+                assert [(message.tool_call_id, message.status) for message in results] == [
+                    (READ_ID, 'success'), (TODO_ID, 'success'), *((task_id, 'error') for task_id in TASK_IDS),
+                ]
+                for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
                     monkeypatch.setattr(serving, name, value)
                 events = [event async for event in serving.invoke(followup, serving._RequestContext('agentcore-session-1'))]
                 assert [(event.type, getattr(event, 'message', None)) for event in events

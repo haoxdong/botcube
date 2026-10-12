@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +18,7 @@ from botcube_harness_deepagents import memory_document, session_api
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.llm import EchoChatModel
 from botcube_harness_deepagents.memory import agentcore
+from checkpoint_fake import ReadCountingSaver, legacy_session
 
 
 @pytest.fixture
@@ -46,14 +45,9 @@ def test_get_of_a_session_without_a_record_is_not_found(client: TestClient) -> N
         ({'operation': 'get', 'sessionId': 'session-1'}, 'userId is required'),
         ({'operation': 'get', 'sessionId': ' ', 'userId': 'user-1'}, 'sessionId is required'),
         ({'operation': 'purge', 'sessionId': 'session-1'}, 'userId is required'),
-        ({'operation': 'activity', 'sessions': [{'sessionId': 'session-1'}]}, 'userId is required'),
         (
-            {'operation': 'activity', 'sessionId': 'session-1', 'userId': 'user-1'},
-            'sessions must list each Session as {sessionId, userId}',
-        ),
-        (
-            {'operation': 'activity', 'sessions': ['session-1']},
-            'sessions must list each Session as {sessionId, userId}',
+            {'operation': 'activity', 'sessions': [{'sessionId': 'session-1', 'userId': 'user-1'}]},
+            "Unknown session API operation: 'activity'",
         ),
         (
             {'operation': 'rename', 'sessionId': 'session-1', 'userId': 'user-1'},
@@ -167,11 +161,12 @@ def test_a_get_reads_the_sessions_record_once_issue_3278(agentcore_record: FakeA
     assert [(message['role'], message['content']) for message in replayed] == [
         ('user', 'hello'), ('assistant', 'Echo: hello'), ('user', 'again'), ('assistant', 'Echo: again'),
     ]
-    assert agentcore_record.listed['session-1'] == 1
+    # The format check's read of the latest checkpoint, then the state read's.
+    assert agentcore_record.listed['session-1'] == 2
 
 
 def test_each_get_reads_the_record_as_the_harness_left_it_issue_3278(agentcore_record: FakeAgentCoreMemory) -> None:
-    """A Turn that left no snapshot: Session Metadata names its request, which the last snapshot lacks."""
+    """Each read is the Session's latest checkpoint, not an earlier read's."""
     harness = build_agent(
         model=EchoChatModel(),
         backend=None,
@@ -185,61 +180,12 @@ def test_each_get_reads_the_record_as_the_harness_left_it_issue_3278(agentcore_r
         await harness.ainvoke({'messages': [HumanMessage('hello', id='user-message-1')]}, config)
         await session_api.handle(GET)
         await harness.ainvoke({'messages': [HumanMessage('again', id='user-message-2')]}, config)
-        return (await session_api.handle({**GET, 'contains': 'user-message-2'}))['messages']
+        return (await session_api.handle(GET))['messages']
 
     assert [message['content'] for message in asyncio.run(scenario())] == ['hello', 'Echo: hello', 'again', 'Echo: again']
 
 
-def test_a_get_serves_the_sessions_snapshot_without_reading_its_record_issue_3354(
-    agentcore_record: FakeAgentCoreMemory,
-) -> None:
-    async def scenario() -> list[dict[str, Any]]:
-        await _turn(HumanMessage('hello', id='user-message-1'))
-        await session_api.handle(GET)
-        agentcore_record.listed.clear()
-        return (await session_api.handle({**GET, 'contains': 'user-message-1'}))['messages']
-
-    assert _said(asyncio.run(scenario())) == [('user', 'hello'), ('assistant', 'Echo: hello')]
-    assert agentcore_record.listed == {'session-1-messages': 1}
-
-
-def test_a_get_rebuilds_a_snapshot_that_lacks_the_message_it_expects_issue_3354(local_record: None) -> None:
-    """A Turn whose snapshot write failed: the next read rebuilds it from the state, then serves it."""
-    config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
-
-    async def scenario() -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any]:
-        await _turn(HumanMessage('hello', id='user-message-1'))
-        await _replay()
-        await _turn(HumanMessage('again', id='user-message-2'))
-        stale = await _replay()
-        fresh = (await session_api.handle({**GET, 'contains': 'user-message-2'}))['messages']
-        kept = await session_api._graph().checkpointer.aread_messages_snapshot('user-1', 'session-1')
-        latest = (await session_api._graph().aget_state(config)).config['configurable']['checkpoint_id']
-        return stale, fresh, (kept.checkpoint == latest, kept.messages == fresh)
-
-    stale, fresh, kept = asyncio.run(scenario())
-
-    assert _said(stale) == [('user', 'hello'), ('assistant', 'Echo: hello')]
-    assert _said(fresh) == [('user', 'hello'), ('assistant', 'Echo: hello'), ('user', 'again'), ('assistant', 'Echo: again')]
-    assert kept == (True, True)
-
-
-def test_a_message_the_state_never_got_rebuilds_the_snapshot_once_issue_3354(
-    agentcore_record: FakeAgentCoreMemory,
-) -> None:
-    """A Turn that failed before its request was saved: reads go on serving the snapshot, not the whole record."""
-
-    async def scenario() -> list[dict[str, Any]]:
-        await _turn(HumanMessage('hello', id='user-message-1'))
-        await session_api.handle({**GET, 'contains': 'never-saved'})
-        agentcore_record.listed.clear()
-        return (await session_api.handle({**GET, 'contains': 'never-saved'}))['messages']
-
-    assert _said(asyncio.run(scenario())) == [('user', 'hello'), ('assistant', 'Echo: hello')]
-    assert agentcore_record.listed == {'session-1-messages': 1}
-
-
-def test_a_post_snapshots_the_session_with_its_message_under_the_id_given_issue_3354(
+def test_a_post_reaches_the_sessions_history_under_the_id_given_issue_3354(
     agentcore_record: FakeAgentCoreMemory,
 ) -> None:
     """A scheduled run's result reaches the Main Chat's history without a Turn."""
@@ -249,195 +195,16 @@ def test_a_post_snapshots_the_session_with_its_message_under_the_id_given_issue_
         await session_api.handle(
             {'operation': 'post', 'sessionId': 'session-1', 'userId': 'user-1', 'content': 'Brief', 'messageId': 'post-1'}
         )
-        agentcore_record.listed.clear()
-        return (await session_api.handle({**GET, 'contains': 'post-1'}))['messages']
+        return (await session_api.handle(GET))['messages']
 
     replayed = asyncio.run(scenario())
 
     assert [(message['id'], message['content']) for message in replayed[2:]] == [('post-1', 'Brief')]
-    assert agentcore_record.listed == {'session-1-messages': 1}
-
-
-async def _activity(session_id: str = 'session-1') -> dict[str, Any]:
-    return await session_api.handle(
-        {'operation': 'activity', 'sessions': [{'sessionId': session_id, 'userId': 'user-1'}]}
-    )
 
 
 async def _turn(*messages: Any, **options: Any) -> None:
     config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
     await session_api._graph().ainvoke({'messages': list(messages)}, config, **options)
-
-
-def test_activity_lists_each_answered_turn_by_its_request_with_the_time_it_finished(local_record: None) -> None:
-    config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
-
-    async def scenario() -> tuple[list[str], dict[str, Any]]:
-        saved = []
-        await _turn(HumanMessage('Summarize AAPL earnings\nwith charts', id='user-message-1'))
-        saved.append((await session_api._graph().aget_state(config)).created_at)
-        await _turn(HumanMessage('Compare with MSFT', id='user-message-2'))
-        saved.append((await session_api._graph().aget_state(config)).created_at)
-        return saved, await _activity()
-
-    saved, activity = asyncio.run(scenario())
-
-    assert activity['tasks'] == [
-        {'sessionId': 'session-1', 'messageId': 'user-message-1', 'summary': 'Summarize AAPL earnings', 'completedAt': saved[0]},
-        {'sessionId': 'session-1', 'messageId': 'user-message-2', 'summary': 'Compare with MSFT', 'completedAt': saved[1]},
-    ]
-
-
-def test_activity_leaves_out_a_turn_that_never_got_its_answer(local_record: None) -> None:
-    async def scenario() -> dict[str, Any]:
-        await _turn(HumanMessage('answered', id='user-message-1'))
-        await _turn(HumanMessage('cut off', id='user-message-2'), interrupt_before=['model'])
-        return await _activity()
-
-    assert [task['summary'] for task in asyncio.run(scenario())['tasks']] == ['answered']
-
-
-def test_activity_files_a_turn_with_several_user_messages_under_its_last_issue_3273(local_record: None) -> None:
-    async def scenario() -> dict[str, Any]:
-        await _turn(HumanMessage('first', id='user-message-1'))
-        await _turn(HumanMessage('unanswered', id='user-message-2'), HumanMessage('Chart MSFT\nweekly', id='user-message-3'))
-        return await _activity()
-
-    tasks = asyncio.run(scenario())['tasks']
-
-    assert [(task['messageId'], task['summary']) for task in tasks] == [
-        ('user-message-1', 'first'),
-        ('user-message-3', 'Chart MSFT'),
-    ]
-
-
-def test_activity_of_a_session_without_a_record_is_empty(local_record: None) -> None:
-    assert asyncio.run(_activity('missing')) == {'tasks': []}
-
-
-def test_activity_fails_loudly_when_turns_and_requests_disagree(local_record: None) -> None:
-    async def scenario() -> dict[str, Any]:
-        await _turn(HumanMessage('asked', id='user-message-1'))
-        await _turn()
-        return await _activity()
-
-    with pytest.raises(
-        RuntimeError,
-        match=r'^Session session-1 activity could not be read: Session session-1 has 2 Turns but 1 user messages$',
-    ):
-        asyncio.run(scenario())
-
-
-def test_activity_reads_each_session_under_its_user_in_the_order_given(local_record: None) -> None:
-    async def scenario() -> dict[str, Any]:
-        await _turn(HumanMessage('Chart the 10y yield', id='user-message-1'))
-        await session_api._graph().ainvoke(
-            {'messages': [HumanMessage('Summarize AAPL earnings', id='user-message-2')]},
-            {'configurable': {'thread_id': 'session-2', 'actor_id': 'user-2'}},
-        )
-        sessions = [('session-2', 'user-2'), ('missing', 'user-1'), ('session-1', 'user-1'), ('session-1', 'user-2')]
-        return await session_api.handle(
-            {'operation': 'activity', 'sessions': [{'sessionId': s, 'userId': u} for s, u in sessions]}
-        )
-
-    tasks = asyncio.run(scenario())['tasks']
-
-    assert [(task['sessionId'], task['messageId']) for task in tasks] == [
-        ('session-2', 'user-message-2'),
-        ('session-1', 'user-message-1'),
-    ]
-
-
-def test_activity_reads_its_sessions_at_once_in_threads_up_to_its_bound_issue_3226(
-    local_record: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Above the default executor's 32-thread ceiling, so only the function's own executor reaches it.
-    monkeypatch.setattr(session_api, 'ACTIVITY_SESSIONS_AT_ONCE', 40)
-    lock, reading, peak = threading.Lock(), [0], [0]
-
-    def read() -> None:
-        with lock:
-            reading[0] += 1
-            peak[0] = max(peak[0], reading[0])
-        time.sleep(0.2)
-        with lock:
-            reading[0] -= 1
-
-    async def session_activity(_user_id: str, _session_id: str) -> list[dict[str, str]]:
-        await asyncio.get_running_loop().run_in_executor(None, read)
-        return []
-
-    monkeypatch.setattr(session_api, 'session_activity', session_activity)
-    sessions = [{'sessionId': f'session-{index}', 'userId': 'user-1'} for index in range(60)]
-
-    assert session_api.lambda_handler({'operation': 'activity', 'sessions': sessions}, None) == {
-        'statusCode': 200,
-        'body': {'tasks': []},
-    }
-    assert peak[0] == 40
-
-
-def test_activity_fails_naming_the_session_it_could_not_read(
-    local_record: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    read = []
-
-    async def session_activity(_user_id: str, session_id: str) -> list[dict[str, str]]:
-        await asyncio.sleep(0)
-        if session_id == 'broken':
-            raise OSError('AgentCore Memory timed out')
-        read.append(session_id)
-        return []
-
-    monkeypatch.setattr(session_api, 'session_activity', session_activity)
-    sessions = [{'sessionId': s, 'userId': 'user-1'} for s in ('first', 'broken', 'last')]
-
-    with pytest.raises(RuntimeError, match=r'^Session broken activity could not be read: AgentCore Memory timed out$'):
-        asyncio.run(session_api.handle({'operation': 'activity', 'sessions': sessions}))
-    assert read == ['first', 'last']
-
-
-def test_activity_reports_the_first_failure_before_a_held_sibling_finishes_issue_3226(
-    local_record: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def scenario() -> None:
-        held_started, rejected, release, cancelled = (asyncio.Event() for _ in range(4))
-
-        async def session_activity(_user_id: str, session_id: str) -> list[dict[str, str]]:
-            if session_id == 'broken':
-                await held_started.wait()
-                rejected.set()
-                raise OSError('AgentCore Memory timed out')
-            if session_id == 'held':
-                held_started.set()
-                try:
-                    await release.wait()
-                finally:
-                    cancelled.set()
-                raise OSError('the later failure')
-            return []
-
-        monkeypatch.setattr(session_api, 'session_activity', session_activity)
-        operation = asyncio.create_task(session_api.handle({
-            'operation': 'activity',
-            'sessions': [{'sessionId': s, 'userId': 'user-1'} for s in ('held', 'broken')],
-        }))
-        await rejected.wait()
-        # Let propagation and cancellation callbacks run; the held read remains gated, not timed.
-        for _ in range(10):
-            await asyncio.sleep(0)
-        try:
-            assert operation.done(), 'the first failure must propagate before the held read finishes'
-        finally:
-            release.set()
-            with pytest.raises(RuntimeError, match=r'^Session broken activity could not be read: AgentCore Memory timed out$'):
-                await operation
-        assert cancelled.is_set()
-        assert await session_api.handle({
-            'operation': 'activity', 'sessions': [{'sessionId': 'next', 'userId': 'user-1'}],
-        }) == {'tasks': []}
-
-    asyncio.run(scenario())
 
 
 async def _post(content: str, session_id: str = 'session-1') -> dict[str, Any]:
@@ -486,34 +253,11 @@ def test_each_post_replays_under_its_own_message_id(local_record: None) -> None:
 
 
 def test_a_post_opens_a_session_that_had_no_turns(local_record: None) -> None:
-    async def scenario() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def scenario() -> list[dict[str, Any]]:
         await _post('Morning brief: markets are up.')
-        return await _replay(), await _activity()
+        return await _replay()
 
-    replayed, activity = asyncio.run(scenario())
-
-    assert _said(replayed) == [('assistant', 'Morning brief: markets are up.')]
-    assert activity == {'tasks': []}
-
-
-def test_a_post_leaves_the_turns_activity_as_it_was(local_record: None) -> None:
-    config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
-
-    async def scenario() -> tuple[list[str], dict[str, Any]]:
-        answered = []
-        await _turn(HumanMessage('Summarize AAPL earnings', id='user-message-1'))
-        answered.append((await session_api._graph().aget_state(config)).created_at)
-        await _post('Morning brief: markets are up.')
-        await _turn(HumanMessage('Compare with MSFT', id='user-message-2'))
-        answered.append((await session_api._graph().aget_state(config)).created_at)
-        return answered, await _activity()
-
-    answered, activity = asyncio.run(scenario())
-
-    assert activity['tasks'] == [
-        {'sessionId': 'session-1', 'messageId': 'user-message-1', 'summary': 'Summarize AAPL earnings', 'completedAt': answered[0]},
-        {'sessionId': 'session-1', 'messageId': 'user-message-2', 'summary': 'Compare with MSFT', 'completedAt': answered[1]},
-    ]
+    assert _said(asyncio.run(scenario())) == [('assistant', 'Morning brief: markets are up.')]
 
 
 def test_a_post_without_content_is_rejected(client: TestClient) -> None:
@@ -544,6 +288,55 @@ def test_the_function_entrypoint_answers_with_the_status_the_http_mode_uses(loca
     }
     assert malformed == {'statusCode': 400, 'body': {'error': 'userId is required', 'code': 'INVALID_REQUEST'}}
     assert purged == {'statusCode': 200, 'body': {}}
+
+
+@pytest.fixture
+def legacy_record(local_record: None, monkeypatch: pytest.MonkeyPatch) -> ReadCountingSaver:
+    """The session API on a record holding `legacy-1`, a Session in the legacy checkpoint format."""
+    saver = ReadCountingSaver()
+    legacy_session(saver, 'legacy-1')
+    monkeypatch.setattr(session_api, '_GRAPH', build_agent(
+        model=EchoChatModel(), backend=None, skills=[], memory=[], checkpointer=saver,
+    ))
+    return saver
+
+
+LEGACY = {
+    'error': 'Session legacy-1 is in the legacy checkpoint format: its latest checkpoint stores no files, messages',
+    'code': 'SESSION_FORMAT_LEGACY',
+}
+
+
+@pytest.mark.parametrize('event', [
+    pytest.param({'operation': 'get'}, id='get'),
+    pytest.param({'operation': 'post', 'content': 'Copper closed up 2%'}, id='post'),
+])
+def test_a_legacy_format_session_is_gone_without_walking_its_checkpoints(
+    legacy_record: ReadCountingSaver, event: dict[str, str],
+) -> None:
+    result = session_api.lambda_handler({**event, 'sessionId': 'legacy-1', 'userId': 'user-1'}, None)
+
+    assert result == {'statusCode': 410, 'body': LEGACY}
+    assert legacy_record.reads == ['get_tuple']
+
+
+def test_a_session_read_that_outlives_the_chat_services_wait_times_out(
+    local_record: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def stalled(*_args: Any, **_kwargs: Any) -> None:
+        await asyncio.sleep(5)
+
+    graph = session_api._graph()
+    monkeypatch.setattr(session_api, 'SESSION_READ_SECONDS', 0.05)
+    monkeypatch.setattr(graph.checkpointer, 'aget_tuple', stalled)
+    events = [{'operation': 'get'}, {'operation': 'post', 'content': 'Copper closed up 2%'}]
+
+    results = [session_api.lambda_handler({**event, 'sessionId': 'session-1', 'userId': 'user-1'}, None)
+               for event in events]
+
+    assert results == [{'statusCode': 504, 'body': {
+        'error': 'The session API gave up reading Session session-1 after 0.05 s', 'code': 'SESSION_READ_TIMEOUT',
+    }}] * 2
 
 
 def test_the_function_entrypoint_serves_repeated_invocations(local_record: None) -> None:
@@ -597,21 +390,24 @@ def test_the_local_session_api_logs_at_info_with_the_logger_name(start: Callable
 # AgentCore memory record IDs are at least 40 characters.
 OWN_RECORD = 'mem-own-000000000000000000000000000000000'
 OTHERS_RECORD = 'mem-others-00000000000000000000000000000000'
+# The other user's ID starts with user-1's: only the trailing slash keeps their records apart.
+OTHER_USER = 'user-12'
+
+
+def _record(record_id: str, text: str, actor: str, kind: str = 'facts') -> dict[str, Any]:
+    return {
+        'memoryRecordId': record_id,
+        'content': {'text': text},
+        'memoryStrategyId': 'SemanticFacts-1',
+        'namespaces': [f'/actors/{actor}/{kind}/'],
+        'createdAt': datetime(2026, 7, 1, tzinfo=UTC),
+    }
 
 
 @pytest.fixture
 def memory(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
     fake = FakeAgentCoreMemory()
-    fake.records += [
-        {
-            'memoryRecordId': record_id,
-            'content': {'text': text},
-            'memoryStrategyId': 'SemanticFacts-1',
-            'namespaces': [f'/strategies/SemanticFacts-1/actors/{actor}/'],
-            'createdAt': datetime(2026, 7, 1, tzinfo=UTC),
-        }
-        for record_id, text, actor in ((OWN_RECORD, 'Trades copper', 'user-1'), (OTHERS_RECORD, 'Trades gold', 'user-2'))
-    ]
+    fake.records += [_record(OWN_RECORD, 'Trades copper', 'user-1'), _record(OTHERS_RECORD, 'Trades gold', OTHER_USER)]
     monkeypatch.setattr(session_api, 'AGENTCORE_REGION', 'eu-west-1')
     monkeypatch.setattr(
         boto3,
@@ -620,6 +416,21 @@ def memory(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> FakeAgentCore
     )
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return fake
+
+
+def test_the_memory_page_shows_the_users_preferences_then_facts_and_no_one_elses(
+    client: TestClient, memory: FakeAgentCoreMemory
+) -> None:
+    memory.records += [
+        _record('mem-preference-000000000000000000000000000', 'Prefers tea', 'user-1', 'preferences'),
+        _record('mem-summary-0000000000000000000000000000000', 'Discussed copper', 'user-1', 'summaries/session-1'),
+        _record('mem-others-preference-00000000000000000000', 'Prefers coffee', OTHER_USER, 'preferences'),
+    ]
+
+    assert _memory(client) == (200, {'lines': [
+        {'id': 'mem-preference-000000000000000000000000000', 'text': 'Prefers tea'},
+        {'id': OWN_RECORD, 'text': 'Trades copper'},
+    ]})
 
 
 @pytest.mark.parametrize(

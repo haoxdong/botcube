@@ -5,10 +5,11 @@ from typing import Any
 
 import pytest
 
+from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving
 from test_serving import (
     _memory_record,
-    _RegionalMemory,
+    _ScopedMemory,
     _Service,
     _sse_events,
 )
@@ -20,29 +21,9 @@ from test_serving import (
 )
 
 
-def test_startup_snapshot_refreshes_on_a_new_conversation_or_memory_revision(
-    service: _Service, agentcore_memory: _RegionalMemory,
-) -> None:
-    preference = _memory_record('Prefers tea', 'UserPreferences-1', 'actor-1')
-    agentcore_memory.records += [preference, _memory_record('Private preference', 'UserPreferences-1', 'actor-2')]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
-
-    first = service.turn('hello', thread='thread-a', **member)
-    preference['content'] = {'text': 'Prefers coffee'}
-    warm = service.turn('hello again', thread='thread-a', **member)
-    fresh = service.turn('hello', thread='thread-b', **member)
-    edited = service.turn('hello after editing Memory', thread='thread-a', memoryRevision=1, **member)
-
-    assert all(events[-1]['type'] == 'RUN_FINISHED' for events in [first, warm, fresh, edited])
-    assert agentcore_memory.startup_snapshot_calls == 3
-    assert ['Prefers tea' in prompt for prompt in service.recorder.prompts] == [True, True, False, False]
-    assert ['Prefers coffee' in prompt for prompt in service.recorder.prompts] == [False, False, True, True]
-    assert all('Private preference' not in prompt for prompt in service.recorder.prompts)
-
-
 @pytest.mark.parametrize('scope', ['startup', 'recorded', None])
-def test_authorized_warmup_prepares_memory_without_model_execution_or_writes(
-    service: _Service, agentcore_memory: _RegionalMemory, scope: str | None,
+def test_authorized_warmup_prepares_without_model_execution_or_writes(
+    service: _Service, agentcore_memory: _ScopedMemory, scope: str | None,
 ) -> None:
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
@@ -50,42 +31,42 @@ def test_authorized_warmup_prepares_memory_without_model_execution_or_writes(
     props = {'preparationScope': scope} if scope is not None else {}
     assert service.turn('', warmup=True, **props, **member) == [_ack('run-0', 'prepared')]
     assert agentcore_memory.listed.get('thread-1', 0) == (0 if scope == 'startup' else 1)
-    assert agentcore_memory.startup_snapshot_calls == 1
     assert agentcore_memory.create_event_calls == 0
     assert service.recorder.prompts == []
 
     answer = service.turn('hello', **member)
     assert answer[-1]['type'] == 'RUN_FINISHED'
-    assert agentcore_memory.startup_snapshot_calls == 1
+    # The Session's first Turn loads its Memory (ADR 0031).
     assert 'Prefers tea' in service.recorder.prompts[-1]
 
 
 def test_authorized_warmup_restores_an_existing_conversation_before_the_next_turn(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     assert service.turn('first message', **member)[-1]['type'] == 'RUN_FINISHED'
-    for name in ('_AGENTS', '_BACKENDS', '_AGENT_BACKENDS', '_BACKEND_BY_AGENT', '_THREAD_LTM_CONTEXTS'):
+    for name in ('_AGENTS', '_BACKENDS', '_AGENT_BACKENDS', '_BACKEND_BY_AGENT'):
         monkeypatch.setattr(serving, name, {})
-    for name in ('_CHECKPOINTER', '_STORE', '_DEFERRED_SAVER'):
+    for name in ('_CHECKPOINTER', '_STORE'):
         monkeypatch.setattr(serving, name, None)
     writes = agentcore_memory.create_event_calls
     prompts = len(service.recorder.prompts)
     reads = agentcore_memory.listed['thread-1']
 
     assert service.turn('', warmup=True, preparationScope='recorded', **member) == [_ack('run-1', 'prepared')]
-    assert agentcore_memory.listed['thread-1'] == reads + 1
+    # The Turn's fed conversation follows its checkpoint, so the saver reads the newest event, then the newest checkpoint.
+    assert agentcore_memory.listed['thread-1'] == reads + 2
     assert agentcore_memory.create_event_calls == writes
     assert len(service.recorder.prompts) == prompts
 
     answer = service.turn('second message', **member)
     assert answer[-1]['type'] == 'RUN_FINISHED'
-    assert agentcore_memory.listed['thread-1'] == reads + 1
+    assert service.recorder.heard[-1] == ['first message', 'second message']
 
 
 @pytest.mark.parametrize('busy', [False, True])
-def test_warmup_without_a_capability_or_during_session_work_does_not_read_memory(
-    service: _Service, agentcore_memory: _RegionalMemory, busy: bool,
+def test_warmup_without_a_turn_identity_or_during_session_work_does_not_read_memory(
+    service: _Service, agentcore_memory: _ScopedMemory, busy: bool,
 ) -> None:
     props: dict[str, object] = {
         'actorId': 'actor-1', 'sessionUserId': 'actor-1', 'memory': True, 'warmup': True,
@@ -94,8 +75,7 @@ def test_warmup_without_a_capability_or_during_session_work_does_not_read_memory
     lock = asyncio.Lock()
     assert service.client.portal is not None
     if busy:
-        props['turnMemory'] = {'url': 'https://chat.test/internal/turn-memory',
-                               'token': '{"actor":"actor-1","filing":"actor-1","thread":"thread-1"}'}
+        props['turnIdentity'] = turn_identity('actor-1', 'actor-1', 'thread-1')
         serving._SESSION_TURNS._locks[('actor-1', 'thread-1')] = lock
         service.client.portal.call(lock.acquire)
     try:
@@ -108,9 +88,9 @@ def test_warmup_without_a_capability_or_during_session_work_does_not_read_memory
         if busy:
             assert events == [_ack('warmup', 'skipped-busy')]
         else:
-            error = {'code': 'MISSING_USER_ID', 'message': 'Invocation carries no Turn Memory capability'}
+            error = {'code': 'TURN_IDENTITY_REJECTED',
+                     'message': 'Invocation carries no Turn identity; the Chat Service must forward turnIdentity'}
             assert events == [{'type': 'RUN_ERROR', **error}, _ack('warmup', 'failed', **error)]
-        assert agentcore_memory.startup_snapshot_calls == 0
         assert agentcore_memory.create_event_calls == 0
         assert service.recorder.prompts == []
         assert service.recorder.builds == []
@@ -142,7 +122,7 @@ def test_preparation_ack_follows_lock_release_even_when_preparation_fails(
             raise RuntimeError('build unavailable')
         agent = get_agent(**kwargs)
         if failure_at == 'history':
-            monkeypatch.setattr(agent.graph, 'aget_state', fail_history)
+            monkeypatch.setattr(agent.graph.checkpointer, 'aget_tuple', fail_history)
         return agent
 
     def observe(encoder: Any, event: Any) -> str:

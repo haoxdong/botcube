@@ -5,7 +5,6 @@ import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { runScheduledTask } from './scheduled-runs.js';
-import { TurnMemory, turnMemoryRoutes } from './turn-memory.js';
 import { sessionLifecycle } from './session-lifecycle.js';
 import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -94,10 +93,7 @@ const sessionMetadata: SessionMetadata = {
   rejectedDispatches: async () => [],
   pendingPurges: async () => [],
   completePurge: async () => undefined,
-  createMemoryLease: async () => { throw new Error('not used'); },
-  memoryLease: async () => { throw new Error('not used'); },
-  endMemoryLease: async () => { throw new Error('not used'); },
-  memorySessionActive: async () => { throw new Error('not used'); },
+  owns: async () => { throw new Error('not used'); },
   checkHealth: async () => undefined,
   recordTurn: async (_owner, _sessionId, { filingUserId }) => filingUserId,
   list: async () => [],
@@ -116,9 +112,8 @@ const sessionMetadata: SessionMetadata = {
 
 // Every account keeps the Cartridge's templates.
 const agentDocuments: AgentDocuments = {
-  get: async (_owner, templates) => ({ ...templates, memoryRevision: 0 }),
+  get: async (_owner, templates) => templates,
   save: async () => undefined,
-  memoryEdited: async () => undefined,
   picture: async () => null,
   savePicture: async () => undefined,
   delete: async () => undefined,
@@ -254,9 +249,9 @@ describe('a Turn against a local Harness', () => {
     } finally { errors.mockRestore(); }
   });
 
-  it.each([['thread', 'success'], ['account', 'success'], ['thread', 'failed-marker'], ['thread', 'other-writer'], ['thread', 'legacy']] as const)('recovers a successful broker writer after replacement for %s erasure with %s controls', async (deletion, control) => {
+  it.each([['thread', 'success'], ['account', 'success'], ['thread', 'failed-marker'], ['thread', 'other-writer'], ['thread', 'legacy']] as const)('recovers a successful writer after replacement for %s erasure with %s controls', async (deletion, control) => {
     const agent = await localHarness((response) => response.end());
-    const table = `broker-ack-replacement-${Math.random().toString(36).slice(2)}`;
+    const table = `writer-ack-replacement-${Math.random().toString(36).slice(2)}`;
     await createChatTable(inject('dynamodbEndpoint'), table);
     const client = new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
     let failed = false;
@@ -264,29 +259,27 @@ describe('a Turn against a local Harness', () => {
       const input = args.input as { TableName?: string; Key?: { pk?: string }; UpdateExpression?: string };
       if (control === 'failed-marker' && context.commandName === 'UpdateItemCommand' && input.TableName === table && input.UpdateExpression?.includes('writer_succeeded')) {
         failed = true;
-        throw new Error('Durable broker success marker unavailable');
+        throw new Error('Durable writer success marker unavailable');
       }
       if (!failed && context.commandName === 'DeleteItemCommand' && input.TableName === table && input.Key?.pk?.startsWith('DISPATCH#')) {
         failed = true;
-        throw new Error('Successful broker registration acknowledgement failed');
+        throw new Error('Successful writer registration acknowledgement failed');
       }
       return next(args);
-    }, { step: 'initialize', name: 'failExactBrokerAcknowledgement' });
+    }, { step: 'initialize', name: 'failExactWriterAcknowledgement' });
     const metadata = new DynamoDBSessionMetadata(table, client);
-    const call = vi.fn(async () => ({ eventId: 'completed-checkpoint' }));
-    const memory = new TurnMemory(metadata, 'shared-chat-service-signing-secret-for-tests', 'memory', { call });
-    const app = new Hono().route('/memory', turnMemoryRoutes(memory));
     const invoke = vi.fn<SessionApi>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      const startedAt = new Date().toISOString();
       await metadata.recordTurn('acct_owner', TURN.threadId, { filingUserId: 'filed-acct_owner', title: 'Original checkpoint' });
       if (control === 'legacy') await DynamoDBDocumentClient.from(client).send(new PutCommand({ TableName: table, Item: { pk: 'SESSIONS#acct_owner', sk: `SESSION#${TURN.threadId}`, session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', title: 'Legacy checkpoint' } }));
-      const { token } = await memory.start({ owner: 'acct_owner', accountActorId: 'filed-acct_owner', filingUserId: 'filed-acct_owner', sessionId: TURN.threadId, runId: 'broker-run', startedAt });
-      const answer = await app.request('/memory', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'create_event', params: { memoryId: 'memory', actorId: 'filed-acct_owner', sessionId: TURN.threadId, eventTimestamp: startedAt, payload: [{ blob: 'completed checkpoint' }] } }) });
-      expect(answer.status).toBe(500);
+      // A writer that succeeded, but whose success could not be settled.
+      const writer = await metadata.beginDispatch('acct_owner', TURN.threadId);
+      await expect((async () => {
+        await defined(writer.markSucceeded, 'writer success marker')('session-post');
+        await writer();
+      })()).rejects.toThrow();
       expect(failed).toBe(true);
-      expect(call).toHaveBeenCalledOnce();
       const admitted = defined(await metadata.get('acct_owner', TURN.threadId), 'registered Session');
       if (control === 'other-writer') await metadata.beginDispatch('acct_owner', TURN.threadId);
       if (deletion === 'thread') await metadata.fence('acct_owner', TURN.threadId);
@@ -347,7 +340,7 @@ describe('a Turn against a local Harness', () => {
       const response = await sendTurn(url);
       await response.text();
       const admitted = defined(await metadata.get('acct_owner', TURN.threadId), 'admitted tracked Session');
-      const broker = await metadata.beginDispatch('acct_owner', TURN.threadId);
+      const writer = await metadata.beginDispatch('acct_owner', TURN.threadId);
       let blocked: (() => void) | undefined;
       const pending = new Promise<void>((resolve) => { blocked = resolve; });
       const check = metadata.assertNoDispatch.bind(metadata);
@@ -368,7 +361,7 @@ describe('a Turn against a local Harness', () => {
       await pending;
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(0);
       expect(invoke).not.toHaveBeenCalled();
-      await broker();
+      await writer();
       await settled;
       expect(invoke.mock.calls).toContainEqual([{ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900]);
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
@@ -500,7 +493,6 @@ describe('a Turn against a local Harness', () => {
       sessionUserId: 'filed-acct_owner',
       agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' },
       soul: '',
-      memoryRevision: 0,
     });
   });
 
@@ -845,7 +837,7 @@ describe('a Turn against a local Harness', () => {
       expect((await fetch(`${url}/health`)).status).toBe(503);
       expect(recordTurn).not.toHaveBeenCalled();
       expect(agent.received).toEqual([]);
-      await DynamoDBDocumentClient.from(client).send(new PutCommand({ TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true } }));
+      await DynamoDBDocumentClient.from(client).send(new PutCommand({ TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true } }));
       const admitted = await sendTurn(url);
       await admitted.text();
       expect(admitted.status).toBe(200);
@@ -868,7 +860,7 @@ describe('a Turn against a local Harness', () => {
       await expect(runScheduledTask({
         cartridge, sessionMetadata: metadata, agentDocuments, invokeSessionApi: post,
         scheduledTasks: { get: async () => ({ id: 'scheduled-gate', proposalId: 'proposal-gate', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false }) },
-        upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), runtimeNamespaceRequired: true,
+        upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), runtimeNamespaceRequired: true, turnIdentity: null,
         summarizeTurn: async () => ({ title: 'Brief', summary: 'Brief summary' }),
       }, { owner: 'acct_owner', taskId: 'scheduled-gate', deliveryId: 'scheduled-gate-delivery' })).rejects.toMatchObject({ status: 503 });
       expect(invoke).not.toHaveBeenCalled();

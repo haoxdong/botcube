@@ -4,7 +4,7 @@ A message starts when its first AG-UI event streams and ends with its last: the 
 TEXT_MESSAGE_START or first TOOL_CALL_START to its model call's end, its reasoning from REASONING_START to
 REASONING_END, and a tool's result from its call's TOOL_CALL_START to the result landing. The stream adapter
 builds those events from the model's chunks, so the model call's chunks time them here, inside the graph, where
-the stamps reach the record (messages_snapshot.MESSAGE_TIMES).
+the stamps reach the record (conversation.MESSAGE_TIMES).
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from langchain_core.tracers.context import register_configure_hook
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from .messages_snapshot import MESSAGE_TIMES, reasoning_texts
+from .conversation import MESSAGE_TIMES, reasoning_texts
 
 _Message = TypeVar('_Message', bound=BaseMessage)
 _clock: ContextVar[_ModelClock | None] = ContextVar('message_times_clock', default=None)

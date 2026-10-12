@@ -37,7 +37,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   defineProduction(app, {
     repositoryRoot: root, deployRoot, identity, parked, webLatency,
     origin: {
-      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', memoryId: 'template_memory-fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
       commit: 'local-fixture',
     },
@@ -67,7 +67,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
       filesSyncRoleName: 'adopter-chat-files-sync',
     },
     origin: {
-      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', memoryId: 'template_memory-fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
       commit: 'local-fixture',
     },

@@ -1,7 +1,7 @@
 import { FirstAnswerTiming } from './first-answer-timing.js';
 import { positiveInteger } from './config.js';
-import { TurnMemory, awsMemoryBackend, turnMemoryRoutes } from './turn-memory.js';
-import type { TurnFailure, TurnMemoryLease } from './session-metadata.js';
+import { TurnIdentity, forwardTurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
+import type { TurnFailure } from './session-metadata.js';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
@@ -89,7 +89,8 @@ function runError(stream: string, credentials: readonly string[]): string | null
 const LIVE_VIEW_URL_EXPIRES_SECONDS = positiveInteger(process.env, 'BOTCUBE_LIVE_VIEW_URL_EXPIRES_SECONDS', 300);
 
 export interface ChatServiceConfig {
-  turnMemory?: { secret: string; memoryId: string; url: string };
+  /** Unset: no per-Turn user identity, and no OIDC discovery. */
+  turnIdentity?: TurnIdentityConfig;
   /** Unset: Turns get 503 and warmup is skipped. */
   agentCore: AgentCoreRuntime | null;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
@@ -114,6 +115,7 @@ function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
   const { region, endpoint } = agentCoreEndpointFromEnv(env);
   const origins = env.BOTCUBE_CORS_ORIGINS;
   const localSessionApiUrl = env.BOTCUBE_LOCAL_SESSION_API_URL?.replace(/\/+$/, '');
+  const turnIdentity = turnIdentityConfigFromEnv(env);
   return {
     harnessEndpoint: harnessEndpointFromEnv(env),
     connectTimeoutMs: positiveInteger(env, 'BOTCUBE_HARNESS_CONNECT_TIMEOUT_MS', 30_000),
@@ -136,10 +138,7 @@ function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
     // A warmup answers once the requester's agent is built, and a cold Sandbox took up to 22 s to take the invocation.
     warmupTimeoutMs: positiveInteger(env, 'BOTCUBE_WARMUP_TIMEOUT_MS', 60_000),
     turnSummaryModel: turnSummaryModelFromEnv(env, region),
-    ...(env.AGENTCORE_MEMORY_ID ? { turnMemory: {
-      secret: env.BOTCUBE_TURN_MEMORY_SECRET ?? '', memoryId: env.AGENTCORE_MEMORY_ID,
-      url: env.BOTCUBE_TURN_MEMORY_URL ?? '',
-    } } : {}),
+    ...(turnIdentity ? { turnIdentity } : {}),
   };
 }
 
@@ -215,34 +214,6 @@ function userText(message: Message): string {
 /** The Session's title: the text of its first user message. */
 function title(messages: RunAgentInput['messages']): string {
   return messages.map(userText).find(Boolean) ?? 'Untitled conversation';
-}
-
-/** Memory mutations finish only after the next Turn's cached Memory is invalidated. */
-function memoryEdits(invokeSessionApi: SessionApi, agentDocuments: AgentDocuments, filingUserId: (owner: string) => string) {
-  return {
-    async edit(owner: string, recordId: string, text: string): Promise<void> {
-      await invokeSessionApi({ operation: 'memory-edit', userId: filingUserId(owner), recordId, text });
-      await agentDocuments.memoryEdited(owner);
-    },
-    async remove(owner: string, recordId: string): Promise<void> {
-      try {
-        await invokeSessionApi({ operation: 'memory-delete', userId: filingUserId(owner), recordId });
-      } catch (error) {
-        if (!(error instanceof HttpError && error.status === 404)) throw error;
-        // A prior delete may have committed before its revision write failed. Refresh
-        // the next Turn even when this retry truthfully reports that the line is absent.
-        try {
-          await agentDocuments.memoryEdited(owner);
-        } catch (refreshError) {
-          throw Object.assign(new HttpError(503, 'Memory refresh failed after its line was not found'), {
-            cause: new AggregateError([error, refreshError], 'Memory deletion and cache refresh failed'),
-          });
-        }
-        throw error;
-      }
-      await agentDocuments.memoryEdited(owner);
-    },
-  };
 }
 
 /** A classified warmup answer rejects fan-out immediately while preserving its HTTP body. */
@@ -321,24 +292,17 @@ export function createChatService(
       await sessionMetadata.transferOwner(source, destination);
       await scheduledTasks?.transfer(source, destination);
     },
-    owns: async (owner, sessionId) => {
-      const session = await sessionMetadata.get(owner, sessionId);
-      return session !== null && await sessionMetadata.memorySessionActive(owner, sessionId, session.filing_user_id);
-    },
+    owns: (owner, sessionId) => sessionMetadata.owns(owner, sessionId),
     ownsMainChat: (owner, sessionId) => sessionMetadata.ownsMainChat(owner, sessionId),
   };
   const cartridge = cartridgeFactory(history);
   const initialRecovery = recoverPurges();
-  const memory = memoryEdits(invokeSessionApi, agentDocuments, (owner) => cartridge.filingUserId(owner));
   const summarizeTurn = bedrockTurnSummarizer(config.turnSummaryModel);
-  if (config.turnMemory && !URL.canParse(config.turnMemory.url)) throw new Error('Turn Memory URL is required');
-  const turnMemory = config.turnMemory === undefined ? null : new TurnMemory(
-    sessionMetadata, config.turnMemory.secret, config.turnMemory.memoryId, awsMemoryBackend(config.region),
-  );
+  const turnIdentity = config.turnIdentity === undefined ? null : new TurnIdentity(config.turnIdentity);
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, runtimeNamespaceRequired, summarizeTurn, turnMemory, turnMemoryUrl: config.turnMemory?.url };
+    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, runtimeNamespaceRequired, summarizeTurn, turnIdentity };
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
     });
@@ -355,8 +319,8 @@ export function createChatService(
     if (error instanceof HttpError) return c.json({ detail: error.detail, ...(error.code === undefined ? {} : { code: error.code }) }, error.status as 400);
     return c.text('Internal Server Error', 500);
   });
+  if (turnIdentity !== null) app.route('/', turnIdentityRoutes(turnIdentity));
   app.route('/', cartridge.routes);
-  app.route('/internal/turn-memory', turnMemoryRoutes(turnMemory));
 
   /** What the Harness gets for a Turn on `input`, but its Session's filing ID: the Cartridge's payload with the Agent Documents. */
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void) => {
@@ -369,7 +333,6 @@ export function createChatService(
     payload.forwardedProps.model = model.key;
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
-    payload.forwardedProps.memoryRevision = documents.memoryRevision;
     return payload;
   };
 
@@ -413,22 +376,14 @@ export function createChatService(
       throw sessionAccessError(error);
     }
     timing.admitted(input.runId, input.threadId, model.key, initialMessages);
-    let memoryLease: TurnMemoryLease | undefined;
-    const end = (failure: TurnFailure | undefined) => turnMemory === null
-      ? sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure)
-      : turnMemory.end(memoryLease, requester.owner, input.threadId, running, failure);
+    const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
     let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
     try {
       const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; });
-      delete payload.forwardedProps.turnMemory;
-      if (turnMemory !== null && config.turnMemory !== undefined) {
-        const capability = await turnMemory.start({ owner: requester.owner,
-          accountActorId: cartridge.filingUserId(requester.owner), filingUserId,
-          sessionId: input.threadId, runId: input.runId, startedAt: running.startedAt });
-        memoryLease = capability.lease;
-        payload.forwardedProps.turnMemory = { token: capability.token, url: config.turnMemory.url };
-        credentials = [...credentials, capability.token];
-      }
+      const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
+        actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
+      });
+      if (identity !== undefined) credentials = [...credentials, identity];
       payload.forwardedProps.sessionUserId = filingUserId;
       cartridge.turnStarting?.(requester, input.threadId);
       const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
@@ -552,34 +507,21 @@ export function createChatService(
       namedSession = { owner: requester.owner, accountActorId: cartridge.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
       warmSession = () => cartridge.warmSession(requester, sessionId);
     }
-    let warmupFailure: unknown;
     const warmAgent = async () => {
-      let warmupLease: TurnMemoryLease | undefined;
-      let warmupCredentials: string[] = [];
-      const revoke = async () => {
-        if (warmupLease !== undefined && turnMemory !== null) {
-          const lease = warmupLease;
-          warmupLease = undefined;
-          await turnMemory.revoke(lease);
-        }
-      };
       try {
         const init = { signal: AbortSignal.timeout(config.warmupTimeoutMs) };
         const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined })
           : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
         if (complete.session !== undefined) input.forwardedProps.sessionUserId = complete.session.filing_user_id;
-        if (namedSession !== undefined && turnMemory !== null && config.turnMemory !== undefined) {
-          try {
-            const capability = await turnMemory.start({ owner: namedSession.owner,
-              accountActorId: namedSession.accountActorId, filingUserId: input.forwardedProps.sessionUserId as string,
-              sessionId: input.threadId, runId: input.runId, startedAt: new Date().toISOString(), purpose: 'warmup' });
-            warmupLease = capability.lease;
-            warmupCredentials = [capability.token];
-            input.forwardedProps.turnMemory = { token: capability.token, url: config.turnMemory.url };
-          } catch (error) {
+        if (namedSession !== undefined) {
+          // The warmup reads the Session's history under its own Turn identity.
+          await forwardTurnIdentity(turnIdentity, input.forwardedProps, {
+            actorId: namedSession.accountActorId, filingActorId: input.forwardedProps.sessionUserId as string,
+            sessionId: input.threadId, startedAt: new Date().toISOString(),
+          }).catch(async (error: unknown) => {
             await complete();
             throw error;
-          }
+          });
         }
         const response = await (namedSession === undefined
           ? upstream.invoke(JSON.stringify(input), input.threadId, init)
@@ -588,24 +530,19 @@ export function createChatService(
           await response.body?.cancel();
           return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
         }
-        const credentials = [...turnCredentials(input.forwardedProps as Record<string, unknown>, cartridge.credentialProps), ...warmupCredentials];
+        const credentials = turnCredentials(input.forwardedProps as Record<string, unknown>, cartridge.credentialProps);
         const failure = runError(await response.text(), credentials);
         if (failure !== null) {
           return c.json({ error: 'AgentCore warmup failed', details: turnErrorDetails(failure, credentials) }, 502);
         }
       } catch (error) {
-        warmupFailure = error;
         console.warn('warmup failed', error);
         return c.json({ error: 'AgentCore warmup failed', details: String(error) }, 502);
-      } finally { await revoke(); }
+      }
       return c.json({ status: 'ok' });
     };
     // The Cartridge readies its own side of the chat, such as its browser, while the agent builds; its failure answers.
-    const agent = warmAgent().catch((error: unknown) => {
-      const failure = warmupFailure === undefined ? error : new AggregateError([warmupFailure, error], 'Warmup invocation and Memory revocation failed');
-      console.warn('warmup Memory revocation failed', failure);
-      return c.json({ error: 'Warmup Memory revocation failed', details: String(failure) }, 502);
-    }).then((answer) => {
+    const agent = warmAgent().then((answer) => {
       if (!answer.ok) throw new WarmupFailure(answer);
       return answer;
     });
@@ -702,14 +639,14 @@ export function createChatService(
     const { owner } = await cartridge.requester(c);
     const text = memoryLine(await c.req.json().catch(() => undefined));
     const recordId = c.req.param('id');
-    await memory.edit(owner, recordId, text);
+    await invokeSessionApi({ operation: 'memory-edit', userId: cartridge.filingUserId(owner), recordId, text });
     return c.body(null, 204);
   });
 
   app.delete('/agent/memory/:id', async (c) => {
     const { owner } = await cartridge.requester(c);
     const recordId = c.req.param('id');
-    await memory.remove(owner, recordId);
+    await invokeSessionApi({ operation: 'memory-delete', userId: cartridge.filingUserId(owner), recordId });
     return c.body(null, 204);
   });
 

@@ -22,7 +22,7 @@ function compose(overrides: Partial<PreviewChatServiceProps> = {}, second = fals
     ingress,
     vpcId: 'vpc-fixture12345678', privateSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],
     clusterName: 'adopter', alertsTopicName: 'alerts', hostnames: ['chat.example.com'], corsOrigins: [],
-    memoryId: 'memory-AbCd', runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test',
+    runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test',
     sessionApiFunctionName: 'session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'reap.js'], authBrowserId: 'browser-AbCd',
     chatTable: dynamodb.Table.fromTableName(stack, 'Table', 'adopter-chat'), image: ContainerImage.fromRegistry('test-image'), parked: false, ...overrides,
   };

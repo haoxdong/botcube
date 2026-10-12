@@ -351,9 +351,6 @@ describe('a scheduled run', () => {
       expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: sideChat, userId: `filed-${account}` });
       release();
       await posted(main);
-      const messages = stack.agentcore.invocationFor(sideChat).payload.messages as { id: string }[];
-      await request(account, `/threads/${sideChat}`);
-      expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: sideChat, userId: `filed-${account}`, contains: defined(messages[0], "the scheduled prompt").id });
       expect(await stack.sessionMetadata.get(account, sideChat)).not.toHaveProperty('turn_running_since');
     } finally {
       release();
@@ -408,14 +405,12 @@ describe('a scheduled run', () => {
     expect(posts).toEqual([
       { content: 'Scheduled task "Morning brief": The 10y yield fell 5bp overnight.', userId: `filed-${account}` },
     ]);
-    const post = defined(stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main), 'the post');
     stack.sessionApi.reply(main, 200, { messages: [] });
     await request(account, '/main-chat');
     expect(stack.sessionApi.events()).toContainEqual({
       operation: 'get',
       sessionId: main,
       userId: `filed-${account}`,
-      contains: defined('messageId' in post ? post.messageId : undefined, "the post's message ID"),
     });
     const threads = ((await (await request(account, '/threads')).json()) as { threads: { id: string; title: string }[] }).threads;
     expect(threads).toEqual([expect.objectContaining({ title: 'Morning brief' })]);
@@ -1121,7 +1116,7 @@ describe('scheduled persistence dispatch admission', () => {
       filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
     };
-    const deps = { runtimeNamespaceRequired: true, cartridge, sessionMetadata: claimed.sessionMetadata,
+    const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: claimed.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
       upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
       summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
@@ -1245,8 +1240,7 @@ describe('scheduled persistence dispatch admission', () => {
       warmSession: async () => undefined,
     };
     const documents: AgentDocuments = {
-      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
-      memoryEdited: async () => undefined, delete: async () => undefined,
+      get: async () => templates, save: async () => undefined, delete: async () => undefined,
       picture: async () => null, savePicture: async () => undefined,
     };
     const invoke = vi.fn(async () => {
@@ -1258,7 +1252,7 @@ describe('scheduled persistence dispatch admission', () => {
       return {};
     });
     const deps = {
-      runtimeNamespaceRequired: false,
+      runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task },
@@ -1406,14 +1400,13 @@ describe('scheduled persistence dispatch admission', () => {
       warmSession: async () => undefined,
     };
     const documents: AgentDocuments = {
-      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
-      memoryEdited: async () => undefined, delete: async () => undefined,
+      get: async () => templates, save: async () => undefined, delete: async () => undefined,
       picture: async () => null, savePicture: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn(async () => ({}));
     await expect(runScheduledTask({
-      runtimeNamespaceRequired: false,
+      runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false }) },
@@ -1437,8 +1430,7 @@ describe('scheduled persistence dispatch admission', () => {
       warmSession: async () => undefined,
     };
     const documents: AgentDocuments = {
-      get: async () => ({ ...templates, memoryRevision: 0 }), save: async () => undefined,
-      memoryEdited: async () => undefined, delete: async () => undefined,
+      get: async () => templates, save: async () => undefined, delete: async () => undefined,
       picture: async () => null, savePicture: async () => undefined,
     };
     let posting: string | undefined;
@@ -1446,7 +1438,7 @@ describe('scheduled persistence dispatch admission', () => {
     const postEntered = new Promise<void>((resolve) => { enteredPost = resolve; });
     let finish: (() => void) | undefined;
     const run = runScheduledTask({
-      runtimeNamespaceRequired: false,
+      runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task },

@@ -58,11 +58,10 @@ def test_first_workspace_tool_sees_files_and_its_edits_can_be_published(
     assert s3.get_object(Bucket='turn-files', Key='owner/report.csv')['Body'].read() == b'date,close\n2026-10-08,10'
 
 
-def test_plain_answer_startup_reads_and_nonworkspace_tools_do_not_pull(
+def test_plain_answer_and_nonworkspace_tools_do_not_pull(
     tmp_path: Path, files: tuple[FilesSync, Any], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sync, s3 = files
-    (tmp_path / 'ltm.md').write_text('Remember this')
     calls: list[str] = []
 
     def no_s3(**kwargs: Any) -> None:
@@ -76,13 +75,12 @@ def test_plain_answer_startup_reads_and_nonworkspace_tools_do_not_pull(
 
     async def answer() -> None:
         with turn_files(sync, tmp_path, excluded_paths(())) as readiness:
-            assert (tmp_path / 'ltm.md').read_text() == 'Remember this'
-            for name in ('task', 'browser', 'agent_core_memory', 'web_search'):
+            for name in ('task', 'browser', 'memory', 'web_search'):
                 await LazyFilesMiddleware().awrap_tool_call(_request(name), handler)
             assert not readiness.ready
 
     asyncio.run(answer())
-    assert calls == ['task', 'browser', 'agent_core_memory', 'web_search']
+    assert calls == ['task', 'browser', 'memory', 'web_search']
     assert not (tmp_path / 'report.csv').exists()
 
 

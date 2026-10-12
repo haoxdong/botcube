@@ -15,7 +15,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.messages_snapshot import conversation
+from botcube_harness_deepagents.conversation import conversation
 from botcube_harness_deepagents.serving import _SessionAgent
 from conftest import ToolBindableFakeModel
 

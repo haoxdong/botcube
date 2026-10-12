@@ -19,7 +19,7 @@ resources, and generated policy names remain implementation-managed.
 | [ChatStorageProps](infra/ecs/cdk/lib/chat-storage-stack.ts)                      | `tableName`, `filesBucketName`, `filesSyncRoleName`.                                                                                                                                                                                                                                                                                                                               |
 | [PreviewChatServiceProps](infra/ecs/cdk/lib/preview-chat-service.ts)             | `clusterName`, `serviceName`, `logGroupName`, `reaperLogGroupName`, `scheduleGroupName`, `taskFamily`, `reaperTaskFamily`.                                                                                                                                                                                                                                                         |
 | Chat task roles                                                                  | `taskRoleName`, `executionRoleName`, `reaperTaskRoleName`, `reaperExecutionRoleName`, `scheduledRunsRoleName`, `reaperInvocationRoleName`.                                                                                                                                                                                                                                         |
-| Chat networking and custody                                                      | `securityGroupName`, `reaperSecurityGroupName`, `targetGroupName`, `turnMemorySecretName`.                                                                                                                                                                                                                                                                                         |
+| Chat networking and custody                                                      | `securityGroupName`, `reaperSecurityGroupName`, `targetGroupName`.                                                                                                                                                                                                                                                                                                                 |
 | Chat queues and reaper                                                           | `scheduledRunsQueueName`, `scheduledRunsFailedQueueName`, `reaperRuleName`.                                                                                                                                                                                                                                                                                                        |
 | Chat alarms                                                                      | `alarmNames` partial map: `task-deficit`, `session-purge-failures`, `turn-summary-failures`, `agent-computer-stop-sleep-failures`, `alb-5xx`, `target-5xx`, `unhealthy-hosts`.                                                                                                                                                                                                     |
 | Chat metric filters                                                              | `metricFilterNames` partial map: `sessionPurgeFailures`, `turnSummaryFailures`, `agentComputerStopSleepFailures`.                                                                                                                                                                                                                                                                  |
@@ -46,7 +46,6 @@ new PreviewChatService(stack, 'ChatService', {
   ingress,
   taskFamily: 'adopter-chat',
   targetGroupName: 'adopter-chat-target',
-  turnMemorySecretName: '/adopter/turn-memory',
   scheduledRunsQueueName: 'adopter-scheduled-runs',
 });
 ```
@@ -80,17 +79,12 @@ new ChatStorageStack(app, 'Storage', {
 });
 ```
 
-For Chat, use `turnMemorySecret: ISecret` and `scheduledRunsQueue: IQueue`:
+For Chat, use `scheduledRunsQueue: IQueue`:
 
 ```ts
 new PreviewChatService(stack, 'ChatService', {
   ...chatProps,
   ingress,
-  turnMemorySecret: secretsmanager.Secret.fromSecretNameV2(
-    stack,
-    'TurnMemory',
-    '/adopter/turn-memory'
-  ),
   scheduledRunsQueue: sqs.Queue.fromQueueArn(
     stack,
     'Runs',
@@ -101,8 +95,7 @@ new PreviewChatService(stack, 'ChatService', {
 
 Replace the example resource names and ARN with your resources. Omit creation
 names from `storageProps` and `chatProps` when importing the corresponding
-resource. An imported Turn Memory secret conflicts with `turnMemorySecretName`.
-An imported queue conflicts with queue and dead-letter names,
+resource. An imported queue conflicts with queue and dead-letter names,
 `scheduledRunVisibilitySeconds`, `scheduledRunRetentionDays`, and
 `scheduledRunMaxReceiveCount`. Your application owns the imported queue's
 visibility, retention, and redrive policy. BotCube grants task consumption and

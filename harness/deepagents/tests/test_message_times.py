@@ -10,8 +10,8 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from botcube_harness_deepagents.conversation import MESSAGE_TIMES
 from botcube_harness_deepagents.message_times import MessageTimesMiddleware
-from botcube_harness_deepagents.messages_snapshot import MESSAGE_TIMES
 
 CALL = {'name': 'ls', 'args': {'path': '/'}, 'id': 'call-1', 'type': 'tool_call'}
 

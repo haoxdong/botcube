@@ -11,7 +11,6 @@ import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
@@ -29,7 +28,6 @@ export interface ChatServiceIngress {
 export interface PreviewChatServiceProps {
   /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
-  turnMemorySecret?: secretsmanager.ISecret;
   scheduledRunsQueue?: sqs.IQueue;
   metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures', string>>;
   taskFamily?: string;
@@ -38,7 +36,6 @@ export interface PreviewChatServiceProps {
   executionRoleName?: string;
   reaperTaskRoleName?: string;
   reaperExecutionRoleName?: string;
-  turnMemorySecretName?: string;
   scheduledRunsQueueName?: string;
   scheduledRunsFailedQueueName?: string;
   scheduledRunsRoleName?: string;
@@ -98,7 +95,6 @@ export interface PreviewChatServiceProps {
   hostnames: string[];
   corsOrigins: string[];
   runtimeArn?: string;
-  memoryId: string;
   /** The session API function the AgentCore stack deploys (ADR 0067 §5). */
   sessionApiFunctionName: string;
   /** The session API alias the AgentCore stack keeps initialized. */
@@ -113,9 +109,7 @@ export interface PreviewChatServiceProps {
 }
 
 function validateChatService(props: PreviewChatServiceProps): void {
-  if (props.turnMemorySecret && props.turnMemorySecretName !== undefined) throw new Error('An imported turnMemorySecret owns its name; omit turnMemorySecretName');
   if (props.scheduledRunsQueue && [props.scheduledRunsQueueName, props.scheduledRunsFailedQueueName, props.scheduledRunVisibilitySeconds, props.scheduledRunRetentionDays, props.scheduledRunMaxReceiveCount].some(value => value !== undefined)) throw new Error('An imported scheduledRunsQueue owns its name and redrive settings; omit queue creation options');
-  if (!Token.isUnresolved(props.memoryId) && !/^[A-Za-z0-9_]+-[A-Za-z0-9]+$/.test(props.memoryId)) throw new Error('Chat Service requires the deployed AgentCore Memory ID');
   if ((!props.vpc && !props.subnets && props.privateSubnets.length < 2) || ((!props.harnessEndpoint || props.harnessSigv4 !== false) && !Token.isUnresolved(props.runtimeArn) && !/^arn:aws:bedrock-agentcore:[^:]+:\d{12}:runtime\/.+$/.test(props.runtimeArn ?? ''))) {
     throw new Error('Preview Chat Service requires private subnets and the deployed AgentCore runtime ARN');
   }
@@ -167,22 +161,7 @@ export class PreviewChatService extends Construct {
       actions: ['bedrock-agentcore:StopRuntimeSession'],
       resources: [props.runtimeArn, `${props.runtimeArn}/runtime-endpoint/*`],
     }));
-    const memoryArn = origin.formatArn({ service: 'bedrock-agentcore', resource: 'memory', resourceName: props.memoryId });
-    task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:GetMemory', 'bedrock-agentcore:ListEvents', 'bedrock-agentcore:GetEvent',
-        'bedrock-agentcore:CreateEvent', 'bedrock-agentcore:DeleteEvent', 'bedrock-agentcore:GetMemoryRecord',
-        'bedrock-agentcore:DeleteMemoryRecord', 'bedrock-agentcore:BatchUpdateMemoryRecords'],
-      resources: [memoryArn],
-    }));
-    task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
-      resources: [memoryArn],
-      conditions: { StringLike: { 'bedrock-agentcore:namespacePath': '/strategies/*/actors/*/' } },
-    }));
-    const turnMemorySecret = props.turnMemorySecret ?? new secretsmanager.Secret(this, 'TurnMemorySecret', {
-      ...optionalPhysicalName('secretName', props.turnMemorySecretName),
-      generateSecretString: { passwordLength: 64, excludePunctuation: true },
-    });
+    // The Chat Service reaches Memory only through the session API; a Turn reaches it with its own tagged credentials.
     // The session API has no public endpoint; this grant is its only caller.
     const sessionApiFunctionArn = origin.formatArn({
       service: 'lambda', resource: 'function', resourceName: props.sessionApiFunctionName, arnFormat: ArnFormat.COLON_RESOURCE_NAME,
@@ -210,8 +189,6 @@ export class PreviewChatService extends Construct {
         AWS_DEFAULT_REGION: origin.region,
         AGENTCORE_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
-        AGENTCORE_MEMORY_ID: props.memoryId,
-        BOTCUBE_TURN_MEMORY_URL: `https://${props.hostnames.at(-1)}/internal/turn-memory`,
         BOTCUBE_SESSION_API_FUNCTION_ARN: sessionApiArn,
         AGENTCORE_BROWSER_ID: browserId,
         BOTCUBE_CHAT_TABLE: props.chatTable.tableName,
@@ -220,7 +197,6 @@ export class PreviewChatService extends Construct {
         ...(props.harnessSigv4 !== undefined ? { BOTCUBE_HARNESS_SIGV4: String(props.harnessSigv4) } : {}),
         PORT: String(port),
       },
-      secrets: { BOTCUBE_TURN_MEMORY_SECRET: ecs.Secret.fromSecretsManager(turnMemorySecret as secretsmanager.ISecret) },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.logStreamPrefix ?? 'chat-service', logGroup }),
       // Allow task-stop cleanup before ECS sends SIGKILL.
       stopTimeout: Duration.seconds(props.containerStopTimeoutSeconds ?? 120),

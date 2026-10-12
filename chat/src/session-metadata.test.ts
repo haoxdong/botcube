@@ -1069,16 +1069,16 @@ describe('durable Session dispatch admission', () => {
     await expect(metadata.assertNoDispatch(session)).resolves.toBeUndefined();
   });
 
-  it('keeps a broker registration blocking alongside a classified rejected admission', async () => {
+  it('keeps another registration blocking alongside a classified rejected admission', async () => {
     await turn('account-1', 'session-1', T1);
     const admission = await metadata.beginDispatch('account-1', 'session-1');
-    const broker = await metadata.beginDispatch('account-1', 'session-1');
+    const other = await metadata.beginDispatch('account-1', 'session-1');
     const session = defined(admission.session, 'bound admission');
     await defined(admission.markRejected, 'durable rejection classifier')(REJECTED_TARGET);
     await metadata.fence('account-1', 'session-1');
     const recovered = await metadata.rejectedDispatches(session, REJECTED_TARGET);
     expect(recovered.map((registration) => registration.token)).toEqual([admission.token]);
-    await expect(metadata.assertNoDispatch(session, recovered.map((registration) => defined(registration.token, 'rejected token')))).rejects.toThrow(String(broker.token));
+    await expect(metadata.assertNoDispatch(session, recovered.map((registration) => defined(registration.token, 'rejected token')))).rejects.toThrow(String(other.token));
     expect(await metadata.rejectedDispatches({ ...session, legacy_settlement_unproved: true }, REJECTED_TARGET)).toEqual([]);
   });
 
@@ -1328,14 +1328,14 @@ describe('Runtime namespace rollout readiness', () => {
 
   it.each([false, 'true'])('refuses a readiness marker whose value is %s', async (runtime_namespaced) => {
     await DynamoDBDocumentClient.from(client()).send(new PutCommand({
-      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: runtime_namespaced, memory_broker_only: true },
+      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: runtime_namespaced },
     }));
     await expect(metadata.checkRuntimeNamespaceReady()).rejects.toThrow('Session Runtime namespace is not ready');
   });
 
   it('accepts an explicitly ready marker through a strongly consistent read', async () => {
     await DynamoDBDocumentClient.from(client()).send(new PutCommand({
-      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true },
+      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
     }));
     const recording = client();
     const reads: unknown[] = [];
@@ -1605,7 +1605,7 @@ describe('ownsMainChat', () => {
 describe('tracked new Session Runtime admission', () => {
   const closed = async () => {
     await DynamoDBDocumentClient.from(client()).send(new PutCommand({ TableName: table,
-      Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true },
+      Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
     }));
   };
 

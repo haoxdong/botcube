@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gc
-import json
-import math
+import hashlib
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -33,30 +32,27 @@ from langchain_core.messages import (
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import BaseCheckpointSaver, empty_checkpoint
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph_checkpoint_aws import AgentCoreMemorySaver
 
 from agentcore_fake import (
     MEMORY_ID,
     PAGE_SIZE,
-    install_memory_broker_http,
-    memory_capability_props,
+    install_tagged_memory,
+    turn_identity,
 )
 from agentcore_fake import FakeAgentCoreMemory as _FakeAgentCoreMemory
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.memory import agentcore
-from botcube_harness_deepagents.memory.agentcore.turn_saver import TurnCheckpointSaver
-from botcube_harness_deepagents.memory_broker import MemoryCapability, turn_memory
 from conftest import ToolBindableFakeModel
 
-# deepagents snapshots `messages` every 50 updates; 30 Turns write 60.
 TURNS = 30
+# ListEvents calls of one state read: the newest checkpoint event, then its pending writes.
+READS_PER_STATE = 2
 THREAD = {'thread_id': 'session-1', 'actor_id': 'user-1'}
 CONFIG: RunnableConfig = {'configurable': THREAD}
-# AgentCore Memory events of a two-Turn Session the Harness recorded while it
-# served through CopilotKit; its checkpoints carry a `copilotkit` state channel.
-COPILOTKIT_ERA_SESSION = Path(__file__).parent / 'fixtures' / 'copilotkit-era-session-events.json'
 
 
 def _graph(checkpointer: BaseCheckpointSaver[str], tmp_path: Path, responses: list[str]) -> CompiledStateGraph[AgentState]:
@@ -94,23 +90,22 @@ def _write_long_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tupl
     return memory, streamed_messages, reader
 
 
-def _assert_one_pass(memory: _FakeAgentCoreMemory) -> None:
-    # The target checkpoint's read plus at most one walk over the thread's
-    # pages, not one full re-list per ancestor checkpoint.
-    pages = math.ceil(len(memory.events[('user-1', 'session-1')]) / PAGE_SIZE)
-    assert memory.list_events_calls <= 3 * pages
+def _assert_bounded_read(memory: _FakeAgentCoreMemory) -> None:
+    # The latest snapshot and its pending writes, never a walk over the Session's events.
+    assert len(memory.events[('user-1', 'session-1')]) > PAGE_SIZE
+    assert memory.list_events_calls <= READS_PER_STATE
 
 
-def test_long_agentcore_session_resumes_identically_in_one_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_long_agentcore_session_resumes_identically_from_its_latest_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     memory, streamed_messages, reader = _write_long_session(tmp_path, monkeypatch)
 
     resumed = reader.get_state(CONFIG).values['messages']
 
     assert [(m.type, m.content) for m in resumed] == streamed_messages
-    _assert_one_pass(memory)
+    _assert_bounded_read(memory)
 
 
-def test_long_agentcore_session_resumes_identically_in_one_pass_async(
+def test_long_agentcore_session_resumes_identically_from_its_latest_snapshot_async(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     memory, streamed_messages, reader = _write_long_session(tmp_path, monkeypatch)
@@ -118,238 +113,34 @@ def test_long_agentcore_session_resumes_identically_in_one_pass_async(
     resumed = asyncio.run(reader.aget_state(CONFIG)).values['messages']
 
     assert [(m.type, m.content) for m in resumed] == streamed_messages
-    _assert_one_pass(memory)
-
-
-def _turn_saver(monkeypatch: pytest.MonkeyPatch) -> tuple[_FakeAgentCoreMemory, Any]:
-    from botcube_harness_deepagents.memory.agentcore.turn_saver import (
-        TurnCheckpointSaver,
-    )
-
-    memory = _FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    return memory, agentcore.build_checkpointer(
-        MEMORY_ID, region_name='us-east-1', wrapper=TurnCheckpointSaver
-    )
-
-
-def _put(saver: Any, parent_id: str | None, checkpoint_id: str) -> None:
-    configurable = {**THREAD, 'checkpoint_ns': ''}
-    if parent_id:
-        configurable['checkpoint_id'] = parent_id
-    saver.put(
-        {'configurable': configurable},
-        {**empty_checkpoint(), 'id': checkpoint_id},
-        {'source': 'loop', 'step': 0, 'parents': {}},
-        {},
-    )
-
-
-def _turn_config(actor_id: str = 'user-1', namespace: str = '', checkpoint_id: str | None = None) -> RunnableConfig:
-    configurable = {'thread_id': 'session-1', 'actor_id': actor_id, 'checkpoint_ns': namespace}
-    if checkpoint_id:
-        configurable['checkpoint_id'] = checkpoint_id
-    return {'configurable': configurable}
-
-
-def test_a_turn_reads_back_the_latest_checkpoint_of_its_actor_and_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
-    _memory, saver = _turn_saver(monkeypatch)
-    metadata = {'source': 'loop', 'step': 0, 'parents': {}}
-
-    def put(config: RunnableConfig, checkpoint_id: str) -> RunnableConfig:
-        return saver.put(config, {**empty_checkpoint(), 'id': checkpoint_id}, metadata, {})
-
-    first = put(_turn_config(), 'checkpoint-1')
-    second = put(first, 'checkpoint-2')
-    put(_turn_config('user-2'), 'checkpoint-3')
-    put(_turn_config(namespace='tools'), 'checkpoint-4')
-
-    assert (first, second) == (
-        _turn_config(checkpoint_id='checkpoint-1'),
-        _turn_config(checkpoint_id='checkpoint-2'),
-    )
-    latest = asyncio.run(saver.aget_tuple(_turn_config()))
-    assert (latest.config, latest.parent_config) == (second, first)
-    assert saver.get_tuple(first).parent_config is None
-    # A read that names no namespace reads the root one.
-    unnamed = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
-    assert saver.get_tuple(unnamed).checkpoint['id'] == 'checkpoint-2'
-    assert saver.get_tuple(_turn_config('user-2')).checkpoint['id'] == 'checkpoint-3'
-    assert saver.get_tuple(_turn_config(namespace='tools')).checkpoint['id'] == 'checkpoint-4'
-
-
-def test_a_turn_checkpoint_needs_a_configurable_section(monkeypatch: pytest.MonkeyPatch) -> None:
-    _memory, saver = _turn_saver(monkeypatch)
-
-    with pytest.raises(ValueError, match='^Checkpoint config carries no configurable section$'):
-        saver.put({}, empty_checkpoint(), {'source': 'loop', 'step': 0, 'parents': {}}, {})
-
-
-def test_a_flushed_turn_records_channel_values_writes_and_their_task_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory, saver = _turn_saver(monkeypatch)
-    version = saver.get_next_version(None, None)
-    config = saver.put(
-        _turn_config(namespace='tools'),
-        {
-            **empty_checkpoint(),
-            'id': 'checkpoint-1',
-            'channel_values': {'topic': 'copper'},
-            'channel_versions': {'topic': version},
-        },
-        {'source': 'loop', 'step': 0, 'parents': {}},
-        {'topic': version},
-    )
-    saver.put_writes(config, [('topic', 'zinc')], 'task-1')
-    asyncio.run(saver.aput_writes(config, [('topic', 'tin')], 'task-2'))
-    asyncio.run(saver.aput_writes(config, [('topic', 'lead')], 'task-3', 'path-3'))
-
-    asyncio.run(saver.aflush())
-
-    record = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
-    persisted = record.get_tuple(_turn_config(namespace='tools'))
-    assert persisted.checkpoint['channel_values'] == {'topic': 'copper'}
-    assert persisted.pending_writes == [
-        ('task-1', 'topic', 'zinc'),
-        ('task-2', 'topic', 'tin'),
-        ('task-3', 'topic', 'lead'),
-    ]
-    stored = [
-        record.checkpoint_event_client.serializer.deserialize_event(item['blob'])
-        for events in memory.events.values()
-        for event in events
-        for item in event['payload']
-    ]
-    assert sorted((e.event_type, e.checkpoint_ns) for e in stored if e.event_type != 'writes') == [
-        ('channel_data', 'tools'),
-        ('checkpoint', 'tools'),
-    ]
-    assert [(w.task_id, w.task_path) for event in stored if event.event_type == 'writes' for w in event.writes] == [
-        ('task-1', ''),
-        ('task-2', ''),
-        ('task-3', 'path-3'),
-    ]
-
-
-def test_a_turn_replays_channel_history_from_its_buffer_without_reading_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory, saver = _turn_saver(monkeypatch)
-    metadata = {'source': 'loop', 'step': 0, 'parents': {}}
-    first = saver.put(
-        _turn_config(), {**empty_checkpoint(), 'id': 'checkpoint-1', 'channel_values': {'topic': 'copper'}}, metadata, {}
-    )
-    saver.put(first, {**empty_checkpoint(), 'id': 'checkpoint-2'}, metadata, {})
-
-    history = saver.get_delta_channel_history(config=_turn_config(), channels=['topic'])
-
-    assert history == {'topic': {'writes': [], 'seed': 'copper'}}
-    assert memory.list_events_calls == 0
-
-
-def test_a_turn_lists_the_checkpoints_the_record_holds(monkeypatch: pytest.MonkeyPatch) -> None:
-    _memory, saver = _turn_saver(monkeypatch)
-    _put(saver, None, 'checkpoint-1')
-    _put(saver, 'checkpoint-1', 'checkpoint-2')
-    asyncio.run(saver.aflush())
-    before = _turn_config(checkpoint_id='checkpoint-2')
-
-    def listed(**kwargs: Any) -> list[str]:
-        return [t.checkpoint['id'] for t in saver.list(CONFIG, **kwargs)]
-
-    async def alisted(**kwargs: Any) -> list[str]:
-        return [t.checkpoint['id'] async for t in saver.alist(CONFIG, **kwargs)]
-
-    for read in (listed, lambda **kwargs: asyncio.run(alisted(**kwargs))):
-        assert read() == ['checkpoint-2', 'checkpoint-1']
-        assert len(read(limit=1)) == 1
-        assert read(before=before) == ['checkpoint-1']
-
-
-def test_a_flushed_turn_stays_readable_without_reading_the_record(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory, saver = _turn_saver(monkeypatch)
-    _put(saver, None, 'checkpoint-1')
-    _put(saver, 'checkpoint-1', 'checkpoint-2')
-
-    asyncio.run(saver.aflush())
-    latest = asyncio.run(saver.aget_tuple(CONFIG))
-
-    assert latest.checkpoint['id'] == 'checkpoint-2'
-    assert latest.parent_config['configurable']['checkpoint_id'] == 'checkpoint-1'
-    assert memory.list_events_calls == 0
-
-
-def test_a_checkpoint_put_during_a_flush_is_kept_for_the_next_flush(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory, saver = _turn_saver(monkeypatch)
-    create_event = memory.create_event
-
-    def create_event_while_the_turn_continues(**kwargs: Any) -> dict[str, Any]:
-        if memory.create_event_calls == 0:
-            _put(saver, 'checkpoint-1', 'checkpoint-2')
-        return create_event(**kwargs)
-
-    memory.create_event = create_event_while_the_turn_continues
-    _put(saver, None, 'checkpoint-1')
-
-    asyncio.run(saver.aflush())
-    assert asyncio.run(saver.aget_tuple(CONFIG)).checkpoint['id'] == 'checkpoint-2'
-    asyncio.run(saver.aflush())
-
-    record = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
-    assert [t.checkpoint['id'] for t in record.list(CONFIG)] == ['checkpoint-2', 'checkpoint-1']
-
-
-def test_a_failed_flush_raises_and_the_next_flush_persists_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    memory, saver = _turn_saver(monkeypatch)
-    create_event = memory.create_event
-
-    def unavailable(**_kwargs: Any) -> NoReturn:
-        raise RuntimeError('AgentCore Memory unavailable')
-
-    memory.create_event = unavailable
-    _put(saver, None, 'checkpoint-1')
-    _put(saver, 'checkpoint-1', 'checkpoint-2')
-
-    with pytest.raises(RuntimeError, match='unavailable'):
-        asyncio.run(saver.aflush())
-    memory.create_event = create_event
-    asyncio.run(saver.aflush())
-
-    record = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
-    assert [t.checkpoint['id'] for t in record.list(CONFIG)] == ['checkpoint-2', 'checkpoint-1']
+    _assert_bounded_read(memory)
 
 
 def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every checkpoint of a Turn reaches the record, so replay walks the whole Session."""
-    from botcube_harness_deepagents import serving, session_api
+    """Each Turn's latest snapshot holds the whole Session, so replay and a restarted Harness see it all."""
+    from botcube_harness_deepagents import session_api
 
     memory = _FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    install_memory_broker_http(monkeypatch, memory)
-    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
+    install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, '_GRAPH', None)
-    writer = _graph(
-        serving._build_checkpointer(),
-        tmp_path,
-        [f'Answer {turn}' for turn in range(TURNS)],
-    )
-    writer_saver = writer.checkpointer
-    assert isinstance(writer_saver, TurnCheckpointSaver)
+
+    def turn_checkpointer() -> BaseCheckpointSaver[str]:
+        identity = turn_identity('user-1', 'user-1', 'session-1')
+        return agentcore.turn_memory(MEMORY_ID, identity, region_name='us-east-1', run_id='run-1')[0]
+
+    writer = _graph(turn_checkpointer(), tmp_path, [f'Answer {turn}' for turn in range(TURNS)])
 
     async def run_turns() -> list[AnyMessage]:
         messages: list[AnyMessage] = []
         for turn in range(TURNS):
-            async with writer_saver.aflush_on_exit():
-                state = await writer.ainvoke(
-                    {'messages': [HumanMessage(f'Question {turn}')]}, config=CONFIG
-                )
+            state = await writer.ainvoke({'messages': [HumanMessage(f'Question {turn}')]}, config=CONFIG)
             messages = state['messages']
         return messages
 
-    with turn_memory(MemoryCapability(**{**memory_capability_props(), 'actor_id': 'user-1'})):
-        streamed = asyncio.run(run_turns())
-    assert memory.create_event_calls == TURNS + 1
+    streamed = asyncio.run(run_turns())
     replayed = asyncio.run(session_api.get_session('user-1', 'session-1'))
 
     assert len(streamed) == 2 * TURNS
@@ -357,29 +148,18 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
         ({'human': 'user', 'ai': 'assistant'}[m.type], m.content) for m in streamed
     ]
 
-    # A restarted Harness (empty buffer) continues the Session from the record.
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
-    restarted = _graph(serving._build_checkpointer(), tmp_path, ['Answer after restart'])
-    restarted_saver = restarted.checkpointer
-    assert isinstance(restarted_saver, TurnCheckpointSaver)
+    # A restarted Harness continues the Session from the record.
+    restarted = _graph(turn_checkpointer(), tmp_path, ['Answer after restart'])
+    continued = asyncio.run(restarted.ainvoke({'messages': [HumanMessage('Question after restart')]}, config=CONFIG))
+    replayed = asyncio.run(session_api.get_session('user-1', 'session-1'))
 
-    async def run_turn_after_restart() -> list[AnyMessage]:
-        async with restarted_saver.aflush_on_exit():
-            state = await restarted.ainvoke(
-                {'messages': [HumanMessage('Question after restart', id='question-after-restart')]}, config=CONFIG
-            )
-        return state['messages']
-
-    with turn_memory(MemoryCapability(**{**memory_capability_props(), 'actor_id': 'user-1'})):
-        continued = asyncio.run(run_turn_after_restart())
-    # The read names the message it expects, as the Chat Service does once no Turn runs.
-    replayed = asyncio.run(session_api.get_session('user-1', 'session-1', 'question-after-restart'))
-
-    assert len(continued) == 2 * TURNS + 2
-    assert [m['content'] for m in replayed] == [m.content for m in continued]
+    assert len(continued['messages']) == 2 * TURNS + 2
+    assert [m['content'] for m in replayed] == [m.content for m in continued['messages']]
 
 
-def test_a_purge_deletes_every_event_of_the_session_at_agentcores_delete_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_purge_deletes_every_event_of_the_session_and_its_writes_sessions_at_agentcores_delete_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from botcube_harness_deepagents import session_api
     from botcube_harness_deepagents.memory.agentcore import purge as purge_module
 
@@ -393,19 +173,31 @@ def test_a_purge_deletes_every_event_of_the_session_at_agentcores_delete_rate(mo
 
     monkeypatch.setattr(purge_module, 'monotonic', lambda: memory.clock)
     monkeypatch.setattr(purge_module, 'sleep', sleep)
+    writes = 'lgw-' + hashlib.sha256(b'session-1').hexdigest()[:32]
+    others = 'lgw-' + hashlib.sha256(b'session-2').hexdigest()[:32]
     for _ in range(PAGE_SIZE + 12):  # more than one page of events
         memory.seed('user-1', 'session-1')
+    for key in ('checkpoint-1', 'checkpoint-2'):
+        memory.seed('user-1', f'{writes}-{key}')
     memory.seed('user-1', 'session-2')
+    memory.seed('user-1', f'{others}-checkpoint-1')
     memory.seed('user-2', 'session-1')
+    memory.seed('user-2', f'{writes}-checkpoint-1')
     purge = {'operation': 'purge', 'sessionId': 'session-1', 'userId': 'user-1'}
+    deleted = PAGE_SIZE + 12 + 2
 
     assert asyncio.run(session_api.handle(purge)) == {}
 
     assert memory.events[('user-1', 'session-1')] == []
-    assert len(memory.events[('user-1', 'session-2')]) == 1
-    assert len(memory.events[('user-2', 'session-1')]) == 1
+    assert memory.events[('user-1', f'{writes}-checkpoint-1')] == []
+    assert memory.events[('user-1', f'{writes}-checkpoint-2')] == []
+    for kept in [('user-1', 'session-2'), ('user-1', f'{others}-checkpoint-1'), ('user-2', 'session-1'), ('user-2', f'{writes}-checkpoint-1')]:
+        assert len(memory.events[kept]) == 1
+    # AgentCore keeps listing emptied sessions: the purge is done once their events are gone.
+    listed = memory.list_sessions(memoryId=MEMORY_ID, actorId='user-1')['sessionSummaries']
+    assert {f'{writes}-checkpoint-1', f'{writes}-checkpoint-2'} <= {summary['sessionId'] for summary in listed}
     # DeleteEvent allows 5 TPS per actor and Session: no 6 deletes within one second.
-    assert len(memory.deleted_at) == PAGE_SIZE + 12
+    assert len(memory.deleted_at) == deleted
     assert all(
         later - earlier >= 1.0 - 1e-9
         for earlier, later in zip(memory.deleted_at, memory.deleted_at[5:], strict=False)
@@ -413,7 +205,7 @@ def test_a_purge_deletes_every_event_of_the_session_at_agentcores_delete_rate(mo
 
     # A purge retry is harmless.
     assert asyncio.run(session_api.handle(purge)) == {}
-    assert len(memory.deleted_at) == PAGE_SIZE + 12
+    assert len(memory.deleted_at) == deleted
 
 
 class _ToolCallingModel(BaseChatModel):
@@ -465,25 +257,20 @@ class _HeldModel(_ToolCallingModel):
             yield chunk
 
 
-def _slow_flush(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> tuple[asyncio.Event, asyncio.Event]:
-    """Hold each checkpoint flush until released, logging when it persists: (flushing, persisted)."""
-    flushing, persisted = asyncio.Event(), asyncio.Event()
-    from botcube_harness_deepagents.turn_publication import _PublishingTurnSaver
+def _slow_checkpoints(monkeypatch: pytest.MonkeyPatch, log: list[str]) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold each checkpoint write until released, logging when it persists: (writing, persisted)."""
+    writing, persisted = asyncio.Event(), asyncio.Event()
+    aput = AgentCoreMemorySaver.aput
 
-    aflush = _PublishingTurnSaver.aflush
-
-    async def persist(saver: _PublishingTurnSaver, session: tuple[str, str] | None = None) -> None:
+    async def slow_put(saver: AgentCoreMemorySaver, *args: Any) -> RunnableConfig:
+        writing.set()
         await persisted.wait()
-        await aflush(saver, session)
-        log.append('flushed')
+        written = await aput(saver, *args)
+        log.append('checkpointed')
+        return written
 
-    async def slow_flush(saver: _PublishingTurnSaver, session: tuple[str, str] | None = None) -> None:
-        flushing.set()
-        # The persistence call runs on in its executor however its caller is cancelled.
-        await asyncio.shield(persist(saver, session))
-
-    monkeypatch.setattr(_PublishingTurnSaver, 'aflush', slow_flush)
-    return flushing, persisted
+    monkeypatch.setattr(AgentCoreMemorySaver, 'aput', slow_put)
+    return writing, persisted
 
 
 def _finishes_only_started_steps(events: list[Any]) -> bool:
@@ -543,11 +330,9 @@ def _serve_session(
 
     from botcube_harness_deepagents import serving, session_api
 
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    install_memory_broker_http(monkeypatch, memory)
+    install_tagged_memory(monkeypatch, memory)
     for name, value in {
         'AGENTCORE_MEMORY_ID': MEMORY_ID,
-        '_DEFERRED_SAVER': None,
         '_CHECKPOINTER': None,
         '_STORE': None,
         '_AGENTS': {},
@@ -560,7 +345,6 @@ def _serve_session(
             agent_name='round-trip',
             execute_description='Runs shell commands.',
             prepare_invocation=lambda _input: serving.InvocationAuth('user-1', False, None),
-            record_belongs_to_actor=lambda _record, _actor: False,
             actor_path_segment=lambda value: value,
             sanitize_actor_id=lambda value: value,
             build_backend=lambda _env: LocalShellBackend(
@@ -584,7 +368,7 @@ def _serve_session(
             'tools': [],
             'context': [],
             'state': {},
-            'forwarded_props': {'sessionUserId': 'user-1', 'turnMemory': memory_capability_props()},
+            'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', session_id)},
         })
         received = [event async for event in serving.invoke(run, context)]
         lock = serving._SESSION_TURNS._locks.get(('user-1', session_id))
@@ -752,7 +536,7 @@ async def _stop(run_id: str) -> list[Any]:
 
     run = RunAgentInput.model_validate({
         'thread_id': 'session-1', 'run_id': run_id, 'messages': [], 'tools': [], 'context': [], 'state': {},
-        'forwarded_props': {'stop': True, 'sessionUserId': 'user-1', 'turnMemory': memory_capability_props()},
+        'forwarded_props': {'stop': True, 'sessionUserId': 'user-1'},
     })
     return [event async for event in serving.invoke(run, serving._RequestContext('agentcore-session-1'))]
 
@@ -856,8 +640,8 @@ def test_a_reply_cut_short_by_stop_stays_in_the_session(
 def test_a_stopped_turns_cut_reply_reaches_the_sessions_history_issue_3354(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stopped Turn saves its request and cut reply, so it snapshots them as a finished Turn does."""
-    from botcube_harness_deepagents import serving, session_api
+    """A stopped Turn saves its request and cut reply, as a finished Turn does."""
+    from botcube_harness_deepagents import serving
 
     memory = _FakeAgentCoreMemory()
     session = _serve_session(tmp_path, monkeypatch, memory)
@@ -874,28 +658,20 @@ def test_a_stopped_turns_cut_reply_reaches_the_sessions_history_issue_3354(
         await _stop(f'run-{len(sent)}')
         events = await running
         cut_reply_id = next(event.message_id for event in events if event.type == 'TEXT_MESSAGE_START')
-        memory.listed.clear()
 
-        replayed = await session_api.handle({
-            'operation': 'get', 'sessionId': 'session-1', 'userId': 'user-1', 'contains': f'run-{len(sent)}',
-        })
-        assert replayed['messages'] == [
+        assert await session.replay() == [
             *sent,
             {'id': cut_reply_id, 'role': 'assistant', 'content': 'Duration measures rate risk.', 'metadata': ANY},
         ]
-        assert memory.listed == {'session-1-messages': 1}
 
     asyncio.run(asyncio.wait_for(stop_after_a_finished_turn(), timeout=10))
 
 
 @pytest.mark.parametrize('failed', [False, True])
-def test_a_settled_turn_marker_serves_history_without_rebuilding_issue_3354(
+def test_a_settled_turn_serves_its_request_in_history_issue_3354(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool
 ) -> None:
-    from botcube_harness_deepagents import session_api
-
-    memory = _FakeAgentCoreMemory()
-    session = _serve_session(tmp_path, monkeypatch, memory)
+    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
     if failed:
 
         def unavailable(*_args: Any, **_kwargs: Any) -> NoReturn:
@@ -911,16 +687,7 @@ def test_a_settled_turn_marker_serves_history_without_rebuilding_issue_3354(
             assert events[-1].message == 'provider unavailable'
         else:
             assert events[-1].type == 'RUN_FINISHED'
-        monkeypatch.setattr(session_api, '_GRAPH', None)
-        snapshot = await session_api._graph().checkpointer.aread_messages_snapshot('user-1', 'session-1')
-        assert snapshot is not None
-        assert snapshot.checked == 'run-1'
-        memory.listed.clear()
-        replayed = await session_api.handle({
-            'operation': 'get', 'sessionId': 'session-1', 'userId': 'user-1', 'contains': 'run-1',
-        })
-        assert replayed['messages'][0] == {'id': 'original-request', 'role': 'user', 'content': 'List the files'}
-        assert memory.listed == {'session-1-messages': 1}
+        assert (await session.replay())[0] == {'id': 'original-request', 'role': 'user', 'content': 'List the files'}
 
     asyncio.run(scenario())
 
@@ -992,27 +759,31 @@ def test_a_turn_stopped_while_its_tool_runs_keeps_the_recorded_tool_call(
         announced = next(event.message_id for event in events if event.type == 'TEXT_MESSAGE_START')
 
         call = {'id': 'call-1', 'type': 'function', 'function': {'name': 'ls', 'arguments': '{"path": "/"}'}}
-        assert await session.replay() == [
+        replayed = await session.replay()
+        # The saver answers the cut call with a placeholder result on load.
+        assert replayed == [
             {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'},
             {'id': announced, 'role': 'assistant', 'content': 'Let me look.', 'toolCalls': [call], 'metadata': ANY},
+            {'id': ANY, 'role': 'tool', 'content': "Tool call 'ls' with id 'call-1' was interrupted before completion.",
+             'toolCallId': 'call-1', 'error': 'error'},
         ]
+        assert await session.replay() == replayed
 
     asyncio.run(asyncio.wait_for(stop_mid_tool(), timeout=10))
 
 
-def test_a_cut_reply_that_cannot_be_kept_still_flushes_and_fails_the_next_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_cut_reply_that_cannot_be_kept_fails_its_turn_loud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retrieved_turn_failure: None,
 ) -> None:
-    """Keeping the cut reply fails loud, as a failed flush does, and never skips the flush (ADR 0030)."""
+    """Keeping the cut reply fails the stopped Turn loud (ADR 0030); the Session stays answerable."""
     from botcube_harness_deepagents import serving
 
     session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
     model = _StoppedMidReplyModel()
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
-    failure = RuntimeError('cut reply not kept')
 
     async def failing_keep(*_args: Any) -> NoReturn:
-        raise failure
+        raise RuntimeError('cut reply not kept')
 
     monkeypatch.setattr(serving._OpenReply, 'keep', failing_keep)
     first = {'id': 'user-message-1', 'role': 'user', 'content': 'Explain duration'}
@@ -1025,9 +796,8 @@ def test_a_cut_reply_that_cannot_be_kept_still_flushes_and_fails_the_next_turn(
         await asyncio.gather(running, return_exceptions=True)
 
         assert await session.replay() == [first]
-        with pytest.raises(RuntimeError) as reported:
-            await session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}])
-        assert reported.value is failure
+        events = await session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}])
+        assert events[-1].type == 'RUN_FINISHED'
 
     asyncio.run(asyncio.wait_for(stop_mid_reply(), timeout=10))
 
@@ -1089,10 +859,10 @@ def test_of_two_turns_sent_while_a_stopped_turn_settles_only_the_later_runs(
     asyncio.run(two_turns_after_stop())
 
 
-def test_the_turn_sent_after_stop_starts_once_the_stopped_turns_flush_has_persisted(
+def test_the_turn_sent_after_stop_starts_once_the_stopped_turns_checkpoints_have_persisted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tearing down the stopped Turn's stream mid-flush leaves the flush to finish before the next Turn."""
+    """Tearing down the stopped Turn's stream mid-write leaves its checkpoints to persist before the next Turn."""
     from botcube_harness_deepagents import serving
 
     session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
@@ -1100,47 +870,26 @@ def test_the_turn_sent_after_stop_starts_once_the_stopped_turns_flush_has_persis
     monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
     first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
 
-    async def stop_mid_flush_then_send() -> None:
-        flushing, persisted = _slow_flush(monkeypatch, model.calls)
+    async def stop_mid_write_then_send() -> None:
+        writing, persisted = _slow_checkpoints(monkeypatch, model.calls)
         stopped = asyncio.create_task(session.events([first]))
-        await flushing.wait()
+        await writing.wait()
         stopped.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await stopped
         sent = asyncio.create_task(session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}]))
-        # Room for the next Turn to run, were it not waiting on the flush.
+        # Room for the next Turn to run, were it not waiting on the checkpoint writes.
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(asyncio.shield(sent), timeout=1)
+        assert 'model: Again' not in model.calls
         persisted.set()
         assert (await asyncio.wait_for(sent, timeout=10))[-1].type == 'RUN_FINISHED'
-        assert model.calls.index('flushed') < model.calls.index('model: Again')
+        assert 'checkpointed' in model.calls[:model.calls.index('model: Again')]
+        replayed = await session.replay()
+        assert [message['id'] for message in replayed if message['role'] == 'user'] == ['user-message-1', 'user-message-2']
+        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
 
-    asyncio.run(stop_mid_flush_then_send())
-
-
-def test_a_turn_that_finished_before_the_next_was_sent_stays_finished(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The next Turn, sent while the last one flushes its checkpoints, does not mark that one stopped."""
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
-    first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
-
-    async def send_while_flushing() -> None:
-        flushing, persisted = _slow_flush(monkeypatch, model.calls)
-        finished = asyncio.create_task(session.events([first]))
-        await flushing.wait()
-        sent = asyncio.create_task(session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}]))
-        for _ in range(50):
-            await asyncio.sleep(0)
-        persisted.set()
-        events, _ = await asyncio.wait_for(asyncio.gather(finished, sent), timeout=10)
-        assert [event.type for event in events if event.type in ('RUN_FINISHED', 'RUN_ERROR')] == ['RUN_FINISHED']
-
-    asyncio.run(send_while_flushing())
+    asyncio.run(stop_mid_write_then_send())
 
 
 def test_a_streamed_session_reopens_and_keeps_recorded_ids_when_the_client_resends_history(
@@ -1196,155 +945,6 @@ def test_a_turn_streams_neither_the_graphs_raw_events_nor_its_state_issue_3291(
     assert [event.type for event in events if event.raw_event is not None] == []
 
 
-def test_a_turn_reads_the_sessions_record_once_on_a_warm_or_restarted_harness_issue_3265(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The Harness reads a Turn's state four times; each read used to page the record up to three times."""
-    from botcube_harness_deepagents import serving
-
-    memory = _FakeAgentCoreMemory()
-    session = _serve_session(tmp_path, monkeypatch, memory)
-
-    async def turn(sent: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
-        memory.listed.clear()
-        await session.turn(sent)
-        # The Session's own record; its messages snapshot lives beside it.
-        passes = memory.listed['session-1']
-        return await session.replay(), passes
-
-    async def scenario() -> tuple[list[str], list[int]]:
-        replayed, _ = await turn([{'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}])
-        replayed, _ = await turn([*replayed, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}])
-        replayed, warm = await turn([*replayed, {'id': 'user-message-3', 'role': 'user', 'content': 'Once more'}])
-        # A new VM: no Turn buffer and no built agent.
-        for name, value in {'_DEFERRED_SAVER': None, '_CHECKPOINTER': None, '_STORE': None, '_AGENTS': {}}.items():
-            monkeypatch.setattr(serving, name, value)
-        replayed, cold = await turn([*replayed, {'id': 'user-message-4', 'role': 'user', 'content': 'Last one'}])
-        return [message['id'] for message in replayed], [warm, cold]
-
-    replayed, passes = asyncio.run(scenario())
-
-    assert [message_id for message_id in replayed if message_id.startswith('user-message')] == [
-        'user-message-1', 'user-message-2', 'user-message-3', 'user-message-4',
-    ]
-    assert passes == [0, 1]
-
-
-def test_warm_turn_preserves_exact_replay_without_reading_durable_ancestry_issue_3701(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from botcube_harness_deepagents import serving
-
-    memory = _FakeAgentCoreMemory()
-    session = _serve_session(tmp_path, monkeypatch, memory)
-    questions: list[str] = []
-    original_stream = _ToolCallingModel._stream
-
-    def inspect_history(model: _ToolCallingModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
-        assert [message.content for message in messages if isinstance(message, HumanMessage)] == questions
-        yield from original_stream(model, messages, *args, **kwargs)
-
-    monkeypatch.setattr(_ToolCallingModel, '_stream', inspect_history)
-
-    async def scenario() -> tuple[list[int], int]:
-        expected: list[dict[str, Any]] = []
-        warm_reads = []
-        for number in range(1, 5):
-            question = {'id': f'user-message-{number}', 'role': 'user', 'content': f'List {number}'}
-            questions.append(f'List {number}')
-            memory.listed.clear()
-            events = await session.events([question])
-            reads = memory.listed['session-1']
-            assert events[-1].type == 'RUN_FINISHED'
-            replayed = await session.replay()
-            assert replayed[:len(expected)] == expected
-            assert replayed[len(expected)] == question
-            assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
-            expected = replayed
-            if number > 1:
-                warm_reads.append(reads)
-        for name, value in {'_DEFERRED_SAVER': None, '_CHECKPOINTER': None, '_STORE': None, '_AGENTS': {}}.items():
-            monkeypatch.setattr(serving, name, value)
-        question = {'id': 'user-message-5', 'role': 'user', 'content': 'After restart'}
-        questions.append('After restart')
-        memory.listed.clear()
-        events = await session.events([question])
-        recovered_reads = memory.listed['session-1']
-        assert events[-1].type == 'RUN_FINISHED'
-        replayed = await session.replay()
-        assert replayed[:len(expected)] == expected
-        assert replayed[len(expected)] == question
-        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
-        recovered_question = {'id': 'user-message-6', 'role': 'user', 'content': 'Warm after restart'}
-        questions.append('Warm after restart')
-        memory.listed.clear()
-        events = await session.events([recovered_question])
-        warmed_after_restart = memory.listed['session-1']
-        assert events[-1].type == 'RUN_FINISHED'
-        assert (await session.replay())[:len(replayed)] == replayed
-        assert warmed_after_restart == 0
-        return warm_reads, recovered_reads
-
-    warm_reads, recovered_reads = asyncio.run(scenario())
-    assert warm_reads == [0, 0, 0]
-    assert recovered_reads == 1
-
-
-def test_warm_ancestry_cache_prunes_when_a_new_messages_seed_is_published_issue_3701(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from botcube_harness_deepagents import serving
-
-    memory = _FakeAgentCoreMemory()
-    session = _serve_session(tmp_path, monkeypatch, memory)
-
-    async def scenario() -> tuple[list[int], list[int], list[dict[str, Any]]]:
-        reads, retained = [], []
-        for number in range(30):
-            memory.listed.clear()
-            events = await session.events([{'id': f'question-{number}', 'role': 'user', 'content': f'List {number}'}])
-            assert events[-1].type == 'RUN_FINISHED'
-            reads.append(memory.listed['session-1'])
-            saver = serving._DEFERRED_SAVER
-            assert saver is not None
-            retained.append(len(saver._checkpoints))
-        return reads, retained, await session.replay()
-
-    reads, retained, replayed = asyncio.run(scenario())
-    assert reads == [1, *([0] * 29)]
-    assert any(new < old for old, new in zip(retained, retained[1:], strict=False))
-    assert [message['content'] for message in replayed if message['role'] == 'user'] == [f'List {number}' for number in range(30)]
-    assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
-
-
-def test_recovered_ancestry_keeps_pending_writes_without_repersisting_them_issue_3701(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    memory, writer = _turn_saver(monkeypatch)
-    _put(writer, None, 'checkpoint-1')
-    writer.put_writes(_turn_config(checkpoint_id='checkpoint-1'), [('messages', 'pending one'), ('topic', 'pending two')], 'task-a')
-    _put(writer, 'checkpoint-1', 'checkpoint-2')
-    writer.flush()
-    reader = TurnCheckpointSaver(writer._saver)
-    history = reader.get_delta_channel_history(config=_turn_config(checkpoint_id='checkpoint-2'), channels=['messages'])
-    assert history == {'messages': {'writes': [('task-a', 'messages', 'pending one')]}}
-
-    def forbid_durable_read(_config: RunnableConfig) -> NoReturn:
-        raise AssertionError('Recovered ancestry must stay readable from the buffered checkpoint')
-
-    monkeypatch.setattr(reader._saver, 'get_tuple', forbid_durable_read)
-    recovered = reader.get_tuple(_turn_config(checkpoint_id='checkpoint-1'))
-    assert recovered is not None
-    assert recovered.config == _turn_config(checkpoint_id='checkpoint-1')
-    assert recovered.parent_config is None
-    assert recovered.metadata.get('source') == 'loop'
-    assert recovered.metadata.get('step') == 0
-    assert recovered.pending_writes == [('task-a', 'messages', 'pending one'), ('task-a', 'topic', 'pending two')]
-    written = memory.create_event_calls
-    reader.flush()
-    assert memory.create_event_calls == written
-
-
 class _MissingToolModel(_ToolCallingModel):
     """Calls a tool the agent does not have, so the Turn's tool result is an error."""
 
@@ -1356,7 +956,7 @@ class _MissingToolModel(_ToolCallingModel):
         yield ChatGenerationChunk(message=AIMessageChunk(content='That tool failed.'))
 
 
-def test_a_turns_persisted_snapshot_holds_the_messages_it_produced_issue_3265(
+def test_a_turns_persisted_state_holds_the_messages_it_produced_issue_3265(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from botcube_harness_deepagents import serving
@@ -1365,7 +965,7 @@ def test_a_turns_persisted_snapshot_holds_the_messages_it_produced_issue_3265(
 
     def use(model: BaseChatModel, *, restart: bool) -> None:
         monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
-        names = ('_DEFERRED_SAVER', '_CHECKPOINTER', '_STORE', '_AGENTS') if restart else ('_AGENTS',)
+        names = ('_CHECKPOINTER', '_STORE', '_AGENTS') if restart else ('_AGENTS',)
         for name in names:
             monkeypatch.setattr(serving, name, {} if name == '_AGENTS' else None)
 
@@ -1374,14 +974,10 @@ def test_a_turns_persisted_snapshot_holds_the_messages_it_produced_issue_3265(
         events = await session.events(sent)
         assert events[-1].type == 'RUN_FINISHED'
         assert 'MESSAGES_SNAPSHOT' not in [event.type for event in events]
-        assert serving._CHECKPOINTER is not None
-        with turn_memory(MemoryCapability(**{**memory_capability_props(), 'actor_id': 'user-1'})):
-            snapshot = await serving._CHECKPOINTER.aread_messages_snapshot('user-1', 'session-1')
-        assert snapshot is not None
         replayed = await session.replay()
         # The Turn's user message, tool call, tool result and answer.
         assert len(replayed) == len(sent) + 3
-        assert snapshot.messages == replayed
+        assert replayed[:len(sent)] == sent
         return replayed
 
     async def scenario() -> list[str | None]:
@@ -1464,7 +1060,7 @@ def test_the_steps_of_a_stopped_turn_stay_under_it_once_the_next_turn_resends_th
     first = {'id': 'user-message-1', 'role': 'user', 'content': 'Research'}
     run = RunAgentInput.model_validate({
         'thread_id': 'session-1', 'run_id': 'run-1', 'messages': [first], 'tools': [], 'context': [],
-        'state': {}, 'forwarded_props': {'sessionUserId': 'user-1', 'turnMemory': memory_capability_props()},
+        'state': {}, 'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', 'session-1')},
     })
 
     async def stop_then_send() -> None:
@@ -1515,40 +1111,6 @@ def test_a_resent_result_still_repairs_its_interrupted_recorded_call(tmp_path: P
     merged = agent.langgraph_default_merge_state({'messages': recorded}, [resent], run)
 
     assert [(message.id, message.content) for message in merged['messages']] == [('tool-1', 'a.txt')]
-
-
-def test_a_session_recorded_under_copilotkit_replays_and_continues(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A Session whose checkpoints carry CopilotKit's `copilotkit` state channel still opens."""
-    memory = _FakeAgentCoreMemory()
-    memory.events[('user-1', 'session-1')] = json.loads(COPILOTKIT_ERA_SESSION.read_text())
-    session = _serve_session(tmp_path, monkeypatch, memory)
-
-    async def round_trip() -> None:
-        replayed = await session.replay()
-        assert [(message['role'], message['content']) for message in replayed] == [
-            ('user', 'List the files'),
-            ('assistant', ''),
-            ('tool', ANY),
-            ('assistant', 'Listed the files.'),
-            ('user', 'Again'),
-            ('assistant', ''),
-            ('tool', ANY),
-            ('assistant', 'Listed the files.'),
-        ]
-
-        next_message = {'id': 'user-message-3', 'role': 'user', 'content': 'Once more'}
-        held = await session.turn([*replayed, next_message])
-        replayed_again = await session.replay()
-        assert len(held) == len(replayed_again) == 12
-        assert held[:9] == [message['id'] for message in replayed_again[:9]]
-        assert replayed_again[:9] == [*replayed, next_message]
-        assert [message['role'] for message in replayed_again[9:]] == [
-            'assistant',
-            'tool',
-            'assistant',
-        ]
-
-    asyncio.run(round_trip())
 
 
 @pytest.mark.parametrize('summarize', [False, True])
@@ -1602,164 +1164,6 @@ def test_a_session_recorded_with_a_resent_tool_result_answers_its_next_turn(
     asyncio.run(round_trip())
 
 
-def test_replacement_reports_prior_checkpoint_flush_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, "build_model", lambda **kwargs: model)
-    first = {"id": "user-message-1", "role": "user", "content": "List the files"}
-    failure = RuntimeError("checkpoint flush unavailable")
-
-    async def run() -> None:
-        held, released = asyncio.Event(), asyncio.Event()
-        settled = asyncio.Event()
-        settled.set()
-        model.gate = (held, released, settled)
-        stopped = asyncio.create_task(session.events([first]))
-        await _await_fixture_admission_or_public_completion(stopped, held)
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.aflush
-        calls = 0
-
-        async def flush(session: tuple[str, str] | None = None) -> None:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise failure
-            await original(session)
-
-        monkeypatch.setattr(saver, "aflush", flush)
-        try:
-            with pytest.raises(RuntimeError, match="checkpoint flush unavailable"):
-                await session.events(
-                    [
-                        first,
-                        {"id": "user-message-2", "role": "user", "content": "Again"},
-                    ]
-                )
-        finally:
-            released.set()
-            await asyncio.gather(stopped, return_exceptions=True)
-
-    asyncio.run(run())
-
-
-def test_closing_the_stopped_stream_does_not_interrupt_its_checkpoint_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
-    first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
-
-    async def run() -> None:
-        held, released = asyncio.Event(), asyncio.Event()
-        settled = asyncio.Event()
-        settled.set()
-        model.gate = (held, released, settled)
-        stopped = asyncio.create_task(session.events([first]))
-        await _await_fixture_admission_or_public_completion(stopped, held)
-        flushing, flush_release = asyncio.Event(), asyncio.Event()
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.aflush
-        calls = 0
-        first_flush_finished = False
-
-        async def flush(session: tuple[str, str] | None = None) -> None:
-            nonlocal calls, first_flush_finished
-            calls += 1
-            if calls == 1:
-                flushing.set()
-                await flush_release.wait()
-                await original(session)
-                first_flush_finished = True
-            else:
-                await original(session)
-
-        monkeypatch.setattr(saver, 'aflush', flush)
-        sent = asyncio.create_task(session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}]))
-        try:
-            await flushing.wait()
-            stopped.cancel()
-            await asyncio.gather(stopped, return_exceptions=True)
-        finally:
-            flush_release.set()
-            released.set()
-        events = await sent
-        assert first_flush_finished
-        assert events[-1].type == 'RUN_FINISHED'
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize('failure', [None, RuntimeError('checkpoint worker failed')])
-def test_replacement_waits_for_already_running_checkpoint_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: RuntimeError | None) -> None:
-    import threading
-
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
-    first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
-    async def run() -> None:
-        held, released = asyncio.Event(), asyncio.Event()
-        settled=asyncio.Event()
-        settled.set()
-        model.gate = (held, released, settled)
-        stopped = asyncio.create_task(session.events([first]))
-        await _await_fixture_admission_or_public_completion(stopped, held)
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.flush
-        entered, finish = threading.Event(), threading.Event()
-        calls = 0
-        def flush(session: tuple[str, str] | None = None) -> None:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                entered.set()
-                finish.wait()
-                if failure is not None:
-                    raise failure
-                original(session)
-                model.calls.append('checkpoint persisted')
-            else:
-                original(session)
-        monkeypatch.setattr(saver, 'flush', flush)
-        released.set()
-        await asyncio.to_thread(entered.wait)
-        sent = asyncio.create_task(session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}]))
-        try:
-            for _ in range(50):
-                await asyncio.sleep(0)
-        finally:
-            finish.set()
-            stopped_results = await asyncio.gather(stopped, return_exceptions=True)
-        await _assert_checkpoint_settlement(failure, sent, stopped_results, model.calls)
-    asyncio.run(run())
-
-
-async def _assert_checkpoint_settlement(failure: RuntimeError | None, sent: asyncio.Task[list[Any]], stopped_results: Sequence[Any], model_calls: list[str]) -> None:
-    if failure is None:
-        events = await sent
-        assert model_calls.index('checkpoint persisted') < model_calls.index('model: Again')
-        assert events[-1].type == 'RUN_FINISHED'
-        stopped_events = stopped_results[0]
-        assert isinstance(stopped_events, list)
-        assert [event.type for event in stopped_events if event.type in ('RUN_FINISHED', 'RUN_ERROR')] == ['RUN_FINISHED']
-    else:
-        with pytest.raises(RuntimeError) as reported:
-            await sent
-        assert reported.value is failure
-        assert 'model: Again' not in model_calls
-
-
 @pytest.fixture
 def retrieved_turn_failure(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     from botcube_harness_deepagents import serving
@@ -1772,269 +1176,3 @@ def retrieved_turn_failure(caplog: pytest.LogCaptureFixture, monkeypatch: pytest
     failures = [record for record in records if record.getMessage().startswith('Harness Turn failed')]
     assert failures
     assert all('code=INTERNAL_ERROR' in record.getMessage() and record.exc_info for record in failures)
-
-
-@pytest.mark.parametrize('successor', [False, True], ids=['no-successor', 'successor'])
-def test_the_successor_observes_a_failed_flush_after_the_stopped_stream_has_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retrieved_turn_failure: None, successor: bool,
-) -> None:
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
-    first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
-    failure = RuntimeError('closed-stream checkpoint flush failed')
-
-    async def run() -> None:
-        held, released, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        settled.set()
-        model.gate = (held, released, settled)
-        stopped = asyncio.create_task(session.events([first]))
-        await _await_fixture_admission_or_public_completion(stopped, held)
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.aflush
-        failed = asyncio.Event()
-        calls = 0
-
-        async def flush(session: tuple[str, str] | None = None) -> None:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                failed.set()
-                raise failure
-            await original(session)
-
-        monkeypatch.setattr(saver, 'aflush', flush)
-        stopped.cancel()
-        await asyncio.gather(stopped, return_exceptions=True)
-        await failed.wait()
-        for _ in range(50):
-            await asyncio.sleep(0)
-        if successor:
-            with pytest.raises(RuntimeError) as reported:
-                await session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}])
-            assert reported.value is failure
-
-    asyncio.run(run())
-
-
-def test_a_stopped_waiter_does_not_consume_a_prior_checkpoint_flush_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retrieved_turn_failure: None,
-) -> None:
-    from botcube_harness_deepagents import serving
-
-    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
-    model = _HeldModel()
-    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: model)
-    first = {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}
-    failure = RuntimeError('stopped-writer checkpoint flush failed')
-
-    async def run() -> None:
-        held, released, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        settled.set()
-        model.gate = (held, released, settled)
-        stopped = asyncio.create_task(session.events([first]))
-        await _await_fixture_admission_or_public_completion(stopped, held)
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.aflush
-        flushing, release_flush = asyncio.Event(), asyncio.Event()
-        calls = 0
-
-        async def flush(session: tuple[str, str] | None = None) -> None:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                flushing.set()
-                await release_flush.wait()
-                raise failure
-            await original(session)
-
-        monkeypatch.setattr(saver, 'aflush', flush)
-        stopped.cancel()
-        await asyncio.gather(stopped, return_exceptions=True)
-        await flushing.wait()
-        abandoned = asyncio.create_task(session.events([first, {'id': 'user-message-2', 'role': 'user', 'content': 'Abandoned'}]))
-        await asyncio.sleep(0)
-        abandoned.cancel()
-        await asyncio.gather(abandoned, return_exceptions=True)
-        sent = asyncio.create_task(session.events([first, {'id': 'user-message-3', 'role': 'user', 'content': 'Again'}]))
-        try:
-            await asyncio.sleep(0)
-        finally:
-            release_flush.set()
-        with pytest.raises(RuntimeError) as reported:
-            await sent
-        assert reported.value is failure
-        assert 'model: Abandoned' not in model.calls
-        assert 'model: Again' not in model.calls
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize('another_turn', [False, True], ids=['empty-flush', 'other-session-flush'])
-def test_concurrent_sessions_keep_their_flushed_turns_until_snapshotting_issue_3354(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, another_turn: bool
-) -> None:
-    from botcube_harness_deepagents.memory.agentcore.snapshot_saver import reading_once
-    from botcube_harness_deepagents.messages_snapshot import (
-        MessagesSnapshot,
-        state_snapshot,
-    )
-
-    memory, saver = _turn_saver(monkeypatch)
-    first = _graph(saver, tmp_path / 'first', ['first answer', 'next answer'])
-    second = _graph(saver, tmp_path / 'second', ['second answer'])
-    second_config: RunnableConfig = {'configurable': {'actor_id': 'user-1', 'thread_id': 'session-2'}}
-
-    async def scenario() -> tuple[MessagesSnapshot | None, MessagesSnapshot | None]:
-        first_buffered, second_buffered, first_flushed, empty_flushed, next_flushed = (
-            asyncio.Event() for _ in range(5)
-        )
-
-        async def first_turn() -> MessagesSnapshot | None:
-            with reading_once():
-                await first.ainvoke({'messages': [HumanMessage('first question')]}, config=CONFIG)
-                first_buffered.set()
-                await second_buffered.wait()
-                await saver.aflush()
-                snapshot = await state_snapshot(first, CONFIG)
-                first_flushed.set()
-                await empty_flushed.wait()
-                if another_turn:
-                    await first.ainvoke({'messages': [HumanMessage('next question')]}, config=CONFIG)
-                    await saver.aflush()
-                next_flushed.set()
-                return snapshot
-
-        async def second_turn() -> MessagesSnapshot | None:
-            with reading_once():
-                await first_buffered.wait()
-                await second.ainvoke({'messages': [HumanMessage('second question')]}, config=second_config)
-                second_buffered.set()
-                await first_flushed.wait()
-                await saver.aflush()
-                empty_flushed.set()
-                await next_flushed.wait()
-                return await state_snapshot(second, second_config)
-
-        one, two = await asyncio.wait_for(asyncio.gather(first_turn(), second_turn()), timeout=10)
-        return one, two
-
-    one, two = asyncio.run(scenario())
-
-    assert one is not None and two is not None
-    assert [message['content'] for message in one.messages] == ['first question', 'first answer']
-    assert [message['content'] for message in two.messages] == ['second question', 'second answer']
-    assert memory.listed['session-1'] == 1
-    assert memory.listed['session-2'] == 1
-
-
-
-def test_adaptive_page_requires_pending_writes_beyond_a_complete_seed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A complete seed on one page does not prove its pending writes were read."""
-    from langgraph.checkpoint.base import CheckpointTuple
-    from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import (
-        ChannelDataEvent,
-        CheckpointEvent,
-        WriteItem,
-        WritesEvent,
-    )
-
-    from botcube_harness_deepagents.memory.agentcore.snapshot_saver import reading_once
-
-    memory = _FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
-    saver = agentcore.build_checkpointer(MEMORY_ID, region_name="us-east-1")
-    saver.max_results = 2
-    target = CheckpointTuple(
-        config=_turn_config(checkpoint_id="checkpoint-2"),
-        checkpoint={**empty_checkpoint(), "id": "checkpoint-2"},
-        metadata={},
-        parent_config=_turn_config(checkpoint_id="checkpoint-1"),
-        pending_writes=[],
-    )
-    # No ListEvents ordering contract: checkpoint/channel blobs can precede pending writes.
-    events = [
-        WritesEvent(
-            checkpoint_id="checkpoint-1",
-            writes=[
-                WriteItem(
-                    task_id="task-1",
-                    channel="topic",
-                    value="pending update",
-                    task_path="",
-                )
-            ],
-        ),
-        ChannelDataEvent(
-            channel="topic",
-            version="1",
-            value="seed",
-            thread_id="session-1",
-            checkpoint_ns="",
-        ),
-        CheckpointEvent(
-            checkpoint_id="checkpoint-1",
-            checkpoint_data={
-                **empty_checkpoint(),
-                "id": "checkpoint-1",
-                "channel_versions": {"topic": "1"},
-            },
-            metadata={},
-            parent_checkpoint_id=None,
-            thread_id="session-1",
-            checkpoint_ns="",
-        ),
-    ]
-    for event in events:
-        saver.checkpoint_event_client.store_blob_event(event, "session-1", "user-1")
-    memory.list_events_calls = 0
-    with reading_once():
-        history = saver.delta_channel_history(
-            config=_turn_config(),
-            channels=["topic"],
-            target=target,
-            known={"checkpoint-2": target},
-        )
-    assert history == {
-        "topic": {"seed": "seed", "writes": [("task-1", "topic", "pending update")]}
-    }
-    assert memory.list_events_calls == 2
-
-
-def test_adaptive_page_cannot_choose_latest_from_an_unordered_first_page(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An older checkpoint on page one cannot establish the Session's latest."""
-    from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import CheckpointEvent
-
-    from botcube_harness_deepagents.memory.agentcore.snapshot_saver import reading_once
-
-    memory = _FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
-    saver = agentcore.build_checkpointer(MEMORY_ID, region_name="us-east-1")
-    saver.max_results = 1
-    for checkpoint_id in ["checkpoint-2", "checkpoint-1"]:
-        saver.checkpoint_event_client.store_blob_event(
-            CheckpointEvent(
-                checkpoint_id=checkpoint_id,
-                checkpoint_data={**empty_checkpoint(), "id": checkpoint_id},
-                metadata={},
-                parent_checkpoint_id=None,
-                thread_id="session-1",
-                checkpoint_ns="",
-            ),
-            "session-1",
-            "user-1",
-        )
-    memory.list_events_calls = 0
-    with reading_once():
-        latest = saver.get_tuple(_turn_config())
-    assert latest is not None
-    assert latest.checkpoint["id"] == "checkpoint-2"
-    assert memory.list_events_calls == 2

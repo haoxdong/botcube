@@ -57,8 +57,7 @@ export function turnCredentials(forwardedProps: Record<string, unknown>, credent
   const filesKeys = files !== null && typeof files === 'object' && !Array.isArray(files)
     ? [files.accessKeyId, files.secretAccessKey, files.sessionToken]
     : [];
-  const memory = forwardedProps.turnMemory as { token?: unknown } | undefined;
-  const props = [...credentialProps.map((prop) => forwardedProps[prop]), memory?.token];
+  const props = [...credentialProps.map((prop) => forwardedProps[prop]), forwardedProps.turnIdentity];
   // A credential URL's query values (a tokened CDP URL's token) authenticate on their own.
   const queryValues = props.flatMap((value) =>
     typeof value === 'string' && URL.canParse(value) ? [...new URL(value).searchParams.values()] : [],

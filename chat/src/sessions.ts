@@ -31,7 +31,6 @@ const historyRead = (sessionId: string, metadata: SessionSummary) => ({
   operation: 'get' as const,
   sessionId,
   userId: metadata.filing_user_id,
-  ...(runningTurn(metadata).running || metadata.latest_message_id === undefined ? {} : { contains: metadata.latest_message_id }),
 });
 
 /**

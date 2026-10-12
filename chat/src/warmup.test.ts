@@ -37,7 +37,6 @@ describe('POST /warmup', () => {
         warmup: true,
         agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
         soul: 'Be brief.',
-        memoryRevision: 0,
         sessionUserId: 'filed-account-1',
       },
     });

@@ -77,18 +77,18 @@ environment, root preparation, and the per-request session variable. A Harness
 adapts those values to its own framework; Cartridge code never imports an agent
 framework.
 
-Every Harness memory backend provides four plain factory slots:
+Every Harness memory backend provides three plain factory slots:
 
 - `build_checkpointer` for conversation continuity;
 - `build_store` for long-term records;
-- `build_memory_tools` for the model-visible memory surface and middleware;
-- `prewarm_ltm` for rendering stored context into the next conversation.
+- `build_memory_tools` for the model-visible memory surface and middleware,
+  including the middleware that loads Memory into a Session's system prompt once.
 
 The in-memory backend is the credential-free presubmit default. Local sandbox
 mode sets `BOTCUBE_CHECKPOINT_PATH` and uses SQLite so a replacement Harness
 process resumes the same Session. Like AgentCore, it addresses a Session by (user ID,
 Session ID): each user ID gets its own SQLite file. AgentCore supplies its own implementations
-of the same four slots.
+of the same three slots.
 
 ## Chat Service, tools, and deployment Cartridge contract
 

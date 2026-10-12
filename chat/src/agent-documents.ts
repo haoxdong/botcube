@@ -1,5 +1,5 @@
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { HttpError, type AgentDocumentSet, type AgentIdentity } from './cartridge.js';
 import { ownerFenceKey } from './session-metadata.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
@@ -43,18 +43,10 @@ export function memoryLine(value: unknown): string {
   return text;
 }
 
-/**
- * An account's Agent Identity and Soul, and its Memory cache generation: how many times the user
- * invalidates Memory, so the Harness reads Memory afresh after an edit or deletion retry.
- */
-export type AccountAgentDocuments = AgentDocumentSet & { memoryRevision: number };
-
 /** Per-account Agent Identity and Soul, each falling back to the Cartridge's template until edited. */
 export interface AgentDocuments {
-  get(owner: string, templates: AgentDocumentSet): Promise<AccountAgentDocuments>;
+  get(owner: string, templates: AgentDocumentSet): Promise<AgentDocumentSet>;
   save(owner: string, edit: AgentDocumentEdit): Promise<void>;
-  /** Invalidate cached Memory after an edit or a deletion that finds the line absent. */
-  memoryEdited(owner: string): Promise<void>;
   /** The agent's picture, or null while its avatar is an emoji or initial. */
   picture(owner: string): Promise<Picture | null>;
   /** Keep this picture as the agent's, or clear it with null. */
@@ -63,7 +55,7 @@ export interface AgentDocuments {
   delete(owner: string): Promise<void>;
 }
 
-const ATTRIBUTE = { agentIdentity: 'agent_identity', soul: 'soul', memoryRevision: 'memory_revision' } as const;
+const ATTRIBUTE = { agentIdentity: 'agent_identity', soul: 'soul' } as const;
 const key = (owner: string, sk = 'DOCUMENTS') => ({ pk: `AGENT#${owner}`, sk });
 const pictureKey = (owner: string) => key(owner, 'PICTURE');
 
@@ -81,7 +73,7 @@ export class DynamoDBAgentDocuments implements AgentDocuments {
     this.documents = DynamoDBDocumentClient.from(client);
   }
 
-  async get(owner: string, templates: AgentDocumentSet): Promise<AccountAgentDocuments> {
+  async get(owner: string, templates: AgentDocumentSet): Promise<AgentDocumentSet> {
     const { Item } = await this.documents.send(
       // Stryker disable next-line BooleanLiteral: a read right after a save must see it, which only a live DynamoDB can fail to do
       new GetCommand({ TableName: this.tableName, Key: key(owner), ConsistentRead: true }),
@@ -89,20 +81,7 @@ export class DynamoDBAgentDocuments implements AgentDocuments {
     return {
       agentIdentity: (Item?.[ATTRIBUTE.agentIdentity] as AgentIdentity | undefined) ?? templates.agentIdentity,
       soul: (Item?.[ATTRIBUTE.soul] as string | undefined) ?? templates.soul,
-      memoryRevision: (Item?.[ATTRIBUTE.memoryRevision] as number | undefined) ?? 0,
     };
-  }
-
-  async memoryEdited(owner: string): Promise<void> {
-    await this.documents.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: key(owner),
-        UpdateExpression: 'ADD #revision :one',
-        ExpressionAttributeNames: { '#revision': ATTRIBUTE.memoryRevision },
-        ExpressionAttributeValues: { ':one': 1 },
-      }),
-    );
   }
 
   async save(owner: string, edit: AgentDocumentEdit): Promise<void> {

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import pytest
 from deepagents.backends import LocalShellBackend
@@ -13,17 +14,17 @@ from langgraph.store.memory import InMemoryStore
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.memory import agentcore, inmem, local
 from botcube_harness_deepagents.memory_tools import MemoryToolResult
+from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
 from conftest import ToolBindableFakeModel
 
 SLOTS = {
     'build_checkpointer',
     'build_store',
     'build_memory_tools',
-    'prewarm_ltm',
 }
 
 
-def test_memory_backends_expose_the_four_documented_factory_slots() -> None:
+def test_memory_backends_expose_the_three_documented_factory_slots() -> None:
     for backend in (agentcore, inmem, local):
         assert {name for name in dir(backend) if callable(getattr(backend, name))} >= SLOTS
 
@@ -44,11 +45,36 @@ def test_inmem_factories_require_no_aws_configuration(monkeypatch: pytest.Monkey
     assert checkpointer is not None
     assert store is not None
     assert len(tools) == 1
-    assert middleware == []
-    assert inmem.prewarm_ltm(store, 'actor-1', thread_id='thread-1') is None
+    assert [type(m) for m in middleware] == [SessionMemoryMiddleware]
 
 
-def test_inmem_memory_tool_round_trips_into_the_next_prewarm() -> None:
+class _PromptRecordingModel(ToolBindableFakeModel):
+    prompts: ClassVar[list[str]] = []
+
+    def _call(self, messages: Any, *args: Any, **kwargs: Any) -> str:
+        self.prompts.append(messages[0].text)
+        return super()._call(messages, *args, **kwargs)
+
+
+def _opening_memory(store: InMemoryStore, actor_id: str, root: Path) -> str:
+    """The Memory block a new Session of the actor opens with, as its model sees it."""
+    tools, middleware = inmem.build_memory_tools(store=store, actor_id=actor_id, thread_id='new-session')
+    _PromptRecordingModel.prompts = []
+    graph = build_agent(
+        model=_PromptRecordingModel(responses=['ok']),
+        backend=LocalShellBackend(root_dir=root, virtual_mode=True, inherit_env=False),
+        skills=[],
+        tools=tools,
+        middleware=middleware,
+        memory=[],
+        store=store,
+    )
+    asyncio.run(graph.ainvoke({'messages': [('user', 'hello')]}))
+    [prompt] = _PromptRecordingModel.prompts
+    return ''.join(re.findall(r'<agent_memory>\n(.*)\n</agent_memory>', prompt, re.DOTALL))
+
+
+def test_inmem_memory_tool_round_trips_into_the_next_session(tmp_path: Path) -> None:
     store = inmem.build_store()
     [memory_tool], _ = inmem.build_memory_tools(
         store=store,
@@ -59,10 +85,8 @@ def test_inmem_memory_tool_round_trips_into_the_next_prewarm() -> None:
     recorded = memory_tool.invoke({'action': 'record', 'content': 'Prefers concise answers'})
 
     assert recorded['status'] == 'success'
-    assert inmem.prewarm_ltm(store, 'actor-1', thread_id='thread-2') == (
-        '- Prefers concise answers'
-    )
-    assert inmem.prewarm_ltm(store, 'actor-2', thread_id='thread-2') is None
+    assert _opening_memory(store, 'actor-1', tmp_path) == 'semantic facts:\n- Prefers concise answers'
+    assert _opening_memory(store, 'actor-2', tmp_path) == ''
 
 
 def test_harness_graph_runs_end_to_end_on_the_inmem_backend(tmp_path: Path) -> None:
@@ -89,8 +113,9 @@ def test_harness_graph_runs_end_to_end_on_the_inmem_backend(tmp_path: Path) -> N
     )
     config = {'configurable': {'thread_id': 'thread-1', 'actor_id': 'actor-1'}}
 
-    first = graph.invoke({'messages': [('user', 'First')]}, config=config)
-    second = graph.invoke({'messages': [('user', 'Second')]}, config=config)
+    # Serving runs Turns on the async path, which Session memory needs.
+    first = asyncio.run(graph.ainvoke({'messages': [('user', 'First')]}, config=config))
+    second = asyncio.run(graph.ainvoke({'messages': [('user', 'Second')]}, config=config))
 
     assert first['messages'][-1].content == 'First answer'
     assert second['messages'][-1].content == 'Second answer'
@@ -246,13 +271,13 @@ def test_inmem_memory_tool_names_a_recorded_memory_it_can_read_back() -> None:
     assert memory_tool.invoke({'action': 'get', 'memory_record_id': record_id}) == _said('success', 'Prefers copper')
 
 
-def test_inmem_prewarm_lists_each_non_blank_memory() -> None:
+def test_inmem_opening_memory_lists_each_non_blank_memory(tmp_path: Path) -> None:
     store = inmem.build_store()
     memory_tool = _inmem_memory_tool(store)
     for content in ('Prefers copper ', '  ', 'Trades in New York'):
         memory_tool.invoke({'action': 'record', 'content': content})
 
-    assert inmem.prewarm_ltm(store, 'actor-1') == '- Prefers copper\n- Trades in New York'
+    assert _opening_memory(store, 'actor-1', tmp_path) == 'semantic facts:\n- Prefers copper\n- Trades in New York'
 
 
 def test_inmem_session_record_refuses_unscoped_reads_and_deletes() -> None:

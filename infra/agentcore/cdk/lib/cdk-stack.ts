@@ -39,9 +39,10 @@ export const SESSION_API_PROVISIONED_CONCURRENCY = 5;
  * because session storage resets on every runtime version update.
  */
 export const RUNTIME_WORKSPACE = '/mnt/workspace';
-const MEMORY_STRATEGIES_NAMESPACE_PREFIX = '/strategies/';
-const RUNTIME_MEMORY_ACTION =
-  /^(bedrock-agentcore:.*Memory.*|bedrock-agentcore:(GetEvent|ListActors|ListEvents|ListSessions|CreateEvent|DeleteEvent))$/i;
+/** The audience of the Chat Service's per-Turn JWT: `TURN_IDENTITY_AUDIENCE` in botcube/chat's `turn-identity.ts`. */
+const TURN_IDENTITY_AUDIENCE = 'sts.amazonaws.com';
+/** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
+const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
 const RUNTIME_REMOVED_ACTION =
   /^(bedrock-agentcore:.*Memory.*|bedrock-agentcore:(GetEvent|ListActors|ListEvents|ListSessions|CreateEvent|DeleteEvent|.*ConfigurationBundle.*)|logs:(GetLogEvents|FilterLogEvents|PutResourcePolicy))$/i;
 
@@ -52,7 +53,8 @@ function removeInvalidMemoryAlias(runtime: bedrockagentcore.CfnRuntime, generate
   runtime.environmentVariables = variables;
 }
 
-function restrictRuntimePolicy(stack: Stack, role: iam.IRole, retainLegacyRuntimeMemory: boolean): void {
+/** The Runtime role keeps no Memory access: a Turn reaches Memory only with its tagged credentials (ADR 0067 §8). */
+function restrictRuntimePolicy(stack: Stack, role: iam.IRole): void {
   if (!(role instanceof iam.Role)) return;
   const policy = role.node.findChild('DefaultPolicy').node.defaultChild;
   if (!(policy instanceof iam.CfnPolicy)) throw new Error('Runtime DefaultPolicy must be an IAM CfnPolicy');
@@ -63,12 +65,7 @@ function restrictRuntimePolicy(stack: Stack, role: iam.IRole, retainLegacyRuntim
   policy.policyDocument = {
     ...document,
     Statement: document.Statement.flatMap(statement => {
-      const actions = [statement.Action]
-        .flat()
-        .filter(
-          action =>
-            !RUNTIME_REMOVED_ACTION.test(action) || (retainLegacyRuntimeMemory && RUNTIME_MEMORY_ACTION.test(action))
-        );
+      const actions = [statement.Action].flat().filter(action => !RUNTIME_REMOVED_ACTION.test(action));
       return actions.length ? [{ ...statement, Action: actions.length === 1 ? actions[0] : actions }] : [];
     }),
   };
@@ -152,7 +149,11 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   harnessCodeLocation?: string;
   /** The commit this stack deploys, output as `Commit` for `scripts/dev-status.sh`. */
   commit?: string;
-  retainLegacyRuntimeMemory?: boolean;
+  /**
+   * The Memory role the Harness assumes with the Chat Service's per-Turn JWT (ADR 0067 §8):
+   * `issuer` is the Chat Service's public origin, registered as an IAM OIDC provider.
+   */
+  userMemoryRole?: { issuer: string; roleName: string };
 }
 
 function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
@@ -223,7 +224,6 @@ export class AgentCoreStack extends Stack {
       description: 'Name of the CloudFormation Stack',
       value: this.stackName,
     });
-    new CfnOutput(this, 'LegacyRuntimeMemoryRetained', { value: String(props.retainLegacyRuntimeMemory === true) });
     if (props.commit) new CfnOutput(this, 'Commit', { value: props.commit });
   }
 
@@ -245,20 +245,10 @@ export class AgentCoreStack extends Stack {
         env.runtime.addEnvironmentVariable('AGENTCORE_MEMORY_ID', memory.memoryId);
         removeInvalidMemoryAlias(env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime, memory.getEnvVarName());
       }
-      if (props.retainLegacyRuntimeMemory) {
-        for (const env of this.application.environments.values()) {
-          env.runtime.role.addToPrincipalPolicy(
-            new iam.PolicyStatement({
-              actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
-              resources: [memory.memoryArn],
-              conditions: { StringEquals: { 'bedrock-agentcore:namespacePath': MEMORY_STRATEGIES_NAMESPACE_PREFIX } },
-            })
-          );
-        }
-      }
       if (props.harnessCodeLocation) {
         this.addSessionApi(props.harnessCodeLocation, memory, physicalIdentity, props);
       }
+      if (props.userMemoryRole) this.addUserMemoryRole(memory.memoryArn, props.userMemoryRole);
     }
   }
 
@@ -281,7 +271,7 @@ export class AgentCoreStack extends Stack {
         })
       );
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
-      restrictRuntimePolicy(this, env.runtime.role, props.retainLegacyRuntimeMemory === true);
+      restrictRuntimePolicy(this, env.runtime.role);
       if (props.vpc) {
         const subnetIds = props.vpc.selectSubnets(props.subnets).subnetIds;
         if (!subnetIds.length) throw new Error('Runtime VPC requires at least one subnet');
@@ -303,6 +293,66 @@ export class AgentCoreStack extends Stack {
   }
 
   /**
+   * The role a Turn's JWT turns into Memory credentials for one user (ADR 0067 §8). The Chat Service
+   * tags each JWT with the Turn's actor, the Session's filing actor, the Session and its writes prefix.
+   */
+  private addUserMemoryRole(memoryArn: string, config: { issuer: string; roleName: string }): void {
+    const issuer = URL.canParse(config.issuer) ? new URL(config.issuer) : undefined;
+    if (issuer?.protocol !== 'https:' || issuer.port || issuer.origin !== config.issuer) {
+      throw new Error('The Memory role issuer must be an https origin without a port');
+    }
+    const provider = new iam.OidcProviderNative(this, 'TurnIdentityProvider', {
+      url: config.issuer,
+      clientIds: [TURN_IDENTITY_AUDIENCE],
+    });
+    const role = new iam.Role(this, 'UserMemoryRole', {
+      roleName: config.roleName,
+      maxSessionDuration: Duration.hours(1),
+      assumedBy: new iam.WebIdentityPrincipal(provider.oidcProviderArn, {
+        StringEquals: { [`${issuer.host}:aud`]: TURN_IDENTITY_AUDIENCE },
+      }).withSessionTags(),
+    });
+    const tag = (key: string) => `\${aws:PrincipalTag/${key}}`;
+    const events = ['CreateEvent', 'GetEvent', 'ListEvents', 'DeleteEvent'].map(
+      action => `bedrock-agentcore:${action}`
+    );
+    const statements = [
+      // The Session's own checkpoints, and their writes sessions, under its filing ID.
+      new iam.PolicyStatement({
+        sid: 'SessionUnderFilingId',
+        actions: events,
+        conditions: {
+          StringEquals: { 'bedrock-agentcore:actorId': tag('filingActorId') },
+          StringLike: { 'bedrock-agentcore:sessionId': [tag('sessionId'), `${tag('writesPrefix')}-*`] },
+        },
+      }),
+      new iam.PolicyStatement({
+        sid: 'OwnActorEvents',
+        actions: events,
+        conditions: { StringEquals: { 'bedrock-agentcore:actorId': tag('actorId') } },
+      }),
+      new iam.PolicyStatement({
+        sid: 'OwnRecords',
+        actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
+        conditions: { StringLike: { 'bedrock-agentcore:namespace': `/actors/${tag('actorId')}/*` } },
+      }),
+      // Neither action takes a namespace condition key: an accepted risk (ADR 0031).
+      new iam.PolicyStatement({
+        sid: 'RecordsById',
+        actions: ['bedrock-agentcore:GetMemoryRecord', 'bedrock-agentcore:DeleteMemoryRecord'],
+      }),
+    ];
+    for (const statement of statements) {
+      statement.addResources(memoryArn);
+      role.addToPolicy(statement);
+    }
+    for (const env of this.application.environments.values()) {
+      env.runtime.addEnvironmentVariable('BOTCUBE_USER_MEMORY_ROLE_ARN', role.roleArn);
+    }
+    new CfnOutput(this, 'UserMemoryRoleArn', { value: role.roleArn });
+  }
+
+  /**
    * The session API reads and purges Sessions without waking a Sandbox (ADR 0067 §5).
    * It has no function URL and no resource policy: only a principal granted
    * lambda:InvokeFunction on it — the Chat Service's task role — can call it.
@@ -318,21 +368,25 @@ export class AgentCoreStack extends Stack {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole')],
     });
-    // Scheduled runs post their result to the member's Main Chat as an event.
+    // Scheduled runs post their result to the member's Main Chat as an event. A purge lists the
+    // Session's checkpoint writes sessions (ListSessions) and deletes their events.
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:ListEvents', 'bedrock-agentcore:CreateEvent', 'bedrock-agentcore:DeleteEvent'],
+        actions: [
+          'bedrock-agentcore:ListEvents',
+          'bedrock-agentcore:CreateEvent',
+          'bedrock-agentcore:DeleteEvent',
+          'bedrock-agentcore:ListSessions',
+        ],
         resources: [memory.memoryArn],
       })
     );
-    // A member's Memory document: their strategy records, listed, edited, and deleted.
+    // A member's Memory document: their records, listed under their actor prefix, edited, and deleted.
     role.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock-agentcore:ListMemoryRecords'],
         resources: [memory.memoryArn],
-        conditions: {
-          StringEquals: { 'bedrock-agentcore:namespacePath': MEMORY_STRATEGIES_NAMESPACE_PREFIX },
-        },
+        conditions: MEMORY_ACTOR_NAMESPACES,
       })
     );
     role.addToPrincipalPolicy(

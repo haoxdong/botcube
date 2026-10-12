@@ -1,10 +1,10 @@
 import { HttpFake, sendJson } from './http-fake.js';
 
-type SessionOperation = 'get' | 'activity' | 'purge' | 'post';
+type SessionOperation = 'get' | 'purge' | 'post';
 
 export type SessionApiEvent =
   | {
-      operation: Exclude<SessionOperation, 'activity'>;
+      operation: SessionOperation;
       sessionId: string;
       userId: string;
       /** What a `post` adds to the Session as the agent's message. */
@@ -14,7 +14,6 @@ export type SessionApiEvent =
       /** The message a `get` names, which the history it reads must hold. */
       contains?: string;
     }
-  | { operation: 'activity'; sessions: { sessionId: string; userId: string }[] }
   | { operation: 'memory'; userId: string }
   | { operation: 'memory-edit'; userId: string; recordId: string; text: string }
   | { operation: 'memory-delete'; userId: string; recordId: string };
@@ -30,7 +29,6 @@ const SESSION_REPLY_MS = 20;
 
 const EMPTY_REPLIES: Record<SessionOperation, unknown> = {
   get: { messages: [] },
-  activity: { tasks: [] },
   purge: {},
   post: {},
 };
@@ -55,7 +53,7 @@ export class FakeSessionApi extends HttpFake {
     super(async (request, response) => {
       const event = JSON.parse(request.body) as SessionApiEvent;
       if (event.operation === 'purge') await this.beforePurgeReply?.();
-      if ('sessionId' in event || 'sessions' in event) {
+      if ('sessionId' in event) {
         if (this.concurrencyLimit !== undefined) {
           if (this.inFlight >= this.concurrencyLimit) {
             sendJson(response, 429, { Reason: 'ConcurrentInvocationLimitExceeded', Type: 'User', message: 'Rate Exceeded.' });
@@ -65,7 +63,7 @@ export class FakeSessionApi extends HttpFake {
           await new Promise((resolve) => setTimeout(resolve, SESSION_REPLY_MS));
           this.inFlight -= 1;
         }
-        const reply = 'sessions' in event ? this.activityReply(event.sessions) : this.sessionReply(event.operation, event.sessionId);
+        const reply = this.sessionReply(event.operation, event.sessionId);
         sendJson(response, reply.status, reply.body);
         return;
       }
@@ -89,18 +87,7 @@ export class FakeSessionApi extends HttpFake {
     return this.replies.get(`${operation} ${sessionId}`) ?? { status: 200, body: EMPTY_REPLIES[operation] };
   }
 
-  /** A batched `activity`: each Session's scripted tasks, tagged with its ID; the first failing Session's reply fails it. */
-  private activityReply(sessions: { sessionId: string }[]): { status: number; body: unknown } {
-    const replies = sessions.map(({ sessionId }) => ({ sessionId, reply: this.sessionReply('activity', sessionId) }));
-    const failed = replies.find(({ reply }) => reply.status !== 200);
-    if (failed !== undefined) return failed.reply;
-    const tasks = replies.flatMap(({ sessionId, reply }) =>
-      (reply.body as { tasks: object[] }).tasks.map((task) => ({ sessionId, ...task })),
-    );
-    return { status: 200, body: { tasks } };
-  }
-
-  /** Script the Session's reply to `operation`; a batched `activity` answers each of its Sessions' scripted tasks. */
+  /** Script the Session's reply to `operation`. */
   reply(sessionId: string, status: number, body: unknown, operation: SessionOperation = 'get'): void {
     this.replies.set(`${operation} ${sessionId}`, { status, body });
   }

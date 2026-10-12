@@ -16,7 +16,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
 from ...memory_tools import MemoryToolResult
-from ...messages_snapshot import MessagesSnapshot
+from ...session_memory import SessionMemoryMiddleware, render_memory
 
 
 class UserScopedMemorySaver(MemorySaver):
@@ -25,7 +25,6 @@ class UserScopedMemorySaver(MemorySaver):
     def __init__(self) -> None:
         super().__init__()
         self._savers: dict[str, MemorySaver] = {}
-        self._messages: dict[tuple[str, str], MessagesSnapshot] = {}
 
     def _saver(self, config: RunnableConfig) -> MemorySaver:
         user_id = _user_id(config)
@@ -81,18 +80,6 @@ class UserScopedMemorySaver(MemorySaver):
         return self._saver(config).get_delta_channel_history(
             config=config, channels=channels
         )
-
-    async def aread_messages_snapshot(
-        self, user_id: str, session_id: str
-    ) -> MessagesSnapshot | None:
-        return self._messages.get((user_id, session_id))
-
-    async def awrite_messages_snapshot(
-        self, user_id: str, session_id: str, snapshot: MessagesSnapshot
-    ) -> None:
-        kept = self._messages.get((user_id, session_id))
-        if kept is None or snapshot.supersedes(kept):
-            self._messages[(user_id, session_id)] = snapshot
 
     def delete_thread(self, thread_id: str) -> None:
         raise ValueError(
@@ -158,7 +145,7 @@ def build_memory_tools(
             memory_record_id=memory_record_id,
         )
 
-    return [memory], []
+    return [memory], [SessionMemoryMiddleware(lambda store: _opening_memory(store, namespace))]
 
 
 def _run_memory_action(
@@ -185,16 +172,8 @@ def _run_memory_action(
     return _result('error', f'Unknown action: {action}')
 
 
-def prewarm_ltm(
-    store: InMemoryStore,
-    actor_id: str,
-    *,
-    thread_id: str | None = None,
-) -> str | None:
-    del thread_id
-    lines = [item.value['content'].strip() for item in store.search(('memory', actor_id))]
-    rendered = '\n'.join(f'- {line}' for line in lines if line)
-    return rendered or None
+def _opening_memory(store: InMemoryStore, namespace: tuple[str, str]) -> str:
+    return render_memory([], [text for item in store.search(namespace) if (text := item.value['content'].strip())])
 
 
 def _result(status: Literal['success', 'error'], text: str) -> MemoryToolResult:

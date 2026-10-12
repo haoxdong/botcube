@@ -14,14 +14,13 @@ it.each(['tracked', 'continuation'] as const)('acknowledges only exact proved wr
     const token = defined(writer.token, 'registered writer token');
     const mark = defined(writer.markSucceeded, 'durable successful writer marker');
     const Key = { pk: `DISPATCH#${JSON.stringify(['filed-original', 'proof-session'])}`, sk: token };
-    await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'memory-event')).rejects.toThrow('settlement is unproved');
-    await mark('memory-event');
     await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')).rejects.toThrow('settlement is unproved');
+    await mark('session-post');
     const row = defined((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item, 'successful writer proof');
-    expect(row).toMatchObject({ session_id: 'proof-session', filing_user_id: 'filed-original', runtime_binding: session.runtime_binding, runtime_generation: session.runtime_generation, writer_succeeded: 'memory-event' });
-    await Promise.all([stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'memory-event'), stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'memory-event')]);
+    expect(row).toMatchObject({ session_id: 'proof-session', filing_user_id: 'filed-original', runtime_binding: session.runtime_binding, runtime_generation: session.runtime_generation, writer_succeeded: 'session-post' });
+    await Promise.all([stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post'), stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')]);
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeUndefined();
-    await expect(mark('memory-event')).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
+    await expect(mark('session-post')).rejects.toMatchObject({ name: 'ConditionalCheckFailedException' });
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeUndefined();
     if (generation === 'continuation') {
       await expect(stack.sessionMetadata.assertNoDispatch(session)).rejects.toThrow('legacy settlement is unproved');
@@ -38,11 +37,11 @@ it.each(['filing_user_id', 'session_id', 'runtime_binding', 'runtime_generation'
     const writer = await stack.sessionMetadata.beginDispatch('account-1', 'proof-session');
     const session = defined(writer.session, 'registered Session');
     const token = defined(writer.token, 'registered token');
-    await defined(writer.markSucceeded, 'writer marker')('memory-event');
+    await defined(writer.markSucceeded, 'writer marker')('session-post');
     const Key = { pk: `DISPATCH#${JSON.stringify(['filed-original', 'proof-session'])}`, sk: token };
     const row = defined((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item, 'successful proof');
     await documents.send(new PutCommand({ TableName: stack.table.name, Item: { ...row, [field]: 'different' } }));
-    await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'memory-event')).rejects.toThrow('settlement is unproved');
+    await expect(stack.sessionMetadata.acknowledgeSuccessfulDispatch(session, token, 'session-post')).rejects.toThrow('settlement is unproved');
     await expect(stack.sessionMetadata.assertNoDispatch(session)).rejects.toThrow('still registered');
     expect((await documents.send(new GetCommand({ TableName: stack.table.name, Key, ConsistentRead: true }))).Item).toBeDefined();
   } finally { await stack.stop(); }

@@ -1,12 +1,13 @@
-"""AgentCore Memory tool for the deep agent.
+"""The `memory` tool for the deep agent (ADR 0031).
 
-Single ``agent_core_memory`` tool with action dispatch matching the Strands
+One tool per actor with action dispatch matching the Strands
 ``AgentCoreMemoryToolProvider`` convention: record, retrieve, list, get, delete.
+Strands names its tool ``agent_core_memory``; ADR 0031 names ours ``memory``.
 
 Uses ``InjectedStore`` so LangGraph's ``ToolNode`` injects the
-``AgentCoreMemoryStore`` automatically.  Direct boto3 calls via
-``store.client`` are used where the store abstraction doesn't expose
-the needed API surface (e.g. ``namespacePath`` for prefix retrieval).
+``AgentCoreMemoryStore`` automatically.  Reads go through ``store.client``
+under the actor's ``/actors/<actor>/`` prefix (ADR 0033), as Strands' do
+under its ``namespace``; ``record`` writes today's Pending Memory session (ADR 0032).
 
 Returns the same ``{"status", "content"}`` envelope as the Strands tool.
 """
@@ -21,16 +22,11 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 from xml.etree import ElementTree
 
 from langchain_core.messages import HumanMessage
-from langchain_core.tools import tool
-from langgraph.config import get_config
+from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedStore
 from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
-from .actor_identity import (
-    ANONYMOUS_ACTOR_ID,
-    actor_namespace_paths,
-    record_belongs_to_actor,
-)
+from .actor_identity import actor_namespace
 from .pending_memory import pending_memory_session_id
 
 if TYPE_CHECKING:
@@ -45,6 +41,10 @@ AGENTCORE_MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID', '')
 AGENTCORE_REGION = os.getenv('AGENTCORE_REGION', 'us-east-1')
 
 VALID_ACTIONS = ('record', 'retrieve', 'list', 'get', 'delete')
+# A new Session reads Pending Memory at once; extraction takes 20-90 s and the record listing ~25 s more (ADR 0032 §6).
+RECORD_REPLY = (
+    'Saved to memory. A new conversation sees it right away, and it reaches long-term memory within about two minutes.'
+)
 MEMORY_RECORD_PAGE_SIZE = 100
 TEXT_KEYS = ('preference', 'fact', 'summary', 'episode', 'reflection')
 EPISODIC_XML_TAGS = ('situation', 'intent', 'assessment', 'justification', 'reflection')
@@ -167,7 +167,7 @@ def _extract_xml_text(raw: str) -> str | None:
     return None
 
 
-def _extract_text(raw: str) -> str:
+def extract_text(raw: str) -> str:
     """Extract clean text from a memory record's content string.
 
     Semantic items are plain text.  UserPreference items are JSON with
@@ -192,108 +192,112 @@ def list_memory_record_summaries(
     client: Any,
     *,
     memory_id: str,
-    namespace_path: str,
+    namespace: str,
 ) -> list[MemoryRecordSummaryTypeDef]:
+    """Every record under the namespace prefix."""
     paginator = client.get_paginator('list_memory_records')
     summaries: list[MemoryRecordSummaryTypeDef] = []
     for page in paginator.paginate(
         memoryId=memory_id,
-        namespacePath=namespace_path,
+        namespace=namespace,
         PaginationConfig={'PageSize': MEMORY_RECORD_PAGE_SIZE},
     ):
         summaries.extend(page['memoryRecordSummaries'])
     return summaries
 
 
-@tool
-def agent_core_memory(
-    action: str,
-    content: str = '',
-    query: str = '',
-    memory_record_id: str = '',
-    store: Annotated[AgentCoreMemoryStore | None, InjectedStore()] = None,
+def memory_tool(actor_id: str) -> BaseTool:
+    """The actor's `memory` tool: Strands' AgentCoreMemoryToolProvider tool under ADR 0031's name."""
+
+    @tool
+    def memory(
+        action: str,
+        content: str = '',
+        query: str = '',
+        memory_record_id: str = '',
+        store: Annotated[AgentCoreMemoryStore | None, InjectedStore()] = None,
+    ) -> MemoryToolResult:
+        """Work with agent memories - create, search, retrieve, list, and manage memory records.
+
+        This tool helps agents store and access memories, allowing them to remember important
+        information across conversations and interactions.
+
+        Extraction skips PII-like content such as account numbers, so agents should not promise durable storage for that content.
+
+        Key Capabilities:
+        - Store new memories (text conversations or structured data)
+        - Search for memories using semantic search
+        - Browse and list all stored memories
+        - Retrieve specific memories by ID
+        - Delete unwanted memories
+
+        Supported Actions:
+        -----------------
+        Memory Management:
+        - record: Store a new memory (conversation or data)
+          Use this when you need to save information for later recall.
+
+        - retrieve: Find relevant memories using semantic search
+          Use this when searching for specific information in memories.
+          This is the best action for queries like "find memories about X" or "search for memories related to Y".
+
+        - list: Browse all stored memories
+          Use this to see all available memories without filtering.
+          This is useful for getting an overview of what's been stored.
+
+        - get: Fetch a specific memory by ID
+          Use this when you already know the exact memory ID.
+
+        - delete: Remove a specific memory
+          Use this to delete memories that are no longer needed.
+
+        Args:
+            action: The memory operation to perform (one of: "record", "retrieve", "list", "get", "delete")
+            content: For record action: Simple text string to store as a memory
+                     Example: "User prefers vegetarian pizza with extra cheese"
+            query: Search terms for finding relevant memories (required for retrieve action)
+            memory_record_id: ID of a specific memory (required for get and delete actions)
+        """
+        if store is None:
+            raise RuntimeError('The memory tool needs the graph store to be injected')
+        return run_memory_action(store, actor_id, action, content=content, query=query, memory_record_id=memory_record_id)
+
+    return memory
+
+
+def run_memory_action(
+    store: AgentCoreMemoryStore, actor_id: str, action: str, *, content: str, query: str, memory_record_id: str,
 ) -> MemoryToolResult:
-    """Work with agent memories - create, search, retrieve, list, and manage memory records.
-
-    This tool helps agents store and access memories, allowing them to remember important
-    information across conversations and interactions.
-
-    Extraction skips PII-like content such as account numbers, so agents should not promise durable storage for that content.
-
-    Key Capabilities:
-    - Store new memories (text conversations or structured data)
-    - Search for memories using semantic search
-    - Browse and list all stored memories
-    - Retrieve specific memories by ID
-    - Delete unwanted memories
-
-    Supported Actions:
-    -----------------
-    Memory Management:
-    - record: Store a new memory (conversation or data)
-      Use this when you need to save information for later recall.
-
-    - retrieve: Find relevant memories using semantic search
-      Use this when searching for specific information in memories.
-      This is the best action for queries like "find memories about X" or "search for memories related to Y".
-
-    - list: Browse all stored memories
-      Use this to see all available memories without filtering.
-      This is useful for getting an overview of what's been stored.
-
-    - get: Fetch a specific memory by ID
-      Use this when you already know the exact memory ID.
-
-    - delete: Remove a specific memory
-      Use this to delete memories that are no longer needed.
-
-    Args:
-        action: The memory operation to perform (one of: "record", "retrieve", "list", "get", "delete")
-        content: For record action: Simple text string to store as a memory
-                 Example: "User prefers vegetarian pizza with extra cheese"
-        query: Search terms for finding relevant memories (required for retrieve action)
-        memory_record_id: ID of a specific memory (required for get and delete actions)
-    """
-    if action not in VALID_ACTIONS:
-        return _err(f'Unknown action: {action}. Valid: {", ".join(VALID_ACTIONS)}')
-
-    if store is None:
-        raise RuntimeError('agent_core_memory needs the graph store to be injected')
-
-    config = get_config()
-    configurable = config.get('configurable', {})
-    actor_id = configurable.get('actor_id') or ANONYMOUS_ACTOR_ID
-    thread_id = configurable.get('thread_id')
-
+    """One `memory` tool call for the actor."""
     if action == 'record':
-        return _handle_record(store, actor_id, content, thread_id=thread_id)
+        return _handle_record(store, actor_id, content)
     if action == 'retrieve':
         return _handle_retrieve(store, actor_id, query)
     if action == 'list':
         return _handle_list(store, actor_id)
     if action == 'get':
-        return _handle_get(store, actor_id, memory_record_id)
-    return _handle_delete(store, actor_id, memory_record_id)
+        return _handle_get(store, memory_record_id)
+    if action == 'delete':
+        return _handle_delete(store, memory_record_id)
+    return _err(f'Unknown action: {action}. Valid: {", ".join(VALID_ACTIONS)}')
 
 
-def _handle_record(store: AgentCoreMemoryStore, actor_id: str, content: str, *, thread_id: str | None = None) -> MemoryToolResult:
+def _handle_record(store: AgentCoreMemoryStore, actor_id: str, content: str) -> MemoryToolResult:
     try:
-        store.put(*_pending_memory_item(actor_id, content, thread_id))
+        store.put(*_pending_memory_item(actor_id, content))
     except Exception:
-        log.warning('agent_core_memory record failed', exc_info=True)
+        log.warning('memory record failed', exc_info=True)
         return _err('Failed to save memory.')
-    return _ok('Saved to memory.')
+    return _ok(RECORD_REPLY)
 
 
-def _pending_memory_item(
-    actor_id: str, content: str, thread_id: str | None
-) -> tuple[tuple[str, str], str, dict[str, Any]]:
+def _pending_memory_item(actor_id: str, content: str) -> tuple[tuple[str, str], str, dict[str, Any]]:
     """The store item for one saved memory: namespace, key, and value.
 
     AgentCoreMemoryStore writes the value as a Pending Memory event and never reads the key.
     """
     return (
-        (actor_id, pending_memory_session_id(actor_id=actor_id, thread_id=thread_id)),
+        (actor_id, pending_memory_session_id()),
         uuid.uuid4().hex,
         {'message': HumanMessage(content=content)},
     )
@@ -301,15 +305,20 @@ def _pending_memory_item(
 
 def _handle_retrieve(store: AgentCoreMemoryStore, actor_id: str, query: str) -> MemoryToolResult:
     try:
-        summaries = _search_actor_records(store, actor_id, query)
+        summaries = store.client.retrieve_memory_records(
+            memoryId=store.memory_id,
+            namespace=actor_namespace(actor_id),
+            searchCriteria={'searchQuery': query},
+            maxResults=10,
+        )['memoryRecordSummaries']
     except Exception:
-        log.warning('agent_core_memory retrieve failed', exc_info=True)
+        log.warning('memory retrieve failed', exc_info=True)
         return _err('Memory search unavailable.')
 
     if not summaries:
         return _ok('No relevant memories found.')
 
-    return {'status': 'success', 'content': [{'text': _extract_text(_record_text(s))} for s in summaries]}
+    return {'status': 'success', 'content': [{'text': extract_text(_record_text(s))} for s in summaries]}
 
 
 def _record_text(record: MemoryRecordSummaryTypeDef | MemoryRecordTypeDef) -> str:
@@ -319,116 +328,51 @@ def _record_text(record: MemoryRecordSummaryTypeDef | MemoryRecordTypeDef) -> st
     return content['text']
 
 
-def _search_actor_records(store: AgentCoreMemoryStore, actor_id: str, query: str) -> list[MemoryRecordSummaryTypeDef]:
-    """The actor's records matching the query across its namespaces, without duplicates."""
-    summaries: list[MemoryRecordSummaryTypeDef] = []
-    seen_ids: set[str] = set()
-    for namespace_path in _list_actor_namespace_paths(store, actor_id):
-        response = store.client.retrieve_memory_records(
-            memoryId=AGENTCORE_MEMORY_ID,
-            namespacePath=namespace_path,
-            searchCriteria={'searchQuery': query},
-            maxResults=10,
-        )
-        for summary in response['memoryRecordSummaries']:
-            record_id = summary['memoryRecordId']
-            if not record_belongs_to_actor(summary, actor_id) or record_id in seen_ids:
-                continue
-            summaries.append(summary)
-            seen_ids.add(record_id)
-    return summaries
-
-
-def _list_actor_namespace_paths(store: AgentCoreMemoryStore, actor_id: str) -> list[str]:
-    return actor_namespace_paths_for_client(store.client, AGENTCORE_MEMORY_ID, actor_id)
-
-
-def actor_namespace_paths_for_client(client: Any, memory_id: str, actor_id: str) -> list[str]:
-    from .memory_broker import MemoryBrokerClient
-
-    if isinstance(client, MemoryBrokerClient):
-        return client.actor_namespace_paths(memory_id, actor_id)
-    paths: set[str] = set()
-    params: dict[str, Any] = {'memoryId': memory_id, 'namespacePath': '/strategies/', 'maxResults': 100}
-    while True:
-        response = client.list_memory_records(**params)
-        for record in response['memoryRecordSummaries']:
-            paths.update(actor_namespace_paths(record, actor_id))
-        if 'nextToken' not in response:
-            return sorted(paths)
-        params['nextToken'] = response['nextToken']
-
-
-def list_actor_memory_record_summaries(client: Any, *, memory_id: str, actor_id: str) -> list[Any]:
-    from .memory_broker import MemoryBrokerClient
-
-    if not isinstance(client, MemoryBrokerClient):
-        return list_memory_record_summaries(client, memory_id=memory_id, namespace_path='/strategies/')
-    return [
-        record for namespace in actor_namespace_paths_for_client(client, memory_id, actor_id)
-        for record in list_memory_record_summaries(client, memory_id=memory_id, namespace_path=namespace)
-    ]
-
-
 def _handle_list(store: AgentCoreMemoryStore, actor_id: str) -> MemoryToolResult:
     try:
-        all_summaries = list_actor_memory_record_summaries(
-            store.client, memory_id=AGENTCORE_MEMORY_ID, actor_id=actor_id,
+        summaries = list_memory_record_summaries(
+            store.client, memory_id=store.memory_id, namespace=actor_namespace(actor_id),
         )
     except Exception:
-        log.warning('agent_core_memory list failed', exc_info=True)
+        log.warning('memory list failed', exc_info=True)
         return _err('Failed to list memories.')
 
-    summaries = [
-        s
-        for s in all_summaries
-        if record_belongs_to_actor(s, actor_id)
-    ]
     if not summaries:
         return _ok('No memories stored.')
 
     return {
         'status': 'success',
-        'content': [{'text': f'[{s["memoryRecordId"]}] {_extract_text(_record_text(s))}'} for s in summaries],
+        'content': [{'text': f'[{s["memoryRecordId"]}] {extract_text(_record_text(s))}'} for s in summaries],
     }
 
 
-def _handle_get(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: str) -> MemoryToolResult:
+def _handle_get(store: AgentCoreMemoryStore, memory_record_id: str) -> MemoryToolResult:
     if not memory_record_id:
         return _err('memory_record_id is required for get action.')
 
     try:
         response = store.client.get_memory_record(
-            memoryId=AGENTCORE_MEMORY_ID,
+            memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
         )
     except Exception:
-        log.warning('agent_core_memory get failed', exc_info=True)
+        log.warning('memory get failed', exc_info=True)
         return _err(f'Failed to get memory record {memory_record_id}.')
 
-    record = response['memoryRecord']
-    if not record_belongs_to_actor(record, actor_id):
-        return _err(f'Failed to get memory record {memory_record_id}.')
-    return _ok(_extract_text(_record_text(record)))
+    return _ok(extract_text(_record_text(response['memoryRecord'])))
 
 
-def _handle_delete(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: str) -> MemoryToolResult:
+def _handle_delete(store: AgentCoreMemoryStore, memory_record_id: str) -> MemoryToolResult:
     if not memory_record_id:
         return _err('memory_record_id is required for delete action.')
 
     try:
-        response = store.client.get_memory_record(
-            memoryId=AGENTCORE_MEMORY_ID,
-            memoryRecordId=memory_record_id,
-        )
-        if not record_belongs_to_actor(response['memoryRecord'], actor_id):
-            return _err(f'Failed to delete memory record {memory_record_id}.')
         store.client.delete_memory_record(
-            memoryId=AGENTCORE_MEMORY_ID,
+            memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
         )
     except Exception:
-        log.warning('agent_core_memory delete failed', exc_info=True)
+        log.warning('memory delete failed', exc_info=True)
         return _err(f'Failed to delete memory record {memory_record_id}.')
 
     return _ok(f'Deleted memory record {memory_record_id}.')

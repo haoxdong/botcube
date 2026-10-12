@@ -65,7 +65,7 @@ export class SessionDispatchPendingError extends Error {}
 
 export class SessionNamespaceNotReadyError extends Error {
   constructor() {
-    super('Session Runtime namespace is not ready; old Chat dispatchers must be retired and broker-only Memory writes verified before tracked admission');
+    super('Session Runtime namespace is not ready; old Chat dispatchers must be retired before tracked admission');
   }
 }
 
@@ -113,31 +113,13 @@ export class SessionProviderError extends Error {
 /** The source account's history is being transferred by Account Claim. */
 export class SessionClaimError extends Error {}
 
-/**
- * Session Metadata (ADR 0067 §2): the only index of Sessions. The item shape is
- * live production data and must stay byte-compatible with the items already stored:
- * `pk = SESSIONS#<owner>`, `sk = SESSION#<id>` | `DELETED` | `CLAIM` | `RETIRED#<id>` | `MAIN`.
- * Turn summaries: `pk = TURN_SUMMARIES#<filing user>`, `sk = SESSION#<id>#TURN#<message id>`.
- */
-export interface TurnMemoryLease {
-  purpose?: 'warmup' | undefined;
-  owner: string;
-  accountActorId: string;
-  filingUserId: string;
-  sessionId: string;
-  runId: string;
-  jti: string;
-  startedAt: string;
-  expiresAt: number;
-}
-
 type AcceptedDispatch = RunningTurn | { messageId: string };
 
 export type RegisteredDispatch = (() => Promise<void>) & {
   readonly session?: SessionPurge;
   readonly token?: string;
   markRejected?: (runtimeTarget: string) => Promise<void>;
-  markSucceeded?: (kind: 'memory-event' | 'session-post', completion?: NonNullable<TransactWriteCommandInput['TransactItems']>[number]) => Promise<void>;
+  markSucceeded?: (kind: 'session-post', completion?: NonNullable<TransactWriteCommandInput['TransactItems']>[number]) => Promise<void>;
   confirmStopped?: () => Promise<void>;
   stopConfirmed?: boolean;
 };
@@ -159,26 +141,28 @@ const runtimeIdentity = (session: Partial<SessionPurge>): Partial<SessionPurge> 
   ...(session.legacy_settlement_unproved === undefined ? {} : { legacy_settlement_unproved: session.legacy_settlement_unproved }),
 });
 const retirementKey = { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' };
-const retirementCondition = { ConditionExpression: 'old_chat_retired = :yes AND memory_broker_only = :yes', ExpressionAttributeValues: { ':yes': true } };
+const retirementCondition = { ConditionExpression: 'old_chat_retired = :yes', ExpressionAttributeValues: { ':yes': true } };
 
+/**
+ * Session Metadata (ADR 0067 §2): the only index of Sessions. The item shape is
+ * live production data and must stay byte-compatible with the items already stored:
+ * `pk = SESSIONS#<owner>`, `sk = SESSION#<id>` | `DELETED` | `CLAIM` | `RETIRED#<id>` | `MAIN`.
+ * Turn summaries: `pk = TURN_SUMMARIES#<filing user>`, `sk = SESSION#<id>#TURN#<message id>`.
+ */
 export interface SessionMetadata {
   readonly scheduledRuns?: ScheduledRunStore;
-  /** Require verified retirement of old Chat dispatchers and the broker-only Memory cutover. */
+  /** Require verified retirement of old Chat dispatchers. */
   checkRuntimeNamespaceReady(): Promise<void>;
   /** Register a persistence writer against the deletion fences; release only after confirmed dispatch/completion. */
   beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<RegisteredDispatch>;
   /** Refuse deletion while another process may still dispatch or finish a persistence writer. */
   assertNoDispatch(session: SessionPurge, failedAdmissionTokens?: readonly string[]): Promise<void>;
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]>;
-  acknowledgeSuccessfulDispatch?(session: SessionPurge, token: string, kind: 'memory-event' | 'session-post'): Promise<void>;
+  acknowledgeSuccessfulDispatch?(session: SessionPurge, token: string, kind: 'session-post'): Promise<void>;
   /** Durable fenced cleanup work, including work left by a replaced Chat Service task. */
   pendingPurges(): Promise<SessionPurge[]>;
   /** Acknowledge only after Runtime stop and durable event purge succeed. */
   completePurge(session: SessionPurge): Promise<void>;
-  createMemoryLease(lease: TurnMemoryLease): Promise<void>;
-  memoryLease(owner: string, jti: string): Promise<TurnMemoryLease | null>;
-  endMemoryLease(owner: string, jti: string): Promise<void>;
-  memorySessionActive(owner: string, sessionId: string, filingUserId: string): Promise<boolean>;
   /** Raise unless the table is active and readable. */
   checkHealth(): Promise<void>;
   /**
@@ -224,6 +208,8 @@ export interface SessionMetadata {
   mainChat(owner: string, filingUserId: string): Promise<string>;
   /** Read only: recognize the assigned Main Chat before its first Turn without allocating; Session, owner deletion and Account Claim fences deny it. */
   ownsMainChat(owner: string, sessionId: string): Promise<boolean>;
+  /** Whether the owner has this Session; Session, owner deletion and Account Claim fences deny it. */
+  owns(owner: string, sessionId: string): Promise<boolean>;
   /** The owner's Session, unless it is fenced. */
   get(owner: string, sessionId: string): Promise<SessionSummary | null>;
   /**
@@ -348,7 +334,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       Key: retirementKey,
       ConsistentRead: true,
     }));
-    if (Item?.old_chat_retired !== true || Item.memory_broker_only !== true) throw new SessionNamespaceNotReadyError();
+    if (Item?.old_chat_retired !== true) throw new SessionNamespaceNotReadyError();
   }
 
   async pendingPurges(): Promise<SessionPurge[]> {
@@ -600,7 +586,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         await this.documents.send(new UpdateCommand(Update));
         return;
       }
-      if (kind !== 'session-post' || completion.Update?.TableName !== this.tableName) throw new SessionDispatchPendingError('Successful writer completion transaction is invalid');
+      if (completion.Update?.TableName !== this.tableName) throw new SessionDispatchPendingError('Successful writer completion transaction is invalid');
       await this.documents.send(new TransactWriteCommand({ TransactItems: [{ Update }, completion] }));
     };
     complete.markRejected = async (target) => {
@@ -642,7 +628,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       .map((row) => this.dispatchAcknowledgement(session, row.sk, true, row.runtime_stop_confirmed === session.runtime_binding, runtimeTarget));
   }
 
-  async acknowledgeSuccessfulDispatch(session: SessionPurge, token: string, kind: 'memory-event' | 'session-post'): Promise<void> {
+  async acknowledgeSuccessfulDispatch(session: SessionPurge, token: string, kind: 'session-post'): Promise<void> {
     if (!boundRuntime(session) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(token)) throw new SessionDispatchPendingError('Successful writer identity is unproved');
     const Key = dispatchKey(session, token);
     const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
@@ -662,11 +648,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       sk: string; session_id?: string; filing_user_id?: string; runtime_binding?: string; runtime_generation?: string; writer_succeeded?: string;
     }[];
     await Promise.all(rows.filter((row) =>
-      (row.writer_succeeded === 'memory-event' || row.writer_succeeded === 'session-post') &&
+      row.writer_succeeded === 'session-post' &&
       row.session_id === session.session_id && row.filing_user_id === session.filing_user_id &&
       row.runtime_binding === session.runtime_binding && row.runtime_generation === session.runtime_generation &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(row.sk)
-    ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, row.writer_succeeded as 'memory-event' | 'session-post')));
+    ).map((row) => this.acknowledgeSuccessfulDispatch(session, row.sk, 'session-post')));
   }
 
   async assertNoDispatch(session: SessionPurge, failedAdmissionTokens: readonly string[] = []): Promise<void> {
@@ -680,36 +666,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       const pending = items.find((item) => pk !== dispatchKey(session, '').pk || !failedAdmissionTokens.includes(item.sk));
       if (pending !== undefined) throw new SessionDispatchPendingError(`Session dispatch is still registered; deletion is blocked. session_id=${session.session_id} filing_user_id=${session.filing_user_id} registration=${String(pending.sk)} dispatcher=${String(pending.dispatcher)}`);
     }
-  }
-
-  async createMemoryLease(lease: TurnMemoryLease): Promise<void> {
-    await this.documents.send(new PutCommand({
-      TableName: this.tableName,
-      Item: { pk: `TURN_MEMORY#${lease.owner}`, sk: `TURN#${lease.jti}`, ...lease },
-      ConditionExpression: 'attribute_not_exists(pk)',
-    }));
-  }
-
-  async memoryLease(owner: string, jti: string): Promise<TurnMemoryLease | null> {
-    const { Item } = await this.documents.send(new GetCommand({
-      TableName: this.tableName, Key: { pk: `TURN_MEMORY#${owner}`, sk: `TURN#${jti}` }, ConsistentRead: true,
-    }));
-    return Item === undefined ? null : Item as TurnMemoryLease;
-  }
-
-  async endMemoryLease(owner: string, jti: string): Promise<void> {
-    await this.documents.send(new DeleteCommand({
-      TableName: this.tableName, Key: { pk: `TURN_MEMORY#${owner}`, sk: `TURN#${jti}` },
-    }));
-  }
-
-  async memorySessionActive(owner: string, sessionId: string, filingUserId: string): Promise<boolean> {
-    const [session, deleted, claim] = await Promise.all([
-      this.get(owner, sessionId),
-      this.documents.send(new GetCommand({ TableName: this.tableName, Key: ownerFenceKey(owner), ConsistentRead: true })),
-      this.documents.send(new GetCommand({ TableName: this.tableName, Key: claimFenceKey(owner), ConsistentRead: true })),
-    ]);
-    return session?.filing_user_id === filingUserId && deleted.Item === undefined && claim.Item === undefined;
   }
 
   async checkHealth(): Promise<void> {
@@ -1045,6 +1001,15 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       this.documents.send(new GetCommand({ TableName: this.tableName, Key: claimFenceKey(owner), ConsistentRead: true })),
     ]);
     return (session.Item === undefined || !fenced(session.Item as SessionItem)) && deleted.Item === undefined && claim.Item === undefined;
+  }
+
+  async owns(owner: string, sessionId: string): Promise<boolean> {
+    const [session, deleted, claim] = await Promise.all([
+      this.get(owner, sessionId),
+      this.documents.send(new GetCommand({ TableName: this.tableName, Key: ownerFenceKey(owner), ConsistentRead: true })),
+      this.documents.send(new GetCommand({ TableName: this.tableName, Key: claimFenceKey(owner), ConsistentRead: true })),
+    ]);
+    return session !== null && deleted.Item === undefined && claim.Item === undefined;
   }
 
   async mainChat(owner: string, filingUserId: string): Promise<string> {

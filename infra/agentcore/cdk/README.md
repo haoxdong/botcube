@@ -32,29 +32,6 @@ Replace the template's placeholder AWS settings and stage your Cartridge's produ
 Always synthesize and inspect the diff before deploying. Do not proceed if it replaces or deletes the configured runtime or memory.
 After deployment, send a real prompt and verify both the response and its structured CloudWatch event.
 
-## One-time Memory broker cutover
+## One-time tagged-credential cutover
 
-Existing Session API infrastructure must already be deployed. Deploy the broker-capable Chat Service first and verify that every old Chat task, including draining tasks, has stopped. The old Harness accepts the additional Turn capability; the new Harness requires it. Do not deploy the new Harness while an old Chat task can still invoke it.
-
-For an existing deployment, retain the old Harness's Memory grants during the runtime image update. From the public repository root:
-
-```bash
-export CARTRIDGE_DEPLOY_ROOT="/absolute/path/to/cartridge/deploy"
-export AGENTCORE_CUTOVER_STACK="AgentCore-your-cartridge-default"
-corepack pnpm --dir infra/agentcore/cdk run build
-corepack pnpm --dir infra/agentcore/cdk exec cdk synth "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=true
-corepack pnpm --dir infra/agentcore/cdk exec cdk diff "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=true
-corepack pnpm --dir infra/agentcore/cdk exec cdk deploy "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=true
-```
-
-Inspect the diff before deploying; replacement or deletion of the runtime or Memory remains a stop condition. This explicit migration context retains only the pre-cutover Memory grants, including their existing namespace conditions. It does not retain the removed log reads, resource-policy writes, or configuration-bundle grants. The new Harness continues to use the broker exclusively. The stack output `LegacyRuntimeMemoryRetained` is `true` during this stage.
-
-Wait at least 3,600 seconds after the updated runtime version becomes `READY`, so every old microVM has exhausted its maximum lifetime. Then synthesize, inspect the diff, and deploy the final policy:
-
-```bash
-corepack pnpm --dir infra/agentcore/cdk exec cdk synth "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=false
-corepack pnpm --dir infra/agentcore/cdk exec cdk diff "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=false
-corepack pnpm --dir infra/agentcore/cdk exec cdk deploy "$AGENTCORE_CUTOVER_STACK" -c retainLegacyRuntimeMemory=false
-```
-
-The explicit `false` overrides any retained CDK context. An absent context also denies all runtime Memory operations. Verify `LegacyRuntimeMemoryRetained=false`, the deployed runtime policy, broker-backed persistence and recall on a new Session, and direct Memory access denial before enabling full Bash.
+A Turn reaches Memory with tagged credentials from STS `AssumeRoleWithWebIdentity`, exchanging the Chat Service's per-Turn JWT for the Memory role the stack outputs as `UserMemoryRoleArn`; the runtime role holds no Memory permission. The new Harness refuses an invocation without that JWT, and the new Chat Service sends no broker capability, so Turns fail between the two deploys. Store the Chat Service's Turn identity keys and deploy the Chat Service first: creating this stack's IAM OIDC provider fetches the issuer's live `/.well-known/openid-configuration`, which STS also reads on every exchange, and fails until the Chat Service serves it. Then synthesize, inspect the diff, and deploy this stack right away. Verify the runtime's `BOTCUBE_USER_MEMORY_ROLE_ARN`, a policy without `bedrock-agentcore:` actions on the runtime role, and persistence and recall on a new Session.

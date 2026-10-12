@@ -3,9 +3,7 @@ from __future__ import annotations
 import pytest
 
 from botcube_harness_deepagents.actor_identity import (
-    actor_namespace_paths,
     actor_path_segment,
-    record_belongs_to_actor,
     sanitize_actor_id,
 )
 
@@ -43,14 +41,3 @@ def test_a_conversation_id_becomes_a_bounded_path_safe_name(value: str, expected
 )
 def test_an_actor_id_becomes_a_collision_safe_path_segment(value: str, expected: str) -> None:
     assert actor_path_segment(value) == expected
-
-
-def test_a_record_belongs_to_the_actor_its_namespaces_name() -> None:
-    record = {
-        'namespace': '/strategy/actor/user-1/facts',
-        'namespaces': ['/strategy/actors/user-1', '/strategy/actor/user-1/facts', '/strategy/actors/user-2'],
-    }
-
-    assert actor_namespace_paths(record, 'user-1') == ['/strategy/actor/user-1/', '/strategy/actors/user-1/']
-    assert record_belongs_to_actor(record, 'user-2')
-    assert not record_belongs_to_actor(record, 'user-3')

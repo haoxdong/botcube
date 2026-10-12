@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, NotRequired
+from typing import Annotated, Any, NotRequired
 
 from deepagents import create_deep_agent
+from deepagents.graph import DeepAgentState
 from deepagents.middleware.filesystem import FilesystemMiddleware, FsToolName
-from deepagents.middleware.memory import MemoryMiddleware
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.profiles import HarnessProfile, register_harness_profile
 from langchain.agents.middleware import TodoListMiddleware
@@ -16,7 +16,11 @@ from langchain.agents.middleware.types import (
     OmitFromOutput,
     PrivateStateAttr,
 )
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AnyMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
+from langgraph.constants import CONFIG_KEY_CHECKPOINTER
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 from opentelemetry.instrumentation.utils import unwrap
@@ -24,23 +28,10 @@ from typing_extensions import TypedDict
 
 from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
-from .memory_files import build_memory_sources, write_ltm_source
-
-if TYPE_CHECKING:
-    # LangGraph injects the config only into a parameter annotated by this name.
-    from langchain_core.runnables import RunnableConfig
+from .memory_files import build_memory_sources
 
 DEFAULT_SYSTEM_PROMPT = ''
 _FILESYSTEM_TOOLS: list[FsToolName] = ['ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'execute']
-
-# Memory injection template: the <agent_memory> block only, no
-# <memory_guidelines>. The framework default steers the
-# agent to persist memories via edit_file, but ltm.md is a per-VM render
-# cache of AgentCore LTM — the agent_core_memory tool is the write path.
-LTM_MEMORY_SYSTEM_PROMPT = """<agent_memory>
-{agent_memory}
-
-</agent_memory>"""
 
 # deepagents 0.7's stdlib SkillMetadata cannot generate JSON schema on Python 3.11.
 # Preserve its complete shape with https://errors.pydantic.dev/2.13/u/typed-dict-version.
@@ -52,6 +43,16 @@ class _SkillMetadata(TypedDict):
     compatibility: str | None
     metadata: dict[str, str]
     allowed_tools: list[str]
+
+
+class PlainState(DeepAgentState):
+    """deepagents' state with `messages` as a plain list: each checkpoint holds every message,
+    so no read walks ancestor checkpoints (ADR 0067 decision 9)."""
+
+    messages: Annotated[list[AnyMessage], add_messages]  # type: ignore[assignment]
+    # The Session's Memory block (`session_memory.SessionMemoryMiddleware`). Every graph on the
+    # Session record carries it, so a session API post keeps it in the next checkpoint.
+    session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
 
 
 class _SkillsState(AgentState):
@@ -86,27 +87,54 @@ class _SchemaSkillsMiddleware(SkillsMiddleware):
         return 'SkillsMiddleware'
 
 
-class FreshMemoryMiddleware(MemoryMiddleware):
-    """Memory read afresh at the start of every Turn.
+class _UncheckpointedTasksMiddleware(AgentMiddleware):
+    """Runs `task` subagents without checkpoints.
 
-    deepagents keeps what it loaded in the conversation's checkpointed state and
-    never reads its sources again, so an edit to the member's Memory would never
-    reach a conversation already under way.
+    A subagent inherits the Session's saver, which would file its checkpoints in an
+    AgentCore session of their own, outside the Session and its writes sessions: past
+    the Turn's Memory access and the purge. Nothing resumes a subagent part-way: the
+    Harness never interrupts a graph.
     """
 
-    @property
-    def name(self) -> str:
-        return 'MemoryMiddleware'
+    def wrap_tool_call(
+        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        return handler(_uncheckpointed_task(request))
 
-    def before_agent(self, state: Any, runtime: Any, config: RunnableConfig) -> Any:  # type: ignore[override]
-        return super().before_agent(_without_memory(state), runtime, config)  # pragma: no mutate: an instance backend reads no runtime or config
+    async def awrap_tool_call(
+        self, request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        return await handler(_uncheckpointed_task(request))
 
-    async def abefore_agent(self, state: Any, runtime: Any, config: RunnableConfig) -> Any:  # type: ignore[override]
-        return await super().abefore_agent(_without_memory(state), runtime, config)  # pragma: no mutate: an instance backend reads no runtime or config
+
+def _uncheckpointed_task(request: ToolCallRequest) -> ToolCallRequest:
+    if request.tool is None or request.tool.name != 'task':
+        return request
+    return request.override(tool=_UncheckpointedTask(task=request.tool))
 
 
-def _without_memory(state: Any) -> Any:
-    return {key: value for key, value in state.items() if key != 'memory_contents'}
+class _UncheckpointedTask(BaseTool):
+    """The `task` tool, run without the saver the Session lends its subgraphs."""
+
+    task: BaseTool
+    name: str = 'task'
+    description: str = ''
+
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError('invoke() and ainvoke() delegate to the task tool')
+
+    def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
+        return self.task.invoke(input, _without_checkpointer(config), **kwargs)
+
+    async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
+        return await self.task.ainvoke(input, _without_checkpointer(config), **kwargs)
+
+
+def _without_checkpointer(config: RunnableConfig | None) -> RunnableConfig:
+    config = config or {}
+    configurable = {key: value for key, value in config.get('configurable', {}).items() if key != CONFIG_KEY_CHECKPOINTER}
+    return {**config, 'configurable': configurable}
 
 
 def _prompt_cache_usage_middleware() -> Sequence[AgentMiddleware[Any, Any, Any]]:
@@ -153,7 +181,6 @@ def build_agent(
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     middleware: Sequence[Any] | None = None,
     checkpointer: Any | None = None,
-    ltm_context: str | None = None,
 ) -> Any:
     _restore_middleware_hook_dispatch()
     resolved_model = model or build_model()
@@ -171,15 +198,6 @@ def build_agent(
             backend=resolved_backend,
         )
     resolved_system_prompt = system_prompt
-    if ltm_context:
-        memory_sources.append(
-            write_ltm_source(
-                ltm_context,
-                backend=resolved_backend,
-                memory_path=memory_path,
-                repo_root=repo_root,
-            )
-        )
     kwargs: dict[str, Any] = {
         'model': resolved_model,
         'tools': list(tools or []),
@@ -187,6 +205,7 @@ def build_agent(
         'subagents': resolved_subagents,
         'backend': resolved_backend,
         'system_prompt': resolved_system_prompt,
+        'state_schema': PlainState,
     }
     kwargs['middleware'] = [
         _FilesMiddleware(
@@ -195,19 +214,11 @@ def build_agent(
         ),
         TodoListMiddleware(),
         _SchemaSkillsMiddleware(backend=resolved_backend, sources=resolved_skills),
+        _UncheckpointedTasksMiddleware(),
         *(list(middleware) if middleware is not None else []),
     ]
-    # Replace the default memory slot by name so LTM stays after skills and
-    # caching without the filesystem-write guidance forbidden by ADR 0031.
     if memory_sources:
         kwargs['memory'] = memory_sources
-        kwargs['middleware'].append(
-            FreshMemoryMiddleware(
-                backend=resolved_backend,
-                sources=memory_sources,
-                system_prompt=LTM_MEMORY_SYSTEM_PROMPT,
-            )
-        )
     if store is not None:
         kwargs['store'] = store
     if checkpointer is not None:

@@ -37,7 +37,7 @@ async function createRuntimeNamespaceReady(endpoint: string, table: string): Pro
     credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
   }));
   await client.send(new PutCommand({
-    TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true },
+    TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
   }));
 }
 

@@ -48,7 +48,6 @@ if created:
             'pk': {'S': 'RUNTIME_DISPATCHERS'},
             'sk': {'S': 'CLOSED'},
             'old_chat_retired': {'BOOL': True},
-            'memory_broker_only': {'BOOL': True},
         },
         ConditionExpression='attribute_not_exists(pk)',
     )

@@ -90,7 +90,7 @@ describe('HTTPS Harness transport', () => {
       expect(received).toEqual([]);
       await DynamoDBDocumentClient.from(stack.table.client).send(new PutCommand({
         TableName: stack.table.name,
-        Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true, memory_broker_only: true },
+        Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
       }));
       expect((await stack.app.request('/health')).status).toBe(200);
     } finally { await stack.stop(); }

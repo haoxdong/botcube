@@ -8,11 +8,9 @@ import { HttpError } from './cartridge.js';
  * and reads and edits a user's Memory document, whose lines are AgentCore Memory records.
  */
 type SessionApiEvent =
-  /** Read history; a snapshot missing the `contains` Turn marker or message ID is rebuilt. */
-  | { operation: 'get'; sessionId: string; userId: string; contains?: string }
+  /** Read history from the Session's latest checkpoint; the session API ignores `contains`. */
+  | { operation: 'get'; sessionId: string; userId: string }
   | { operation: 'purge'; sessionId: string; userId: string }
-  /** Read the answered Turns of each Session, in one call. */
-  | { operation: 'activity'; sessions: { sessionId: string; userId: string }[] }
   /** Add `content` to the Session as the agent's message, under `messageId`. */
   | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string }
   | { operation: 'memory'; userId: string }
@@ -53,6 +51,11 @@ export function sessionApi(config: SessionApiConfig): SessionApi {
           ? await invokeFunction(config, event, timeoutSeconds)
           : await invokeLocal(config.localUrl, event, timeoutSeconds);
       if (status === 404) throw new HttpError(404, String((body as { error: unknown }).error));
+      // A Session in the legacy checkpoint format, which the session API reads no further (ADR 0067).
+      if (status === 410) {
+        const { error, code } = body as { error: unknown; code: unknown };
+        throw new HttpError(410, String(error), String(code));
+      }
       if (status !== 200) {
         throw Object.assign(new HttpError(503, `Session API returned HTTP ${status}`), { cause: body });
       }

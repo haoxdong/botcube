@@ -20,6 +20,7 @@ from moto import mock_aws
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.files_sync import FilesSync
 from botcube_harness_deepagents.lazy_files import LazyFilesMiddleware
+from conftest import prepared
 
 
 def _use_workspace() -> None:
@@ -79,12 +80,8 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
     release = threading.Event()
     chart = '<svg xmlns="http://www.w3.org/2000/svg"><text>Chart</text></svg>'
 
-    async def snapshot(*args: Any) -> None:
-        pass
 
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-    monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
     for name in ('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_ENDPOINT_URL_S3'):
         monkeypatch.delenv(name, raising=False)
 
@@ -116,7 +113,7 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
 
         async def exercise() -> None:
             stream = serving._SessionTurns().stream(
-                ('owner', 'session'), lambda: agent, _input(), files, tmp_path, serving._RequestContext(None),
+                ('owner', 'session'), prepared(agent, tmp_path), _input(), files, serving._RequestContext(None),
             )
 
             async def read_chart_on_completion() -> str:
@@ -139,41 +136,6 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
                 await stream.aclose()
 
         asyncio.run(exercise())
-
-
-def test_turn_without_files_finishes_after_history_settlement(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    async def exercise() -> None:
-        entered = asyncio.Event()
-        release = asyncio.Event()
-
-        async def snapshot(*args: Any) -> None:
-            entered.set()
-            await release.wait()
-
-        monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-        monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-        monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
-        stream = serving._SessionTurns().stream(
-            ('owner', 'session'), lambda: _agent(), _input(), None, tmp_path, serving._RequestContext(None),
-        )
-        try:
-            async def collect() -> list[EventType]:
-                return [event.type async for event in stream]
-
-            completion = asyncio.create_task(collect())
-            async with asyncio.timeout(2):
-                await entered.wait()
-            assert not completion.done()
-            release.set()
-            async with asyncio.timeout(2):
-                assert (await completion)[-1] == EventType.RUN_FINISHED
-        finally:
-            release.set()
-            await stream.aclose()
-
-    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize('mode', ['dynamic', 'before', 'after'])
@@ -214,31 +176,27 @@ def test_graph_interrupts_keep_the_adapters_finalization(mode: str) -> None:
 def test_failed_files_settlement_preserves_history_and_fails_the_current_turn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    saved: list[str] = []
     failure = serving.FilesSyncError('Files could not be uploaded')
 
     def push(*args: Any) -> None:
         raise failure
 
-    async def snapshot(*args: Any) -> None:
-        saved.append('history')
-
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-    monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
     files = cast(FilesSync, SimpleNamespace(pull=lambda *args: None, push=push))
 
     async def exercise() -> None:
         turns = serving._SessionTurns()
+        agent = _agent(use_files=True)
         received = []
         with pytest.raises(serving.FilesSyncError) as caught:
             async for event in turns.stream(
-                ('owner', 'session'), lambda: _agent(use_files=True), _input(), files, tmp_path, serving._RequestContext(None),
+                ('owner', 'session'), prepared(agent, tmp_path), _input(), files, serving._RequestContext(None),
             ):
                 received.extend([event.type])
         assert EventType.RUN_FINISHED not in received
         assert caught.value is failure
-        assert saved == ['history']
+        state = await agent.graph.aget_state({'configurable': {'thread_id': 'session'}})
+        assert state.values['messages'][-1].content == 'Done'
         await asyncio.sleep(0)
         assert 'Task exception was never retrieved' not in caplog.text
 
@@ -264,19 +222,15 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
                     closing.set()
                     await release.wait()
 
-        async def snapshot(*args: Any) -> None:
-            pass
 
         monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-        monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-        monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
         files = cast(FilesSync, SimpleNamespace(pull=lambda *args: None, push=lambda *args: pushed.append('files')))
         turns = serving._SessionTurns()
-        stream = turns.stream(('owner', 'session'), lambda: cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None))
+        stream = turns.stream(('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path), _input(), files, serving._RequestContext(None))
         completion = asyncio.create_task(anext(stream))
         await closing.wait()
         assert not completion.done()
-        next_stream = turns.stream(('owner', 'session'), lambda: _agent(), _input('next'), None, tmp_path, serving._RequestContext(None))
+        next_stream = turns.stream(('owner', 'session'), prepared(_agent(), tmp_path), _input('next'), None, serving._RequestContext(None))
         next_event = asyncio.create_task(anext(next_stream))
         await asyncio.sleep(0.02)
         assert not next_event.done()
@@ -300,17 +254,13 @@ def test_an_errored_graph_does_not_publish_files(monkeypatch: pytest.MonkeyPatch
             _use_workspace()
             yield RunErrorEvent(message='Graph failed', code='GRAPH_FAILED')
 
-    async def snapshot(*args: Any) -> None:
-        pass
 
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-    monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', None)
     files = cast(FilesSync, SimpleNamespace(pull=lambda *args: None, push=lambda *args: pushed.append('files')))
 
     async def exercise() -> None:
         events = [event async for event in serving._SessionTurns().stream(
-            ('owner', 'session'), lambda: cast(LangGraphAgent, Agent()), _input(), files, tmp_path, serving._RequestContext(None),
+            ('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path), _input(), files, serving._RequestContext(None),
         )]
         assert [(event.type, event.code) for event in events] == [(EventType.RUN_ERROR, 'GRAPH_FAILED')]
         assert pushed == []
@@ -318,28 +268,18 @@ def test_an_errored_graph_does_not_publish_files(monkeypatch: pytest.MonkeyPatch
     asyncio.run(exercise())
 
 
-def test_files_completion_waits_for_checkpoint_flush_and_stop_keeps_the_upload_lock(
+def test_a_stop_during_the_files_upload_keeps_the_sessions_lock_until_it_completes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         uploading = threading.Event()
         stored = threading.Event()
-        flushing = asyncio.Event()
-        flushed = asyncio.Event()
-        snapshots: list[str] = []
         started: list[str] = []
 
         def push(*args: Any) -> None:
             uploading.set()
             if not stored.wait(5):
                 raise AssertionError('The upload was never released')
-
-        async def flush(session: tuple[str, str]) -> None:
-            flushing.set()
-            await flushed.wait()
-
-        async def snapshot(session: Any, agent: Any, run_id: str) -> None:
-            snapshots.append(run_id)
 
         from ag_ui.core import RunFinishedEvent
 
@@ -350,15 +290,13 @@ def test_files_completion_waits_for_checkpoint_flush_and_stop_keeps_the_upload_l
                 yield RunFinishedEvent(thread_id=input.thread_id or '', run_id=input.run_id)
 
         monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-        monkeypatch.setattr(serving, '_snapshot_messages', snapshot)
-        monkeypatch.setattr(serving, '_DEFERRED_SAVER', SimpleNamespace(aflush=flush))
         files = cast(FilesSync, SimpleNamespace(pull=lambda *args: None, push=push))
         turns = serving._SessionTurns()
         session = ('owner', 'session')
         agent = cast(LangGraphAgent, Agent())
-        stream = turns.stream(session, lambda: agent, _input(), files, tmp_path, serving._RequestContext(None))
+        stream = turns.stream(session, prepared(agent, tmp_path), _input(), files, serving._RequestContext(None))
         completion = asyncio.create_task(anext(stream))
-        next_stream = turns.stream(session, lambda: agent, _input('next'), None, tmp_path, serving._RequestContext(None))
+        next_stream = turns.stream(session, prepared(agent, tmp_path), _input('next'), None, serving._RequestContext(None))
         try:
             assert await asyncio.to_thread(uploading.wait, 2)
             turns.stop(session, 'run')
@@ -369,20 +307,11 @@ def test_files_completion_waits_for_checkpoint_flush_and_stop_keeps_the_upload_l
             assert started == ['run']
             stored.set()
             async with asyncio.timeout(2):
-                await flushing.wait()
-            assert not completion.done()
-            assert snapshots == []
-            assert not next_completion.done()
-            assert started == ['run']
-            flushed.set()
-            async with asyncio.timeout(2):
                 assert (await completion).type == EventType.RUN_FINISHED
                 assert (await next_completion).type == EventType.RUN_FINISHED
-            assert snapshots[0] == 'run'
             assert started == ['run', 'next']
         finally:
             stored.set()
-            flushed.set()
             await stream.aclose()
             await next_stream.aclose()
 

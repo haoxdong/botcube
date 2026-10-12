@@ -199,7 +199,7 @@ def test_serving_aliases_native_sdk_chunk_to_actual_public_message(
 
     import httpx
 
-    from agentcore_fake import FakeAgentCoreMemory, memory_capability_props
+    from agentcore_fake import FakeAgentCoreMemory, turn_identity
     from botcube_harness_deepagents import serving
     from test_session_resume import _serve_session
 
@@ -279,7 +279,7 @@ def test_serving_aliases_native_sdk_chunk_to_actual_public_message(
                         "state": {},
                         "forwarded_props": {
                             "sessionUserId": "user-1",
-                            "turnMemory": memory_capability_props(),
+                            "turnIdentity": turn_identity("user-1", "user-1", "session-fixture"),
                             "model": "openai-plan:gpt-6-astra",
                         },
                     },

@@ -1,5 +1,4 @@
-import type { TurnMemory } from './turn-memory.js';
-import type { TurnMemoryLease } from './session-metadata.js';
+import { forwardTurnIdentity, type TurnIdentity } from './turn-identity.js';
 import { contentToText, type RunAgentInput, type ToolCallResultEvent } from '@ag-ui/client';
 import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
@@ -16,8 +15,8 @@ import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store
 
 export interface ScheduledRunDeps {
   runtimeNamespaceRequired: boolean;
-  turnMemory?: TurnMemory | null;
-  turnMemoryUrl?: string | undefined;
+  /** Null: the Chat Service has no keys and forwards no Turn identity. */
+  turnIdentity: TurnIdentity | null;
   cartridge: ChatServiceCartridge;
   sessionMetadata: SessionMetadata;
   agentDocuments: AgentDocuments;
@@ -195,20 +194,15 @@ async function runInSideChat(
     running,
   });
   let output: RunOutput;
-  let memoryLease: TurnMemoryLease | undefined;
   try {
     const payload = await cartridge.invocationPayload(input, requester, model);
     const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
     payload.forwardedProps.sessionUserId = sessionUserId;
-    delete payload.forwardedProps.turnMemory;
-    if (deps.turnMemory) {
-      const capability = await deps.turnMemory.start({ owner, accountActorId: cartridge.filingUserId(owner),
-        filingUserId: sessionUserId, sessionId: sideChat, runId: input.runId, startedAt: running.startedAt });
-      memoryLease = capability.lease;
-      payload.forwardedProps.turnMemory = { token: capability.token, url: deps.turnMemoryUrl };
-    }
+    await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
+      actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
+    });
     const complete = await sessionMetadata.beginDispatch(owner, sideChat, undefined, running);
     output = await readRun(
       await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session ?? { session_id: sideChat, filing_user_id: sessionUserId }, complete),
@@ -217,8 +211,7 @@ async function runInSideChat(
       initialMessages,
     );
   } finally {
-    if (deps.turnMemory) await deps.turnMemory.end(memoryLease, owner, sideChat, running, undefined);
-    else await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
+    await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
   }
   const signIn = await cartridge.signInNeeded(owner, [...output.toolResults, ...output.texts]);
   const answer = output.texts.at(-1);

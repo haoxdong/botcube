@@ -10,13 +10,14 @@ from typing import Any
 import boto3
 import pytest
 from botocore.stub import Stubber
+from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
+    _writes_session_prefix,
+)
 
-from botcube_harness_deepagents import serving
-from botcube_harness_deepagents.actor_identity import record_belongs_to_actor
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import purge as purge_module
-from botcube_harness_deepagents.memory_tools import agent_core_memory
-from botcube_harness_deepagents.pending_memory import pending_memory_session_id
+from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
+from botcube_harness_deepagents.turn_memory import TurnMemoryMiddleware
 
 MEMORY_ID = 'memory_1-0123456789'
 
@@ -26,6 +27,11 @@ def aws_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'us-west-2')
+
+
+def test_the_checkpointers_writes_prefix_is_the_one_the_chat_service_signs() -> None:
+    # The Session ID and prefix of botcube/chat's turn-identity.test.ts: the Memory role allows `${writesPrefix}-*`.
+    assert _writes_session_prefix('3f2b8c1e-5d4a-4f6b-9c2d-1a2b3c4d5e6f') == 'lgw-3d005e2ccf2461767eb01d780463736c-'
 
 
 def test_the_checkpointer_reads_the_configured_memory_in_the_configured_region() -> None:
@@ -40,55 +46,14 @@ def test_the_store_reads_the_configured_memory_in_the_configured_region() -> Non
     assert (store.memory_id, store.client.meta.region_name) == (MEMORY_ID, 'eu-west-1')
 
 
-def test_the_memory_tools_record_each_turn_of_the_actors_thread() -> None:
-    tools, middleware = agentcore.build_memory_tools(
-        store=agentcore.build_store(MEMORY_ID, region_name='eu-west-1'),
-        actor_id='jane.doe_ny',
-        thread_id='thread-1',
-        memory_id=MEMORY_ID,
-    )
+def test_the_actor_gets_one_memory_tool_its_turns_recorded_and_memory_loaded_once() -> None:
+    tools, middleware = agentcore.build_memory_tools(actor_id='jane.doe_ny', thread_id='thread-1')
 
-    assert tools == [agent_core_memory]
-    assert [(m.memory_id, m.actor_id, m.session_id) for m in middleware] == [
-        (MEMORY_ID, 'jane.doe_ny', 'thread-1')
-    ]
-
-
-class _PendingMemoryClient:
-    """Serves no strategy records, and one Pending Memory event per seeded (actor, Session)."""
-
-    def __init__(self, texts_by_session: dict[tuple[str, str], str]) -> None:
-        self.texts_by_session = texts_by_session
-
-    def get_paginator(self, operation: str) -> Any:
-        assert operation == 'list_memory_records'
-        return SimpleNamespace(paginate=lambda **_params: [{'memoryRecordSummaries': []}])
-
-    def list_events(self, *, actorId: str, sessionId: str, **_params: Any) -> dict[str, Any]:
-        text = self.texts_by_session.get((actorId, sessionId))
-        if text is None:
-            return {'events': []}
-        payload = [{'conversational': {'content': {'text': text}, 'role': 'USER'}}]
-        return {'events': [{'eventTimestamp': datetime.now(UTC), 'payload': payload}]}
-
-
-@pytest.mark.parametrize(
-    ('actor_id', 'thread_id', 'expected'),
-    [
-        ('anonymous', 'thread-1', 'semantic facts:\n- Prefers copper'),
-        ('anonymous', 'thread-2', None),
-        ('jane.doe_ny', 'thread-1', None),
-    ],
-)
-def test_prewarm_reads_the_pending_memory_of_the_actors_thread(
-    actor_id: str, thread_id: str, expected: str | None, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # An anonymous actor's Pending Memory is filed per thread.
-    session_id = pending_memory_session_id(actor_id='anonymous', thread_id='thread-1')
-    store: Any = SimpleNamespace(client=_PendingMemoryClient({('anonymous', session_id): 'Prefers copper'}))
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(record_belongs_to_actor=record_belongs_to_actor))
-
-    assert agentcore.prewarm_ltm(store, actor_id, thread_id=thread_id) == expected
+    assert [tool.name for tool in tools] == ['memory']
+    turns, session = middleware
+    assert isinstance(turns, TurnMemoryMiddleware)
+    assert (turns.actor_id, turns.session_id) == ('jane.doe_ny', 'thread-1')
+    assert isinstance(session, SessionMemoryMiddleware)
 
 
 # -- Session purge ---------------------------------------------------------------
@@ -113,7 +78,7 @@ def events_client() -> Iterator[tuple[Any, Stubber]]:
         stubber.assert_no_pending_responses()
 
 
-def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second(events_client: tuple[Any, Stubber], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second_in_the_session_and_its_writes_sessions(events_client: tuple[Any, Stubber], monkeypatch: pytest.MonkeyPatch) -> None:
     client, stubber = events_client
     clock = [10.0]
     sleeps: list[float] = []
@@ -140,9 +105,26 @@ def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second(events
             {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': 'session-1', 'eventId': event_id},
         )
     stubber.add_response('list_events', {'events': []}, list_request)
+    writes = 'lgw-84097828fc31a8c8d29210df48901a85-checkpoint-1'
+    others = 'lgw-5d9061408048c12d053925aed45333a1-checkpoint-1'
+    listed = datetime(2026, 7, 2, tzinfo=UTC)
+    sessions = {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'maxResults': 100}
+    stubber.add_response('list_sessions', {'sessionSummaries': [
+        {'sessionId': session, 'actorId': 'user-1', 'createdAt': listed} for session in ('session-1', writes)
+    ], 'nextToken': 'page-2'}, sessions)
+    stubber.add_response('list_sessions', {'sessionSummaries': [
+        {'sessionId': others, 'actorId': 'user-1', 'createdAt': listed},
+    ]}, {**sessions, 'nextToken': 'page-2'})
+    writes_request = {**list_request, 'sessionId': writes}
+    stubber.add_response('list_events', {'events': [{**_event('3#c3'), 'sessionId': writes}]}, writes_request)
+    stubber.add_response(
+        'delete_event', {'eventId': '3#c3'},
+        {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': writes, 'eventId': '3#c3'},
+    )
+    stubber.add_response('list_events', {'events': []}, writes_request)
     saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
 
     purge_module.purge_session(saver, 'user-1', 'session-1')
 
-    # The first delete goes at once; the second waits out the rest of its 0.2 s slot.
-    assert sleeps == [0.0, pytest.approx(0.2)]
+    # The first delete goes at once; each next waits out the rest of its 0.2 s slot.
+    assert sleeps == [0.0, pytest.approx(0.2), pytest.approx(0.2)]

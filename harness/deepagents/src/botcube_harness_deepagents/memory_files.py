@@ -6,8 +6,6 @@ from typing import Any
 
 DEFAULT_MEMORY_RELATIVE_PATH = Path('.tmp/botcube-harness-deepagents/memory.md')
 STANDALONE_MEMORY_RELATIVE_PATH = Path('botcube-harness-deepagents/memory.md')
-MEMORY_FILENAME = 'memory.md'
-LTM_FILENAME = 'ltm.md'
 
 
 def default_memory_path(repo_root: Path | str | None = None) -> Path:
@@ -27,64 +25,30 @@ def build_memory_sources(
     repo_root: Path | str | None = None,
     backend: Any = None,
 ) -> list[str]:
-    path, source = resolve_memory_source(
-        filename=MEMORY_FILENAME,
-        memory_path=memory_path,
-        repo_root=repo_root,
-        backend=backend,
-    )
+    path, source = _memory_source(memory_path=memory_path, repo_root=repo_root, backend=backend)
     ensure_memory_file(path)
     return [source]
 
 
-def write_ltm_source(
-    content: str,
+def _memory_source(
     *,
-    backend: Any = None,
-    memory_path: Path | str | None = None,
-    repo_root: Path | str | None = None,
-) -> str:
-    """Write prewarmed LTM beside the memory file; return its source path."""
-    path, source = resolve_memory_source(
-        filename=LTM_FILENAME,
-        memory_path=memory_path,
-        repo_root=repo_root,
-        backend=backend,
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    return source
-
-
-def resolve_memory_source(
-    *,
-    filename: str,
-    memory_path: Path | str | None = None,
-    repo_root: Path | str | None = None,
-    backend: Any = None,
+    memory_path: Path | str | None,
+    repo_root: Path | str | None,
+    backend: Any,
 ) -> tuple[Path, str]:
     memory_path = memory_path or os.getenv('BOTCUBE_MEMORY_PATH')
     if memory_path is not None:
-        configured = Path(memory_path)
-        path = configured if filename == MEMORY_FILENAME else configured.with_name(filename)
-        return _source_for_backend(path, backend)
+        return _source_for_backend(Path(memory_path), backend)
 
     backend_root = _virtual_root(backend)
     if backend_root is not None:
         default_source = _virtual_default_memory_path_and_source(repo_root, backend_root)
         if default_source is not None:
-            path, source = default_source
-            if filename == path.name:
-                return path, source
-            return path.with_name(filename), f"{source.rsplit('/', 1)[0]}/{filename}"
-
-        relative = Path('tmp') / STANDALONE_MEMORY_RELATIVE_PATH.with_name(filename)
+            return default_source
+        relative = Path('tmp') / STANDALONE_MEMORY_RELATIVE_PATH
         return backend_root / relative, f'/{relative.as_posix()}'
 
-    path, source = _default_memory_path_and_source(repo_root)
-    if filename == path.name:
-        return path, source
-    return path.with_name(filename), f"{source.rsplit('/', 1)[0]}/{filename}"
+    return _default_memory_path_and_source(repo_root)
 
 
 def _source_for_backend(path: Path, backend: Any) -> tuple[Path, str]:

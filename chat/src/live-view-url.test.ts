@@ -30,10 +30,7 @@ const unused = async (): Promise<never> => {
 };
 const sessionMetadata: SessionMetadata = {
   checkRuntimeNamespaceReady: async () => undefined,
-  createMemoryLease: async () => { throw new Error('not used'); },
-  memoryLease: async () => { throw new Error('not used'); },
-  endMemoryLease: async () => { throw new Error('not used'); },
-  memorySessionActive: async () => { throw new Error('not used'); },
+  owns: async () => { throw new Error('not used'); },
   checkHealth: unused,
   recordTurn: unused,
   beginDispatch: unused,
@@ -58,7 +55,6 @@ const sessionMetadata: SessionMetadata = {
 const agentDocuments: AgentDocuments = {
   get: unused,
   save: unused,
-  memoryEdited: unused,
   picture: unused,
   savePicture: unused,
   delete: unused,

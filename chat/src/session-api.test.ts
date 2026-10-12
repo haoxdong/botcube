@@ -60,6 +60,16 @@ describe('local mode', () => {
     await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(httpError(404, 'Session not found'));
   });
 
+  it("answers 410 with the session API's error and code for a legacy-format Session", async () => {
+    fake = await new FakeSessionApi().listen();
+    const error = 'Session session-1 is in the legacy checkpoint format: its latest checkpoint stores no messages';
+    fake.reply('session-1', 410, { error, code: 'SESSION_FORMAT_LEGACY' });
+
+    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(
+      expect.objectContaining({ constructor: HttpError, status: 410, detail: error, code: 'SESSION_FORMAT_LEGACY' }),
+    );
+  });
+
   it('answers 503 naming any other status', async () => {
     fake = await new FakeSessionApi().listen();
     fake.reply('session-1', 500, { error: '/private/sentinel.py', stackTrace: ['secret-stack'] });

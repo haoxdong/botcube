@@ -13,21 +13,20 @@ import importlib.metadata
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import EntryPoint, EntryPoints
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn, TypedDict
 
 import boto3
-import httpx
 import pytest
 import uvicorn
 from botcube_cartridge import HarnessDefinition
@@ -44,20 +43,25 @@ from langchain_core.messages.ai import UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
-from langgraph.store.memory import InMemoryStore
 from moto import mock_aws
 
-from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory
+from agentcore_fake import (
+    MEMORY_ID,
+    FakeAgentCoreMemory,
+    FakeSts,
+    install_tagged_memory,
+    turn_identity,
+)
 from botcube_harness_deepagents import (
     files_sync,
     llm,
-    memory_broker,
     memory_tools,
     message_times,
     serving,
     session_api,
 )
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
+from checkpoint_fake import ReadCountingSaver, legacy_session
 from prompt_cache_fake import DelegatingBedrockClient, fake_bedrock_model
 from relay_fake import (
     REASONING_STREAM,
@@ -120,8 +124,9 @@ class _ScriptedModel(BaseChatModel):
         if text.startswith('propose: '):
             return _call('propose_scheduled_task', json.loads(text.removeprefix('propose: ')), len(messages))
         if text.startswith('remember: '):
-            tool = 'agent_core_memory' if 'agent_core_memory' in self.recorder.tools[-1] else 'memory'
-            return _call(tool, {'action': 'record', 'content': text.removeprefix('remember: ')}, len(messages))
+            return _call('memory', {'action': 'record', 'content': text.removeprefix('remember: ')}, len(messages))
+        if text.startswith('memory: '):
+            return _call('memory', json.loads(text.removeprefix('memory: ')), len(messages))
         if text.startswith('say: '):
             return _text(text.removeprefix('say: '))
         if text.startswith('wait: '):
@@ -225,19 +230,20 @@ class _Service:
         memory: bool = False,
         env: Mapping[str, str] | None = None,
         session: str | None = None,
+        message: str | None = None,
         **props: Any,
     ) -> list[dict[str, Any]]:
         forwarded: dict[str, Any] = {'actorId': actor, 'memory': memory, 'env': env, **props}
         if user is not None:
             forwarded['sessionUserId'] = user
-        if serving.AGENTCORE_MEMORY_ID:
-            forwarded['turnMemory'] = {'url': 'https://chat.test/internal/turn-memory',
-                                       'token': json.dumps({'actor': actor, 'filing': user, 'thread': thread})}
+        if serving.AGENTCORE_MEMORY_ID and 'turnIdentity' not in props:
+            forwarded['turnIdentity'] = turn_identity(actor or 'no-actor', user, thread)
         return self.post(
             {
                 'threadId': thread,
                 'runId': f'run-{len(self.recorder.prompts)}',
-                'messages': [{'id': f'message-{len(self.recorder.prompts)}', 'role': 'user', 'content': text}],
+                'messages': [{'id': message or f'message-{len(self.recorder.prompts)}', 'role': 'user',
+                              'content': text}],
                 'tools': [],
                 'context': [],
                 'state': {},
@@ -281,6 +287,12 @@ def _tool_output(events: list[dict[str, Any]]) -> str:
     return result
 
 
+def _memory_block(prompt: str) -> str:
+    """The Memory block in a system prompt."""
+    [block] = re.findall(r'<agent_memory>\n(.*)\n</agent_memory>', prompt, re.DOTALL)
+    return block
+
+
 def _cache_usage(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [json.loads(record.getMessage()) for record in caplog.records if record.name.endswith('prompt_cache')]
 
@@ -295,8 +307,6 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
         '_BACKEND_BY_AGENT': {},
         '_CHECKPOINTER': None,
         '_STORE': None,
-        '_THREAD_LTM_CONTEXTS': {},
-        '_DEFERRED_SAVER': None,
         '_SESSION_TURNS': serving._SessionTurns(),
     }.items():
         monkeypatch.setattr(serving, name, value)
@@ -590,14 +600,6 @@ def test_a_member_gets_the_memory_tool_and_the_same_instructions(service: _Servi
     assert 'memory' in service.recorder.tools[1]
 
 
-def test_a_members_memory_is_rendered_into_their_conversations_sandbox(service: _Service) -> None:
-    service.turn('remember: prefers copper', thread='thread-a', memory=True)
-
-    events = service.turn('run: cat botcube-harness-deepagents/threads/thread-b/actors/actor-1/ltm.md', thread='thread-b', memory=True)
-
-    assert _tool_output(events) == '- prefers copper\n[Command succeeded with exit code 0]'
-
-
 def test_a_members_memories_reach_their_next_conversation_only(service: _Service) -> None:
     events = service.turn('remember: prefers copper', thread='thread-a', memory=True)
     assert _tool_output(events).startswith('{"status": "success"')
@@ -617,6 +619,32 @@ def test_a_conversations_memory_is_read_once(service: _Service) -> None:
     service.turn('hello again', thread='thread-b', memory=True, model='opus-4.6')
 
     assert 'prefers copper' not in service.recorder.prompts[-1]
+
+
+def test_a_sessions_memory_block_stays_byte_identical_on_its_later_turns(service: _Service) -> None:
+    service.turn('remember: prefers copper', thread='thread-a', memory=True)
+    service.turn('hello', thread='thread-b', memory=True)
+    opened = service.recorder.prompts[-1]
+    service.turn('remember: trades gold', thread='thread-a', memory=True)
+    service.turn('hello again', thread='thread-b', memory=True)
+
+    assert _memory_block(opened) == 'semantic facts:\n- prefers copper'
+    assert service.recorder.prompts[-1] == opened
+
+
+def test_a_sessions_memory_block_survives_a_restarted_harness(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    service.turn('remember: prefers copper', thread='thread-a', memory=True)
+    service.turn('hello', thread='thread-b', memory=True)
+    opened = service.recorder.prompts[-1]
+    # A restart loses everything but the Session record, which is on disk here; the in-memory store is empty again.
+    for name, value in {'_AGENTS': {}, '_AGENT_BACKENDS': {}, '_BACKEND_BY_AGENT': {}, '_BACKENDS': {},
+                        '_CHECKPOINTER': None, '_STORE': None}.items():
+        monkeypatch.setattr(serving, name, value)
+
+    service.turn('hello again', thread='thread-b', memory=True)
+
+    assert '- prefers copper' in opened
+    assert service.recorder.prompts[-1] == opened
 
 
 # -- Agent Identity and Soul -----------------------------------------------------
@@ -745,16 +773,6 @@ def test_a_stop_without_a_session_filing_id_is_rejected(service: _Service) -> No
         'message': 'Invocation carries no Session filing ID; the Chat Service must forward sessionUserId',
         'code': 'MISSING_USER_ID',
     }]
-    assert service.recorder.builds == []
-
-
-@pytest.mark.parametrize('revision', ['1', 1.5, True, None])
-def test_an_invocation_with_a_malformed_memory_revision_is_rejected(service: _Service, revision: object) -> None:
-    events = service.turn('hello', memoryRevision=revision)
-
-    assert events == [
-        {'type': 'RUN_ERROR', 'message': 'memoryRevision must be a whole number', 'code': 'INVALID_MEMORY_REVISION'}
-    ]
     assert service.recorder.builds == []
 
 
@@ -1609,7 +1627,7 @@ def test_no_tool_turns_never_access_unchanged_files_issue_3500(
 
 
 def test_only_the_agents_own_files_reach_files(service: _Service, files_bucket: Any) -> None:
-    for internal in ('.cartridge/cookies.json', 'botcube-harness-deepagents/threads/ltm.md', 'notes/.draft'):
+    for internal in ('.cartridge/cookies.json', 'botcube-harness-deepagents/threads/state.json', 'notes/.draft'):
         path = service.home / internal
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('internal')
@@ -1733,193 +1751,66 @@ def test_without_a_checkpoint_path_conversations_are_kept_in_memory(service: _Se
     assert list(workdir.iterdir()) == []
 
 
-# -- AgentCore Memory ------------------------------------------------------------
-
-
-def _assert_broker_event_scope(params: dict[str, Any], identity: dict[str, str]) -> None:
-    if 'actorId' not in params:
-        return
-    assert params['actorId'] in {identity['actor'], identity['filing']}
-    if identity['thread']:
-        session_id = params['sessionId']
-        assert session_id in {identity['thread'], identity['thread'] + '-messages'} or session_id.startswith(('pending-memory-', 'memory-saves-'))
-
-
-def _broker_http(monkeypatch: pytest.MonkeyPatch, memory: FakeAgentCoreMemory) -> None:
-    from botcube_harness_deepagents.memory_broker import _timestamps
-
-    def post(wire_request: httpx.Request) -> httpx.Response:
-        assert str(wire_request.url) == 'https://chat.test/internal/turn-memory'
-        identity = json.loads(wire_request.headers['Authorization'].removeprefix('Bearer '))
-        request = json.loads(wire_request.content)
-        params = _timestamps(request['params'])
-        operation = request['operation']
-        actor = identity['actor']
-        if operation == 'actor_namespaces':
-            assert params['actorId'] == actor
-            strategies = {record['memoryStrategyId'] for record in memory.records}
-            response = {'namespaces': [f'/strategies/{strategy}/actors/{actor}/' for strategy in sorted(strategies)]}
-        elif operation == 'list_memory_records':
-            assert f'/actors/{actor}/' in params['namespacePath']
-            listed = memory.get_paginator(operation).paginate(PaginationConfig={'PageSize': 100}, **params)
-            [response] = listed
-        elif operation == 'startup_snapshot':
-            assert params['actorId'] == actor
-            response = memory.startup_snapshot(**params)
-        else:
-            _assert_broker_event_scope(params, identity)
-            response = getattr(memory, operation)(**params)
-        return httpx.Response(200, content=json.dumps(response, default=lambda item: item.isoformat()))
-
-    from botcube_harness_deepagents import memory_broker
-    monkeypatch.setattr(memory_broker._http_client(), 'send', post)
-
-
-class _RegionalMemory(FakeAgentCoreMemory):
-    def __init__(self) -> None:
-        super().__init__()
-        self.regions: list[str | None] = []
+LEGACY_ERROR = {
+    'type': 'RUN_ERROR', 'code': 'SESSION_FORMAT_LEGACY',
+    # Unlike the session API's graph, the Turn's declares no `files` channel.
+    'message': 'Session thread-1 is in the legacy checkpoint format: its latest checkpoint stores no messages',
+}
 
 
 @pytest.fixture
-def agentcore_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> _RegionalMemory:
-    """Serve on AgentCore Memory in eu-west-1, held by an in-memory bedrock-agentcore client."""
-    memory = _RegionalMemory()
+def legacy_record(service: _Service, monkeypatch: pytest.MonkeyPatch) -> ReadCountingSaver:
+    """The Harness on a record holding thread-1, a Session in the legacy checkpoint format."""
+    saver = ReadCountingSaver()
+    legacy_session(saver, 'thread-1')
+    monkeypatch.setattr(serving, '_build_checkpointer', lambda: saver)
+    return saver
 
-    def client(service_name: str, **options: Any) -> _RegionalMemory:
-        assert service_name == 'bedrock-agentcore'
-        memory.regions.append(options.get('region_name'))
-        return memory
 
-    monkeypatch.setattr(boto3, 'client', client)
-    _broker_http(monkeypatch, memory)
+def test_a_turn_on_a_legacy_format_session_fails_classified_without_walking_its_checkpoints(
+    service: _Service, legacy_record: ReadCountingSaver,
+) -> None:
+    events = service.turn('hello')
+
+    assert events[-1] == LEGACY_ERROR
+    assert legacy_record.reads == ['get_tuple']
+    assert service.recorder.heard == []
+
+
+def test_a_warmup_of_a_legacy_format_session_fails_classified_without_walking_its_checkpoints(
+    service: _Service, legacy_record: ReadCountingSaver,
+) -> None:
+    events = service.post({
+        'threadId': 'thread-1', 'runId': 'warmup-1', 'messages': [], 'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'warmup': True},
+    })
+
+    assert events[0] == LEGACY_ERROR
+    assert events[-1]['value']['outcome'] == 'failed'
+    assert legacy_record.reads == ['get_tuple']
+
+
+# -- AgentCore Memory ------------------------------------------------------------
+
+
+class _ScopedMemory(FakeAgentCoreMemory):
+    sts: FakeSts
+
+
+@pytest.fixture
+def agentcore_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> _ScopedMemory:
+    """Serve on AgentCore Memory in eu-west-1, reached with each Turn's tagged credentials."""
+    memory = _ScopedMemory()
+    memory.sts = install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(serving, 'AGENTCORE_REGION', 'eu-west-1')
     monkeypatch.setattr(memory_tools, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return memory
 
 
-def test_isolation_receipt_precedes_a_real_turn_and_never_enters_the_graph(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+def test_named_warmup_requires_a_turn_identity_and_reads_original_history(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    responses = [
-        httpx.Response(200, json={'events': [{'memoryId': MEMORY_ID, 'actorId': 'original-filing',
-                                           'sessionId': 'logical-session', 'eventId': 'private-event',
-                                           'eventTimestamp': '2026-10-09T20:00:00.000Z'}]}),
-        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
-        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
-        httpx.Response(200, json={'namespaces': ['/strategies/semantic/actors/actor-1/']}),
-        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
-        httpx.Response(200, json={'events': []}),
-    ]
-    requests: list[dict[str, Any]] = []
-
-    def post(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.headers['Authorization'].removeprefix('Bearer ')) == {
-            'actor': 'actor-1', 'filing': 'original-filing', 'thread': 'logical-session',
-        }
-        requests.append(json.loads(request.content))
-        return responses.pop(0)
-
-    client = httpx.AsyncClient
-    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', lambda **kwargs: client(transport=httpx.MockTransport(post), **kwargs))
-    invoke_agent = serving._invoke_agent
-    graph_props: list[dict[str, Any]] = []
-
-    async def observed(input_data: Any, context: Any, forwarded: dict[str, Any], *args: Any) -> Any:
-        graph_props.append(dict(forwarded))
-        async for event in invoke_agent(input_data, context, forwarded, *args):
-            yield event
-
-    monkeypatch.setattr(serving, '_invoke_agent', observed)
-    events = service.turn('hello', thread='logical-session', user='original-filing', memory=True, memoryIsolationCheck='v1')
-    assert events[0] == {'type': 'CUSTOM', 'name': 'MEMORY_ISOLATION_CHECK', 'value': {
-        'version': 1, 'runId': 'run-0', 'ownBefore': 200, 'foreignActor': 403, 'foreignSession': 403,
-        'ownNamespaces': 200, 'foreignNamespaces': 403, 'ownAfter': 200,
-    }}
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert _said(events) == 'Echo: hello'
-    assert service.recorder.heard == [['hello']]
-    assert 'memoryIsolationCheck' not in graph_props[0]
-    assert 'turnMemory' not in graph_props[0]
-    assert 'private-event' not in json.dumps(events)
-    assert requests[0]['params']['actorId'] == 'original-filing'
-    assert requests[0]['params']['sessionId'] == 'logical-session'
-    assert requests[3] == {'operation': 'actor_namespaces', 'params': {'memoryId': MEMORY_ID, 'actorId': 'actor-1'}}
-    assert len(requests) == 6
-    assert agentcore_memory.create_event_calls > 0
-
-    service.turn('ordinary follow-up', thread='logical-session', user='original-filing', memory=True)
-    assert len(requests) == 6
-    assert service.recorder.heard[-1] == ['hello', 'ordinary follow-up']
-
-
-@pytest.mark.parametrize(('options', 'reason'), [
-    ({'memoryIsolationCheck': None}, 'invalid request'),
-    ({'memoryIsolationCheck': False}, 'invalid request'),
-    ({'memoryIsolationCheck': {}}, 'invalid request'),
-    ({'memoryIsolationCheck': ['v1']}, 'invalid request'),
-    ({'memoryIsolationCheck': 'v2'}, 'invalid request'),
-    ({'memoryIsolationCheck': 'v1', 'warmup': True}, 'requires a normal Turn'),
-    ({'memoryIsolationCheck': 'v1', 'stop': True}, 'requires a normal Turn'),
-    ({'memoryIsolationCheck': 'v1'}, 'requires linked Memory'),
-    ({'memoryIsolationCheck': 'v1', 'memory': True}, 'missing capability'),
-])
-def test_invalid_isolation_invocations_fail_without_http_or_model_work(
-    service: _Service, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], reason: str,
-) -> None:
-    clients: list[dict[str, Any]] = []
-
-    def unexpected_client(**kwargs: Any) -> NoReturn:
-        clients.append(kwargs)
-        raise AssertionError('Unexpected diagnostic HTTP')
-
-    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', unexpected_client)
-    events = service.turn('hello', **options)
-    assert events[0] == {'type': 'RUN_ERROR', 'code': 'MEMORY_ISOLATION_CHECK_FAILED',
-                         'message': f'Memory isolation check failed: {reason}'}
-    assert all(event.get('name') != 'MEMORY_ISOLATION_CHECK' for event in events)
-    assert clients == []
-    assert service.recorder.builds == []
-
-
-def test_marked_turn_cannot_substitute_a_missing_capability(
-    service: _Service, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    events = service.post({
-        'threadId': 'session', 'runId': 'run', 'messages': [], 'tools': [], 'context': [], 'state': {},
-        'forwardedProps': {'actorId': 'actor', 'sessionUserId': 'filing', 'memory': True, 'memoryIsolationCheck': 'v1'},
-    })
-    assert events == [{'type': 'RUN_ERROR', 'code': 'MISSING_USER_ID',
-                       'message': 'Invocation carries no Turn Memory capability'}]
-    assert service.recorder.builds == []
-
-
-def test_failed_isolation_is_a_classified_turn_error_without_private_data(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    def post(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError('private-secret https://private-broker.test secret-response-body', request=request)
-
-    client = httpx.AsyncClient
-    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', lambda **kwargs: client(transport=httpx.MockTransport(post), **kwargs))
-    events = service.turn('hello', memory=True, memoryIsolationCheck='v1')
-    assert events == [{'type': 'RUN_ERROR', 'code': 'MEMORY_ISOLATION_CHECK_FAILED',
-                       'message': 'Memory isolation check failed: transport'}]
-    assert service.recorder.builds == []
-    assert agentcore_memory.create_event_calls == 0
-    assert 'private-secret' not in caplog.text
-    assert 'private-broker' not in caplog.text
-    assert 'secret-response-body' not in caplog.text
-
-
-def test_named_warmup_requires_memory_capability_and_reads_original_history(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from botcube_harness_deepagents import memory_broker
-
     payload: dict[str, Any] = {
         'threadId': 'original-logical-session', 'runId': 'named-warmup',
         'messages': [], 'tools': [], 'context': [], 'state': {},
@@ -1927,88 +1818,259 @@ def test_named_warmup_requires_memory_capability_and_reads_original_history(
                            'memory': True, 'warmup': True, 'model': 'opus-4.6'},
     }
     events = service.post(payload, session='opaque-runtime-binding')
-    error = {'code': 'MISSING_USER_ID', 'message': 'Invocation carries no Turn Memory capability'}
+    error = {'code': 'TURN_IDENTITY_REJECTED',
+             'message': 'Invocation carries no Turn identity; the Chat Service must forward turnIdentity'}
     assert events == [{'type': 'RUN_ERROR', **error},
                       {'type': 'CUSTOM', 'name': 'SESSION_PREPARATION', 'value': {
                           'runId': 'named-warmup', 'sessionId': 'original-logical-session',
                           'outcome': 'failed', 'error': error,
                       }}]
     assert service.recorder.builds == []
-    assert agentcore_memory.startup_snapshot_calls == 0
 
     service.turn('original visible history', thread='original-logical-session',
                  actor='current-owner', user='original-filing', memory=True,
                  session='opaque-runtime-binding')
-    for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None,
-                        '_THREAD_LTM_CONTEXTS': {}, '_DEFERRED_SAVER': None}.items():
+    for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
         monkeypatch.setattr(serving, name, value)
-    operations: list[dict[str, Any]] = []
-    client = memory_broker._http_client()
-    original_send = client.send
-
-    def record(request: httpx.Request) -> httpx.Response:
-        operations.append(json.loads(request.content))
-        return original_send(request)
-
-    monkeypatch.setattr(client, 'send', record)
+    operations = agentcore_memory.sts.memory_calls
+    operations.clear()
     prompts = list(service.recorder.prompts)
-    snapshots = agentcore_memory.startup_snapshot_calls
-    payload['forwardedProps']['turnMemory'] = {
-        'url': 'https://chat.test/internal/turn-memory',
-        'token': json.dumps({'actor': 'current-owner', 'filing': 'original-filing',
-                             'thread': 'original-logical-session'}),
-    }
+    payload['forwardedProps']['turnIdentity'] = turn_identity('current-owner', 'original-filing', 'original-logical-session')
     events = service.post(payload, session='opaque-runtime-binding')
     assert events == [{'type': 'CUSTOM', 'name': 'SESSION_PREPARATION', 'value': {
         'runId': 'named-warmup', 'sessionId': 'original-logical-session', 'outcome': 'prepared',
     }}]
     assert service.recorder.prompts == prompts
-    assert agentcore_memory.startup_snapshot_calls == snapshots + 1
-    assert all(operation['operation'] not in {'create_event', 'delete_event'} for operation in operations)
-    session_reads = [operation['params'] for operation in operations
-                     if operation['operation'] == 'list_events']
+    # Memory loads on the Session's first Turn, never at warmup.
+    assert all(operation not in {'create_event', 'delete_event', 'list_memory_records'}
+               for operation, _ in operations)
+    session_reads = [params for operation, params in operations if operation == 'list_events']
     assert session_reads
     assert all(read['actorId'] == 'original-filing' for read in session_reads)
-    assert all(read['sessionId'] in {'original-logical-session', 'original-logical-session-messages'}
+    # The snapshot checkpointer's writes-session prefix for the Session.
+    writes = 'lgw-a3df2202f27feb0d3080068e6084400e-'
+    assert all(read['sessionId'] == 'original-logical-session' or read['sessionId'].startswith(writes)
                for read in session_reads)
 
 
-def _memory_record(text: str, strategy_id: str, actor_id: str, record_id: str | None = None) -> dict[str, Any]:
+def test_on_agentcore_the_turn_credential_exchange_overlaps_the_agent_build(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory import agentcore
+
+    building, exchanging = threading.Event(), threading.Event()
+    get_agent, turn_memory = serving._get_agent, agentcore.turn_memory
+
+    def build(**kwargs: Any) -> Any:
+        building.set()
+        assert exchanging.wait(5), 'The agent build waited for the credential exchange'
+        return get_agent(**kwargs)
+
+    def exchange(*args: Any, **kwargs: Any) -> Any:
+        exchanging.set()
+        assert building.wait(5), 'The credential exchange waited for the agent build'
+        return turn_memory(*args, **kwargs)
+
+    monkeypatch.setattr(serving, '_get_agent', build)
+    monkeypatch.setattr(agentcore, 'turn_memory', exchange)
+
+    events = service.turn('hello', actor='actor-1', user='filing-1', memory=True)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert _said(events) == 'Echo: hello'
+
+
+def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory import agentcore
+
+    preparing, release = threading.Event(), threading.Event()
+    turn_memory = agentcore.turn_memory
+    exchanges: list[str] = []
+
+    def exchange(*args: Any, **kwargs: Any) -> Any:
+        exchanges.append(kwargs['run_id'])
+        if len(exchanges) == 1:
+            preparing.set()
+            assert release.wait(5), 'The first Turn was never released'
+        return turn_memory(*args, **kwargs)
+
+    monkeypatch.setattr(agentcore, 'turn_memory', exchange)
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(service.turn, 'first', **member)
+        try:
+            assert preparing.wait(5), 'The first Turn never began preparing'
+            later = service.turn('later', **member)
+        finally:
+            release.set()
+        earlier = first.result(timeout=10)
+
+    assert earlier[-1]['code'] == 'TURN_STOPPED'
+    assert later[-1]['type'] == 'RUN_FINISHED'
+    assert service.recorder.heard == [['later']]
+
+
+def test_on_agentcore_a_failed_credential_exchange_fails_the_turn_after_the_build_settles(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory import agentcore
+
+    built = threading.Event()
+    get_agent = serving._get_agent
+
+    def build(**kwargs: Any) -> Any:
+        agent = get_agent(**kwargs)
+        built.set()
+        return agent
+
+    def rejected(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise serving.TurnIdentityError('Turn identity rejected by STS')
+
+    monkeypatch.setattr(serving, '_get_agent', build)
+    monkeypatch.setattr(agentcore, 'turn_memory', rejected)
+
+    events = service.turn('hello', actor='actor-1', user='filing-1', memory=True)
+
+    assert events[-1] == {'type': 'RUN_ERROR', 'code': 'TURN_IDENTITY_REJECTED', 'message': 'Turn identity rejected by STS'}
+    assert built.is_set()
+    assert service.recorder.heard == []
+
+
+def test_on_agentcore_an_edited_question_regenerates_its_answer(service: _Service, agentcore_memory: _ScopedMemory) -> None:
+    member = {'thread': 'thread-a', 'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    service.turn('first question', message='question-1', **member)
+
+    # Resent under the same ID with new text, the library rewinds the Session through its checkpoint history.
+    edited = service.turn('edited question', message='question-1', **member)
+
+    assert edited[-1]['type'] == 'RUN_FINISHED'
+    assert _said(edited) == 'Echo: edited question'
+    assert service.recorder.heard[-1] == ['edited question']
+
+
+@pytest.mark.parametrize('identity', [
+    pytest.param(('actor-2', 'filing-1', 'thread-a'), id='another actor'),
+    pytest.param(('actor-1', 'filing-1', 'thread-b'), id='another Session'),
+    pytest.param(('actor-1', 'filing-2', 'thread-a'), id='another filing actor'),
+])
+def test_on_agentcore_a_turn_reaches_only_the_memory_its_identity_names(
+    service: _Service, agentcore_memory: _ScopedMemory, identity: tuple[str, str, str],
+) -> None:
+    events = service.turn('hello', thread='thread-a', actor='actor-1', user='filing-1', memory=True,
+                          turnIdentity=turn_identity(*identity))
+
+    assert events[-1]['type'] == 'RUN_ERROR'
+    assert events[-1]['code'] == 'MEMORY_ACCESS_DENIED'
+    assert 'Not authorized' in events[-1]['message']
+    assert not any(event['type'] == 'RUN_FINISHED' for event in events)
+
+
+@pytest.mark.parametrize(('identity', 'message'), [
+    pytest.param(None, 'Invocation carries no Turn identity; the Chat Service must forward turnIdentity', id='missing'),
+    pytest.param(turn_identity('actor-1', 'user-1', 'thread-1', expires_in=-10),
+                 'STS refused the Turn identity: ExpiredTokenException: Token expired', id='expired'),
+    pytest.param(turn_identity('actor-1', 'user-1', 'thread-1', key=b'another-key'),
+                 'STS refused the Turn identity: InvalidIdentityToken: Incorrect token audience or signature', id='forged'),
+])
+def test_on_agentcore_a_turn_without_a_valid_identity_fails_classified(
+    service: _Service, agentcore_memory: _ScopedMemory, identity: str | None, message: str,
+) -> None:
+    events = service.turn('hello', turnIdentity=identity)
+
+    assert events[-1] == {'type': 'RUN_ERROR', 'message': message, 'code': 'TURN_IDENTITY_REJECTED'}
+    assert agentcore_memory.events == {}
+
+
+def _memory_record(
+    text: str, strategy_id: str, actor_id: str, record_id: str | None = None, created: datetime | None = None,
+) -> dict[str, Any]:
     return {
         'memoryRecordId': record_id or f'record-{text}',
         'content': {'text': text},
         'memoryStrategyId': strategy_id,
-        'namespaces': [f'/strategies/{strategy_id}/actors/{actor_id}/'],
-        'createdAt': datetime(2026, 7, 1, tzinfo=UTC),
+        'namespaces': [f"/actors/{actor_id}/{'preferences' if strategy_id.startswith('UserPreference') else 'facts'}/"],
+        'createdAt': created or datetime(2026, 7, 1, tzinfo=UTC),
     }
 
 
-def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _Service, agentcore_memory: _RegionalMemory) -> None:
+RECORD_REPLY = (
+    '{"status": "success", "content": [{"text": "Saved to memory. A new conversation sees it right away, '
+    'and it reaches long-term memory within about two minutes."}]}'
+)
+
+
+def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _Service, agentcore_memory: _ScopedMemory) -> None:
     agentcore_memory.records += [
         _memory_record('{"preference": "Prefers dark mode"}', 'UserPreferences-1', 'actor-1'),
         _memory_record('{"preference": "Prefers light mode"}', 'UserPreferences-1', 'actor-2'),
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'),
     ]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    # A claimed Session: filed under its original user, its Memory is the current account's.
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
 
     saved = service.turn('remember: prefers copper', thread='thread-a', **member)
     service.turn('hello', thread='thread-b', **member)
 
-    assert _tool_output(saved) == '{"status": "success", "content": [{"text": "Saved to memory."}]}'
-    assert service.recorder.prompts[-1].endswith(
-        '<agent_memory>\n'
-        '/botcube-harness-deepagents/threads/thread-b/actors/actor-1/ltm.md\n'
-        '\n'
+    assert _tool_output(saved) == RECORD_REPLY
+    assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
         '- Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
         '- prefers copper\n'
-        '- Trades copper futures\n'
-        '\n'
-        '</agent_memory>'
+        '- Trades copper futures'
     )
-    assert agentcore_memory.regions == []
+    assert agentcore_memory.sts.regions == ['eu-west-1', 'eu-west-1']
+
+
+def test_on_agentcore_a_sessions_memory_block_holds_the_newest_50_preferences_and_facts_and_says_more_exist(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
+    agentcore_memory.records += [
+        _memory_record(f'{{"preference": "Preference {n}"}}', 'UserPreferences-1', 'actor-1',
+                       created=datetime(2026, 7, 1, tzinfo=UTC) + timedelta(minutes=n))
+        for n in range(1, 52)
+    ] + [
+        _memory_record(f'Fact {n}', 'SemanticFacts-1', 'actor-1', created=datetime(2026, 7, 1, tzinfo=UTC) + timedelta(minutes=n))
+        for n in range(1, 52)
+    ]
+
+    service.turn('hello', thread='thread-a', actor='actor-1', user='actor-1', memory=True)
+
+    assert _memory_block(service.recorder.prompts[-1]) == (
+        'user preferences:\n' + ''.join(f'- Preference {n}\n' for n in range(51, 1, -1))
+        + '\nsemantic facts:\n' + ''.join(f'- Fact {n}\n' for n in range(51, 1, -1))
+        + '\nMore memories are available. Use memory retrieve to search beyond the startup memory block.'
+    )
+
+
+def test_on_agentcore_the_memory_tool_lists_retrieves_gets_and_deletes_only_the_members_records(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
+    agentcore_memory.records += [
+        _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
+        _memory_record('Trades copper options', 'SemanticFacts-1', 'actor-2', PARIS),
+        _memory_record('Summary: copper desk review', 'Summaries-1', 'actor-1', DARK_MODE),
+    ]
+    agentcore_memory.records[-1]['namespaces'] = ['/actors/actor-1/summaries/thread-0/']
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+
+    def run(**args: str) -> Any:
+        return json.loads(_tool_output(service.turn(f'memory: {json.dumps(args)}', **member)))
+
+    assert run(action='list') == {'status': 'success', 'content': [
+        {'text': f'[{COPPER}] Trades copper futures'}, {'text': f'[{DARK_MODE}] Summary: copper desk review'},
+    ]}
+    assert run(action='retrieve', query='copper') == {'status': 'success', 'content': [
+        {'text': 'Trades copper futures'}, {'text': 'Summary: copper desk review'},
+    ]}
+    assert run(action='get', memory_record_id=COPPER) == {'status': 'success', 'content': [{'text': 'Trades copper futures'}]}
+    assert run(action='delete', memory_record_id=COPPER) == {
+        'status': 'success', 'content': [{'text': f'Deleted memory record {COPPER}.'}],
+    }
+    assert [record['memoryRecordId'] for record in agentcore_memory.records] == [PARIS, DARK_MODE]
 
 
 def _memory_operation(operation: str, user: str = 'actor-1', **fields: str) -> dict[str, Any]:
@@ -2023,8 +2085,8 @@ COPPER = 'mem-copper-0000000000000000000000000000000'
 PARIS = 'mem-paris-00000000000000000000000000000000'
 
 
-def test_on_agentcore_a_members_edited_memory_reaches_the_agent_from_their_next_message(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch
+def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the_current_ones_block_unchanged(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     agentcore_memory.records += [
@@ -2033,13 +2095,16 @@ def test_on_agentcore_a_members_edited_memory_reaches_the_agent_from_their_next_
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
         _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
     ]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True, 'thread': 'thread-a'}
-    service.turn('hello', memoryRevision=0, **member)
+    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    service.turn('hello', thread='thread-a', **member)
+    opened = service.recorder.prompts[-1]
 
     document = _memory_operation('memory')
     _memory_operation('memory-edit', recordId=PARIS, text='Lives in London')
     _memory_operation('memory-delete', recordId=COPPER)
-    service.turn('hello again', memoryRevision=1, **member)
+    service.turn('hello again', thread='thread-a', **member)
+    continued = service.recorder.prompts[-1]
+    service.turn('hello', thread='thread-b', **member)
 
     assert document == {
         'lines': [
@@ -2048,22 +2113,43 @@ def test_on_agentcore_a_members_edited_memory_reaches_the_agent_from_their_next_
             {'id': PARIS, 'text': 'Lives in Paris'},
         ]
     }
-    assert service.recorder.prompts[-1].endswith(
+    assert continued == opened
+    assert _memory_block(opened).endswith('semantic facts:\n- Trades copper futures\n- Lives in Paris')
+    assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
         '- Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
-        '- Lives in London\n'
-        '\n'
-        '</agent_memory>'
+        '- Lives in London'
     )
     assert _memory_operation('memory') == {
         'lines': [{'id': DARK_MODE, 'text': 'Prefers dark mode'}, {'id': PARIS, 'text': 'Lives in London'}]
     }
 
 
-def test_on_agentcore_saved_memory_reaches_the_reload_and_next_message_while_agentcore_lists_the_old_lines_issue_3483(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch
+def test_on_agentcore_a_scheduled_runs_summary_leaves_the_sessions_memory_block_unchanged(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    agentcore_memory.records += [_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER)]
+    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    service.turn('hello', thread='thread-a', **member)
+    opened = service.recorder.prompts[-1]
+
+    # A reload would show the newer record.
+    agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS))
+    response = TestClient(session_api.app).post('/invocations', json={
+        'operation': 'post', 'userId': 'actor-1', 'sessionId': 'thread-a', 'content': 'Copper closed up 2%',
+    })
+    service.turn('hello again', thread='thread-a', **member)
+
+    assert response.status_code == 200, response.text
+    assert _memory_block(opened) == 'semantic facts:\n- Trades copper futures'
+    assert service.recorder.prompts[-1] == opened
+
+
+def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_lists_the_old_lines_issue_3483(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     agentcore_memory.records += [
@@ -2071,61 +2157,159 @@ def test_on_agentcore_saved_memory_reaches_the_reload_and_next_message_while_age
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
         _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
     ]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True, 'thread': 'thread-a'}
-    service.turn('hello', memoryRevision=0, **member)
+    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    service.turn('hello', thread='thread-a', **member)
     agentcore_memory.lag_listing()
 
     _memory_operation('memory-edit', recordId=PARIS, text='Lives in London')
     _memory_operation('memory-delete', recordId=COPPER)
     document = _memory_operation('memory')
-    service.turn('hello again', memoryRevision=1, **member)
+    service.turn('hello', thread='thread-b', **member)
 
     assert document == {
         'lines': [{'id': DARK_MODE, 'text': 'Prefers dark mode'}, {'id': PARIS, 'text': 'Lives in London'}]
     }
-    assert service.recorder.prompts[-1].endswith(
+    assert _memory_block(service.recorder.prompts[-1]) == (
         'user preferences:\n'
         '- Prefers dark mode\n'
         '\n'
         'semantic facts:\n'
-        '- Lives in London\n'
-        '\n'
-        '</agent_memory>'
+        '- Lives in London'
     )
 
 
-def test_on_agentcore_each_member_turn_is_recorded_for_memory_extraction(service: _Service, agentcore_memory: _RegionalMemory) -> None:
-    service.turn('hello', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+def _fed(service: _Service) -> None:
+    """Wait for every Turn feed the Harness is running in the background."""
+    async def fed() -> None:
+        await asyncio.gather(*serving._SESSION_TURNS._feeds.values(), return_exceptions=True)
 
-    def recorded() -> list[tuple[str, str]]:
-        return [
-            (item['conversational']['role'], item['conversational']['content']['text'])
-            for event in agentcore_memory.events[('actor-1', 'thread-b')]
-            for item in event['payload']
-            if 'conversational' in item
-        ]
-
-    # The Turn is written in the background after the run.
-    deadline = time.monotonic() + 5
-    while not recorded() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert recorded() == [('USER', 'hello'), ('ASSISTANT', 'Echo: hello')]
+    assert service.client.portal is not None
+    service.client.portal.call(fed)
 
 
-def test_on_agentcore_an_anonymous_members_memory_stays_in_its_conversation(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch
+def _fed_events(memory: FakeAgentCoreMemory, actor: str, thread: str) -> list[list[tuple[str, str]]]:
+    """Each conversational event in the Session, as its (role, text) items."""
+    return [
+        [(item['conversational']['role'], item['conversational']['content']['text']) for item in event['payload']]
+        for event in memory.events[(actor, thread)]
+        if any('conversational' in item for item in event['payload'])
+    ]
+
+
+def test_on_agentcore_a_long_member_turn_feeds_one_untrimmed_event_per_message(
+    service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
-    anonymous = {'actor': 'anonymous', 'user': 'anonymous', 'memory': True}
-    service.turn('remember: prefers copper', thread='thread-a', **anonymous)
-    # A restarted Harness reads each conversation's memory afresh.
-    for name in ('_AGENTS', '_AGENT_BACKENDS', '_BACKEND_BY_AGENT', '_THREAD_LTM_CONTEXTS'):
-        monkeypatch.setattr(serving, name, {})
+    # 40 steps: the question, 40 tool calls with 40 results, and the answer, 82 messages.
+    service.turn('steps: 40', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+    _fed(service)
 
-    service.turn('hello', thread='thread-a', **anonymous)
-    service.turn('hello', thread='thread-b', **anonymous)
+    fed = _fed_events(agentcore_memory, 'actor-1', 'thread-b')
+    # Assistant messages that only call a tool carry no text, so they feed nothing.
+    assert [items[0][0] for items in fed] == ['USER', *['TOOL'] * 40, 'ASSISTANT']
+    assert all(len(items) == 1 for items in fed)
+    assert fed[0] == [('USER', 'steps: 40')]
+    assert fed[-1] == [('ASSISTANT', 'Done after 40 steps')]
+    assert not any('[truncated]' in text or 'omitted' in text for items in fed for _role, text in items)
 
-    assert '- prefers copper' in service.recorder.prompts[-2]
-    assert 'prefers copper' not in service.recorder.prompts[-1]
+
+def test_on_agentcore_the_response_finishes_before_the_turn_feed(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feeding, release = threading.Event(), threading.Event()
+    create_event = agentcore_memory.create_event
+
+    def held(**params: Any) -> dict[str, Any]:
+        if any('conversational' in item for item in params['payload']):
+            feeding.set()
+            assert release.wait(5), 'The test did not release the feed'
+        return create_event(**params)
+
+    monkeypatch.setattr(agentcore_memory, 'create_event', held)
+    try:
+        events = service.turn('hello', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+        assert events[-1]['type'] == 'RUN_FINISHED'
+        assert feeding.wait(5)
+        assert _fed_events(agentcore_memory, 'actor-1', 'thread-b') == []
+    finally:
+        release.set()
+    _fed(service)
+
+    assert _fed_events(agentcore_memory, 'actor-1', 'thread-b') == [[('USER', 'hello')], [('ASSISTANT', 'Echo: hello')]]
+
+
+def test_on_agentcore_a_failed_turn_feed_is_logged_and_fails_the_next_turn(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    create_event = agentcore_memory.create_event
+
+    def failing(**params: Any) -> dict[str, Any]:
+        if any('conversational' in item for item in params['payload']):
+            raise RuntimeError('Memory unavailable')
+        return create_event(**params)
+
+    monkeypatch.setattr(agentcore_memory, 'create_event', failing)
+
+    first = service.turn('hello', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+    _fed(service)
+
+    assert first[-1]['type'] == 'RUN_FINISHED'
+    assert _fed_events(agentcore_memory, 'actor-1', 'thread-b') == []
+    [logged] = [record for record in caplog.records if record.getMessage().startswith('Harness Turn feed failed')]
+    assert logged.levelno == logging.ERROR
+    assert 'code=TURN_FEED_FAILED' in logged.getMessage()
+    [run_error] = [event for event in service.turn('again', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+                   if event['type'] == 'RUN_ERROR']
+    assert run_error == {'type': 'RUN_ERROR', 'code': 'TURN_FEED_FAILED',
+                         'message': 'The Turn could not be fed to Memory: Memory unavailable'}
+
+
+def test_on_agentcore_a_failed_memory_load_fails_the_sessions_first_turn_and_the_next_turn_loads_again(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
+    list_events = agentcore_memory.list_events
+
+    def throttled(**params: Any) -> dict[str, Any]:
+        if params['sessionId'].startswith('pending-memory-'):
+            raise RuntimeError('Memory throttled')
+        return list_events(**params)
+
+    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+
+    [run_error] = [event for event in service.turn('hello', thread='thread-a', **member) if event['type'] == 'RUN_ERROR']
+    monkeypatch.setattr(agentcore_memory, 'list_events', list_events)
+    retried = service.turn('hello again', thread='thread-a', message='message-retry', **member)
+
+    assert run_error['message'] == 'Memory throttled'
+    assert retried[-1]['type'] == 'RUN_FINISHED'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+
+
+def test_on_agentcore_a_guests_turn_feeds_nothing(service: _Service, agentcore_memory: _ScopedMemory) -> None:
+    events = service.turn('hello', thread='thread-b', actor='anonymous', user='anonymous', memory=False)
+    _fed(service)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert all(not _fed_events(agentcore_memory, actor, thread) for actor, thread in agentcore_memory.events)
+
+
+def test_on_agentcore_an_anonymous_actor_gets_no_memory_block_tool_or_memory_reads(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
+    agentcore_memory.records += [_memory_record('Trades copper futures', 'SemanticFacts-1', 'anonymous')]
+
+    service.turn('hello', thread='thread-a', actor='anonymous', user='anonymous', memory=True)
+
+    assert 'memory' not in service.recorder.tools[-1]
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
+    # Its credentials serve only the Session's checkpoints.
+    writes = 'lgw-8b983fb92d2eb12751695722fdb4e498-'
+    assert {operation for operation, _ in agentcore_memory.sts.memory_calls} <= {'create_event', 'list_events'}
+    assert all(params['sessionId'] == 'thread-a' or params['sessionId'].startswith(writes)
+               for _, params in agentcore_memory.sts.memory_calls)
+    assert not [session for session in agentcore_memory.listed if session.startswith('pending-memory-')]
 
 
 # -- Configuration and startup ---------------------------------------------------
@@ -2265,96 +2449,35 @@ def test_prompt_cache_lines_are_logged_under_a_quieter_package_logger(start: Cal
     assert capsys.readouterr().err == '{"cache_read": 1}\n'
 
 
-def test_overlapping_turns_recover_after_a_failed_checkpoint_flush(
+def test_a_failed_checkpoint_write_fails_its_turn_loud_and_the_next_turn_answers(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from botcube_harness_deepagents.memory import agentcore
-    from botcube_harness_deepagents.memory.agentcore.turn_saver import (
-        TurnCheckpointSaver,
-    )
-
     memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
-    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1', wrapper=TurnCheckpointSaver)
-    monkeypatch.setattr(serving, '_CHECKPOINTER', saver)
-    monkeypatch.setattr(serving, '_DEFERRED_SAVER', saver)
-    monkeypatch.setattr(serving, '_STORE', InMemoryStore())
-    service.turn('seed one', session='runtime-session-1')
-    service.turn('seed two', thread='thread-2', session='runtime-session-1')
-    client = saver._saver.checkpoint_event_client
-    persist = client.store_blob_events_batch
-    first_persisting = threading.Event()
-    release_failure = threading.Event()
-    second_flushing = threading.Event()
-    calls_lock = threading.Lock()
-    persistence_calls = 0
-    flush_calls = 0
-
-    def persist_with_one_failure(*args: Any, **kwargs: Any) -> Any:
-        nonlocal persistence_calls
-        with calls_lock:
-            persistence_calls += 1
-            first = persistence_calls == 1
-        if first:
-            first_persisting.set()
-            if not release_failure.wait(5):
-                raise AssertionError('The test did not release the failed flush')
-            raise RuntimeError('Transient checkpoint persistence failure')
-        return persist(*args, **kwargs)
-
-    flush = saver.flush
-
-    def observed_flush(session: tuple[str, str] | None = None) -> None:
-        nonlocal flush_calls
-        with calls_lock:
-            flush_calls += 1
-            second = flush_calls == 2
-        if second:
-            second_flushing.set()
-        flush(session)
-
-    monkeypatch.setattr(client, 'store_blob_events_batch', persist_with_one_failure)
-    monkeypatch.setattr(saver, 'flush', observed_flush)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(service.turn, 'one', session='runtime-session-1')
-        try:
-            assert first_persisting.wait(5)
-            # A Session is a thread, and a Turn on the same thread waits on
-            # _SESSION_LOCKS. Only a Turn on another thread (same runtime
-            # session, same process-wide saver) flushes while the first fails.
-            second = pool.submit(service.turn, 'two', thread='thread-2', session='runtime-session-1')
-            assert second_flushing.wait(5)
-            # On the broken implementation the second flush finishes and drops
-            # the first's retry data. A serialized flush waits for the failure.
-            with suppress(TimeoutError):
-                second.result(timeout=1)
-        finally:
-            release_failure.set()
-        first_events = first.result(timeout=5)
-        second_events = second.result(timeout=5)
-
-    assert first_events[-1] == {
-        'type': 'RUN_ERROR', 'message': 'Transient checkpoint persistence failure', 'code': 'INTERNAL_ERROR',
-    }
-    assert second_events[-1]['type'] == 'RUN_FINISHED'
-    reported = service.turn('three', session='runtime-session-1')
-    assert reported[-1] == {
-        'type': 'RUN_ERROR', 'message': 'Transient checkpoint persistence failure', 'code': 'INTERNAL_ERROR',
-    }
-    recovered = service.turn('three', session='runtime-session-1')
-    assert recovered[-1]['type'] == 'RUN_FINISHED'
-    assert _said(recovered) == 'Echo: three'
+    install_tagged_memory(monkeypatch, memory)
+    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    assert _replay('user-1', 'thread-1') == [
-        ('user', 'seed one'), ('assistant', 'Echo: seed one'),
-        ('user', 'one'), ('assistant', 'Echo: one'),
-        ('user', 'three'), ('assistant', 'Echo: three'),
-    ]
-    assert _replay('user-1', 'thread-2') == [
-        ('user', 'seed two'), ('assistant', 'Echo: seed two'),
-        ('user', 'two'), ('assistant', 'Echo: two'),
-    ]
+    service.turn('seed one', session='runtime-session-1')
+    create_event = memory.create_event
+    failed = False
+
+    def fail_once(**params: Any) -> dict[str, Any]:
+        nonlocal failed
+        if not failed and params['sessionId'] == 'thread-1':
+            failed = True
+            raise RuntimeError('Transient checkpoint persistence failure')
+        return create_event(**params)
+
+    monkeypatch.setattr(memory, 'create_event', fail_once)
+
+    events = service.turn('one', session='runtime-session-1')
+
+    assert events[-1] == {
+        'type': 'RUN_ERROR', 'message': 'Transient checkpoint persistence failure', 'code': 'INTERNAL_ERROR',
+    }
+    recovered = service.turn('two', session='runtime-session-1')
+    assert recovered[-1]['type'] == 'RUN_FINISHED'
+    assert _said(recovered) == 'Echo: two'
+    assert _replay('user-1', 'thread-1')[-2:] == [('user', 'two'), ('assistant', 'Echo: two')]
 
 
 @pytest.mark.parametrize("backend", ["sqlite", "inmem", "agentcore"])
@@ -2367,8 +2490,7 @@ def test_same_session_id_isolates_each_filing_user(
         monkeypatch.delenv("BOTCUBE_CHECKPOINT_PATH")
     elif backend == "agentcore":
         memory = FakeAgentCoreMemory()
-        monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
-        _broker_http(monkeypatch, memory)
+        install_tagged_memory(monkeypatch, memory)
         monkeypatch.setattr(serving, "AGENTCORE_MEMORY_ID", MEMORY_ID)
         monkeypatch.setattr(session_api, "AGENTCORE_MEMORY_ID", MEMORY_ID)
     first = service.turn(
@@ -2400,9 +2522,7 @@ def test_same_session_id_isolates_each_filing_user(
         serving._AGENTS.clear()
         serving._AGENT_BACKENDS.clear()
         serving._BACKEND_BY_AGENT.clear()
-        serving._DEFERRED_SAVER = None
         serving._CHECKPOINTER = serving._build_checkpointer()
-        serving._DEFERRED_SAVER = serving._CHECKPOINTER if isinstance(serving._CHECKPOINTER, serving.TurnCheckpointSaver) else None
         cold = service.turn(
             "synthetic B cold",
             actor="owner-b",
@@ -2416,8 +2536,8 @@ def test_same_session_id_isolates_each_filing_user(
         ]
 
 
-def test_opaque_runtime_continuation_restores_original_history_through_broker_issue_2822(
-    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+def test_opaque_runtime_continuation_restores_original_history_issue_2822(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     original = service.turn(
@@ -2428,9 +2548,7 @@ def test_opaque_runtime_continuation_restores_original_history_through_broker_is
     serving._AGENTS.clear()
     serving._AGENT_BACKENDS.clear()
     serving._BACKEND_BY_AGENT.clear()
-    serving._DEFERRED_SAVER = None
     serving._CHECKPOINTER = serving._build_checkpointer()
-    serving._DEFERRED_SAVER = serving._CHECKPOINTER
 
     continued = service.turn(
         'after continuation', actor='claimed-owner', user='original-filing',
@@ -2444,26 +2562,11 @@ def test_opaque_runtime_continuation_restores_original_history_through_broker_is
     ]
 
 
-def test_a_turn_without_a_thread_finishes_on_agentcore_issue_3354(
+def test_a_finished_turns_history_reads_only_its_latest_checkpoint_issue_3354(
     service: _Service, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
-    monkeypatch.setattr(serving, "AGENTCORE_MEMORY_ID", MEMORY_ID)
-
-    events = service.turn("hello", user="user-1", thread="")
-
-    assert events[-1]["type"] == "RUN_FINISHED"
-    assert not [session for _actor, session in memory.events if session.endswith("-messages")]
-
-
-def test_a_finished_turn_leaves_its_history_to_read_without_its_record_issue_3354(
-    service: _Service, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
+    install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, "AGENTCORE_MEMORY_ID", MEMORY_ID)
     monkeypatch.setattr(session_api, "AGENTCORE_MEMORY_ID", MEMORY_ID)
     service.turn("hello", user="user-1", thread="thread-1")
@@ -2476,19 +2579,21 @@ def test_a_finished_turn_leaves_its_history_to_read_without_its_record_issue_335
         ("user", "again"),
         ("assistant", "Echo: again"),
     ]
-    assert memory.listed == {"thread-1-messages": 1}
+    writes = "lgw-4b0a5fefc328e6b9257bc535e3c5d26f-"
+    writes_reads = [session for session in memory.listed if session != "thread-1"]
+    # The format check's read of the latest checkpoint, then the state read's.
+    assert memory.listed["thread-1"] == 2
+    assert len(writes_reads) == 1 and writes_reads[0].startswith(writes)
 
 
 def test_a_new_session_is_readable_while_its_first_turn_runs_issue_3470(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
+    install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     started = threading.Event()
-    opened: list[Any] = []
     answering = threading.Event()
     release_answer = threading.Event()
     stream = _ScriptedModel._stream
@@ -2508,9 +2613,6 @@ def test_a_new_session_is_readable_while_its_first_turn_runs_issue_3470(
                 session = ('user-1', 'thread-1')
                 assert serving._SESSION_TURNS._turns[session].run_id == input_data.run_id
                 assert serving._SESSION_TURNS._locks[session].locked()
-                opened.append(records.post('/invocations', json={
-                    'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1',
-                }))
                 started.set()
 
         await turn_events(agent, input_data, files, root, observed)
@@ -2527,9 +2629,6 @@ def test_a_new_session_is_readable_while_its_first_turn_runs_issue_3470(
             running = pool.submit(service.turn, 'First question', session='runtime-session-1')
             try:
                 assert started.wait(5), 'The first Turn did not publish RUN_STARTED'
-                assert opened[0].status_code == 200, opened[0].text
-                assert [(message['role'], message.get('content', ''))
-                        for message in opened[0].json()['messages']] == [('user', 'First question')]
                 assert answering.wait(5), 'The first Turn did not reach the held model'
                 response = records.post('/invocations', json={
                     'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1',
@@ -2548,134 +2647,24 @@ def test_a_new_session_is_readable_while_its_first_turn_runs_issue_3470(
     ]
 
 
-@pytest.mark.parametrize('fail_publication', [False, True], ids=['delayed-record', 'failed-record'])
-def test_a_new_turn_waits_for_its_record_and_reports_publication_failure_issue_3470(
-    service: _Service, monkeypatch: pytest.MonkeyPatch, fail_publication: bool,
-) -> None:
-    memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
-    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    started = threading.Event()
-    turn_events = serving._turn_events
-    persisting = threading.Event()
-    release_record = threading.Event()
-    answering = threading.Event()
-    create_event = memory.create_event
-    stream = _ScriptedModel._stream
-
-    def held_record(**params: Any) -> dict[str, Any]:
-        if not persisting.is_set():
-            persisting.set()
-            if not release_record.wait(10):
-                raise AssertionError('The test did not release initial publication')
-            if fail_publication:
-                raise RuntimeError('Initial record publication failed')
-        return create_event(**params)
-
-    def observed_answer(model: _ScriptedModel, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
-        answering.set()
-        yield from stream(model, *args, **kwargs)
-
-    async def observed_events(agent: Any, input_data: Any, files: Any, root: Path, publish: Any) -> None:
-        def observed(event: Any) -> None:
-            publish(event)
-            if event.type == 'RUN_STARTED':
-                started.set()
-        await turn_events(agent, input_data, files, root, observed)
-
-    monkeypatch.setattr(serving, '_turn_events', observed_events)
-    monkeypatch.setattr(memory, 'create_event', held_record)
-    monkeypatch.setattr(_ScriptedModel, '_stream', observed_answer)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        running = pool.submit(service.turn, 'First question', session='runtime-session-1')
-        try:
-            assert persisting.wait(5), 'Initial publication did not reach the record'
-            assert not started.wait(0.2), 'RUN_STARTED published before initial record was durable'
-            assert answering.wait(5), 'Model work did not overlap initial publication'
-        finally:
-            release_record.set()
-            events = running.result(timeout=10)
-
-    if fail_publication:
-        assert not started.is_set()
-        assert events[-1] == {
-            'type': 'RUN_ERROR', 'message': 'Initial record publication failed', 'code': 'INTERNAL_ERROR',
-        }
-        assert service.recorder.heard == [['First question']]
-        assert _replay('user-1', 'thread-1')[0] == ('user', 'First question')
-    else:
-        assert started.is_set()
-        assert events[-1]['type'] == 'RUN_FINISHED'
-        assert service.recorder.heard == [['First question']]
-        assert _replay('user-1', 'thread-1') == [
-            ('user', 'First question'), ('assistant', 'Echo: First question'),
-        ]
-
-
-def test_stopped_initial_publication_settles_before_replacement_issue_3701(
+def test_a_new_turn_whose_record_cannot_be_written_fails_loud_issue_3470(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
+    install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
-    persisting = threading.Event()
-    release = threading.Event()
-    answering = threading.Event()
-    replacement_started = threading.Event()
-    create_event = memory.create_event
 
-    def held_record(**params: Any) -> dict[str, Any]:
-        if not persisting.is_set():
-            persisting.set()
-            assert release.wait(10), 'Initial publication was never released'
-        return create_event(**params)
+    def unwritable(**_params: Any) -> NoReturn:
+        raise RuntimeError('Initial record publication failed')
 
-    async def unfinished(model: _ScriptedModel, messages: list[BaseMessage], *_args: Any, **_kwargs: Any):
-        model.recorder.prompts.append('')
-        if any(message.content == 'replacement' for message in messages):
-            replacement_started.set()
-            yield _text('Replacement answer')
-            return
-        answering.set()
-        await asyncio.Future()
-        yield _text('Unreachable answer')
+    monkeypatch.setattr(memory, 'create_event', unwritable)
 
-    monkeypatch.setattr(memory, 'create_event', held_record)
-    monkeypatch.setattr(_ScriptedModel, '_astream', unfinished)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(service.turn, 'First question', session='runtime-session-1')
-        replacement = None
-        try:
-            assert persisting.wait(5)
-            assert answering.wait(5), 'Model did not overlap the initial write'
-            for _ in range(3):
-                stopped = service.client.post('/invocations', json={
-                    'threadId': 'thread-1', 'runId': 'stop', 'messages': [],
-                    'tools': [], 'context': [], 'state': {},
-                    'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
-                }, headers={SESSION_HEADER: 'runtime-session-1'})
-                assert stopped.status_code == 200
-            replacement = pool.submit(service.turn, 'replacement', session='runtime-session-1')
-            assert not replacement_started.wait(0.2), 'Replacement entered before the initial worker settled'
-            with pytest.raises(TimeoutError):
-                first.result(timeout=0.2)
-            with pytest.raises(TimeoutError):
-                replacement.result(timeout=0.2)
-        finally:
-            release.set()
-            first_events = first.result(timeout=10)
-            replacement_events = replacement.result(timeout=10) if replacement is not None else []
-    assert first_events[-1]['code'] == 'TURN_STOPPED'
-    assert not any(event['type'] == 'RUN_STARTED' for event in first_events)
-    assert replacement_started.is_set()
-    assert replacement_events[-1]['type'] == 'RUN_FINISHED'
-    assert _replay('user-1', 'thread-1') == [
-        ('user', 'First question'), ('user', 'replacement'), ('assistant', 'Replacement answer'),
-    ]
+    events = service.turn('First question', session='runtime-session-1')
+
+    assert events[-1] == {
+        'type': 'RUN_ERROR', 'message': 'Initial record publication failed', 'code': 'INTERNAL_ERROR',
+    }
+    assert not any(event['type'] == 'RUN_FINISHED' for event in events)
 
 
 def test_claimed_session_keeps_its_filing_record_on_the_in_memory_backend(
@@ -2721,13 +2710,11 @@ def test_upgraded_write_file_replaces_existing_content(service: _Service) -> Non
 
 
 @pytest.mark.parametrize('stopped', [False, True])
-@pytest.mark.parametrize('settlement', ['flush', 'snapshot'])
 def test_invocation_eof_waits_for_real_record_settlement_before_purge_issue_2822(
-    service: _Service, monkeypatch: pytest.MonkeyPatch, stopped: bool, settlement: str,
+    service: _Service, monkeypatch: pytest.MonkeyPatch, stopped: bool,
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    _broker_http(monkeypatch, memory)
+    install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     service.turn('seed', session='physical-runtime')
@@ -2741,35 +2728,23 @@ def test_invocation_eof_waits_for_real_record_settlement_before_purge_issue_2822
             await asyncio.Future()
 
         monkeypatch.setattr(_ScriptedModel, '_astream', unfinished)
-    if settlement == 'flush':
-        saver = serving._DEFERRED_SAVER
-        assert saver is not None
-        original = saver.aflush
+    create_event = memory.create_event
+    held_from = memory.create_event_calls
 
-        async def held_flush(session: tuple[str, str] | None = None) -> None:
+    def held_write(**params: Any) -> dict[str, Any]:
+        # The Turn's last checkpoint write: its answer, or the cut reply Stop keeps.
+        if params['sessionId'] == 'thread-1' and memory.create_event_calls >= held_from:
             entered.set()
-            assert await asyncio.to_thread(release.wait, 5), 'Checkpoint settlement was never released'
-            await original(session)
+            assert release.wait(5), 'Checkpoint settlement was never released'
+        return create_event(**params)
 
-        monkeypatch.setattr(saver, 'aflush', held_flush)
-    else:
-        checkpointer = serving._CHECKPOINTER
-        assert checkpointer is not None
-        original_snapshot = checkpointer.awrite_messages_snapshot
-
-        async def held_snapshot(*args: Any) -> None:
-            entered.set()
-            assert await asyncio.to_thread(release.wait, 5), 'Messages snapshot was never released'
-            await original_snapshot(*args)
-
-        monkeypatch.setattr(checkpointer, 'awrite_messages_snapshot', held_snapshot)
+    monkeypatch.setattr(memory, 'create_event', held_write)
     payload = {
         'threadId': 'thread-1', 'runId': 'held-turn',
         'messages': [{'id': 'held-question', 'role': 'user', 'content': 'next question'}],
         'tools': [], 'context': [], 'state': {},
         'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'memory': False,
-                          'turnMemory': {'url': 'https://chat.test/internal/turn-memory',
-                                         'token': json.dumps({'actor': 'actor-1', 'filing': 'user-1', 'thread': 'thread-1'})}},
+                          'turnIdentity': turn_identity('actor-1', 'user-1', 'thread-1')},
     }
     with ThreadPoolExecutor(max_workers=1) as pool:
         response = pool.submit(service.client.post, '/invocations', json=payload,

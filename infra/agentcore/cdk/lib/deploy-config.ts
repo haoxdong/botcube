@@ -38,11 +38,15 @@ export interface DeployIdentity {
     iam: {
       runtimeRole: string;
       memoryRole: string;
+      /** The role a Turn's JWT turns into Memory credentials for one user (ADR 0067 §8). */
+      userMemoryRole: string;
       lambdaRole: string;
       codeBuildRole: string;
       sessionApiRole: string;
     };
   };
+  /** The Chat Service's origin: its hostname, over https, issues the per-Turn JWT. */
+  domains: { chatService: string };
   artifacts: { toolStaging: { hook: string } };
 }
 

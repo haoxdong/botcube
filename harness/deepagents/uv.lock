@@ -479,7 +479,7 @@ requires-dist = [
     { name = "langchain-core", specifier = ">=1.6.7" },
     { name = "langchain-openai", specifier = ">=1.6.7" },
     { name = "langgraph", specifier = ">=1.2.14" },
-    { name = "langgraph-checkpoint-aws", specifier = ">=1.2.4" },
+    { name = "langgraph-checkpoint-aws", specifier = "==1.2.4" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1.1" },
     { name = "opentelemetry-instrumentation-langchain", specifier = ">=0.62.4" },
     { name = "python-dotenv", specifier = ">=1.2.4" },

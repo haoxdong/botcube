@@ -10,7 +10,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
 import { CfnMountTarget } from 'aws-cdk-lib/aws-s3files';
-import type { ISecret } from 'aws-cdk-lib/aws-secretsmanager';
+import { Secret as SecretsManagerSecret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApiHealthStack } from './api-health-stack.js';
 import { ChatStorageStack } from './chat-storage-stack.js';
@@ -28,7 +28,6 @@ interface OriginInput {
   cloudflareCidrs: string[];
   clientVersion: string;
   runtimeArn?: string;
-  memoryId: string;
 }
 
 interface Subnet {
@@ -61,6 +60,8 @@ interface DeployIdentity {
       webLatency: { stackName: string; appMonitorName: string };
       chatService: {
         planUsageOwnerAccountParameter: string;
+        /** The private P-256 JWKs that sign per-Turn JWTs (ADR 0067 §8), created out of band. */
+        turnIdentityKeysSecretName: string;
         environmentKeys: {
           agentComputerCdpUrl: string; filesBucket: string; filesFileSystemArn: string;
           planUsageOwnerAccountId: string;
@@ -180,7 +181,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     hostnames: [identity.domains.chatServicePreview, identity.domains.chatService].map(url => new URL(url).hostname),
     corsOrigins: identity.domains.corsOrigins,
     ...(input.runtimeArn ? { runtimeArn: input.runtimeArn } : {}),
-    memoryId: input.memoryId,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
     sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
     reaperCommand: identity.artifacts.chatService.reaperCommand,
@@ -197,6 +197,10 @@ export function defineProduction(app: App, options: ProductionOptions) {
     parameterName: identity.aws.agentCore.runtimeNetworkParameter, stringValue: agentNetwork.securityGroupId,
   });
   new CfnOutput(origin, 'AgentSecurityGroupId', { value: agentNetwork.securityGroupId });
+  // The per-Turn JWT's issuer is the origin the AgentCore app registers as the Memory role's OIDC provider.
+  chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', `https://${new URL(identity.domains.chatService).hostname}`);
+  const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
+  chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
   const chatKeys = identity.aws.ecs.chatService.environmentKeys;
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(chatKeys.planUsageOwnerAccountId, planUsageOwner);

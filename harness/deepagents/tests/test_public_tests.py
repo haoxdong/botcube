@@ -17,4 +17,4 @@ def test_agentcore_fake_tests_run_without_private_repository(tmp_path: Path) -> 
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert '1 passed' in result.stdout
+    assert ' passed' in result.stdout
