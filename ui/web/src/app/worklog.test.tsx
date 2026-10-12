@@ -182,6 +182,15 @@ describe('a tool step', () => {
     expect(container.querySelector('pre')).toHaveTextContent(/^\[stderr\] Specify one or more comma-separated fields for `--json`$/);
   });
 
+  it('holds each word of a command together, so it wraps only at a space', () => {
+    const { container } = render(<ToolStep name="execute" params={{ command: 'acme search "US CPI" --limit 1' }} status="complete" output="1 result" />);
+
+    fireEvent.click(screen.getByRole('button', { name: /^Ran/ }));
+
+    expect(Array.from(container.querySelectorAll('.worklog-step-input .code-word'), (word) => word.textContent)).toEqual(['"US', 'CPI"', '--limit']);
+    expect(container.querySelector('.worklog-step-input')).toHaveTextContent(/^\$ acme search "US CPI" --limit 1$/);
+  });
+
   it('marks a command that succeeded after quoting a failure as done', () => {
     const { container } = render(
       <ToolStep name="execute" params={{ command: 'cat log' }} status="complete" output={'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]'} />,

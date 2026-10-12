@@ -11,6 +11,8 @@ import {
   ListChecksIcon, SearchIcon, SquareTerminalIcon, WrenchIcon, type LucideIcon,
 } from "lucide-react";
 
+import { CodeWords } from "./code-words";
+
 /**
  * A chat message as a Worklog reads it. A replayed agent, reasoning or tool message carries `started_at` and `ended_at`
  * in its metadata, in epoch ms; a user message, and one recorded before the stamps, has none.
@@ -292,12 +294,12 @@ export function ToolStep({ name, params, status, output, commandPrefix }: {
         <div className="worklog-step-input" data-prose={prose}>
           <span className="worklog-step-input-text">
             {name === "execute" && argument && <span className="worklog-step-prompt">$ </span>}
-            {argument}
+            {prose || !argument ? argument : <CodeWords text={argument} />}
           </span>
           {exit && <span className="worklog-step-exit">Exit {exit}</span>}
         </div>
       )}
-      {shown && <pre className="worklog-step-output">{shown}</pre>}
+      {shown && <pre className="worklog-step-output"><CodeWords text={shown} /></pre>}
     </>
   );
   const state = exit ? "failed" : status === "running" ? "live" : status === "stopped" ? "stopped" : "done";

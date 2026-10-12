@@ -5,6 +5,7 @@ import { expect, it } from 'vitest';
 
 import { MARKDOWN_RENDERER } from './markdown';
 import MarkdownRenderer from './markdown-renderer';
+import { REPLY_MARKDOWN } from './reply-markdown';
 
 const tables = [
   {
@@ -376,4 +377,25 @@ it('marks a citation link and its brackets, keeping its text, and leaves other l
   expect(citation?.querySelectorAll('[data-citation-bracket]')).toHaveLength(2);
   expect(link).not.toHaveAttribute('data-citation');
   expect(link).toHaveTextContent(/^the note$/);
+});
+
+it('holds each word of inline code together, so it wraps only at a space', () => {
+  const flag = '--include-revisions-since-2020-01-01';
+  const url = 'https://example.com/s/markets/rates/us-treasury-curve-2s10s-steepener-history';
+  const view = render(
+    <Streamdown {...MARKDOWN_RENDERER} {...REPLY_MARKDOWN}>
+      {`Ran \`acme content search "US CPI" --limit 1 ${flag}\`, see \`${url}\`.`}
+    </Streamdown>
+  );
+  const [command, link] = view.container.querySelectorAll('code');
+  const held = (code: Element | undefined, kind: string) =>
+    Array.from(code?.querySelectorAll(kind) ?? [], (word) => word.textContent);
+
+  expect(command?.textContent).toBe(`acme content search "US CPI" --limit 1 ${flag}`);
+  // Only a word a browser could break inside needs holding.
+  expect(held(command, '.code-word')).toEqual(['"US', 'CPI"', '--limit']);
+  // A word too long for a phone's line holds together only off a phone; one too long for that wraps as plain text.
+  expect(held(command, '.code-word-wide')).toEqual([flag]);
+  expect(link?.textContent).toBe(url);
+  expect(held(link, '[class]')).toEqual([]);
 });

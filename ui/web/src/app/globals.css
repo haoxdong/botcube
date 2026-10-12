@@ -697,6 +697,18 @@ cpk-web-inspector,
   font-weight: var(--weight-regular) !important;
 }
 
+/* Code as words (code-words.tsx): a word that fits its line never breaks inside, so code wraps only at its spaces. */
+.code-word,
+.code-word-wide {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .code-word-wide {
+    white-space: inherit;
+  }
+}
+
 /* The chip marks the code, so drop the backticks Tailwind Typography quotes it with. */
 .copilotKitAssistantMessage :not(pre) > code::before,
 .copilotKitAssistantMessage :not(pre) > code::after {
