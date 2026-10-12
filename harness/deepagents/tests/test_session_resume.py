@@ -700,8 +700,8 @@ def test_concurrent_sessions_keep_their_active_turns_and_replay_independent(
             second_record = await second_session.replay()
             assert [message['id'] for message in first_record if message['role'] == 'user'] == ['first-user-message']
             assert [message['id'] for message in second_record if message['role'] == 'user'] == ['second-user-message']
-            assert first_record[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
-            assert second_record[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+            assert first_record[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
+            assert second_record[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
         finally:
             # Every fixture gate is released even if a stream's behavior assertion fails.
             released.set()
@@ -739,7 +739,7 @@ def test_the_turn_sent_after_stop_stays_the_sessions_latest_once_the_stopped_tur
         assert _finishes_only_started_steps(sent)
         replayed = await session.replay()
         assert [message['id'] for message in replayed if message['role'] == 'user'] == ['user-message-1', 'user-message-2']
-        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
 
     asyncio.run(stop_then_send())
 
@@ -836,7 +836,10 @@ def test_a_reply_cut_short_by_stop_stays_in_the_session(
             {'id': 'user-message-1', 'role': 'user', 'content': 'Explain duration'},
             {'id': cut_reply_id, 'role': 'assistant', 'content': 'Duration measures rate risk.'},
         ]
-        assert await session.replay() == kept
+        # The cut reply is timed from its first words to the last the user read.
+        replayed = await session.replay()
+        assert replayed == [kept[0], {**kept[1], 'metadata': ANY}]
+        assert replayed[1]['metadata']['started_at'] <= replayed[1]['metadata']['ended_at']
 
         # AG-UI keeps the partial tool call on the same assistant message as its text.
         resent = [dict(message) for message in kept]
@@ -878,7 +881,7 @@ def test_a_stopped_turns_cut_reply_reaches_the_sessions_history_issue_3354(
         })
         assert replayed['messages'] == [
             *sent,
-            {'id': cut_reply_id, 'role': 'assistant', 'content': 'Duration measures rate risk.'},
+            {'id': cut_reply_id, 'role': 'assistant', 'content': 'Duration measures rate risk.', 'metadata': ANY},
         ]
         assert memory.listed == {'session-1-messages': 1}
 
@@ -991,7 +994,7 @@ def test_a_turn_stopped_while_its_tool_runs_keeps_the_recorded_tool_call(
         call = {'id': 'call-1', 'type': 'function', 'function': {'name': 'ls', 'arguments': '{"path": "/"}'}}
         assert await session.replay() == [
             {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'},
-            {'id': announced, 'role': 'assistant', 'content': 'Let me look.', 'toolCalls': [call]},
+            {'id': announced, 'role': 'assistant', 'content': 'Let me look.', 'toolCalls': [call], 'metadata': ANY},
         ]
 
     asyncio.run(asyncio.wait_for(stop_mid_tool(), timeout=10))
@@ -1160,9 +1163,10 @@ def test_a_streamed_session_reopens_and_keeps_recorded_ids_when_the_client_resen
                 'toolCalls': [
                     {'id': 'call-2', 'type': 'function', 'function': {'name': 'ls', 'arguments': '{"path": "/"}'}}
                 ],
+                'metadata': ANY,
             },
-            {'id': ANY, 'role': 'tool', 'content': ANY, 'toolCallId': 'call-2'},
-            {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'},
+            {'id': ANY, 'role': 'tool', 'content': ANY, 'toolCallId': 'call-2', 'metadata': ANY},
+            {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY},
         ]
         assert len(held) == 4
         assert held[0] == replayed[0]['id']
@@ -1255,7 +1259,7 @@ def test_warm_turn_preserves_exact_replay_without_reading_durable_ancestry_issue
             replayed = await session.replay()
             assert replayed[:len(expected)] == expected
             assert replayed[len(expected)] == question
-            assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+            assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
             expected = replayed
             if number > 1:
                 warm_reads.append(reads)
@@ -1270,7 +1274,7 @@ def test_warm_turn_preserves_exact_replay_without_reading_durable_ancestry_issue
         replayed = await session.replay()
         assert replayed[:len(expected)] == expected
         assert replayed[len(expected)] == question
-        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+        assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
         recovered_question = {'id': 'user-message-6', 'role': 'user', 'content': 'Warm after restart'}
         questions.append('Warm after restart')
         memory.listed.clear()
@@ -1310,7 +1314,7 @@ def test_warm_ancestry_cache_prunes_when_a_new_messages_seed_is_published_issue_
     assert reads == [1, *([0] * 29)]
     assert any(new < old for old, new in zip(retained, retained[1:], strict=False))
     assert [message['content'] for message in replayed if message['role'] == 'user'] == [f'List {number}' for number in range(30)]
-    assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.'}
+    assert replayed[-1] == {'id': ANY, 'role': 'assistant', 'content': 'Listed the files.', 'metadata': ANY}
 
 
 def test_recovered_ancestry_keeps_pending_writes_without_repersisting_them_issue_3701(

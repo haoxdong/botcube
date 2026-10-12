@@ -53,6 +53,7 @@ from botcube_harness_deepagents import (
     llm,
     memory_broker,
     memory_tools,
+    message_times,
     serving,
     session_api,
 )
@@ -824,6 +825,102 @@ def test_a_long_tool_using_turn_runs_to_its_answer(service: _Service) -> None:
     assert events[-1]['type'] == 'RUN_FINISHED'
 
 
+def _times(user: str, thread: str) -> list[tuple[str, int, int]]:
+    """Each replayed message the Turn produced, with when it started and ended."""
+    session_api._GRAPH = None
+    messages = asyncio.run(session_api.get_session(user, thread))
+    return [
+        (message['role'], message['metadata']['started_at'], message['metadata']['ended_at'])
+        for message in messages if message['role'] != 'user'
+    ]
+
+
+def test_a_reopened_turn_knows_when_each_step_started_and_ended(service: _Service) -> None:
+    before = message_times.now()
+    service.turn('run: sleep 0.3')
+    after = message_times.now()
+
+    [call, result, answer] = _times('user-1', 'thread-1')
+
+    assert [call[0], result[0], answer[0]] == ['assistant', 'tool', 'assistant']
+    stamps = [stamp for _, started, ended in (call, result, answer) for stamp in (started, ended)]
+    assert before <= stamps[0] and stamps[-1] <= after
+    # The tool's step runs from the model naming the call to its result landing, the 0.3 s command between.
+    assert result[1] == call[1]
+    assert call[2] <= result[2] - 300 and result[2] <= answer[1] <= answer[2]
+
+
+@pytest.mark.parametrize(('request_text', 'failure'), [
+    pytest.param('run: exit 3', 'Exit code: 3', id='command exits non-zero'),
+    pytest.param('propose: {}', 'Field required', id='call with invalid arguments'),
+])
+def test_a_reopened_failed_tool_step_knows_when_it_started_and_ended(
+    service: _Service, request_text: str, failure: str,
+) -> None:
+    events = service.turn(request_text)
+
+    # The tool node answers both failures with a result, which the step's times reach.
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    session_api._GRAPH = None
+    [_, _, tool, _] = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    assert tool['role'] == 'tool' and failure in tool['content']
+    [call, result, _] = _times('user-1', 'thread-1')
+    assert result[0] == 'tool' and result[1] == call[1] <= call[2] <= result[2]
+
+
+def test_a_tool_that_raises_fails_the_turn_before_any_result_needs_timing(
+    service: _Service, files_bucket: Any,
+) -> None:
+    files_bucket.delete_bucket(Bucket=FILES_BUCKET)
+
+    events = service.turn('ls: /', files=_files())
+
+    # The raise fails the Turn, so the record keeps the timed call and no result to time.
+    assert events[-1]['type'] == 'RUN_ERROR'
+    assert [role for role, _, _ in _times('user-1', 'thread-1')] == ['assistant']
+
+
+BEDROCK_STREAM = json.loads((Path(__file__).parent / 'fixtures' / 'bedrock-reasoning-tools-stream.json').read_text())
+
+
+class _RecordedBedrockModel(_ScriptedModel):
+    """Replays a live Bedrock Turn's model calls, one recorded stream per call."""
+
+    answered: int = 0
+
+    def _stream(self, *_args: Any, **_kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        recorded = BEDROCK_STREAM['calls'][self.answered]
+        self.answered += 1
+        for chunk in recorded:
+            yield ChatGenerationChunk(message=AIMessageChunk(**chunk))
+
+
+def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _RecordedBedrockModel(recorder=service.recorder))
+
+    events = service.turn('Use the execute tool to run `echo one`, then `echo two`.')
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    times = _times('user-1', 'thread-1')
+    assert [role for role, _, _ in times] == ['reasoning', 'assistant', 'tool', 'assistant', 'tool', 'assistant']
+    [reasoning, call, result, _, _, _] = times
+    assert reasoning[1] <= reasoning[2] <= call[1] == result[1] <= call[2] <= result[2]
+
+
+def test_a_reopened_answer_starts_when_its_first_words_streamed_not_when_the_model_was_asked(
+    service: _Service,
+) -> None:
+    before = message_times.now()
+    service.turn('wait: 0.3')
+
+    [(role, started, ended)] = _times('user-1', 'thread-1')
+
+    assert role == 'assistant'
+    assert before + 300 <= started <= ended
+
+
 # -- Plan Usage --------------------------------------------------------------------
 
 REVOKED = plan_usage_error(
@@ -871,6 +968,20 @@ def test_a_plan_turn_streams_its_reasoning_summary_before_its_answer_and_replays
     assert _replay('user-1', 'thread-1') == [
         ('user', 'Say exactly: hello'), ('reasoning', SUMMARY[0]), ('reasoning', SUMMARY[1]), ('assistant', 'hello'),
     ]
+
+
+def test_a_reopened_plan_turn_knows_how_long_each_reasoning_step_took(service: _Service) -> None:
+    before = message_times.now()
+    with serving_relay() as relay:
+        relay.reply = RelayReply(body=REASONING_STREAM)
+        service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
+    after = message_times.now()
+
+    [first, second, answer] = _times('user-1', 'thread-1')
+
+    assert [first[0], second[0], answer[0]] == ['reasoning', 'reasoning', 'assistant']
+    stamps = [stamp for _, started, ended in (first, second, answer) for stamp in (started, ended)]
+    assert before <= stamps[0] and stamps == sorted(stamps) and stamps[-1] <= after
 
 
 # -- Files -----------------------------------------------------------------------

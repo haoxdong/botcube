@@ -17,6 +17,12 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
+# Where a recorded message keeps when it started and ended, in epoch ms, in its `response_metadata`; a replay
+# copies them into its AG-UI `metadata` as `started_at` and `ended_at`. An agent message's entry
+# also times each of its reasoning blocks, in order, and the start of each tool call it made: message_times.py
+# stamps them. A message recorded before stamping has none.
+MESSAGE_TIMES = 'message_times'
+
 
 @dataclass(frozen=True)
 class MessagesSnapshot:
@@ -55,11 +61,31 @@ def conversation(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     ]
 
 
+def reasoning_texts(message: BaseMessage) -> list[str]:
+    """The text of each reasoning block an AI message replays as its own reasoning message."""
+    blocks = message.content_blocks if isinstance(message, AIMessage) else []
+    return [text for block in blocks if block['type'] == 'reasoning' and (text := block.get('reasoning'))]
+
+
 def _replayed(message: BaseMessage) -> list[Message]:
     """The message as AG-UI messages; an AI message's reasoning goes first, as its Turn streamed it."""
-    blocks = message.content_blocks if isinstance(message, AIMessage) else []
-    reasoning = [text for block in blocks if block['type'] == 'reasoning' and (text := block.get('reasoning'))]
+    reasoning = reasoning_texts(message)
+    times = message.response_metadata.get(MESSAGE_TIMES)
     return [
-        *(ReasoningMessage(id=f'{message.id}-reasoning-{index}', content=text) for index, text in enumerate(reasoning)),
-        *(converted for converted in langchain_messages_to_agui([message]) if not reasoning or converted.role != 'reasoning'),
+        *(
+            ReasoningMessage(
+                id=f'{message.id}-reasoning-{index}', content=text,
+                metadata=_span(times['reasoning'][index]) if times else None,
+            )
+            for index, text in enumerate(reasoning)
+        ),
+        *(
+            converted.model_copy(update={'metadata': _span(times)}) if times and converted.role != 'reasoning' else converted
+            for converted in langchain_messages_to_agui([message])
+            if not reasoning or converted.role != 'reasoning'
+        ),
     ]
+
+
+def _span(times: dict[str, Any]) -> dict[str, int]:
+    return {'started_at': times['started_at'], 'ended_at': times['ended_at']}

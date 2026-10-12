@@ -9,6 +9,8 @@ Service's local mode.
 Operations:
 - ``{"operation": "get", "sessionId", "userId", "contains"?}`` -> ``{"messages": [...]}``,
   the Session's conversation in AG-UI message shape, from its messages snapshot.
+  Each agent, reasoning and tool message the Harness timed carries ``metadata``
+  ``{"started_at", "ended_at"}``, in epoch milliseconds (message_times.py).
   A Session without one, or whose snapshot lacks the message ID
   ``contains`` names, has it rebuilt from its state, read through LangGraph's
   state API. A Session with no record is ``SESSION_NOT_FOUND`` (HTTP 404).

@@ -1,0 +1,798 @@
+{
+  "_source": "Live Bedrock us.anthropic.claude-sonnet-4-6 (adaptive thinking, effort high) through the Harness on 2026-10-11: each model call's streamed AIMessageChunks, provider request metadata dropped.",
+  "calls": [
+    [
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": "The"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " user wants me to run"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " `"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": "echo one`,"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " then think about its output, then run"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " `echo two`,"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " then"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " think about both outputs and answer."
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " I"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " need"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " to do"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " these"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": " sequ"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": "entially."
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "text": ""
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "reasoning_content",
+            "reasoning_content": {
+              "signature": "EoEDCnwIEhABGAIqQFxUtD0x1UUk0Gw6Hd2xEof0+ka11uKSPhqjvHUQqVuRpVWuHvW0JAm+sQrPxCJr/NUhEuI3y9L7nILnYfeg2bcyEWNsYXVkZS1zb25uZXQtNC02OABCCHRoaW5raW5nWgwyOTExNTk2NDE1NjeoAb+MsdYGEgzT14iiBNxa/VwHsfIaDE44nSG0fU3mRyH6GSIwLRc+lfCYB8v9QYEbwvJ3E2KSvVuJJ+qk6MtXwaOri+BCvbhQhc0F3AOgakkSI4iTKrIBB9BFRXvN1L03QQEOLoMP0+AMS9HagsJJQQXl/j+0dHWO3aTq8slUT09PDIZC3wNph8u6vQjrcumYYVeuO2BGkxd4+zJp+XC+IgIW4S7ABbk+0Ckne806C0xDcnjrcrNBwwvwI47dmHCVhK6wy4ZhtQDZs6qRCpWsI6oYznKIm6Q6ZhcpW8glnS9bRS+tXxytMTAvP27kXEVHzqyB7wyyBZPfuEQBi2wYYz2uP1WWOv4jahgB"
+            },
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "execute",
+            "id": "tooluse_h338L05cjoVLse11IctVO9",
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": "execute",
+            "args": null,
+            "id": "tooluse_h338L05cjoVLse11IctVO9",
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "{\"comman",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "{\"comman",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "d\": \"echo on",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "d\": \"echo on",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "e\"}",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "e\"}",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "stopReason": "tool_use",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_name": "us.anthropic.claude-sonnet-4-6",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {}
+      }
+    ],
+    [
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "The",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " first",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " command printed",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " `",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "one`.",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " Now running",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " the second.",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "execute",
+            "id": "tooluse_OJXN4OFXsdNc8Frrmmnuot",
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": "execute",
+            "args": null,
+            "id": "tooluse_OJXN4OFXsdNc8Frrmmnuot",
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "{\"comma",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "{\"comma",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "nd\": \"echo t",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "nd\": \"echo t",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "tool_use",
+            "input": "wo\"}",
+            "id": null,
+            "index": 1
+          }
+        ],
+        "tool_call_chunks": [
+          {
+            "name": null,
+            "args": "wo\"}",
+            "id": null,
+            "index": 1,
+            "type": "tool_call_chunk"
+          }
+        ],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "stopReason": "tool_use",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_name": "us.anthropic.claude-sonnet-4-6",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {}
+      }
+    ],
+    [
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "The",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " two",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " commands printed",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": ":",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "\n\n1",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": ". `echo one` \u2192",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": " **",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "one**\n2. `echo two",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [
+          {
+            "type": "text",
+            "text": "` \u2192 **two**",
+            "index": 0
+          }
+        ],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": [],
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "stopReason": "end_turn",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {
+          "model_name": "us.anthropic.claude-sonnet-4-6",
+          "model_provider": "bedrock_converse"
+        }
+      },
+      {
+        "content": "",
+        "tool_call_chunks": [],
+        "response_metadata": {}
+      }
+    ]
+  ]
+}

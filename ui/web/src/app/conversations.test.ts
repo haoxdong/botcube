@@ -161,6 +161,19 @@ describe('direct agent saved messages', () => {
     ]);
   });
 
+  it('keeps when each replayed step started and ended', async () => {
+    const timed = { id: 'm2', role: 'assistant' as const, content: 'An answer', metadata: { started_at: 1791772208634, ended_at: 1791772209051 } };
+    const agent = buildDirectAgent({ onStopFailed: unexpectedStopFailure,
+      chatServiceUrl: 'http://localhost:8123',
+      threadId: 'timed-thread',
+      messages: [{ id: 'm1', role: 'user', content: 'Saved question' }, timed],
+    });
+
+    await agent.connectAgent();
+
+    expect(agent.messages[1]).toEqual(timed);
+  });
+
   it('reports no message change when connecting a new conversation', async () => {
     const agent = buildDirectAgent({ onStopFailed: unexpectedStopFailure, chatServiceUrl: 'http://localhost:8123', threadId: 'new-thread', messages: [] });
     const onMessagesChanged = vi.fn();

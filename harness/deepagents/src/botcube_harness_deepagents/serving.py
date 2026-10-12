@@ -54,7 +54,7 @@ from langgraph_checkpoint_aws import AgentCoreMemoryStore
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
 
-from . import answer_timing
+from . import answer_timing, message_times
 from ._env import positive_float, positive_int
 from .actor_identity import (
     actor_path_segment,
@@ -732,6 +732,7 @@ def _get_agent(
             _AnsweredToolResultsMiddleware(),
             _ExecuteDescriptionMiddleware(_require_cartridge().execute_description),
             prompt_cache_middleware,
+            message_times.MessageTimesMiddleware(),
         ]
         tools: list[Any] = [propose_scheduled_task]
         if persistent_memory:
@@ -999,13 +1000,17 @@ class _OpenReply:
     def __init__(self) -> None:
         self.message_id = ''
         self.text = ''
+        self.started_at = self.ended_at = 0
 
     def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
         def watched(event: Any) -> None:
             if event.type == EventType.TEXT_MESSAGE_START:
                 self.message_id, self.text = event.message_id, ''
+                # A reply is kept only once it has text, whose content moves its end on.
+                self.started_at = self.ended_at = message_times.now()
             elif event.type == EventType.TEXT_MESSAGE_CONTENT:
                 self.text += event.delta
+                self.ended_at = message_times.now()
             elif event.type == EventType.TOOL_CALL_RESULT:
                 self.message_id, self.text = '', ''
             put(event)
@@ -1021,7 +1026,8 @@ class _OpenReply:
         # A model call that finished, as one whose tool Stop cut short, is already recorded.
         if isinstance(recorded[-1], AIMessage):
             return
-        await agent.graph.aupdate_state(config, {'messages': [AIMessage(self.text, id=self.message_id)]}, as_node='model')
+        reply = AIMessage(self.text, id=self.message_id)
+        await agent.graph.aupdate_state(config, {'messages': [message_times.cut(reply, self.started_at, self.ended_at)]}, as_node='model')
 
 
 _PreparationResult = TypeVar('_PreparationResult')

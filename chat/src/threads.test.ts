@@ -212,7 +212,8 @@ describe('GET /threads/{id}', () => {
     await chat('replayer', 'replayed');
     const messages = [
       { id: 'm1', role: 'user', content: 'about replayed' },
-      { id: 'm2', role: 'assistant', content: 'an answer' },
+      // The Harness times each step it replays.
+      { id: 'm2', role: 'assistant', content: 'an answer', metadata: { started_at: 1791772208634, ended_at: 1791772209051 } },
     ];
     stack.sessionApi.reply('replayed', 200, { messages });
 
