@@ -129,7 +129,8 @@ const ABOUT: Record<AgentFile, string> = {
     "Soul shapes only its manner: its rules for grounding answers and running commands live in its skills, which Soul cannot change.",
   Memory:
     "What your agent has learned about you and keeps from chat to chat, one memory per line. " +
-    "The agent reads it at the start of every message and uses your edits from your next message on. " +
+    "The agent reads it once when a chat starts. Chats already open, including your Main chat, keep what they read. " +
+    "Side chats you start later get your edits, but a memory the agent saved less than 15 minutes ago keeps its old text until then. " +
     "Edit a line to correct it, or delete it to make the agent forget it.",
 };
 

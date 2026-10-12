@@ -5687,7 +5687,7 @@ describe('agent profile', () => {
     expect(panel.queryByRole('textbox')).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent/memory', { credentials: 'include', cache: 'no-store' });
     expect(memory.getByRole('region', { name: 'About Memory' })).toHaveTextContent(
-      /^What your agent has learned about you and keeps from chat to chat, one memory per line\. The agent reads it at the start of every message and uses your edits from your next message on\. Edit a line to correct it, or delete it to make the agent forget it\.$/,
+      /^What your agent has learned about you and keeps from chat to chat, one memory per line\. The agent reads it once when a chat starts\. Chats already open, including your Main chat, keep what they read\. Side chats you start later get your edits, but a memory the agent saved less than 15 minutes ago keeps its old text until then\. Edit a line to correct it, or delete it to make the agent forget it\.$/,
     );
 
     await click(panel, 'Edit Memory');
