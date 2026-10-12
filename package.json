@@ -14,7 +14,7 @@
     "screenshots:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
     "pretest:chat": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet && pnpm --filter botcube-template-chat build && template/deploy/stage-tools.sh'",
     "pretest:chat:unit": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet'",
-    "storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
+    "storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1146.0",

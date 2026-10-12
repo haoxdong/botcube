@@ -1,6 +1,19 @@
 #!/bin/sh
 # Runs one Node-heavy command under the machine-wide lock, so agents sharing a Mac run one at a time (docs/testing.md).
 # Linux (CI, Codex Cloud) has no lockf and runs the command directly; a nested call reuses its parent's lock.
+previous=
+refuse=
+for arg do
+  case "$previous:$arg" in
+    vite:build|vite:optimize|vite:--help|vite:-h|vite:--version|vite:-v) ;;
+    storybook:dev|next:dev|vite:*|*:--watch) refuse=1 ;;
+  esac
+  previous=${arg##*/}
+done
+if [ "$previous" = vite ] || [ -n "$refuse" ]; then
+  echo "heavy.sh: dev servers and --watch commands must run outside the heavy lock; run the command without scripts/heavy.sh" >&2
+  exit 1
+fi
 script_root=$(cd "${0%/*}/.." && pwd)
 if [ -f "$script_root/../pnpm-workspace.yaml" ]; then
   script_root=$(cd "$script_root/.." && pwd)
