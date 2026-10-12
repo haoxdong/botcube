@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, Any
 from ._env import positive_int
 from .actor_identity import actor_namespace
 from .memory_tools import extract_text, list_memory_record_summaries
-from .pending_memory import pending_memory_session_ids, pending_memory_texts, utc_now
+from .pending_memory import (
+    PENDING_MEMORY_WINDOW,
+    pending_memory_session_ids,
+    pending_memory_texts,
+    utc_now,
+)
 from .session_memory import render_memory
 
 if TYPE_CHECKING:
@@ -63,12 +68,42 @@ def actor_memory_records(
 def opening_memory(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> str:
     """The Memory block a Session opens with (ADR 0031): preferences, then facts with Pending Memory first, newest first."""
     now = utc_now()
-    preferences, facts = actor_memory_records(client, memory_id=memory_id, actor_id=actor_id)
+    events = _session_events(
+        client, memory_id=memory_id, actor_id=actor_id, session_ids=_save_session_ids(now, PENDING_MEMORY_WINDOW),
+    )
+    journal = _journal_entries(events, now, PENDING_MEMORY_WINDOW)
+    saves = {save['recordId']: save['text'] for save in journal}
+    preferences, facts = (
+        list_memory_record_summaries(client, memory_id=memory_id, namespace=actor_namespace(actor_id, kind))
+        for kind in ('preferences', 'facts')
+    )
+    preferences, facts = _actor_memory_records(preferences, facts, saves)
     pending = pending_memory_texts(
         _session_events(client, memory_id=memory_id, actor_id=actor_id, session_ids=pending_memory_session_ids(now)),
         now=now,
     )
-    return render_memory(_record_texts(_newest_first(preferences)), [*pending, *_record_texts(facts)])
+    block = render_memory(_record_texts(_newest_first(preferences)), [*pending, *_record_texts(facts)])
+    previous: dict[str, list[str]] = {}
+    for save in journal:
+        if 'previousText' in save:
+            texts = previous.setdefault(save['recordId'], [])
+            if save['previousText'] not in texts:
+                texts.append(save['previousText'])
+    corrections = []
+    for record_id, texts in previous.items():
+        replacement = saves[record_id]
+        corrections.extend(
+            json.dumps({'previousText': text, 'text': replacement}) for text in texts if text != replacement
+        )
+    if corrections:
+        context = (
+            'Memory page corrections (authoritative):\n'
+            'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
+            'Each previousText is superseded by text; null means forgotten and must not be used. '
+            'Keep unrelated facts from those saves.\n' + '\n'.join(corrections)
+        )
+        block = f'{block}\n\n{context}' if block else context
+    return block
 
 
 def _record_texts(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[str]:
@@ -88,8 +123,10 @@ def _saves_session_id(at: datetime) -> str:
     return f'memory-saves-{int(at.timestamp() // MEMORY_SAVE_WINDOW.total_seconds())}'
 
 
-def _save_session_ids(now: datetime) -> tuple[str, str]:
-    return _saves_session_id(now - MEMORY_SAVE_WINDOW), _saves_session_id(now)
+def _save_session_ids(now: datetime, window: timedelta = MEMORY_SAVE_WINDOW) -> list[str]:
+    first = int((now - window).timestamp() // MEMORY_SAVE_WINDOW.total_seconds())
+    last = int(now.timestamp() // MEMORY_SAVE_WINDOW.total_seconds())
+    return [f'memory-saves-{bucket}' for bucket in range(first, last + 1)]
 
 
 def _recent_saves(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> dict[str, str | None]:
@@ -118,14 +155,24 @@ def _session_events(
     return events
 
 
-def _saves_from_events(events: Sequence[Mapping[str, Any]], now: datetime) -> dict[str, str | None]:
-    saves: dict[str, str | None] = {}
-    for event in sorted(events, key=lambda event: event['eventTimestamp']):
-        if now - event['eventTimestamp'] <= MEMORY_SAVE_WINDOW:
+def _saves_from_events(
+    events: Sequence[Mapping[str, Any]], now: datetime, window: timedelta = MEMORY_SAVE_WINDOW,
+) -> dict[str, str | None]:
+    return {save['recordId']: save['text'] for save in _journal_entries(events, now, window)}
+
+
+def _journal_entries(
+    events: Sequence[Mapping[str, Any]], now: datetime, window: timedelta,
+) -> list[dict[str, Any]]:
+    entries = []
+    # ListEvents is newest first; reverse preserves write order for tied timestamps.
+    chronological = list(reversed(events))
+    chronological.sort(key=lambda event: event['eventTimestamp'])
+    for event in chronological:
+        if now - event['eventTimestamp'] <= window:
             [item] = event['payload']
-            save = json.loads(item['blob'])
-            saves[save['recordId']] = save['text']
-    return saves
+            entries.append(json.loads(item['blob']))
+    return entries
 
 
 def _with_saves(
@@ -143,10 +190,13 @@ def _with_saves(
     return current
 
 
-def _journal_save(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str, text: str | None) -> None:
+def _journal_save(
+    client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str,
+    previous_text: str, text: str | None,
+) -> None:
     now = utc_now()
     # A JSON string, though the stubs type a blob as a mapping: AgentCore returns a dict blob as a Java-style string.
-    blob: Any = json.dumps({'recordId': record_id, 'text': text})
+    blob: Any = json.dumps({'recordId': record_id, 'previousText': previous_text, 'text': text})
     client.create_event(
         memoryId=memory_id, actorId=actor_id, sessionId=_saves_session_id(now), eventTimestamp=now, payload=[{'blob': blob}],
         # Kept out of long-term extraction, which would turn the save into a Memory record of its own.
@@ -166,16 +216,18 @@ def memory_lines(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: st
     return [line for line in lines if line['text']]
 
 
-def _require_line(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str) -> None:
-    if not any(line['id'] == record_id for line in memory_lines(client, memory_id=memory_id, actor_id=actor_id)):
-        raise MemoryLineNotFoundError(f'Memory has no line {record_id}')
+def _require_line(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str) -> str:
+    for line in memory_lines(client, memory_id=memory_id, actor_id=actor_id):
+        if line['id'] == record_id:
+            return line['text']
+    raise MemoryLineNotFoundError(f'Memory has no line {record_id}')
 
 
 def edit_memory_line(
     client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str, text: str
 ) -> None:
     """Rewrite one line of the actor's Memory: its record's content becomes this text."""
-    _require_line(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
+    previous_text = _require_line(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
     response = client.batch_update_memory_records(
         memoryId=memory_id,
         records=[{'memoryRecordId': record_id, 'timestamp': utc_now(), 'content': {'text': text}}],
@@ -185,11 +237,11 @@ def edit_memory_line(
         if failed.get('errorCode') == 404:
             raise MemoryLineNotFoundError(f'Memory has no line {record_id}')
         raise RuntimeError(f'Updating memory record {record_id} failed: {failed.get("errorMessage", failed["status"])}')
-    _journal_save(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id, text=text)
+    _journal_save(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id, previous_text=previous_text, text=text)
 
 
 def delete_memory_line(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str) -> None:
     """Delete one line of the actor's Memory, and with it its record."""
-    _require_line(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
+    previous_text = _require_line(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
     client.delete_memory_record(memoryId=memory_id, memoryRecordId=record_id)
-    _journal_save(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id, text=None)
+    _journal_save(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id, previous_text=previous_text, text=None)

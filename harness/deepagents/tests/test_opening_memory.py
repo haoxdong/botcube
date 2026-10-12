@@ -161,6 +161,42 @@ def test_pending_memory_ages_out_after_fifteen_minutes(memory: FakeAgentCoreMemo
     assert _open(memory) == 'semantic facts:\n- Save from a clock running ahead'
 
 
+@pytest.mark.parametrize('delete', [False, True])
+def test_fresh_session_respects_correction_after_pending_save_extraction(
+    memory: FakeAgentCoreMemory, delete: bool,
+) -> None:
+    _save(memory, 'pending-memory-20260702', 'QA telescope colour is copper', at=NOW - timedelta(minutes=2))
+    _save(memory, 'pending-memory-20260702', 'QA observatory is Cedar', at=NOW - timedelta(minutes=1))
+    first = _fact('QA telescope colour is copper')
+    second = _fact('QA telescope colour is copper')
+    first['memoryRecordId'] = '1' * 40
+    second['memoryRecordId'] = '2' * 40
+    memory.records += [first, second]
+    record_ids = [record['memoryRecordId'] for record in memory.records]
+    for record_id in record_ids:
+        if delete:
+            memory_document.delete_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR, record_id=record_id)
+        else:
+            memory_document.edit_memory_line(
+                cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                record_id=record_id, text='QA telescope colour is amber',
+            )
+
+    expected = 'semantic facts:\n- QA observatory is Cedar\n- QA telescope colour is copper'
+    if not delete:
+        expected += '\n- QA telescope colour is amber\n- QA telescope colour is amber'
+    block = _open(memory)
+    facts, corrections = block.split('\n\nMemory page corrections (authoritative):\n')
+    assert facts == expected
+    assert 'override conflicting memories above, including paraphrases and parts of compound saves' in corrections
+    assert 'null means forgotten and must not be used' in corrections
+    replacement = None if delete else 'QA telescope colour is amber'
+    assert corrections.splitlines()[1:] == [
+        json.dumps({'previousText': 'QA telescope colour is copper', 'text': replacement}),
+        json.dumps({'previousText': 'QA telescope colour is copper', 'text': replacement}),
+    ]
+
+
 def test_pending_memory_reads_every_page_of_a_session(memory: FakeAgentCoreMemory) -> None:
     _save(memory, 'pending-memory-20260702', 'First save', at=NOW - timedelta(minutes=10))
     for minute in range(100):
@@ -186,3 +222,101 @@ def test_a_failing_pending_memory_lookup_fails_the_load(memory: FakeAgentCoreMem
     with pytest.raises(EXCEPTIONS.ThrottledException):
         _open(memory)
 
+
+
+@pytest.mark.parametrize('minutes', [5, 7, 10, 15, 16])
+def test_corrections_span_pending_window_but_page_overlay_stays_five_minutes(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, minutes: int,
+) -> None:
+    memory.records.append(_fact('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    memory.lag_listing()
+    monkeypatch.setattr(memory_document, 'utc_now', lambda: NOW - timedelta(minutes=minutes))
+    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                     record_id='1' * 40, text='Amber telescope')
+    monkeypatch.setattr(memory_document, 'utc_now', lambda: NOW)
+    assert memory_document.memory_lines(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR) == [
+        {'id': '1' * 40, 'text': 'Amber telescope' if minutes <= 5 else 'Copper telescope'},
+    ]
+    block = _open(memory)
+    if minutes <= 15:
+        assert block.startswith('semantic facts:\n- Amber telescope\n\nMemory page corrections (authoritative):')
+        assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
+    else:
+        assert block == 'semantic facts:\n- Copper telescope'
+
+
+@pytest.mark.parametrize('delete', [False, True])
+def test_repeated_corrections_keep_original_and_intermediate_text(
+    memory: FakeAgentCoreMemory, delete: bool,
+) -> None:
+    memory.records.append(_fact('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    memory.lag_listing()
+    _save(memory, 'pending-memory-20260702', 'My telescope is copper and my observatory is Cedar', at=NOW)
+    for text in ['Amber telescope', 'Silver telescope']:
+        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                         record_id='1' * 40, text=text)
+    if delete:
+        memory_document.delete_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR, record_id='1' * 40)
+    block = _open(memory)
+    assert 'My telescope is copper and my observatory is Cedar' in block
+    final = None if delete else 'Silver telescope'
+    for previous in ['Copper telescope', 'Amber telescope', *(['Silver telescope'] if delete else [])]:
+        assert json.dumps({'previousText': previous, 'text': final}) in block
+    assert 'Keep unrelated facts from those saves.' in block
+    assert _open(memory, actor_id='other') == ''
+
+
+def test_legacy_journal_overlays_without_inventing_previous_text(memory: FakeAgentCoreMemory) -> None:
+    memory.records.append(_fact('Copper telescope'))
+    memory.create_event(memoryId=MEMORY_ID, actorId=ACTOR, sessionId=memory_document._saves_session_id(NOW),
+                        eventTimestamp=NOW, payload=[{'blob': json.dumps({
+                            'recordId': 'record-Copper telescope', 'text': 'Amber telescope',
+                        })}], extractionMode='SKIP')
+    assert _open(memory) == 'semantic facts:\n- Amber telescope'
+
+
+def test_journal_write_failure_is_not_reported_as_a_success(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory.records.append(_fact('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    def fail(**_params: Any) -> NoReturn:
+        raise RuntimeError('journal unavailable')
+    monkeypatch.setattr(memory, 'create_event', fail)
+    with pytest.raises(RuntimeError, match='journal unavailable'):
+        memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                         record_id='1' * 40, text='Amber telescope')
+
+
+@pytest.mark.parametrize('seconds', [299, 300, 301, 419])
+def test_startup_reads_every_bucket_intersecting_pending_window(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, seconds: int,
+) -> None:
+    monkeypatch.setattr(memory_document, 'MEMORY_SAVE_WINDOW', timedelta(seconds=seconds))
+    later = NOW + timedelta(seconds=37)
+    memory.records.append(_fact('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    memory.lag_listing()
+    monkeypatch.setattr(memory_document, 'utc_now', lambda: later - timedelta(minutes=15))
+    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                     record_id='1' * 40, text='Amber telescope')
+    monkeypatch.setattr(memory_document, 'utc_now', lambda: later)
+    block = _open(memory)
+    assert block.startswith('semantic facts:\n- Amber telescope\n\nMemory page corrections (authoritative):')
+    assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
+
+
+def test_correction_authority_is_not_lost_when_fact_section_is_capped(memory: FakeAgentCoreMemory) -> None:
+    memory.records.append(_fact('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    memory_document.edit_memory_line(cast(Any, memory), memory_id=MEMORY_ID, actor_id=ACTOR,
+                                     record_id='1' * 40, text='Amber telescope')
+    for index in range(51):
+        _save(memory, 'pending-memory-20260702', f'Unrelated fact {index}', at=NOW)
+    block = _open(memory)
+    assert SPILLOVER in block
+    assert 'semantic facts:\n- Unrelated fact 50' in block
+    assert '\n- Amber telescope' not in block
+    assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
