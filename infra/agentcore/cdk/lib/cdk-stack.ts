@@ -402,7 +402,9 @@ export class AgentCoreStack extends Stack {
     }
 
     if (spec.runtimes.length > 0) {
-      requireOne(bedrockagentcore.CfnRuntime).agentRuntimeName = identity.runtime;
+      const runtime = requireOne(bedrockagentcore.CfnRuntime);
+      runtime.agentRuntimeName = identity.runtime;
+      new CfnOutput(this, 'AgentRuntimeVersion', { value: runtime.attrAgentRuntimeVersion });
       requireOne(ecr.CfnRepository).repositoryName = identity.ecrRepository;
       requireOne(codebuild.CfnProject).name = identity.codeBuildProject;
       requireOne(lambda.CfnFunction).functionName = identity.lambdaFunction;
