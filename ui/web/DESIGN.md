@@ -31,7 +31,7 @@ the `max-width: 640px` query, as are `--weight-title`, `--weight-name` and `--we
 | `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.agent-file h3`, `.profile-editor-title`, sign-ins) |
 | `message`  | `--font-message`  | 16px/400 | 17px/400       | The chat: messages, the composer's text, the agent's name pill under the avatar                                                             |
 | `body`     | `--font-body`     | 14px/400 | 17px/400       | Sidebar rows, menus (account, model), fields, file text, the welcome's description, the agent computer's file list                          |
-| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Secondary lines (summary, time, account), intros, errors, field labels, buttons, the model picker, code                                     |
+| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Secondary lines (summary, time, account), intros, errors, field labels, buttons, the model picker, fenced code                              |
 | `label`    | `--font-label`    | 11px/600 | 13px/600       | Section labels, uppercase with 0.04em tracking (`SIDE CHATS`); status and Coming soon pills                                                 |
 
 The weights are each role's own. Sidebar rows are regular on a desktop, as in ChatGPT, and medium on a phone
@@ -39,7 +39,7 @@ The weights are each role's own. Sidebar rows are regular on a desktop, as in Ch
 option's name, the Side chats header and buttons stay medium.
 
 Font stack: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif` Code font:
-`'Menlo', 'Monaco', 'Courier New', monospace`
+`--font-code` (`'Menlo', 'Monaco', 'Courier New', monospace`). Inline code is 0.9em of the text beside it.
 
 ## Components
 
@@ -138,7 +138,7 @@ from `botcube-ui-web/ui`.
 | `text-subtle`   | `#555`    | Picker pill text (in-input), sheet notes                                                               |
 | `text-muted`    | `#6b6b6b` | Secondary lines, placeholders, section labels, muted icons (AA on `surface`), the fallback avatar disc |
 | `surface`       | `#f7f7f8` | App and sidebar background, tab bar                                                                    |
-| `surface-hover` | `#f4f4f4` | Secondary buttons, icon tiles, hover states, code blocks                                               |
+| `surface-hover` | `#f4f4f4` | Secondary buttons, icon tiles, hover states                                                            |
 | `composer`      | `#fbfbfb` | The phone composer's fill (ChatGPT Work's)                                                             |
 | `selected`      | `#efefef` | The open row in the phone drawer (Muse Fig 21)                                                         |
 | `border`        | `#e0e0e0` | Borders, separators, secondary button hover, the desktop sidebar's open row                            |
@@ -146,7 +146,7 @@ from `botcube-ui-web/ui`.
 | `white`         | `#fff`    | Cards, dropdowns, field background, the desktop sidebar (as ChatGPT's)                                 |
 | `blue`          | `#2563eb` | Checkmarks, selection, focus rings, Linked                                                             |
 | `blue-soft`     | `#eff6ff` | The Linked pill, the composer's sign-in chip                                                           |
-| `success`       | `#22c55e` | The Connected badge, a finished tool call                                                              |
+| `success`       | `#22c55e` | The Connected badge                                                                                    |
 | `danger`        | `#dc2626` | Errors, failed rows, Delete, Re-link required (AA on white)                                            |
 | `danger-soft`   | `#fef2f2` | A failed row's icon tile, the Re-link required pill                                                    |
 | `black`         | `#000`    | CopilotKit primary, active send button                                                                 |
