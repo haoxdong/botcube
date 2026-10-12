@@ -1810,22 +1810,16 @@ button.worklog-step-head:hover {
   font-size: var(--font-body);
   line-height: 1;
   border-radius: var(--radius-sm);
-  transition: opacity var(--transition-fast), color var(--transition-fast);
+  transition: color var(--transition-fast);
 }
 
 /* Only a mouse reveals rename and delete on hover: iOS Safari spends a tap on any hover that reveals content, so
-   a touch screen shows them at rest and one tap opens the chat. The keyboard reveals them as they take focus. */
+   a touch screen shows them at rest and one tap opens the chat. At rest with a mouse they take no room, so a title
+   runs the row's full width, as in ChatGPT; tabbing to the title reveals them for the next Tab. */
 @media (hover: hover) {
-  .sidebar-item-rename,
-  .sidebar-item-delete {
-    opacity: 0;
-  }
-
-  .sidebar-item:hover .sidebar-item-rename,
-  .sidebar-item:hover .sidebar-item-delete,
-  .sidebar-item-rename:focus-visible,
-  .sidebar-item-delete:focus-visible {
-    opacity: 1;
+  .sidebar-item:not(:hover):not(:focus-within) .sidebar-item-rename,
+  .sidebar-item:not(:hover):not(:focus-within) .sidebar-item-delete {
+    display: none;
   }
 }
 

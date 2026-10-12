@@ -690,28 +690,35 @@ it("paints the file cards in a neutral grey unless a cartridge's theme brings th
 
 // a Side Chat row revealed its delete button on hover, so iOS Safari spent the first tap on that hover and
 // opened the chat only on the second.
-it("shows a Side Chat's rename and delete buttons at rest on a touch screen, so the first tap opens the chat, and only on hover with a mouse", () => {
+it("shows a Side Chat's rename and delete buttons at rest on a touch screen, so the first tap opens the chat, and only on hover or focus with a mouse", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
-  // A fresh row per device, as happy-dom keeps an element's computed style; removed, so no later test finds it.
-  const deleteOpacity = (maxTouchPoints: number) => {
+  // happy-dom matches no :hover or :focus-within, so a copy of the sheet marking those states with classes stands in for it.
+  const states = document.createElement('style');
+  states.textContent = sheet.replace(/:hover\b/g, '.pointer-over').replace(/:focus-within\b/g, '.focus-inside');
+  style.replaceWith(states);
+  // A fresh row per case, as happy-dom keeps an element's computed style; removed, so no later test finds it.
+  const buttons = (maxTouchPoints: number, state = '') => {
     happyDOM.settings.navigator.maxTouchPoints = maxTouchPoints;
     const row = document.createElement('div');
-    row.className = 'sidebar-item';
+    row.className = `sidebar-item ${state}`;
     row.innerHTML = '<button class="sidebar-item-btn">Rates</button><button class="sidebar-item-rename"></button><button class="sidebar-item-delete">×</button>';
     document.body.append(row);
-    const opacities = [styleOf(row, '.sidebar-item-rename').opacity, styleOf(row, '.sidebar-item-delete').opacity];
+    const shown = ['.sidebar-item-rename', '.sidebar-item-delete'].map((selector) => styleOf(row, selector).display !== 'none');
     row.remove();
-    expect(opacities[0]).toBe(opacities[1]);
-    return opacities[1];
+    expect(shown[0]).toBe(shown[1]);
+    return shown[1];
   };
 
   try {
-    expect(deleteOpacity(5)).not.toBe('0');
-    expect(deleteOpacity(0)).toBe('0');
-    // happy-dom matches no :hover, so this reads the sheet: the hover reveal applies only where the device can hover.
-    expect(sheet).toMatch(/@media \(hover: hover\) \{[^@]*\.sidebar-item:hover \.sidebar-item-rename,\s*\.sidebar-item:hover \.sidebar-item-delete[^{]*\{\s*opacity: 1;/);
+    expect(buttons(5)).toBe(true);
+    // At rest with a mouse they take no room, so a long title runs the row's full width.
+    expect(buttons(0)).toBe(false);
+    expect(buttons(0, 'pointer-over')).toBe(true);
+    // Tabbing to the title reveals them, so the next Tab reaches rename.
+    expect(buttons(0, 'focus-inside')).toBe(true);
   } finally {
     happyDOM.settings.navigator.maxTouchPoints = 0;
+    states.replaceWith(style);
   }
 });
 
