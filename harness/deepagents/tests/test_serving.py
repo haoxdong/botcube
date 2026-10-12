@@ -51,6 +51,7 @@ from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory
 from botcube_harness_deepagents import (
     files_sync,
     llm,
+    memory_broker,
     memory_tools,
     serving,
     session_api,
@@ -1685,6 +1686,122 @@ def agentcore_memory(service: _Service, monkeypatch: pytest.MonkeyPatch) -> _Reg
     monkeypatch.setattr(serving, 'AGENTCORE_REGION', 'eu-west-1')
     monkeypatch.setattr(memory_tools, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     return memory
+
+
+def test_isolation_receipt_precedes_a_real_turn_and_never_enters_the_graph(
+    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        httpx.Response(200, json={'events': [{'memoryId': MEMORY_ID, 'actorId': 'original-filing',
+                                           'sessionId': 'logical-session', 'eventId': 'private-event',
+                                           'eventTimestamp': '2026-10-09T20:00:00.000Z'}]}),
+        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
+        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
+        httpx.Response(200, json={'namespaces': ['/strategies/semantic/actors/actor-1/']}),
+        httpx.Response(403, json={'detail': 'Memory access is outside this Turn'}),
+        httpx.Response(200, json={'events': []}),
+    ]
+    requests: list[dict[str, Any]] = []
+
+    def post(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.headers['Authorization'].removeprefix('Bearer ')) == {
+            'actor': 'actor-1', 'filing': 'original-filing', 'thread': 'logical-session',
+        }
+        requests.append(json.loads(request.content))
+        return responses.pop(0)
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', lambda **kwargs: client(transport=httpx.MockTransport(post), **kwargs))
+    invoke_agent = serving._invoke_agent
+    graph_props: list[dict[str, Any]] = []
+
+    async def observed(input_data: Any, context: Any, forwarded: dict[str, Any], *args: Any) -> Any:
+        graph_props.append(dict(forwarded))
+        async for event in invoke_agent(input_data, context, forwarded, *args):
+            yield event
+
+    monkeypatch.setattr(serving, '_invoke_agent', observed)
+    events = service.turn('hello', thread='logical-session', user='original-filing', memory=True, memoryIsolationCheck='v1')
+    assert events[0] == {'type': 'CUSTOM', 'name': 'MEMORY_ISOLATION_CHECK', 'value': {
+        'version': 1, 'runId': 'run-0', 'ownBefore': 200, 'foreignActor': 403, 'foreignSession': 403,
+        'ownNamespaces': 200, 'foreignNamespaces': 403, 'ownAfter': 200,
+    }}
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert _said(events) == 'Echo: hello'
+    assert service.recorder.heard == [['hello']]
+    assert 'memoryIsolationCheck' not in graph_props[0]
+    assert 'turnMemory' not in graph_props[0]
+    assert 'private-event' not in json.dumps(events)
+    assert requests[0]['params']['actorId'] == 'original-filing'
+    assert requests[0]['params']['sessionId'] == 'logical-session'
+    assert requests[3] == {'operation': 'actor_namespaces', 'params': {'memoryId': MEMORY_ID, 'actorId': 'actor-1'}}
+    assert len(requests) == 6
+    assert agentcore_memory.create_event_calls > 0
+
+    service.turn('ordinary follow-up', thread='logical-session', user='original-filing', memory=True)
+    assert len(requests) == 6
+    assert service.recorder.heard[-1] == ['hello', 'ordinary follow-up']
+
+
+@pytest.mark.parametrize(('options', 'reason'), [
+    ({'memoryIsolationCheck': None}, 'invalid request'),
+    ({'memoryIsolationCheck': False}, 'invalid request'),
+    ({'memoryIsolationCheck': {}}, 'invalid request'),
+    ({'memoryIsolationCheck': ['v1']}, 'invalid request'),
+    ({'memoryIsolationCheck': 'v2'}, 'invalid request'),
+    ({'memoryIsolationCheck': 'v1', 'warmup': True}, 'requires a normal Turn'),
+    ({'memoryIsolationCheck': 'v1', 'stop': True}, 'requires a normal Turn'),
+    ({'memoryIsolationCheck': 'v1'}, 'requires linked Memory'),
+    ({'memoryIsolationCheck': 'v1', 'memory': True}, 'missing capability'),
+])
+def test_invalid_isolation_invocations_fail_without_http_or_model_work(
+    service: _Service, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], reason: str,
+) -> None:
+    clients: list[dict[str, Any]] = []
+
+    def unexpected_client(**kwargs: Any) -> NoReturn:
+        clients.append(kwargs)
+        raise AssertionError('Unexpected diagnostic HTTP')
+
+    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', unexpected_client)
+    events = service.turn('hello', **options)
+    assert events[0] == {'type': 'RUN_ERROR', 'code': 'MEMORY_ISOLATION_CHECK_FAILED',
+                         'message': f'Memory isolation check failed: {reason}'}
+    assert all(event.get('name') != 'MEMORY_ISOLATION_CHECK' for event in events)
+    assert clients == []
+    assert service.recorder.builds == []
+
+
+def test_marked_turn_cannot_substitute_a_missing_capability(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    events = service.post({
+        'threadId': 'session', 'runId': 'run', 'messages': [], 'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor', 'sessionUserId': 'filing', 'memory': True, 'memoryIsolationCheck': 'v1'},
+    })
+    assert events == [{'type': 'RUN_ERROR', 'code': 'MISSING_USER_ID',
+                       'message': 'Invocation carries no Turn Memory capability'}]
+    assert service.recorder.builds == []
+
+
+def test_failed_isolation_is_a_classified_turn_error_without_private_data(
+    service: _Service, agentcore_memory: _RegionalMemory, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def post(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('private-secret https://private-broker.test secret-response-body', request=request)
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(memory_broker.httpx, 'AsyncClient', lambda **kwargs: client(transport=httpx.MockTransport(post), **kwargs))
+    events = service.turn('hello', memory=True, memoryIsolationCheck='v1')
+    assert events == [{'type': 'RUN_ERROR', 'code': 'MEMORY_ISOLATION_CHECK_FAILED',
+                       'message': 'Memory isolation check failed: transport'}]
+    assert service.recorder.builds == []
+    assert agentcore_memory.create_event_calls == 0
+    assert 'private-secret' not in caplog.text
+    assert 'private-broker' not in caplog.text
+    assert 'secret-response-body' not in caplog.text
 
 
 def test_named_warmup_requires_memory_capability_and_reads_original_history(

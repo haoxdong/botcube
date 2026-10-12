@@ -83,7 +83,13 @@ from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
 from .memory.agentcore.snapshot_saver import reading_once
 from .memory.agentcore.turn_saver import TurnCheckpointSaver
-from .memory_broker import MemoryBrokerClient, MemoryCapability, turn_memory
+from .memory_broker import (
+    MemoryBrokerClient,
+    MemoryCapability,
+    MemoryIsolationCheckError,
+    take_isolation_request,
+    turn_memory,
+)
 from .memory_document import actor_memory_records, record_text, startup_memory_records
 from .memory_files import MEMORY_FILENAME
 from .memory_tools import (
@@ -879,6 +885,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     if not isinstance(forwarded, dict):
         forwarded = {}
         input_data.forwarded_props = forwarded
+    isolation_check = take_isolation_request(forwarded)
     warmup = forwarded.get('warmup')
     session_user_id = forwarded.get('sessionUserId')
     if warmup and not session_user_id:
@@ -912,6 +919,12 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
             raise MissingUserIdError('Invocation carries no Turn Memory capability')
         capability = MemoryCapability(capability_data['url'], capability_data['token'], auth.actor_id)
     with turn_memory(capability):
+        if isolation_check:
+            receipt = await MemoryBrokerClient().check_isolation(
+                persistent_memory=auth.persistent_memory, memory_id=AGENTCORE_MEMORY_ID, filing_actor_id=session_user_id,
+                session_id=input_data.thread_id, run_id=input_data.run_id,
+            )
+            yield CustomEvent(name='MEMORY_ISOLATION_CHECK', value=receipt)
         async for event in _invoke_agent(input_data, context, forwarded, auth, session_user_id,
                                        documents, memory_revision, files, warmup):
             yield event
@@ -1395,6 +1408,7 @@ async def invocations(request: Request) -> Any:
             FilesSyncRecordError,
             InvalidMemoryRevisionError,
             PlanUsageError,
+            MemoryIsolationCheckError,
         ) as e:
             log.error('Rejected invocation: %s', e)
             yield encoder.encode(error := RunErrorEvent(message=str(e), code=e.code))
