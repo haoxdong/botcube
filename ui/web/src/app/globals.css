@@ -44,12 +44,14 @@ body {
   --agent-memory-glow: var(--color-control);
 
   /* The type scale (DESIGN.md): ChatGPT's Mac app here, iOS's defaults in the 640px query below */
-  --font-title: 1.5rem;
+  --font-title: 1.125rem;
   --font-name: 1.125rem;
   --font-headline: 0.875rem;
-  --font-message: 1rem;
+  --font-message: 0.875rem;
+  --font-pill: 1rem;
   --font-body: 0.875rem;
   --font-detail: 0.8125rem;
+  --font-meta: 0.75rem;
   --font-label: 0.6875rem;
   /* DESIGN.md's code font. Menlo runs wide and tall, so at 0.9em of the text beside it its x-height sits 6% under the
      system sans and its average letter 4% wider: the two read one size. */
@@ -59,7 +61,7 @@ body {
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;
-  --weight-title: var(--weight-medium);
+  --weight-title: var(--weight-semibold);
   --weight-name: var(--weight-semibold);
   --weight-headline: var(--weight-medium);
 
@@ -159,6 +161,36 @@ body {
 .copilotKitInput textarea {
   padding: 10px 0 !important;
   font-size: var(--font-message) !important;
+}
+
+/* A desktop's text on ChatGPT Mac's 20px line: its 40px box fits the controls' 44px row, which the grid's 8px padding
+   and the box's 1px border make the composer's 62px. A phone's keeps CopilotKit's `leading-relaxed`. */
+@media (min-width: 641px) {
+  .copilotKitInput textarea {
+    line-height: 20px;
+  }
+}
+
+/* A touch tablet keeps the text at 16px, under which iOS Safari zooms into the field it focuses. */
+@media (min-width: 641px) and (hover: none) and (pointer: coarse) {
+  .copilotKitInput textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* The disclaimer under the composer, the chat surface's and the kept chat's: `meta` on a desktop, as ChatGPT Mac's
+   `text-xs`. A phone keeps CopilotKit's own `text-xs` in its grey. */
+.chat-disclaimer {
+  font-size: var(--font-meta);
+  line-height: 1rem;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 640px) {
+  .chat-disclaimer {
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+  }
 }
 
 @media (max-width: 767px) {
@@ -452,6 +484,20 @@ body {
   max-width: 720px;
   letter-spacing: -0.005em;
   padding: 0 !important;
+}
+
+/* A desktop's messages run at ChatGPT Mac's `leading-relaxed`. The Worklog's notes keep the line they had, as their
+   words and steps keep their own. */
+@media (min-width: 641px) {
+  .copilotKitUserMessage > div:first-child,
+  .copilotKitAssistantMessage,
+  .copilotKitAssistantMessage [class*="cpk:prose"] {
+    line-height: 1.625 !important;
+  }
+
+  .worklog-body .copilotKitAssistantMessage {
+    line-height: 1.6 !important;
+  }
 }
 
 /* Each message's prose in a grey bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). A long
@@ -1431,17 +1477,15 @@ button.worklog-step-head:hover {
   }
 }
 
-/* A section label (Muse Fig 21's SIDE CHATS) */
+/* A section header: ChatGPT Mac's grey `headline` on a desktop, a section label on a phone (Muse Fig 21's SIDE CHATS) */
 .sidebar-side-chats-toggle {
   appearance: none;
   border: none;
   background: none;
   color: var(--color-text-muted);
   font-family: inherit;
-  font-size: var(--font-label);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
   display: flex;
   align-items: center;
   gap: calc(var(--spacing) * 2);
@@ -1453,6 +1497,14 @@ button.worklog-step-head:hover {
 .sidebar-side-chats-toggle svg {
   width: calc(var(--spacing) * 4);
   height: calc(var(--spacing) * 4);
+}
+
+@media (max-width: 640px) {
+  .sidebar-side-chats-toggle {
+    font-size: var(--font-label);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
 }
 
 .sidebar-list[hidden] {
@@ -1656,7 +1708,7 @@ button.worklog-step-head:hover {
   justify-content: center;
   gap: 6px;
   padding: 1.5rem 1.25rem;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   color: var(--color-text-muted);
   text-align: center;
   text-wrap: balance;
@@ -1823,8 +1875,10 @@ button.worklog-step-head:hover {
     --font-name: 1.375rem;
     --font-headline: 1.0625rem;
     --font-message: 1.0625rem;
+    --font-pill: 1.0625rem;
     --font-body: 1.0625rem;
     --font-detail: 0.9375rem;
+    --font-meta: 0.9375rem;
     --font-label: 0.8125rem;
   }
 
@@ -2476,8 +2530,10 @@ button.worklog-step-head:hover {
   --text-name: var(--font-name);
   --text-headline: var(--font-headline);
   --text-message: var(--font-message);
+  --text-pill: var(--font-pill);
   --text-body: var(--font-body);
   --text-detail: var(--font-detail);
+  --text-meta: var(--font-meta);
   --text-label: var(--font-label);
   --font-weight-normal: var(--weight-regular);
   --font-weight-medium: var(--weight-medium);
@@ -2893,7 +2949,7 @@ button.worklog-step-head:hover {
   background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(4px);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-  font-size: var(--font-message);
+  font-size: var(--font-pill);
   font-weight: var(--weight-medium);
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -2989,7 +3045,7 @@ button.worklog-step-head:hover {
 .agent-profile-character {
   max-width: 100%;
   overflow: hidden;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   color: var(--color-text-muted);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2999,7 +3055,7 @@ button.worklog-step-head:hover {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   color: var(--color-text-muted);
 }
 
@@ -3319,7 +3375,7 @@ button.worklog-step-head:hover {
 /* A quiet caption under the header; the file's own content starts 16px below it. */
 .agent-file-about {
   margin-bottom: 8px;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   line-height: 1.45;
   color: var(--color-text-muted);
 }
@@ -3410,7 +3466,7 @@ button.worklog-step-head:hover {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   line-height: 1.35;
 }
 
@@ -3593,7 +3649,7 @@ button.worklog-step-head:hover {
 
 .plugins-intro {
   margin-top: 4px;
-  font-size: var(--font-detail);
+  font-size: var(--font-meta);
   color: var(--color-text-muted);
 }
 

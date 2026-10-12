@@ -18,25 +18,26 @@ tokens. There is no dark theme; when `shadcn add` writes its own palette into `g
 ## Typography
 
 The phone uses iOS's Dynamic Type defaults (Title 2 22, Headline 17 semibold, Body 17, Subheadline 15, Footnote 13).
-Desktop and tablet follow ChatGPT's newest Mac build (26.930.61225, 6 Oct 2026), its 16px chat bubbles included. The
-maintainer chose both: "phone uses iPhone defaults,
-desktop follows ChatGPT", "lets use their newest". To change a size, re-measure its source: ChatGPT renders in OpenAI
-Sans, and measuring it against SF Pro gave wrong sizes. Each token is its desktop size in `:root` and its phone size in
+Desktop and tablet follow ChatGPT's newest Mac build. The maintainer chose both: "phone uses iPhone defaults,
+desktop follows ChatGPT", "lets use their newest". Desktop sizes are read from the ChatGPT Mac app 26.1002.52244 webview
+CSS (electron window type), which renders chat and UI in SF Pro. Each token is its desktop size in `:root` and its phone size in
 the `max-width: 640px` query, as are `--weight-title`, `--weight-name` and `--weight-headline`; name the role, never a pixel size.
 
-| Token      | CSS var           | Desktop  | Phone (≤640px) | Use                                                                                                                                         |
-| ---------- | ----------------- | -------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `title`    | `--font-title`    | 24px/500 | 22px/700       | A screen's title (`.plugins-title`, `.welcome-title`)                                                                                       |
-| `name`     | `--font-name`     | 18px/600 | 22px/700       | The sidebar brand and the Agent Profile's name, as ChatGPT's identity-panel hero name (`text-lg font-semibold`)                             |
-| `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.agent-file h3`, `.profile-editor-title`, sign-ins) |
-| `message`  | `--font-message`  | 16px/400 | 17px/400       | The chat: messages, the composer's text, the agent's name pill under the avatar                                                             |
-| `body`     | `--font-body`     | 14px/400 | 17px/400       | Sidebar rows, menus (account, model), fields, file text, the welcome's description, the agent computer's file list                          |
-| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Secondary lines (summary, time, account), intros, errors, field labels, buttons, the model picker, fenced code                              |
-| `label`    | `--font-label`    | 11px/600 | 13px/600       | Section labels, uppercase with 0.04em tracking (`SIDE CHATS`); status and Coming soon pills                                                 |
+| Token      | CSS var           | Desktop  | Phone (≤640px) | Use                                                                                                                                                                                |
+| ---------- | ----------------- | -------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`    | `--font-title`    | 18px/600 | 22px/700       | A screen's title (`.plugins-title`, `.welcome-title`)                                                                                                                              |
+| `name`     | `--font-name`     | 18px/600 | 22px/700       | The sidebar brand and the Agent Profile's name, as ChatGPT's identity-panel hero name (`text-lg font-semibold`)                                                                    |
+| `headline` | `--font-headline` | 14px/500 | 17px/600       | A row's or sheet's title, a section heading (`.list-row-title`, `.list-group-heading`, `.agent-file h3`, `.profile-editor-title`, sign-ins), the desktop Side chats header         |
+| `pill`     | `--font-pill`     | 16px/500 | 17px/600       | The agent's name pill under the avatar, ChatGPT Mac's mascot name                                                                                                                  |
+| `message`  | `--font-message`  | 14px/400 | 17px/400       | The chat: messages, the composer's text                                                                                                                                            |
+| `body`     | `--font-body`     | 14px/400 | 17px/400       | Sidebar rows, menus (account, model), fields, file text, the welcome's description, the agent computer's file list                                                                 |
+| `detail`   | `--font-detail`   | 13px/400 | 15px/400       | Controls: buttons, the model picker and its options, field labels; errors, fenced code                                                                                             |
+| `meta`     | `--font-meta`     | 12px/400 | 15px/400       | Secondary lines under a title (a row's subtitle, the profile's character and status, a file's caption, the Plugins intro, the empty Side chats' note), the desktop chat disclaimer |
+| `label`    | `--font-label`    | 11px/600 | 13px/600       | Section labels, uppercase with 0.04em tracking (the phone's `SIDE CHATS`); status and Coming soon pills                                                                            |
 
 The weights are each role's own. Sidebar rows are regular on a desktop, as in ChatGPT, and medium on a phone
-(`--sidebar-row-weight`). The name pill is medium on a desktop, as ChatGPT's dot name under its avatar (`text-[16px] font-medium`), and semibold on a phone. The account menu's name stays semibold; a model
-option's name, the Side chats header and buttons stay medium.
+(`--sidebar-row-weight`). The name pill is medium on a desktop, as ChatGPT's dot name under its avatar (`font-medium`), and semibold on a phone. The account menu's name stays semibold; a model
+option's name, the desktop Side chats header and buttons stay medium.
 
 Font stack: `-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif` Code font:
 `--font-code` (`'Menlo', 'Monaco', 'Courier New', monospace`). Inline code is 0.9em of the text beside it.
@@ -56,8 +57,9 @@ from `botcube-ui-web/ui`.
   `border` seam outside its 260px and no shadow, as the Agent Profile's on the chat's other side. It stays open
   until the menu control beside the open brand shuts it, without motion either way; a desktop opens it as the viewer
   last left it. The brand row keeps its 64px.
-  Navigation icons stay centred in the first 44px. Side chats has a disclosure in the `label` role at semibold, in
-  capitals (Muse Fig 21's SIDE CHATS), with a down/right chevron and one plus control. The list collapse preference
+  Navigation icons stay centred in the first 44px. Side chats has a disclosure, `text-muted`: on a desktop in the
+  `headline` role, as ChatGPT Mac's Recents; on a phone in the `label` role at semibold, in capitals (Muse Fig 21's
+  SIDE CHATS); with a down/right chevron and one plus control. The list collapse preference
   is remembered per viewer.
   The desktop brand has 12px top and 8px bottom padding.
   The phone drawer follows Muse Fig 21, measured from the safe area's top: a 44px brand row holding only the `name`
@@ -72,7 +74,7 @@ from `botcube-ui-web/ui`.
   Side Chats header's label at 20px, its rows at the same 44px pitch right under it, each × in the plus's column; the
   Account row 4px above the bottom, as dots' account (Fig 1).
 - **List row** (`<ListRow>` and its parts, `.list-row`): a round icon tile (`--row-icon`, 40px desktop, 44px phone) on `surface-hover`, a 14px gap,
-  then a `headline` title over `detail` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Plugins use
+  then a `headline` title over `meta` lines in `text-muted` (Muse Fig 13, 15). Activity, Scheduled and Plugins use
   it (a Plugins placeholder adds a dashed `border` edge); a failed row tints its tile `danger-soft` with a `danger`
   icon. Scheduled rows sit under frequency headings (`.list-group-heading`, as Activity's days), each a button with one
   cut-short detail line (time · prompt) that opens the task's Sheet. A paused Scheduled row sets its icon `control` and its title `text-muted`, a Paused status pill beside the
@@ -102,13 +104,15 @@ from `botcube-ui-web/ui`.
   `border`), 16px from the top and left edges (Muse Figs 13-16).
 - **Field** (`<Field>`, `.field`: `input`, `textarea`, `select`): `body` text, 10px × 12px, a `border` line, `radius-lg`, its `detail`
   label 4px above.
-- **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker, 16 : 13 on a desktop
-  or tablet and 17 : 15 on a phone; both clear the 16px under which iOS Safari zooms into a field. The desktop composer is one 62px row. The phone stacks the text over the picker and Send in a
+- **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
+  the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason.
+  The disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey
+  line on a phone. The desktop composer is one 62px row. The phone stacks the text over the picker and Send in a
   90px box with a `composer` fill and shadow. Send has a 44px target; the phone draws a 32px circle inside it.
 - **Status pill** (`<StatusPill>`, `.status-pill`; Sign-ins, Scheduled's Paused, Coming soon): `label` at medium, 3px × 10px, on a soft tint of its colour: `blue` on
   `blue-soft`, `danger` on `danger-soft`, `text-muted` on `surface-hover`.
 - **Profile header** (`.agent-profile-header`): the 96px avatar with a pencil badge (`.agent-profile-edit`, Edit agent)
-  that opens Identity's editor, the `name`, Identity's character as one `detail` line in `text-muted` cut short with an
+  that opens Identity's editor, the `name`, Identity's character as one `meta` line in `text-muted` cut short with an
   ellipsis (`.agent-profile-character`, left out when blank), then the Connected status.
 - **File tint** (`.agent-file-tint-*`; Agent files): each file's gradient, after Muse's file cards (Fig 16), in the
   agent's colours (Agent colours, below): deep `to` under the white type on the left, lifting to `from` at the bottom
@@ -124,7 +128,7 @@ from `botcube-ui-web/ui`.
   speech bubble at 80% white sits bottom-right. Hover lifts the card 2px, except under reduced motion; keyboard focus
   draws a 2px `text` ring.
 - **File page** (`.agent-file`; an opened Soul or Memory card, or Identity from the pencil): Back, then the file's tinted tile,
-  then the `headline` title. Under it a caption on what the file is, `detail` in `text-muted`. The
+  then the `headline` title. Under it a caption on what the file is, `meta` in `text-muted`. The
   content is a grouped list, as iOS Settings: one `white` `radius-xl` group with a `border` edge, its rows 12px × 16px
   and split by `border` hairlines inset to the text. Memory has one row per memory; Soul's text sits in the group as it
   is. Identity opens straight into its editor: an 80px avatar centred over its fields; Cancel, Back or Save returns to

@@ -100,6 +100,7 @@ function ComposerInput(props: CopilotChatInputProps) {
       <CopilotChatInput
         {...props}
         isRunning={isRunning}
+        disclaimer="chat-disclaimer"
         {...(!props.onAddFile && !props.toolsMenu?.length ? {
           addMenuButton: NoAddMenuButton,
         } : {})}

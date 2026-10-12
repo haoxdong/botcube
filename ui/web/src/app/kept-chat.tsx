@@ -124,7 +124,7 @@ export function KeptChat({ messages, disclaimer, composerAccessory }: { messages
                 </div>
               </div>
             </div>
-            <div className="cpk:text-center cpk:text-xs cpk:text-muted-foreground cpk:py-3 cpk:px-4 cpk:max-w-3xl cpk:mx-auto">{disclaimer}</div>
+            <div className="chat-disclaimer cpk:text-center cpk:py-3 cpk:px-4 cpk:max-w-3xl cpk:mx-auto">{disclaimer}</div>
           </div>
         </div>
       </div>

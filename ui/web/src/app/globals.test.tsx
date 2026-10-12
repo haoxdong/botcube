@@ -93,6 +93,27 @@ it('hides a Worklog row with nothing to show, so it adds no gap', () => {
   body.remove();
 });
 
+it("keeps the Worklog's lines as they were under the desktop chat's `leading-relaxed`", () => {
+  const worklog = document.createElement('div');
+  worklog.className = 'worklog';
+  worklog.innerHTML = `<button class="worklog-head">Worked for 38s</button><div class="worklog-body">
+    <div class="copilotKitMessage copilotKitAssistantMessage"><div class="cpk:prose"><div>Checking the curve.</div></div>
+      <div class="worklog-step" data-kind="thought"><div class="worklog-step-head">Thought</div><div class="worklog-step-detail">Steeper.</div></div>
+    </div></div>`;
+  const { message: answer } = inAssistantMessage('<p>Done.</p>');
+  answer.before(worklog);
+  try {
+    expect(getComputedStyle(answer).lineHeight).toBe('1.625');
+    const note = styleOf(worklog, '.copilotKitAssistantMessage');
+    expect({ note: note.lineHeight, words: styleOf(worklog, '[class*="cpk:prose"]').lineHeight, head: styleOf(worklog, '.worklog-head').fontSize })
+      .toEqual({ note: '1.6', words: 'calc(14px + 8px)', head: '13px' });
+    expect(styleOf(worklog, '.worklog-step-detail').lineHeight).toBe(styleOf(worklog, '.worklog-step').lineHeight);
+  } finally {
+    worklog.remove();
+    answer.remove();
+  }
+});
+
 it("shows a citation as a pill of its number, its brackets dropped", () => {
   const { message, prose } = inAssistantMessage(
     '<div><p>Steeper.<a href="https://example.com" data-citation=""><span data-citation-bracket="">[</span>1<span data-citation-bracket="">]</span></a></p></div>',
@@ -168,7 +189,7 @@ it('keeps phone text above right controls and desktop text beside controls for e
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   try {
     // The text is the `message` role and the picker `detail`, whose phone sizes start at 640px.
-    for (const [width, textSize, pickerSize] of [[440, '17px', '15px'], [641, '16px', '13px'], [767, '16px', '13px'], [768, '16px', '13px'], [1440, '16px', '13px']] as const) {
+    for (const [width, textSize, pickerSize] of [[440, '17px', '15px'], [641, '14px', '13px'], [767, '14px', '13px'], [768, '14px', '13px'], [1440, '14px', '13px']] as const) {
       happyDOM.setViewport({ width, height: 844 });
       // The type roles are the root's tokens, whose kept style a changed attribute drops.
       document.documentElement.dataset.width = String(width);
@@ -205,6 +226,8 @@ it('keeps phone text above right controls and desktop text beside controls for e
         expect(styleOf(input, '[class*="col-start-3"]').gridRow).toBe(expected.controlsRow);
         expect(styleOf(input, 'textarea').paddingLeft).toBe('0px');
         expect(styleOf(input, 'textarea').fontSize).toBe(textSize);
+        // A desktop's text sits on ChatGPT Mac's 20px line; a phone's keeps CopilotKit's, which happy-dom does not load.
+        if (width > 640) expect(styleOf(input, 'textarea').lineHeight).toBe('20px');
         expect(styleOf(input, '.mep-pill').fontSize).toBe(pickerSize);
         expect(styleOf(input, '.mep-pill-effort').display).not.toBe('none');
         expect(styleOf(input, '.mep-pill').minHeight).toBe('44px');
@@ -218,6 +241,33 @@ it('keeps phone text above right controls and desktop text beside controls for e
     happyDOM.setViewport({ width: 1024, height: 768 });
     delete document.documentElement.dataset.width;
     document.querySelectorAll('.copilotKitInput').forEach((input) => input.remove());
+  }
+});
+
+// iOS Safari zooms into a field under 16px as it takes focus, so a touch tablet keeps the composer's text at 16px.
+it("keeps the composer's text at 16px on a touch tablet, the desktop's 14px with a mouse and the phone's 17px", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  // A fresh composer per device, as happy-dom keeps an element's computed style; the root's tokens, kept likewise, are
+  // dropped by a changed attribute.
+  const textSize = (width: number, maxTouchPoints: number) => {
+    happyDOM.setViewport({ width, height: 1024 });
+    happyDOM.settings.navigator.maxTouchPoints = maxTouchPoints;
+    document.documentElement.dataset.width = `${width}-${maxTouchPoints}`;
+    const input = document.createElement('div');
+    input.className = 'copilotKitInput';
+    input.innerHTML = '<textarea></textarea>';
+    document.body.append(input);
+    const { fontSize } = styleOf(input, 'textarea');
+    input.remove();
+    return fontSize;
+  };
+
+  try {
+    expect([textSize(768, 5), textSize(1024, 5), textSize(1024, 0), textSize(440, 5)]).toEqual(['16px', '16px', '14px', '17px']);
+  } finally {
+    happyDOM.settings.navigator.maxTouchPoints = 0;
+    happyDOM.setViewport({ width: 1024, height: 768 });
+    delete document.documentElement.dataset.width;
   }
 });
 
@@ -715,8 +765,8 @@ it("slides the chat right by the phone drawer's width as a rounded, shadowed car
 });
 
 // on a phone the messages were 14px beside the drawer's 17px rows; phone body text is 17px (Muse Fig 11,
-// dots Fig 7, iOS body), as on desktop the messages are ChatGPT's 16px (dots Fig 1).
-it("sets the messages at the drawer rows' 17px on a phone, and at 16px on desktop", () => {
+// dots Fig 7, iOS body), as on desktop the messages are ChatGPT Mac's 14px at its `leading-relaxed`.
+it("sets the messages at the drawer rows' 17px on a phone, and at 14px on desktop", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   // A fresh pair per viewport, as happy-dom keeps an element's computed style; removed, so no later test finds them.
   // The token is the root's, whose kept style a changed attribute drops.
@@ -727,16 +777,18 @@ it("sets the messages at the drawer rows' 17px on a phone, and at 16px on deskto
     user.innerHTML = '<div>Chart the 10y</div>';
     document.body.append(user);
     const { prose } = inAssistantMessage('<p>The curve steepened.</p>');
-    const result = { user: styleOf(user, ':scope > div').fontSize, assistant: getComputedStyle(prose).fontSize };
+    const bubble = styleOf(user, ':scope > div');
+    const reply = getComputedStyle(prose);
+    const result = { user: [bubble.fontSize, bubble.lineHeight], assistant: [reply.fontSize, reply.lineHeight] };
     user.remove();
     prose.parentElement?.remove();
     return result;
   };
 
-  expect(sizes()).toEqual({ user: '16px', assistant: '16px' });
+  expect(sizes()).toEqual({ user: ['14px', '1.625'], assistant: ['14px', '1.625'] });
   happyDOM.setViewport({ width: 440, height: 956 });
   try {
-    expect(sizes()).toEqual({ user: '17px', assistant: '17px' });
+    expect(sizes()).toEqual({ user: ['17px', '1.5'], assistant: ['17px', '1.6'] });
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
     delete document.documentElement.dataset.width;
@@ -744,18 +796,23 @@ it("sets the messages at the drawer rows' 17px on a phone, and at 16px on deskto
 });
 
 
-// The desktop follows ChatGPT's Mac app (6 Oct build) and the phone iOS's defaults: one sample of each role, and the
-// sidebar row and the agent's name pill, whose desktop weights differ from the phone's, and the brand, a second `name`.
+// The desktop follows ChatGPT's Mac app (26.1002.52244) and the phone iOS's defaults: one sample of each role, and the
+// sidebar row and the agent's name pill, whose desktop weights differ from the phone's, the brand, a second `name`, the
+// chat disclaimer, `meta` on a desktop and CopilotKit's 12px on a phone as before, and the Worklog header, `detail` as
+// everything in the Worklog.
 it("sets each type role at ChatGPT's desktop size and weight and iOS's phone one", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   const samples = [
-    ['title', '<h1 class="plugins-title"></h1>', '24px', '500', '22px', '700'],
+    ['title', '<h1 class="plugins-title"></h1>', '18px', '600', '22px', '700'],
     ['headline', '<div class="list-row-title"></div>', '14px', '500', '17px', '600'],
     ['body', '<p class="welcome-desc"></p>', '14px', '400', '17px', '400'],
     ['sidebar row', '<aside class="sidebar sidebar-expanded"><button class="sidebar-nav-item"></button></aside>', '14px', '400', '17px', '500'],
     ['side chat row', '<button class="sidebar-item-btn"></button>', '14px', '400', '17px', '400'],
     ['menu item', '<button class="user-menu-item"></button>', '14px', '400', '17px', '400'],
     ['name pill', '<div class="chat-header-name"></div>', '16px', '500', '17px', '600'],
+    ['meta', '<p class="plugins-intro"></p>', '12px', '400', '15px', '400'],
+    ['disclaimer', '<div class="chat-disclaimer"></div>', '12px', '400', '12px', '400'],
+    ['worklog header', '<button class="worklog-head"></button>', '13px', '400', '15px', '400'],
     ['name', '<h2 class="agent-profile-name"></h2>', '18px', '600', '22px', '700'],
     ['brand', '<aside class="sidebar sidebar-expanded"><span class="sidebar-brand-text"></span></aside>', '18px', '600', '22px', '600'],
   ] as const;
@@ -1143,7 +1200,7 @@ it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name
   }
 });
 
-it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHATS label, a grey selected fill, a plain plus and the account row 4px off the bottom (memo 0049 Fig 1, #3624)", () => {
+it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side chats header, a grey selected fill, a plain plus and the account row 4px off the bottom (memo 0049 Fig 1, #3624)", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   happyDOM.setViewport({ width: 1440, height: 900 });
   try {
@@ -1160,8 +1217,9 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, the SIDE CHA
       // The label 20px in, on the title and the icons' edge; the plus at the header's right, as before (#3555).
       expect(styleOf(container, '.sidebar-section-header').padding).toBe('4px 12px 0px 20px');
       const label = styleOf(container, '.sidebar-side-chats-toggle');
-      expect({ size: label.fontSize, weight: label.fontWeight, spacing: label.letterSpacing, transform: label.textTransform })
-        .toEqual({ size: '11px', weight: '600', spacing: '0.44px', transform: 'uppercase' });
+      // ChatGPT Mac's Recents: the `headline` role in sentence case, grey.
+      expect({ size: label.fontSize, weight: label.fontWeight, spacing: label.letterSpacing || 'normal', transform: label.textTransform || 'none', color: label.color })
+        .toEqual({ size: '14px', weight: '500', spacing: 'normal', transform: 'none', color: '#6b6b6b' });
       const plus = styleOf(container, '.sidebar-new-chat');
       expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#6b6b6b' });
       expect(plus.backgroundColor || 'transparent').toMatch(/^(transparent|none|rgba\(0, 0, 0, 0\))$/);
@@ -1207,9 +1265,10 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
       expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
       expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');
       // happy-dom keeps :root's custom properties from their first read, whatever the viewport since, so this reads
-      // the sheet: the label still takes the phone's 13px `label` role.
+      // the sheet: the label still takes the phone's 13px `label` role, tracked, in capitals.
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*(\/\*[^*]*\*\/\s*)?:root \{[^}]*--font-label: 0\.8125rem;/);
-      expect(sheet).toMatch(/\.sidebar-side-chats-toggle \{[^}]*font-size: var\(--font-label\);/);
+      expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*\.sidebar-side-chats-toggle \{\s*font-size: var\(--font-label\);\s*letter-spacing: 0\.04em;/);
+      expect(styleOf(open.container, '.sidebar-side-chats-toggle').textTransform).toBe('uppercase');
       expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 20px 0px 8px');
       expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
       expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#efefef');
