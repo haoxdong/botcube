@@ -333,7 +333,7 @@ describe('a Turn against a local Harness', () => {
     const invoke = vi.fn<SessionApi>(async () => ({}));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const queue = purges.purgeQueue;
-    const queues = vi.spyOn(purges, 'purgeQueue').mockImplementation((api, stop, _backoff, complete) => queue(api, stop, [100], complete));
+    const queues = vi.spyOn(purges, 'purgeQueue').mockImplementation((api, ownerActorId, stop, _backoff, complete) => queue(api, ownerActorId, stop, [100], complete));
     try {
       const url = await chatService(agent.url, { config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } }, metadata, invoke });
       queues.mockRestore();
@@ -885,7 +885,7 @@ describe('a Turn against a local Harness', () => {
     try {
       await chatService(agent.url, { config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } }, metadata, invoke });
       const jobs = await metadata.pendingPurges();
-      expect(jobs).toEqual([{ session_id: TURN.threadId, filing_user_id: 'filed-acct_owner' }]);
+      expect(jobs).toEqual([{ session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', owner: 'acct_owner' }]);
       await expect(metadata.assertNoDispatch(defined(jobs[0], 'stored Session identity'))).rejects.toThrow('legacy settlement is unproved');
       expect(invoke).not.toHaveBeenCalled();
       expect(agent.received).toEqual([]);

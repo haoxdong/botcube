@@ -7,7 +7,11 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
 
 /**
  * Purges fenced Sessions' events one at a time, after the response, retrying a
- * failure after each backoff in turn. One at a time keeps this process within
+ * failure after each backoff in turn. A Session is purged under every actor that
+ * filed into it: its filing ID and, after Account Claim, its owner's actor
+ * (`ownerActorId`), under which the claiming account's Turns file (ADR 0067 §8).
+ * Only an anonymous account is claimed, into a registered one that is never
+ * claimed in turn, so these two are all. One at a time keeps this process within
  * AgentCore's account-wide delete rate; the session API paces each purge to the
  * per-Session rate.
  *
@@ -18,6 +22,7 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
  */
 export function purgeQueue(
   invoke: SessionApi,
+  ownerActorId: (owner: string) => string,
   stop: (session: SessionPurge) => Promise<void | 'absent'>,
   backoffMs: readonly number[] = RETRY_BACKOFF_MS,
   complete: (session: SessionPurge) => Promise<void> = async () => undefined,
@@ -28,7 +33,11 @@ export function purgeQueue(
 
   async function erase(session: SessionPurge): Promise<void> {
     if (await stop(session) === 'absent') console.info(`Session Sandbox is absent; purging remaining Session events. session_id=${session.session_id}`);
-    await invoke({ operation: 'purge', sessionId: session.session_id, userId: session.filing_user_id }, 900);
+    const actorIds = new Set([session.filing_user_id, ...(session.owner === undefined ? [] : [ownerActorId(session.owner)])]);
+    for (const userId of actorIds) {
+      // eslint-disable-next-line no-await-in-loop -- one actor's purge at a time keeps within AgentCore's delete rate
+      await invoke({ operation: 'purge', sessionId: session.session_id, userId }, 900);
+    }
     await complete(session);
   }
 

@@ -12,6 +12,9 @@ const session = (sessionId: string): SessionSummary => ({
   updated_at: '2026-09-25T00:00:00Z',
 });
 
+/** The filing user ID the test Cartridge gives an account. */
+const filed = (owner: string) => `filed-${owner}`;
+
 const purgeOf = (sessionId: string) => [{ operation: 'purge', sessionId, userId: 'filed-acct_owner' }, 900];
 
 let consoleError: MockInstance<typeof console.error>;
@@ -31,7 +34,7 @@ describe('a background Session purge', () => {
   it('purges each Session in turn, starting the next once the last is done', async () => {
     const done: (() => void)[] = [];
     const invoke = vi.fn<SessionApi>(() => new Promise((resolve) => done.push(() => resolve({}))));
-    const purge = purgeQueue(invoke, async () => undefined);
+    const purge = purgeQueue(invoke, filed, async () => undefined);
 
     purge([session('session-1'), session('session-2')]);
     await vi.advanceTimersByTimeAsync(0);
@@ -43,10 +46,39 @@ describe('a background Session purge', () => {
     expect(consoleWarn).not.toHaveBeenCalled();
   });
 
+  it('purges a claimed Session under its filing ID, then its owner\'s actor, before completing it', async () => {
+    const done: (() => void)[] = [];
+    const invoke = vi.fn<SessionApi>(() => new Promise((resolve) => done.push(() => resolve({}))));
+    const complete = vi.fn(async () => undefined);
+    const purge = purgeQueue(invoke, filed, async () => undefined, [], complete);
+
+    purge([{ ...session('session-1'), owner: 'acct_claiming' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke.mock.calls).toEqual([purgeOf('session-1')]);
+
+    defined(done[0], 'a pending purge')();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke.mock.calls.at(-1)).toEqual([{ operation: 'purge', sessionId: 'session-1', userId: 'filed-acct_claiming' }, 900]);
+    expect(complete).not.toHaveBeenCalled();
+
+    defined(done[1], 'a pending purge')();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it('purges an unclaimed Session once, its owner filing under the filing ID', async () => {
+    const invoke = vi.fn<SessionApi>(async () => ({}));
+
+    purgeQueue(invoke, filed, async () => undefined)([{ ...session('session-1'), owner: 'acct_owner' }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(invoke.mock.calls).toEqual([purgeOf('session-1')]);
+  });
+
   it('queues a later batch behind the one still purging', async () => {
     const done: (() => void)[] = [];
     const invoke = vi.fn<SessionApi>(() => new Promise((resolve) => done.push(() => resolve({}))));
-    const purge = purgeQueue(invoke, async () => undefined);
+    const purge = purgeQueue(invoke, filed, async () => undefined);
 
     purge([session('session-1')]);
     purge([session('session-2')]);
@@ -61,7 +93,7 @@ describe('a background Session purge', () => {
   it('retries a failure after 5 s, 30 s and 2 min, then logs the line the Session-purge alarm matches', async () => {
     const failure = new Error('session API down');
     const invoke = vi.fn<SessionApi>(() => Promise.reject(failure));
-    purgeQueue(invoke, async () => undefined)([session('session-1')]);
+    purgeQueue(invoke, filed, async () => undefined)([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(4_999);
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -94,7 +126,7 @@ describe('a background Session purge', () => {
       if (failures-- > 0) throw new Error('throttled');
       return {};
     });
-    purgeQueue(invoke, async () => undefined, [10])([session('session-1'), session('session-2')]);
+    purgeQueue(invoke, filed, async () => undefined, [10])([session('session-1'), session('session-2')]);
 
     await vi.advanceTimersByTimeAsync(10);
 
@@ -106,7 +138,7 @@ describe('a background Session purge', () => {
     let stopped: (() => void) | undefined;
     const stop = vi.fn(() => new Promise<void>((resolve) => { stopped = resolve; }));
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop)([session('session-1')]);
+    purgeQueue(invoke, filed, stop)([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(0);
     expect(stop.mock.calls).toEqual([[session('session-1')]]);
@@ -120,7 +152,7 @@ describe('a background Session purge', () => {
     const failure = new Error('Runtime stop denied');
     const stop = vi.fn(async () => { throw failure; });
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop, [10])([session('session-1')]);
+    purgeQueue(invoke, filed, stop, [10])([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(10);
     expect(stop.mock.calls).toEqual(Array(2).fill([session('session-1')]));
@@ -133,7 +165,7 @@ describe('a background Session purge', () => {
   it('purges once stopping the writer succeeds on retry', async () => {
     const stop = vi.fn().mockRejectedValueOnce(new Error('stop conflict')).mockResolvedValue(undefined);
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop, [10])([session('session-1')]);
+    purgeQueue(invoke, filed, stop, [10])([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(0);
     expect(invoke).not.toHaveBeenCalled();
@@ -147,7 +179,7 @@ describe('a background Session purge', () => {
     const failure = new SessionDispatchPendingError('registered writer');
     const stop = vi.fn(async () => { if (pending) throw failure; });
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop)([session('session-1')]);
+    purgeQueue(invoke, filed, stop)([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(155_000);
     expect(stop).toHaveBeenCalledTimes(4);
@@ -168,7 +200,7 @@ describe('a background Session purge', () => {
       if (sessionId === 'session-1' && pending) throw new SessionDispatchPendingError('registered writer');
     });
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop)([session('session-1'), session('session-2')]);
+    purgeQueue(invoke, filed, stop)([session('session-1'), session('session-2')]);
     await vi.advanceTimersByTimeAsync(155_000);
     expect(invoke.mock.calls).toEqual([purgeOf('session-2')]);
     pending = false;
@@ -185,7 +217,7 @@ describe('a background Session purge', () => {
       throw failure;
     });
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, stop)([session('session-1')]);
+    purgeQueue(invoke, filed, stop)([session('session-1')]);
     await vi.advanceTimersByTimeAsync(155_000);
     pending = false;
     await vi.advanceTimersByTimeAsync(120_000 + 155_000);
@@ -201,7 +233,7 @@ describe('a background Session purge', () => {
     const failure = new Error('durable acknowledgement failed');
     const invoke = vi.fn<SessionApi>().mockRejectedValueOnce(new Error('event purge failed')).mockResolvedValue({});
     const complete = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
-    purgeQueue(invoke, async () => undefined, [10, 10], complete)([session('session-1')]);
+    purgeQueue(invoke, filed, async () => undefined, [10, 10], complete)([session('session-1')]);
     await vi.advanceTimersByTimeAsync(0);
     expect(complete).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10);
@@ -219,7 +251,7 @@ describe('a background Session purge', () => {
       if (pending) throw new SessionDispatchPendingError('session-1');
     });
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    const enqueue = purgeQueue(invoke, stop, [10]);
+    const enqueue = purgeQueue(invoke, filed, stop, [10]);
     enqueue([session('session-1')]);
     await vi.advanceTimersByTimeAsync(0);
     enqueue([session('session-1')]);
@@ -236,7 +268,7 @@ describe('a background Session purge', () => {
   it('reports an absent Sandbox and purges its remaining durable events', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const invoke = vi.fn<SessionApi>(async () => ({}));
-    purgeQueue(invoke, async () => 'absent')([session('session-1')]);
+    purgeQueue(invoke, filed, async () => 'absent')([session('session-1')]);
 
     await vi.advanceTimersByTimeAsync(0);
     expect(info.mock.calls).toEqual([

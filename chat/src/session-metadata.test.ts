@@ -978,6 +978,27 @@ describe('durable fenced Session cleanup', () => {
     expect(await replacement.get('owner', 'session')).toBeNull();
   });
 
+  it('records a claimed Session\'s owner beside its filing ID, so recovery purges both actors', async () => {
+    await turn('source', 'session', T1);
+    await metadata.transferOwner('source', 'destination');
+    await metadata.fence('destination', 'session');
+    expect(await new DynamoDBSessionMetadata(table, client()).pendingPurges()).toMatchObject([
+      { session_id: 'session', filing_user_id: 'filed-source', owner: 'destination' },
+    ]);
+  });
+
+  it('recovers the owner of a claimed Session\'s job registered before jobs recorded it', async () => {
+    await turn('source', 'session', T1);
+    await metadata.transferOwner('source', 'destination');
+    await metadata.fence('destination', 'session');
+    await DynamoDBDocumentClient.from(client()).send(new UpdateCommand({
+      TableName: table, Key: { pk: 'PURGES', sk: '["filed-source","session"]' }, UpdateExpression: 'REMOVE #owner', ExpressionAttributeNames: { '#owner': 'owner' },
+    }));
+    expect(await new DynamoDBSessionMetadata(table, client()).pendingPurges()).toMatchObject([
+      { session_id: 'session', filing_user_id: 'filed-source', owner: 'destination' },
+    ]);
+  });
+
   it('retains both filing identities when accounts use the same Session ID', async () => {
     await turn('owner-1', 'session', T1);
     await turn('owner-2', 'session', T1);
@@ -1119,7 +1140,7 @@ describe('durable Session dispatch admission', () => {
     const stop = vi.fn(async () => { await metadata.assertNoDispatch(await tracked({ session_id: 'session', filing_user_id: 'filed-owner' })); });
     const purge = vi.fn(async () => ({}));
     try {
-      purgeQueue(purge, stop, [0])([summary]);
+      purgeQueue(purge, (owner) => `filed-${owner}`, stop, [0])([summary]);
       await expect.poll(() => logged.mock.calls.length).toBe(1);
       expect(purge).not.toHaveBeenCalled();
       await complete();
@@ -1217,7 +1238,7 @@ describe('purge recovery across task replacement', () => {
     }));
     const replacement = new DynamoDBSessionMetadata(table, client());
     const job = { session_id: 'session', filing_user_id: 'filed-owner' };
-    expect(await replacement.pendingPurges()).toMatchObject([job]);
+    expect(await replacement.pendingPurges()).toMatchObject([{ ...job, owner: 'owner' }]);
     await replacement.completePurge(await tracked(job));
     expect(await new DynamoDBSessionMetadata(table, client()).pendingPurges()).toMatchObject([]);
     expect(await replacement.pendingPurges()).toMatchObject([]);
@@ -1760,7 +1781,7 @@ it('retains one legacy continuation binding through concurrent registration, res
   expect(fenced).toMatchObject(first.session ?? {});
   await expect(metadata.assertNoDispatch(fenced)).rejects.toThrow('legacy settlement is unproved');
   await expect(metadata.completePurge(fenced)).rejects.toThrow('legacy settlement is unproved');
-  expect(await replacement.pendingPurges()).toContainEqual(first.session);
+  expect(await replacement.pendingPurges()).toContainEqual({ ...first.session, owner: 'destination' });
 });
 
 it.each([

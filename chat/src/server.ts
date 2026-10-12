@@ -248,7 +248,7 @@ export function createChatService(
       throw new HttpError(503, 'Session Runtime namespace is not ready');
     }
   };
-  const purge = purgeQueue(invokeSessionApi, async (session) => {
+  const purge = purgeQueue(invokeSessionApi, (owner) => cartridge.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     if (!trackedRuntime(session)) await sessionMetadata.assertNoDispatch(session);
     await requireRuntimeNamespace();

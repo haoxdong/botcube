@@ -55,7 +55,17 @@ export interface SessionSummary {
   latest_message_id?: string;
 }
 
-export type SessionPurge = Pick<SessionSummary, 'session_id' | 'filing_user_id' | 'runtime_binding' | 'runtime_generation' | 'legacy_settlement_unproved'>;
+export type SessionPurge = Pick<SessionSummary, 'session_id' | 'filing_user_id' | 'runtime_binding' | 'runtime_generation' | 'legacy_settlement_unproved'> & {
+  /**
+   * The account that owned the Session when it was fenced. After Account Claim its Turns file
+   * events under its own actor, not the filing ID (ADR 0067 §8), so the purge covers both.
+   * Jobs registered before owners were recorded take it from the fenced Session row.
+   */
+  owner?: string;
+};
+
+/** A fenced Session's metadata, with the owner its purge job records. */
+export type FencedSession = SessionSummary & SessionPurge;
 
 /** The Turn's Session, or its owner's whole history, is deleted: it takes no more Turns. */
 export class SessionDeletedError extends Error {}
@@ -217,13 +227,13 @@ export interface SessionMetadata {
    * such Session. Fencing a fenced Session keeps its first fence, so a repeated
    * delete can retry the purge.
    */
-  fence(owner: string, sessionId: string): Promise<SessionSummary | null>;
+  fence(owner: string, sessionId: string): Promise<FencedSession | null>;
   /**
    * Fence the account's history: the owner first, so no later Turn records a
    * Session, then every Session the account answers for (its own and those under
    * the retired IDs it gained through Account Claim), fenced ones included.
    */
-  fenceOwner(owner: string): Promise<SessionSummary[]>;
+  fenceOwner(owner: string): Promise<FencedSession[]>;
   /**
    * Account Claim: the destination owns the source account's Sessions from now
    * on. Fence source Turn writes before the snapshot; failed transfers keep the
@@ -340,9 +350,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   async pendingPurges(): Promise<SessionPurge[]> {
     // Older tasks could die after an owner fence or before a durable job existed.
     // Reconcile only unfinished rows; completion remains durable across discoveries.
+    // A job registered before owners were recorded takes it from its fenced Session row.
+    const owners = new Map<string, string>();
     for await (const { Items } of paginateScan({ client: this.documents }, {
       TableName: this.tableName,
-      FilterExpression: 'begins_with(pk, :owner) AND ((sk = :deleted AND attribute_not_exists(purge_reconciled)) OR (begins_with(sk, :session) AND attribute_exists(deleted_at) AND attribute_not_exists(purge_registered)))',
+      FilterExpression: 'begins_with(pk, :owner) AND ((sk = :deleted AND attribute_not_exists(purge_reconciled)) OR (begins_with(sk, :session) AND attribute_exists(deleted_at)))',
       ExpressionAttributeValues: { ':owner': OWNER, ':deleted': 'DELETED', ':session': SESSION },
       ConsistentRead: true,
     })) {
@@ -350,9 +362,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         if (item.sk === 'DELETED') {
           // eslint-disable-next-line no-await-in-loop -- finish each interrupted account fence before returning its jobs
           await this.reconcileOwner(String(item.pk).slice(OWNER.length));
-        } else {
+        } else if (item.purge_registered === undefined) {
           // eslint-disable-next-line no-await-in-loop -- persist each legacy fence's job before advancing the scan
           await this.registerLegacyPurge(item as SessionItem);
+        } else {
+          owners.set(purgeKey(item as SessionPurge).sk, String(item.pk).slice(OWNER.length));
         }
       }
     }
@@ -365,7 +379,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       ConsistentRead: true,
     });
     for await (const page of pages) {
-      for (const session of (page.Items ?? []) as SessionPurge[]) pending.push({ session_id: session.session_id, filing_user_id: session.filing_user_id, ...runtimeIdentity(session) });
+      for (const session of (page.Items ?? []) as SessionPurge[]) {
+        const owner = session.owner ?? owners.get(purgeKey(session).sk);
+        pending.push({ session_id: session.session_id, filing_user_id: session.filing_user_id, ...runtimeIdentity(session), ...(owner === undefined ? {} : { owner }) });
+      }
     }
     return pending;
   }
@@ -385,6 +402,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
 
   private async registerLegacyPurge(item: SessionItem): Promise<void> {
     const job = { session_id: item.session_id, filing_user_id: item.filing_user_id, ...runtimeIdentity(item) };
+    const owner = item.pk.slice(OWNER.length);
     await this.documents.send(new TransactWriteCommand({ TransactItems: [
       { Update: {
         TableName: this.tableName, Key: { pk: item.pk, sk: item.sk },
@@ -394,8 +412,9 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       } },
       { Update: {
         TableName: this.tableName, Key: purgeKey(job),
-        UpdateExpression: 'SET session_id = if_not_exists(session_id, :id), filing_user_id = if_not_exists(filing_user_id, :filing)' + (item.runtime_binding === undefined ? '' : ', runtime_binding = if_not_exists(runtime_binding, :binding)') + (item.runtime_generation === undefined ? '' : ', runtime_generation = if_not_exists(runtime_generation, :generation)') + (item.legacy_settlement_unproved === undefined ? '' : ', legacy_settlement_unproved = if_not_exists(legacy_settlement_unproved, :legacy)'),
-        ExpressionAttributeValues: { ':id': item.session_id, ':filing': item.filing_user_id, ...(item.runtime_binding === undefined ? {} : { ':binding': item.runtime_binding }), ...(item.runtime_generation === undefined ? {} : { ':generation': item.runtime_generation }), ...(item.legacy_settlement_unproved === undefined ? {} : { ':legacy': item.legacy_settlement_unproved }) },
+        UpdateExpression: 'SET session_id = if_not_exists(session_id, :id), filing_user_id = if_not_exists(filing_user_id, :filing), #owner = if_not_exists(#owner, :owner)' + (item.runtime_binding === undefined ? '' : ', runtime_binding = if_not_exists(runtime_binding, :binding)') + (item.runtime_generation === undefined ? '' : ', runtime_generation = if_not_exists(runtime_generation, :generation)') + (item.legacy_settlement_unproved === undefined ? '' : ', legacy_settlement_unproved = if_not_exists(legacy_settlement_unproved, :legacy)'),
+        ExpressionAttributeNames: { '#owner': 'owner' },
+        ExpressionAttributeValues: { ':id': item.session_id, ':filing': item.filing_user_id, ':owner': owner, ...(item.runtime_binding === undefined ? {} : { ':binding': item.runtime_binding }), ...(item.runtime_generation === undefined ? {} : { ':generation': item.runtime_generation }), ...(item.legacy_settlement_unproved === undefined ? {} : { ':legacy': item.legacy_settlement_unproved }) },
       } },
     ] }));
   }
@@ -1019,7 +1038,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return (await this.mainChatId(owner)) as string;
   }
 
-  async fence(owner: string, sessionId: string): Promise<SessionSummary | null> {
+  async fence(owner: string, sessionId: string): Promise<FencedSession | null> {
     const fenced = await this.setFence(owner, sessionId);
     if (fenced === null) return null;
     await this.deleteTurnSummaries(fenced.filing_user_id, sessionId);
@@ -1035,7 +1054,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
   }
 
-  private async setFence(owner: string, sessionId: string): Promise<SessionSummary | null> {
+  private async setFence(owner: string, sessionId: string): Promise<FencedSession | null> {
     const { Item } = await this.documents.send(
       new GetCommand({ TableName: this.tableName, Key: key(owner, sessionId), ConsistentRead: true }),
     );
@@ -1049,13 +1068,13 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
           ConditionExpression: 'attribute_exists(pk) AND session_id = :id AND filing_user_id = :filing',
           ExpressionAttributeValues: { ':now': deletedAt, ':id': sessionId, ':filing': Item.filing_user_id, ':registered': true },
         } },
-        { Put: { TableName: this.tableName, Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, ...runtimeIdentity(Item as SessionPurge) } } },
+        { Put: { TableName: this.tableName, Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, owner, ...runtimeIdentity(Item as SessionPurge) } } },
       ] }));
       const { Item: fencedItem } = await this.documents.send(
         new GetCommand({ TableName: this.tableName, Key: key(owner, sessionId), ConsistentRead: true }),
       );
       if (fencedItem === undefined) throw new Error('The fenced Session disappeared before its acknowledgement');
-      return summaryOf(fencedItem as SessionItem);
+      return { ...summaryOf(fencedItem as SessionItem), owner };
     } catch (error) {
       const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
       if (reasons?.[0]?.Code === 'ConditionalCheckFailed') return null;
@@ -1063,7 +1082,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
   }
 
-  async fenceOwner(owner: string): Promise<SessionSummary[]> {
+  async fenceOwner(owner: string): Promise<FencedSession[]> {
     const deletedAt = now();
     const accounts = await this.answeringIds(owner);
     // Persist the root first: only it links all retired IDs for replacement-task recovery.
@@ -1071,7 +1090,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       // eslint-disable-next-line no-await-in-loop -- stops at the first failure without sending the rest
       await this.fenceAccount(account, deletedAt);
     }
-    const fencedSessions: SessionSummary[] = [];
+    const fencedSessions: FencedSession[] = [];
     for (const account of accounts) {
       // eslint-disable-next-line no-await-in-loop -- stops at the first failure without sending the rest
       for (const item of await this.query(account, SESSION)) {
