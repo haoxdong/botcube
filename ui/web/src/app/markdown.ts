@@ -6,6 +6,7 @@ import remarkBreaks from "remark-breaks";
 import { defaultRehypePlugins, defaultRemarkPlugins } from "streamdown";
 
 import { remarkBracketMath } from "./remark-bracket-math";
+import { REPLY_MARKDOWN } from "./reply-markdown";
 
 type Pluggable = (typeof defaultRehypePlugins)[string];
 
@@ -46,7 +47,7 @@ function remarkBareListMarkersAsText() {
  */
 export const MARKDOWN_RENDERER = {
   plugins: { cjk, code, math, mermaid },
-  linkSafety: { enabled: false },
+  linkSafety: REPLY_MARKDOWN.linkSafety,
   remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBracketMath, remarkBareListMarkersAsText, remarkBreaks],
   rehypePlugins: Object.values({
     ...defaultRehypePlugins,

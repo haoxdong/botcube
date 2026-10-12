@@ -6,6 +6,7 @@ import {
   CopilotChat,
   CopilotChatInput,
   CopilotChatMessageView,
+  type CopilotChatReasoningMessage,
   CopilotChatView,
   type CopilotChatInputProps,
   type CopilotChatMessageViewProps,
@@ -23,8 +24,8 @@ import { useComposerBacking } from "./phone-composer-backing";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
-import { Tool, ToolHeader, ToolContent, ToolOutput } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
+import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
 
 const UI_CONFIG = webUiPlugin.config;
 const AGENT_ID = UI_CONFIG.agentId;
@@ -41,14 +42,6 @@ function WelcomeScreen({ userName }: { userName?: string | undefined }) {
   );
 }
 
-/** Extract the primary argument value for inline display (not JSON). */
-function summarizeParams(params: Record<string, unknown> | undefined): string | undefined {
-  return Object.values(params ?? {}).find((value): value is string => typeof value === "string");
-}
-
-/** deepagents' execute tool reports a non-zero exit only as this trailer on an otherwise successful result. */
-const FAILED_COMMAND = /\n\[Command failed with exit code \d+\](\n\[Output was truncated due to size limits\])?$/;
-
 function ToolCallRenderer({ agent }: { agent: AbstractAgent }) {
   const cancellations = toolCancellationStore(agent);
   const stoppedIds = useSyncExternalStore(cancellations.subscribe, cancellations.getSnapshot, cancellations.getSnapshot);
@@ -63,22 +56,14 @@ function ToolCallRenderer({ agent }: { agent: AbstractAgent }) {
           />
         );
       }
-      const state = status === "complete"
-        ? FAILED_COMMAND.test(result ?? "") ? "output-error" : "output-available"
-        : stoppedIds.has(toolCallId)
-          ? "stopped"
-          : status === "executing"
-          ? "input-available"
-          : "input-streaming";
       return (
-        <Tool>
-          <ToolHeader state={state} title={name} description={summarizeParams(parameters as Record<string, unknown> | undefined)} />
-          {status === "complete" && result != null && (
-            <ToolContent>
-              <ToolOutput output={result} />
-            </ToolContent>
-          )}
-        </Tool>
+        <ToolStep
+          name={name}
+          params={parameters as Record<string, unknown> | undefined}
+          status={status === "complete" ? "complete" : stoppedIds.has(toolCallId) ? "stopped" : "running"}
+          output={status === "complete" ? result ?? undefined : undefined}
+          commandPrefix={webUiPlugin.commandPrefix}
+        />
       );
     },
   }, [[...stoppedIds]]);
@@ -345,6 +330,12 @@ const CHAT_SCROLL_VIEW = ChatScrollView;
  */
 const ASSISTANT_MESSAGE = { markdownRenderer: ({ content }: { content: string }) => <MarkdownRenderer content={content} /> };
 
+/**
+ * The reasoning message slot: a thought, as a step of its Turn's Worklog. A constant, like CHAT_SCROLL_VIEW. CopilotKit
+ * types the slot as its own component, statics included, but renders only the function.
+ */
+const REASONING_MESSAGE = ThoughtStep as unknown as typeof CopilotChatReasoningMessage;
+
 /** Ends `moment` as it is first on screen. */
 function MomentEnds({ moment }: { moment: Moment }) {
   useEffect(() => endMoment(moment), [moment]);
@@ -528,16 +519,17 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
   const runError = useContext(RunError);
   return (
     <>
-      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE}>
+      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
         {({ messageElements, messages, isRunning, interruptElement }) => (
           <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
             <ReplyImageTurnRunning.Provider value={isRunning}>
-              <MessageRows rows={messageElements} messages={messages} />
+              <MessageRows rows={worklogRows(messageElements, messages, isRunning)} messages={messages} />
             </ReplyImageTurnRunning.Provider>
             {interruptElement}
             {isRunning && messages.at(-1)?.role !== "reasoning" && (
               <div className="cpk:mt-2">
-                <CopilotChatMessageView.Cursor />
+                {/* Once the Turn shows its work, its Worklog's clock says it runs. */}
+                {(messages.at(-1)?.role ?? "user") === "user" && <CopilotChatMessageView.Cursor />}
                 <MomentEnds moment="send-acknowledged" />
               </div>
             )}

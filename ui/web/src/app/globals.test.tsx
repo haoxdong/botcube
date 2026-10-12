@@ -55,26 +55,53 @@ it("shows an assistant message's prose in a grey bubble up to the column's right
   const bubble = styleOf(reply.prose, ':scope > div');
   expect(bubble.backgroundColor).toBe('#f4f4f4');
   expect(bubble.borderRadius).toBe('20px');
-  expect(bubble.padding).toBe('10px 16px');
+  expect(bubble.padding).toBe('12px 18px');
   expect(bubble.maxWidth).toBe('100%');
   expect(styleOf(reply.prose, 'p').marginTop).toBe('0px');
   expect(styleOf(reply.prose, 'p').marginBottom).toBe('0px');
   expect(styleOf(reply.prose, 'code').backgroundColor).toBe('#fff');
-  const toolRow = document.createElement('div');
-  toolRow.className = 'not-prose';
-  toolRow.innerHTML = '<p><code>agent --help</code></p>';
-  toolOnly.message.append(toolRow);
-  expect(styleOf(toolRow, 'code').backgroundColor).toBe('#f4f4f4');
+  expect(styleOf(reply.prose, 'code').borderWidth).toBe('1px');
   expect(styleOf(toolOnly.prose, ':scope > div').backgroundColor).not.toBe('#f4f4f4');
 });
 
-it("keeps the user's next message a paragraph's distance below the agent's bubble", () => {
-  const { message } = inAssistantMessage('<div><p>Done.</p></div>');
+it("starts a Turn well clear of the last, its Worklog under the question and its answer under the Worklog", () => {
+  const question = document.createElement('div');
+  question.className = 'copilotKitMessage copilotKitUserMessage';
+  const worklog = document.createElement('div');
+  worklog.className = 'worklog';
+  const { message: answer } = inAssistantMessage('<div><p>Done.</p></div>');
   const next = document.createElement('div');
   next.className = 'copilotKitMessage copilotKitUserMessage';
-  message.after(next);
+  answer.before(question, worklog);
+  answer.after(next);
 
-  expect(getComputedStyle(next).marginTop).toBe('12px');
+  expect(getComputedStyle(worklog).marginTop).toBe('12px');
+  expect(getComputedStyle(answer).marginTop).toBe('8px');
+  expect(getComputedStyle(next).marginTop).toBe('32px');
+  worklog.remove();
+  expect(getComputedStyle(answer).marginTop).toBe('14px');
+});
+
+it('hides a Worklog row with nothing to show, so it adds no gap', () => {
+  const body = document.createElement('div');
+  body.className = 'worklog-body';
+  body.innerHTML = '<div></div><div class="worklog-step"><div class="worklog-step-head">Ran</div></div>';
+  document.body.append(body);
+
+  expect(styleOf(body, ':scope > :empty').display).toBe('none');
+  expect(styleOf(body, '.worklog-step').display).toBe('flex');
+  body.remove();
+});
+
+it("shows a citation as a pill of its number, its brackets dropped", () => {
+  const { message, prose } = inAssistantMessage(
+    '<div><p>Steeper.<a href="https://example.com" data-citation=""><span data-citation-bracket="">[</span>1<span data-citation-bracket="">]</span></a></p></div>',
+  );
+
+  expect(styleOf(prose, 'a').borderRadius).toBe('9999px');
+  expect(styleOf(prose, 'a').textDecoration).toBe('none');
+  expect(styleOf(prose, '[data-citation-bracket]').display).toBe('none');
+  message.remove();
 });
 
 it("puts the agent's avatar on the chat's white surface, with no grey band above the chat", () => {
@@ -218,45 +245,16 @@ it("shows an initial or emoji avatar on a blackish disc, and the agent's own fig
   agent.remove();
 });
 
-it("lays out a message's markdown table as a table, though streamdown marks it as its own wrapper", () => {
-  // streamdown 1.6.11 puts data-streamdown="table-wrapper" on the <table> as well as its wrapper, so
-  // CopilotKit's flex column for the wrapper turns the table into a flexbox whose rows shrink to fit.
-  const copilotKit = document.createElement('style');
-  copilotKit.textContent = '[data-copilotkit] [data-streamdown="table-wrapper"] { display: flex; flex-direction: column; margin-top: 16px; margin-bottom: 16px; }';
-  document.head.prepend(copilotKit);
-  const { prose } = inAssistantMessage(
-    '<div data-streamdown="table-wrapper"><div><table data-streamdown="table-wrapper"><tbody><tr><td>1</td></tr></tbody></table></div></div>',
-  );
-  prose.parentElement?.setAttribute('data-copilotkit', '');
-
-  expect(styleOf(prose, 'table').display).toBe('table');
-  expect(styleOf(prose, 'table').marginTop).toBe('0px');
-  expect(styleOf(prose, 'div[data-streamdown]').display).toBe('flex');
-  copilotKit.remove();
-});
-
-it("keeps a message's table copy and download buttons at the table's top right, spaced as streamdown spaces them", () => {
-  // Tailwind compiles only the classes in this app's own source, not streamdown's `justify-end` and `p-1`.
-  const { message, prose } = inAssistantMessage(
-    '<div class="flex flex-col" data-streamdown="table-wrapper"><div class="flex items-center justify-end gap-1"><div class="relative"><button class="p-1" title="Copy table" type="button"></button></div></div><div class="overflow-x-auto"><table data-streamdown="table-wrapper"></table></div></div>',
-  );
-  prose.parentElement?.setAttribute('data-copilotkit', '');
-
-  const controls = styleOf(prose, 'div[data-streamdown] > div:first-child');
-  expect(controls.justifyContent).toBe('flex-end');
-  expect(controls.gap).toBe('0.25rem');
-  expect(styleOf(prose, 'button[title="Copy table"]').padding).toBe('4px');
-  message.remove();
-});
-
-it("keeps Streamdown's table scroll box inside its card while extending the card to the bubble's right edge", () => {
+// streamdown 2.7 marks the table data-streamdown="table" in a table-wrapper card; these rules once targeted 1.6's
+// markup, which marked the <table> table-wrapper too, so the card's padding and Typography's table margins showed.
+it("shows a message's markdown table as a white sheet whose one frame is its scroll box, its controls in no row of their own", () => {
   const { container, unmount } = render(
     <div data-copilotkit="" className="copilotKitMessage copilotKitAssistantMessage">
       <div className="cpk:prose">
         <Streamdown>{`Scenarios:
 
 | Currency | Spot level | Outlook |
-| --- | --- | --- |
+| --- | ---: | --- |
 | Australian dollar | 0.6543 | Continued gains against the US dollar |`}</Streamdown>
       </div>
     </div>,
@@ -265,16 +263,25 @@ it("keeps Streamdown's table scroll box inside its card while extending the card
   try {
     expect(container.querySelector('td')?.textContent).toBe('Australian dollar');
     const card = styleOf(container, 'div[data-streamdown="table-wrapper"]');
-    const scroller = styleOf(container, 'div[data-streamdown="table-wrapper"] > .overflow-x-auto');
-    expect(scroller.marginRight || '0px').toBe('0px');
-    expect(scroller.paddingRight || '0px').toBe('0px');
-    expect(card.marginRight).toBe('-16px');
+    expect(card.padding).toBe('0px');
+    expect(card.borderWidth || '0px').toBe('0px');
+    const scroller = styleOf(container, 'div[data-streamdown="table-wrapper"] > div:last-child');
+    expect(scroller.borderWidth).toBe('1px');
+    expect(scroller.backgroundColor).toBe('#fff');
     expect(scroller.backgroundImage.match(/radial-gradient/g)).toHaveLength(2);
+    const table = styleOf(container, 'table[data-streamdown="table"]');
+    expect(table.marginTop).toBe('0px');
+    expect(table.width).toBe('max-content');
+    expect(table.minWidth).toBe('100%');
+    expect(styleOf(container, 'td:nth-child(2)').whiteSpace).toBe('nowrap');
+    const controls = styleOf(container, 'div[data-streamdown="table-wrapper"] > div:first-child:not(:last-child)');
+    expect(controls.justifyContent).toBe('flex-end');
+    expect(styleOf(container, 'div[data-streamdown="table-wrapper"] > div:first-child button').padding).toBe('4px');
   } finally {
     unmount();
   }
   // happy-dom drops background attachment lists, so the real-browser check proves their rendering.
-  expect(sheet).toMatch(/> \.overflow-x-auto \{[^}]*background-attachment: local, local, scroll, scroll;/);
+  expect(sheet).toMatch(/\[data-streamdown="table-wrapper"\] > div:last-child \{[^}]*background-attachment: local, local, scroll, scroll;/);
 });
 
 // a white band ran from the scroll-to-bottom chevron's row down to the composer, hiding the messages behind it.

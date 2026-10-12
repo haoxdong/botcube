@@ -7230,7 +7230,7 @@ describe('tool calls', () => {
     const turn = current.runAgent({ runId: 'stopped-run' });
     await waitFor(() => expect(current.messages).toContainEqual(expect.objectContaining({ id: 'inner-message' })));
     const row = renderToolCall({ toolCallId: 'inner-execute', status: 'inProgress' });
-    expect(row.container).toHaveTextContent(/^executePending$/);
+    expect(row.container).toHaveTextContent(/^Running$/);
 
     await act(async () => {
       current.abortRun();
@@ -7239,7 +7239,7 @@ describe('tool calls', () => {
     expect(fetchMock).toHaveBeenCalledWith(`http://chat.test/threads/${current.threadId}/stop`, expect.objectContaining({ method: 'POST' }));
     expect(current.isRunning).toBe(false);
     row.rerender(present(copilot.renderTool, 'the tool renderer')({ name: 'execute', toolCallId: 'inner-execute', status: 'inProgress', parameters: {} }));
-    expect(row.container).toHaveTextContent(/^executeStopped$/);
+    expect(row.container).toHaveTextContent(/^Stopped · Ran$/);
     expect(current.messages).toContainEqual({ id: 'completed-result', role: 'tool', toolCallId: 'completed', content: 'Logged in.' });
 
     await act(async () => {
@@ -7247,30 +7247,27 @@ describe('tool calls', () => {
       await current.runAgent({ runId: 'followup-run' });
     });
     row.rerender(present(copilot.renderTool, 'the tool renderer')({ name: 'execute', toolCallId: 'inner-execute', status: 'inProgress', parameters: {} }));
-    expect(row.container).toHaveTextContent(/^executeStopped$/);
+    expect(row.container).toHaveTextContent(/^Stopped · Ran$/);
     row.rerender(present(copilot.renderTool, 'the tool renderer')({ name: 'execute', toolCallId: 'inner-execute', status: 'complete', parameters: {}, result: 'Late actual output.' }));
     expect(row.container).not.toHaveTextContent('Stopped');
-    expect(row.getByRole('button', { name: 'execute' })).toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Ran' })).toBeInTheDocument();
     expect(current.messages.at(-1)).toMatchObject({ id: 'followup', role: 'assistant', content: 'OK' });
   });
 
-  it.each([
-    ['inProgress', 'Pending'],
-    ['executing', 'Running'],
-  ])('shows a %s tool call as %s', async (status, label) => {
+  it.each(['inProgress', 'executing'])('shows an %s tool call as running', async (status) => {
     await renderPage();
 
     const { container } = renderToolCall({ status });
 
-    expect(container).toHaveTextContent(new RegExp(`^execute${label}$`));
+    expect(container).toHaveTextContent(/^Running$/);
   });
 
-  it('summarizes a tool call by its first text argument', async () => {
+  it('summarizes a tool call by its command', async () => {
     await renderPage();
 
     const { container } = renderToolCall({ status: 'executing', parameters: { limit: 5, command: 'ls -la', cwd: '/tmp' } });
 
-    expect(container).toHaveTextContent(/^executels -laRunning$/);
+    expect(container).toHaveTextContent(/^Runningls -la$/);
   });
 
   it.each([
@@ -7282,24 +7279,24 @@ describe('tool calls', () => {
 
     const { container } = renderToolCall({ status: 'executing', parameters });
 
-    expect(container).toHaveTextContent(/^executeRunning$/);
+    expect(container).toHaveTextContent(/^Running$/);
   });
 
   it('shows a finished tool call result when expanded', async () => {
     await renderPage();
 
     const { container } = renderToolCall({ status: 'complete', result: '{"ok": true}' });
-    expect(container).toHaveTextContent(/^execute$/);
+    expect(container).toHaveTextContent(/^Ran$/);
     await userEvent.click(within(container).getByRole('button'));
 
     expect(container.querySelector('pre')).toHaveTextContent('{"ok": true}');
   });
 
   it.each([
-    ['failed', 'Command failed: open. Exit code: 1\n[Command failed with exit code 1]', 'lucide-circle-x', 'lucide-circle-check-big'],
-    ['failed and was truncated', 'partial\n[Command failed with exit code 126]\n[Output was truncated due to size limits]', 'lucide-circle-x', 'lucide-circle-check-big'],
-    ['succeeded', 'ok\n[Command succeeded with exit code 0]', 'lucide-circle-check-big', 'lucide-circle-x'],
-    ['succeeded after quoting a failure', 'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]', 'lucide-circle-check-big', 'lucide-circle-x'],
+    ['failed', 'Command failed: open. Exit code: 1\n[Command failed with exit code 1]', 'lucide-circle-x', 'lucide-square-terminal'],
+    ['failed and was truncated', 'partial\n[Command failed with exit code 126]\n[Output was truncated due to size limits]', 'lucide-circle-x', 'lucide-square-terminal'],
+    ['succeeded', 'ok\n[Command succeeded with exit code 0]', 'lucide-square-terminal', 'lucide-circle-x'],
+    ['succeeded after quoting a failure', 'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]', 'lucide-square-terminal', 'lucide-circle-x'],
   ])('marks a command that %s by its exit code trailer', async (_case, result, shown, hidden) => {
     await renderPage();
 
@@ -7307,19 +7304,19 @@ describe('tool calls', () => {
 
     expect(container.querySelector(`.${shown}`)).not.toBeNull();
     expect(container.querySelector(`.${hidden}`)).toBeNull();
-    expect(container).toHaveTextContent(/^execute$/);
+    expect(container).toHaveTextContent(/^Ran$/);
   });
 
   it.each([
     ['a running tool call', 'executing', '{"ok": true}'],
     ['a finished tool call without a result', 'complete', undefined],
-  ])('shows no result for %s', async (_case, status, result) => {
+  ])('shows no result for %s, its row nothing to open', async (_case, status, result) => {
     await renderPage();
 
     const { container } = renderToolCall({ status, result });
-    await userEvent.click(within(container).getByRole('button'));
 
-    expect(container.querySelector('[data-slot="collapsible-content"]')).toBeNull();
+    expect(within(container).queryByRole('button')).toBeNull();
+    expect(container.querySelector('.worklog-step-detail')).toBeNull();
   });
 });
 

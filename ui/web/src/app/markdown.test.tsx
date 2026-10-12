@@ -366,3 +366,14 @@ it('preserves an unfinished terminal escape after completed math', () => {
   expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
   expect(view.container.querySelector('.katex')).not.toBeNull();
 });
+
+it('marks a citation link and its brackets, keeping its text, and leaves other links alone', () => {
+  const view = render(<MarkdownRenderer content="Steeper.[[1]](https://example.com/a) See [the note](https://example.com/b)." />);
+  const [citation, link] = view.container.querySelectorAll('a');
+
+  expect(citation).toHaveAttribute('data-citation');
+  expect(citation).toHaveTextContent(/^\[1\]$/);
+  expect(citation?.querySelectorAll('[data-citation-bracket]')).toHaveLength(2);
+  expect(link).not.toHaveAttribute('data-citation');
+  expect(link).toHaveTextContent(/^the note$/);
+});

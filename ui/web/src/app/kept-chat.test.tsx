@@ -169,3 +169,48 @@ it('keeps a completed saved math reply visible on cold open without changing the
   expect(view.container.querySelector('.copilotKitAssistantMessage')).not.toHaveTextContent('streamdown:incomplete-link');
   expect(view.container.querySelector('.katex')).toBeNull();
 });
+
+it("folds a Turn's work into its Worklog, as the chat surface will, so its answer keeps its place", () => {
+  const started = Date.parse('2026-10-11T14:05:41Z');
+  const turn: Message[] = [
+    { id: 'w1', role: 'user', content: 'Where did rates close?' },
+    { id: 'w2', role: 'reasoning', content: '**Planning**' },
+    {
+      id: 'w3',
+      role: 'assistant',
+      content: "I'll read the close.",
+      toolCalls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{}' } }],
+      metadata: { started_at: started, ended_at: started + 1000 },
+    },
+    { id: 'w4', role: 'tool', toolCallId: 'call-1', content: '{"close":4.12}' },
+    { id: 'w5', role: 'assistant', content: 'The 10y closed at 4.12%.', metadata: { started_at: started + 2000, ended_at: started + 9000 } },
+  ];
+  const view = render(<KeptChat messages={turn} disclaimer="Check important info." />);
+  const list = view.container.querySelector('.copilotKitMessages');
+
+  expect([...(list?.children ?? [])].map((row) => row.className.split(' ').find((name) => name !== 'copilotKitMessage'))).toEqual([
+    'copilotKitUserMessage',
+    'worklog',
+    'copilotKitAssistantMessage',
+  ]);
+  expect(screen.getByRole('button', { name: 'Worked for 9s' })).toHaveAttribute('aria-expanded', 'false');
+  expect(list).not.toHaveTextContent("I'll read the close.");
+});
+
+it("shows a reply's links as the chat surface will: a citation as its pill, a link as a link", () => {
+  const view = render(
+    <KeptChat
+      messages={[
+        { id: 'q', role: 'user', content: 'Where did rates close?' },
+        { id: 'r', role: 'assistant', content: 'Steeper.[[1]](https://example.com/a) See [the note](https://example.com/b).' },
+      ]}
+      disclaimer=""
+    />,
+  );
+  const [citation, link] = view.container.querySelectorAll('.copilotKitAssistantMessage a');
+
+  expect(citation).toHaveAttribute('data-citation');
+  expect(citation).toHaveTextContent(/^\[1\]$/);
+  expect(link).toHaveAttribute('href', 'https://example.com/b');
+  expect(view.container.querySelector('button[data-streamdown="link"]')).toBeNull();
+});

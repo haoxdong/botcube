@@ -14,6 +14,7 @@ type FileLink =
   | { status: 'loading' }
   | { status: 'ready'; url: string }
   | { status: 'error'; reason: string };
+const CITATION = /^\[(\d+)\]$/;
 const reason = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -36,7 +37,21 @@ export function ReplyFileLink(
       current = false;
     };
   }, [path, fileUrl]);
-  if (!path || !fileUrl) return <defaultComponents.a {...props} />;
+  if (!path || !fileUrl) {
+    // A citation `[[1]](url)` keeps its text; it and its brackets are marked so the answer shows it as a pill.
+    const cited =
+      typeof props.children === 'string'
+        ? CITATION.exec(props.children)?.[1]
+        : undefined;
+    if (cited === undefined) return <defaultComponents.a {...props} />;
+    return (
+      <defaultComponents.a {...props} data-citation="">
+        <span data-citation-bracket="">[</span>
+        {cited}
+        <span data-citation-bracket="">]</span>
+      </defaultComponents.a>
+    );
+  }
   if (file.status === 'loading') return <span>{props.children} (loading)</span>;
   if (file.status === 'error')
     return (

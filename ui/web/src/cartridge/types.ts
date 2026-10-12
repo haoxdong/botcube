@@ -98,6 +98,8 @@ export interface WebUiPlugin {
   agentProfileTabs?: Partial<Record<AgentProfileTab, ComponentType>>;
   /** A short-lived URL for one of the agent's files, by the path a reply names it with, such as `/chart.svg`. */
   fileUrl?: (path: string) => Promise<string>;
+  /** The binary every agent command runs, with its trailing space, such as `tool `: a command's step label drops it. */
+  commandPrefix?: string;
   theme: Record<string, string>;
 }
 

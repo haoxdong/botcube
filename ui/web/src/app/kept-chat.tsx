@@ -1,9 +1,11 @@
 "use client";
 
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
 import { defaultRemarkPlugins, Streamdown } from "streamdown";
 import { remarkRepairedBracketMath } from "./remark-bracket-math";
+import { REPLY_MARKDOWN } from "./reply-markdown";
+import { worklogRows } from "./worklog";
 
 /** CopilotKit's side padding around the messages and the composer, inside the chat's container. */
 const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-6";
@@ -14,8 +16,40 @@ const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px
  * opened at its latest message. The markup copies CopilotKit 1.77's CopilotChatView, CopilotChatUserMessage and
  * CopilotChatInput (the composer's box stays hidden, as it is until the chat surface places its model picker);
  * `scripts/web-cold-open-check.mjs` fails when a kept message moves as the chat surface takes over. A reply shows
- * through Streamdown without the chat surface's plugins, which load with it.
+ * through Streamdown with the chat surface's links and images but not its plugins, which load with it. Each Turn's work folds into its Worklog
+ * as the chat surface folds it; a thought takes an empty row there, as the surface's thought row would be folded.
  */
+/**
+ * A kept message's row, keyed by its id as CopilotKit keys it: a question, a reply, or a thought's empty row, which
+ * keeps its Turn's work grouped as the chat surface's thought row does. A tool result has none.
+ */
+function keptRow(message: Message): ReactElement | null {
+  switch (message.role) {
+    case "user":
+      return (
+        <div data-copilotkit className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10" key={message.id}>
+          <div className="cpk:prose cpk:dark:prose-invert cpk:bg-muted cpk:relative cpk:max-w-[80%] cpk:rounded-[18px] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap">
+            {contentToText(message.content)}
+          </div>
+        </div>
+      );
+    case "assistant":
+      return (
+        <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>
+          <div className="cpk:prose cpk:max-w-full cpk:break-words cpk:dark:prose-invert">
+            <Streamdown {...REPLY_MARKDOWN} remarkPlugins={[...Object.values(defaultRemarkPlugins), [remarkRepairedBracketMath, contentToText(message.content)]]}>
+              {contentToText(message.content)}
+            </Streamdown>
+          </div>
+        </div>
+      );
+    case "reasoning":
+      return <div key={message.id} />;
+    default:
+      return null;
+  }
+}
+
 export function KeptChat({ messages, disclaimer, composerAccessory }: { messages: Message[]; disclaimer: string; composerAccessory?: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLDivElement>(null);
@@ -66,23 +100,7 @@ export function KeptChat({ messages, disclaimer, composerAccessory }: { messages
                 <div ref={room} style={{ paddingBottom: "32px" }}>
                   <div className="cpk:max-w-3xl cpk:mx-auto">
                     <div data-copilotkit className="copilotKitMessages cpk:flex cpk:flex-col">
-                      {messages.filter((message) => message.role === "user" || message.role === "assistant").map((message) =>
-                        message.role === "user" ? (
-                          <div data-copilotkit className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10" key={message.id}>
-                            <div className="cpk:prose cpk:dark:prose-invert cpk:bg-muted cpk:relative cpk:max-w-[80%] cpk:rounded-[18px] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap">
-                              {contentToText(message.content)}
-                            </div>
-                          </div>
-                        ) : (
-                          <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>
-                            <div className="cpk:prose cpk:max-w-full cpk:break-words cpk:dark:prose-invert">
-                              <Streamdown remarkPlugins={[...Object.values(defaultRemarkPlugins), [remarkRepairedBracketMath, contentToText(message.content)]]}>
-                                {contentToText(message.content)}
-                              </Streamdown>
-                            </div>
-                          </div>
-                        ),
-                      )}
+                      {worklogRows(messages.map(keptRow).filter((row) => row !== null), messages, false)}
                     </div>
                   </div>
                 </div>
