@@ -114,9 +114,11 @@ from `botcube-ui-web/ui`.
   hairlines inset 16px. An editable value is a bare select ending in a 16px chevron; a date or time in words over the
   same chevron (Tue, Oct 6, 3:02 PM ET), a native picker unseen over the row (`.settings-when`); a read-only one has
   no chevron. Text fields above the cards (`.settings-text`)
-  are the same `radius-xl` box with 14px × 18px padding, the instructions 120px tall with 18px padding. A More
-  disclosure (`.settings-disclosure`, `text-muted`, shut by default) holds further cards 12px apart. Cancel and
-  Save end the form at the right, pills 12px apart and at least 36px tall (44px on a phone).
+  are the same `radius-xl` box with 14px × 18px padding, the instructions 120px tall with 18px padding. Under them,
+  every task's Edit form has the same card, after Apple Calendar's event editor: Starts (its first run, whose time and
+  weekday a calendar cadence runs on), Repeats (one menu, Never to Every week on Starts' weekday, plus the task's own
+  schedule in its words where it is none of them) and Ends (After it runs, disabled, for Never); Model has a card of
+  its own. Cancel and Save end the form at the right, pills 12px apart and at least 36px tall (44px on a phone).
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The
   disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey line

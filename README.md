@@ -72,8 +72,8 @@ path.
 
 A Cartridge exposes a framework-neutral Harness definition through the
 `botcube.cartridge` Python entry-point group. It supplies skills, agent
-identity and copy, invocation identity handling, a shell command policy and
-environment, root preparation, and the per-request session variable. A Harness
+identity and copy, invocation identity handling, a shell environment, root
+preparation, and the per-request session variable. A Harness
 adapts those values to its own framework; Cartridge code never imports an agent
 framework.
 

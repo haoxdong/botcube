@@ -6,7 +6,7 @@ from typing import Annotated, Any, NotRequired
 
 from deepagents import create_deep_agent
 from deepagents.graph import DeepAgentState
-from deepagents.middleware.filesystem import FilesystemMiddleware, FsToolName
+from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.profiles import HarnessProfile, register_harness_profile
 from langchain.agents.middleware import TodoListMiddleware
@@ -31,7 +31,6 @@ from .llm import build_model
 from .memory_files import build_memory_sources
 
 DEFAULT_SYSTEM_PROMPT = ''
-_FILESYSTEM_TOOLS: list[FsToolName] = ['ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'execute']
 
 # deepagents 0.7's stdlib SkillMetadata cannot generate JSON schema on Python 3.11.
 # Preserve its complete shape with https://errors.pydantic.dev/2.13/u/typed-dict-version.
@@ -209,10 +208,7 @@ def build_agent(
         'state_schema': PlainState,
     }
     kwargs['middleware'] = [
-        _FilesMiddleware(
-            backend=resolved_backend,
-            tools=_FILESYSTEM_TOOLS,
-        ),
+        _FilesMiddleware(backend=resolved_backend),
         TodoListMiddleware(),
         _SchemaSkillsMiddleware(backend=resolved_backend, sources=resolved_skills),
         _UncheckpointedTasksMiddleware(),
@@ -230,7 +226,7 @@ def build_agent(
 def _subagent_spec(spec: dict[str, Any], backend: Any, skills: list[str]) -> dict[str, Any]:
     if 'runnable' in spec:
         return spec
-    middleware: list[Any] = [_FilesMiddleware(backend=backend, tools=_FILESYSTEM_TOOLS)]
+    middleware: list[Any] = [_FilesMiddleware(backend=backend)]
     sources = skills if spec.get('mode') == 'fork' else spec.get('skills')
     if sources is not None and (sources or spec.get('mode') == 'fork'):
         middleware.append(_SchemaSkillsMiddleware(backend=backend, sources=sources))

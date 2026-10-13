@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict, Unpack, cast
+from typing import cast
 
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
@@ -40,29 +39,10 @@ def _run_worker(request: Request) -> Result:
         return cast(Result, response)
 
 
-class LocalShellOptions(TypedDict, total=False):
-    """The keyword options ``LocalShellBackend.__init__`` accepts."""
-
-    root_dir: str | Path | None
-    virtual_mode: bool
-    timeout: int
-    max_output_bytes: int
-    env: dict[str, str] | None
-    inherit_env: bool
-
-
 class PolicyShellBackend(LocalShellBackend):
-    """Shell backend whose command policy is supplied by a Cartridge."""
-
-    def __init__(self, *, command_validator: Callable[[str], str | None] | None = None, **kwargs: Unpack[LocalShellOptions]) -> None:
-        super().__init__(**kwargs)
-        self._command_validator = command_validator
+    """deepagents' local shell, run in a per-command worker process."""
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        if self._command_validator is not None:
-            error = self._command_validator(command)
-            if error is not None:
-                return ExecuteResponse(output=f'Error: {error}', exit_code=126)
         if not command or not isinstance(command, str):
             return ExecuteResponse(output='Error: Command must be a non-empty string.', exit_code=1)
         effective_timeout = timeout if timeout is not None else self._default_timeout

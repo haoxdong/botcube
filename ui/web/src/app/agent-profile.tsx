@@ -778,7 +778,7 @@ export function AgentProfile({
   const keptComputer = computer !== undefined && tab === "Computer" && !editor;
   const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
     Activity: <ActivityPanel chatServiceUrl={chatServiceUrl} />,
-    Scheduled: <ScheduledPanel chatServiceUrl={chatServiceUrl} agentName={profile?.name ?? "the agent"} onOpenChat={onOpenChat} />,
+    Scheduled: <ScheduledPanel chatServiceUrl={chatServiceUrl} onOpenChat={onOpenChat} />,
     Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} />,
   };
   const panel = (name: AgentProfileTab) => {

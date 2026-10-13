@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -30,6 +31,7 @@ import boto3
 import pytest
 import uvicorn
 from botcube_cartridge import HarnessDefinition
+from deepagents.middleware.filesystem import EXECUTE_TOOL_DESCRIPTION
 from fastapi.testclient import TestClient
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
@@ -189,12 +191,8 @@ def _definition(prepared: list[Path]) -> HarnessDefinition:
         agent_name='test-agent',
         system_prompt='',
         prepare_invocation=_prepare_invocation,
-        command_validator=lambda command: 'forbidden command' if 'forbidden' in command else None,
-        execute_description='Runs any command without the word forbidden.',
         prepare_root=prepare_root,
         build_shell_env=lambda environment: {**environment, 'DEFINITION_MARKER': 'from-definition'},
-        shell_timeout=2,
-        max_output_bytes=200,
         session_id_env_var='TEST_SESSION_ID',
         # A rotating token keeps its agent: only the account selects the cached agent.
         environment_cache_key=lambda environment: tuple(
@@ -503,29 +501,6 @@ def test_the_sandbox_shell_sees_the_invocation_definition_and_process_environmen
     assert _tool_output(events) == 'acct-1 from-definition from-process\n\n[Command succeeded with exit code 0]'
 
 
-def test_the_sandbox_shell_follows_the_cartridges_command_policy(service: _Service) -> None:
-    events = service.turn('run: echo forbidden')
-
-    assert _tool_output(events).startswith('Error: forbidden command')
-
-
-def test_the_sandbox_shell_stops_a_command_at_the_cartridges_timeout(service: _Service) -> None:
-    events = service.turn('run: sleep 10')
-
-    assert 'Command timed out after 2 seconds' in _tool_output(events)
-
-
-def test_the_sandbox_shell_truncates_output_at_the_cartridges_limit(service: _Service) -> None:
-    events = service.turn("run: printf 'x%.0s' $(seq 300)")
-
-    assert _tool_output(events) == (
-        'x' * 200
-        + '\n\n... Output truncated at 200 bytes.\n'
-        + '[Command succeeded with exit code 0]\n'
-        + '[Output was truncated due to size limits]'
-    )
-
-
 def test_the_sandbox_shell_carries_the_logical_session_id(service: _Service) -> None:
     first = service.turn('run: echo "[$TEST_SESSION_ID]"', session='agentcore-session-1')
     second = service.turn('run: echo "[$TEST_SESSION_ID]"', thread='thread-2', session='agentcore-session-2')
@@ -584,13 +559,10 @@ def test_a_sandbox_belongs_to_one_conversation_actor_and_environment(service: _S
     assert len(service.prepared) == 4
 
 
-def test_the_agent_is_told_which_commands_the_cartridges_execute_runs(service: _Service) -> None:
+def test_the_agent_gets_deepagents_execute_description_verbatim(service: _Service) -> None:
     service.turn('hello')
 
-    # deepagents' own description offers python and pytest, which a Cartridge's execute can refuse.
-    assert service.recorder.descriptions[0]['execute'] == 'Runs any command without the word forbidden.'
-    assert 'Use this tool to run commands, scripts, tests, builds' not in service.recorder.prompts[0]
-    assert '## Execute Tool `execute`' not in service.recorder.prompts[0]
+    assert service.recorder.descriptions[0]['execute'] == EXECUTE_TOOL_DESCRIPTION
 
 
 # -- Memory ----------------------------------------------------------------------
@@ -1894,6 +1866,14 @@ def test_the_agent_is_told_its_files_are_the_workspace_root(service: _Service, f
     )
     assert files_line in service.recorder.prompts[0]
     assert files_line not in service.recorder.prompts[1]
+
+
+def test_the_computer_section_names_only_pinned_python_libraries() -> None:
+    project = Path(__file__).resolve().parents[1] / 'tools/pyproject.toml'
+    pinned = {dependency.split('==')[0] for dependency in tomllib.loads(project.read_text())['project']['dependencies']}
+    named = serving.AGENT_SYSTEM_PROMPT.split('Python has ')[1].split(' preinstalled')[0].replace(' and ', ', ').split(', ')
+
+    assert set(named) <= pinned
 
 
 def test_prompt_composes_generic_cartridge_files_and_documents_in_order(

@@ -586,19 +586,6 @@ it("shows a scheduled task's Title and instructions as fields, and its schedule 
   form.remove();
 });
 
-it("fills a Weekly day while it is picked, as a primary button is, and leaves the others secondary", () => {
-  const days = document.createElement('div');
-  days.className = 'scheduled-days';
-  days.innerHTML = '<button class="scheduled-day" aria-pressed="true">M</button><button class="scheduled-day" aria-pressed="false">T</button>';
-  document.body.append(days);
-
-  const [picked, other] = [styleOf(days, '[aria-pressed="true"]'), styleOf(days, '[aria-pressed="false"]')];
-  expect([picked.color, picked.backgroundColor]).toEqual(['#fff', '#0d0d0d']);
-  expect([other.color, other.backgroundColor]).toEqual(['#0d0d0d', '#f4f4f4']);
-  expect([picked.width, picked.height, picked.borderRadius]).toEqual(['36px', '36px', '50%']);
-  days.remove();
-});
-
 it('spaces a scheduled-task proposal in a message by its own gap, not prose paragraph margins', () => {
   const { message, prose } = inAssistantMessage('');
   render(

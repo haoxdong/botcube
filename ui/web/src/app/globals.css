@@ -4155,13 +4155,6 @@ button.worklog-step-head:hover {
   border-top: 1px solid var(--color-border);
 }
 
-.settings-row-stacked {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding-block: 12px;
-}
-
 .settings-row dt {
   flex: none;
 }
@@ -4279,30 +4272,6 @@ textarea.settings-text {
 
 .settings-text::placeholder {
   color: var(--color-text-muted);
-}
-
-/* Advanced, shut until opened: `text-muted` with its chevron, its cards 12px apart under it. */
-.settings-disclosure {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 8px;
-  padding: 0 8px;
-  border: none;
-  font-size: var(--font-body);
-  color: var(--color-text-muted);
-  background: none;
-  cursor: pointer;
-}
-
-.settings-disclosure:hover {
-  color: var(--color-text);
-}
-
-.settings-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 /* Cancel then Save, pills at the right 12px apart, at least Codex's 36px tall. */
@@ -4438,34 +4407,6 @@ textarea.settings-text {
 
 .scheduled-task-paused .scheduled-task-title {
   color: var(--color-text-muted);
-}
-
-/* Weekly's days, Sunday first as EventBridge numbers them: a 36px circle each, filled `text` while picked. */
-.scheduled-days {
-  display: flex;
-  gap: 6px;
-}
-
-.scheduled-day {
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  font-size: var(--font-detail);
-  font-weight: var(--weight-medium);
-  color: var(--color-text);
-  background: var(--color-surface-hover);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.scheduled-day[aria-pressed="false"]:hover:not(:disabled) {
-  background: var(--color-border);
-}
-
-.scheduled-day[aria-pressed="true"] {
-  color: var(--color-white);
-  background: var(--color-text);
 }
 
 .scheduled-task-hint {
@@ -4695,10 +4636,6 @@ textarea.settings-text {
 
   .agent-profile-tab,
   .mep-pill {
-    min-height: 44px;
-  }
-
-  .settings-disclosure {
     min-height: 44px;
   }
 }

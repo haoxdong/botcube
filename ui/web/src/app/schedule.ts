@@ -70,7 +70,10 @@ export function toExpression(cadence: Cadence): string {
   }
 }
 
-/** The cadence an expression runs on, or null when the Edit form's controls can't show it. */
+/**
+ * The cadence an expression runs on, or null where none says it. `rate(1 day)` is null: it runs every 24 hours, so a
+ * daylight-saving change moves its time of day, as a daily cron's doesn't.
+ */
 export function fromExpression(expression: string): Cadence | null {
   const [, date, at] = AT.exec(expression) ?? [];
   if (date !== undefined && at !== undefined && DATE.test(date) && TIME.test(at)) return { frequency: "once", date, time: at };
@@ -78,14 +81,15 @@ export function fromExpression(expression: string): Cadence | null {
   if (every !== undefined) return { frequency: unit === "minute" ? "minutes" : "hours", every: Number(every) };
   const [, minute, hour, days] = /^cron\((\d{1,2}) (\d{1,2}) (\* \* \? \*|\? \* \S+ \*)\)$/.exec(expression) ?? [];
   if (minute === undefined || hour === undefined || days === undefined || Number(minute) > 59 || Number(hour) > 23) return null;
-  const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
-  if (days === "* * ? *") return { frequency: "daily", time };
+  const runsAt = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+  // Every day of the month, or every day of the week.
+  if (days === "* * ? *" || days === "? * * *") return { frequency: "daily", time: runsAt };
   const list = days.slice(4, -2);
-  if (list === "MON-FRI") return { frequency: "weekdays", time };
+  if (list === "MON-FRI") return { frequency: "weekdays", time: runsAt };
   // A day is EventBridge's name for it or its number.
   const named = list.split(",").map((day) => WEEKDAYS.find((name, index) => day === name || day === String(index + 1)));
   if (named.some((day) => day === undefined)) return null;
-  return { frequency: "weekly", time, days: WEEKDAYS.filter((day) => named.includes(day)) };
+  return { frequency: "weekly", time: runsAt, days: WEEKDAYS.filter((day) => named.includes(day)) };
 }
 
 /** The schedule in words; an expression neither `cron(...)` nor `rate(...)` reads as written. */
@@ -101,6 +105,8 @@ export function describeSchedule(expression: string): string {
   }
   const [, count, unit] = /^rate\((\d+) (minute|hour|day)s?\)$/.exec(expression) ?? [];
   if (count === undefined || unit === undefined) return expression;
+  // A day's rate runs every 24 hours whatever the clock says, unlike Every day at a time of day.
+  if (count === "1" && unit === "day") return "Every 24 hours";
   return count === "1" ? `Every ${unit}` : `Every ${count} ${unit}s`;
 }
 
@@ -110,28 +116,40 @@ function clock(time: string): string {
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
 }
 
+/** Days of the week in words: Monday, or Monday and Thursday. */
+function dayList(days: Weekday[]): string {
+  return new Intl.ListFormat("en-US").format(days.map((day) => DAY_NAMES[WEEKDAYS.indexOf(day)] ?? day));
+}
+
+/** How often a cadence repeats, as the Edit form's Repeats names it: Never, Every 5 minutes, Every day, Every week on Monday. */
+export function repeatsOption(cadence: Cadence): string {
+  switch (cadence.frequency) {
+    case "minutes":
+    case "hours":
+      return describeSchedule(toExpression(cadence));
+    case "daily":
+      return "Every day";
+    case "weekdays":
+      return "Every weekday";
+    case "weekly":
+      return `Every week on ${dayList(cadence.days)}`;
+    case "once":
+      return "Never";
+  }
+}
+
 /**
- * The label the Scheduled tab lists an expression under (Muse Fig 15's "Daily"), as the Edit form's Frequency names
- * it, and its time of day when it has one. An expression the Edit form can't show lists under its own words.
+ * The label the Scheduled tab lists an expression under, in Repeats' words, and its time of day where it has one; a
+ * one-off lists under Once, with its date. An expression none of them says lists under its own words.
  */
 export function listing(expression: string): { label: string; time?: string } {
   const cadence = fromExpression(expression);
   if (cadence === null) return { label: describeSchedule(expression) };
-  switch (cadence.frequency) {
-    case "minutes":
-    case "hours":
-      return { label: describeSchedule(expression) };
-    case "daily":
-      return { label: "Daily", time: clock(cadence.time) };
-    case "weekdays":
-      return { label: "Weekdays", time: clock(cadence.time) };
-    case "weekly":
-      return { label: `Every ${cadence.days.map((day) => DAY_NAMES[WEEKDAYS.indexOf(day)]).join(", ")}`, time: clock(cadence.time) };
-    case "once": {
-      const day = new Date(`${cadence.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-      return { label: "Once", time: `${day}, ${clock(cadence.time)}` };
-    }
+  if (cadence.frequency === "once") {
+    const day = new Date(`${cadence.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    return { label: "Once", time: `${day}, ${clock(cadence.time)}` };
   }
+  return "time" in cadence ? { label: repeatsOption(cadence), time: clock(cadence.time) } : { label: repeatsOption(cadence) };
 }
 
 /** Each time zone's clock, made once: counting runs reads it for every day it steps. */
@@ -166,21 +184,12 @@ export function stopInstant(wall: string, timezone: string): string {
   return new Date(asUtc - offset(first)).toISOString();
 }
 
-/** How often a cadence repeats, as a task's sheet and a proposal say it: Weekly on Mon, Wed at 7:00 AM. */
+/**
+ * How often a cadence repeats, as a task's sheet and a proposal say it: Repeats' words, then the time of day it runs
+ * at where it has one, as Every week on Monday and Wednesday at 7:00 AM.
+ */
 export function repeatsWords(cadence: Cadence): string {
-  switch (cadence.frequency) {
-    case "minutes":
-    case "hours":
-      return describeSchedule(toExpression(cadence));
-    case "daily":
-      return `Daily at ${clock(cadence.time)}`;
-    case "weekdays":
-      return `Weekdays at ${clock(cadence.time)}`;
-    case "weekly":
-      return `Weekly on ${cadence.days.map((day) => DAY_NAMES[WEEKDAYS.indexOf(day)]?.slice(0, 3)).join(", ")} at ${clock(cadence.time)}`;
-    case "once":
-      return "Once";
-  }
+  return cadence.frequency === "once" || !("time" in cadence) ? repeatsOption(cadence) : `${repeatsOption(cadence)} at ${clock(cadence.time)}`;
 }
 
 const MINUTE = 60_000;
@@ -262,18 +271,18 @@ function dateTime(at: number, timezone: string, now: number): string {
 }
 
 /**
- * A date and time (YYYY-MM-DDTHH:MM) in words, as the Edit form's rows show it: Tue, Oct 6, 3:02 PM ET, or its time
- * alone, 3:02 PM ET. A wall time that isn't one throws, saying so.
+ * A date and time (YYYY-MM-DDTHH:MM) in words, as the Edit form's rows show it: Tue, Oct 6, 3:02 PM ET. A wall time
+ * that isn't one throws, saying so.
  */
-export function wallWords(wall: string, timezone: string, timeOnly = false): string {
+export function wallWords(wall: string, timezone: string): string {
   const at = Date.parse(stopInstant(wall, timezone));
-  return `${timeOnly ? clock(wall.slice(11)) : dayTime(at, timezone)} ${zoneName(timezone, at)}`;
+  return `${dayTime(at, timezone)} ${zoneName(timezone, at)}`;
 }
 
 /**
  * A task's schedule in one plain line, as a proposal says it: how it repeats, from when, how it ends,
  * and the time zone. A time carries its date only when it isn't today there: "Every minute from 3:02 PM, ends
- * 3:04 PM ET", "Weekdays at 7:00 AM from Oct 14 ET", "Once on Oct 14, 9:00 AM ET".
+ * 3:04 PM ET", "Every weekday at 7:00 AM from Oct 14 ET", "Once on Oct 14, 9:00 AM ET".
  */
 export function summary(schedule: string, timezone: string, start: number | undefined, ending: Ending, now = Date.now(), starts?: number): string {
   const date = (at: number) => wallTime(at, timezone).slice(0, 10);

@@ -48,7 +48,6 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
@@ -107,7 +106,12 @@ Link a file you made as `[Download <name>](<path>)`, not a number.
 
 Put a long answer in a Report, a file in the user's Files; in chat, give only its bottom line, a one-line summary of what it covers, and its link.
 Structure a Report BLUF: `Summary` (the bottom line in 1-2 sentences), then `More Details` (supporting data, tables and analysis).
-Write a Report as an email draft (`.eml` with `X-Unsent: 1`), or as HTML or PDF when the user asks."""
+Write a Report as an email draft (`.eml` with `X-Unsent: 1`), or as HTML or PDF when the user asks.
+
+## Your computer
+
+Python has pandas, numpy, matplotlib, openpyxl, python-pptx, python-docx, reportlab and pypdf preinstalled; use them rather than installing packages.
+Write files for the user into the workspace so they appear in Files; use /tmp for scratch."""
 
 class MissingUserIdError(RuntimeError):
     """The invocation carries no user ID; only the Chat Service resolves identity (ADR 0068)."""
@@ -120,7 +124,6 @@ class HarnessCartridge:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
-    execute_description: str
     prepare_invocation: Callable[[Any], InvocationAuth]
     actor_path_segment: Callable[[str], str]
     sanitize_actor_id: Callable[[str], str]
@@ -148,11 +151,8 @@ def configure_harness_definition(definition: HarnessDefinition) -> None:
         return PolicyShellBackend(
             root_dir=root,
             virtual_mode=True,
-            timeout=definition.shell_timeout,
-            max_output_bytes=definition.max_output_bytes,
             env=definition.build_shell_env(environment),
             inherit_env=True,
-            command_validator=definition.command_validator,
         )
 
     def apply_session_id(backend: LocalShellBackend, session_id: str | None) -> None:
@@ -167,7 +167,6 @@ def configure_harness_definition(definition: HarnessDefinition) -> None:
             skills=definition.skills,
             agent_name=definition.agent_name,
             system_prompt=definition.system_prompt,
-            execute_description=definition.execute_description,
             prepare_invocation=definition.prepare_invocation,
             actor_path_segment=actor_path_segment,
             sanitize_actor_id=sanitize_actor_id,
@@ -418,30 +417,6 @@ class _AnsweredToolResultsMiddleware(AgentMiddleware):
         return await handler(request.override(messages=messages))
 
 
-class _ExecuteDescriptionMiddleware(AgentMiddleware):
-    """Describes `execute` by the Cartridge's command policy.
-
-    deepagents describes a general shell, with python and pytest examples, so the
-    model ran python against a policy that refuses it.
-    """
-
-    def __init__(self, description: str) -> None:
-        super().__init__()
-        self.description = description
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        tools = [
-            tool.model_copy(update={'description': self.description})
-            if isinstance(tool, BaseTool) and tool.name == 'execute' else tool
-            for tool in request.tools
-        ]
-        return await handler(request.override(tools=tools))
-
-
 # Module-level singletons — built once, reused across requests.
 # The graph is compiled once so the checkpointer can load prior
 # conversation state from the same compiled channels. Rebuilding per request created a fresh graph
@@ -552,7 +527,6 @@ def _get_agent(
         )
         middleware = [
             _AnsweredToolResultsMiddleware(),
-            _ExecuteDescriptionMiddleware(_require_cartridge().execute_description),
             prompt_cache_middleware,
             message_times.MessageTimesMiddleware(),
         ]
@@ -803,16 +777,20 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).aensure()
             )
             work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
-            try:
-                done, _ = await asyncio.wait(work, return_when=asyncio.FIRST_EXCEPTION)
-            finally:
-                # A failure stops the history read; the pull, mutating the workspace, ends before the lock is released.
-                for task in work[1:]:
-                    task.cancel()
-                await asyncio.wait(work)
-            for task in [*done, *work]:
-                task.result()
+            await _finish_preparation(work)
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
+
+
+async def _finish_preparation(work: list[asyncio.Task[Any]]) -> None:
+    try:
+        done, _ = await asyncio.wait(work, return_when=asyncio.FIRST_EXCEPTION)
+    finally:
+        # A failure stops the history read; the pull, mutating the workspace, ends before the lock is released.
+        for task in work[1:]:
+            task.cancel()
+        await asyncio.wait(work)
+    for task in [*done, *work]:
+        task.result()
 
 
 def _preparation_event(

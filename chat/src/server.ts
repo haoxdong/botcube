@@ -329,11 +329,10 @@ export function createChatService(
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
     }, async () => {
-      await scheduled.tasks.checkHealth();
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
         console.error('Scheduled task retirement failed', { owner, taskId }, error);
       }
-    });
+    }, () => scheduled.tasks.checkHealth());
     scheduled.onClose?.(stop);
   }
 

@@ -344,7 +344,6 @@ def _serve_session(
             system_prompt='',
             skills=[],
             agent_name='round-trip',
-            execute_description='Runs shell commands.',
             prepare_invocation=lambda _input: serving.InvocationAuth('user-1', False, None),
             actor_path_segment=lambda value: value,
             sanitize_actor_id=lambda value: value,

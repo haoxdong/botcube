@@ -362,9 +362,9 @@ The [template README](template/README.md) describes the local stack and its limi
 
 ### Supply a CLI and skills through bash
 
-The [Harness definition](template/src/botcube_template/harness.py) exports `CARTRIDGE`. It prepares the [packaged skill](template/src/botcube_template/skills/SKILL.md), validates shell commands, and forwards invocation-scoped environment variables. Its policy accepts `echo`, `template-cli data`, and documented `agent-browser` commands.
+The [Harness definition](template/src/botcube_template/harness.py) exports `CARTRIDGE`. It prepares the [packaged skill](template/src/botcube_template/skills/SKILL.md) and forwards invocation-scoped environment variables. Its shell runs any command.
 
-The [staging hook](template/deploy/stage-tools.sh) packages the Cartridge wheel, offline CLI, and browser tools for the [Harness image](harness/deepagents/Dockerfile). The [fake CLI](template/src/botcube_template/fake_cli.py) calls the Credential Service with the invocation binding. It receives data rather than site credentials. Replace this executable, skill, and command policy together.
+The [staging hook](template/deploy/stage-tools.sh) packages the Cartridge wheel, offline CLI, and browser tools for the [Harness image](harness/deepagents/Dockerfile). The [fake CLI](template/src/botcube_template/fake_cli.py) calls the Credential Service with the invocation binding. It receives data rather than site credentials. Replace this executable and skill together.
 
 ### Bind site Sign-in to an Account
 

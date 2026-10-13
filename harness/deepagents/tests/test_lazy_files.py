@@ -116,13 +116,13 @@ def test_parallel_child_tools_and_sync_tool_share_one_pull(
             parent = asyncio.create_task(LazyFilesMiddleware().awrap_tool_call(_request('read_file'), aread))
             assert await asyncio.to_thread(listed.wait, 5)
             children = [asyncio.create_task(LazyFilesMiddleware().awrap_tool_call(_request(name), aread))
-                        for name in ('ls', 'write_file', 'edit_file', 'glob', 'grep')]
+                        for name in ('ls', 'write_file', 'edit_file', 'delete', 'glob', 'grep')]
             synchronous = asyncio.create_task(asyncio.to_thread(LazyFilesMiddleware().wrap_tool_call, _request('execute'), read))
             assert observed == []
             assert not readiness.ready
             release.set()
             results = await asyncio.gather(parent, *children, synchronous)
-            assert len(results) == 7
+            assert len(results) == 8
             for result in results:
                 assert isinstance(result, ToolMessage)
                 assert result.content == 'date,close'
@@ -130,7 +130,7 @@ def test_parallel_child_tools_and_sync_tool_share_one_pull(
 
     asyncio.run(parallel())
     assert listings == ['owner/']
-    assert sorted(observed) == ['edit_file', 'execute', 'glob', 'grep', 'ls', 'read_file', 'write_file']
+    assert sorted(observed) == ['delete', 'edit_file', 'execute', 'glob', 'grep', 'ls', 'read_file', 'write_file']
 
 
 def test_failed_pull_preserves_exception_and_blocks_every_tool_without_retry(

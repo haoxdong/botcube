@@ -22,9 +22,8 @@ def test_first_plan_model_needs_no_sdk_resource_imports_after_runtime_is_ready()
             socket.socket.connect = forbidden
             serving.configure_harness_definition(HarnessDefinition(
                 skills=[], agent_name='bootstrap-test', system_prompt='',
-                execute_description='', prepare_invocation=forbidden,
-                command_validator=forbidden, prepare_root=forbidden,
-                build_shell_env=forbidden, shell_timeout=1, max_output_bytes=1,
+                prepare_invocation=forbidden, prepare_root=forbidden,
+                build_shell_env=forbidden,
                 session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
             ))
 

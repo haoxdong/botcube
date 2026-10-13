@@ -376,9 +376,28 @@ export function pollScheduledRuns(
   draining: () => Promise<boolean>,
   onFailure?: (error: unknown) => void,
   maintenance?: () => Promise<void>,
+  maintenanceReadiness?: () => Promise<void>,
 ): () => void {
   const stop = new AbortController();
   const stopped = () => stop.signal.aborted;
+  let maintenancePending: Promise<void> | undefined;
+  let nextMaintenance = 0;
+  const reportFailure = (failure: string, error: unknown) => {
+    console.error(`Scheduled runs stopped: ${failure}`, error);
+    stop.abort();
+    if (onFailure === undefined) throw error;
+    onFailure(error);
+  };
+  const maybeStartMaintenance = () => {
+    if (maintenance === undefined || maintenancePending !== undefined || Date.now() < nextMaintenance) return;
+    maintenancePending = maintenance().then(
+      () => undefined,
+      (error: unknown) => { reportFailure('expired task maintenance failed', error); },
+    ).finally(() => {
+      nextMaintenance = Date.now() + 60_000;
+      maintenancePending = undefined;
+    });
+  };
   const receiveBatch = async () => {
     let failure = 'cannot tell whether this task is draining';
     try {
@@ -386,19 +405,20 @@ export function pollScheduledRuns(
         console.log('This Chat Service task is draining; it takes no more scheduled runs');
         return null;
       }
-      if (maintenance !== undefined) {
+      if (maintenance !== undefined || maintenanceReadiness !== undefined) {
         failure = 'expired task maintenance failed';
-        await maintenance();
+        await maintenanceReadiness?.();
+        if (stopped()) return null;
+        maybeStartMaintenance();
         failure = 'cannot tell whether this task is draining';
         if (await draining()) return null;
       }
+      if (stopped()) return null;
       failure = 'queue receive failed';
       return await queue.receive(stop.signal);
     } catch (error) {
       if (failure === 'queue receive failed' && stopped()) return null;
-      console.error(`Scheduled runs stopped: ${failure}`, error);
-      if (onFailure === undefined) throw error;
-      onFailure(error);
+      reportFailure(failure, error);
       return null;
     }
   };

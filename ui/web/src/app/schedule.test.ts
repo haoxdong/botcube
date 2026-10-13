@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { dayTime, lastRun, repeatsWords, runs, summary, zoneName, type Cadence } from './schedule';
+import { dayTime, describeSchedule, fromExpression, lastRun, listing, repeatsWords, runs, summary, zoneName, type Cadence } from './schedule';
 
 const NY = 'America/New_York';
 const at = (iso: string) => Date.parse(iso);
@@ -75,16 +75,48 @@ describe('zoneName', () => {
   });
 });
 
+describe('fromExpression', () => {
+  // cron(M H ? * * *) is daily too.
+  it.each<[string, Cadence | null]>([
+    ['cron(30 7 ? * * *)', { frequency: 'daily', time: '07:30' }],
+    ['cron(30 7 * * ? *)', { frequency: 'daily', time: '07:30' }],
+    ['rate(3 days)', null],
+    ['cron(0 8 1 * ? *)', null],
+  ])('reads %s as %j', (expression, cadence) => {
+    expect(fromExpression(expression)).toEqual(cadence);
+  });
+
+  it('reads rate(1 day) as no daily cadence: it runs every 24 hours, so a clock change moves its time of day', () => {
+    expect(fromExpression('rate(1 day)')).toBeNull();
+    expect(describeSchedule('rate(1 day)')).toBe('Every 24 hours');
+    expect(describeSchedule('rate(3 days)')).toBe('Every 3 days');
+  });
+});
+
+describe('listing', () => {
+  it.each<[string, { label: string; time?: string }]>([
+    ['rate(1 day)', { label: 'Every 24 hours' }],
+    ['cron(0 7 ? * * *)', { label: 'Every day', time: '7:00 AM' }],
+    ['cron(0 7 ? * MON-FRI *)', { label: 'Every weekday', time: '7:00 AM' }],
+    ['cron(0 7 ? * TUE *)', { label: 'Every week on Tuesday', time: '7:00 AM' }],
+    ['rate(5 minutes)', { label: 'Every 5 minutes' }],
+    ['at(2026-10-14T08:30:00)', { label: 'Once', time: 'Oct 14, 8:30 AM' }],
+    ['cron(0 8 1 * ? *)', { label: 'At 8:00 AM, on day 1 of the month' }],
+  ])('lists %s in Repeats\' words', (expression, listed) => {
+    expect(listing(expression)).toEqual(listed);
+  });
+});
+
 describe('repeatsWords', () => {
   it.each<[Cadence, string]>([
     [{ frequency: 'minutes', every: 1 }, 'Every minute'],
     [{ frequency: 'minutes', every: 5 }, 'Every 5 minutes'],
     [{ frequency: 'hours', every: 1 }, 'Every hour'],
     [{ frequency: 'hours', every: 3 }, 'Every 3 hours'],
-    [{ frequency: 'daily', time: '07:00' }, 'Daily at 7:00 AM'],
-    [{ frequency: 'weekdays', time: '19:30' }, 'Weekdays at 7:30 PM'],
-    [{ frequency: 'weekly', time: '07:00', days: ['MON', 'WED', 'FRI'] }, 'Weekly on Mon, Wed, Fri at 7:00 AM'],
-    [{ frequency: 'once', date: '2026-10-14', time: '09:00' }, 'Once'],
+    [{ frequency: 'daily', time: '07:00' }, 'Every day at 7:00 AM'],
+    [{ frequency: 'weekdays', time: '19:30' }, 'Every weekday at 7:30 PM'],
+    [{ frequency: 'weekly', time: '07:00', days: ['MON', 'WED', 'FRI'] }, 'Every week on Monday, Wednesday, and Friday at 7:00 AM'],
+    [{ frequency: 'once', date: '2026-10-14', time: '09:00' }, 'Never'],
   ])('says %j as %s', (cadence, words) => {
     expect(repeatsWords(cadence)).toBe(words);
   });
@@ -114,10 +146,10 @@ describe('summary', () => {
   });
 
   it('says the time of day once for a daily, weekdays or weekly task, and its start date when it waits past its next run day', () => {
-    expect(summary('cron(0 7 * * ? *)', NY, at('2026-10-06T11:00:00Z'), { kind: 'never' }, now)).toBe('Daily at 7:00 AM ET');
-    expect(summary('cron(0 7 ? * MON-FRI *)', NY, at('2026-10-14T11:00:00Z'), { kind: 'never' }, now)).toBe('Weekdays at 7:00 AM from Oct 14 ET');
+    expect(summary('cron(0 7 * * ? *)', NY, at('2026-10-06T11:00:00Z'), { kind: 'never' }, now)).toBe('Every day at 7:00 AM ET');
+    expect(summary('cron(0 7 ? * MON-FRI *)', NY, at('2026-10-14T11:00:00Z'), { kind: 'never' }, now)).toBe('Every weekday at 7:00 AM from Oct 14 ET');
     // 6 October 2026 is a Tuesday, so a Monday and Thursday task first runs on Thursday 8 October anyway.
-    expect(summary('cron(5 7 ? * MON,THU *)', NY, at('2026-10-08T11:05:00Z'), { kind: 'never' }, now)).toBe('Weekly on Mon, Thu at 7:05 AM ET');
+    expect(summary('cron(5 7 ? * MON,THU *)', NY, at('2026-10-08T11:05:00Z'), { kind: 'never' }, now)).toBe('Every week on Monday and Thursday at 7:05 AM ET');
   });
 
   it('says a one-off run as its date and time, or its time today', () => {

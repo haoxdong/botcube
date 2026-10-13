@@ -5891,8 +5891,8 @@ describe('agent profile', () => {
 
     const task = await openScheduled();
 
-    expect(within(openProfile()).getByRole('region', { name: 'Weekdays' })).toContainElement(task);
-    expect(within(openProfile()).getByRole('heading', { name: 'Weekdays' })).toHaveClass('list-group-heading');
+    expect(within(openProfile()).getByRole('region', { name: 'Every weekday' })).toContainElement(task);
+    expect(within(openProfile()).getByRole('heading', { name: 'Every weekday' })).toHaveClass('list-group-heading');
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
     expect(task.querySelector('.scheduled-task-detail')).toHaveTextContent(/^8:00 AM · Brief me on rates$/);
     // Its actions are in its sheet, not on the inSheet.
@@ -5920,12 +5920,12 @@ describe('agent profile', () => {
       group.getAttribute('aria-label'),
       within(group).getAllByRole('listitem').map((task) => task.querySelector('.scheduled-task-detail')?.textContent),
     ])).toEqual([
-      ['Weekdays', ['12:00 AM · Brief me on rates', '11:59 PM · Brief me on rates']],
+      ['Every weekday', ['12:00 AM · Brief me on rates', '11:59 PM · Brief me on rates']],
       // EventBridge numbers the days of the week from 1, Sunday.
-      ['Every Saturday', ['12:05 PM · Brief me on rates']],
-      // rate(1 day) runs a day after it was made, not at a time the Edit form could show as Daily.
-      ['Every day', ['Brief me on rates']],
-      ['Every Monday', ['2:30 PM · Brief me on rates']],
+      ['Every week on Saturday', ['12:05 PM · Brief me on rates']],
+      // rate(1 day) runs every 24 hours, not at a time of day: a clock change moves it (#4021).
+      ['Every 24 hours', ['Brief me on rates']],
+      ['Every week on Monday', ['2:30 PM · Brief me on rates']],
       ['Every 2 hours', ['Brief me on rates']],
       ['Once', ['Oct 14, 8:30 AM · Brief me on rates']],
     ]);
@@ -6002,26 +6002,25 @@ describe('agent profile', () => {
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
 
-    // Its start is ahead, so Starts stands for its next run.
+    // It hasn't run yet, so its next run is its first.
     expect(details(sheet)).toEqual([
       ['Repeats', 'Every minute'],
-      ['Starts', 'Tue, Oct 6, 3:02 PM'],
+      ['Next run', 'Tue, Oct 6, 3:02 PM'],
       ['Ends', 'Tue, Oct 6, 3:04 PM'],
     ]);
     expect(sheet).not.toHaveTextContent(/\bN\b/);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Minutes');
-    expect(inSheet.getByLabelText('Every')).toHaveDisplayValue('1 minute');
+    // Every minute isn't one of Repeats' listed choices, so it is one of its own, where it sorts (#4021).
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every minute');
+    expect(within(inSheet.getByLabelText('Repeats')).getAllByRole('option').slice(0, 3).map((option) => option.textContent))
+      .toEqual(['Never', 'Every minute', 'Every 5 minutes']);
     // The sheet is named for what it does while the Title field shows the title.
     expect(sheet).toHaveAccessibleName('Edit task');
-    // Starts, Ends and Model wait under More, shut until opened; no line under the rows while Save can.
+    // No line under the rows while Save can.
     expect(inSheet.queryByRole('status')).toBeNull();
-    for (const label of ['Starts', 'Ends', 'Model']) expect(inSheet.queryByLabelText(label)).toBeNull();
-    await userEvent.click(inSheet.getByRole('button', { name: 'More', expanded: false }));
-    expect(inSheet.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'true');
-    // A rate's Starts is its date and time, in words as Ends reads.
+    // Starts is its date and time, in words as Ends reads.
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T15:02');
     expect(inSheet.getByText('Tue, Oct 6, 3:02 PM ET')).toBeInTheDocument();
     // One Ends row, Never or a date and time: a counted task's is its last run.
@@ -6066,14 +6065,13 @@ describe('agent profile', () => {
     ]);
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
-    await userEvent.click(within(sheet).getByRole('button', { name: 'More' }));
 
     expect(within(sheet).getByLabelText('End date')).toHaveValue('2026-10-06T15:04');
   });
 
   it.each([
     ['Starts', '2026-10-07T09:30', '2026-10-07T09:30', { startDate: '2026-10-07T13:30:00.000Z' }],
-    ['Every', '5 minutes', '2026-10-06T15:07', { schedule: 'rate(5 minutes)', startDate: '2026-10-06T19:02:00.000Z' }],
+    ['Repeats', 'Every 5 minutes', '2026-10-06T15:07', { schedule: 'rate(5 minutes)', startDate: '2026-10-06T19:02:00.000Z' }],
   ])('keeps only the remaining run when a counted task changes %s', async (label, value, ending, changes) => {
     beforeCountedRuns();
     vi.setSystemTime('2026-10-06T19:03:30Z');
@@ -6082,15 +6080,13 @@ describe('agent profile', () => {
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
-    if (label === 'Every') await userEvent.selectOptions(inSheet.getByLabelText(label), value);
+    if (label === 'Repeats') await userEvent.selectOptions(inSheet.getByLabelText(label), value);
     else fireEvent.change(inSheet.getByLabelText(label), { target: { value } });
 
     expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: COUNTED.title, prompt: COUNTED.prompt, ...changes }]);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
   });
 
@@ -6102,7 +6098,6 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.clear(inSheet.getByLabelText('Starts'));
     expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(why(sheet)).toBe('Starts needs a date and time');
@@ -6116,7 +6111,6 @@ describe('agent profile', () => {
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: COUNTED.title, prompt: 'Brief me on rates', startDate: '2026-10-07T13:30:00.000Z' },
     ]);
-    expect(detail(sheet, 'Starts')).toBe('Wed, Oct 7, 9:30 AM');
     expect(detail(sheet, 'Ends')).toBe('Wed, Oct 7, 9:32 AM');
   });
 
@@ -6128,13 +6122,11 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
-    // A daily task's Starts is its date; Time gives the time of day.
-    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13');
-    expect(inSheet.getByLabelText('Time')).toHaveValue('09:00');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Hours');
+    // A daily task's Starts is its first run, at the time of day it runs.
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
-    await userEvent.selectOptions(inSheet.getByLabelText('Every'), '2 hours');
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every day');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 2 hours');
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
@@ -6150,7 +6142,6 @@ describe('agent profile', () => {
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
     expect(inSheet.getByLabelText('End date')).toHaveValue('');
@@ -6158,7 +6149,6 @@ describe('agent profile', () => {
     expect(detail(sheet, 'Ends')).toBe('Never');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     // Where the browser can't open its picker when asked (Safari before 16.4), On a date… focuses the picker, which then
     // takes the row's taps.
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
@@ -6177,7 +6167,6 @@ describe('agent profile', () => {
     expect(detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     // Never, then the same date again, is the ending Edit opened with: Save leaves it alone.
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
@@ -6217,7 +6206,6 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     // Read in the task's own time zone.
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Wed, Jan 1, 12:00 AM ET');
     expect(inSheet.getByLabelText('End date')).toHaveValue('2020-01-01T00:00');
@@ -6230,7 +6218,6 @@ describe('agent profile', () => {
     expect(inSheet.getByRole('button', { name: 'Resume' })).toBeEnabled();
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6246,10 +6233,10 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Once');
-    // A task that runs once has nothing to end, and its Starts, its only run, is in the main card.
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
-    expect(inSheet.queryByLabelText('Ends')).toBeNull();
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Never');
+    // A task that runs once ends after it runs; its Starts is its only run.
+    expect(inSheet.getByLabelText('Ends')).toBeDisabled();
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('After it runs');
     expect(inSheet.getAllByLabelText('Starts')).toHaveLength(1);
     await userEvent.clear(inSheet.getByLabelText('Starts'));
     await userEvent.type(inSheet.getByLabelText('Starts'), '2099-11-06T08:30');
@@ -6259,7 +6246,7 @@ describe('agent profile', () => {
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'at(2099-11-06T08:30:00)', endDate: null, startDate: null },
     ]);
-    expect(details(sheet).slice(0, 2)).toEqual([['Repeats', 'Once'], ['Starts', 'Fri, Nov 6, 8:30 AM']]);
+    expect(detail(sheet, 'Repeats')).toBe('Never');
   });
 
   it("opens a task's sheet on a tap, saying what it asks and when it runs in words, or as written", async () => {
@@ -6283,7 +6270,7 @@ describe('agent profile', () => {
       await closeTask(sheet);
     }
 
-    expect(words).toEqual(['Weekdays at 8:00 AM', 'Every hour', 'cron(nonsense)']);
+    expect(words).toEqual(['Every weekday at 8:00 AM', 'Every hour', 'cron(nonsense)']);
   });
 
   it('keeps a failed scheduled edit and saves the same draft on retry', async () => {
@@ -6375,14 +6362,22 @@ describe('agent profile', () => {
     expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on FX$/);
   });
 
+  /** The Edit form's settings rows, by their labels. */
+  const rows = (sheet: HTMLElement) => [...sheet.querySelectorAll('.scheduled-edit .settings-row')].map((row) => row.firstElementChild?.textContent);
+  const choices = (sheet: HTMLElement) => within(within(sheet).getByLabelText('Repeats')).getAllByRole('option').map((option) => option.textContent);
+
   it('keeps a schedule as written when an edit leaves its controls alone', async () => {
+    beforeCountedRuns();
     service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(08 8 ? * 2,5 *)' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Weekly');
+    // Weekly on two days is none of the listed choices: it is its own, where it sorts. With no start, Starts is today.
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every week on Monday and Thursday');
+    expect(choices(sheet).slice(-3)).toEqual(['Every weekday', 'Every week on Monday and Thursday', 'Every week on Tuesday']);
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T08:08');
     await userEvent.type(inSheet.getByLabelText('Title'), ' (FX)');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6399,17 +6394,12 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     expect(inSheet.queryByLabelText('Schedule')).toBeNull();
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Weekdays');
-    // The time of day sits by Repeats, in words, as Codex's Time.
-    expect(inSheet.getByLabelText('Time')).toHaveValue('08:00');
-    expect(inSheet.getByText('8:00 AM ET')).toBeInTheDocument();
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
-    // A task from before tasks kept their first run starts today; Starts picks its date and says its time as well.
-    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06');
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every weekday');
+    // A task from before tasks kept their first run starts at its next one; Starts' time of day is when it runs.
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T08:00');
     expect(inSheet.getByText('Tue, Oct 6, 8:00 AM ET')).toBeInTheDocument();
-    await userEvent.clear(inSheet.getByLabelText('Time'));
-    await userEvent.type(inSheet.getByLabelText('Time'), '10:00');
-    expect(inSheet.getByText('10:00 AM ET')).toBeInTheDocument();
+    await userEvent.clear(inSheet.getByLabelText('Starts'));
+    await userEvent.type(inSheet.getByLabelText('Starts'), '2026-10-06T10:00');
     expect(inSheet.getByText('Tue, Oct 6, 10:00 AM ET')).toBeInTheDocument();
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6417,73 +6407,126 @@ describe('agent profile', () => {
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 10 ? * MON-FRI *)', startDate: '2026-10-06T14:00:00.000Z' },
     ]);
-    expect(detail(sheet, 'Repeats')).toBe('Weekdays at 10:00 AM');
+    expect(detail(sheet, 'Repeats')).toBe('Every weekday at 10:00 AM');
   });
 
-  it('runs a task every so many minutes or hours, daily, or weekly on the days picked', async () => {
+  // The maintainer (#4021): "we need one single schdueld job us intead of changing depends on frequency or other factsr".
+  it('gives every task the same rows, Starts, Repeats and Ends, whatever it repeats; a rate(1 day) task keeps Every 24 hours as its own choice (#4021)', async () => {
     beforeCountedRuns();
-    service.scheduled = [MORNING_BRIEF];
+    // Dev's daily task: rate(1 day), from 7:15 AM New York on 6 October.
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'rate(1 day)', startDate: '2026-10-06T11:15:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    // It runs every 24 hours, so a clock change moves it off 7:15 AM: it isn't Every day.
+    expect(detail(sheet, 'Repeats')).toBe('Every 24 hours');
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every 24 hours');
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T07:15');
+    // Weekly runs on Starts' weekday, a Tuesday; its own schedule, which none says, goes last.
+    const listed = [
+      'Never', 'Every 5 minutes', 'Every 15 minutes', 'Every 30 minutes', 'Every hour', 'Every 2 hours', 'Every 6 hours', 'Every 12 hours',
+      'Every day', 'Every weekday', 'Every week on Tuesday', 'Every 24 hours',
+    ];
+    expect(choices(sheet)).toEqual(listed);
+    for (const choice of listed) {
+      // eslint-disable-next-line no-await-in-loop -- one choice at a time
+      await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), choice);
+      expect(rows(sheet)).toEqual(['Starts', 'Repeats', 'Ends', 'Model']);
+      expect(inSheet.queryByRole('status')).toBeNull();
+      // A task that runs once ends after it runs.
+      expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue(choice === 'Never' ? 'After it runs' : 'Never');
+      if (choice === 'Never') expect(inSheet.getByLabelText('Ends')).toBeDisabled();
+      else expect(inSheet.getByLabelText('Ends')).toBeEnabled();
+    }
+    expect(inSheet.queryByRole('button', { name: 'More' })).toBeNull();
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    // Back on its own choice, it stays rate(1 day).
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on rates' }]);
+    expect(detail(sheet, 'Repeats')).toBe('Every 24 hours');
+  });
+
+  it('moves a daily task to every 5 minutes, weekly on Starts\' weekday, Never, and back to daily (#4021)', async () => {
+    beforeCountedRuns();
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(30 7 ? * * *)', startDate: '2026-10-06T11:30:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
+    const edit = async (choice: string, starts?: string) => {
+      await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+      if (starts !== undefined) fireEvent.change(inSheet.getByLabelText('Starts'), { target: { value: starts } });
+      await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), choice);
+      await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    };
+    expect(detail(sheet, 'Repeats')).toBe('Every day at 7:30 AM');
+
+    await edit('Every 5 minutes');
+    expect(detail(sheet, 'Repeats')).toBe('Every 5 minutes');
+    // Thursday 8 October: Weekly follows Starts' weekday.
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(inSheet.getByLabelText('Starts'), { target: { value: '2026-10-08T07:30' } });
+    expect(choices(sheet).at(-1)).toBe('Every week on Thursday');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every week on Thursday');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(detail(sheet, 'Repeats')).toBe('Every week on Thursday at 7:30 AM');
+    await edit('Never');
+    expect(detail(sheet, 'Repeats')).toBe('Never');
+    await edit('Every day');
+    expect(detail(sheet, 'Repeats')).toBe('Every day at 7:30 AM');
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { ...fields, schedule: 'rate(5 minutes)', startDate: '2026-10-06T11:30:00.000Z' },
+      { ...fields, schedule: 'cron(30 7 ? * THU *)', startDate: '2026-10-08T11:30:00.000Z' },
+      { ...fields, schedule: 'at(2026-10-08T07:30:00)', startDate: null },
+      { ...fields, schedule: 'cron(30 7 * * ? *)', startDate: '2026-10-08T11:30:00.000Z' },
+    ]);
+  });
+
+  it('keeps every 3 hours as its own choice, where it sorts, until another is picked (#4021)', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'rate(3 hours)', startDate: '2026-10-06T11:00:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every 3 hours');
+    expect(choices(sheet).slice(5, 8)).toEqual(['Every 2 hours', 'Every 3 hours', 'Every 6 hours']);
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 6 hours');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 3 hours');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 6 hours');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, schedule: 'rate(6 hours)', startDate: '2026-10-06T11:00:00.000Z' }]);
+  });
+
+  it.each([
+    ['cron(0 8 1 * ? *)', 'At 8:00 AM, on day 1 of the month'],
+    ['rate(3 days)', 'Every 3 days'],
+  ])('keeps %s, which no listed choice says, as its own choice in its words, and Save leaves it alone (#4021)', async (schedule, words) => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    const options = within(inSheet.getByLabelText('Repeats')).getAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['Once', 'Minutes', 'Hours', 'Daily', 'Weekdays', 'Weekly']);
-    expect(inSheet.queryByLabelText('Every')).toBeNull();
 
-    // Every is a menu, as Repeats is: a rate's usual counts with their unit.
-    const every = () => within(inSheet.getByLabelText('Every')).getAllByRole('option').map((option) => option.textContent);
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Hours');
-    expect(every()).toEqual(['1 hour', '2 hours', '3 hours', '6 hours', '12 hours']);
-    await userEvent.selectOptions(inSheet.getByLabelText('Every'), '3 hours');
-    // A count that isn't one of the unit's is sorted in among them.
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Minutes');
-    expect(inSheet.getByLabelText('Every')).toHaveDisplayValue('3 minutes');
-    expect(every()).toEqual(['1 minute', '3 minutes', '5 minutes', '10 minutes', '15 minutes', '30 minutes']);
-
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Daily');
-    expect(inSheet.queryByLabelText('Every')).toBeNull();
-    expect(inSheet.queryByRole('status')).toBeNull();
-
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Weekly');
-    const days = within(inSheet.getByRole('group', { name: 'Days' }));
-    expect(days.getAllByRole('button').map((day) => [day.textContent, day.getAttribute('aria-pressed')])).toEqual([
-      ['S', 'false'], ['M', 'true'], ['T', 'false'], ['W', 'false'], ['T', 'false'], ['F', 'false'], ['S', 'false'],
-    ]);
-    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
-    await userEvent.click(days.getByRole('button', { name: 'Monday' }));
-    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
-    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(why(sheet)).toBe('No schedule yet: a weekly task needs its days');
-    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
-    await userEvent.click(days.getByRole('button', { name: 'Monday' }));
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue(words);
+    expect(choices(sheet).at(-1)).toBe(words);
+    expect(rows(sheet)).toEqual(['Starts', 'Repeats', 'Ends', 'Model']);
+    expect(inSheet.queryByText(/to change it/)).toBeNull();
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every day');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), words);
+    await userEvent.clear(inSheet.getByLabelText('Prompt'));
+    await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-
-    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON,THU *)', startDate: '2026-10-06T12:00:00.000Z' },
-    ]);
-    await closeTask(sheet);
-    expect(within(openProfile()).getByRole('region', { name: 'Every Monday, Thursday' })).toHaveTextContent(/8:00 AM · Brief me on rates$/);
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on FX' }]);
+    expect(service.scheduled[0]?.schedule).toBe(schedule);
   });
-
-  it.each(['rate(1 day)', 'cron(0 8 1 * ? *)'])(
-    'keeps %s, which the controls cannot show, read-only while other fields change',
-    async (schedule) => {
-      service.scheduled = [{ ...MORNING_BRIEF, schedule }];
-      await renderPage();
-      const sheet = await openTask(await openScheduled());
-      const inSheet = within(sheet);
-      await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-
-      expect(inSheet.queryByLabelText('Repeats')).toBeNull();
-      expect(inSheet.getByText('Ask Ada Bot to change it.')).toBeInTheDocument();
-      await userEvent.clear(inSheet.getByLabelText('Prompt'));
-      await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
-      await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-      expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on FX' }]);
-      expect(service.scheduled[0]?.schedule).toBe(schedule);
-    },
-  );
 
   it("runs a scheduled task on the account's default model until the user picks another", async () => {
     service.models = [
@@ -6496,15 +6539,12 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(task));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toHaveValue('plan');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
@@ -6518,7 +6558,6 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(await openScheduled()));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
 
     const model = inSheet.getByLabelText('Model');
     expect(model).toHaveValue('retired');
@@ -6538,7 +6577,6 @@ describe('agent profile', () => {
     expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
     expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toBeDisabled();
     expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
@@ -6566,7 +6604,6 @@ describe('agent profile', () => {
     await panel.findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     const chooser = inSheet.getByLabelText('Model');
     expect(chooser).toBeEnabled();
     expect(chooser).toHaveValue(model ?? '');
@@ -6574,11 +6611,9 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
     if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
@@ -6597,7 +6632,6 @@ describe('agent profile', () => {
     await within(openProfile()).findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
     expect(inSheet.getByLabelText('Model')).toHaveValue('');
@@ -8541,7 +8575,7 @@ describe('a proposed scheduled task', () => {
     expect(container).toHaveTextContent('Morning brief');
     expect(container).toHaveTextContent('Brief me on rates');
     // The words its task's Edit form will show.
-    expect(words(container)).toBe('Weekdays at 8:00 AM UTC');
+    expect(words(container)).toBe('Every weekday at 8:00 AM UTC');
 
     await userEvent.click(await confirmButton(container));
 
@@ -8596,14 +8630,14 @@ describe('a proposed scheduled task', () => {
     // A rate first runs a period after it is confirmed.
     [{ frequency: 'minutes', every: 1 }, 'rate(1 minute)', 'Every minute from 5:01 AM UTC'],
     [{ frequency: 'hours', every: 2 }, 'rate(2 hours)', 'Every 2 hours from 7:00 AM UTC'],
-    [{ frequency: 'daily', time: '18:30' }, 'cron(30 18 * * ? *)', 'Daily at 6:30 PM UTC'],
+    [{ frequency: 'daily', time: '18:30' }, 'cron(30 18 * * ? *)', 'Every day at 6:30 PM UTC'],
     // The Harness takes an unused field sent as null.
-    [{ frequency: 'weekdays', time: '08:00', every: null, days: null }, 'cron(0 8 ? * MON-FRI *)', 'Weekdays at 8:00 AM UTC'],
-    [{ frequency: 'weekly', time: '07:05', days: ['THU', 'MON'] }, 'cron(5 7 ? * MON,THU *)', 'Weekly on Mon, Thu at 7:05 AM UTC'],
+    [{ frequency: 'weekdays', time: '08:00', every: null, days: null }, 'cron(0 8 ? * MON-FRI *)', 'Every weekday at 8:00 AM UTC'],
+    [{ frequency: 'weekly', time: '07:05', days: ['THU', 'MON'] }, 'cron(5 7 ? * MON,THU *)', 'Every week on Monday and Thursday at 7:05 AM UTC'],
     [{ frequency: 'once', date: '2026-11-06', time: '08:30' }, 'at(2026-11-06T08:30:00)', 'Once on Nov 6, 8:30 AM UTC'],
-    [{ frequency: 'daily', time: '18:30', date: null, ends: null }, 'cron(30 18 * * ? *)', 'Daily at 6:30 PM UTC'],
+    [{ frequency: 'daily', time: '18:30', date: null, ends: null }, 'cron(30 18 * * ? *)', 'Every day at 6:30 PM UTC'],
     // A proposal made before proposals carried the Edit form's fields.
-    [{ schedule: 'cron(0 8 ? * MON-FRI *)' }, 'cron(0 8 ? * MON-FRI *)', 'Weekdays at 8:00 AM UTC'],
+    [{ schedule: 'cron(0 8 ? * MON-FRI *)' }, 'cron(0 8 ? * MON-FRI *)', 'Every weekday at 8:00 AM UTC'],
   ])('schedules a proposal of %j as %s', async (fields, schedule, summary) => {
     await renderPage();
     const { container } = render(
@@ -8652,7 +8686,7 @@ describe('a proposed scheduled task', () => {
       })
     );
 
-    expect(words(container)).toBe('Weekdays at 8:00 AM, ends Dec 31, 5:00 PM UTC');
+    expect(words(container)).toBe('Every weekday at 8:00 AM, ends Dec 31, 5:00 PM UTC');
     await userEvent.click(await confirmButton(container));
 
     expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
@@ -8665,7 +8699,7 @@ describe('a proposed scheduled task', () => {
       name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete',
       parameters: { ...proposal, starts: '2099-12-01T09:30', ends: '2099-12-31T17:00' }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
     }));
-    expect(words(container)).toBe('Weekdays at 8:00 AM, starts Dec 1, 2099, 9:30 AM, ends Dec 31, 2099, 5:00 PM UTC');
+    expect(words(container)).toBe('Every weekday at 8:00 AM, starts Dec 1, 2099, 9:30 AM, ends Dec 31, 2099, 5:00 PM UTC');
     await userEvent.click(await confirmButton(container));
     expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
       .toEqual({ ...task, timezone: 'UTC', startDate: '2099-12-01T09:30:00.000Z', endDate: '2099-12-31T17:00:00.000Z', proposalId: 'call-1' });
@@ -8680,7 +8714,7 @@ describe('a proposed scheduled task', () => {
     );
 
     // Tuesday's, Wednesday's and Thursday's runs.
-    expect(words(container)).toBe('Weekdays at 8:00 AM, ends Oct 8, 8:00 AM UTC');
+    expect(words(container)).toBe('Every weekday at 8:00 AM, ends Oct 8, 8:00 AM UTC');
     await userEvent.click(await confirmButton(container));
 
     expect(container).toHaveTextContent('This proposal uses a run count. Ask the agent for start and end times.');
@@ -8688,13 +8722,13 @@ describe('a proposed scheduled task', () => {
   });
 
   it.each([
-    [{ frequency: 'daily', time: '08:00' }, 'Daily at 8:00 AM, 1000000000 runs UTC'],
-    [{ schedule: 'rate(1 day)', ends: '2026-10-07T12:00' }, 'Every day, ends Oct 7, 12:00 PM UTC, up to 1000000000 runs'],
+    [{ frequency: 'daily', time: '08:00' }, 'Every day at 8:00 AM, 1000000000 runs UTC'],
+    [{ schedule: 'rate(1 day)', ends: '2026-10-07T12:00' }, 'Every 24 hours, ends Oct 7, 12:00 PM UTC, up to 1000000000 runs'],
   ])('renders a large counted proposal with fields %j', async (fields, expected) => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields, count: 1_000_000_000 }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields, count: 1_000_000_000 }, result: JSON.stringify({ model: 'fast' }),
       })
     );
     expect(words(container)).toBe(expected);
@@ -8702,14 +8736,14 @@ describe('a proposed scheduled task', () => {
   });
 
   it.each([
-    ['2026-10-06T07:00', 'Weekdays at 8:00 AM, ends 7:00 AM UTC'],
-    ['2026-10-07T12:00', 'Weekdays at 8:00 AM, ends Oct 7, 12:00 PM UTC'],
-    ['2026-10-09T12:00', 'Weekdays at 8:00 AM, ends Oct 8, 8:00 AM UTC'],
+    ['2026-10-06T07:00', 'Every weekday at 8:00 AM, ends 7:00 AM UTC'],
+    ['2026-10-07T12:00', 'Every weekday at 8:00 AM, ends Oct 7, 12:00 PM UTC'],
+    ['2026-10-09T12:00', 'Every weekday at 8:00 AM, ends Oct 8, 8:00 AM UTC'],
   ])('shows the earlier ending when a proposal has a count and stop time %s', async (ends, expected) => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3, ends }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3, ends }, result: JSON.stringify({ model: 'fast' }),
       })
     );
     expect(words(container)).toBe(expected);

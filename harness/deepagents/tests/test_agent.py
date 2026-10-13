@@ -436,7 +436,7 @@ def test_upgraded_main_and_subagent_keep_file_tools_without_recursive_delete(
     assert len(bound_tools) == 3
     for tools in bound_tools:
         assert {'read_file', 'write_file', 'execute'} <= tools
-        assert 'delete' not in tools
+        assert 'delete' in tools
     assert 'write_todos' in bound_tools[0]
     assert 'write_todos' not in bound_tools[1]
     assert 'write_todos' in bound_tools[2]

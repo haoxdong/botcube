@@ -7,8 +7,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, get_args
 
+from deepagents.middleware.filesystem import FsToolName
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
@@ -17,7 +18,7 @@ from langgraph.types import Command
 from . import turn_timing
 from .files_sync import FilesSync
 
-_WORKSPACE_TOOLS = frozenset({'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'execute'})
+_WORKSPACE_TOOLS = frozenset(get_args(FsToolName))
 
 
 class TurnFiles:

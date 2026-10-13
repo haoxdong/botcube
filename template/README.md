@@ -3,7 +3,7 @@
 This neutral Cartridge is both the template's hello-world and the permanent
 fixture for BotCube's tests. It provides:
 
-- a DeepAgents Harness definition with a shell backend restricted to `echo` and `template-cli data`;
+- a DeepAgents Harness definition whose shell runs any command, with deepagents' default timeout and output cap;
 - the `/auth/template` Chat Service router and local Account sessions;
 - a complete default web UI plugin with neutral branding and a local sample artifact;
 - a full placeholder deployment identity and a staged offline CLI;

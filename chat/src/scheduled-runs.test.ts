@@ -1369,6 +1369,114 @@ describe('pollScheduledRuns', () => {
 
   const neverDraining = async () => false;
 
+  it('receives healthy deliveries while expiration maintenance is still pending', async () => {
+    let releaseMaintenance!: () => void;
+    const heldMaintenance = new Promise<void>((resolve) => { releaseMaintenance = resolve; });
+    let maintenancePending = false;
+    let maintenanceStarts = 0;
+    const { fake, deleted, receives } = queue('{"owner":"healthy-owner","taskId":"healthy-task"}');
+    const runs: ScheduledRunMessage[] = [];
+    const stop = pollScheduledRuns(fake, async (message) => {
+      runs.push(message);
+    }, neverDraining, undefined, async () => {
+      maintenanceStarts += 1;
+      maintenancePending = true;
+      await heldMaintenance;
+      maintenancePending = false;
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(runs).toEqual([{ owner: 'healthy-owner', taskId: 'healthy-task', deliveryId: 'delivery-0' }]);
+        expect(deleted).toEqual(['receipt-0']);
+        expect(maintenancePending).toBe(true);
+        expect(receives()).toBe(2);
+        expect(maintenanceStarts).toBe(1);
+      });
+    } finally {
+      releaseMaintenance();
+      stop();
+    }
+  });
+
+  it('aborts receiving and reports a delayed maintenance failure after acknowledging healthy work', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let rejectMaintenance!: (error: Error) => void;
+    const heldMaintenance = new Promise<void>((_, reject) => { rejectMaintenance = reject; });
+    const failure = new Error('Expiry storage unavailable');
+    const failed = vi.fn();
+    const { fake, deleted, receives, signals } = queue('{"owner":"healthy-owner","taskId":"healthy-task"}');
+    const runs: ScheduledRunMessage[] = [];
+    const stop = pollScheduledRuns(fake, async (message) => {
+      runs.push(message);
+    }, neverDraining, failed, () => heldMaintenance);
+
+    try {
+      await vi.waitFor(() => {
+        expect(deleted).toEqual(['receipt-0']);
+        expect(receives()).toBe(2);
+      });
+      rejectMaintenance(failure);
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledWith(failure));
+      expect(runs).toEqual([{ owner: 'healthy-owner', taskId: 'healthy-task', deliveryId: 'delivery-0' }]);
+      expect(signals.map((signal) => signal.aborted)).toEqual([true, true]);
+      expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: expired task maintenance failed', failure);
+      expect(deleted).toEqual(['receipt-0']);
+      expect(receives()).toBe(2);
+    } finally {
+      stop();
+    }
+  });
+
+  it('keeps healthy work moving between maintenance runs and resumes maintenance after a minute', async () => {
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const releases: (() => void)[] = [];
+    const waits = Array.from({ length: 3 }, () => new Promise<void>((resolve) => { releases.push(resolve); }));
+    const { fake, deleted, receives } = queue(
+      '{"owner":"healthy-owner","taskId":"first"}',
+      '{"owner":"healthy-owner","taskId":"second"}',
+      '{"owner":"healthy-owner","taskId":"third"}',
+    );
+    const receive = fake.receive;
+    let waiting = 0;
+    const runs: ScheduledRunMessage[] = [];
+    const maintenance = vi.fn(async () => undefined);
+    const stop = pollScheduledRuns({
+      ...fake,
+      receive: async (signal) => {
+        const wait = waits[waiting++];
+        if (wait) await wait;
+        return receive(signal);
+      },
+    }, async (message) => { runs.push(message); }, neverDraining, undefined, maintenance);
+
+    try {
+      await vi.waitFor(() => expect(waiting).toBe(1));
+      defined(releases[0], 'first receive')();
+      await vi.waitFor(() => expect(waiting).toBe(2));
+      defined(releases[1], 'second receive')();
+      await vi.waitFor(() => {
+        expect(waiting).toBe(3);
+        expect(deleted).toEqual(['receipt-0', 'receipt-1']);
+      });
+      expect(maintenance).toHaveBeenCalledTimes(1);
+      now = 61_000;
+      defined(releases[2], 'third receive')();
+      await vi.waitFor(() => expect(receives()).toBe(4));
+      expect(maintenance).toHaveBeenCalledTimes(2);
+      expect(deleted).toEqual(['receipt-0', 'receipt-1', 'receipt-2']);
+      expect(runs).toEqual([
+        { owner: 'healthy-owner', taskId: 'first', deliveryId: 'delivery-0' },
+        { owner: 'healthy-owner', taskId: 'second', deliveryId: 'delivery-1' },
+        { owner: 'healthy-owner', taskId: 'third', deliveryId: 'delivery-2' },
+      ]);
+    } finally {
+      releases.forEach((release) => release());
+      stop();
+    }
+  });
+
   it('settles expired tasks before receiving without requiring a scheduled delivery', async () => {
     const events: string[] = [];
     const maintenance = vi.fn(async () => { events.push('maintenance'); });
