@@ -1,7 +1,9 @@
 import type { RunAgentInput } from '@ag-ui/client';
 import { Hono } from 'hono';
-import type { AccountHistory } from 'botcube-chat';
+import { HttpError, type AccountHistory } from 'botcube-chat';
 import { describe, expect, it } from 'vitest';
+import { memoryDocuments } from '../../../chat/test/memory-documents.js';
+import { templateAccountStore } from './account.js';
 import { templateCartridge, templateCartridgeFactory } from './cartridge.js';
 
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false,
@@ -23,19 +25,24 @@ describe('the template Chat Service Cartridge', () => {
     expect(await response.json()).toEqual({ status: 'ready', actorId: 'template-user' });
   });
 
-  it('files every request under the one local actor and forwards the Turn with its Agent Computer', async () => {
-    const cartridge = templateCartridge(history);
+  it("files each request under the browser's account and forwards the Turn with its Agent Computer", async () => {
+    const cartridge = templateCartridgeFactory({}, templateAccountStore({}, memoryDocuments()))(history);
     const input = {
       threadId: 'session-1', runId: 'run-1', state: {}, messages: [], tools: [], context: [],
       forwardedProps: { model: 'echo' },
     } as RunAgentInput;
 
-    let requester: { owner: string } = { owner: '' };
-    const route = new Hono().get('/', async (c) => { requester = await cartridge.requester(c); return c.json(requester); });
-    const session = await route.request('/');
-    expect(session.headers.get('set-cookie')).toContain('template_session=');
+    const route = new Hono()
+      .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, 500))
+      .route('/', cartridge.routes)
+      .get('/requester', async (c) => c.json(await cartridge.requester(c)));
+    expect(await (await route.request('/requester')).json()).toEqual({ detail: 'Missing template account cookie' });
+    const session = await route.request('/account/session');
+    const cookie = session.headers.get('set-cookie')?.split(';')[0] ?? '';
+    expect(cookie).toMatch(/^template_account_id=acct_/);
+    const requester = await (await route.request('/requester', { headers: { Cookie: cookie } })).json() as { owner: string };
 
-    expect(requester.owner).toMatch(/^template-/);
+    expect(requester).toEqual({ owner: (await session.json() as { accountId: string }).accountId });
     expect(cartridge.filingUserId(requester.owner)).toBe(requester.owner);
     expect(await cartridge.invocationPayload(input, requester, cartridge.models[0])).toEqual({
       ...input,

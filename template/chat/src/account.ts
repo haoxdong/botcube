@@ -1,20 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import type { Context } from 'hono';
-import { getCookie, setCookie } from 'hono/cookie';
+import { accountCookies } from 'botcube-chat/account-cookies';
+import { AccountStore } from 'botcube-chat/account-store';
+import { chatTable } from 'botcube-chat/config';
+import { TEMPLATE_IDENTITY } from '../../identity.js';
 
-export const accountsNeedingSignIn = new Set<string>();
+/** The template's accounts, `template_account_id` and `template_session`, in BOTCUBE_CHAT_TABLE. */
+export const templateCookies = accountCookies('template');
 
-const sessions = new Map<string, { owner: string; expires: number }>();
-
-export async function templateRequester(c: Context): Promise<{ owner: string }> {
-  const now = Date.now();
-  const cookie = getCookie(c, 'template_session');
-  const current = cookie ? sessions.get(cookie) : undefined;
-  if (current && current.expires > now) return { owner: current.owner };
-  for (const [key, value] of sessions) if (value.expires <= now) sessions.delete(key);
-  const token = randomUUID();
-  const owner = `template-${randomUUID()}`;
-  sessions.set(token, { owner, expires: now + 24 * 60 * 60 * 1000 });
-  setCookie(c, 'template_session', token, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 86400 });
-  return { owner };
-}
+export const templateAccountStore = (env: NodeJS.ProcessEnv, documents?: ConstructorParameters<typeof AccountStore>[2]) =>
+  new AccountStore(chatTable(env), { key: 'template', product: TEMPLATE_IDENTITY.name }, documents);

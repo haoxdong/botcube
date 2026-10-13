@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { HttpError } from 'botcube-chat';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { AccountFiles } from 'botcube-chat/files';
-import { templateRequester } from './account.js';
 
 const uploads = new Map<string, { owner: string; name: string; expires: number }>();
 const accounts = new Map<string, Map<string, Uint8Array>>();
@@ -31,8 +30,9 @@ export function templateFiles(requestUrl: string): Pick<AccountFiles, 'list' | '
   };
 }
 
-export const templateFileContent = new Hono()
-  .get('/files/content', async (c) => { const { owner } = await templateRequester(c); const name = requireName(c.req.query('name') ?? ''); const data = records(owner).get(name); if (!data) throw new HttpError(404, 'File not found'); return c.body(new Uint8Array(data)); })
+/** Serves the URLs `templateFiles` hands out, for the account `requester` resolves. */
+export const templateFileContent = (requester: (c: Context) => Promise<{ owner: string }>) => new Hono()
+  .get('/files/content', async (c) => { const { owner } = await requester(c); const name = requireName(c.req.query('name') ?? ''); const data = records(owner).get(name); if (!data) throw new HttpError(404, 'File not found'); return c.body(new Uint8Array(data)); })
   .put('/files/content', async (c) => {
     const upload = uploads.get(c.req.query('upload') ?? '');
     if (!upload || upload.expires <= Date.now() || upload.name !== c.req.query('name')) throw new HttpError(403, 'Invalid upload URL');

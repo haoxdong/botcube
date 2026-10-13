@@ -116,9 +116,11 @@ from `botcube-ui-web/ui`.
   no chevron. Text fields above the cards (`.settings-text`)
   are the same `radius-xl` box with 14px × 18px padding, the instructions 120px tall with 18px padding. Under them,
   every task's Edit form has the same card, after Codex's Schedule a task: Repeat (one menu: Interval, Daily, Weekdays,
-  Weekly, Once; Custom only for a schedule none of them says, read in its words and saved as written), then the one
-  row it needs: Every with a bare count and a `text-muted` unit, Time, Day over Time, or Once's date and time. Advanced,
-  shut by default, holds Starts, Ends and Model (Model alone for Once). Cancel and Save end the form at the right,
+  Weekly, Once; Custom only for a schedule none of them says, a rate of hours or days among them, read in its words
+  and saved as written), then the one row it needs: Interval's Every, minutes only, a bare count then "minutes" in
+  `text-muted` with no unit control; Time; Day over Time; or Once's date and time. More,
+  shut by default, holds Starts, Ends and Model (Model alone for Once). A task's sheet is laid out the same: that card
+  read-only, then More, shut, over Next run, Ends and Last run. Cancel and Save end the form at the right,
   pills 12px apart and at least 36px tall (44px on a phone).
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The

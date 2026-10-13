@@ -10,7 +10,7 @@ import { StatusPill } from "../components/ui/status-pill";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
 import { throwIfRefused } from "./refusal";
 import {
-  DAY_NAMES, WEEKDAYS, clock, dayTime, describeSchedule, fromExpression, lastRun, listing, repeatsWords, runs, stopInstant, summary, toExpression, unitOf, wallTime, wallWords, zoneName,
+  DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, describeSchedule, fromExpression, lastRun, listing, repeatsWords, runs, stopInstant, summary, toExpression, unitOf, wallTime, wallWords, zoneName,
   type Cadence, type Ending, type Weekday,
 } from "./schedule";
 
@@ -274,26 +274,56 @@ function NextRun({ task }: { task: ScheduledTask }) {
 }
 
 /**
- * What a task's sheet says of it, each time in its time zone: how it repeats, its next run (its first, before it has
- * run), when it ends, and how its last run ended (spec story 73).
+ * What a task's sheet says of it, each time in its time zone, laid out as Edit: Repeat and the row it needs in a card,
+ * as Edit opens on them; then More, shut, over a second card of its next run (its first, before it has run), when it
+ * ends, and how its last run ended (spec story 73).
  */
 function TaskDetails({ task }: { task: ScheduledTask }) {
   const cadence = fromExpression(task.schedule);
   const once = cadence?.frequency === "once";
   const last = task.lastRun;
+  const starts = startsOf(task, cadence, Date.now());
+  // Shut each time the sheet opens: the sheet's body mounts anew.
+  const [more, setMore] = useState(false);
   return (
-    <dl className="settings-group">
-      <Detail term="Repeats">{cadence === null ? describeSchedule(task.schedule) : repeatsWords(cadence)}</Detail>
-      <NextRun task={task} />
-      {/* A stop time in the past reads as its time: Next run alone says Ended (issues #3860, #3861). */}
-      {!once && <Detail term="Ends">{endsWords(task, cadence)}</Detail>}
-      {last && (
-        <Detail term="Last run">
-          {dayTime(last.at, task.timezone)}
-          <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
-        </Detail>
-      )}
-    </dl>
+    <>
+      <dl className="settings-group">
+        {repeatRows(repeatOf(task.schedule, cadence, starts), starts, task.timezone).map(([term, words]) => (
+          <Detail key={term} term={term}>
+            {words}
+          </Detail>
+        ))}
+      </dl>
+      <More open={more} onToggle={() => setMore(!more)}>
+        <dl className="settings-group">
+          <NextRun task={task} />
+          {/* A stop time in the past reads as its time: Next run alone says Ended (issues #3860, #3861). */}
+          {!once && <Detail term="Ends">{endsWords(task, cadence)}</Detail>}
+          {last && (
+            <Detail term="Last run">
+              {dayTime(last.at, task.timezone)}
+              <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
+            </Detail>
+          )}
+        </dl>
+      </More>
+    </>
+  );
+}
+
+/**
+ * More, as Codex's, under a card in Edit and in a task's sheet alike: muted words over a chevron that turns up while
+ * open, and under it, while open, what it folds away.
+ */
+function More({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <>
+      <button type="button" className="settings-more" aria-expanded={open} onClick={onToggle}>
+        More
+        <ChevronDown size={16} aria-hidden />
+      </button>
+      {open && children}
+    </>
   );
 }
 
@@ -315,10 +345,15 @@ function weekdayOf(wall: string): Weekday | undefined {
 }
 
 /**
- * Repeat's choices, after Codex's Schedule a task: every N minutes, hours, days or weeks (Interval), daily, on weekdays
- * or weekly at a time, once, or the task's own schedule where none of these says it (Custom).
+ * Repeat's choices, after Codex's Schedule a task: every N minutes (Interval), daily, on weekdays or weekly at a time,
+ * once, or the task's own schedule where none of these says it (Custom).
  */
 type Frequency = "interval" | "daily" | "weekdays" | "weekly" | "once" | "custom";
+
+/** Repeat's choices as its menu names them. */
+const FREQUENCY_NAMES: Record<Frequency, string> = {
+  interval: "Interval", daily: "Daily", weekdays: "Weekdays", weekly: "Weekly", once: "Once", custom: "Custom",
+};
 
 /** The task's own schedule where Repeat can't say it otherwise: its cadence, null where none says it, and its expression in words. */
 interface Own {
@@ -326,26 +361,21 @@ interface Own {
   words: string;
 }
 
-/** The units Interval counts. */
-const UNITS = ["minute", "hour", "day", "week"] as const;
-type Unit = (typeof UNITS)[number];
-
-/** What Repeat holds: how often; Interval's count, as typed, and unit; Weekly's day; and the task's own schedule. */
+/** What Repeat holds: how often; Interval's count of minutes, as typed; Weekly's day; and the task's own schedule. */
 interface Repeat {
   frequency: Frequency;
   every: string;
-  unit: Unit;
   day: Weekday;
   own: Own | null;
 }
 
 /**
- * Repeat over a schedule, with Starts. A rate is an Interval, its days as weeks when whole; a calendar schedule is
- * Daily, Weekdays or Weekly at Starts' time of day; any other is Custom.
+ * Repeat over a schedule, with Starts. A rate of minutes is an Interval; a calendar schedule is Daily, Weekdays or
+ * Weekly at Starts' time of day; any other, a rate of hours or days among them, is Custom.
  */
 function repeatOf(schedule: string, cadence: Cadence | null, starts: string): Repeat {
   const of = (frequency: Frequency, changes: Partial<Repeat> = {}): Repeat => ({
-    frequency, every: "30", unit: "minute", day: weekdayOf(starts) ?? "MON", own: null, ...changes,
+    frequency, every: "30", day: weekdayOf(starts) ?? "MON", own: null, ...changes,
   });
   switch (cadence?.frequency) {
     case "once":
@@ -353,15 +383,12 @@ function repeatOf(schedule: string, cadence: Cadence | null, starts: string): Re
     case "weekdays":
       return of(cadence.frequency);
     case "minutes":
-    case "hours":
-      return of("interval", { every: String(cadence.every), unit: cadence.frequency === "minutes" ? "minute" : "hour" });
+      return of("interval", { every: String(cadence.every) });
     case "weekly": {
       const [day] = cadence.days;
       if (cadence.days.length === 1 && day !== undefined) return of("weekly", { day });
     }
   }
-  const days = Number(/^rate\(([1-9]\d*) days?\)$/.exec(schedule)?.[1] ?? 0);
-  if (days > 0) return of("interval", days % 7 === 0 ? { every: String(days / 7), unit: "week" } : { every: String(days), unit: "day" });
   return of("custom", { own: { cadence, words: describeSchedule(schedule) } });
 }
 
@@ -371,10 +398,16 @@ function ownCadence(own: Own | null, starts: string): Cadence | null {
   return cadence !== null && "time" in cadence && cadence.frequency !== "once" ? { ...cadence, time: starts.slice(11) } : cadence;
 }
 
+/** Custom's words: the task's own schedule, at Starts' time of day where it has one. Custom with none throws. */
+function ownWords(own: Own | null, starts: string): string {
+  if (own === null) throw new Error("Custom has no schedule of its own");
+  const cadence = ownCadence(own, starts);
+  return cadence === null ? own.words : repeatsWords(cadence);
+}
+
 /**
  * The cadence and expression Repeat makes with Starts, and its first run (an ISO instant), or why it makes none yet.
- * An Interval of days or weeks is a rate with no cadence, run 24 hours at a time; the task's own schedule where none
- * says it makes neither, so it stays as written.
+ * The task's own schedule where none says it makes neither, so it stays as written.
  */
 function pickedSchedule(repeat: Repeat, starts: string, timezone: string): { cadence: Cadence | null; expression: string | null; start: string } | { why: string } {
   let start: string;
@@ -388,10 +421,7 @@ function pickedSchedule(repeat: Repeat, starts: string, timezone: string): { cad
   switch (repeat.frequency) {
     case "interval": {
       if (!/^[1-9]\d*$/.test(repeat.every)) return { why: "Every needs a whole number from 1" };
-      const every = Number(repeat.every);
-      if (repeat.unit === "minute" || repeat.unit === "hour") return made({ frequency: `${repeat.unit}s`, every });
-      const days = repeat.unit === "week" ? every * 7 : every;
-      return { cadence: null, expression: `rate(${days} ${unitOf("day", days)})`, start };
+      return made({ frequency: "minutes", every: Number(repeat.every) });
     }
     case "once":
       return made({ frequency: "once", date: starts.slice(0, 10), time });
@@ -478,21 +508,24 @@ function WhenRow({ label, value, time = false, timezone, disabled, onChange }: {
 function RepeatRow({ value, disabled, onChange }: { value: Repeat; disabled: boolean; onChange: (value: Repeat) => void }) {
   return (
     <SelectRow label="Repeat" value={value.frequency} disabled={disabled} onChange={(frequency) => onChange({ ...value, frequency: frequency as Frequency })}>
-      <option value="interval">Interval</option>
-      <option value="daily">Daily</option>
-      <option value="weekdays">Weekdays</option>
-      <option value="weekly">Weekly</option>
-      <option value="once">Once</option>
-      {value.own && <option value="custom">Custom</option>}
+      {Object.entries(FREQUENCY_NAMES)
+        .filter(([frequency]) => frequency !== "custom" || value.own)
+        .map(([frequency, name]) => (
+          <option key={frequency} value={frequency}>
+            {name}
+          </option>
+        ))}
     </SelectRow>
   );
 }
 
-/** Interval's Every, as Codex's: the count bare and editable in place, then its unit, muted, with no box. */
+/**
+ * Interval's Every, as Codex's: the count of minutes bare and edited in place, with no box, then minutes, muted; a tap
+ * anywhere on the row puts the caret in the count.
+ */
 function EveryRow({ value, disabled, onChange }: { value: Repeat; disabled: boolean; onChange: (value: Repeat) => void }) {
-  const count = Number(value.every) || 0;
   return (
-    <div className="settings-row">
+    <label className="settings-row">
       <span>Every</span>
       <span className="settings-every">
         <input
@@ -503,16 +536,31 @@ function EveryRow({ value, disabled, onChange }: { value: Repeat; disabled: bool
           style={{ width: `${Math.max(value.every.length, 1) + 0.5}ch` }}
           onChange={(event) => onChange({ ...value, every: event.target.value.replace(/\D/g, "") })}
         />
-        <select aria-label="Unit" disabled={disabled} value={value.unit} onChange={(event) => onChange({ ...value, unit: event.target.value as Unit })}>
-          {UNITS.map((unit) => (
-            <option key={unit} value={unit}>
-              {unitOf(unit, count)}
-            </option>
-          ))}
-        </select>
+        <span>{unitOf("minute", Number(value.every))}</span>
       </span>
-    </div>
+    </label>
   );
+}
+
+/**
+ * Repeat and the row it needs, as label and words, as Edit's shut card shows them: a task's sheet reads them, so the
+ * two say one thing.
+ */
+function repeatRows(repeat: Repeat, starts: string, timezone: string): [string, string][] {
+  const head: [string, string] = ["Repeat", FREQUENCY_NAMES[repeat.frequency]];
+  switch (repeat.frequency) {
+    case "interval":
+      return [head, ["Every", `${repeat.every} ${unitOf("minute", Number(repeat.every))}`]];
+    case "weekly":
+      return [head, ["Day", dayName(repeat.day)], ["Time", whenWords(starts, timezone, true)]];
+    case "daily":
+    case "weekdays":
+      return [head, ["Time", whenWords(starts, timezone, true)]];
+    case "once":
+      return [head, ["Time", whenWords(starts, timezone, false)]];
+    case "custom":
+      return [head, ["Schedule", ownWords(repeat.own, starts)]];
+  }
 }
 
 /**
@@ -617,8 +665,8 @@ interface Draft {
   prompt: string;
   model: string;
   repeat: Repeat;
-  /** Advanced is open, showing Starts, Ends and the model. */
-  advanced: boolean;
+  /** More is open, showing Starts, Ends and the model. */
+  more: boolean;
   /** The first run as Starts shows it: a date and time (YYYY-MM-DDTHH:MM) in the task's time zone. */
   starts: string;
   ends: Ends;
@@ -637,7 +685,7 @@ function startsOf(task: ScheduledTask, cadence: Cadence | null, now: number): st
 }
 
 /**
- * The Edit form over a task, Advanced shut: Repeat on its schedule; Ends On its last run for a counted task, else On
+ * The Edit form over a task, More shut: Repeat on its schedule; Ends On its last run for a counted task, else On
  * its stop time, else Never.
  */
 function draftOf(task: ScheduledTask, model: string): Draft {
@@ -650,7 +698,7 @@ function draftOf(task: ScheduledTask, model: string): Draft {
   const on = task.endDate ? wallTime(task.endDate, task.timezone) : "";
   const ends: Ends = { choice: task.maxRuns != null || task.endDate ? "on" : "never", on, count: task.maxRuns ?? null };
   return {
-    title: task.title, prompt: task.prompt, model, repeat, advanced: false, starts, ends,
+    title: task.title, prompt: task.prompt, model, repeat, more: false, starts, ends,
     opened: {
       starts,
       expression: "why" in made ? null : made.expression,
@@ -743,7 +791,7 @@ function countedWall(save: ReturnType<typeof edited>, timezone: string): string 
 /**
  * The Edit form, after Codex's Schedule a task (DESIGN.md): the title and what it asks; then one card, Repeat and what
  * it needs: Interval's Every, Weekly's Day, a calendar schedule's Time, Once's date and time, or Custom's own words;
- * then Advanced, shut, over Starts, Ends and the model; then, while Save can't, why, over Cancel and Save. Its times
+ * then More, shut, over Starts, Ends and the model; then, while Save can't, why, over Cancel and Save. Its times
  * are in the task's time zone.
  */
 function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, onDone }: {
@@ -762,8 +810,6 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
   const set = (changes: Partial<Draft>) => setDraft({ ...draft, ...changes });
   const save = edited(draft, task, model);
   const { frequency } = draft.repeat;
-  // Custom says its time of day, which follows Starts.
-  const custom = ownCadence(draft.repeat.own, draft.starts);
   return (
     <div className="scheduled-sheet-body scheduled-edit">
       <input className="settings-text" aria-label="Title" placeholder="Title" disabled={saving} value={draft.title} onChange={(event) => set({ title: event.target.value })} />
@@ -795,15 +841,12 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
         {frequency === "custom" && (
           <div className="settings-row">
             <span>Schedule</span>
-            <span>{custom === null ? draft.repeat.own?.words : repeatsWords(custom)}</span>
+            {/* Custom says its time of day, which follows Starts. */}
+            <span>{ownWords(draft.repeat.own, draft.starts)}</span>
           </div>
         )}
       </div>
-      <button type="button" className="settings-advanced" aria-expanded={draft.advanced} onClick={() => set({ advanced: !draft.advanced })}>
-        Advanced
-        <ChevronDown size={16} aria-hidden />
-      </button>
-      {draft.advanced && (
+      <More open={draft.more} onToggle={() => set({ more: !draft.more })}>
         <div className="settings-group">
           {frequency !== "once" && (
             <>
@@ -813,7 +856,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
           )}
           <ModelRow task={task} models={models} modelsFailed={modelsFailed} runsOn={runsOn} value={draft.model} disabled={saving} onChange={(picked) => set({ model: picked })} />
         </div>
-      )}
+      </More>
       {"why" in save && (
         <p className="scheduled-task-hint" role="status">
           {save.why}

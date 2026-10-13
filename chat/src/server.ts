@@ -1,5 +1,5 @@
 import { TurnTiming } from './turn-timing.js';
-import { positiveInteger } from './config.js';
+import { chatTable, positiveInteger } from './config.js';
 import { TurnIdentity, forwardTurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import type { TurnFailure } from './session-metadata.js';
 import type { RunAgentInput } from '@ag-ui/client';
@@ -839,7 +839,7 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
   if (config.agentCore === null && config.localHarnessUrl === null && !config.harnessEndpoint) {
     console.warn('AGENTCORE_RUNTIME_ARN is not set; agent runs (POST /) return 503 and warmup is skipped until it is configured.');
   }
-  const table = env.BOTCUBE_CHAT_TABLE || 'chat';
+  const table = chatTable(env);
   const scheduler = schedulerConfigFromEnv(env);
   let stopScheduledRuns: (() => void) | undefined;
   let built: ChatServiceCartridge | undefined;

@@ -4211,39 +4211,31 @@ button.worklog-step-head:hover {
   pointer-events: none;
 }
 
-/* Interval's Every, as Codex's: the count bare and editable in place, then its unit muted; no box. */
+/* Interval's Every, as Codex's: the count bare and edited in place, then minutes, muted. No box or ring at any
+   state, focus among them: only the caret shows. */
 .settings-every {
   display: flex;
   align-items: baseline;
   gap: 6px;
-}
-
-.settings-every input,
-.settings-every select {
-  padding: 0;
-  border: none;
-  font: inherit;
-  font-size: var(--font-body);
-  background: none;
-  appearance: none;
+  color: var(--color-text-muted);
 }
 
 .settings-every input {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font: inherit;
+  font-size: var(--font-body);
   text-align: right;
   color: var(--color-text);
+  background: none;
+  box-shadow: none;
+  outline: none;
+  appearance: none;
 }
 
-.settings-every input:focus-visible {
-  outline: auto;
-}
-
-.settings-every select {
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-/* Advanced, as Codex's: muted words and a chevron under the card, which turns up while open. */
-.settings-advanced {
+/* More, as Codex's, in Edit and a task's sheet: muted words and a chevron under the card, which turns up while open. */
+.settings-more {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4258,11 +4250,11 @@ button.worklog-step-head:hover {
   cursor: pointer;
 }
 
-.settings-advanced svg {
+.settings-more svg {
   transition: rotate 0.2s;
 }
 
-.settings-advanced[aria-expanded="true"] svg {
+.settings-more[aria-expanded="true"] svg {
   rotate: 180deg;
 }
 

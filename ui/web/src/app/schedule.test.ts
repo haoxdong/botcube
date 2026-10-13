@@ -96,13 +96,13 @@ describe('fromExpression', () => {
 describe('listing', () => {
   it.each<[string, { label: string; time?: string }]>([
     ['rate(1 day)', { label: 'Every 24 hours' }],
-    ['cron(0 7 ? * * *)', { label: 'Every day', time: '7:00 AM' }],
-    ['cron(0 7 ? * MON-FRI *)', { label: 'Every weekday', time: '7:00 AM' }],
-    ['cron(0 7 ? * TUE *)', { label: 'Every week on Tuesday', time: '7:00 AM' }],
+    ['cron(0 7 ? * * *)', { label: 'Daily', time: '7:00 AM' }],
+    ['cron(0 7 ? * MON-FRI *)', { label: 'Weekdays', time: '7:00 AM' }],
+    ['cron(0 7 ? * TUE *)', { label: 'Weekly on Tuesday', time: '7:00 AM' }],
     ['rate(5 minutes)', { label: 'Every 5 minutes' }],
     ['at(2026-10-14T08:30:00)', { label: 'Once', time: 'Oct 14, 8:30 AM' }],
     ['cron(0 8 1 * ? *)', { label: 'At 8:00 AM, on day 1 of the month' }],
-  ])('lists %s in Repeats\' words', (expression, listed) => {
+  ])('lists %s in Repeat\'s words', (expression, listed) => {
     expect(listing(expression)).toEqual(listed);
   });
 });
@@ -113,10 +113,10 @@ describe('repeatsWords', () => {
     [{ frequency: 'minutes', every: 5 }, 'Every 5 minutes'],
     [{ frequency: 'hours', every: 1 }, 'Every hour'],
     [{ frequency: 'hours', every: 3 }, 'Every 3 hours'],
-    [{ frequency: 'daily', time: '07:00' }, 'Every day at 7:00 AM'],
-    [{ frequency: 'weekdays', time: '19:30' }, 'Every weekday at 7:30 PM'],
-    [{ frequency: 'weekly', time: '07:00', days: ['MON', 'WED', 'FRI'] }, 'Every week on Monday, Wednesday, and Friday at 7:00 AM'],
-    [{ frequency: 'once', date: '2026-10-14', time: '09:00' }, 'Never'],
+    [{ frequency: 'daily', time: '07:00' }, 'Daily at 7:00 AM'],
+    [{ frequency: 'weekdays', time: '19:30' }, 'Weekdays at 7:30 PM'],
+    [{ frequency: 'weekly', time: '07:00', days: ['MON', 'WED', 'FRI'] }, 'Weekly on Monday, Wednesday, and Friday at 7:00 AM'],
+    [{ frequency: 'once', date: '2026-10-14', time: '09:00' }, 'Once'],
   ])('says %j as %s', (cadence, words) => {
     expect(repeatsWords(cadence)).toBe(words);
   });
@@ -146,10 +146,10 @@ describe('summary', () => {
   });
 
   it('says the time of day once for a daily, weekdays or weekly task, and its start date when it waits past its next run day', () => {
-    expect(summary('cron(0 7 * * ? *)', NY, at('2026-10-06T11:00:00Z'), { kind: 'never' }, now)).toBe('Every day at 7:00 AM ET');
-    expect(summary('cron(0 7 ? * MON-FRI *)', NY, at('2026-10-14T11:00:00Z'), { kind: 'never' }, now)).toBe('Every weekday at 7:00 AM from Oct 14 ET');
+    expect(summary('cron(0 7 * * ? *)', NY, at('2026-10-06T11:00:00Z'), { kind: 'never' }, now)).toBe('Daily at 7:00 AM ET');
+    expect(summary('cron(0 7 ? * MON-FRI *)', NY, at('2026-10-14T11:00:00Z'), { kind: 'never' }, now)).toBe('Weekdays at 7:00 AM from Oct 14 ET');
     // 6 October 2026 is a Tuesday, so a Monday and Thursday task first runs on Thursday 8 October anyway.
-    expect(summary('cron(5 7 ? * MON,THU *)', NY, at('2026-10-08T11:05:00Z'), { kind: 'never' }, now)).toBe('Every week on Monday and Thursday at 7:05 AM ET');
+    expect(summary('cron(5 7 ? * MON,THU *)', NY, at('2026-10-08T11:05:00Z'), { kind: 'never' }, now)).toBe('Weekly on Monday and Thursday at 7:05 AM ET');
   });
 
   it('says a one-off run as its date and time, or its time today', () => {

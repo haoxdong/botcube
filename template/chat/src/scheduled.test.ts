@@ -1,12 +1,14 @@
 import type { AccountHistory } from 'botcube-chat';
 import { expect, it } from 'vitest';
-import { templateCartridge } from './cartridge.js';
+import { memoryDocuments } from '../../../chat/test/memory-documents.js';
+import { templateAccountStore } from './account.js';
+import { templateCartridgeFactory } from './cartridge.js';
 
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false,
       owns: async () => true };
 
 it('reports a scheduled site refusal only to the task owner', async () => {
-  const cartridge = templateCartridge(history);
+  const cartridge = templateCartridgeFactory({}, templateAccountStore({}, memoryDocuments()))(history);
   const first = await cartridge.routes.request('/account/session');
   const { accountId } = await first.json() as { accountId: string };
   const cookie = first.headers.get('set-cookie')?.split(';')[0];

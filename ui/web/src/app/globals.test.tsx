@@ -570,7 +570,7 @@ it("shows a scheduled task's Title and instructions as fields, and its schedule 
   const form = document.createElement('div');
   form.innerHTML =
     '<input class="settings-text" value="Morning brief" /><textarea class="settings-text"></textarea>' +
-    '<div class="settings-group"><label class="settings-row"><span>Repeats</span><span class="settings-select"><select></select></span></label></div>';
+    '<div class="settings-group"><label class="settings-row"><span>Repeat</span><span class="settings-select"><select></select></span></label></div>';
   document.body.append(form);
 
   for (const control of ['input', 'textarea']) {
