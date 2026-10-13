@@ -70,7 +70,6 @@ services:
     environment:
       <<: *dynamodb-environment
       PORT: "8125"
-      DYNAMODB_ENDPOINT_URL: http://dynamodb:8000
       BOTCUBE_VAULT_TABLE: credential-vault
       BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/template-vault/key
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret

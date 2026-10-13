@@ -5,17 +5,22 @@ import base64
 import binascii
 import itertools
 import json
+import logging
 import os
 import ssl
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from fastapi import APIRouter, HTTPException, Request
 
+from .server import CREDENTIAL_CAPTURE_SCOPE, InvocationGuard
+
+_LOG = logging.getLogger(__name__)
 FIELD_WAIT_SECONDS = 15.0
 _PROBE_INTERVAL_SECONDS = 0.25
 # How long the automation stream may take to answer one CDP command.
@@ -224,3 +229,52 @@ async def open_browser_page(variable: str, missing: str, browser_session_id: str
         if not isinstance(page_session_id, str):
             raise CdpError('Could not attach to the Auth Browser Session page')
         yield _AutomationStreamPage(socket, page_session_id)
+
+
+def required_text(payload: Mapping[str, object], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=400, detail=f'{name} is required')
+    return value.strip()
+
+
+def sheet_routes(
+    guard: InvocationGuard,
+    *,
+    account_header: str,
+    key: Callable[[], SheetKey],
+    open_page: Callable[[str], AbstractAsyncContextManager[CdpPage]],
+    type_credentials: Callable[[CdpPage, str, str], Awaitable[None]],
+) -> APIRouter:
+    """A site's Sign-in Sheet: the key it seals credentials to, and the call that types them into the site's login page.
+
+    The site names how its page is reached and how its fields are filled; only this process can open what is sealed.
+    """
+    router = APIRouter()
+
+    @router.get('/auth/sheet/public-key')
+    def sign_in_sheet_public_key() -> dict[str, str]:
+        return {'algorithm': 'RSA-OAEP-256', 'publicKey': key().public_key()}
+
+    @router.post('/auth/sheet/type')
+    async def type_sign_in_sheet_credentials(payload: dict[str, Any], request: Request) -> dict[str, str]:
+        guard.verify_account(request.headers.get('authorization'), request.headers.get(account_header), CREDENTIAL_CAPTURE_SCOPE)
+        browser_session_id = required_text(payload, 'browserSessionId')
+        sealed = required_text(payload, 'credentials')
+        try:
+            username, password = key().open(sealed)
+            async with open_page(browser_session_id) as page:
+                await type_credentials(page, username, password)
+        except NotEncryptedToCredentialService as exc:
+            raise HTTPException(status_code=400, detail={'code': exc.code, 'message': str(exc)}) from None
+        except SheetEntryRefused as exc:
+            _LOG.warning('Sign-in Sheet entry refused: %s', exc)
+            raise HTTPException(status_code=409, detail={'code': exc.code, 'message': str(exc)}) from None
+        except (CdpError, OSError, TimeoutError) as exc:
+            cause = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
+            # The traceback and the exception's notes name the step; nothing here carries the credentials.
+            _LOG.error('Sign-in Sheet entry failed: %s', cause, exc_info=exc)
+            raise HTTPException(status_code=502, detail=f'Sign-in page could not be reached: {cause}') from None
+        return {'status': 'typed'}
+
+    return router

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,16 @@ class ModelRelay:
     token: str
     headers: Mapping[str, str]
     session_id: str
+
+
+def openai_model_relay(credential_service_url: str, token: str, session_id: str, headers: Mapping[str, str]) -> ModelRelay:
+    """The Credential Service's OpenAI relay, under the Turn's invocation token and for the Session it was signed for.
+
+    The OpenAI provider sits at the service root, whatever provider prefix the bound URL names. `headers` name
+    the Session (and the account) in the Cartridge's Credential Service headers.
+    """
+    url = urlsplit(credential_service_url)
+    return ModelRelay(base_url=f'{url.scheme}://{url.netloc}/openai/v1', token=token, headers=headers, session_id=session_id)
 
 
 @dataclass(frozen=True)

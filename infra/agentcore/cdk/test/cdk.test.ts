@@ -6,7 +6,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
-import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   AgentCoreStack,
@@ -16,9 +15,16 @@ import {
 } from '../lib/cdk-stack';
 import { readCdkContext } from '../lib/cdk-context';
 
+/** The template's one runtime and one memory. */
+function onlyOf<T>(entries: T[]): T {
+  const [entry] = entries;
+  assert(entry, 'the template spec declares it');
+  return entry;
+}
+import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
+
 const DEPLOY_ROOT = resolve(__dirname, '../../../../template/deploy');
-const AGENTCORE_SPEC = resolve(DEPLOY_ROOT, 'agentcore/agentcore.json');
-const DEPLOY_IDENTITY = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'identity.json'), 'utf-8'));
+const DEPLOY_IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 const PHYSICAL_IDENTITY = {
   runtime: DEPLOY_IDENTITY.aws.agentCore.runtime,
   memory: DEPLOY_IDENTITY.aws.agentCore.memory,
@@ -156,7 +162,7 @@ test('private browser adopts pre-provisioned network identity without recreating
 });
 
 test('botcube_harness_deepagents memory enables all built-in extraction strategies under actor-first namespaces', () => {
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
+  const spec = readProjectSpec(DEPLOY_ROOT);
   const app = new cdk.App();
   const stack = new AgentCoreStack(app, 'MemoryStrategyStack', {
     spec,
@@ -199,7 +205,7 @@ test('botcube_harness_deepagents memory enables all built-in extraction strategi
 test('runtime IAM denies every Memory operation and retains only audited harmless permissions', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'MemoryIsolationStack', {
     env: { account: '123456789012', region: 'us-east-1' },
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
   });
   const template = Template.fromStack(stack);
@@ -275,12 +281,12 @@ test('runtime IAM denies every Memory operation and retains only audited harmles
 });
 
 test('synthesizes the Cartridge-owned physical resource identities', () => {
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
+  const spec = readProjectSpec(DEPLOY_ROOT);
   const app = new cdk.App();
   const stack = new AgentCoreStack(app, 'PhysicalIdentityStack', {
     spec,
     physicalIdentity: PHYSICAL_IDENTITY,
-    harnessCodeLocation: resolve(DEPLOY_ROOT, spec.runtimes[0].codeLocation),
+    harnessCodeLocation: resolve(DEPLOY_ROOT, onlyOf(spec.runtimes).codeLocation),
   });
   const template = Template.fromStack(stack);
 
@@ -308,7 +314,7 @@ test('synthesizes the Cartridge-owned physical resource identities', () => {
 });
 
 test('synthesizes the deployed build-handler and IAM policy shape', () => {
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
+  const spec = readProjectSpec(DEPLOY_ROOT);
   const app = new cdk.App({
     context: readCdkContext(resolve(__dirname, '../cdk.json')),
   });
@@ -397,7 +403,7 @@ test('synthesizes the deployed build-handler and IAM policy shape', () => {
 test('grants the runtime role tracing and no browser access (ADR 0075 decision 5)', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'RuntimeGrantsStack', {
     env: { account: '123456789012', region: 'us-east-1' },
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
   });
 
@@ -424,7 +430,7 @@ test('grants the runtime role tracing and no browser access (ADR 0075 decision 5
 
 test('caps the lifecycle of the runtime the stack deploys (ADR 0029)', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'RuntimeLifecycleStack', {
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
   });
 
@@ -438,7 +444,7 @@ test('caps the lifecycle of the runtime the stack deploys (ADR 0029)', () => {
 
 test("the agent's shell works in the runtime's session storage (ADR 0077)", () => {
   const stack = new AgentCoreStack(new cdk.App(), 'SessionStorageStack', {
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
   });
 
@@ -451,7 +457,7 @@ test("the agent's shell works in the runtime's session storage (ADR 0077)", () =
 test("the runtime role reaches no account's Files: no S3 or S3 Files action (ADR 0077)", () => {
   const stack = new AgentCoreStack(new cdk.App(), 'RuntimeFilesStack', {
     env: { account: '123456789012', region: 'us-east-1' },
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
     privateNatBrowser: PRIVATE_NAT_BROWSER,
   });
@@ -487,8 +493,8 @@ test("the runtime role reaches no account's Files: no S3 or S3 Files action (ADR
 });
 
 test('refuses a spec whose resources cannot take the one Cartridge-owned name', () => {
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
-  spec.runtimes.push({ ...spec.runtimes[0], name: 'second_runtime' });
+  const spec = readProjectSpec(DEPLOY_ROOT);
+  spec.runtimes.push({ ...onlyOf(spec.runtimes), name: 'second_runtime' });
 
   expect(
     () =>
@@ -505,7 +511,7 @@ test('existing resources replace runtime role and network without creating or mu
   const roleArn = 'arn:aws:iam::123456789012:role/corporate-runtime';
   const boundaryArn = 'arn:aws:iam::123456789012:policy/corporate-boundary';
   const keyArn = 'arn:aws:kms:us-east-1:123456789012:key/corporate-key';
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
+  const spec = readProjectSpec(DEPLOY_ROOT);
   const original = JSON.stringify(spec);
   const vpc = ec2.Vpc.fromVpcAttributes(imports, 'Vpc', {
     vpcId: 'vpc-corporate',
@@ -559,7 +565,7 @@ test('existing resources replace runtime role and network without creating or mu
 
 test('omitted resource props retain the default runtime configuration snapshot', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'DefaultResources', {
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
   });
   const template = Template.fromStack(stack);
@@ -573,9 +579,9 @@ test('omitted resource props retain the default runtime configuration snapshot',
 });
 
 test('example Memory keeps its resource identity and supplies only valid runtime environment names', () => {
-  const spec = JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8'));
-  spec.runtimes[0].name = 'example-agent';
-  spec.memories[0].name = 'example-agent';
+  const spec = readProjectSpec(DEPLOY_ROOT);
+  onlyOf(spec.runtimes).name = 'example-agent';
+  onlyOf(spec.memories).name = 'example-agent';
   const stack = new AgentCoreStack(new cdk.App(), 'ExampleResourceIdentity', {
     spec,
     physicalIdentity: PHYSICAL_IDENTITY,
@@ -605,7 +611,7 @@ test.each([
   expect(
     () =>
       new AgentCoreStack(new cdk.App(), 'InvalidLifecycle', {
-        spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+        spec: readProjectSpec(DEPLOY_ROOT),
         physicalIdentity: PHYSICAL_IDENTITY,
         [name]: value,
       })
@@ -618,7 +624,7 @@ test.each([
   [60, 60],
 ])('accepts runtime lifecycle at the caps and below (%s, %s)', (maxLifetime, idleTimeout) => {
   const stack = new AgentCoreStack(new cdk.App(), 'ConfiguredLifecycle', {
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
     runtimeMaxLifetimeSeconds: maxLifetime,
     runtimeIdleTimeoutSeconds: idleTimeout,
@@ -638,7 +644,7 @@ test('adopters name the security group created for a runtime VPC', () => {
   });
   const stack = new AgentCoreStack(app, 'NamedRuntime', {
     env: { account: '123456789012', region: 'us-east-1' },
-    spec: JSON.parse(readFileSync(AGENTCORE_SPEC, 'utf-8')),
+    spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
     vpc,
     runtimeSecurityGroupName: 'adopter-runtime',

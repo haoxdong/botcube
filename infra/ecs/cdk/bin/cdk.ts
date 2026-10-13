@@ -4,16 +4,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { cartridgeDeployRoot } from '../lib/cartridge.js';
+import { cartridgeDeployRoot, cartridgeIdentity, projectDir } from '../lib/cartridge.js';
 import { repositoryImageProps } from '../lib/repository-image.js';
 import { defineProduction, parkedContext } from '../lib/production.js';
 
 export const app = new App();
-// This project's directory holds cdk.json, whether the app runs from source or from dist/.
-const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
 const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
 const deployRoot = cartridgeDeployRoot();
-const identity = JSON.parse(fs.readFileSync(path.join(deployRoot, 'identity.json'), 'utf8'));
+const identity = cartridgeIdentity(deployRoot);
 // A Cartridge holds its Chat Service half in `chat/` beside `deploy/`.
 const cartridgeFile = (file: string) => path.relative(repositoryRoot, path.join(deployRoot, file));
 // HEAD, marked `-dirty` when tracked files differ from it, so a deploy never claims a commit it did not ship.

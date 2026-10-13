@@ -5,7 +5,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from botcube_cartridge import HarnessDefinition, InvocationAuth, environment_cache_key
+from botcube_cartridge import (
+    HarnessDefinition,
+    InvocationAuth,
+    environment_cache_key,
+    openai_model_relay,
+)
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _IDENTITY = json.loads((_PACKAGE_ROOT / 'identity.json').read_text(encoding='utf8'))
@@ -22,9 +27,15 @@ def _prepare_invocation(input_data: Any) -> InvocationAuth:
         if isinstance(value, str) and value:
             environment[key] = value
     session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
+    relay = None
     if isinstance(session, str):
         environment['TEMPLATE_CREDENTIAL_SESSION'] = session
-    return InvocationAuth(actor_id=props.get('sessionUserId'), persistent_memory=True, environment=environment)
+        url, token = environment.get('TEMPLATE_CREDENTIAL_SERVICE_URL'), environment.get('TEMPLATE_CREDENTIAL_INVOCATION')
+        if url and token:
+            relay = openai_model_relay(url, token, session, {'X-Template-Session': session})
+        elif url or token:
+            raise ValueError('The Credential Service binding needs both its URL and its invocation token')
+    return InvocationAuth(actor_id=props.get('sessionUserId'), persistent_memory=True, environment=environment, model_relay=relay)
 
 
 def _prepare_root(root: Path) -> None:

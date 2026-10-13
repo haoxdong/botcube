@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import boto3
+from deploy_identity import load_identity
 
-IDENTITY = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+IDENTITY = load_identity()
 os.environ.update({
     'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
     'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],

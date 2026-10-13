@@ -79,6 +79,33 @@ def test_link_relay_and_unlink_keep_durable_credential_in_encrypted_vault() -> N
         thread.join()
 
 
+def test_relay_reuses_the_sites_access_until_the_site_ends_it_then_re_mints_once() -> None:
+    site = FakeSiteServer(('127.0.0.1', 0))
+    thread = threading.Thread(target=site.serve_forever, daemon=True)
+    thread.start()
+    url = f'http://127.0.0.1:{site.server_port}'
+    vault = DynamoDbCredentialVault(LocalTable(), LocalKeys())
+    app = create_app(
+        CredentialServiceSettings('template', lambda: 'local-secret', 'X-Template-Account', 'X-Template-Session'),
+        [FakeSiteProvider(lambda: vault, url)],
+    )
+    try:
+        with TestClient(app) as client:
+            credential = httpx.post(f'{url}/login').json()['credential']
+            client.post('/fake-site/auth/link/ingest', headers=authorization('credential_capture'), json={'credential': credential})
+
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert len(site.access) == 1
+            site.access.clear()
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert len(site.access) == 1
+    finally:
+        site.shutdown()
+        site.server_close()
+        thread.join()
+
+
 def test_status_does_not_hide_vault_failure() -> None:
     import pytest
 

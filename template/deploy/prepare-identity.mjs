@@ -67,7 +67,6 @@ const nameFields =
 const runtimeFields = {
   "aws.ecs.originZone": "example.invalid",
   "github.oidcSubject": "repo:example/bot:environment:production",
-  "verification.acceptanceHook": "ecs/acceptance.py",
   "verification.userAgent": "BotCube-Preview-Verification/1.0",
   "verification.originUserAgent": "BotCube-Origin-Verification/1.0",
   "aws.ecs.credentialService.rpcPath": "",

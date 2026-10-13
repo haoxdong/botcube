@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import boto3
 from botocore.exceptions import ClientError
+from deploy_identity import load_identity
 
 if TYPE_CHECKING:
     from types_boto3_cloudformation import CloudFormationClient
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 
 
 
-IDENTITY = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+IDENTITY = load_identity()
 os.environ.update({
     'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
     'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],

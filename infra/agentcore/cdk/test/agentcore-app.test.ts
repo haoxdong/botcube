@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { resolve } from 'path';
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import type { AgentCoreStack } from '../lib/cdk-stack';
-import type { DeployConfig } from '../lib/deploy-config';
+import { readDeployIdentity, readProjectSpec, type DeployConfig } from '../lib/deploy-config';
 
 const COMMIT = 'abc123';
 const DEPLOY_ROOT = resolve(__dirname, '../../../../template/deploy');
@@ -25,8 +25,8 @@ const PRIVATE_NAT_BROWSER = {
 };
 
 function deployConfig(agentCore: Record<string, unknown> = {}): DeployConfig {
-  const identity = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'identity.json'), 'utf8'));
-  const spec = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'agentcore/agentcore.json'), 'utf8'));
+  const identity = readDeployIdentity(DEPLOY_ROOT);
+  const spec = readProjectSpec(DEPLOY_ROOT);
   identity.aws.cloudFormation.stackFamily = 'template_agent';
   Object.assign(identity.aws.agentCore, agentCore);
   return {

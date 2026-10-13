@@ -19,10 +19,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
+from deploy_identity import load_identity
+
 ROOT = Path(os.environ['CARTRIDGE_REPOSITORY_ROOT']).resolve()
 DEPLOY = Path(__file__).resolve().parent
 CDK = DEPLOY / 'cdk'
-IDENTITY = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+IDENTITY = load_identity()
 PARAMETER = IDENTITY['ssm']['parkState']
 TARGETS = {'park': 'parked', 'unpark': 'live'}
 T = TypeVar('T')

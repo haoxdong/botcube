@@ -169,8 +169,63 @@ test('accepts an agentcore.json that omits the optional features', async () => {
   await expect(loadDeployConfig(root, '/')).resolves.toEqual(expect.objectContaining({ deployRoot: root }));
 });
 
-test('loads a project without runtime environment variables', async () => {
-  const root = deployRoot({ spec: spec => delete runtimeOf(spec).envVars });
+const HARNESS = path.resolve(__dirname, '../../../../harness/deepagents');
 
-  expect((await loadDeployConfig(root, '/')).spec.runtimes).toHaveLength(1);
+test("the template names only its project, runtime and memory: BotCube's defaults fill the rest", async () => {
+  const config = await loadDeployConfig(TEMPLATE_DEPLOY, '/');
+
+  expect(config.identity.aws.agentCore.sessionApiAlias).toBe('live');
+  expect(config.spec).toMatchObject({
+    version: 1,
+    managedBy: 'CDK',
+    tags: { 'agentcore:created-by': 'agentcore-cli' },
+  });
+  expect(runtimeOf(config.spec)).toMatchObject({
+    build: 'Container',
+    entrypoint: 'src/botcube_harness_deepagents/serving.py',
+    codeLocation: HARNESS,
+    runtimeVersion: 'PYTHON_3_13',
+    protocol: 'AGUI',
+    envVars: expect.arrayContaining([{ name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' }]),
+  });
+  expect(fs.existsSync(path.join(HARNESS, 'Dockerfile'))).toBe(true);
+  const [memory] = config.spec.memories;
+  // Session events last 365 days, the AgentCore maximum; every long-term record files under its actor first (ADR 0033).
+  expect(memory?.eventExpiryDuration).toBe(365);
+  expect(
+    memory?.strategies.map(strategy => [
+      strategy.type,
+      strategy.namespaceTemplates,
+      strategy.reflectionNamespaceTemplates,
+    ])
+  ).toEqual([
+    ['USER_PREFERENCE', ['/actors/{actorId}/preferences/'], undefined],
+    ['SEMANTIC', ['/actors/{actorId}/facts/'], undefined],
+    ['SUMMARIZATION', ['/actors/{actorId}/summaries/{sessionId}/'], undefined],
+    ['EPISODIC', ['/actors/{actorId}/episodes/{sessionId}/'], ['/actors/{actorId}/episodes/']],
+  ]);
+});
+
+test("a Cartridge's own value replaces BotCube's default", async () => {
+  const root = deployRoot({
+    identity: identity => (identity.aws.agentCore.sessionApiAlias = 'blue'),
+    spec: spec => {
+      runtimeOf(spec).envVars = [];
+      Object.assign(spec.memories[0] ?? {}, { eventExpiryDuration: 30 });
+    },
+  });
+
+  const config = await loadDeployConfig(root, '/');
+
+  expect(config.identity.aws.agentCore.sessionApiAlias).toBe('blue');
+  expect(runtimeOf(config.spec).envVars).toEqual([]);
+  expect(config.spec.memories[0]?.eventExpiryDuration).toBe(30);
+});
+
+test('rejects an agentcore.json that the defaults cannot make valid, naming it', async () => {
+  const root = deployRoot({ spec: spec => Object.assign(runtimeOf(spec), { build: 'Zip' }) });
+
+  await expect(loadDeployConfig(root, '/')).rejects.toThrow(
+    `Invalid AgentCore config at ${path.join(root, 'agentcore/agentcore.json')}`
+  );
 });

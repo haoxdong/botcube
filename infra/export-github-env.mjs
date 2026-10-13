@@ -26,7 +26,6 @@ const values = {
   LAMBDA_FAMILY: identity.aws.lambda.family,
   PUBLIC_WEB_URL: identity.domains.web,
   RUNTIME_ARN_SSM_PARAMETER: identity.ssm.runtimeArn,
-  TOOL_STAGING_DIRECTORY: identity.artifacts.toolStaging.directory,
   TOOL_STAGING_HOOK: identity.artifacts.toolStaging.hook,
 };
 

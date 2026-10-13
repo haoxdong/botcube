@@ -2,6 +2,7 @@ import io
 import json
 import os
 import runpy
+import sys
 import unittest
 from collections.abc import Callable, Mapping
 from email.message import Message
@@ -13,6 +14,10 @@ from urllib.error import HTTPError
 os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'bot-cube.com'})
 os.environ['CARTRIDGE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'template/deploy')
 import handler
+
+# The deploy scripts import their shared identity module from their own directory.
+ECS = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ECS))
 
 
 class _Event(TypedDict):
@@ -37,7 +42,7 @@ class OriginTests(unittest.TestCase):
                 'OldResourceProperties': {'Hostname': 'api-next.bot-cube.com', 'ClientVersion': 'v1'}}
 
     def test_restoration_waits_for_data_plane_after_control_plane_is_active(self):
-        verifier = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'verify-origin.py'))
+        verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
         wait = verifier['expect_ready']
         clock = Mock()
         clock.monotonic.return_value = 0
@@ -50,7 +55,7 @@ class OriginTests(unittest.TestCase):
                 wait()
 
     def test_negative_probe_rejects_edge_auth_and_origin_success(self):
-        verifier = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'verify-origin.py'))
+        verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
         phase = verifier['tls_failure_phase']
         for status in (520, 525, 403, 503):
             with self.subTest(status=status), patch.dict(phase.__globals__, {'set_aop': Mock(), 'time': Mock(), 'request_status': Mock(return_value=(status, 'body'))}):
@@ -61,7 +66,7 @@ class OriginTests(unittest.TestCase):
                         phase(Mock(), 'base', 'cert', False)
 
     def test_origin_probe_identifies_itself_and_preserves_edge_errors(self):
-        verifier = runpy.run_path(str(Path(__file__).resolve().parent.parent / 'verify-origin.py'))
+        verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
         rejected = HTTPError('url', 403, 'forbidden', Message(), io.BytesIO(b'error code: 1010'))
         with patch.object(handler.urllib.request, 'urlopen', side_effect=rejected) as request:
             self.assertEqual(verifier['request_status'](), (403, 'error code: 1010'))

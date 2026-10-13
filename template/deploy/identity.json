@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "aws": {
     "account": "000000000000",
     "region": "us-east-1",
@@ -11,7 +10,6 @@
       "runtimeNetworkParameter": "/bot-cube/agentcore/security-group-id",
       "memory": "bot_cube_memory",
       "sessionApiFunction": "bot-cube-session-api",
-      "sessionApiAlias": "live",
       "agentComputerBrowser": {
         "name": "bot_cube_agent_computer_managed",
         "profileNamePrefix": "bot_cube_"
@@ -41,13 +39,11 @@
       }
     },
     "credentialService": {
-      "vpcId": "vpc-placeholder",
-      "port": 8081
+      "vpcId": "vpc-placeholder"
     },
     "ecs": {
       "privateNamespace": "bot-cube.internal",
       "credentialService": {
-        "tableName": "credential-vault-by-provider",
         "rpcPath": "",
         "environmentKeys": {
           "url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
@@ -76,7 +72,6 @@
       "originPullClientSecretName": "/bot-cube/cloudflare/origin-pull-client",
       "originTokenSecretName": "/bot-cube/cloudflare/origin-api-token",
       "previewOriginStackName": "bot-cube-preview-origin",
-      "parkedDnsTarget": "parked.invalid",
       "privateEgress": {
         "stackName": "bot-cube-private-egress",
         "publicIp": "192.0.2.1",
@@ -152,22 +147,14 @@
     "variables": {
       "ecsDeployRoleArn": "BOT_CUBE_ECS_DEPLOY_ROLE_ARN"
     },
-    "secrets": {
-      "cloudflareOriginApiToken": "CLOUDFLARE_ORIGIN_API_TOKEN"
-    },
     "oidcSubject": "repo:example/bot:environment:production"
   },
   "artifacts": {
-    "chatService": {
-      "reaperCommand": ["node", "dist/reap-auth-browsers.js"]
-    },
     "toolStaging": {
-      "hook": "template/deploy/stage-tools.sh",
-      "directory": "harness/deepagents/.tool-dist"
+      "hook": "template/deploy/stage-tools.sh"
     }
   },
   "verification": {
-    "acceptanceHook": "ecs/acceptance.py",
     "userAgent": "BotCube-Preview-Verification/1.0",
     "originUserAgent": "BotCube-Origin-Verification/1.0"
   }

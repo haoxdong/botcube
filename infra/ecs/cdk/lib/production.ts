@@ -38,8 +38,8 @@ interface Subnet {
   availabilityZone: string;
 }
 
-/** The fields of the Cartridge's `deploy/identity.json` the ECS app reads. */
-interface DeployIdentity {
+/** The fields of the Cartridge's deploy identity the ECS app reads. */
+export interface DeployIdentity {
   aws: {
     account: string;
     region: string;
@@ -124,7 +124,7 @@ export interface ProductionOptions {
   repositoryRoot: string;
   /** The active Cartridge's deploy directory (`CARTRIDGE_DEPLOY_ROOT`). */
   deployRoot: string;
-  /** Parsed `identity.json` from the deploy directory. */
+  /** The Cartridge's deploy identity, as `cartridgeIdentity` reads it. */
   identity: DeployIdentity;
   /** Production's operating state: Parked when true, Live when false. */
   parked: boolean;

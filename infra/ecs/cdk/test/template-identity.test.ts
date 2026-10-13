@@ -4,9 +4,10 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
+import { cartridgeIdentity } from '../lib/cartridge.js';
 import { defineProduction } from '../lib/production.js';
 
-const identity = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../template/deploy/identity.json'), 'utf8'));
+const identity = cartridgeIdentity(path.resolve(__dirname, '../../../../template/deploy'));
 const roots: string[] = [];
 
 afterEach(() => {

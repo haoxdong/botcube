@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import boto3
+from deploy_identity import load_identity
 
 if TYPE_CHECKING:
     from types_boto3_cloudwatch import CloudWatchClient
@@ -131,7 +132,7 @@ def alarm_states(alarms: Sequence[MetricAlarmTypeDef]) -> dict[str, str]:
 
 
 def main():
-    outputs = json.loads(Path(sys.argv[1]).read_text())[json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())['aws']['ecs']['previewOriginStackName']]
+    outputs = json.loads(Path(sys.argv[1]).read_text())[load_identity()['aws']['ecs']['previewOriginStackName']]
     cw, ecs, sns = boto3.client('cloudwatch'), boto3.client('ecs'), boto3.client('sns')
     cluster = ecs.describe_clusters(clusters=[outputs['ClusterName']], include=['SETTINGS'])
     require(not cluster.get('failures') and len(cluster['clusters']) == 1, 'Preview cluster lookup failed')

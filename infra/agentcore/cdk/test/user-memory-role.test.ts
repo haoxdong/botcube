@@ -2,13 +2,13 @@ import { ok as assert } from 'node:assert';
 import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
-import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { AgentCoreStack } from '../lib/cdk-stack';
+import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../template/deploy');
-const SPEC = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'agentcore/agentcore.json'), 'utf-8'));
-const IDENTITY = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'identity.json'), 'utf-8'));
+const SPEC = readProjectSpec(DEPLOY_ROOT);
+const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 setSessionProjectRoot(DEPLOY_ROOT);
 
 function synthesize(userMemoryRole?: { issuer: string; roleName: string }): Template {

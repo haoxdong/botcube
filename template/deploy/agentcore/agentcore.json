@@ -1,94 +1,16 @@
 {
-  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
   "name": "botcube",
-  "version": 1,
-  "managedBy": "CDK",
   "tags": {
-    "agentcore:created-by": "agentcore-cli",
     "agentcore:project-name": "bot-cube"
   },
   "runtimes": [
     {
-      "name": "bot_cube",
-      "build": "Container",
-      "entrypoint": "src/botcube_harness_deepagents/serving.py",
-      "codeLocation": "../../harness/deepagents/",
-      "runtimeVersion": "PYTHON_3_13",
-      "networkMode": "PUBLIC",
-      "protocol": "AGUI",
-      "envVars": [
-        {
-          "name": "AGENT_OBSERVABILITY_ENABLED",
-          "value": "true"
-        },
-        {
-          "name": "OTEL_PYTHON_DISTRO",
-          "value": "aws_distro"
-        },
-        {
-          "name": "OTEL_PYTHON_CONFIGURATOR",
-          "value": "aws_configurator"
-        },
-        {
-          "name": "OTEL_TRACES_SAMPLER",
-          "value": "always_on"
-        },
-        {
-          "name": "TRACELOOP_TRACE_CONTENT",
-          "value": "false"
-        },
-        {
-          "name": "UNIFIED_TRACES_DESTINATION_ENABLED",
-          "value": "false"
-        }
-      ],
-      "filesystemConfigurations": [
-        {
-          "sessionStorage": {
-            "mountPath": "/mnt/workspace"
-          }
-        }
-      ]
+      "name": "bot_cube"
     }
   ],
   "memories": [
     {
-      "name": "bot_cube",
-      "eventExpiryDuration": 365,
-      "strategies": [
-        {
-          "type": "USER_PREFERENCE",
-          "name": "UserPreferences",
-          "namespaceTemplates": ["/actors/{actorId}/preferences/"]
-        },
-        {
-          "type": "SEMANTIC",
-          "name": "SemanticFacts",
-          "namespaceTemplates": ["/actors/{actorId}/facts/"]
-        },
-        {
-          "type": "SUMMARIZATION",
-          "name": "SessionSummary",
-          "namespaceTemplates": ["/actors/{actorId}/summaries/{sessionId}/"]
-        },
-        {
-          "type": "EPISODIC",
-          "name": "EpisodicLearning",
-          "namespaceTemplates": ["/actors/{actorId}/episodes/{sessionId}/"],
-          "reflectionNamespaceTemplates": ["/actors/{actorId}/episodes/"]
-        }
-      ]
+      "name": "bot_cube"
     }
-  ],
-  "knowledgeBases": [],
-  "credentials": [],
-  "evaluators": [],
-  "onlineEvalConfigs": [],
-  "agentCoreGateways": [],
-  "policyEngines": [],
-  "configBundles": [],
-  "abTests": [],
-  "harnesses": [],
-  "datasets": [],
-  "payments": []
+  ]
 }

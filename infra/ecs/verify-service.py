@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import boto3
 from botocore.exceptions import ClientError
+from deploy_identity import load_identity
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore import BedrockAgentCoreClient
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from types_boto3_lambda import LambdaClient
 
 DEPLOY_ROOT = Path(os.environ['CARTRIDGE_DEPLOY_ROOT']).resolve()
-IDENTITY = json.loads((DEPLOY_ROOT / 'identity.json').read_text())
+IDENTITY = load_identity()
 DOMAIN = 'chatServicePreview'
 
 

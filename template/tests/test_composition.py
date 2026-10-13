@@ -38,7 +38,11 @@ def test_template_deploy_identity_is_placeholder_only() -> None:
 
 def test_a_rotating_site_invocation_keeps_the_sessions_agent() -> None:
     def environment(credential: str) -> Any:
-        props = {'sessionUserId': 'owner-one', 'credentialServiceInvocationToken': credential}
+        props = {
+            'sessionUserId': 'owner-one',
+            'credentialServiceUrl': 'http://credentials:8125/fake-site',
+            'credentialServiceInvocationToken': credential,
+        }
         return HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': props}).environment
 
     first, renewed = environment('credential-first'), environment('credential-renewed')
@@ -92,3 +96,17 @@ def test_shared_invocation_without_template_identity_is_classified(monkeypatch: 
         asyncio.run(invoke())
     assert str(rejected.value) == 'Invocation carries no user ID; the Chat Service must forward the account ID'
     assert rejected.value.code == 'MISSING_USER_ID'
+
+
+def test_a_bound_turn_relays_its_model_calls_through_the_credential_service_for_its_session() -> None:
+    props = {'credentialServiceUrl': 'http://credentials:8125/fake-site', 'credentialServiceInvocationToken': 'invocation'}
+
+    relay = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': props}).model_relay
+    unbound = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': {}}).model_relay
+
+    assert relay is not None
+    assert (relay.base_url, relay.token, relay.session_id) == ('http://credentials:8125/openai/v1', 'invocation', 'session-one')
+    assert relay.headers == {'X-Template-Session': 'session-one'}
+    assert unbound is None
+    with pytest.raises(ValueError, match='needs both its URL and its invocation token'):
+        HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': {'credentialServiceUrl': 'http://x'}})

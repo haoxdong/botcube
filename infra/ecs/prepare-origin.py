@@ -7,7 +7,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-identity = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+from deploy_identity import load_identity
+
+identity = load_identity()
 origin = identity['aws']['ecs']
 token = os.environ['CLOUDFLARE_ORIGIN_API_TOKEN']
 if not token:

@@ -69,7 +69,7 @@ class FakeSiteHandler(BaseHTTPRequestHandler):
                 return
             access = secrets.token_urlsafe(32)
             self.server.access[access] = time.time() + 60
-            self._json(200, {'access': access})
+            self._json(200, {'access': access, 'expiresAt': self.server.access[access]})
             return
         if self.path != '/login':
             self._json(404, {'error': 'Not found'})

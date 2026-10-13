@@ -5,11 +5,14 @@ import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { AgentCoreStack, SESSION_API_TIMEOUT_SECONDS } from '../lib/cdk-stack';
+import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../template/deploy');
-const SPEC = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'agentcore/agentcore.json'), 'utf-8'));
-const IDENTITY = JSON.parse(readFileSync(resolve(DEPLOY_ROOT, 'identity.json'), 'utf-8'));
-const HARNESS = resolve(DEPLOY_ROOT, SPEC.runtimes[0].codeLocation);
+const SPEC = readProjectSpec(DEPLOY_ROOT);
+const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
+const [RUNTIME] = SPEC.runtimes;
+assert(RUNTIME, 'the template spec declares a runtime');
+const HARNESS = resolve(DEPLOY_ROOT, RUNTIME.codeLocation);
 setSessionProjectRoot(DEPLOY_ROOT);
 
 function stack(app = new cdk.App()): AgentCoreStack {

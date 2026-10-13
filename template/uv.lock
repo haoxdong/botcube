@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -250,6 +250,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "uvicorn" },
     { name = "websockets" },
 ]
 
@@ -261,6 +262,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.142.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
+    { name = "uvicorn", specifier = ">=0.54.0" },
     { name = "websockets", specifier = ">=16.0" },
 ]
 
