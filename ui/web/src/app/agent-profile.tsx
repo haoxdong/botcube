@@ -736,6 +736,7 @@ export function AgentProfile({
   onClose,
   revision,
   onSaved,
+  onOpenChat,
   isAccountCurrent,
   tabs = {},
   ref,
@@ -751,6 +752,8 @@ export function AgentProfile({
   revision: number;
   /** Called after the user saves Agent Identity or Soul. */
   onSaved: () => void;
+  /** Opens a scheduled task's Side Chat from its sheet. */
+  onOpenChat: (id: string, title: string) => void;
   isAccountCurrent?: (() => boolean) | undefined;
   tabs?: Partial<Record<AgentProfileTab, ComponentType>> | undefined;
   /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
@@ -775,7 +778,7 @@ export function AgentProfile({
   const keptComputer = computer !== undefined && tab === "Computer" && !editor;
   const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
     Activity: <ActivityPanel chatServiceUrl={chatServiceUrl} />,
-    Scheduled: <ScheduledPanel chatServiceUrl={chatServiceUrl} />,
+    Scheduled: <ScheduledPanel chatServiceUrl={chatServiceUrl} agentName={profile?.name ?? "the agent"} onOpenChat={onOpenChat} />,
     Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} />,
   };
   const panel = (name: AgentProfileTab) => {

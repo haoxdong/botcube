@@ -252,6 +252,31 @@ def test_each_post_replays_under_its_own_message_id(local_record: None) -> None:
     assert len({message['id'] for message in replayed}) == len(replayed)
 
 
+def test_a_scheduled_runs_post_replays_with_its_run_card_issue_3859(local_record: None) -> None:
+    """The card is stored with the message, so it shows after a reload and after the chat's next Turn."""
+    card = {
+        'sideChat': 'task-1', 'messageId': 'run-request-1', 'title': 'Rates brief',
+        'ranAt': '2026-10-12T07:00:00.000Z', 'status': 'done', 'text': 'The 10y yield fell 5bp.',
+    }
+
+    async def scenario() -> list[dict[str, Any]]:
+        await session_api.handle({
+            'operation': 'post', 'sessionId': 'session-1', 'userId': 'user-1',
+            'content': 'Scheduled task "Rates brief": The 10y yield fell 5bp.', 'messageId': 'post-1', 'scheduledRun': card,
+        })
+        await _post('Plain brief')
+        await _turn(HumanMessage('hello', id='user-message-1'))
+        return await _replay()
+
+    replayed = asyncio.run(scenario())
+
+    assert [(message['id'], message.get('metadata')) for message in replayed if message['role'] == 'assistant'][:2] == [
+        ('post-1', {'scheduledRun': card}),
+        (replayed[1]['id'], None),
+    ]
+    assert replayed[0]['content'] == 'Scheduled task "Rates brief": The 10y yield fell 5bp.'
+
+
 def test_a_post_opens_a_session_that_had_no_turns(local_record: None) -> None:
     async def scenario() -> list[dict[str, Any]]:
         await _post('Morning brief: markets are up.')

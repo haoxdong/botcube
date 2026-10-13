@@ -49,6 +49,7 @@ from agentcore_fake import (
     MEMORY_ID,
     FakeAgentCoreMemory,
     FakeSts,
+    fresh_warm_sessions,
     install_tagged_memory,
     turn_identity,
 )
@@ -319,6 +320,7 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
         '_SESSION_TURNS': serving._SessionTurns(),
     }.items():
         monkeypatch.setattr(serving, name, value)
+    fresh_warm_sessions(monkeypatch)
 
 
 @pytest.fixture
@@ -366,6 +368,19 @@ def test_a_turn_streams_the_models_answer_and_files_the_session_under_the_sessio
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _said(events) == 'Echo: hello'
     assert _replay('user-a', 'thread-a') == [('user', 'hello'), ('assistant', 'Echo: hello')]
+
+
+def test_scheduled_runs_in_one_task_chat_keep_earlier_turns_for_the_agent(service: _Service) -> None:
+    service.turn('say: First brief found rates rising', thread='task-chat', memory=True)
+
+    events = service.turn('Flag what changed since last time', thread='task-chat', memory=True)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert service.recorder.heard[-1] == ['say: First brief found rates rising', 'Flag what changed since last time']
+    assert _replay('user-1', 'task-chat') == [
+        ('user', 'say: First brief found rates rising'), ('assistant', 'First brief found rates rising'),
+        ('user', 'Flag what changed since last time'), ('assistant', 'Echo: Flag what changed since last time'),
+    ]
 
 
 def test_a_quiet_turn_streams_keepalive_comments_until_its_answer_issue_3284(
@@ -591,13 +606,71 @@ def test_a_guest_gets_the_generic_prompt_and_no_memory_tool(service: _Service) -
 
 
 def test_the_agent_proposes_a_scheduled_task_for_the_user_to_confirm(service: _Service) -> None:
-    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'schedule': 'cron(0 8 ? * MON-FRI *)'}
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'frequency': 'weekdays', 'time': '08:00'}
 
     events = service.turn(f'propose: {json.dumps(proposal)}')
 
     [call] = [event for event in events if event['type'] == 'TOOL_CALL_START']
     assert call['toolCallName'] == 'propose_scheduled_task'
     assert _tool_output(events) == 'Proposed. Nothing is scheduled until the user confirms it in the chat.'
+    assert 'one Side Chat' in service.recorder.descriptions[0]['propose_scheduled_task']
+    assert 'fresh chat' not in service.recorder.descriptions[0]['propose_scheduled_task']
+    assert 'without when or how often it runs' in serving.propose_scheduled_task.args['prompt']['description']
+    assert 'How many runs' in serving.propose_scheduled_task.args['count']['description']
+
+
+def test_a_scheduled_run_whose_prompt_says_every_minute_makes_no_proposal(service: _Service) -> None:
+    proposal = {'title': 'US rates', 'prompt': 'US rates analysis every minute', 'frequency': 'minutes', 'every': 1}
+
+    events = service.turn(f'propose: {json.dumps(proposal)}', scheduledRun=True)
+
+    assert 'propose_scheduled_task' not in service.recorder.tools[0]
+    # Even a call the model makes anyway is refused, so no proposal reaches the chat.
+    assert 'propose_scheduled_task is not a valid tool' in _said(events)
+
+
+@pytest.mark.parametrize(
+    'fields',
+    [
+        {'frequency': 'once', 'date': '2026-11-06', 'time': '08:30'},
+        {'frequency': 'weekdays', 'time': '08:00', 'ends': '2026-12-31T17:00'},
+        {'frequency': 'minutes', 'every': 1, 'count': 3},
+    ],
+)
+def test_the_agent_proposes_a_one_off_task_or_a_stop_time(service: _Service, fields: dict[str, Any]) -> None:
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', **fields}
+
+    events = service.turn(f'propose: {json.dumps(proposal)}')
+
+    assert _tool_output(events) == 'Proposed. Nothing is scheduled until the user confirms it in the chat.'
+
+
+@pytest.mark.parametrize(
+    ('fields', 'why'),
+    [
+        ({'frequency': 'weekly', 'time': '08:00'}, 'days'),
+        ({'frequency': 'minutes'}, 'every'),
+        ({'frequency': 'daily', 'time': '8am'}, 'time'),
+        ({'frequency': 'daily', 'time': '08:00', 'every': 2}, 'every'),
+        ({'frequency': 'hours', 'every': 0}, 'every'),
+        ({'frequency': 'once', 'time': '08:00'}, 'date'),
+        ({'frequency': 'daily', 'time': '08:00', 'date': '2026-11-06'}, 'date'),
+        ({'frequency': 'once', 'time': '08:00', 'date': '6 Nov'}, 'date'),
+        ({'frequency': 'daily', 'time': '08:00', 'ends': 'Friday'}, 'ends'),
+        ({'frequency': 'once', 'time': '08:00', 'date': '2026-11-06', 'ends': '2026-12-31T17:00'}, 'ends'),
+        ({'frequency': 'minutes', 'every': 1, 'count': 0}, 'count'),
+        ({'frequency': 'once', 'time': '08:00', 'date': '2026-11-06', 'count': 3}, 'count'),
+    ],
+)
+def test_the_agent_is_told_why_a_schedule_it_proposed_cannot_be_shown(service: _Service, fields: dict[str, Any], why: str) -> None:
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', **fields}
+
+    events = service.turn(f'propose: {json.dumps(proposal)}')
+
+    # The tool's refusal reaches the agent, which says what it was told.
+    said = _said(events)
+    assert said.startswith("Tool said: Error invoking tool 'propose_scheduled_task'"), said
+    assert f'with error:\n {why}: ' in said
 
 
 def test_a_member_gets_the_memory_tool_and_the_same_instructions(service: _Service) -> None:
@@ -622,12 +695,12 @@ def test_a_members_memories_reach_their_next_conversation_only(service: _Service
     assert 'prefers copper' not in service.recorder.prompts[-1]
 
 
-def test_a_conversations_memory_is_read_once(service: _Service) -> None:
+def test_a_conversations_empty_memory_is_reloaded_on_its_next_turn(service: _Service) -> None:
     service.turn('hello', thread='thread-b', memory=True)
     service.turn('remember: prefers copper', thread='thread-a', memory=True)
     service.turn('hello again', thread='thread-b', memory=True, model='opus-4.6')
 
-    assert 'prefers copper' not in service.recorder.prompts[-1]
+    assert 'prefers copper' in service.recorder.prompts[-1]
 
 
 def test_a_sessions_memory_block_stays_byte_identical_on_its_later_turns(service: _Service) -> None:
@@ -1958,6 +2031,48 @@ def test_on_agentcore_an_edited_question_regenerates_its_answer(service: _Servic
     assert edited[-1]['type'] == 'RUN_FINISHED'
     assert _said(edited) == 'Echo: edited question'
     assert service.recorder.heard[-1] == ['edited question']
+
+
+# Seconds of one AgentCore Memory call, scaled down from production's.
+MEMORY_ROUND_TRIP = 0.1
+
+
+def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_memory_round_trip_issue_3701(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached: list[float] = []
+    calls = agentcore_memory.sts.memory_calls
+    before_model: list[tuple[str, str, bool]] = []
+    stream = _ScriptedModel._stream
+
+    def first_model_call(self: _ScriptedModel, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        reached.append(time.perf_counter())
+        if agentcore_memory.latency:
+            before_model.extend((operation, params.get('sessionId', '')[:4], params.get('includePayloads', True))
+                                for operation, params in calls if operation != 'create_event')
+        # Only the wait before the model is measured: the Turn's writes go at test speed.
+        agentcore_memory.latency = 0
+        return stream(self, *args, **kwargs)
+
+    monkeypatch.setattr(_ScriptedModel, '_stream', first_model_call)
+    # A Memory block the Session keeps, so the second Turn loads no Memory records.
+    agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
+    # The member's own Session, so the Turn feed files its messages there too, as on Main Chat.
+    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    assert service.turn('first question', **member)[-1]['type'] == 'RUN_FINISHED'
+    service.fed()
+    agentcore_memory.latency = MEMORY_ROUND_TRIP
+    calls.clear()
+    started = time.perf_counter()
+
+    events = service.turn('second question', **member)
+
+    assert _said(events) == 'Echo: second question'
+    assert service.recorder.heard[-1] == ['first question', 'second question']
+    # The newest checkpoint's key without payloads, read alongside its pending writes; checkpoint writes run behind.
+    assert sorted(before_model) == [('list_events', 'lgw-', True), ('list_events', 'thre', False)]
+    # Three reads of the Session, three ListEvents each, took nine round trips.
+    assert (reached[-1] - started) / MEMORY_ROUND_TRIP < 2
 
 
 @pytest.mark.parametrize('identity', [

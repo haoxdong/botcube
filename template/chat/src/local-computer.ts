@@ -1,3 +1,4 @@
+import { Cdp } from 'botcube-chat/cdp';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,50 +19,9 @@ export interface LocalComputer {
   stop(): Promise<void>;
 }
 
-async function command(
-  endpoint: string,
-  method: string,
-  params: object = {},
-  sessionId?: string
-): Promise<Record<string, unknown>> {
-  const socket = new WebSocket(endpoint);
-  try {
-    return await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`Agent Computer ${method} timed out`)),
-        10_000
-      );
-      const finish = (error?: Error, result?: Record<string, unknown>) => {
-        clearTimeout(timer);
-        if (error) reject(error);
-        else if (result) resolve(result);
-        else reject(new Error(`Agent Computer ${method} answered no result`));
-      };
-      socket.addEventListener('error', () =>
-        finish(new Error(`Agent Computer ${method} connection failed`))
-      );
-      socket.addEventListener('open', () =>
-        socket.send(JSON.stringify({ id: 1, method, params, sessionId }))
-      );
-      socket.addEventListener('message', (event) => {
-        try {
-          const message = JSON.parse(String(event.data)) as {
-            id?: number;
-            result?: Record<string, unknown>;
-            error?: { message: string };
-          };
-          if (message.id !== 1) return;
-          if (message.error) finish(new Error(message.error.message));
-          else if (message.result) finish(undefined, message.result);
-          else finish(new Error(`Agent Computer ${method} answered no result`));
-        } catch (error) {
-          finish(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-    });
-  } finally {
-    socket.close();
-  }
+async function command(endpoint: string, method: string, params: object = {}, sessionId?: string): Promise<Record<string, unknown>> {
+  const cdp = await Cdp.connect(endpoint);
+  try { return await cdp.send(method, { params, ...(sessionId ? { sessionId } : {}) }); } finally { cdp.close(); }
 }
 
 export async function startLocalComputer(

@@ -145,49 +145,6 @@
   }
 }
 
-/* ── The Computer tab ── */
-.template-computer {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.template-computer-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.template-computer-driver {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-detail);
-  color: var(--color-text-muted);
-}
-
-.template-computer-bar .button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: var(--button-height);
-}
-
-.template-computer-bar .button svg {
-  width: 14px;
-  height: 14px;
-}
-
-.template-error {
-  margin: 0;
-  font-size: var(--font-detail);
-  line-height: 1.4;
-  color: var(--color-danger);
-}
-
 /* ── The live browser panel, floating over the chat while a Turn drives the computer ── */
 .template-browser-panel {
   position: fixed;
@@ -394,3 +351,8 @@
     min-height: 44px;
   }
 }
+
+.agent-computer-screen > .template-screen { position: absolute; inset: 0; margin: 0; border: 0; border-radius: 0; }
+.agent-computer-screen > .template-screen .template-screen-bar { display: none; }
+.agent-computer-screen > .template-screen .template-screen-glass { height: 100%; aspect-ratio: auto; }
+.browser-view-page > .template-screen { height: 100%; margin: 0; }

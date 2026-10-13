@@ -94,9 +94,9 @@ async function mainChat(account: string): Promise<string> {
  * What has been posted to the Session, once the first post is in: a run's post is its last step. Only the test's
  * timeout bounds the wait, since a loaded machine can take longer than any fixed deadline.
  */
-async function posted(sessionId: string): Promise<{ content: string; userId: string }[]> {
+async function posted(sessionId: string, api: InProcessStack['sessionApi'] = stack.sessionApi): Promise<{ content: string; userId: string }[]> {
   for (;;) {
-    const posts = stack.sessionApi
+    const posts = api
       .events()
       .flatMap((event) =>
         event.operation === 'post' && event.sessionId === sessionId ? [{ content: event.content ?? '', userId: event.userId }] : [],
@@ -121,6 +121,355 @@ const text = (messageId: string, ...deltas: string[]) => [
 ];
 
 describe('a scheduled run', () => {
+  it('keeps an older per-run Side Chat when an existing task next runs in its task chat', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const response = await request(account, '/scheduled-tasks', { method: 'POST', body: {
+      title: 'Morning brief', prompt: 'Check the curve', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'legacy-task',
+    } });
+    const { id } = await response.json() as { id: string };
+    const oldChat = `old-run-${account}`;
+    const previous = await request(account, '/', { method: 'POST', body: {
+      threadId: oldChat, runId: 'legacy-run', messages: [{ id: 'legacy-request', role: 'user', content: 'Morning brief' }],
+      tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+    } });
+    expect(previous.status).toBe(200);
+    await previous.text();
+    stack.agentcore.scriptPrompt('Check the curve', stream(...text('brief', 'Next brief.')));
+    await scheduler.fire(id);
+    await posted(main);
+    const { threads } = await (await request(account, '/threads')).json() as { threads: { id: string; title: string }[] };
+    expect(threads).toHaveLength(2);
+    expect(threads).toContainEqual(expect.objectContaining({ id: oldChat, title: 'Morning brief' }));
+    expect(threads.filter(({ id }) => id !== oldChat)).toEqual([expect.objectContaining({ title: 'Morning brief' })]);
+  });
+
+  it('refuses a user Turn while its task Side Chat has a scheduled Turn going', async () => {
+    const account = owner();
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const main = await mainChat(account);
+    await run(account, { ...stream(...text('brief', 'Scheduled brief.')), hold });
+    let side = '';
+    try {
+      await vi.waitFor(async () => {
+        const { threads } = (await (await request(account, '/threads')).json()) as { threads: { id: string }[] };
+        side = defined(threads[0], 'task Side Chat').id;
+        expect(stack.agentcore.invocationFor(side).payload.threadId).toBe(side);
+      });
+      const response = await request(account, '/', { method: 'POST', body: {
+        threadId: side, runId: 'overlapping-user', messages: [{ id: 'question', role: 'user', content: 'Discuss the brief' }],
+        tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+      } });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ detail: 'The previous Turn is still going' });
+      expect(stack.agentcore.invocationFor(side).payload.messages).toHaveLength(1);
+    } finally {
+      release();
+      await posted(main);
+    }
+  });
+
+  it('skips a scheduled run while the user is chatting in its Side Chat', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const { id } = await run(account, stream(...text('answer', 'First brief.')));
+    await posted(main);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0));
+    const { threads } = (await (await request(account, '/threads')).json()) as { threads: { id: string }[] };
+    const side = defined(threads[0], 'task Side Chat').id;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    stack.agentcore.scriptPrompt('Discuss the brief', { ...stream(...text('reply', 'User reply.')), hold });
+    const chatting = await request(account, '/', { method: 'POST', body: {
+      threadId: side, runId: 'user-discussion', messages: [{ id: 'discussion', role: 'user', content: 'Discuss the brief' }],
+      tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
+    } });
+    try {
+      expect(chatting.status).toBe(200);
+      await scheduler.fire(id);
+      await vi.waitFor(async () => expect(await posted(main)).toContainEqual({
+        content: 'Scheduled task "Morning brief" skipped: the previous run was still going', userId: `filed-${account}`,
+      }));
+      // Its request was never written, so its card has nothing to open.
+      const skipped = stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main && event.content?.includes('skipped'));
+      expect(skipped && 'scheduledRun' in skipped && skipped.scheduledRun).toEqual({
+        title: 'Morning brief', ranAt: expect.any(String), status: 'skipped', text: 'the previous run was still going',
+      });
+    } finally {
+      release();
+      await chatting.text();
+    }
+  });
+
+  it("says whether a task's Side Chat exists: not before its first run, and once it has", async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const listed = async () => ((await (await request(account, '/scheduled-tasks')).json()) as { tasks: { sideChat: boolean }[] }).tasks;
+    const prompt = `Side chat ${Math.random().toString(36).slice(2)}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('a1', 'Done.')));
+    const created = await request(account, '/scheduled-tasks', {
+      method: 'POST', body: { title: 'Side', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt },
+    });
+    const { id, sideChat } = (await created.json()) as { id: string; sideChat: boolean };
+    expect(sideChat).toBe(false);
+    expect((await listed()).map((task) => task.sideChat)).toEqual([false]);
+
+    await scheduler.fire(id);
+    await posted(main);
+
+    expect((await listed()).map((task) => task.sideChat)).toEqual([true]);
+    const edited = await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { title: 'Renamed' } });
+    expect(await edited.json()).toMatchObject({ sideChat: true });
+  });
+
+  it('adds later runs to the task Side Chat and leaves it after deleting the task', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const { id } = await run(account, stream(...text('answer', 'The curve changed.')));
+    await posted(main);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0));
+    const threads = async () => ((await (await request(account, '/threads')).json()) as { threads: { id: string; title: string }[] }).threads.map(({ id, title }) => ({ id, title }));
+    const first = await threads();
+    expect(first).toEqual([expect.objectContaining({ title: 'Morning brief' })]);
+    await scheduler.fire(id);
+    await vi.waitFor(async () => expect((await posted(main)).length).toBe(2));
+    expect(await threads()).toEqual(first);
+    const invocations = stack.agentcore.invocations().map(({ body }) => JSON.parse(body) as { threadId: string; runId: string; messages: { id: string }[] })
+      .filter(({ threadId }) => threadId === defined(first[0], 'task Side Chat').id);
+    expect(invocations).toHaveLength(2);
+    expect(new Set(invocations.map(({ runId }) => runId)).size).toBe(2);
+    expect(new Set(invocations.flatMap(({ messages }) => messages.map(({ id }) => id))).size).toBe(2);
+    expect(await activity(account, 0)).toHaveLength(2);
+    await request(account, `/scheduled-tasks/${id}`, { method: 'DELETE' });
+    expect(await threads()).toEqual(first);
+  });
+
+  it('retires a one-off task once it has run, freeing its place under the cap and keeping its Side Chat and run card', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const prompt = `Once ${Math.random().toString(36).slice(2)}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('once', 'Payrolls beat.')));
+    const confirmed = async (title: string, schedule: string, proposalId: string) =>
+      request(account, '/scheduled-tasks', { method: 'POST', body: { title, prompt, schedule, timezone: 'UTC', proposalId } });
+    // Its time has come: Scheduler delivers a one-off at or after it.
+    const { id } = (await (await confirmed('Payrolls', 'at(2026-10-02T13:30:00)', `once-${prompt}`)).json()) as { id: string };
+    for (let n = 1; n <= 9; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- tasks are confirmed one at a time
+      expect((await confirmed(`Brief ${n}`, 'rate(1 day)', `${prompt}-${n}`)).status).toBe(201);
+    }
+
+    await scheduler.fire(id);
+
+    expect((await posted(main)).map(({ content }) => content)).toEqual(['Scheduled task "Payrolls": Payrolls beat.']);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0));
+    const { tasks } = (await (await request(account, '/scheduled-tasks')).json()) as { tasks: { id: string }[] };
+    expect(tasks.map((task) => task.id)).not.toContain(id);
+    expect((await confirmed('Brief 10', 'rate(1 day)', `${prompt}-10`)).status).toBe(201);
+    const { threads } = (await (await request(account, '/threads')).json()) as { threads: { title: string }[] };
+    expect(threads).toEqual([expect.objectContaining({ title: 'Payrolls' })]);
+  });
+
+  it('retires a task after its count of runs, so a run queued after the last one runs nothing (#3950)', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const prompt = `US rates ${Math.random().toString(36).slice(2)}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('rates', 'Rates update.')));
+    const response = await request(account, '/scheduled-tasks', {
+      method: 'POST', body: { title: 'US rates', prompt, schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 3, proposalId: prompt },
+    });
+    const { id, maxRuns } = (await response.json()) as { id: string; maxRuns?: number };
+    expect(maxRuns).toBe(3);
+    const { Target } = defined(await scheduler.schedule(id), 'the task schedule');
+    const posts = async () => (await posted(main)).length;
+
+    for (let n = 1; n <= 3; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- one run at a time
+      await scheduler.fire(id);
+      // eslint-disable-next-line no-await-in-loop -- one run at a time
+      await vi.waitFor(async () => expect(await posts()).toBe(n), { timeout: 10_000 });
+    }
+
+    await vi.waitFor(async () => expect(await scheduler.schedule(id)).toBeNull(), { timeout: 10_000 });
+    const { tasks } = (await (await request(account, '/scheduled-tasks')).json()) as { tasks: { id: string }[] };
+    expect(tasks.map((task) => task.id)).not.toContain(id);
+    // Delivered before Scheduler deleted the schedule.
+    await scheduler.deliver(Target.Input);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 10_000 });
+    expect(await posts()).toBe(3);
+  });
+
+  it.each(['spent', 'retired'] as const)('skips a stale admitted delivery after the final run is %s (#3950)', async (state) => {
+    const account = owner();
+    const response = await request(account, '/scheduled-tasks', { method: 'POST', body: {
+      title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 1, proposalId: account,
+    } });
+    const { id } = await response.json() as { id: string };
+    const tasks = new ScheduledTasks(stack.table.name, scheduler.runs, stack.table.client,
+      new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => templates, save: async () => undefined, delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Rates update."}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
+    const post = vi.fn<import('./session-api.js').SessionApi>(async () => ({}));
+    const deps = {
+      runtimeNamespaceRequired: false, turnIdentity: null,
+      summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: tasks,
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
+    };
+    const retirement = state === 'spent' ? vi.spyOn(tasks, 'retire').mockResolvedValue(undefined) : undefined;
+    const stale = runScheduledTask({ ...deps, cartridge: { ...cartridge, scheduledRequester: async (value) => {
+      enter(); await released; return { owner: value };
+    } } }, { owner: account, taskId: id, deliveryId: 'stale-admission' });
+    try {
+      await Promise.race([entered, stale.then(() => { throw new Error('Stale delivery never reached requester'); })]);
+      await runScheduledTask(deps, { owner: account, taskId: id, deliveryId: 'final-run' });
+      if (state === 'spent') expect(await tasks.get(account, id)).toMatchObject({ runsMade: 1, maxRuns: 1 });
+      else expect(await tasks.get(account, id)).toBeNull();
+      release();
+      await stale;
+      expect(post.mock.calls.map(([event]) => event)).toEqual([
+        expect.objectContaining({ content: 'Scheduled task "US rates": Rates update.' }),
+        expect.objectContaining({ content: state === 'spent'
+          ? 'Scheduled task "US rates" skipped: the task had already made its count of runs'
+          : 'Scheduled task "US rates" skipped: the task was no longer available' }),
+      ]);
+      expect(invoke).toHaveBeenCalledTimes(1);
+      const session = await stack.sessionMetadata.get(account, id);
+      expect(session).toMatchObject({ scheduled_task_id: id });
+      expect(session).not.toHaveProperty('turn_running_since');
+      expect(session).not.toHaveProperty('turn_run_id');
+    } finally {
+      release(); await stale.catch(() => undefined); retirement?.mockRestore();
+    }
+  });
+
+  it('clears the running mark after counting fails so the next occurrence runs (#3950)', async () => {
+    const isolated = await startInProcess({ scheduled: true });
+    const scheduler = defined(isolated.scheduler, 'the task scheduler');
+    const account = owner();
+    const call = (path: string, body?: unknown) => isolated.app.request(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-owner': account },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const { id: main } = await (await call('/main-chat')).json() as { id: string };
+    const prompt = `Counting recovery ${Math.random().toString(36).slice(2)}`;
+    isolated.agentcore.scriptPrompt(prompt, stream(...text('recovered', 'Recovered brief.')));
+    const response = await call('/scheduled-tasks', {
+      title: 'Counting recovery', prompt, schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 3, proposalId: prompt,
+    });
+    const { id } = await response.json() as { id: string };
+    const counting = vi.spyOn(ScheduledTasks.prototype, 'countRun').mockRejectedValueOnce(new Error('Task count unavailable'));
+    try {
+      await scheduler.fire(id);
+      await vi.waitFor(async () => expect(await posted(main, isolated.sessionApi)).toEqual([
+        expect.objectContaining({ content: 'Scheduled task "Counting recovery" failed: Task count unavailable' }),
+      ]), { timeout: 10_000 });
+      const { threads } = await (await call('/threads')).json() as { threads: { id: string }[] };
+      const sideChat = defined(threads[0], 'the scheduled Side Chat').id;
+      expect(await isolated.sessionMetadata.get(account, sideChat)).not.toHaveProperty('turn_running_since');
+      await scheduler.fire(id);
+      await vi.waitFor(async () => expect(await posted(main, isolated.sessionApi)).toEqual([
+        expect.objectContaining({ content: 'Scheduled task "Counting recovery" failed: Task count unavailable' }),
+        expect.objectContaining({ content: 'Scheduled task "Counting recovery": Recovered brief.' }),
+      ]), { timeout: 10_000 });
+      expect(counting).toHaveBeenCalledTimes(2);
+    } finally {
+      counting.mockRestore();
+      await isolated.stop();
+    }
+  }, 15_000);
+
+  it('runs nothing for a task whose count of runs is spent but not yet retired (#3950)', async () => {
+    const account = owner();
+    const task = { id: 'spent', proposalId: 'spent-proposal', title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', paused: false, ended: true, maxRuns: 3, runsMade: 3 };
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => templates, save: async () => undefined, delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
+    const post = vi.fn(async () => ({}));
+    const retire = vi.fn(async () => undefined);
+
+    await runScheduledTask({
+      runtimeNamespaceRequired: false, turnIdentity: null,
+      summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire },
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
+      invokeSessionApi: post,
+    }, { owner: account, taskId: task.id, deliveryId: 'after-the-last-run' });
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledWith(account, task);
+  });
+
+  it('retires a one-off under the claiming account when Account Claim moves it mid-run', async () => {
+    const claimed = await startInProcess({ scheduled: true });
+    const source = owner();
+    const destination = owner();
+    const originalMain = await claimed.sessionMetadata.mainChat(source, `filed-${source}`);
+    let sideChat: string | undefined;
+    const recordTurn = claimed.sessionMetadata.recordTurn.bind(claimed.sessionMetadata);
+    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
+    const recording = vi.spyOn(claimed.sessionMetadata, 'recordTurn').mockImplementation(async (account, sessionId, turn) => {
+      const filingId = await recordTurn(account, sessionId, turn);
+      if (account === source && turn.running !== undefined) sideChat = sessionId;
+      return filingId;
+    });
+    // The Claim lands while the one-off's run is under way.
+    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      const complete = await beginDispatch(...args);
+      if (args[0] === source && args[1] === sideChat) await claimed.history.transfer(source, destination);
+      return complete;
+    });
+    try {
+      const prompt = 'Preview payrolls before the Claim';
+      claimed.agentcore.scriptPrompt(prompt, stream(...text('claimed-once', 'Payrolls beat.')));
+      const response = await claimed.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': source },
+        body: JSON.stringify({ title: 'Payrolls', prompt, schedule: 'at(2026-10-02T13:30:00)', timezone: 'UTC', proposalId: prompt }),
+      });
+      const { id } = (await response.json()) as { id: string };
+      await defined(claimed.scheduler, 'the Claim stack schedules tasks').fire(id);
+
+      await vi.waitFor(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({ operation: 'post', sessionId: originalMain })));
+      const listed = async () => ((await (await claimed.app.request('/scheduled-tasks', { headers: { 'x-test-owner': destination } })).json()) as { tasks: { id: string }[] }).tasks;
+      await vi.waitFor(async () => expect(await listed()).toEqual([]));
+    } finally {
+      recording.mockRestore();
+      dispatching.mockRestore();
+      await claimed.stop();
+    }
+  });
+
   it('dispatches an accepted scheduled Turn after Account Claim moves its Session and task', async () => {
     const claimed = await startInProcess({ scheduled: true });
     const source = owner();
@@ -386,7 +735,72 @@ describe('a scheduled run', () => {
     await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 2_000 });
   });
 
-  it("runs the prompt as the first Turn of a fresh Side Chat and posts the agent's last answer to the Main Chat", async () => {
+  it.each([
+    { status: 'done', frames: [...text('a1', 'The 10y yield fell 5bp.')], text: 'The 10y yield fell 5bp.' },
+    { status: 'failed', frames: [{ type: 'RUN_ERROR', message: 'Model overloaded' }], text: 'Model overloaded' },
+    { status: 'sign-in', frames: [{ type: 'TOOL_CALL_RESULT', messageId: 'r1', toolCallId: 't1', content: 'Sign in to continue.' }], text: 'Sign in to continue.' },
+  ])('posts a $status run with its run card, which opens the task Side Chat at the run', async ({ status, frames, text: excerpt }) => {
+    const account = owner();
+    const main = await mainChat(account);
+    const before = new Date().toISOString();
+
+    const { id, prompt } = await run(account, stream(...frames), 'Rates brief');
+
+    await posted(main);
+    const post = defined(stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main), 'the post');
+    const invocation = JSON.parse(defined(stack.agentcore.invocations().find(({ body }) => body.includes(prompt)), 'the run').body) as { messages: { id: string }[] };
+    expect('scheduledRun' in post && post.scheduledRun).toEqual({
+      sideChat: id,
+      messageId: defined(invocation.messages[0], 'the run request').id,
+      title: 'Rates brief',
+      ranAt: expect.any(String),
+      status,
+      text: excerpt,
+    });
+    expect(defined('scheduledRun' in post ? post.scheduledRun : undefined, 'the run card').ranAt >= before).toBe(true);
+  });
+
+  // A card opens the run in its Side Chat: a run that never got there has nothing to open. Its own stack, since the
+  // failed delivery stays on the queue and backs the poller off, which would hold up a later run.
+  it('posts a run that failed before reaching its Side Chat with a run card that has nothing to open', async () => {
+    const isolated = await startInProcess({ scheduled: true, cartridge: {
+      scheduledRequester: async (owner) => ({ owner, scheduled: true }),
+      accountModels: async (requester) => {
+        if ('scheduled' in requester) throw new Error('The plan catalog is unavailable');
+        return [{ key: 'plan', label: 'Plan', provider: 'openai' }];
+      },
+    } });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const account = owner();
+      const call = (path: string, body?: unknown) => isolated.app.request(path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const { id: main } = await (await call('/main-chat')).json() as { id: string };
+      const { id } = await (await call('/scheduled-tasks', {
+        title: 'Rates brief', prompt: 'Brief me on rates.', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'unavailable-catalog',
+      })).json() as { id: string };
+      await defined(isolated.scheduler, 'the isolated schedule').fire(id);
+
+      await posted(main, isolated.sessionApi);
+      const post = defined(isolated.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main), 'the post');
+      expect('scheduledRun' in post && post.scheduledRun).toEqual({
+        title: 'Rates brief', ranAt: expect.any(String), status: 'failed', text: 'The plan catalog is unavailable',
+      });
+      expect(await (await call('/threads')).json()).toEqual({ threads: [] });
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledWith('Scheduled run failed', expect.objectContaining({ message: 'The plan catalog is unavailable' })));
+      // Its task has a Last run, but no Side Chat for its sheet to open.
+      const { tasks } = (await (await call('/scheduled-tasks')).json()) as { tasks: object[] };
+      expect(tasks).toEqual([expect.objectContaining({ lastRun: { at: expect.any(String), status: 'failed' }, sideChat: false })]);
+    } finally {
+      await isolated.stop();
+      errors.mockRestore();
+    }
+  });
+
+  it("runs the prompt as the first Turn of the task Side Chat and posts the agent's last answer to the Main Chat", async () => {
     const account = owner();
     const main = await mainChat(account);
     const started = Date.now();
@@ -428,6 +842,8 @@ describe('a scheduled run', () => {
         sessionUserId: `filed-${account}`,
         agentIdentity: { name: 'Test Bot' },
         soul: 'Be brief.',
+        // The Harness leaves out the proposal tool, so a run never proposes another task (#3950).
+        scheduledRun: true,
       },
     });
     expect(signInChecks).toContainEqual({ owner: account, outputs: ['Checking the curve.', 'The 10y yield fell 5bp overnight.'] });
@@ -701,6 +1117,39 @@ describe('a scheduled run', () => {
     expect(signInChecks).toContainEqual({ owner: account, outputs: ['Sign in to continue.', 'I need you to sign in.'] });
   });
 
+  it.each([
+    ['done', stream(...text('a1', 'All quiet.'))],
+    ['failed', stream({ type: 'RUN_ERROR', message: 'Model overloaded' })],
+    ['sign-in', stream({ type: 'TOOL_CALL_RESULT', messageId: 'r1', toolCallId: 't1', content: 'Sign in to continue.' })],
+  ])("lists the run as its task's last run, %s", async (status, script) => {
+    const account = owner();
+    const main = await mainChat(account);
+    const started = Date.now();
+
+    const { id } = await run(account, script);
+
+    // The run records its end once its Main Chat post is in.
+    await posted(main);
+    await vi.waitFor(async () => {
+      const { tasks } = (await (await request(account, '/scheduled-tasks')).json()) as { tasks: { id: string; lastRun?: { at: string; status: string } }[] };
+      const lastRun = defined(tasks.find((task) => task.id === id)?.lastRun, 'the last run');
+      expect(lastRun.status).toBe(status);
+      expect(Date.parse(lastRun.at)).toBeGreaterThanOrEqual(started);
+    }, { timeout: 3_000 });
+  });
+
+  it('marks the task Side Chat as scheduled in the Side Chat list, and no other', async () => {
+    const account = owner();
+    await stack.sessionMetadata.recordTurn(account, 'topic-chat', { filingUserId: `filed-${account}`, title: 'My topic' });
+
+    const { id } = await run(account, stream(...text('a1', 'All quiet.')));
+
+    await vi.waitFor(async () => {
+      const { threads } = (await (await request(account, '/threads')).json()) as { threads: { id: string; scheduled?: boolean }[] };
+      expect(threads.map(({ id: thread, scheduled }) => [thread, scheduled])).toEqual(expect.arrayContaining([[id, true], ['topic-chat', undefined]]));
+    }, { timeout: 3_000 });
+  });
+
   it('does not invoke a paused task when its schedule delivers a run', async () => {
     const account = owner();
     const main = await mainChat(account);
@@ -742,6 +1191,24 @@ describe('a scheduled run', () => {
     expect((await posted(main)).map(({ content }) => content)).toEqual(['Scheduled task "Paused brief": Resumed execution']);
   });
 
+  it('runs a task whose stored schedule its next run cannot be read from', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const prompt = `Unread ${Math.random().toString(36).slice(2)}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('a1', 'Ran anyway')));
+    const { id } = (await (await request(account, '/scheduled-tasks', {
+      method: 'POST', body: { title: 'Unread', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt },
+    })).json()) as { id: string };
+    await DynamoDBDocumentClient.from(stack.table.client).send(new UpdateCommand({
+      TableName: stack.table.name, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${id}` },
+      UpdateExpression: 'SET schedule = :schedule', ExpressionAttributeValues: { ':schedule': 'cron(0 9 W * ? *)' },
+    }));
+
+    await scheduler.fire(id);
+
+    expect((await posted(main)).map(({ content }) => content)).toEqual(['Scheduled task "Unread": Ran anyway']);
+  });
+
   it('skips a run whose task was deleted after the schedule fired', async () => {
     const account = owner();
     const main = await mainChat(account);
@@ -780,9 +1247,10 @@ describe('a scheduled run', () => {
         title: 'Unavailable computer', prompt: 'Open the template site.', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'unavailable-computer',
       })).json() as { id: string };
       await defined(isolated.scheduler, 'the isolated schedule').fire(id);
-      await vi.waitFor(() => expect(isolated.sessionApi.events()).toContainEqual(expect.objectContaining({
+      await posted(main, isolated.sessionApi);
+      expect(isolated.sessionApi.events()).toContainEqual(expect.objectContaining({
         operation: 'post', sessionId: main, content: 'Scheduled task "Unavailable computer" failed: Computer capability is unavailable',
-      })));
+      }));
       const { threads } = await (await call('/threads')).json() as { threads: { id: string }[] };
       expect(threads).toHaveLength(1);
       const sideChat = defined(threads[0], 'the failed scheduled Side Chat').id;
@@ -795,17 +1263,69 @@ describe('a scheduled run', () => {
     }
   });
 
+  // Scheduler deleted the one-off's schedule when it fired, so it can never run again: once the Main Chat has heard, it goes.
+  it('retires a one-off task whose run failed once its failure reaches the Main Chat, still failing its delivery', async () => {
+    const isolated = await startInProcess({ scheduled: true, cartridge: {
+      invocationPayload: async () => { throw new Error('Computer capability is unavailable'); },
+    } });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const account = owner();
+      const call = (path: string, body?: unknown) => isolated.app.request(path, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const { id: main } = await (await call('/main-chat')).json() as { id: string };
+      const { id } = await (await call('/scheduled-tasks', {
+        title: 'Payrolls', prompt: 'Preview payrolls.', schedule: 'at(2026-10-02T13:30:00)', timezone: 'UTC', proposalId: 'failed-one-off',
+      })).json() as { id: string };
+      const queue = defined(isolated.scheduler, 'the isolated schedule');
+
+      await queue.fire(id);
+
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledWith('Scheduled run failed', expect.objectContaining({ message: 'Computer capability is unavailable' })));
+      expect((await posted(main, isolated.sessionApi)).map(({ content }) => content)).toEqual(['Scheduled task "Payrolls" failed: Computer capability is unavailable']);
+      expect(await (await call('/scheduled-tasks')).json()).toEqual({ tasks: [] });
+    } finally {
+      await isolated.stop();
+      errors.mockRestore();
+    }
+  });
+
+  it('tells the Main Chat of a one-off paused after it fired, then retires it without running it', async () => {
+    const account = owner();
+    const main = await mainChat(account);
+    const prompt = `Paused once ${Math.random().toString(36).slice(2)}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('a1', 'Never ran')));
+    const { id } = (await (await request(account, '/scheduled-tasks', {
+      method: 'POST', body: { title: 'Payrolls', prompt, schedule: 'at(2026-10-02T13:30:00)', timezone: 'UTC', proposalId: prompt },
+    })).json()) as { id: string };
+    const delivery = defined(await scheduler.schedule(id), 'the schedule').Target.Input;
+    // The user pauses it while its fired run waits on the queue.
+    expect((await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: true } })).status).toBe(200);
+
+    await scheduler.deliver(delivery);
+
+    expect((await posted(main)).map(({ content }) => content)).toEqual(['Scheduled task "Payrolls" skipped: the task was paused']);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0));
+    expect(await (await request(account, '/scheduled-tasks')).json()).toEqual({ tasks: [] });
+    expect(stack.agentcore.invocations().map(({ body }) => body)).not.toContainEqual(expect.stringContaining(prompt));
+  });
+
   // Last: the poller backs off after the failure, which would hold up a later run.
   it('posts a run that broke off mid-stream as failed, and still fails its delivery', async () => {
     const account = owner();
     const main = await mainChat(account);
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await run(account, { ...stream(...text('a1', 'Partial')), drop: true });
+    const { id } = await run(account, { ...stream(...text('a1', 'Partial')), drop: true });
 
     const [summary] = (await posted(main)).map(({ content }) => content);
     expect(summary).toMatch(/^Scheduled task "Morning brief" failed: \S/);
     await vi.waitFor(() => expect(errors).toHaveBeenCalledWith('Scheduled run failed', expect.any(Error)), { timeout: 2_000 });
+    const { tasks } = (await (await request(account, '/scheduled-tasks')).json()) as { tasks: { id: string; lastRun?: { status: string } }[] };
+    expect(tasks.find((task) => task.id === id)?.lastRun?.status).toBe('failed');
     const threads = (await (await request(account, '/threads')).json()) as { threads: { id: string }[] };
     const sideChat = defined(threads.threads[0], 'the failed Side Chat').id;
     expect(await stack.sessionMetadata.get(account, sideChat)).not.toHaveProperty('turn_running_since');
@@ -1092,6 +1612,147 @@ async function changeReservedClaimBoundary(claimed: InProcessStack, boundary: st
 }
 
 describe('scheduled persistence dispatch admission', () => {
+  it('runs one first occurrence while an overlapping occurrence skips and stays skipped on redelivery', async () => {
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const account = owner();
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let first: Promise<void[]> | undefined;
+    try {
+      const response = await isolated.app.request('/scheduled-tasks', { method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        body: JSON.stringify({ title: 'Morning brief', prompt: 'Check the curve', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'curve' }),
+      });
+      expect(response.status).toBe(201);
+      const { id } = await response.json() as { id: string };
+      const runs = defined(isolated.scheduler, 'scheduled stack');
+      const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
+        new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+      const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
+      const cartridge: ChatServiceCartridge = {
+        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      };
+      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+        agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
+        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        summarizeTurn: async () => ({ title: 'Brief', summary: 'Checked the curve.' }),
+      };
+      isolated.agentcore.scriptPrompt('Check the curve', { ...stream(...text('brief', 'Rates rose.')), hold });
+      const original = { owner: account, taskId: id, deliveryId: 'first-occurrence' };
+      const overlapping = { owner: account, taskId: id, deliveryId: 'overlapping-occurrence' };
+      const deliveries = [runScheduledTask(deps, original), runScheduledTask(deps, overlapping)];
+      first = Promise.all(deliveries);
+      await Promise.race(deliveries);
+      expect(isolated.agentcore.invocations()).toHaveLength(1);
+      const posts = () => isolated.sessionApi.events().filter((event) => event.operation === 'post');
+      expect(posts()).toEqual([expect.objectContaining({ content: 'Scheduled task "Morning brief" skipped: the previous run was still going' })]);
+      release();
+      await first;
+      await runScheduledTask(deps, overlapping);
+      await runScheduledTask(deps, original);
+      expect(isolated.agentcore.invocations()).toHaveLength(1);
+      expect(posts()).toEqual([
+        expect.objectContaining({ content: 'Scheduled task "Morning brief" skipped: the previous run was still going' }),
+        expect.objectContaining({ content: 'Scheduled task "Morning brief": Rates rose.' }),
+      ]);
+      const threads = await (await isolated.app.request('/threads', { headers: { 'x-test-owner': account } })).json() as { threads: { title: string }[] };
+      expect(threads.threads).toEqual([expect.objectContaining({ title: 'Morning brief' })]);
+    } finally {
+      release();
+      await first;
+      await isolated.stop();
+    }
+  });
+
+  it('keeps a task made one-off after a recurring run was queued, until its own time comes', async () => {
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    try {
+      const account = owner();
+      const call = (method: string, path: string, body: unknown) => isolated.app.request(path, { method,
+        headers: { 'content-type': 'application/json', 'x-test-owner': account }, body: JSON.stringify(body) });
+      const { id } = await (await call('POST', '/scheduled-tasks', {
+        title: 'Payrolls', prompt: 'Preview payrolls', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'payrolls-made-once',
+      })).json() as { id: string };
+      const runs = defined(isolated.scheduler, 'scheduled stack');
+      const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
+        new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+      const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
+      const cartridge: ChatServiceCartridge = {
+        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      };
+      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+        agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
+        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
+      };
+      isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
+      // The daily run is already queued when the user makes the task run once, next year.
+      await call('PATCH', `/scheduled-tasks/${id}`, { schedule: `at(${new Date().getUTCFullYear() + 1}-11-06T13:30:00)` });
+
+      await runScheduledTask(deps, { owner: account, taskId: id, deliveryId: 'queued-daily-occurrence' });
+
+      expect(await tasks.get(account, id)).not.toBeNull();
+    } finally {
+      await isolated.stop();
+    }
+  });
+
+  it("retires a one-off on its redelivery when retiring failed after its run's post", async () => {
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    try {
+      const account = owner();
+      const response = await isolated.app.request('/scheduled-tasks', { method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        body: JSON.stringify({ title: 'Payrolls', prompt: 'Preview payrolls', schedule: 'at(2026-10-02T13:30:00)', timezone: 'UTC', proposalId: 'payrolls' }),
+      });
+      const { id } = await response.json() as { id: string };
+      const runs = defined(isolated.scheduler, 'scheduled stack');
+      const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
+        new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+      const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
+      const cartridge: ChatServiceCartridge = {
+        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      };
+      // Storage refuses the first retirement, as a throttled transaction would.
+      let refusals = 1;
+      const retire: ScheduledTasks['retire'] = async (...args) => {
+        if (refusals-- > 0) throw new Error('Retirement throttled');
+        return tasks.retire(...args);
+      };
+      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+        agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), countRun: tasks.countRun.bind(tasks), retire },
+        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
+      };
+      isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
+      const delivery = { owner: account, taskId: id, deliveryId: 'one-off-occurrence' };
+
+      await expect(runScheduledTask(deps, delivery)).rejects.toThrow('Retirement throttled');
+      expect(await tasks.get(account, id)).not.toBeNull();
+      await runScheduledTask(deps, delivery);
+
+      expect(await tasks.get(account, id)).toBeNull();
+      expect(isolated.agentcore.invocations()).toHaveLength(1);
+      expect(isolated.sessionApi.events().filter((event) => event.operation === 'post')).toEqual([
+        expect.objectContaining({ content: 'Scheduled task "Payrolls": Payrolls beat.' }),
+      ]);
+    } finally {
+      await isolated.stop();
+    }
+  });
+
   it.each(['valid transfer', 'original Main filing', 'missing original Main filing proof', 'concurrent replacements', 'deleted destination', 'further Claim', 'changed source Claim', 'missing moved task', 'paused moved task', 'missing original Main', 'fresh source delivery', 'missing same-owner task', 'paused same-owner task'] as const)('recovers the original reserved SQS delivery after its real scheduled task moves during Account Claim: %s', async (boundary) => {
     const claimed = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
     const source = owner();
@@ -1229,7 +1890,7 @@ describe('scheduled persistence dispatch admission', () => {
 
   it.each(['ack failure', 'success proof failure', 'uncertain post', 'failed run', 'settled failed retry', 'before preparation', 'running Main', 'paused reservation', 'after admission', 'Claim before admission'] as const)('recovers an accepted scheduled post on replacement without another Side Chat or Main result: %s', async (failure) => {
     const account = owner();
-    const task = { id: 'post-recovery', proposalId: 'post-recovery', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false };
+    const task = { id: 'post-recovery', proposalId: 'post-recovery', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
@@ -1255,7 +1916,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task },
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
     };
@@ -1384,6 +2045,45 @@ describe('scheduled persistence dispatch admission', () => {
     } else await expect(replacement.assertNoDispatch(address)).resolves.toBeUndefined();
   });
 
+  it("records a run's end on redelivery when recording it failed after its Main Chat post", async () => {
+    const account = owner();
+    const task = { id: 'record-retry', proposalId: 'record-retry', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
+      warmSession: async () => undefined,
+    };
+    const documents: AgentDocuments = {
+      get: async () => templates, save: async () => undefined,
+      delete: async () => undefined,
+      picture: async () => null, savePicture: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"a1","delta":"Done."}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
+    const recordRun = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('Task table unavailable'));
+    const post = vi.fn(async () => ({}));
+    const deps = {
+      runtimeNamespaceRequired: false, turnIdentity: null,
+      summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      scheduledTasks: { get: async () => task, recordRun, countRun: async () => undefined, retire: async () => undefined },
+      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
+      invokeSessionApi: post,
+    };
+    const message = { owner: account, taskId: task.id, deliveryId: 'record-retry-occurrence' };
+
+    await expect(runScheduledTask(deps, message)).rejects.toThrow('Task table unavailable');
+    await runScheduledTask(deps, message);
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(recordRun).toHaveBeenCalledTimes(2);
+    expect(recordRun).toHaveBeenLastCalledWith(account, task.id, { at: expect.any(String), status: 'done' });
+  });
+
   it('propagates account deletion during scheduled preparation without posting to Main Chat', async () => {
     const account = owner();
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
@@ -1409,7 +2109,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false }) },
+      scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
       invokeSessionApi: post,
     }, { owner: account, taskId: 'deleted-run', deliveryId: 'deleted-run-occurrence' })).rejects.toThrow(SessionDeletedError);
@@ -1419,7 +2119,7 @@ describe('scheduled persistence dispatch admission', () => {
 
   it('keeps account deletion blocked until the scheduled Main Chat post finishes', async () => {
     const account = owner();
-    const task = { id: 'scheduled-dispatch', proposalId: 'proposal-dispatch', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false };
+    const task = { id: 'scheduled-dispatch', proposalId: 'proposal-dispatch', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
@@ -1441,7 +2141,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task },
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),
       invokeSessionApi: async (event) => {
         if (event.operation === 'post') {

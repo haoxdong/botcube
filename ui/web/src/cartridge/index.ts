@@ -8,3 +8,4 @@ export type {
   ComputerViewProps,
   WebUiPlugin,
 } from './types.js';
+export { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount, subscribeAttachmentAccount } from './file-account';

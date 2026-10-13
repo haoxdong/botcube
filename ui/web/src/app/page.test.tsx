@@ -51,8 +51,14 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     return <div data-message-row={id} />;
   };
   type MessageViewParts = { messageElements: ReactNode[]; messages: Message[]; isRunning: boolean; interruptElement: ReactNode };
+  type AssistantProps = { message: Message; markdownRenderer?: ComponentType<{ content: string }> };
+  const CopilotChatAssistantMessage = Object.assign(
+    ({ message, markdownRenderer: Renderer }: AssistantProps) =>
+      Renderer ? <Renderer content={message.content as string} /> : <Streamdown>{message.content as string}</Streamdown>,
+    { MarkdownRenderer: ({ content, ...props }: { content: string }) => <Streamdown {...props}>{content}</Streamdown> },
+  );
   const CopilotChatMessageView = Object.assign(
-    ({ assistantMessage, children }: { assistantMessage?: { markdownRenderer?: ComponentType<{ content: string }> }; children?: (parts: MessageViewParts) => ReactNode }) => {
+    ({ assistantMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
       const agentMessages = copilot.kits.at(-1)?.selfManagedAgents['research-agent']?.messages ?? [];
       const rows = copilot.rows
         ? agentMessages.flatMap((message) => {
@@ -60,15 +66,16 @@ vi.mock('@copilotkit/react-core/v2', async () => {
             return copilot.slots ? [<Fragment key={`${message.id}-custom-before`} />, ...row, <Fragment key={`${message.id}-custom-after`} />] : row;
           })
         : [];
-      const Renderer = assistantMessage?.markdownRenderer;
-      const messageElements = copilot.reply === '' ? rows : [...rows, Renderer ? <Renderer key="reply" content={copilot.reply} /> : <Streamdown key="reply">{copilot.reply}</Streamdown>];
+      // Like its slots: a component renders the message, or an object gives the default one its props.
+      const Assistant = typeof assistantMessage === 'function' ? assistantMessage : (props: AssistantProps) => <CopilotChatAssistantMessage {...props} {...assistantMessage} />;
+      const messageElements = copilot.reply === '' ? rows : [...rows, <Assistant key="reply" message={{ id: 'reply', role: 'assistant', content: copilot.reply }} />];
       const messages = copilot.rows ? agentMessages : copilot.messages;
       if (children) return <>{children({ messageElements, messages, isRunning: copilot.running, interruptElement: null })}</>;
       return <div data-testid="copilot-message-list" data-virtualized>{messageElements}</div>;
     },
     { Cursor: () => <div data-testid="copilot-loading-cursor" /> },
   );
-  const CopilotChatInput = ({ isRunning = false, sendButton, addMenuButton, onSubmitMessage, onStop, textArea }: { textArea?: Record<string, unknown>; isRunning?: boolean; sendButton?: Record<string, unknown> | ComponentType<ButtonHTMLAttributes<HTMLButtonElement>>; addMenuButton?: ButtonHTMLAttributes<HTMLButtonElement> | ComponentType; onSubmitMessage?: (message: string) => void; onStop?: () => void }) => {
+  const CopilotChatInput = ({ isRunning = false, sendButton, addMenuButton, onAddFile, onSubmitMessage, onStop, textArea }: { textArea?: Record<string, unknown>; isRunning?: boolean; sendButton?: Record<string, unknown> | ComponentType<ButtonHTMLAttributes<HTMLButtonElement>>; addMenuButton?: ButtonHTMLAttributes<HTMLButtonElement> | ComponentType; onAddFile?: () => void; onSubmitMessage?: (message: string) => void; onStop?: () => void }) => {
     const sendCellShown = useSyncExternalStore(
       (listener) => {
         copilot.listeners.add(listener);
@@ -82,7 +89,8 @@ vi.mock('@copilotkit/react-core/v2', async () => {
         <div className="cpk:max-w-3xl cpk:mx-auto cpk:py-0 cpk:px-4 cpk:sm:px-0 cpk:pointer-events-auto">
           <div className="copilotKitInput">
             <div data-layout="compact">
-              {sendCellShown && <div className="cpk:col-start-1" data-testid="add-cell">{typeof addMenuButton === 'function' ? createElement(addMenuButton) : <button type="button" disabled aria-label="Add files" {...addMenuButton} />}</div>}
+              {sendCellShown && <div className="cpk:col-start-1" data-testid="add-cell">{/* Its + opens a menu whose one item, with onAddFile, adds files: here a click on it adds them. */}
+                {typeof addMenuButton === 'function' ? createElement(addMenuButton) : <button type="button" data-testid="copilot-add-menu-button" disabled={!onAddFile} onClick={onAddFile} aria-label="Add files" {...addMenuButton} />}</div>}
               <textarea aria-label="Message" {...textArea} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey) { if (isRunning && !event.currentTarget.value.trim()) onStop?.(); else onSubmitMessage?.(event.currentTarget.value); } }} />
               {sendCellShown && (
                 <div className="cpk:col-start-3" data-testid="send-cell">
@@ -123,7 +131,6 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     </>
   );
   return {
-    CopilotChatAssistantMessage: { MarkdownRenderer: ({ content, ...props }: { content: string }) => <Streamdown {...props}>{content}</Streamdown> },
     CopilotKit: ({ children, ...props }: { children: ReactNode } & (typeof copilot.kits)[number]) => {
       copilot.kits.push(props);
       useEffect(() => {
@@ -177,6 +184,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
         </div>
       );
     },
+    CopilotChatAssistantMessage,
     CopilotChatInput,
     CopilotChatMessageView,
     CopilotChatView: { ScrollToBottomButton, ScrollView: CopilotChatScrollView },
@@ -309,7 +317,9 @@ function scheduledTasks(route: string, pathname: string, init?: RequestInit): Re
   }
   const task = service.scheduled.find(({ id }) => pathname === `/scheduled-tasks/${String(id)}`);
   if (route.startsWith('PATCH /scheduled-tasks/') && task !== undefined) {
-    return answer(200, { ...task, ...JSON.parse(init?.body as string) });
+    const changes = JSON.parse(init?.body as string) as Record<string, unknown>;
+    // A moved or cleared stop time is in the future here, so the task no longer has ended.
+    return answer(200, { ...task, ...changes, ...('endDate' in changes ? { ended: false } : {}) });
   }
   return undefined;
 }
@@ -3427,6 +3437,600 @@ describe('a Turn that runs on the server after a reload', () => {
   });
 });
 
+// A follow-up sent while a Turn ran waited out of sight in CopilotKit's memory, so a reload lost it (#3920).
+describe('a follow-up sent while a Turn runs', () => {
+  const question: Message = { id: 'q', role: 'user', content: 'Run sleep 30' };
+  const reply: Message = { id: 'a', role: 'assistant', content: 'QA3903_QUEUE_SLOW' };
+  const followUp = 'Reply with exactly QUEUED_SURVIVED';
+  const queued = () => within(screen.getByTestId('copilot-message-list')).queryByRole('status', { name: 'Queued message' });
+  const sentTo = () => copilot.runAgent.mock.calls.map(([{ agent: sent }]) => [sent?.threadId, sent?.messages.at(-1)?.content]);
+
+  async function threeSecondsPass() {
+    await act(async () => {
+      vi.advanceTimersByTime(3_000);
+    });
+    await settle();
+  }
+
+  async function reload(state = auth({ accountId: 'acct-first' }), view?: ReturnType<typeof render>) {
+    view?.unmount();
+    copilot.kits = [];
+    return renderPage(state);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'server-run' };
+  });
+
+  it('shows as pending, survives a reload, and sends once after the Turn ends', async () => {
+    const first = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    expect(queued()).toHaveTextContent('Sends when this reply ends');
+
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+
+    const second = await reload(undefined, first);
+    expect(queued()).toHaveTextContent(followUp);
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+    expect(agent().messages.map(({ content }) => content)).toEqual([question.content, reply.content, followUp]);
+    expect(queued()).toBeNull();
+
+    await reload(undefined, second);
+    expect(queued()).toBeNull();
+    expect(copilot.runAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for a Turn streaming here, then for it on the server after a reload', async () => {
+    service.mainChat = { id: 'main-1', messages: [] };
+    const first = await renderPage(auth({ accountId: 'acct-first' }));
+    const current = agent();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === 'http://chat.test' && init?.method === 'POST') {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'server-run' })}\n\n`));
+          },
+        }), { headers: { 'content-type': 'text/event-stream' } });
+      }
+      return chatService(url, init);
+    });
+    await act(async () => {
+      current.addMessage(question);
+      void current.runAgent({ runId: 'server-run' }).catch(() => undefined);
+    });
+    await settle();
+    await sendMessage(followUp);
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+
+    fetchMock.mockImplementation(chatService);
+    service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'server-run' };
+    await reload(undefined, first);
+    expect(queued()).toHaveTextContent(followUp);
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it("holds it while the page shows this browser's copy of the Main Chat, until the load says the Turn ended", async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    let answerMainChat!: () => void;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test/main-chat'
+        ? new Promise<Response>((resolve) => { answerMainChat = () => resolve(answer(200, service.mainChat)); })
+        : chatService(url, init),
+    );
+
+    await reload(undefined, view);
+    expect(queued()).toHaveTextContent(followUp);
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    await act(async () => { answerMainChat(); });
+    await settle();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    fetchMock.mockImplementation(chatService);
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('waits in a reloaded Side Chat through a Stop, until the server says the Turn ended', async () => {
+    service.mainChat = { id: 'main-1', messages: [] };
+    service.replies.set('side', [question]);
+    service.running.add('side');
+    service.runIds.set('side', 'server-run');
+    window.history.replaceState(null, '', '/?chat=side');
+    const first = await renderPage(auth({ accountId: 'acct-first' }));
+    expect(agent().threadId).toBe('side');
+    await sendMessage(followUp);
+    expect(queued()).toHaveTextContent(followUp);
+
+    await reload(undefined, first);
+    expect(agent().threadId).toBe('side');
+    expect(queued()).toHaveTextContent(followUp);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await settle();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    service.running.delete('side');
+    service.runIds.delete('side');
+    service.replies.set('side', [question, reply]);
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['side', followUp]]);
+  });
+
+  it("holds it when the load of this browser's copy of the Main Chat fails, until a Retry says the Turn ended", async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    service.failing.set('GET /main-chat', 503);
+
+    await reload(undefined, view);
+    expect(screen.getByText('Your Main Chat could not be opened.')).toBeInTheDocument();
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+
+    service.failing.delete('GET /main-chat');
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await settle();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('holds it while the browser is offline, across a reload, and sends once back online', async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    await reload(undefined, view);
+    expect(queued()).toHaveTextContent(followUp);
+    onLine.mockReturnValue(true);
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    await settle();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('sends it from one tab only when the chat is open in another', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+
+    // Another tab sends it first: the follow-up leaves this browser's storage.
+    const held = present(localStorage.getItem('botcube.queued-follow-ups:acct-first'), 'the held follow-up');
+    localStorage.removeItem('botcube.queued-follow-ups:acct-first');
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toBeNull();
+
+    // A follow-up another tab holds reaches this one, which sends it once the server says no Turn runs and its
+    // claim finds it still held.
+    await act(async () => {
+      localStorage.setItem('botcube.queued-follow-ups:acct-first', held);
+      window.dispatchEvent(new StorageEvent('storage', { key: 'botcube.queued-follow-ups:acct-first' }));
+    });
+    await settle();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBeNull();
+  });
+
+  it('still sends one this browser could not keep, as its storage is full', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    await sendMessage(followUp);
+    expect(queued()).toHaveTextContent(followUp);
+    expect(queued()).toHaveTextContent('Not kept in this browser: leaving this chat or reloading loses it');
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBeNull();
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('keeps one this browser can no longer read back, unsent, and says why', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be taken out of this browser');
+  });
+
+  it("sends what another tab added to it just before the Turn ended, once, as one message", async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    localStorage.setItem('botcube.queued-follow-ups:acct-first', JSON.stringify({ 'main-1': `${followUp}\n\nAnd from the other tab` }));
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', `${followUp}\n\nAnd from the other tab`]]);
+  });
+
+  it('keeps a follow-up added after storage stopped answering, unsent, while its earlier part may still be stored', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    await sendMessage('And one more');
+    expect(queued()).toHaveTextContent('And one more');
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be taken out of this browser');
+  });
+
+  it('keeps one this browser cannot take out of storage, unsent, and says why', async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    const removeItem = vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be taken out of this browser');
+
+    removeItem.mockRestore();
+    await reload(undefined, view);
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('keeps one sent from the copy before the account session answers, and sends it after the Turn', async () => {
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    const view = await renderPage(auth({ sessionStatus: 'loading' }));
+    await sendMessage(followUp);
+    expect(queued()).toHaveTextContent(followUp);
+
+    cartridge.auth = auth({ accountId: 'acct-first' });
+    view.rerender(<Page />);
+    await settle();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toContain(followUp);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it("says to reload when the account's models failed to load, keeping it for the reload", async () => {
+    service.failing.set('GET /agent/models', 503);
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Reload the page to send your queued message\.$/);
+    expect(queued()).toHaveTextContent(followUp);
+
+    service.failing.delete('GET /agent/models');
+    await reload(undefined, view);
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it("joins one held before the account session answered to what another tab holds for the chat", async () => {
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    const view = await renderPage(auth({ sessionStatus: 'loading' }));
+    await sendMessage(followUp);
+    localStorage.setItem('botcube.queued-follow-ups:acct-first', JSON.stringify({ 'main-1': 'From the other tab' }));
+
+    cartridge.auth = auth({ accountId: 'acct-first' });
+    view.rerender(<Page />);
+    await settle();
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', `From the other tab\n\n${followUp}`]]);
+  });
+
+  it('keeps one sent before the account session answered that waited on another tab\'s lock until after it did', async () => {
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    const view = await renderPage(auth({ sessionStatus: 'loading' }));
+    // Another tab holds the lock until the account session has answered.
+    const release = lockHeldElsewhere();
+    await sendMessage(followUp);
+
+    cartridge.auth = auth({ accountId: 'acct-first' });
+    view.rerender(<Page />);
+    await settle();
+    await release();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBe(JSON.stringify({ 'main-1': followUp }));
+    expect(queued()).toHaveTextContent(followUp);
+  });
+
+  /** Another tab holds the lock until `release`: the lock requests made meanwhile wait for it. */
+  function lockHeldElsewhere() {
+    let release!: () => void;
+    const busy = new Promise<void>((resolve) => { release = resolve; });
+    const request = navigator.locks.request.bind(navigator.locks);
+    vi.spyOn(navigator.locks, 'request').mockImplementation(((name: string, callback: () => unknown) =>
+      busy.then(() => request(name, callback))) as typeof navigator.locks.request);
+    return async () => {
+      await act(async () => { release(); });
+      await settle();
+    };
+  }
+
+  it('never sends one cancelled while its send waited on another tab\'s lock', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    const release = lockHeldElsewhere();
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued message' }));
+    await release();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toBeNull();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBeNull();
+  });
+
+  it('keeps one whose send waited on the lock while the connection went, stored and unsent', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    const release = lockHeldElsewhere();
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    // The connection goes before the lock is granted, and before the page hears of it.
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await release();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBe(JSON.stringify({ 'main-1': followUp }));
+  });
+
+  it('sends one added while storage refused to grow, with the earlier part storage kept', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    await sendMessage('And one more');
+    expect(queued()).toHaveTextContent(/And one more/);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', `${followUp}\n\nAnd one more`]]);
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBeNull();
+  });
+
+  it('keeps one held before the account session answered through another tab\'s change to the chat', async () => {
+    localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [question] }));
+    const view = await renderPage(auth({ sessionStatus: 'loading' }));
+    await sendMessage(followUp);
+    const release = lockHeldElsewhere();
+    cartridge.auth = auth({ accountId: 'acct-first' });
+    view.rerender(<Page />);
+    await settle();
+    await act(async () => {
+      localStorage.setItem('botcube.queued-follow-ups:acct-first', JSON.stringify({ 'main-1': 'From the other tab' }));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'botcube.queued-follow-ups:acct-first' }));
+    });
+    expect(queued()).toHaveTextContent(/From the other tab\s*Reply with exactly/);
+    await release();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBe(JSON.stringify({ 'main-1': `From the other tab\n\n${followUp}` }));
+  });
+
+  it('sends at once in a Side Chat chosen again while its stream ran, once the server says the Turn ended', async () => {
+    service.mainChat = { id: 'main-1', messages: [] };
+    service.sideChats = [sideChat('side', 'Other chat')];
+    service.replies.set('side', [question]);
+    await renderPage(auth({ accountId: 'acct-first' }));
+    fireEvent.click(sidebar().getByText('Other chat'));
+    await settle();
+    const streaming = agent();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === 'http://chat.test' && init?.method === 'POST') {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'RUN_STARTED', threadId: 'side', runId: 'side-run' })}\n\n`));
+          },
+        }), { headers: { 'content-type': 'text/event-stream' } });
+      }
+      return chatService(url, init);
+    });
+    await act(async () => {
+      void streaming.runAgent({ runId: 'side-run' }).catch(() => undefined);
+    });
+    await settle();
+
+    fetchMock.mockImplementation(chatService);
+    service.replies.set('side', [question, reply]);
+    fireEvent.click(sidebar().getByText('Other chat'));
+    await settle();
+    expect(agent()).not.toBe(streaming);
+    await sendMessage(followUp);
+    expect(queued()).toBeNull();
+    expect(sentTo()).toEqual([['side', followUp]]);
+  });
+
+  it('waits on the server before sending one another tab holds while it streams the Turn', async () => {
+    service.mainChat = { id: 'main-1', messages: [question], running: false };
+    await renderPage(auth({ accountId: 'acct-first' }));
+    // The other tab streams a Turn this one has not heard of, and holds a follow-up for after it.
+    service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'other-tab-run' };
+    await act(async () => {
+      localStorage.setItem('botcube.queued-follow-ups:acct-first', JSON.stringify({ 'main-1': followUp }));
+      window.dispatchEvent(new StorageEvent('storage', { key: 'botcube.queued-follow-ups:acct-first' }));
+    });
+    await settle();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', followUp]]);
+  });
+
+  it('gathers a second follow-up into the pending one', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage('First');
+    await sendMessage('Second');
+    expect(queued()).toHaveTextContent(/^First\s*Second/);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(sentTo()).toEqual([['main-1', 'First\n\nSecond']]);
+  });
+
+  it('never sends a follow-up the user cancelled, after a reload either', async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued message' }));
+    await settle();
+    expect(queued()).toBeNull();
+
+    await reload(undefined, view);
+    expect(queued()).toBeNull();
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await threeSecondsPass();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('keeps one whose cancel this browser cannot take out of storage, and says why', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued message' }));
+    await settle();
+    expect(queued()).toHaveTextContent(followUp);
+    expect(screen.getByRole('alert')).toHaveTextContent('so it was not cancelled');
+  });
+
+  it('keeps all of one whose cancel storage refuses, its unsaved part too', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    await sendMessage('And one more');
+    vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued message' }));
+    await settle();
+    expect(queued()).toHaveTextContent(/Reply with exactly QUEUED_SURVIVED\.?\s*And one more/);
+    expect(screen.getByRole('alert')).toHaveTextContent('so it was not cancelled');
+  });
+
+  it('keeps one added while a cancel storage then refuses waited on the lock', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+    const release = lockHeldElsewhere();
+    vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued message' }));
+    await sendMessage('A new one instead');
+    await release();
+    expect(queued()).toHaveTextContent(/Reply with exactly QUEUED_SURVIVED\.?\s*A new one instead/);
+    expect(screen.getByRole('alert')).toHaveTextContent('so it was not cancelled');
+  });
+
+  it('forgets it under the lock at sign-out, even when the first removal fails', async () => {
+    const state = auth({ accountId: 'acct-first' });
+    await renderPage(state);
+    await sendMessage(followUp);
+    const remove = localStorage.removeItem.bind(localStorage);
+    let failed = false;
+    vi.spyOn(localStorage, 'removeItem').mockImplementation((key) => {
+      if (key === 'botcube.queued-follow-ups:acct-first' && !failed) {
+        failed = true;
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      }
+      remove(key);
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fireEvent.click(sidebar().getByRole('button', { name: 'Account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await settle();
+    expect(failed).toBe(true);
+    expect(state.logout).toHaveBeenCalled();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-first')).toBeNull();
+  });
+
+  it('stays with its chat when the user opens another, and sends there on return', async () => {
+    service.sideChats = [sideChat('side', 'Other chat')];
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+
+    fireEvent.click(sidebar().getByText('Other chat'));
+    await settle();
+    expect(agent().threadId).toBe('side');
+    expect(queued()).toBeNull();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    await sendMessage('Side question');
+    expect(sentTo()).toEqual([['side', 'Side question']]);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    fireEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await settle();
+    expect(sentTo()).toEqual([['side', 'Side question'], ['main-1', followUp]]);
+  });
+
+  it("never shows or sends one account's follow-up for another", async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    await sendMessage(followUp);
+
+    service.mainChat = { id: 'main-1', messages: [question, reply], running: false };
+    await reload(auth({ accountId: 'acct-second' }), view);
+    await threeSecondsPass();
+    expect(queued()).toBeNull();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(localStorage.getItem('botcube.queued-follow-ups:acct-second')).toBeNull();
+  });
+
+  it("never drops another account's follow-up from a tab still on its own account", async () => {
+    const second = await renderPage(auth({ accountId: 'acct-second' }));
+    await sendMessage(followUp);
+    // A tab still on the first account loads, and hears of every change to storage.
+    const first = await reload(auth({ accountId: 'acct-first' }), second);
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: null })); });
+    await settle();
+
+    await reload(auth({ accountId: 'acct-second' }), first);
+    expect(queued()).toHaveTextContent(followUp);
+  });
+
+  it('leaves no follow-up in this browser after a sign-out', async () => {
+    const state = auth({ accountId: 'acct-first' });
+    await renderPage(state);
+    await sendMessage(followUp);
+    fireEvent.click(sidebar().getByRole('button', { name: 'Account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(state.logout).toHaveBeenCalled();
+    expect(JSON.stringify({ ...localStorage })).not.toContain(followUp);
+  });
+});
+
 describe('Side Chats', () => {
   it.each([204, 503])('keeps deletion truth when a held sidebar refresh arrives after DELETE %i', async (status) => {
     const kept = sideChat('keep', 'Keep me');
@@ -3442,7 +4046,7 @@ describe('Side Chats', () => {
     );
     await userComesBack();
     expect(held).toHaveLength(1);
-    await userEvent.click(within(present(sidebar().getByText('Drop me').parentElement, 'the conversation item')).getByLabelText('Delete conversation'));
+    await userEvent.click(within(present(sidebar().getByText('Drop me').parentElement, 'the conversation item')).getByLabelText('Delete side chat'));
     const retained = status === 204 ? [kept] : [kept, dropped];
     expect(recents()).toEqual(retained.map(({ title }) => title));
     service.sideChats = [scheduled, ...retained];
@@ -3463,6 +4067,67 @@ describe('Side Chats', () => {
     expect(sidebar().getByText('Side chats')).toBeInTheDocument();
     expect(recents()).toEqual(['Newer question', 'Older question']);
     expect(sidebar().queryByText('Start a side chat')).toBeNull();
+  });
+
+  it('shows five Side Chats, then five more per Show more until all show', async () => {
+    service.sideChats = Array.from({ length: 7 }, (_, i) => sideChat(`chat${i + 1}`, `Chat ${i + 1}`));
+    await renderPage();
+
+    expect(recents()).toEqual(['Chat 1', 'Chat 2', 'Chat 3', 'Chat 4', 'Chat 5']);
+    await userEvent.click(sidebar().getByRole('button', { name: 'Show more' }));
+
+    expect(recents()).toEqual(service.sideChats.map(({ title }) => title));
+    expect(sidebar().queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('moves focus to the first newly shown Side Chat after Show more', async () => {
+    service.sideChats = Array.from({ length: 7 }, (_, i) => sideChat(`chat${i + 1}`, `Chat ${i + 1}`));
+    await renderPage();
+
+    await userEvent.click(sidebar().getByRole('button', { name: 'Show more' }));
+
+    expect(sidebar().getByRole('button', { name: 'Chat 6' })).toHaveFocus();
+  });
+
+  it('offers no Show more with five Side Chats or fewer', async () => {
+    service.sideChats = Array.from({ length: 5 }, (_, i) => sideChat(`chat${i + 1}`, `Chat ${i + 1}`));
+    await renderPage();
+
+    expect(recents()).toHaveLength(5);
+    expect(sidebar().queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('reveals five more and focuses the first new Side Chat after a refresh moves the open chat past five', async () => {
+    service.sideChats = Array.from({ length: 10 }, (_, i) => sideChat(`chat${i + 1}`, `Chat ${i + 1}`));
+    await renderPage();
+    await userEvent.click(sidebar().getByText('Chat 5'));
+
+    service.sideChats = [
+      ...Array.from({ length: 7 }, (_, i) => sideChat(`new${i + 1}`, `New ${i + 1}`)),
+      ...service.sideChats,
+    ];
+    await userComesBack();
+    expect(recents()).toHaveLength(12);
+
+    await userEvent.click(sidebar().getByRole('button', { name: 'Show more' }));
+
+    expect(recents()).toHaveLength(17);
+    expect(sidebar().getByRole('button', { name: 'Chat 10' })).toBeInTheDocument();
+    expect(sidebar().getByRole('button', { name: 'Chat 6' })).toHaveFocus();
+    expect(sidebar().queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
+  it('still shows the open Side Chat once a refresh puts it past the first five', async () => {
+    service.sideChats = Array.from({ length: 5 }, (_, i) => sideChat(`chat${i + 1}`, `Chat ${i + 1}`));
+    await renderPage();
+    await userEvent.click(sidebar().getByText('Chat 5'));
+
+    service.sideChats = [sideChat('new1', 'New 1'), sideChat('new2', 'New 2'), ...service.sideChats];
+    await userComesBack();
+
+    expect(recents()).toEqual(service.sideChats.map(({ title }) => title));
+    expect(document.querySelector('.sidebar-item-active')).toHaveTextContent('Chat 5');
+    expect(sidebar().queryByRole('button', { name: 'Show more' })).toBeNull();
   });
 
   it('says when there are none', async () => {
@@ -3648,11 +4313,11 @@ describe('Side Chats', () => {
     service.failing.set('DELETE /threads/stuck', 409);
     await renderPage();
     await userEvent.click(
-      within(present(sidebar().getByText('Stuck').parentElement, 'the conversation item')).getByLabelText('Delete conversation'),
+      within(present(sidebar().getByText('Stuck').parentElement, 'the conversation item')).getByLabelText('Delete side chat'),
     );
 
     await userEvent.click(
-      within(present(sidebar().getByText('Fine').parentElement, 'the conversation item')).getByLabelText('Delete conversation'),
+      within(present(sidebar().getByText('Fine').parentElement, 'the conversation item')).getByLabelText('Delete side chat'),
     );
 
     expect(sidebar().queryByRole('alert')).toBeNull();
@@ -3684,7 +4349,7 @@ describe('Side Chats', () => {
     await userEvent.click(sidebar().getByText('Keep me'));
 
     await userEvent.click(
-      within(present(sidebar().getByText('Drop me').parentElement, 'the conversation item')).getByLabelText('Delete conversation'),
+      within(present(sidebar().getByText('Drop me').parentElement, 'the conversation item')).getByLabelText('Delete side chat'),
     );
 
     expect(recents()).toEqual(['Keep me']);
@@ -3697,7 +4362,7 @@ describe('Side Chats', () => {
     await renderPage();
     await userEvent.click(sidebar().getByText('Current one'));
 
-    await userEvent.click(sidebar().getByLabelText('Delete conversation'));
+    await userEvent.click(sidebar().getByLabelText('Delete side chat'));
 
     expect(recents()).toEqual([]);
     expect(copilot.chat?.threadId).toBe('new-1');
@@ -3786,7 +4451,7 @@ describe('Side Chats', () => {
     await renderPage();
     await openSidebar();
 
-    await userEvent.click(sidebar().getByLabelText('Delete conversation'));
+    await userEvent.click(sidebar().getByLabelText('Delete side chat'));
 
     expect(sidebar().getByRole('alert')).toHaveTextContent('Stuck could not be deleted: Failed to delete thread: 409');
     expect(recents()).toEqual(['Stuck']);
@@ -4979,6 +5644,8 @@ describe('agent profile', () => {
     timezone: 'America/New_York',
     paused: false,
     proposalId: 'call-0',
+    ended: false,
+    sideChat: false,
   };
   const openScheduled = async () => {
     await userEvent.click(avatar());
@@ -5043,10 +5710,138 @@ describe('agent profile', () => {
       ['Weekdays', ['12:00 AM · Brief me on rates', '11:59 PM · Brief me on rates']],
       // EventBridge numbers the days of the week from 1, Sunday.
       ['Every Saturday', ['12:05 PM · Brief me on rates']],
-      ['Daily', ['Brief me on rates']],
+      // rate(1 day) runs a day after it was made, not at a time the Edit form could show as Daily.
+      ['Every day', ['Brief me on rates']],
       ['Every Monday', ['2:30 PM · Brief me on rates']],
       ['Every 2 hours', ['Brief me on rates']],
-      ['at(2026-10-14T08:30:00)', ['Brief me on rates']],
+      ['Once', ['Oct 14, 8:30 AM · Brief me on rates']],
+    ]);
+  });
+
+  // A task past its stop time no longer runs, and says so; Resume waits until the stop time moves.
+  it('marks a task past its stop time Ended, in its row and its sheet, with no Pause or Resume', async () => {
+    service.scheduled = [
+      { ...MORNING_BRIEF, endDate: '2020-01-01T05:00:00.000Z', paused: true, ended: true },
+      { ...MORNING_BRIEF, id: 'task-2', title: 'Later brief', endDate: '2099-12-31T22:00:00.000Z' },
+    ];
+    await renderPage();
+    await userEvent.click(avatar());
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
+    const [ended, later] = await within(openProfile()).findAllByRole('listitem');
+
+    expect(within(present(ended, 'the ended task')).getByText('Ended')).toHaveClass('status-pill');
+    expect(within(present(ended, 'the ended task')).queryByText('Paused')).toBeNull();
+    expect(within(present(later, 'the later task')).queryByText('Ended')).toBeNull();
+    const sheet = await openTask(present(ended, 'the ended task'));
+    // Its Next run reads Ended, over Paused, and nothing else says so again.
+    expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
+    expect(within(sheet).getAllByText(/Ended/)).toHaveLength(1);
+    expect(within(sheet).queryByText('Paused')).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
+    expect(within(sheet).getByRole('button', { name: 'Edit' })).toBeEnabled();
+    await closeTask(sheet);
+
+    const open = await openTask(present(later, 'the later task'));
+    expect(open.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Ends December 31, 2099 at 5:00 PM$/);
+    expect(within(open).getByRole('button', { name: 'Pause' })).toBeEnabled();
+  });
+
+  it('marks a paused one-off task whose time passed Ended, until Edit moves its date', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'at(2020-01-02T08:30:00)', paused: true, ended: true }];
+    await renderPage();
+    const task = await openScheduled();
+
+    expect(within(task).getByText('Ended')).toHaveClass('status-pill');
+    const sheet = await openTask(task);
+    expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
+  });
+
+  // The Chat Service knows when a task has no run left before its stop time; the page takes its word.
+  it('marks a task Ended when the Chat Service says it has no run left, though its stop time is ahead', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(0 8 1 1 ? 2025)', endDate: '2099-12-31T22:00:00.000Z', ended: true }];
+    await renderPage();
+    const task = await openScheduled();
+
+    expect(within(task).getByText('Ended')).toHaveClass('status-pill');
+    const sheet = await openTask(task);
+    expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
+    expect(sheet.querySelector('.scheduled-task-ends')).toBeNull();
+    expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
+  });
+
+  it('says in its sheet how many runs a task makes before it stops (#3950)', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, maxRuns: 1 }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    expect(sheet.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Stops after 1 run$/);
+  });
+
+  it('says a task whose schedule the Chat Service cannot read runs next at an unknown time', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(0 9 W * ? *)', nextRunUnknown: 'The schedule cron(0 9 W * ? *) cannot be read' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    expect(within(sheet).getByText('Unknown', { selector: 'dd' })).toHaveAttribute('title', 'The schedule cron(0 9 W * ? *) cannot be read');
+  });
+
+  // Its Side Chat exists once a run has reached it: a run that failed before it, or was skipped, made none.
+  it.each([
+    [false, { at: '2026-10-09T12:00:00.000Z', status: 'failed' }],
+    [true, { at: '2026-10-09T12:00:00.000Z', status: 'done' }],
+  ])('offers Open chat in the sheet only where the task has a Side Chat (%s)', async (sideChat, lastRun) => {
+    service.scheduled = [{ ...MORNING_BRIEF, sideChat, lastRun }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    expect(within(sheet).queryAllByRole('button', { name: 'Open chat' })).toHaveLength(sideChat ? 1 : 0);
+  });
+
+  it('moves a stop time, or clears it, from the Edit form', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, endDate: '2020-01-01T05:00:00.000Z', paused: true, ended: true }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    // Read in the task's own time zone.
+    expect(inSheet.getByLabelText('Ends')).toHaveValue('2020-01-01T00:00');
+    await userEvent.clear(inSheet.getByLabelText('Ends'));
+    await userEvent.type(inSheet.getByLabelText('Ends'), '2099-06-30T18:00');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on rates', endDate: '2099-06-30T22:00:00.000Z' }]);
+    expect(within(sheet).queryByText('Ended')).toBeNull();
+    expect(inSheet.getByRole('button', { name: 'Resume' })).toBeEnabled();
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'No stop time' }));
+    expect(inSheet.getByLabelText('Ends')).toHaveValue('');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1').at(-1)).toEqual({ title: 'Morning brief', prompt: 'Brief me on rates', endDate: null });
+    expect(sheet.querySelector('.scheduled-task-ends')).toBeNull();
+  });
+
+  it('makes a task run once, at a date and time, from the Edit form', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, endDate: '2099-12-31T22:00:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Once');
+    // A task that runs once has nothing to stop.
+    expect(inSheet.queryByLabelText('Ends')).toBeNull();
+    await userEvent.clear(inSheet.getByLabelText('Date'));
+    await userEvent.type(inSheet.getByLabelText('Date'), '2026-11-06');
+    await userEvent.clear(inSheet.getByLabelText('Time'));
+    await userEvent.type(inSheet.getByLabelText('Time'), '08:30');
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Once on November 6, 2026 at 8:30 AM · America\/New_York$/);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'at(2026-11-06T08:30:00)', endDate: null },
     ]);
   });
 
@@ -5139,8 +5934,8 @@ describe('agent profile', () => {
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ paused: true }]);
     expect(within(sheet).getByRole('button', { name: 'Resume' })).toBeInTheDocument();
-    expect(within(sheet).getByText('Paused')).toHaveClass('status-pill');
-    // Paused is a status pill beside the name, not part of it.
+    // The sheet's Next run reads Paused; the row's Paused is a status pill beside the name, not part of it.
+    expect(within(sheet).getByText('Paused', { selector: 'dd' })).toBeInTheDocument();
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
     expect(within(task).getByText('Paused')).toHaveClass('status-pill');
     expect(task.querySelector('.scheduled-task')).toHaveClass('scheduled-task-paused');
@@ -5151,42 +5946,127 @@ describe('agent profile', () => {
     expect(within(task).queryByText('Paused')).toBeNull();
   });
 
-  it('edits what a scheduled task asks and when it runs', async () => {
+  it('edits what a scheduled task asks', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
-    const task = await openScheduled();
-    const sheet = await openTask(task);
+    const sheet = await openTask(await openScheduled());
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
     await userEvent.clear(within(sheet).getByLabelText('Prompt'));
     await userEvent.type(within(sheet).getByLabelText('Prompt'), 'Brief me on FX');
-    await userEvent.clear(within(sheet).getByLabelText('Schedule'));
-    await userEvent.type(within(sheet).getByLabelText('Schedule'), 'rate(1 day)');
     await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'rate(1 day)' },
+      { title: 'Morning brief', prompt: 'Brief me on FX' },
     ]);
     expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on FX$/);
-    await closeTask(sheet);
-    expect(within(openProfile()).getByRole('region', { name: 'Daily' })).toHaveTextContent(/Brief me on FX$/);
   });
 
-  // The Schedule field showed only the raw AWS expression, unlike the card and the list.
-  it('reads the Schedule being edited in the words and time zone the sheet shows', async () => {
+  it('keeps a schedule as written when an edit leaves its controls alone', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(08 8 ? * 2,5 *)' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Frequency')).toHaveDisplayValue('Weekly');
+    await userEvent.type(inSheet.getByLabelText('Title'), ' (FX)');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief (FX)', prompt: 'Brief me on rates' }]);
+  });
+
+  // Changing a schedule meant writing an AWS expression such as cron(0 9 ? * MON-FRI *).
+  it('moves a weekday task to 10:00 in another time zone without an AWS expression', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const sheet = await openTask(await openScheduled());
-    const words = /^At 8:00 AM, Monday through Friday · America\/New_York$/;
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
+    const inSheet = within(sheet);
 
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.queryByLabelText('Schedule')).toBeNull();
+    expect(inSheet.getByLabelText('Frequency')).toHaveDisplayValue('Weekdays');
+    expect(inSheet.getByLabelText('Time')).toHaveValue('08:00');
+    expect(inSheet.getByLabelText('Time zone')).toHaveValue('America/New_York');
+    await userEvent.clear(inSheet.getByLabelText('Time'));
+    await userEvent.type(inSheet.getByLabelText('Time'), '10:00');
+    await userEvent.selectOptions(inSheet.getByLabelText('Time zone'), 'Europe/London');
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 10:00 AM, Monday through Friday · Europe\/London$/);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(words);
-    await userEvent.clear(within(sheet).getByLabelText('Schedule'));
-    await userEvent.type(within(sheet).getByLabelText('Schedule'), 'rate(2 hours)');
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Every 2 hours · America\/New_York$/);
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 10 ? * MON-FRI *)', timezone: 'Europe/London' },
+    ]);
+    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 10:00 AM, Monday through Friday · Europe\/London$/);
   });
+
+  it('runs a task every N minutes or hours, daily, or weekly on the days picked', async () => {
+    service.scheduled = [MORNING_BRIEF];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    const words = () => sheet.querySelector('.scheduled-task-schedule')?.textContent;
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    const options = within(inSheet.getByLabelText('Frequency')).getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['Every N minutes', 'Every N hours', 'Daily', 'Weekdays', 'Weekly', 'Once']);
+
+    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Every N hours');
+    expect(inSheet.queryByLabelText('Time')).toBeNull();
+    await userEvent.clear(inSheet.getByLabelText('Every'));
+    await userEvent.type(inSheet.getByLabelText('Every'), '3');
+    expect(words()).toBe('Every 3 hours · America/New_York');
+    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Every N minutes');
+    expect(words()).toBe('Every 3 minutes · America/New_York');
+    await userEvent.clear(inSheet.getByLabelText('Every'));
+    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(inSheet.getByText('No schedule yet: every minute needs a whole number from 1')).toBeInTheDocument();
+
+    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Daily');
+    expect(inSheet.queryByLabelText('Every')).toBeNull();
+    expect(words()).toBe('At 8:00 AM · America/New_York');
+
+    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Weekly');
+    const days = within(inSheet.getByRole('group', { name: 'Days' }));
+    expect(days.getAllByRole('button').map((day) => [day.textContent, day.getAttribute('aria-pressed')])).toEqual([
+      ['S', 'false'], ['M', 'true'], ['T', 'false'], ['W', 'false'], ['T', 'false'], ['F', 'false'], ['S', 'false'],
+    ]);
+    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
+    await userEvent.click(days.getByRole('button', { name: 'Monday' }));
+    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
+    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(inSheet.getByText('No schedule yet: a weekly task needs its days')).toBeInTheDocument();
+    await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
+    await userEvent.click(days.getByRole('button', { name: 'Monday' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON,THU *)' },
+    ]);
+    await closeTask(sheet);
+    expect(within(openProfile()).getByRole('region', { name: 'Every Monday, Thursday' })).toHaveTextContent(/8:00 AM · Brief me on rates$/);
+  });
+
+  it.each(['rate(1 day)', 'cron(0 8 1 * ? *)'])(
+    'keeps %s, which the controls cannot show, read-only while other fields change',
+    async (schedule) => {
+      service.scheduled = [{ ...MORNING_BRIEF, schedule }];
+      await renderPage();
+      const sheet = await openTask(await openScheduled());
+      const inSheet = within(sheet);
+      const words = sheet.querySelector('.scheduled-task-schedule')?.textContent;
+
+      await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+
+      expect(inSheet.queryByLabelText('Frequency')).toBeNull();
+      expect(sheet.querySelector('.scheduled-task-schedule')?.textContent).toBe(words);
+      expect(inSheet.getByText('Ask Ada Bot to change it.')).toBeInTheDocument();
+      await userEvent.clear(inSheet.getByLabelText('Prompt'));
+      await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
+      await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+      expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on FX' }]);
+      expect(service.scheduled[0]?.schedule).toBe(schedule);
+    },
+  );
 
   it("runs a scheduled task on the account's default model until the user picks another", async () => {
     service.models = [
@@ -5206,7 +6086,7 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    const fields = { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' };
+    const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
     expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
   });
@@ -5241,11 +6121,9 @@ describe('agent profile', () => {
     expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
     await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
-    await userEvent.clear(inSheet.getByLabelText('Schedule'));
-    await userEvent.type(inSheet.getByLabelText('Schedule'), 'rate(1 day)');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'rate(1 day)' },
+      { title: 'Morning brief', prompt: 'Brief me on FX' },
     ]);
     expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent('Brief me on FX');
     expect(service.scheduled[0]?.model).toBe(model);
@@ -5318,7 +6196,7 @@ describe('agent profile', () => {
     expect(inSheet.getByLabelText('Prompt')).toHaveValue('Brief me on FX');
     expect(service.scheduled[0]).toEqual({ ...MORNING_BRIEF, model: 'sonnet' });
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on FX', schedule: 'cron(0 8 ? * MON-FRI *)' },
+      { title: 'Morning brief', prompt: 'Brief me on FX' },
     ]);
   });
 
@@ -6527,7 +7405,8 @@ describe('model and effort picker', () => {
 
   it('omits unavailable attachment and microphone controls', async () => {
     await renderPage();
-    expect(screen.queryByRole('button', { name: /Microphone|Add files/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Microphone|Add/ })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
   });
 
@@ -7119,7 +7998,8 @@ describe('account reload responses', () => {
 });
 
 describe('a proposed scheduled task', () => {
-  const proposal = { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' };
+  const proposal = { title: 'Morning brief', prompt: 'Brief me on rates', frequency: 'weekdays', time: '08:00' };
+  const task = { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' };
   const renderProposal = () =>
     render(
       present(copilot.renderTool, 'the tool renderer')({
@@ -7138,7 +8018,7 @@ describe('a proposed scheduled task', () => {
   };
 
   it('stays scheduled after a reload once the account holds the task its proposal made', async () => {
-    service.scheduled = [{ id: 'task-1', ...proposal, timezone: 'America/New_York', paused: false, proposalId: 'call-1' }];
+    service.scheduled = [{ id: 'task-1', ...task, timezone: 'America/New_York', paused: false, proposalId: 'call-1' }];
     await renderPage();
     const { container } = renderProposal();
 
@@ -7148,7 +8028,7 @@ describe('a proposed scheduled task', () => {
   });
 
   it("offers Confirm when the account's tasks came from other proposals", async () => {
-    service.scheduled = [{ id: 'task-1', ...proposal, timezone: 'America/New_York', paused: false, proposalId: 'call-0' }];
+    service.scheduled = [{ id: 'task-1', ...task, timezone: 'America/New_York', paused: false, proposalId: 'call-0' }];
     await renderPage();
     const { container } = renderProposal();
 
@@ -7168,11 +8048,13 @@ describe('a proposed scheduled task', () => {
   });
 
   it('schedules the task in the browser timezone once the user confirms it', async () => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     await renderPage();
     const { container } = renderProposal();
     expect(container).toHaveTextContent('Morning brief');
     expect(container).toHaveTextContent('Brief me on rates');
-    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 8:00 AM, Monday through Friday$/);
+    // The words and time zone its task's sheet and Edit form will show.
+    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(`At 8:00 AM, Monday through Friday · ${zone}`);
 
     await userEvent.click(await confirmButton(container));
 
@@ -7184,14 +8066,105 @@ describe('a proposed scheduled task', () => {
     );
     expect(url).toBe('http://chat.test/scheduled-tasks');
     expect(init).toMatchObject({ method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' } });
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
-      ...proposal,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      proposalId: 'call-1',
-    });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ ...task, timezone: zone, proposalId: 'call-1' });
     expect(container).toHaveTextContent('Scheduled. Manage it in the Scheduled tab.');
     expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
     expect(container.querySelector('.agent-profile-error')).toBeNull();
+  });
+
+  it.each([
+    [{ frequency: 'minutes', every: 1 }, 'rate(1 minute)', 'Every minute'],
+    [{ frequency: 'hours', every: 2 }, 'rate(2 hours)', 'Every 2 hours'],
+    [{ frequency: 'daily', time: '18:30' }, 'cron(30 18 * * ? *)', 'At 6:30 PM'],
+    // The Harness takes an unused field sent as null.
+    [{ frequency: 'weekdays', time: '08:00', every: null, days: null }, 'cron(0 8 ? * MON-FRI *)', 'At 8:00 AM, Monday through Friday'],
+    [{ frequency: 'weekly', time: '07:05', days: ['THU', 'MON'] }, 'cron(5 7 ? * MON,THU *)', 'At 7:05 AM, only on Monday and Thursday'],
+    [{ frequency: 'once', date: '2026-11-06', time: '08:30' }, 'at(2026-11-06T08:30:00)', 'Once on November 6, 2026 at 8:30 AM'],
+    [{ frequency: 'daily', time: '18:30', date: null, ends: null }, 'cron(30 18 * * ? *)', 'At 6:30 PM'],
+    // A proposal made before proposals carried the Edit form's fields.
+    [{ schedule: 'cron(0 8 ? * MON-FRI *)' }, 'cron(0 8 ? * MON-FRI *)', 'At 8:00 AM, Monday through Friday'],
+  ])('schedules a proposal of %j as %s', async (fields, schedule, words) => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Proposed.',
+      })
+    );
+    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(new RegExp(`^${words} · `));
+
+    await userEvent.click(await confirmButton(container));
+
+    expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string)).toMatchObject({ schedule });
+  });
+
+  it.each([
+    [{ frequency: 'weekly', time: '08:00' }, 'a weekly task needs its days'],
+    [{ frequency: 'weekly', time: '08:00', days: ['MONDAY'] }, 'a weekly task needs its days'],
+    [{ frequency: 'daily', time: '8am' }, 'a daily task needs a time as HH:MM'],
+    [{ frequency: 'once', time: '08:00' }, 'a once task needs a date as YYYY-MM-DD'],
+    [{ frequency: 'daily', time: '08:00', ends: 'Friday' }, 'a stop time needs a date and time as YYYY-MM-DDTHH:MM'],
+    // The Harness refuses a field its frequency doesn't take, so the card does too.
+    [{ frequency: 'weekdays', time: '08:00', days: ['MON'] }, 'days is not allowed for weekdays'],
+    [{ frequency: 'hours', every: 2, time: '08:00' }, 'time is not allowed for hours'],
+    [{ frequency: 'daily', time: '08:00', every: 1 }, 'every is not allowed for daily'],
+    [{ frequency: 'daily', time: '08:00', date: '2026-11-06' }, 'date is not allowed for daily'],
+    [{ frequency: 'once', date: '2026-11-06', time: '08:00', ends: '2026-12-31T17:00' }, 'ends is not allowed for once'],
+  ])('says why a proposal of %j makes no schedule, and offers no Confirm', async (fields, why) => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Error',
+      })
+    );
+
+    expect(await within(container).findByText(`This proposal has no schedule: ${why}`)).toBeInTheDocument();
+    expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
+  });
+
+  // The agent can propose a stop time; the card says it in plain words and sends it as an instant.
+  it('says when a proposed task stops, and schedules it to stop then in the browser timezone', async () => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, ends: '2026-12-31T17:00' }, result: 'Proposed.',
+      })
+    );
+
+    expect(container.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Ends December 31, 2026 at 5:00 PM$/);
+    await userEvent.click(await confirmButton(container));
+
+    expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
+      .toEqual({ ...task, timezone: 'UTC', endDate: '2026-12-31T17:00:00.000Z', proposalId: 'call-1' });
+  });
+
+  // "Three updates only" is a count of runs: the card says it, and the task retires itself after them (#3950).
+  it('says how many runs a proposed task makes, and schedules it to stop after them', async () => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3 }, result: 'Proposed.',
+      })
+    );
+
+    expect(container.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Stops after 3 runs$/);
+    await userEvent.click(await confirmButton(container));
+
+    expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
+      .toEqual({ ...task, timezone: 'UTC', maxRuns: 3, proposalId: 'call-1' });
+  });
+
+  // A one-off task leaves the account once it has run, so its card must not offer to schedule it again.
+  it('offers no Confirm for a one-off proposal whose time has passed', async () => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', frequency: 'once', date: '2020-01-02', time: '08:30' }, result: 'Proposed.',
+      })
+    );
+
+    expect(await within(container).findByText('Its time has passed.')).toBeInTheDocument();
+    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Once on January 2, 2020 at 8:30 AM · /);
+    expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
   });
 
   it('cannot be confirmed twice while scheduling', async () => {
@@ -7410,7 +8383,7 @@ describe('a pending Side Chat deletion', () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/threads/old' && init?.method === 'DELETE' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
     );
-    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete conversation'));
+    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete side chat'));
     await userEvent.click(sidebar().getByText('Next chat'));
     expect(copilot.chat?.threadId).toBe('next');
     await act(async () => { present(held[0], 'delete response')(answer(204)); });
@@ -7426,7 +8399,7 @@ describe('a pending Side Chat deletion', () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/threads/old' && init?.method === 'DELETE' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
     );
-    await userEvent.click(sidebar().getByLabelText('Delete conversation'));
+    await userEvent.click(sidebar().getByLabelText('Delete side chat'));
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await userEvent.type(screen.getByLabelText('Message'), 'Keep this draft');
@@ -7444,7 +8417,7 @@ describe('a pending Side Chat deletion', () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/threads/old' && init?.method === 'DELETE' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
     );
-    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete conversation'));
+    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete side chat'));
     await userEvent.click(sidebar().getByText('Next chat'));
     await userEvent.click(sidebar().getByText('Old chat'));
     await act(async () => { present(held[0], 'delete response')(answer(204)); });
@@ -7465,7 +8438,7 @@ describe('a pending Side Chat deletion', () => {
       if (url === 'http://chat.test/threads/next') return new Promise<Response>((resolve) => replays.push(resolve));
       return chatService(url, init);
     });
-    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete conversation'));
+    await userEvent.click(within(present(sidebar().getByText('Old chat').parentElement, 'old item')).getByLabelText('Delete side chat'));
     await userEvent.click(sidebar().getByText('Next chat'));
     await act(async () => { present(deletes[0], 'delete response')(answer(204)); });
     await act(async () => { present(replays[0], 'replay response')(answer(status, { messages: [] })); });
@@ -7647,7 +8620,7 @@ describe('Main Chat navigation after a Side Chat deletion', () => {
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => url === 'http://chat.test/main-chat' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init));
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
-    await userEvent.click(sidebar().getByLabelText('Delete conversation'));
+    await userEvent.click(sidebar().getByLabelText('Delete side chat'));
     await settle();
     await act(async () => { present(held[0], 'Main Chat load')(answer(status, { id: 'main-1', messages: [] })); });
     await settle();
@@ -7707,4 +8680,133 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
   } finally {
     vi.doUnmock('./chat-surface');
   }
+});
+
+// With the cartridge's uploadFile, a + attaches files, and the message names them for the agent.
+describe('attaching files', () => {
+  const uploads: { name: string; resolve: (path: string) => void; reject: (error: Error) => void }[] = [];
+  beforeEach(async () => {
+    uploads.length = 0;
+    const { webUiPlugin } = await import('@cartridge-ui');
+    webUiPlugin.uploadFile = (file) => new Promise((resolve, reject) => {
+      uploads.push({ name: file.name, resolve, reject });
+    });
+    onTestFinished(() => {
+      delete webUiPlugin.uploadFile;
+    });
+  });
+  const chips = () => [...document.querySelectorAll('.copilotKitInput .composer-file')].map((chip) => chip.textContent);
+  const attach = async (...names: string[]) => {
+    const picker = present(document.querySelector<HTMLInputElement>('input[type="file"]'), 'the file picker');
+    await userEvent.upload(picker, names.map((name) => new File(['data'], name)));
+    expect(picker.value).toBe('');
+  };
+
+  it("shows the + that opens CopilotKit's add menu at Add photos & files, a multi-file picker", async () => {
+    await renderPage();
+    const add = screen.getByRole('button', { name: 'Add photos & files' });
+    const picker = present(document.querySelector<HTMLInputElement>('input[type="file"]'), 'the file picker');
+    const opened = vi.spyOn(picker, 'click');
+
+    await userEvent.click(add);
+
+    expect(add).toHaveAttribute('data-testid', 'copilot-add-menu-button');
+    expect(copilot.chat?.labels).toMatchObject({ chatInputToolbarAddButtonLabel: 'Add photos & files' });
+    expect(picker.multiple).toBe(true);
+    expect(opened).toHaveBeenCalledOnce();
+  });
+
+  it('holds the message while a file uploads or has failed, then sends it naming the files by their paths', async () => {
+    await renderPage();
+    await attach('report.csv', 'notes.md');
+    expect(chips()).toEqual(['report.csvUploading… 0%', 'notes.mdUploading… 0%']);
+
+    await sendMessage('Summarise these');
+    expect(agent().messages).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+
+    await act(async () => {
+      uploads[0]?.resolve('/report.csv');
+      uploads[1]?.reject(new Error('Upload failed: 403'));
+    });
+    expect(chips()).toEqual(['report.csvCSV', 'notes.mdUpload failed: 403Retry']);
+    await sendMessage('Summarise these');
+    expect(agent().messages).toEqual([]);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await act(async () => uploads[2]?.resolve('/notes (1).md'));
+    expect(screen.getByRole('button', { name: 'Send' })).not.toBeDisabled();
+    await sendMessage('Summarise these');
+
+    expect(agent().messages).toEqual([
+      { id: 'submitted', role: 'user', content: 'Summarise these\n\nAttached files:\n- /report.csv\n- /notes (1).md' },
+    ]);
+    expect(chips()).toEqual([]);
+  });
+
+  it('clears uploaded chips when a follow-up queues, keeping their paths in that queued message only', async () => {
+    service.mainChat = { id: 'main-1', messages: [], running: true, runId: 'server-run' };
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await attach('report.csv');
+    await act(async () => uploads[0]?.resolve('/report.csv'));
+    await sendMessage('Summarise this');
+
+    expect(screen.getByRole('status', { name: 'Queued message' })).toHaveTextContent('/report.csv');
+    expect(chips()).toEqual([]);
+    await sendMessage('Then explain');
+    expect(screen.getByRole('status', { name: 'Queued message' })).toHaveTextContent('Then explain');
+    const stored = localStorage.getItem('botcube.queued-follow-ups:acct-first');
+    expect(stored && JSON.parse(stored)['main-1']).toBe('Summarise this\n\nAttached files:\n- /report.csv\n\nThen explain');
+  });
+
+  it('keeps uploaded chips for an offline send, then clears them when Retry sends their paths', async () => {
+    await renderPage();
+    await attach('report.csv');
+    await act(async () => uploads[0]?.resolve('/report.csv'));
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await sendMessage('Summarise this');
+    expect(chips()).toEqual(['report.csvCSV']);
+    online.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(agent().messages.at(-1)?.content).toBe('Summarise this\n\nAttached files:\n- /report.csv');
+    expect(chips()).toEqual([]);
+  });
+
+  it('leaves a removed upload out when an offline message is retried', async () => {
+    await renderPage();
+    await attach('report.csv');
+    await act(async () => uploads[0]?.resolve('/report.csv'));
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await sendMessage('Summarise this');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove report.csv' }));
+    online.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(agent().messages.at(-1)?.content).toBe('Summarise this');
+    expect(chips()).toEqual([]);
+  });
+
+  it('clears uploads when sign-in changes the account while the running chat remains mounted', async () => {
+    const view = await renderPage(auth({ accountId: 'acct-anonymous' }));
+    await attach('report.csv');
+    await act(async () => uploads[0]?.resolve('/report.csv'));
+    const current = agent();
+    copilot.running = true;
+    current.isRunning = true;
+    cartridge.auth = auth({ accountId: 'acct-linked' });
+    view.rerender(<Page />);
+    await settle();
+
+    expect(agent()).toBe(current);
+    expect(chips()).toEqual([]);
+  });
+
+  it('drops a removed file from the message', async () => {
+    await renderPage();
+    await attach('report.csv');
+    await userEvent.click(screen.getByRole('button', { name: 'Remove report.csv' }));
+
+    expect(chips()).toEqual([]);
+    await sendMessage('Hello');
+    expect(agent().messages).toEqual([{ id: 'submitted', role: 'user', content: 'Hello' }]);
+  });
 });

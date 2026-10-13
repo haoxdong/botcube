@@ -1,8 +1,11 @@
+import { templateFiles, templateFileContent } from './files.js';
+import { computerFilesRoutes } from 'botcube-chat/computer-files-routes';
 import { TEMPLATE_IDENTITY } from '../../identity.js';
 import { LOCAL_UI_ORIGINS, type CartridgeFactory } from 'botcube-chat';
 import { Hono } from 'hono';
 import { accountsNeedingSignIn, templateRequester } from './account.js';
-import { invocationToken, siteSignInRoutes } from './sign-in.js';
+import { siteSignInRoutes } from './sign-in.js';
+import { signCredentialServiceInvocation } from 'botcube-chat/credential-service-token';
 import { templateComputer, templateComputerConfig } from './computer.js';
 
 const TEMPLATE_ACTOR_ID = 'template-user';
@@ -32,7 +35,8 @@ export function templateCartridgeFactory(
       accountModels: async () => [],
       browserEventName: 'botcube:browser-live-view',
       routes: new Hono()
-        .route('/', computer ? computer.routes : new Hono())
+        .route('/', computer ? computer.routes : computerFilesRoutes({ requester: templateRequester, history, computers: { async state() { return { state: 'asleep', screenshot: null }; }, async wake() { throw new Error('Agent Computer is not configured'); } }, files: (c) => templateFiles(c.req.url) }))
+        .route('/', templateFileContent)
         .route(
           '/',
           siteSignInRoutes({
@@ -43,11 +47,6 @@ export function templateCartridgeFactory(
         .get('/auth/template', (c) =>
           c.json({ status: 'ready', actorId: TEMPLATE_ACTOR_ID })
         )
-        .get('/files/download-url', (c) => {
-          if (c.req.query('name') !== 'sample.txt')
-            return c.json({ error: 'Unknown template file' }, 404);
-          return c.json({ url: new URL('/files/sample.txt', c.req.url).href });
-        })
         .get('/files/sample.txt', (c) =>
           c.text(`Hello from ${TEMPLATE_IDENTITY.name}.\n`)
         ),
@@ -70,7 +69,7 @@ export function templateCartridgeFactory(
             ...(env.TEMPLATE_CREDENTIAL_SERVICE_URL
               ? {
                   credentialServiceUrl: env.TEMPLATE_CREDENTIAL_SERVICE_URL,
-                  credentialServiceInvocation: invocationToken(
+                  credentialServiceInvocation: signCredentialServiceInvocation(
                     env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
                     requester.owner,
                     input.threadId

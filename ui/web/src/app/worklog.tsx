@@ -94,7 +94,8 @@ type Part = "question" | "work" | "shown";
 /**
  * Each message's part in its Turn. The answer is the Turn's last text that calls no tool, and while the last Turn runs
  * only its latest message can be it: a note reads as the answer until its tool call arrives. A proposed schedule and
- * its result show too.
+ * its result show too. A scheduled run's card, which the Chat Service posts to the Main Chat with no question before it,
+ * is no Turn's work: it ends the Turn before it and shows on its own.
  */
 function partsOf(messages: readonly TurnMessage[], isRunning: boolean): Map<string, Part> {
   const parts = new Map<string, Part>();
@@ -111,11 +112,13 @@ function partsOf(messages: readonly TurnMessage[], isRunning: boolean): Map<stri
     turn = [];
   };
   for (const message of messages) {
-    if (message.role !== "user") turn.push(message);
-    else {
+    if (message.role === "user") {
       close(false);
       parts.set(message.id, "question");
-    }
+    } else if (message.metadata?.scheduledRun !== undefined) {
+      close(false);
+      parts.set(message.id, "shown");
+    } else turn.push(message);
   }
   close(true);
   return parts;

@@ -5,9 +5,10 @@ from typing import Any
 
 import pytest
 
-from agentcore_fake import turn_identity
-from botcube_harness_deepagents import serving
+from agentcore_fake import fresh_warm_sessions, turn_identity
+from botcube_harness_deepagents import serving, session_memory
 from test_serving import (
+    _memory_block,
     _memory_record,
     _ScopedMemory,
     _Service,
@@ -19,6 +20,47 @@ from test_serving import (
 from test_serving import (
     service as service,
 )
+
+
+def test_empty_startup_memory_retries_on_the_next_session_turn_issue_3942(
+    service: _Service, agentcore_memory: _ScopedMemory,
+) -> None:
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert '<agent_memory>' not in service.recorder.prompts[-1]
+
+    agentcore_memory.records += [
+        _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'),
+        _memory_record('Trades gold futures', 'SemanticFacts-1', 'actor-2'),
+    ]
+
+    assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+
+
+def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl_issue_3942(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 1000.0
+    monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
+
+    assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
+    opened = _memory_block(service.recorder.prompts[-1])
+    assert opened == 'semantic facts:\n- Trades copper futures'
+    agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1'))
+
+    for at in (1200.0, 1500.0):
+        now = at
+        assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'
+        assert _memory_block(service.recorder.prompts[-1]) == opened
+
+    now = 1801.0
+    assert service.turn('hello after a break', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert _memory_block(service.recorder.prompts[-1]) == (
+        'semantic facts:\n- Trades copper futures\n- Lives in Paris'
+    )
 
 
 @pytest.mark.parametrize('scope', ['startup', 'recorded', None])
@@ -50,6 +92,7 @@ def test_authorized_warmup_restores_an_existing_conversation_before_the_next_tur
         monkeypatch.setattr(serving, name, {})
     for name in ('_CHECKPOINTER', '_STORE'):
         monkeypatch.setattr(serving, name, None)
+    fresh_warm_sessions(monkeypatch)
     writes = agentcore_memory.create_event_calls
     prompts = len(service.recorder.prompts)
     reads = agentcore_memory.listed['thread-1']
@@ -98,6 +141,32 @@ def test_warmup_without_a_turn_identity_or_during_session_work_does_not_read_mem
     finally:
         if busy:
             service.client.portal.call(lock.release)
+
+
+def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 1000.0
+    monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
+    assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
+    now = 1301.0
+    list_events = agentcore_memory.list_events
+
+    def throttled(**params: Any) -> dict[str, Any]:
+        if params['sessionId'].startswith('pending-memory-'):
+            raise RuntimeError('Memory throttled')
+        return list_events(**params)
+
+    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    [error] = [event for event in service.turn('refresh', **member) if event['type'] == 'RUN_ERROR']
+    assert error['message'] == 'Memory throttled'
+    assert len(service.recorder.prompts) == 1
+    monkeypatch.setattr(agentcore_memory, 'list_events', list_events)
+    agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1'))
+    assert service.turn('retry', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert 'Lives in Paris' in _memory_block(service.recorder.prompts[-1])
 
 
 def _ack(run_id: str, outcome: str, **error: str) -> dict[str, Any]:

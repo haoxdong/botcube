@@ -60,6 +60,22 @@ _Avoid_: cookie store, database, keychain
 One user message and the agent's complete response within a Session.
 _Avoid_: run, invocation
 
+**End-to-end Latency**:
+A Turn's time from the Chat Service receiving the user's message to the agent's last token, reported at p50 and p95. It is exactly Orchestration Overhead + Inference Latency + Tool Latency.
+_Avoid_: response time, TTFT (one model call's first token)
+
+**Orchestration Overhead**:
+The part of End-to-end Latency spent outside model calls and tools: loading and saving the Session, Memory reads, credential fetches, admission, and the hops between them. The goal keeps it under 1 s per Turn, cold and warm.
+_Avoid_: pre-dispatch stall, receipt-to-dispatch, harness overhead
+
+**Inference Latency**:
+Time a model call takes from leaving the agent to its last token, including the Credential Service's hop to the provider. Its first part is the call's TTFT, OpenTelemetry's `gen_ai.server.time_to_first_token`.
+_Avoid_: model step, LLM time
+
+**Tool Latency**:
+Time a tool runs, from the agent's call to its result, OpenTelemetry's `execute_tool` span.
+_Avoid_: tool step
+
 **Activity**:
 The owner's list of answered Turns across their Sessions, most recent first.
 _Avoid_: history, task log

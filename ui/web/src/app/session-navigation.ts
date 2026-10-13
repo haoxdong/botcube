@@ -75,6 +75,8 @@ export function useSessionNavigation({
   /** Why the Side Chat the URL names could not open; the user goes on to the Main Chat from it. */
   const [linkedChatError, setLinkedChatError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** The message the open chat opens at, as Open on a run's card names it. */
+  const [openAt, setOpenAt] = useState<string | null>(null);
   const [newChatOwner, setNewChatOwner] = useState<{ accountId: typeof accountId } | null>(null);
   // Only the latest navigation may open a chat or report a load failure.
   const navigation = useRef(0);
@@ -90,6 +92,8 @@ export function useSessionNavigation({
   /** The open Session's latest Turn runs on the server, as its last load said, with its run ID for a Stop. */
   const [serverTurn, setServerTurn] = useState<{ runId: string | undefined } | null>(null);
   const turnRunsOnServer = serverTurn !== null;
+  /** Whether the open chat came from a load, which says whether its Turn runs, rather than from this browser's copy. */
+  const [turnKnown, setTurnKnown] = useState(true);
   // The reload reads the run it waits on, which may start or change between reloads, and is kept while its Stop is asked.
   const awaitedRunId = useRef<string | undefined>(undefined);
   if (serverTurn === null) awaitedRunId.current = undefined;
@@ -156,8 +160,10 @@ export function useSessionNavigation({
     }
   };
 
-  const openChat = (id: string, { messages, provider, running, runId, failure }: ReplayedSession) => {
+  const openChat = (id: string, { messages, provider, running, runId, failure }: ReplayedSession, loaded = true, at: string | null = null) => {
     navigationDestination.current = id;
+    setTurnKnown(loaded);
+    setOpenAt(at);
     copiedAccount.current = undefined;
     setMainChatError(null);
     setStopError(null);
@@ -181,7 +187,7 @@ export function useSessionNavigation({
     // The copy the page opened with is this account's, and stays on screen on its agent.
     if (opened?.id === copy.id && activeId === copy.id && copiedAccount.current === accountId) return opened;
     setMainChatId(copy.id);
-    openChat(copy.id, copy);
+    openChat(copy.id, copy, false);
     copiedAccount.current = accountId;
     return copy;
   };
@@ -192,6 +198,7 @@ export function useSessionNavigation({
    */
   const loadIntoCopy = (copy: MainChatCopy, { messages, provider, running, runId, failure }: ReplayedSession) => {
     const shown = agentRef.current;
+    setTurnKnown(true);
     const copied = JSON.stringify(copy.messages);
     if (!shown.isRunning && JSON.stringify(shown.messages) === copied) {
       if (JSON.stringify(messages) !== copied) shown.setMessages(messages);
@@ -232,6 +239,8 @@ export function useSessionNavigation({
       // A resumed Turn may finish or fail before this load answers; preserve its question and reply as well.
       if (unlessRunning && (runningBeforeLoad || agent.isRunning || agent.messages !== messagesBeforeLoad || agent.messages.length !== messageCountBeforeLoad)) {
         navigationDestination.current = activeId;
+        // The chat kept on screen runs its own Turn, which its stream reports.
+        setTurnKnown(true);
         return;
       }
       if (accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, { id, ...session }));
@@ -241,6 +250,7 @@ export function useSessionNavigation({
     } catch (error) {
       console.error(error);
       if (request !== navigation.current) return;
+      // A copy whose load failed leaves unknown whether its Turn runs, so a held follow-up waits for a Retry that loads it.
       // Another account's copy left behind, the previous account's chat leaves too, unless it runs the Turn the sign-in resumed.
       if (!forgotten && unlessRunning && !runningBeforeLoad && !agent.isRunning) closeChat();
       else if (activeId !== null && deletedChats.current.has(activeId)) handleNewConversation();
@@ -281,7 +291,7 @@ export function useSessionNavigation({
   useLayoutEffect(() => {
     if (opening === null) return;
     setMainChatId(opening.copy.id);
-    openChat(opening.copy.id, opening.copy);
+    openChat(opening.copy.id, opening.copy, false);
     copiedAccount.current = opening.accountId;
     openedCopy.current = opening.copy;
   }, []);
@@ -470,13 +480,13 @@ export function useSessionNavigation({
         }
       : null;
 
-  const handleSelectConversation = async (conversation: ConversationEntry) => {
+  const handleSelectConversation = async (conversation: Pick<ConversationEntry, "id" | "title">, at: string | null = null) => {
     const request = ++navigation.current;
     navigationDestination.current = conversation.id;
     try {
       const session = await openConversation({ id: conversation.id, chatServiceUrl });
       if (request !== navigation.current) return;
-      openChat(conversation.id, session);
+      openChat(conversation.id, session, true, at);
       setSideChatsError(null);
     } catch (error) {
       console.error(error);
@@ -503,7 +513,11 @@ export function useSessionNavigation({
     });
 
   return {
-    current: { id: activeId, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
+    current: { id: activeId, openAt, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure,
+      // A chat shown from this browser's copy may run a Turn until its load says otherwise.
+      turnRunning: turnRunsOnServer || !turnKnown,
+      // Another tab can know of a Turn this one does not: the open chat reloads until the server says none runs.
+      turnMayRun: () => setServerTurn((turn) => turn ?? { runId: undefined }) },
     mainChatId,
     sideChats: { entries: sideChats, error: sideChatsError },
     failures: { mainChat: mainChatError, linkedChat: linkedChatError, refresh: mainChatRefreshError, stop: stopError },

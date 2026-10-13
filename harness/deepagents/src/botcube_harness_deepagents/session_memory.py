@@ -1,14 +1,8 @@
-"""The member's Memory, loaded on a Session's first Turn and kept unchanged in its system prompt (ADR 0031).
-
-The block lives in graph state, so the Session record carries it across Turns and Harness
-restarts, and the system prompt stays byte-identical for the prompt cache. A new Session
-loads afresh; the `memory` tool reads live records.
-"""
-
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
+from time import time
 from typing import Any
 
 from langchain.agents.middleware.types import (
@@ -21,6 +15,7 @@ from langchain_core.messages import SystemMessage
 from . import answer_timing
 
 MEMORY_LIMIT = 50
+PROMPT_CACHE_TTL_SECONDS = 300
 PREFERENCE_SECTION = 'user preferences:'
 FACT_SECTION = 'semantic facts:'
 SPILLOVER_NOTE = 'More memories are available. Use memory retrieve to search beyond the startup memory block.'
@@ -39,20 +34,23 @@ def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
 
 
 class SessionMemoryMiddleware(AgentMiddleware):
-    """Load the block once per Session from the graph's store, and add it to every model call's system prompt.
-
-    Its `session_memory` state is `agent.PlainState`'s, which every graph on the Session record carries.
-    """
-
     def __init__(self, load: Callable[[Any], str]) -> None:
         super().__init__()
         self._load = load
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, str] | None:
-        if 'session_memory' in state:
+        last_model_call_at = state.get('last_model_call_at')
+        if (
+            state.get('session_memory')
+            and last_model_call_at is not None
+            and time() - last_model_call_at <= PROMPT_CACHE_TTL_SECONDS
+        ):
             return None
         with answer_timing.phase('personal_memory'):
             return {'session_memory': await asyncio.to_thread(self._load, runtime.store)}
+
+    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, float]:
+        return {'last_model_call_at': time()}
 
     async def awrap_model_call(
         self,

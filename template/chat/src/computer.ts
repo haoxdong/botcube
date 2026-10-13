@@ -1,3 +1,5 @@
+import { computerFilesRoutes } from 'botcube-chat/computer-files-routes';
+import { templateFiles } from './files.js';
 import {
   createHmac,
   randomBytes,
@@ -20,7 +22,7 @@ import {
   startLocalComputer,
   type LocalComputer,
 } from './local-computer.js';
-import { invocationToken } from './sign-in.js';
+import { signCredentialServiceInvocation } from 'botcube-chat/credential-service-token';
 
 interface RunningComputer {
   readonly owner: string;
@@ -203,14 +205,10 @@ export function templateComputer({
       throw new HttpError(501, 'Local Agent Computer Take-over is unavailable');
     });
   }
-  routes.get('/agent-computer', async (c) => {
-    const { owner, threadId } = await current(c);
-    return c.json(await state(running.get(keyOf(owner, threadId))));
-  });
-  routes.post('/agent-computer/wake', async (c) => {
-    const { owner, threadId } = await current(c);
-    return c.json(await state(start(owner, threadId)));
-  });
+  routes.route('/', computerFilesRoutes({ requester, history, computers: {
+    async state(owner, threadId) { await requireOwner(owner, threadId); const failure = cleanupFailures.get(keyOf(owner, threadId)); if (failure) throw failure; return state(running.get(keyOf(owner, threadId))); },
+    async wake(owner, threadId) { await requireOwner(owner, threadId); const failure = cleanupFailures.get(keyOf(owner, threadId)); if (failure) throw failure; return state(start(owner, threadId)); },
+  }, files: (c) => templateFiles(c.req.url) }));
   routes.get('/agent-computer/view', async (c) => {
     const { owner, threadId } = await current(c);
     const computer = running.get(keyOf(owner, threadId));
@@ -343,11 +341,11 @@ export function templateComputer({
     async forwardedProps(owner: string, threadId: string) {
       await requireOwner(owner, threadId);
       const computer = start(owner, threadId);
-      const token = invocationToken(
+      const token = signCredentialServiceInvocation(
         secret,
         owner,
         threadId,
-        `computer:${computer.browserSessionId}`
+        { scope: `computer:${computer.browserSessionId}` }
       );
       const url = new URL(cdpUrl);
       url.searchParams.set('token', token);

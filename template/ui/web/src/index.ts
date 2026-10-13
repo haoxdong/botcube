@@ -6,6 +6,7 @@ import { ComputerView } from './computer-view';
 import { CHAT_SERVICE_URL, config } from './config';
 import { SiteDataResult } from './site-data-result';
 import type { WebUiPlugin } from 'botcube-ui-web/cartridge';
+import 'botcube-ui-web/computer/styles.css';
 import './styles.css';
 
 export const webUiPlugin: WebUiPlugin = {

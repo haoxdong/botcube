@@ -139,6 +139,16 @@ describe('a Worklog', () => {
     expect(screen.getByText("I'll propose a weekday brief.")).toBeVisible();
   });
 
+  it("shows each scheduled run's card the Chat Service posts after a Turn, folding none and leaving the Turn's answer outside", () => {
+    const card = (id: string, title: string) => ({ id, role: 'assistant', content: `Scheduled task "${title}": done`, metadata: { scheduledRun: { title } } });
+    render(<Chat messages={[...turn('runs'), card('runs-1', 'Oil brief'), card('runs-2', 'Credit brief')]} running={false} />);
+
+    expect(heads()).toHaveLength(1);
+    expect(screen.getByText('2s10s steepened to +45bp.')).toBeVisible();
+    expect(screen.getByText('Scheduled task "Oil brief": done')).toBeVisible();
+    expect(screen.getByText('Scheduled task "Credit brief": done')).toBeVisible();
+  });
+
   it("folds the rows CopilotKit's own message list lays out, custom-message slots and renamed messages included", () => {
     const messages = turn('copilotkit');
     const view = render(<CopilotKitChat messages={messages} />);

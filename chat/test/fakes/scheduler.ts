@@ -55,6 +55,7 @@ export interface Schedule {
   ScheduleExpression: string;
   ScheduleExpressionTimezone?: string;
   StartDate?: number | null;
+  ActionAfterCompletion?: 'NONE' | 'DELETE' | null;
   State: 'ENABLED' | 'DISABLED';
   Target: { Arn: string; RoleArn: string; Input: string };
 }
@@ -74,11 +75,17 @@ export class SchedulerView {
     return (await response.json()) as Schedule;
   }
 
-  /** Deliver the schedule's target input to its queue, as Scheduler does when the schedule is due. */
+  /**
+   * Deliver the schedule's target input to its queue, as Scheduler does when the schedule is due, then delete a
+   * schedule that asks for it (a one-off's `ActionAfterCompletion: DELETE`).
+   */
   async fire(name: string): Promise<void> {
     const schedule = await this.schedule(name);
     if (schedule === null) throw new Error(`No schedule ${name}`);
     await this.deliver(schedule.Target.Input);
+    if (schedule.ActionAfterCompletion !== 'DELETE') return;
+    const deleted = await scheduler(this.endpoint, 'DELETE', `/schedules/${name}?groupName=${this.runs.group}`);
+    if (deleted.status !== 200) throw new Error(`DeleteSchedule: ${deleted.status} ${await deleted.text()}`);
   }
 
   /** How many runs the queue holds, delivered or not. */

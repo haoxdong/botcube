@@ -8,6 +8,8 @@ from ag_ui.core import Message, ReasoningMessage
 from ag_ui_langgraph.utils import langchain_messages_to_agui
 from langchain_core.messages import AIMessage, BaseMessage
 
+# The additional_kwargs key a scheduled run's post keeps its run card under; history replays it as `metadata.scheduledRun`.
+SCHEDULED_RUN = 'scheduled_run'
 # Where a recorded message keeps when it started and ended, in epoch ms, in its `response_metadata`; a replay
 # copies them into its AG-UI `metadata` as `started_at` and `ended_at`. An agent message's entry
 # also times each of its reasoning blocks, in order, and the start of each tool call it made: message_times.py
@@ -39,6 +41,8 @@ def _replayed(message: BaseMessage) -> list[Message]:
     """The message as AG-UI messages; an AI message's reasoning goes first, as its Turn streamed it."""
     reasoning = reasoning_texts(message)
     times = message.response_metadata.get(MESSAGE_TIMES)
+    card = message.additional_kwargs.get(SCHEDULED_RUN)
+    metadata = {**(_span(times) if times else {}), **({'scheduledRun': card} if card is not None else {})}
     return [
         *(
             ReasoningMessage(
@@ -48,7 +52,7 @@ def _replayed(message: BaseMessage) -> list[Message]:
             for index, text in enumerate(reasoning)
         ),
         *(
-            converted.model_copy(update={'metadata': _span(times)}) if times and converted.role != 'reasoning' else converted
+            converted.model_copy(update={'metadata': metadata}) if metadata and converted.role != 'reasoning' else converted
             for converted in langchain_messages_to_agui([message])
             if not reasoning or converted.role != 'reasoning'
         ),

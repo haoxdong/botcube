@@ -11,11 +11,25 @@ type SessionApiEvent =
   /** Read history from the Session's latest checkpoint; the session API ignores `contains`. */
   | { operation: 'get'; sessionId: string; userId: string }
   | { operation: 'purge'; sessionId: string; userId: string }
-  /** Add `content` to the Session as the agent's message, under `messageId`. */
-  | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string }
+  /** Add `content` to the Session as the agent's message, under `messageId`, with the run card a scheduled run shows as. */
+  | { operation: 'post'; sessionId: string; userId: string; content: string; messageId: string; scheduledRun?: ScheduledRunCard }
   | { operation: 'memory'; userId: string }
   | { operation: 'memory-edit'; userId: string; recordId: string; text: string }
   | { operation: 'memory-delete'; userId: string; recordId: string };
+
+/**
+ * A scheduled run as its Main Chat message shows it: the task's title, when the run started, how it ended, and its
+ * answer or why not. Open goes to the task's Side Chat at the run's request, `messageId`; a run that never reached its
+ * Side Chat (skipped, or failed before it) has neither, and no Open.
+ */
+export interface ScheduledRunCard {
+  sideChat?: string;
+  messageId?: string;
+  title: string;
+  ranAt: string;
+  status: 'done' | 'failed' | 'sign-in' | 'skipped';
+  text: string;
+}
 
 /** Where the session API runs: the deployed function, invoked with SigV4, or its local plain-HTTP mode. */
 export type SessionApiConfig =

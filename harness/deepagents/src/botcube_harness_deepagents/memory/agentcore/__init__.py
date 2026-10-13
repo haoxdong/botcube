@@ -19,14 +19,12 @@ from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from langgraph_checkpoint_aws import AgentCoreMemorySaver, AgentCoreMemoryStore
-from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import (
-    BedrockAgentCoreClientWithRetry,
-)
 
 from ...memory_document import opening_memory
 from ...memory_tools import memory_tool
 from ...session_memory import SessionMemoryMiddleware
 from ...turn_memory import TurnMemoryMiddleware
+from .warm_session import WarmSessionSaver
 
 __all__ = [
     'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store', 'is_access_denied', 'turn_memory',
@@ -70,14 +68,15 @@ def build_store(memory_id: str, *, region_name: str, **credentials: Unpack[_Cred
 
 def turn_memory(
     memory_id: str, turn_identity: str, *, region_name: str, run_id: str,
-) -> tuple[AgentCoreMemorySaver, AgentCoreMemoryStore]:
-    """The Turn's checkpointer and store, on one client with the Turn's tagged credentials."""
+) -> tuple[WarmSessionSaver, AgentCoreMemoryStore]:
+    """The Turn's checkpointer and store, on one client with the Turn's tagged credentials.
+
+    The checkpointer keeps the Session warm in this process: a continuing Session's latest snapshot loads
+    from Memory only when another process wrote it since.
+    """
     credentials = _turn_credentials(turn_identity, region_name=region_name, run_id=run_id)
     store = build_store(memory_id, region_name=region_name, **credentials)
-    saver = build_checkpointer(memory_id, region_name=region_name, **credentials)
-    # The saver builds its own client; it takes the store's, so every Memory call of the Turn shares one.
-    saver.checkpoint_event_client.client = BedrockAgentCoreClientWithRetry(store.client)
-    return saver, store
+    return WarmSessionSaver(memory_id, store.client, region_name=region_name), store
 
 
 def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> _Credentials:

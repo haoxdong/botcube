@@ -1,13 +1,15 @@
 "use client";
 
-import { createContext, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref } from "react";
+import { createContext, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
+  CopilotChatAssistantMessage,
   CopilotChatInput,
   CopilotChatMessageView,
   type CopilotChatReasoningMessage,
   CopilotChatView,
+  type CopilotChatAssistantMessageProps,
   type CopilotChatInputProps,
   type CopilotChatMessageViewProps,
 } from "@copilotkit/react-core/v2";
@@ -17,6 +19,7 @@ import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./con
 import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
+import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
 import MarkdownRenderer from "./markdown-renderer";
 import { ReplyImageTurnRunning } from "./reply-image-turn";
 import { pageHeld } from "./phone-page-hold";
@@ -25,7 +28,9 @@ import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
 import { Button } from "@/components/ui/button";
+import { ComposerFilePicker, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
+import { useQueuedFollowUp } from "./queued-follow-up";
 
 const UI_CONFIG = webUiPlugin.config;
 const AGENT_ID = UI_CONFIG.agentId;
@@ -74,53 +79,112 @@ function NoAddMenuButton() {
   return null;
 }
 
+type Submit = NonNullable<CopilotChatInputProps["onSubmitMessage"]>;
+
 const ComposerAccessory = createContext<React.ReactNode>(null);
-const SubmitTurn = createContext<((message: string, submit: NonNullable<CopilotChatInputProps["onSubmitMessage"]>) => void) | null>(null);
+const SubmitTurn = createContext<((message: string, submit: Submit, retry?: () => void) => boolean) | null>(null);
+/** Where the composer leaves CopilotKit's send, so a held follow-up goes as one typed now would. */
+const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
+/** The follow-up held until the running Turn ends, shown as pending in the chat. */
+const QueuedMessage = createContext<{ text: string; unkept: boolean; cancel: () => void } | null>(null);
 /** Stops the chat's Turn that runs on the server with no stream here, while one does. */
 const ServerTurnStop = createContext<(() => void) | null>(null);
+/** The files attached in the composer, with the cartridge's `uploadFile`; null without it, and the composer has no +. */
+const AttachedFiles = createContext<ComposerFiles | null>(null);
 
-/** CopilotChat's input with the cartridge's accessory above its text box, in the composer's own overlay. */
+/** The + slot: with files to attach, named for its menu, whose item opens the file picker; none with nothing to add. */
+function addMenuSlot(attached: ComposerFiles | null, picker: RefObject<HTMLInputElement | null>, { onAddFile, toolsMenu }: CopilotChatInputProps) {
+  if (attached) return { addMenuButton: { "aria-label": "Add photos & files" }, onAddFile: () => picker.current?.click() };
+  return !onAddFile && !toolsMenu?.length ? { addMenuButton: NoAddMenuButton } : {};
+}
+
+/**
+ * The message as sent, naming the attached files by the paths the agent reads them by in the Turn it starts; they leave
+ * the composer once it goes, as CopilotChatInput clears its text. A send held back (models loading, offline) keeps them.
+ */
+function sendWithFiles(message: string, attachedRef: RefObject<ComposerFiles | null>, submitTurn: NonNullable<React.ContextType<typeof SubmitTurn>>, submit: NonNullable<CopilotChatInputProps["onSubmitMessage"]>) {
+  const attached = attachedRef.current;
+  if (!attached) {
+    submitTurn(message, submit);
+    return;
+  }
+  if (!attached.sendable) return;
+  const paths = attached.files.flatMap(({ state }) => (state.status === "uploaded" ? [state.path] : []));
+  if (submitTurn(messageWithFiles(message, paths), submit, () => sendWithFiles(message, attachedRef, submitTurn, submit))) attached.clear();
+}
+
+/** CopilotChatInput's send button turns into an icon-only Stop while the agent runs, with no name of its own; Stop is never held back. */
+function sendButtonSlot(mode: CopilotChatInputProps["mode"], isRunning: boolean, held: boolean) {
+  if (mode === "transcribe") return {};
+  return { sendButton: { "aria-label": isRunning ? "Stop" : "Send", ...(held && !isRunning ? { disabled: true } : {}) } };
+}
+
+/**
+ * Swallows the Enter that would send, while the message is `held` for its files, or would stop a running Turn from an
+ * empty text box.
+ */
+function holdEnter(held: boolean, isRunning: boolean) {
+  return (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter" && !event.shiftKey && (held || (isRunning && !event.currentTarget.value.trim()))) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+}
+
+/**
+ * CopilotChat's input with the cartridge's accessory above its text box, in the composer's own overlay, and the files
+ * attached with its + as chips inside its box, above the text.
+ */
 function ComposerInput(props: CopilotChatInputProps) {
   const accessory = useContext(ComposerAccessory);
   const submitTurn = useContext(SubmitTurn);
   const stopServerTurn = useContext(ServerTurnStop);
+  const attached = useContext(AttachedFiles);
+  const attachedRef = useRef(attached);
+  attachedRef.current = attached;
+  const picker = useRef<HTMLInputElement>(null);
+  // A message waits for every attached file to upload; a failed one waits on its Retry or Remove.
+  const held = attached?.sendable === false;
+  const composerSubmit = useContext(ComposerSubmit);
   const submit = props.onSubmitMessage;
+  useLayoutEffect(() => {
+    if (composerSubmit !== null) composerSubmit.current = submit ?? null;
+  });
   // A Turn that runs on the server with no stream here shows the same Stop as one streaming here.
   const stopsServerTurn = !props.isRunning && stopServerTurn !== null;
   const isRunning = props.isRunning || stopsServerTurn;
   return (
     <>
+      {attached && <ComposerFilePicker attached={attached} picker={picker} />}
       {/* CopilotChatInput's column (CopilotKit's own classes), so the accessory lines up with the text box in it. */}
       {accessory && (
         <div className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:sm:px-0">
           <div className="composer-accessory">{accessory}</div>
         </div>
       )}
-      {/* CopilotChatInput's send button turns into an icon-only Stop while the agent runs, with no name of its own. */}
       <CopilotChatInput
         {...props}
         isRunning={isRunning}
         disclaimer="chat-disclaimer"
-        {...(!props.onAddFile && !props.toolsMenu?.length ? {
-          addMenuButton: NoAddMenuButton,
-        } : {})}
-        textArea={{
-          onKeyDownCapture: (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if (isRunning && event.key === "Enter" && !event.shiftKey && !event.currentTarget.value.trim()) {
-              event.preventDefault();
-              event.stopPropagation();
-            }
-          },
-        }}
+        {...addMenuSlot(attached, picker, props)}
+        textArea={{ onKeyDownCapture: holdEnter(held, isRunning) }}
         {...(stopsServerTurn ? { onStop: stopServerTurn } : {})}
-        {...(submit && submitTurn ? { onSubmitMessage: (message: string) => submitTurn(message, submit) } : {})}
-        {...(props.mode !== "transcribe" ? {
-          sendButton: { "aria-label": isRunning ? "Stop" : "Send" },
-        } : {})}
+        {...(submit && submitTurn ? { onSubmitMessage: (message: string) => sendWithFiles(message, attachedRef, submitTurn, submit) } : {})}
+        {...sendButtonSlot(props.mode, isRunning, held)}
       />
     </>
   );
+}
+
+function subscribeOnline(listener: () => void) {
+  window.addEventListener("online", listener);
+  window.addEventListener("offline", listener);
+  return () => {
+    window.removeEventListener("online", listener);
+    window.removeEventListener("offline", listener);
+  };
 }
 
 /** Why the last Turn failed, and how to resend it when the send never reached the Chat Service. */
@@ -131,6 +195,9 @@ interface TurnFailure {
 }
 
 const RunError = createContext<TurnFailure | null>(null);
+
+/** The message a chat opens at, as Open on a run's card opens its Side Chat at the run; null, it opens at its latest. */
+const OpensAt = createContext<string | null>(null);
 
 /** A Turn that ended in a run error, as the chat shows it. */
 const couldNotAnswer = (message: string): TurnFailure => ({ message: `The agent could not answer: ${message}` });
@@ -171,6 +238,32 @@ function holdAtBottom(scroller: Element) {
   hold();
   requestAnimationFrame(frame);
 }
+
+/**
+ * Holds the row of message `id` at the top of the chat's view, under its header, as the chat opens: its rows and their
+ * markdown lay out over the first frames. A scroll of the user's own lets go.
+ */
+function holdAtRow(wrapper: Element, id: string): () => void {
+  const started = performance.now();
+  let frame = 0;
+  const hold = (now: number) => {
+    const row = wrapper.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+    const scroller = row && scrollParent(row);
+    if (row && scroller) {
+      const header = wrapper.closest(".app-shell")?.querySelector(".chat-header")?.getBoundingClientRect().bottom ?? 0;
+      scroller.scrollTop += row.getBoundingClientRect().top - Math.max(viewTop(scroller), header);
+    }
+    if (now - started < OPENING_MS) frame = requestAnimationFrame(hold);
+  };
+  const release = () => {
+    cancelAnimationFrame(frame);
+    for (const type of USER_SCROLLS) window.removeEventListener(type, release, true);
+  };
+  for (const type of USER_SCROLLS) window.addEventListener(type, release, { capture: true, passive: true });
+  frame = requestAnimationFrame(hold);
+  return release;
+}
+const USER_SCROLLS = ["wheel", "touchstart", "pointerdown", "keydown"];
 
 /** CopilotKit's spring mistakes momentum for a new user scroll and cancels the jump. */
 function JumpToBottom({ onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -221,7 +314,7 @@ function useKeyboardLift(): number {
  */
 function PageScrollView({ children, inputContainerHeight = 0, isResizing = false }: ScrollViewProps) {
   const content = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
+  const pinned = useRef(useContext(OpensAt) === null);
   const follows = useRef<() => void>(undefined);
   const backing = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -311,7 +404,7 @@ function PageScrollView({ children, inputContainerHeight = 0, isResizing = false
 }
 
 /** StickToBottom's own props, which CopilotChatView.ScrollView passes on to it but does not type. */
-const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
+const STICK_INSTANTLY: { initial: "instant" | false; resize: "instant" } = { initial: "instant", resize: "instant" };
 
 /**
  * CopilotChat's scroll view: open a chat at its latest message, and stay there as the chat grows, not smooth-scrolled
@@ -319,17 +412,29 @@ const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
  * whose value changes.
  */
 function ChatScrollView(props: ScrollViewProps) {
+  const opensAt = useContext(OpensAt);
   if (useIsPhone()) return <PageScrollView {...props} />;
-  return <CopilotChatView.ScrollView {...props} {...STICK_INSTANTLY} scrollToBottomButton={JumpToBottom} />;
+  // A chat opening at an earlier message leaves the latest to the user's jump.
+  const stick = opensAt === null ? STICK_INSTANTLY : { ...STICK_INSTANTLY, initial: false };
+  return <CopilotChatView.ScrollView {...props} {...stick} scrollToBottomButton={JumpToBottom} />;
 }
 const CHAT_SCROLL_VIEW = ChatScrollView;
 
+const MARKDOWN_RENDERER = ({ content }: { content: string }) => <MarkdownRenderer content={content} />;
+
 /**
- * The assistant message slot: render markdown and reply images. The renderer loads with this lazy chat surface: loaded
- * after it, every reply showed blank as the surface replaced the page's plain-text history (#3539). A constant, like
- * CHAT_SCROLL_VIEW.
+ * The assistant message slot: a scheduled run's card, or markdown and reply images. The renderer loads with this lazy
+ * chat surface: loaded after it, every reply showed blank as the surface replaced the page's plain-text history (#3539).
+ * A constant, like CHAT_SCROLL_VIEW.
  */
-const ASSISTANT_MESSAGE = { markdownRenderer: ({ content }: { content: string }) => <MarkdownRenderer content={content} /> };
+function AssistantMessage(props: CopilotChatAssistantMessageProps) {
+  const run = scheduledRunOf(props.message);
+  if (run !== null) return <div data-message-id={props.message.id}><ScheduledRunCard run={run} /></div>;
+  return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN_RENDERER} />;
+}
+
+/** The slot types its component with CopilotKit's sub-components, which a component slot never reads: it only renders it. */
+const ASSISTANT_MESSAGE_SLOT = AssistantMessage as typeof CopilotChatAssistantMessage;
 
 /**
  * The reasoning message slot: a thought, as a step of its Turn's Worklog. A constant, like CHAT_SCROLL_VIEW. CopilotKit
@@ -441,8 +546,10 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
   const [firstKey, setFirstKey] = useState<Key | null>(null);
   const kept = firstKey === null ? -1 : rows.findIndex((row) => row.key === firstKey);
   const messageIds = new Set(messages.map(({ id }) => id));
-  // The rows a chat opens with, or a replaced history's, which has no row laid out yet.
-  const first = kept === -1 ? pageStart(rows, rows.length, messageIds) : kept;
+  const opensAt = useContext(OpensAt);
+  const at = kept === -1 && opensAt !== null ? rows.findIndex((row) => row.key === opensAt) : -1;
+  // The rows a chat opens with, up to the message it opens at, or a replaced history's, which has no row laid out yet.
+  const first = kept === -1 ? pageStart(rows, at === -1 ? rows.length : at + 1, messageIds) : kept;
   const firstRowKey = rows[first]?.key ?? null;
   if (kept === -1 && firstRowKey !== firstKey) setFirstKey(firstRowKey);
 
@@ -518,9 +625,10 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
  */
 function ChatMessages(props: CopilotChatMessageViewProps) {
   const runError = useContext(RunError);
+  const queued = useContext(QueuedMessage);
   return (
     <>
-      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
+      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE_SLOT} reasoningMessage={REASONING_MESSAGE}>
         {({ messageElements, messages, isRunning, interruptElement }) => (
           <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
             <ReplyImageTurnRunning.Provider value={isRunning}>
@@ -532,6 +640,15 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
                 {/* Once the Turn shows its work, its Worklog's clock says it runs. */}
                 {(messages.at(-1)?.role ?? "user") === "user" && <CopilotChatMessageView.Cursor />}
                 <MomentEnds moment="send-acknowledged" />
+              </div>
+            )}
+            {queued !== null && (
+              <div className="chat-queued-message" role="status" aria-label="Queued message">
+                <div className="chat-queued-bubble">{queued.text}</div>
+                <div className="chat-queued-footer">
+                  <span>{queued.unkept ? "Not kept in this browser: leaving this chat or reloading loses it" : "Sends when this reply ends"}</span>
+                  <button type="button" className="chat-queued-cancel" onClick={queued.cancel} aria-label="Cancel queued message">Cancel</button>
+                </div>
               </div>
             )}
           </div>
@@ -565,6 +682,9 @@ const OPENING_MS = 1000;
 function ChatThread({
   agent,
   threadId,
+  accountId,
+  turnRunning,
+  turnMayRun,
   onMessageSubmitted,
   showWelcome,
   userName,
@@ -574,10 +694,18 @@ function ChatThread({
   stopServerTurn,
   savedFailure,
   onOpened,
+  openAt,
+  onOpenRun,
   children,
 }: {
   agent: AbstractAgent;
   threadId: string;
+  /** The account whose follow-ups this browser holds for the chat across a reload. */
+  accountId: string | undefined;
+  /** The chat's latest Turn runs, streaming here or on the server, so a follow-up waits for it to end. */
+  turnRunning: boolean;
+  /** Has the chat check with the server whether its Turn runs, as one this tab did not start may. */
+  turnMayRun: () => void;
   onMessageSubmitted: () => void;
   /** The account's models; until they load, a Turn would run on another account's model or the default. */
   models: ModelList;
@@ -592,12 +720,24 @@ function ChatThread({
   composerAccessory?: React.ReactNode;
   /** Called once as the chat opens, on the first frame it shows at its latest message. */
   onOpened: () => void;
+  /** The message the chat opens at, when it holds it, rather than its latest. */
+  openAt?: string | null;
+  /** Opens a run's task Side Chat at the run, from its card. */
+  onOpenRun?: (run: ReachedScheduledRun) => void;
   children?: React.ReactNode;
 }) {
   const firedRef = useRef(false);
   const refreshTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (opensAt === null || wrapper === null) return undefined;
+    return holdAtRow(wrapper, opensAt);
+  },
+  // Stryker disable next-line ArrayDeclaration: a chat opens at its message once, as it mounts
+  []);
   // CopilotKit's scroll view reaches the latest message some frames after it mounts (#3697). The chat is open on the
   // first frame it shows there or has nothing to scroll, or a second on, wherever it shows: a chat that never comes to
   // rest there, as a reply streams in, still opens.
@@ -628,27 +768,65 @@ function ChatThread({
   const accountRef = useRef({ models, isAccountCurrent });
   accountRef.current = { models, isAccountCurrent };
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
-  const submitTurn = (message: string, submit: NonNullable<CopilotChatInputProps["onSubmitMessage"]>) => {
+  // A follow-up sent while a Turn runs is held here, and in this browser across a reload, then sent once the Turn
+  // ends (#3920). Follow-ups sent meanwhile go together as one message.
+  const [agentRunning, setAgentRunning] = useState(agent.isRunning);
+  useEffect(() => {
+    // Another agent for the chat, as when its Side Chat is chosen again, runs or not as it does.
+    setAgentRunning(agent.isRunning);
+    const subscription = agent.subscribe({
+      onRunInitialized: () => setAgentRunning(true),
+      onRunFinalized: () => setAgentRunning(false),
+    });
+    return () => subscription.unsubscribe();
+  }, [agent]);
+  const running = turnRunning || agentRunning;
+  // A follow-up waits out a lost connection too, held, rather than going to a Retry a reload would lose.
+  const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  // A follow-up another tab holds may wait on a Turn that tab streams, which this one does not know of.
+  const queued = useQueuedFollowUp(accountId, threadId, turnMayRun);
+  const composerSubmit = useRef<Submit | null>(null);
+  const submitTurn = (message: string, submit: Submit, retry?: () => void) => {
+    if (runningRef.current) {
+      queued.add(message);
+      return true;
+    }
     if (!modelsReady()) {
       const { models: accountModels } = accountRef.current;
       // Nothing loads the models again after a failure, so only a reload can.
       setRunError(
         !accountModels.loaded && accountModels.error !== null
           ? { message: `${accountModels.error}. Reload the page to send a message.` }
-          : { message: "Your models are still loading. Send it again once they have.", retry: () => submitTurn(message, submit) },
+          : { message: "Your models are still loading. Send it again once they have.", retry: retry ?? (() => submitTurn(message, submit)) },
       );
-      return;
+      return false;
     }
     if (!navigator.onLine) {
       // No CopilotKit submit callback, message addition, or request has occurred: retry is safe.
-      setRunError({ message: `Couldn't reach ${UI_CONFIG.title}. Check your connection.`, retry: () => submitTurn(message, submit) });
-      return;
+      setRunError({ message: `Couldn't reach ${UI_CONFIG.title}. Check your connection.`, retry: retry ?? (() => submitTurn(message, submit)) });
+      return false;
     }
     setRunError(null);
     startMoment("send-acknowledged");
     submittedQuestion.current = message;
     void submit(message);
+    return true;
   };
+  useEffect(() => {
+    // Read when the lock is granted, so the browser's connection as it is then, not as last rendered.
+    const ready = () => !runningRef.current && navigator.onLine && composerSubmit.current !== null && modelsReady();
+    // Models that failed to load never send it; only a reload, which keeps it, can.
+    if (!running && queued.text !== null && !models.loaded && models.error !== null) {
+      setRunError({ message: `${models.error}. Reload the page to send your queued message.` });
+      return;
+    }
+    if (!ready()) return;
+    queued.send(ready, (text) => {
+      if (composerSubmit.current !== null) submitTurn(text, composerSubmit.current);
+    }, () => setRunError({ message: "Your queued message could not be taken out of this browser's storage, so it was not sent. Reload the page to try again." }));
+  }, [running, online, queued.text, models]);
   useEffect(() => {
     // Keyboard and Send-button sends both add the user's message to the agent.
     const subscription = agent.subscribe({
@@ -659,8 +837,11 @@ function ChatThread({
     return () => subscription.unsubscribe();
   }, [agent]);
 
+  // A chat opens with no files attached: page.tsx mounts a ChatThread for each chat.
+  const attachedFiles = useComposerFiles(webUiPlugin.uploadFile, accountId);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Enter" || e.shiftKey || !navigator.onLine || !modelsReady()) return;
+    if (e.key !== "Enter" || e.shiftKey || !navigator.onLine || !modelsReady() || attachedFiles?.sendable === false) return;
     const text = e.currentTarget.querySelector("textarea")?.value.trim();
     if (!text) return;
     if (firedRef.current) return;
@@ -708,13 +889,22 @@ function ChatThread({
       {showWelcome && <WelcomeScreen userName={userName} />}
       <ToolCallRenderer agent={agent} />
       <SubmitTurn.Provider value={submitTurn}>
+      <ComposerSubmit.Provider value={composerSubmit}>
       <ServerTurnStop.Provider value={stopServerTurn}>
       <ComposerAccessory.Provider value={composerAccessory}>
+      <AttachedFiles.Provider value={attachedFiles}>
+      <OpenScheduledRun.Provider value={onOpenRun ?? null}>
+      <OpensAt.Provider value={opensAt}>
+      <QueuedMessage.Provider value={queued.text === null ? null : {
+        text: queued.text,
+        unkept: queued.unkept,
+        cancel: () => queued.cancel(() => setRunError({ message: "Your queued message could not be taken out of this browser's storage, so it was not cancelled. Reload the page to try again." })),
+      }}>
         <RunError.Provider value={runError}>
           <CopilotChat
             agentId={AGENT_ID}
             threadId={threadId}
-            labels={{ chatInputPlaceholder: "Ask anything", chatDisclaimerText: UI_CONFIG.disclaimer }}
+            labels={{ chatInputPlaceholder: "Ask anything", chatDisclaimerText: UI_CONFIG.disclaimer, chatInputToolbarAddButtonLabel: "Add photos & files" }}
             className="chat-full-height"
             messageView={CHAT_MESSAGES}
             input={CHAT_INPUT}
@@ -738,8 +928,13 @@ function ChatThread({
             }}
           />
         </RunError.Provider>
+      </QueuedMessage.Provider>
+      </OpensAt.Provider>
+      </OpenScheduledRun.Provider>
+      </AttachedFiles.Provider>
       </ComposerAccessory.Provider>
       </ServerTurnStop.Provider>
+      </ComposerSubmit.Provider>
       </SubmitTurn.Provider>
       <div ref={pickerRef} style={{ position: "absolute", visibility: "hidden" }}>{children}</div>
     </div>

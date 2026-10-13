@@ -16,5 +16,4 @@ cp "$cube_root/cartridge/pyproject.toml" "$destination/cartridge-contract/"
 cp -R "$cube_root/cartridge/src" "$destination/cartridge-contract/"
 uv build --wheel "$cube_root/template" --out-dir "$destination/cartridge"
 
-node "$script_dir/stage-browser-tools.mjs" "$destination"
 rm -rf "$destination/node_modules"

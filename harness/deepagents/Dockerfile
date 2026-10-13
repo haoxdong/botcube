@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build context: botcube/harness/deepagents/
 # The active Cartridge stages its tool bundle before this generic image builds.
-FROM public.ecr.aws/docker/library/python:3.13-slim
+FROM public.ecr.aws/docker/library/python:3.13-slim AS base
 
 # Node.js for a Cartridge CLI + AWS CLI for agent-browser credential resolution
 RUN --mount=type=secret,id=build_ca,mode=0444 \
@@ -28,21 +28,25 @@ RUN --mount=type=secret,id=build_ca \
     uv sync --frozen --no-dev --no-cache
 COPY tools/smoke.py ./
 
+WORKDIR /opt/browser
+COPY browser/package.json browser/package-lock.json ./
+COPY browser/install.mjs ./
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+    npm ci --omit=dev --ignore-scripts && node install.mjs /opt/browser && \
+    ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then BIN=agent-browser-linux-arm64; else BIN=agent-browser-linux-x64; fi && \
+    cp "/opt/browser/$BIN" /usr/local/bin/agent-browser && chmod +x /usr/local/bin/agent-browser && \
+    rm -rf /opt/browser/node_modules
+
+FROM base AS cartridge
+
 # Install the pre-staged Cartridge CLI package
 WORKDIR /opt/tools
 COPY .tool-dist/ ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
     npm install --omit=dev --ignore-scripts && npm link --ignore-scripts
-
-# Install an optional agent-browser binary supplied by the Cartridge.
-# Both x64 and arm64 binaries may be staged; pick the one matching the container arch.
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then BIN="agent-browser-linux-arm64"; \
-    else BIN="agent-browser-linux-x64"; fi && \
-    if [ -f "/opt/tools/$BIN" ]; then \
-      cp "/opt/tools/$BIN" /usr/local/bin/agent-browser && chmod +x /usr/local/bin/agent-browser; \
-    fi
 
 # Install the Harness Python package
 WORKDIR /opt/harness

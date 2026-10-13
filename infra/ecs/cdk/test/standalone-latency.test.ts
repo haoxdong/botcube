@@ -46,8 +46,10 @@ test('the unfiltered standalone export synthesizes explicitly supplied latency m
   });
 });
 
-test('the standalone export without explicit moments reports its missing budget file', () => {
-  expect(() => compose()).toThrow(/ENOENT.*latency-budgets\.json/);
+test('the standalone export without explicit moments uses cube latency budgets', () => {
+  const app = compose();
+  app.synth();
+  Template.fromStack(app.node.findChild('WebLatency') as Stack).resourceCountIs('AWS::RUM::AppMonitor', 1);
 });
 
 test('malformed JSON latency moments fail loudly', () => {

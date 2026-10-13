@@ -72,6 +72,8 @@ class FakeAgentCoreMemory:
         self.created_by_token: dict[str, dict[str, Any]] = {}
         # Sessions ever written, by actor: ListSessions keeps listing them once emptied.
         self.sessions: dict[str, list[str]] = defaultdict(list)
+        # Seconds each call under Turn credentials takes, as a round trip to AgentCore does.
+        self.latency = 0.0
 
     def lag_listing(self) -> None:
         """ListMemoryRecords keeps listing the records as they are now, until it catches up."""
@@ -316,6 +318,7 @@ class TaggedMemoryClient:
             if not self._allowed(operation, params):
                 raise _denied(operation, params)
             self.calls.append((operation, params))
+            time.sleep(self.memory.latency)
             return call(**params)
 
         return scoped
@@ -327,6 +330,7 @@ class TaggedMemoryClient:
             if not self._allowed(operation, params):
                 raise _denied(operation, params)
             self.calls.append((operation, params))
+            time.sleep(self.memory.latency)
             return paginator.paginate(**params)
 
         return SimpleNamespace(paginate=paginate)
@@ -355,3 +359,10 @@ def install_tagged_memory(monkeypatch: Any, memory: FakeAgentCoreMemory) -> Fake
     monkeypatch.setattr(boto3, 'client', client)
     monkeypatch.setattr(agentcore, 'USER_MEMORY_ROLE_ARN', USER_MEMORY_ROLE_ARN)
     return sts
+
+
+def fresh_warm_sessions(monkeypatch: Any) -> None:
+    """A new process's warm Sessions: none held."""
+    from botcube_harness_deepagents.memory.agentcore import warm_session
+
+    monkeypatch.setattr(warm_session, '_SESSIONS', warm_session._WarmSessions(warm_session.WARM_SESSIONS))

@@ -5,9 +5,9 @@ import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError, type ChatServiceCartridge } from './cartridge.js';
 import { accountDefaultModel, accountModelList, namedModel } from './models.js';
-import type { ScheduledRunMessage, ScheduledTask, ScheduledTasks } from './scheduled-tasks.js';
-import type { SessionApi } from './session-api.js';
-import { SessionDeletedError, type SessionMetadata } from './session-metadata.js';
+import { fired, spent, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
+import type { ScheduledRunCard, SessionApi } from './session-api.js';
+import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { sseFrameData, turnCredentialGuard, turnCredentials, turnErrorDetails } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
 import type { sessionLifecycle } from './session-lifecycle.js';
@@ -21,7 +21,7 @@ export interface ScheduledRunDeps {
   sessionMetadata: SessionMetadata;
   agentDocuments: AgentDocuments;
   invokeSessionApi: SessionApi;
-  scheduledTasks: Pick<ScheduledTasks, 'get'>;
+  scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'countRun' | 'retire'>;
   upstream: ReturnType<typeof sessionLifecycle> | null;
   summarizeTurn: TurnSummarizer;
 }
@@ -69,7 +69,7 @@ async function readRun(response: Response, label: string, credentials: readonly 
 }
 
 /**
- * Run a scheduled task: its prompt is the first Turn of a fresh Side Chat, and
+ * Run a scheduled task: its prompt adds a Turn to its one Side Chat, and
  * a summary of the outcome is posted to the account's Main Chat. A run that
  * fails, or needs the user to sign in, says so there (ADR 0030).
  */
@@ -79,60 +79,125 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
   const store = sessionMetadata.scheduledRuns;
   if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
   const previous = await store.get(owner, deliveryId, taskId);
-  if (previous !== null && previous.phase !== 'reserved') {
-    await resumeScheduledDelivery(sessionMetadata, previous);
-    return;
-  }
+  if (previous !== null && previous.phase !== 'reserved') return finishRedelivery(deps, store, previous);
   const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous);
   if (admission === null) return;
   const { executionOwner, task } = admission;
-  if (deps.runtimeNamespaceRequired) {
-    try {
-      await sessionMetadata.checkRuntimeNamespaceReady();
-    } catch (error) {
-      console.error('Session Runtime namespace readiness failed', error);
-      throw new HttpError(503, 'Session Runtime namespace is not ready');
-    }
-  }
+  if (deps.runtimeNamespaceRequired) await assertRuntimeNamespaceReady(sessionMetadata);
   const filingUserId = previous?.filingUserId ?? cartridge.filingUserId(owner);
   const mainChat = previous?.mainChat ?? await sessionMetadata.mainChat(owner, filingUserId);
   await assertReservedMainIdentity(sessionMetadata, owner, executionOwner, mainChat, previous?.mainFilingUserId);
   const delivery = previous === null ? await store.claim(owner, taskId, deliveryId, filingUserId, mainChat) : await store.reclaim(previous, executionOwner);
   await store.admit(delivery, executionOwner);
   await sessionMetadata.recordTurn(executionOwner, mainChat, { filingUserId: delivery.mainFilingUserId ?? filingUserId, title: task.title, messageId: delivery.postMessageId, postAcceptance: true });
-  const post = async (summary: string, failed = false) => {
+  // Whether this run's request reached its Side Chat, so its card can open it there.
+  const reached = { sideChat: false };
+  const post = async (outcome: RunOutcome, failed = false) => {
+    const scheduledRun: ScheduledRunCard = {
+      ...(reached.sideChat ? { sideChat: delivery.sideChat, messageId: delivery.inputMessageId } : {}),
+      title: task.title, ranAt: delivery.startedAt, ...outcome,
+    };
     const messageId = delivery.postMessageId;
     const complete = await sessionMetadata.beginDispatch(executionOwner, mainChat, undefined, { messageId });
     if (complete.session === undefined) throw new HttpError(503, 'Scheduled post filing identity is unavailable');
     const userId = complete.session.filing_user_id;
     if (complete.markSucceeded === undefined) throw new HttpError(503, 'Scheduled post success registration is unavailable');
-    const posting = await store.posting(delivery, complete, failed);
-    await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: summary, messageId });
+    const posting = await store.posting(delivery, complete, failed, lastRunStatus(outcome.status));
+    await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun });
     await complete.markSucceeded('session-post', store.postedTransaction(posting));
     await complete();
     await store.complete(posting);
-    if (failed) await store.retryFailed(posting);
+    return posting;
   };
-  let summary: string;
+  // The task's sheet shows how its latest run ended, once the Main Chat has heard.
+  const recordLastRun = (status: ScheduledTaskRun['status']) => deps.scheduledTasks.recordRun(executionOwner, task.id, { at: delivery.startedAt, status });
+  // A one-off leaves the account once the Main Chat has heard of its run, however it ended, since Scheduler deleted its
+  // schedule when it fired; an Account Claim during the run may have moved it.
+  const retire = async () => deps.scheduledTasks.retire(await store.executionOwner(delivery), task);
+  let outcome: RunOutcome;
   try {
-    summary = await runInSideChat(deps, executionOwner, task, filingUserId, delivery);
+    // A one-off paused after it fired never runs again: its delivery only tells the Main Chat so.
+    outcome = task.paused ? { status: 'skipped', text: 'the task was paused' } : await runInSideChat(deps, executionOwner, task, filingUserId, delivery, reached);
   } catch (error) {
     if (error instanceof SessionDeletedError) throw error;
     // The Main Chat hears of every failed run; the delivery still fails, so the queue redelivers it.
-    await post(`Scheduled task "${task.title}" failed: ${error instanceof Error ? error.message : String(error)}`, true);
+    const posting = await post({ status: 'failed', text: error instanceof Error ? error.message : String(error) }, true);
+    await settleFailedRun(error, async () => {
+      await recordLastRun('failed');
+      await retire();
+      await store.retryFailed(posting);
+    });
     throw error;
   }
-  await post(summary);
+  await post(outcome);
+  const status = lastRunStatus(outcome.status);
+  if (status !== undefined) await recordLastRun(status);
+  await retire();
+}
+
+/** A failure to record a failed run, or retire its one-off, keeps the run's own failure beside it. */
+async function settleFailedRun(runFailure: unknown, settle: () => Promise<void>): Promise<void> {
+  try {
+    await settle();
+  } catch (settleFailure) {
+    throw new AggregateError([runFailure, settleFailure], 'Scheduled run failed, and so did settling it');
+  }
+}
+
+/** How a run ended, and its answer or why not. */
+type RunOutcome = Pick<ScheduledRunCard, 'status' | 'text'>;
+
+/** A skipped run ran nothing, so the task's Last run stays as it was. */
+function lastRunStatus(status: RunOutcome['status']): ScheduledTaskRun['status'] | undefined {
+  return status === 'skipped' ? undefined : status;
+}
+
+/** The run's Main Chat message as text: what the Main Chat's agent reads, and what a client without run cards shows. */
+function runSummary({ title, status, text }: ScheduledRunCard): string {
+  const said = { done: ':', failed: ' failed:', 'sign-in': ' could not finish:', skipped: ' skipped:' }[status];
+  return `Scheduled task "${title}"${said} ${text}`;
 }
 
 async function scheduledTaskAdmission(deps: ScheduledRunDeps, store: ScheduledRunStore, owner: string, taskId: string, previous: ScheduledDelivery | null) {
   const executionOwner = previous === null ? owner : await store.executionOwner(previous);
   const task = await deps.scheduledTasks.get(executionOwner, taskId);
-  if (task === null || task.paused) {
+  // A paused task runs nothing; a paused one-off that fired still reaches the Main Chat, as it will never run.
+  if (task === null || (task.paused && !fired(task))) {
     if (executionOwner !== owner) throw new HttpError(503, 'Reserved scheduled task is unavailable; delivery remains pending');
     return null;
   }
+  // A task that has made its count of runs runs nothing more; it leaves the account, should its last run not have retired it.
+  if (spent(task)) {
+    await deps.scheduledTasks.retire(executionOwner, task);
+    return null;
+  }
   return { executionOwner, task };
+}
+
+/** A redelivered run past its post: finish settling it, and fail it again if the run failed. */
+async function finishRedelivery(deps: ScheduledRunDeps, store: ScheduledRunStore, previous: ScheduledDelivery): Promise<void> {
+  await resumeScheduledDelivery(deps.sessionMetadata, previous, deps.scheduledTasks);
+  await retireFinished(deps, store, previous);
+  if (previous.failed) {
+    await store.retryFailed(previous);
+    throw new HttpError(503, 'Scheduled delivery previously failed; its Main Chat notification is complete');
+  }
+}
+
+async function assertRuntimeNamespaceReady(sessionMetadata: SessionMetadata): Promise<void> {
+  try {
+    await sessionMetadata.checkRuntimeNamespaceReady();
+  } catch (error) {
+    console.error('Session Runtime namespace readiness failed', error);
+    throw new HttpError(503, 'Session Runtime namespace is not ready');
+  }
+}
+
+/** A redelivered run that already finished and posted: its one-off may not have left the account yet. */
+async function retireFinished(deps: ScheduledRunDeps, store: ScheduledRunStore, previous: ScheduledDelivery): Promise<void> {
+  const executionOwner = await store.executionOwner(previous);
+  const task = await deps.scheduledTasks.get(executionOwner, previous.taskId);
+  if (task !== null) await deps.scheduledTasks.retire(executionOwner, task);
 }
 
 async function assertReservedMainIdentity(sessionMetadata: SessionMetadata, owner: string, executionOwner: string, mainChat: string, filingUserId: string | undefined): Promise<void> {
@@ -141,7 +206,7 @@ async function assertReservedMainIdentity(sessionMetadata: SessionMetadata, owne
   if (filingUserId === undefined || main?.filing_user_id !== filingUserId) throw new HttpError(503, 'Reserved scheduled Main Chat identity is unavailable; delivery remains pending');
 }
 
-async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previous: ScheduledDelivery): Promise<void> {
+async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previous: ScheduledDelivery, tasks: Pick<ScheduledTasks, 'recordRun'>): Promise<void> {
   const store = sessionMetadata.scheduledRuns;
   if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
   if (previous.phase !== 'completed') {
@@ -151,20 +216,20 @@ async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previou
     await sessionMetadata.acknowledgeSuccessfulDispatch(previous.postSession, previous.postToken, 'session-post');
     await store.complete(previous);
   }
-  if (previous.failed) {
-    await store.retryFailed(previous);
-    throw new HttpError(503, 'Scheduled delivery previously failed; its Main Chat notification is complete');
+  // Its end may not have reached the task before the delivery failed; recording it again changes nothing.
+  if (previous.status !== undefined) {
+    await tasks.recordRun(await store.executionOwner(previous), previous.taskId, { at: previous.startedAt, status: previous.status });
   }
 }
 
-/** Run the task's prompt as the first Turn of a fresh Side Chat; answers the Main Chat summary of its outcome. */
 async function runInSideChat(
   deps: ScheduledRunDeps,
   owner: string,
   task: ScheduledTask,
   filingUserId: string,
   delivery: ScheduledDelivery,
-): Promise<string> {
+  reached: { sideChat: boolean },
+): Promise<RunOutcome> {
   const { cartridge, sessionMetadata } = deps;
   if (deps.upstream === null) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
   const sideChat = delivery.sideChat;
@@ -192,14 +257,28 @@ async function runInSideChat(
     provider: model.provider,
     messageId,
     running,
+    scheduledTaskId: task.id,
+  }).catch((error: unknown) => {
+    if (error instanceof SessionBusyError) return null;
+    throw error;
   });
+  if (sessionUserId === null) return { status: 'skipped', text: 'the previous run was still going' };
+  reached.sideChat = true;
   let output: RunOutput;
   try {
+    if (task.maxRuns !== undefined) {
+      const current = await deps.scheduledTasks.get(owner, task.id);
+      if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
+      if (spent(current)) return { status: 'skipped', text: 'the task had already made its count of runs' };
+      await deps.scheduledTasks.countRun(owner, task.id, delivery.deliveryId);
+    }
     const payload = await cartridge.invocationPayload(input, requester, model);
     const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
     payload.forwardedProps.sessionUserId = sessionUserId;
+    // The prompt may still say how often to run; a run must not propose another task.
+    payload.forwardedProps.scheduledRun = true;
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
       actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
@@ -228,10 +307,10 @@ async function runInSideChat(
     await sessionMetadata.saveTurnSummary(owner, turn, turnActivity(task.prompt, output.error ?? undefined));
   }
   return signIn !== null
-    ? `Scheduled task "${task.title}" could not finish: ${signIn}`
+    ? { status: 'sign-in', text: signIn }
     : output.error !== null
-      ? `Scheduled task "${task.title}" failed: ${output.error}`
-      : `Scheduled task "${task.title}": ${answer ?? 'finished without an answer.'}`;
+      ? { status: 'failed', text: output.error }
+      : { status: 'done', text: answer ?? 'finished without an answer.' };
 }
 
 /** The queue that schedules deliver their runs to. */

@@ -13,10 +13,11 @@ Operations:
   message the Harness timed carries ``metadata`` ``{"started_at", "ended_at"}``,
   in epoch milliseconds (message_times.py). A Session with no record is
   ``SESSION_NOT_FOUND`` (HTTP 404).
-- ``{"operation": "post", "sessionId", "userId", "content", "messageId"?}`` -> ``{}``,
+- ``{"operation": "post", "sessionId", "userId", "content", "messageId"?, "scheduledRun"?}`` -> ``{}``,
   after adding ``content`` to the Session as the agent's message, under
   ``messageId`` when given, without running the agent: a scheduled run's summary
-  reaches the Main Chat this way.
+  reaches the Main Chat this way, with the run card it shows as, which history
+  replays as the message's ``metadata``.
 - A ``get`` or ``post`` on a Session in the legacy checkpoint format is
   ``SESSION_FORMAT_LEGACY`` (HTTP 410), read without walking its checkpoints; one
   that runs past ``SESSION_READ_SECONDS`` is ``SESSION_READ_TIMEOUT`` (HTTP 504).
@@ -47,7 +48,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from .agent import build_agent
-from .conversation import conversation
+from .conversation import SCHEDULED_RUN, conversation
 from .llm import EchoChatModel
 from .memory import agentcore as agentcore_memory_backend
 from .memory import local as local_memory_backend
@@ -143,6 +144,13 @@ def _optional(event: Mapping[str, Any], name: str) -> str | None:
     return None if event.get(name) is None else _required(event, name)
 
 
+def _scheduled_run(event: Mapping[str, Any]) -> dict[str, Any] | None:
+    card = event.get('scheduledRun')
+    if card is not None and not isinstance(card, dict):
+        raise SessionApiError('scheduledRun must be an object')
+    return card
+
+
 async def get_session(user_id: str, session_id: str) -> list[dict[str, Any]]:
     """The Session's conversation as its latest checkpoint holds it."""
     graph, config = _graph(), _config(user_id, session_id)
@@ -158,7 +166,9 @@ def _config(user_id: str, session_id: str) -> RunnableConfig:
     return {'configurable': {'thread_id': session_id, 'actor_id': user_id}}
 
 
-async def post_message(user_id: str, session_id: str, content: str, message_id: str | None = None) -> None:
+async def post_message(
+    user_id: str, session_id: str, content: str, message_id: str | None = None, scheduled_run: dict[str, Any] | None = None
+) -> None:
     config = _config(user_id, session_id)
     graph = _graph()
     if await latest_checkpoint(graph, config) is None:
@@ -166,7 +176,11 @@ async def post_message(user_id: str, session_id: str, content: str, message_id: 
         await graph.aupdate_state(config, {'messages': []}, as_node='model')  # pragma: no mutate: LangGraph drops this update's values, so any values or node name that it accepts starts the same record
     # As the model's answer: the Session's next Turn starts from a finished one. Its own ID,
     # as the web keys a Session's messages by ID.
-    message = AIMessage(content, id=message_id or str(uuid.uuid4()))
+    message = AIMessage(
+        content,
+        id=message_id or str(uuid.uuid4()),
+        additional_kwargs={} if scheduled_run is None else {SCHEDULED_RUN: scheduled_run},
+    )
     await graph.aupdate_state(config, {'messages': [message]}, as_node='model')
 
 
@@ -225,7 +239,7 @@ async def handle(event: Mapping[str, Any]) -> dict[str, Any]:
     if operation == 'post':
         user_id, session_id = _required(event, 'userId'), _required(event, 'sessionId')
         content, message_id = _required(event, 'content'), _optional(event, 'messageId')
-        await _read(session_id, post_message(user_id, session_id, content, message_id))
+        await _read(session_id, post_message(user_id, session_id, content, message_id, _scheduled_run(event)))
         return {}
     if operation in MEMORY_OPERATIONS:
         return _memory_operation(operation, event)

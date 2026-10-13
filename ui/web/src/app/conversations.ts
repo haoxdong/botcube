@@ -16,6 +16,8 @@ export interface ConversationEntry {
   title: string;
   created_at: string | null;
   updated_at: string | null;
+  /** A scheduled task's Side Chat, which the drawer marks with a clock. */
+  scheduled?: true;
 }
 
 interface ThreadsResponse {
@@ -29,6 +31,7 @@ function normalizeConversation(value: Partial<ConversationEntry>): ConversationE
     title: typeof value.title === "string" && value.title ? value.title : "Untitled conversation",
     created_at: typeof value.created_at === "string" ? value.created_at : null,
     updated_at: typeof value.updated_at === "string" ? value.updated_at : null,
+    ...(value.scheduled === true ? { scheduled: true } : {}),
   };
 }
 

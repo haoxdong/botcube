@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
   "boto3>=1.43.108",
   "cryptography>=48.0.1",
+  "certifi>=2026.2.25",
+  "websockets>=16.0",
   "fastapi>=0.142.2",
   "httpx>=0.28.1",
   "pyjwt[crypto]>=2.15.1",

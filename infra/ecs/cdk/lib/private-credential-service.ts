@@ -54,16 +54,11 @@ export interface PrivateCredentialServiceProps {
   image: ecs.ContainerImage;
   /** The Vault: one Durable Credential per (accountId, provider) (ADR 0078 decision 3). */
   tableName: string;
-  /**
-   * The account-keyed Vault it replaces, kept until the migration is verified. While `mirrored`,
-   * the service reads it and writes both, and the migration can run; afterwards reads use only `tableName`.
-   */
-  legacyVault?: { tableName: string; mirrored: boolean };
   namespaceName: string;
   alertsTopicName: string;
   port: number;
   rpcPath: string;
-  environmentKeys: { port: string; invocationToken: string; keyId: string; vaultTable: string; legacyVaultTable: string };
+  environmentKeys: { port: string; invocationToken: string; keyId: string; vaultTable: string };
   /** Parked production runs no tasks; the vault, key and namespace stay. */
   parked: boolean;
   /** The AgentCore browser whose Auth Browser Sessions the Sign-in Sheet types into (ADR 0075). */
@@ -135,10 +130,6 @@ export class PrivateCredentialService extends Construct {
     const table = vault('ProviderVault', props.tableName, 'provider');
     // UpdateItem takes a rotating credential's refresh lease (ADR 0078 decision 4).
     table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem');
-    // The construct ID the account-keyed table was deployed under; renaming it would replace the table.
-    const legacy = props.legacyVault && vault('Vault', props.legacyVault.tableName);
-    // The migration scans it and copies each item only while it is unchanged.
-    legacy?.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:Scan', 'dynamodb:ConditionCheckItem');
     // Sign-in Sheet entry and session seeding: find a browser Session's automation stream and drive it.
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:GetBrowserSession', 'bedrock-agentcore:ConnectBrowserAutomationStream'],
@@ -158,7 +149,6 @@ export class PrivateCredentialService extends Construct {
         ...props.environment,
         AWS_REGION: stack.region, [props.environmentKeys.port]: String(props.port),
         [props.environmentKeys.keyId]: key.keyArn, [props.environmentKeys.vaultTable]: table.tableName,
-        ...(legacy && props.legacyVault?.mirrored ? { [props.environmentKeys.legacyVaultTable]: legacy.tableName } : {}),
         AGENTCORE_BROWSER_ID: props.authBrowserId,
         AGENTCORE_AGENT_COMPUTER_BROWSER_ID: props.agentComputerBrowserId,
       },
@@ -206,7 +196,6 @@ export class PrivateCredentialService extends Construct {
       CredentialErrorAlarmName: alarm.alarmName,
       // What the operator command signs Plan Usage ingest tokens with (ADR 0078 decision 5).
       CredentialInvocationSecretArn: this.invocationSecret.secretArn,
-      ...(legacy ? { CredentialLegacyVaultTableName: legacy.tableName } : {}),
     })) new CfnOutput(stack, name, { value });
   }
 }

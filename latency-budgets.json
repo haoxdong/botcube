@@ -1,0 +1,51 @@
+{
+  "description": "Web latency budgets for the moments a user waits on.",
+  "percentile": 75,
+  "moments": {
+    "history-returning": {
+      "from": "the page opens, on a device that has opened it before",
+      "to": "the Main Chat's history is visible",
+      "budgetMs": 300
+    },
+    "history-first-visit": {
+      "from": "the page opens, on a device that has never opened it",
+      "to": "the Main Chat's history is visible",
+      "budgetMs": 1000
+    },
+    "computer-return": {
+      "from": "the Computer tab is shown again, after another profile tab or closing the profile",
+      "to": "its live view is live",
+      "budgetMs": 100
+    },
+    "computer-cold": {
+      "from": "the Computer tab is opened on a chat whose computer is asleep",
+      "to": "its live view is live",
+      "budgetMs": 500
+    },
+    "send-acknowledged": {
+      "from": "Enter sends a message",
+      "to": "the user's message and a working indicator are on screen",
+      "budgetMs": 100
+    },
+    "first-token-ours": {
+      "from": "Enter sends a message",
+      "to": "RUN_STARTED, plus the relay of the provider's first token: the share before and after the provider's own time to first token",
+      "budgetMs": 200
+    },
+    "provider-first-token": {
+      "from": "the request reaches the model provider",
+      "to": "the provider's first token",
+      "budgetMs": 2000
+    },
+    "turn-first-progress": {
+      "from": "Enter sends a message",
+      "to": "the Turn's first reasoning summary or tool row is on screen",
+      "budgetMs": 3000
+    },
+    "activity": {
+      "from": "the Activity tab is opened",
+      "to": "its list is visible",
+      "budgetMs": 300
+    }
+  }
+}

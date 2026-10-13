@@ -133,92 +133,81 @@ describe('the Computer tab', () => {
   const show = (shown = true, chat = 'chat-1') =>
     act(async () => root.render(<ComputerView activity={activity} agentId="template" agentName="BotCube" conversation={{ id: chat, service: 'chat-service' }} shown={shown} />));
 
-  it('wakes a sleeping computer when it shows, then shows its screen live', async () => {
+  beforeEach(() => {
+    answers['GET /browser-live-view-url'] = () => Response.json({ signedUrl: `${CHAT}/agent-computer/view?thread_id=chat-1` });
+  });
+
+  it('wakes a sleeping computer and paints its local screenshot through the generic desktop', async () => {
     answers['GET /agent-computer'] = asleep;
     answers['POST /agent-computer/wake'] = awake;
     answers['GET /agent-computer/view'] = frame;
     await show();
     await settle();
-    expect(requests.slice(0, 3)).toEqual([
+    expect(requests.slice(0, 4)).toEqual([
       'GET /agent-computer?thread_id=chat-1',
       'POST /agent-computer/wake?thread_id=chat-1',
+      'GET /browser-live-view-url?session_id=browser-1',
       'GET /agent-computer/view?thread_id=chat-1',
     ]);
+    expect(container.querySelector('.agent-computer')).not.toBeNull();
     expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:frame');
-    expect(container.querySelector('.status-pill')?.textContent).toBe('Awake');
-    expect(container.textContent).toContain('BotCube is driving');
+    expect(container.textContent).toContain('BotCube has control');
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     expect(requests.filter((request) => request.startsWith('GET /agent-computer/view'))).toHaveLength(2);
-
-    const open = vi.fn();
-    vi.stubGlobal('open', open);
-    await act(async () => button('Pop out').click());
-    expect(open).toHaveBeenCalledWith('/browser-view?session_id=browser-1', '_blank', 'popup,width=1280,height=840');
   });
 
-  it('stays asleep when the computer sleeps under the open tab, until the user wakes it', async () => {
+  it('keeps a stream that sleeps under the open tab asleep until the tab opens again', async () => {
     answers['GET /agent-computer'] = awake;
     answers['GET /agent-computer/view'] = () => new Response(null, { status: 409 });
     await show();
     await settle();
-    expect(container.querySelector('.status-pill')?.textContent).toBe('Asleep');
-    expect(container.textContent).toContain("BotCube's browser sleeps after ten idle minutes. Wake it to look again.");
     expect(requests.filter((request) => request.startsWith('POST'))).toEqual([]);
+    answers['GET /agent-computer'] = asleep;
     answers['POST /agent-computer/wake'] = awake;
     answers['GET /agent-computer/view'] = frame;
-    await act(async () => button('Wake').click());
+    await show(false);
+    await show(true);
     await settle();
     expect(requests).toContain('POST /agent-computer/wake?thread_id=chat-1');
     expect(container.querySelector('img')).not.toBeNull();
   });
 
-  it("explains a chat whose first message has not started its computer", async () => {
-    answers['GET /agent-computer'] = () => Response.json({ detail: 'This account does not own the Session' }, { status: 404 });
+  it('explains a wake before the first message starts its computer', async () => {
+    answers['GET /agent-computer'] = asleep;
+    answers['POST /agent-computer/wake'] = () => Response.json({ detail: "The computer starts with this chat's first message." }, { status: 404 });
     await show();
     await settle();
-    expect(container.querySelector('[role="status"]')?.textContent).toContain("The computer starts with this chat's first message.");
-    expect(button('Wake').disabled).toBe(true);
+    expect(container.querySelector('.agent-computer-notice')?.textContent).toBe("The computer starts with this chat's first message.");
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it('names a failed wake with the Chat Service reason and retries on request', async () => {
+  it('reports failed wakes and retries when the tab opens again', async () => {
     answers['GET /agent-computer'] = asleep;
     answers['POST /agent-computer/wake'] = () => Response.json({ detail: 'Agent Computer task is stopping' }, { status: 503 });
     await show();
     await settle();
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not wake the Agent Computer (HTTP 503): Agent Computer task is stopping');
-    expect(container.querySelector('.status-pill')?.textContent).toBe('Unavailable');
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Agent Computer task is stopping. Reopen the Computer tab to try again.');
     answers['POST /agent-computer/wake'] = awake;
     answers['GET /agent-computer/view'] = frame;
-    await act(async () => button('Retry').click());
+    await show(false);
+    await show(true);
     await settle();
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector('img')).not.toBeNull();
   });
 
-  it('rejects an unknown computer state rather than showing it asleep', async () => {
-    answers['GET /agent-computer'] = () => Response.json({ state: 'dreaming' });
+  it('uses the generic Files app and preserves failed listings', async () => {
+    answers['GET /agent-computer'] = awake;
+    answers['GET /agent-computer/view'] = frame;
+    answers['GET /files'] = () => Response.json({ detail: 'Files unavailable' }, { status: 503 });
     await show();
     await settle();
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe('The Agent Computer answered with an unknown state');
+    await act(async () => button('Files').click());
+    await settle();
+    expect(container.querySelector('.agent-computer-files')).not.toBeNull();
+    expect(container.textContent).toContain('Files unavailable');
   });
 
-  it('asks nothing while hidden, and goes live when a Turn opens the browser under the open tab', async () => {
-    await show(false);
-    await settle();
-    expect(requests).toEqual([]);
-    answers['GET /agent-computer'] = () => Response.json({ detail: 'This account does not own the Session' }, { status: 404 });
-    await show(true);
-    await settle();
-    answers['GET /agent-computer/view'] = frame;
-    await act(async () => kit.send({ open: true, sessionId: 'browser-2' }));
-    await settle();
-    expect(container.querySelector('img')).not.toBeNull();
-    const open = vi.fn();
-    vi.stubGlobal('open', open);
-    await act(async () => button('Pop out').click());
-    expect(open).toHaveBeenCalledWith('/browser-view?session_id=browser-2', '_blank', 'popup,width=1280,height=840');
-  });
 });
 
 describe('the live browser panel', () => {

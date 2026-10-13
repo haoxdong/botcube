@@ -163,6 +163,49 @@ body {
   font-size: var(--font-message) !important;
 }
 
+/* With the cartridge's uploadFile, CopilotKit's + shows in its own cell at the left: + | text | controls. */
+.copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) {
+  grid-template-columns: auto minmax(0, 1fr) auto !important;
+}
+
+.copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) > :first-child {
+  display: flex !important;
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+}
+
+.copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) > :nth-child(2) {
+  grid-column: 2 !important;
+}
+
+.copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) > :nth-child(3) {
+  grid-column: 3 !important;
+}
+
+/* A plain grey + in a 44px target, with a round hover, like the phone sidebar's plus. */
+.copilotKitInput [data-testid="copilot-add-menu-button"] {
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--color-text-muted) !important;
+}
+
+.copilotKitInput [data-testid="copilot-add-menu-button"]:hover {
+  background: var(--color-surface-hover) !important;
+}
+
+.copilotKitInput [data-testid="copilot-add-menu-button"] svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+
 /* A desktop's text on ChatGPT Mac's 20px line: its 40px box fits the controls' 44px row, which the grid's 8px padding
    and the box's 1px border make the composer's 62px. A phone's keeps CopilotKit's `leading-relaxed`. */
 @media (min-width: 641px) {
@@ -206,6 +249,16 @@ body {
 
   .copilotKitInput > [data-layout] > :nth-child(3) {
     grid-row: 2 !important;
+  }
+
+  /* The + under the text at the left, its 20px glyph lined up with the text's left edge (its 44px target centres it). */
+  .copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) > :first-child {
+    grid-row: 2 !important;
+    margin-left: -12px;
+  }
+
+  .copilotKitInput > [data-layout]:has([data-testid="copilot-add-menu-button"]) > :nth-child(2) {
+    grid-column: 1 / -1 !important;
   }
 
   /* Send's 44px target reaches 2px from the box's right edge, so its 32px circle sits 7px inside the border. */
@@ -475,6 +528,49 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A follow-up held until the running Turn ends: the user's bubble, faded, with when it goes and a Cancel (#3920). */
+.chat-queued-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 24px;
+}
+
+.chat-queued-bubble {
+  max-width: 80%;
+  padding: 10px 18px;
+  border: 1px dashed var(--color-text);
+  border-radius: var(--radius-2xl);
+  color: var(--color-text);
+  font-size: var(--font-message);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: 0.7;
+}
+
+.chat-queued-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--font-detail);
+}
+
+.chat-queued-cancel {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+  text-decoration: underline;
+}
+
+.chat-queued-cancel:hover {
+  background: var(--color-surface-hover);
+}
+
 /* ── Assistant messages ── */
 .copilotKitAssistantMessage,
 .copilotKitAssistantMessage [class*="cpk:prose"] {
@@ -577,6 +673,161 @@ div.copilotKitInput {
 }
 .composer-accessory > * {
   pointer-events: auto;
+}
+
+/* The files attached with the +: chips inside the composer's box, above its text, wrapping as ChatGPT's do. */
+.copilotKitInput {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.composer-files {
+  order: -1;
+  align-self: stretch;
+  /* One row that scrolls sideways, as ChatGPT's composer keeps its files: more files never push the chat up. */
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  list-style: none;
+}
+
+.composer-file {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  width: min(240px, 75%);
+  padding: 6px 4px 6px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+
+.composer-file-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.composer-file-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.composer-file[data-status="failed"] .composer-file-icon {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.composer-file-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.composer-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.composer-file-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  color: var(--color-text-muted);
+  font-size: var(--font-detail);
+}
+
+.composer-file-bar {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+}
+
+.composer-file-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-text);
+  transition: width var(--transition-layout);
+}
+
+.composer-file-error {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-danger);
+  font-size: var(--font-detail);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.composer-file-retry {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.composer-file-remove {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.composer-file-remove:hover {
+  background: var(--color-surface-hover);
+}
+
+.composer-file-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Phones: Remove and Retry are a finger's 44px target; the chip keeps its look. */
+@media (max-width: 767px) {
+  .composer-file-remove {
+    width: 44px;
+    height: 44px;
+    margin: -8px -4px -8px -8px;
+    align-self: center;
+  }
+
+  .composer-file-retry {
+    min-height: 44px;
+    margin: -12px 0;
+  }
 }
 
 /* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──
@@ -1221,7 +1472,7 @@ button.worklog-step-head:hover {
   cursor: pointer;
   color: var(--color-text-muted);
   padding: 6px;
-  border-radius: var(--radius-md);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1285,7 +1536,7 @@ button.worklog-step-head:hover {
   padding: 0;
   width: 44px;
   height: 44px;
-  border-radius: var(--radius-md);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1375,8 +1626,9 @@ button.worklog-step-head:hover {
   height: 20px;
 }
 
-.sidebar-nav-item:hover {
-  background: var(--color-border);
+/* Hover lighter than the open row, whose fill it leaves alone */
+.sidebar-nav-item:not(.sidebar-nav-item-active):hover {
+  background: var(--color-selected);
 }
 
 /* The open row's fill, as light as Muse's (memo 0049 Fig 21) and dots' rail (Fig 1) */
@@ -1409,8 +1661,15 @@ button.worklog-step-head:hover {
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Each fill inset 2px from its 44px slot, so neighbours never touch */
 .sidebar-expanded .sidebar-nav-item {
+  margin: 2px 0;
   padding: 9px 12px;
+  border-radius: var(--radius-pill);
+}
+
+/* Side Chat rows round like the nav rows */
+.sidebar-expanded .sidebar-item {
   border-radius: var(--radius-pill);
 }
 
@@ -1450,14 +1709,14 @@ button.worklog-step-head:hover {
     min-height: 64px;
   }
 
-  /* The rows meet at a 44px pitch in both states, as dots' rail steps (memo 0049 Fig 1) */
+  /* The rows step at a 44px pitch in both states, as dots' rail steps (memo 0049 Fig 1) */
   .sidebar-expanded .sidebar-main {
     gap: 0;
     padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
   }
 
   .sidebar-expanded .sidebar-nav-item {
-    height: calc(var(--spacing) * 11);
+    height: 40px;
     padding: 0;
   }
 
@@ -1692,11 +1951,13 @@ button.worklog-step-head:hover {
   background: var(--color-danger-soft);
 }
 
-/* Text on the labels' 20px edge; each × in the + control's column */
+/* Rows across the nav pills' width; a column, so the rows' margins never collapse */
 .sidebar-list {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 0 12px 0 8px;
+  padding: 0 var(--sidebar-pad-x);
 }
 
 /* No Side Chats yet: an invitation centred in the list (Muse Fig 12) */
@@ -1731,30 +1992,26 @@ button.worklog-step-head:hover {
   color: var(--color-danger);
 }
 
+/* A 40px fill in a 44px slot, as the nav rows; --plus-centre puts the delete's centre under the + control's */
 .sidebar-item {
+  --control-width: 44px;
+  --plus-centre: 26px;
   display: flex;
   align-items: center;
+  height: 40px;
+  margin: 2px 0;
   border-radius: var(--radius-md);
   transition: background var(--transition-fast);
 }
 
-.sidebar-item:hover {
-  background: var(--color-border);
+/* Hover lighter than the open row, whose fill it leaves alone */
+.sidebar-item:not(.sidebar-item-active):hover {
+  background: var(--color-selected);
 }
 
 .sidebar-item-active {
   background: var(--color-selected);
   font-weight: var(--weight-medium);
-}
-
-.sidebar-item-active::before {
-  content: "";
-  width: 3px;
-  height: 16px;
-  background: var(--color-text);
-  border-radius: 2px;
-  margin-left: 4px;
-  flex-shrink: 0;
 }
 
 .sidebar-item-btn {
@@ -1764,8 +2021,8 @@ button.worklog-step-head:hover {
   appearance: none;
   background: none;
   border: none;
-  /* At the nav rows' 44px pitch */
-  padding: 11px 4px 11px 12px;
+  /* As tall as the 40px fill, text on the labels' 20px edge */
+  padding: 9px 4px 9px 12px;
   line-height: 22px;
   font-size: var(--font-body);
   color: var(--color-text);
@@ -1776,13 +2033,14 @@ button.worklog-step-head:hover {
   font-family: inherit;
 }
 
-/* The row's name being edited, where its title button stood: a field (DESIGN.md), as tall as the row */
+/* The row's name being edited, across the whole fill: a field (DESIGN.md), as tall as it, its text where the title's was */
 .sidebar-item-name {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 11px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  /* Inline, it takes its row's pill */
+  border-radius: var(--radius-pill);
   background: var(--color-white);
   line-height: 22px;
   font-size: var(--font-body);
@@ -1790,11 +2048,17 @@ button.worklog-step-head:hover {
   color: var(--color-text);
 }
 
-.sidebar-item-active .sidebar-item-btn {
-  padding-left: 8px;
+/* A scheduled task's Side Chat: a muted clock before its title, on the text's line */
+.sidebar-item-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  color: var(--color-text-muted);
 }
 
-/* Muted glyphs, AA on surface */
+/* Muted icons, AA on surface */
 .sidebar-item-rename,
 .sidebar-item-delete {
   appearance: none;
@@ -1802,21 +2066,28 @@ button.worklog-step-head:hover {
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  /* A 44px-wide target, as tall as its row, which it never grows */
+  /* As tall as its row, which it never grows; the icon centred, not on the preflight's block start */
   align-self: stretch;
   flex: none;
-  width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-width);
   padding: 0;
   font-size: var(--font-body);
   line-height: 1;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   transition: color var(--transition-fast);
 }
 
 /* Only a mouse reveals rename and delete on hover: iOS Safari spends a tap on any hover that reveals content, so
-   a touch screen shows them at rest and one tap opens the chat. At rest with a mouse they take no room, so a title
-   runs the row's full width, as in ChatGPT; tabbing to the title reveals them for the next Tab. */
+   a touch screen shows them at rest, and one tap opens the chat. At rest with a mouse they take no
+   room, so a title runs the row's full width, as in ChatGPT; tabbing to the title reveals them for the next Tab. */
 @media (hover: hover) {
+  .sidebar-item {
+    --control-width: 32px;
+  }
+
   .sidebar-item:not(:hover):not(:focus-within) .sidebar-item-rename,
   .sidebar-item:not(:hover):not(:focus-within) .sidebar-item-delete {
     display: none;
@@ -1827,8 +2098,33 @@ button.worklog-step-head:hover {
   color: var(--color-text);
 }
 
+.sidebar-item-delete {
+  margin-right: calc(var(--plus-centre) - var(--control-width) / 2);
+}
+
 .sidebar-item-delete:hover {
   color: var(--color-danger);
+}
+
+/* A quiet row under the Side Chats, at their pitch and text inset */
+.sidebar-show-more {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 11px 4px 11px 12px;
+  line-height: 22px;
+  font-size: var(--font-body);
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.sidebar-show-more:hover {
+  color: var(--color-text);
 }
 
 /* ── Sidebar bottom ── */
@@ -1994,23 +2290,31 @@ button.worklog-step-head:hover {
     padding: 38px 10px 10px;
   }
 
-  /* The open row keeps its fill under a tap's lingering hover */
-  .sidebar-expanded .sidebar-nav-item-active {
-    background: var(--color-selected);
-  }
-
   .sidebar-expanded .sidebar-section-header {
     padding: 10px 20px 0;
   }
 
-  /* Text 20px from the edge; each × in the + control's column */
+  /* Rows across the nav pills' width, text 20px from the edge; each delete under the + control */
   .sidebar-list {
-    padding: 0 20px 0 8px;
+    padding: 0 10px;
+  }
+
+  .sidebar-item {
+    --plus-centre: 32px;
+  }
+
+  .sidebar-item-btn,
+  .sidebar-show-more {
+    padding-left: 10px;
+  }
+
+  .sidebar-item-name {
+    padding-left: 9px;
   }
 
   .sidebar-expanded .sidebar-nav-item {
     gap: 18px;
-    padding: calc(var(--spacing) * 2.5);
+    padding: 8px 10px;
     line-height: 22px;
   }
 
@@ -2042,7 +2346,7 @@ button.worklog-step-head:hover {
     display: none;
   }
 
-  /* New side chat keeps its 44px, the column of the rows' × marks */
+  /* New side chat keeps its 44px; the rows' deletes centre under it */
   .sidebar-new-chat {
     flex: none;
   }
@@ -2210,7 +2514,7 @@ button.worklog-step-head:hover {
   align-items: center;
   gap: 12px;
   padding: var(--sidebar-btn-pad);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
   cursor: pointer;
   color: var(--color-text);
   font-size: var(--font-detail);
@@ -2854,7 +3158,7 @@ button.worklog-step-head:hover {
     margin-left: auto;
   }
 
-  /* The open row takes the profile controls' hover grey, which shows on the white */
+  /* The open row takes the profile controls' hover grey, which shows on the white; a hovered row stays lighter */
   .sidebar-nav-item-active,
   .sidebar-item-active {
     background: var(--color-border);
@@ -3542,7 +3846,32 @@ button.worklog-step-head:hover {
   overflow-wrap: anywhere;
 }
 
-/* Pause or Resume, Edit and Delete, one under another across the sheet. */
+/* Next run and Last run: a muted term beside its value, the last run's status pill after its time. */
+.scheduled-sheet-runs {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 6px 0 0;
+}
+
+.scheduled-sheet-runs > div {
+  display: contents;
+}
+
+.scheduled-sheet-runs dt {
+  color: var(--color-text-muted);
+}
+
+.scheduled-sheet-runs dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+/* Open chat, Pause or Resume, Edit and Delete, one under another across the sheet. */
 .scheduled-sheet-actions {
   display: grid;
   gap: 8px;
@@ -3558,7 +3887,9 @@ button.worklog-step-head:hover {
   margin-top: 6px;
 }
 
-.scheduled-proposal {
+/* A proposal card, and a scheduled run's card in the Main Chat. */
+.scheduled-proposal,
+.scheduled-run {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -3582,6 +3913,64 @@ button.worklog-step-head:hover {
   margin-top: 6px;
 }
 
+/* A run card's lines: the task and its status, when it ran, two lines of its answer or error, and Open. */
+.scheduled-run-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+}
+
+.scheduled-run-icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.scheduled-run-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-headline);
+  font-weight: var(--weight-headline);
+}
+
+.scheduled-run-heading .status-pill {
+  flex: none;
+}
+
+.scheduled-run-time {
+  color: var(--color-text-muted);
+}
+
+.scheduled-run-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Headings, lists and paragraphs flow inline as one run of text, a space apart, in the card's own type. */
+.scheduled-run-text :where(*) {
+  display: inline !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  list-style: none;
+}
+
+.scheduled-run-text :where(h1, h2, h3, h4, h5, h6, p, li, tr)::after {
+  content: " ";
+}
+
+.scheduled-run-open {
+  margin-top: 6px;
+}
+
 .scheduled-proposal-done {
   color: var(--color-text-muted);
 }
@@ -3590,7 +3979,8 @@ button.worklog-step-head:hover {
   font-weight: var(--weight-semibold);
 }
 
-.scheduled-task-schedule {
+.scheduled-task-schedule,
+.scheduled-task-ends {
   color: var(--color-text-muted);
 }
 
@@ -3622,6 +4012,61 @@ button.worklog-step-head:hover {
   align-self: stretch;
   gap: 2px;
   color: inherit;
+}
+
+/* The Edit form's Frequency, beside its N or its time. */
+.scheduled-task-row {
+  display: flex;
+  gap: 8px;
+  align-self: stretch;
+}
+
+.scheduled-task-row > .scheduled-task-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* No stop time sits beside Ends, level with its input. */
+.scheduled-task-row > .scheduled-task-clear {
+  flex: none;
+  align-self: flex-end;
+}
+
+/* A time input stands a few pixels taller than a select; side by side, both fill the row. */
+.scheduled-task-row :is(input, select) {
+  flex: 1;
+}
+
+/* Weekly's days, Sunday first as EventBridge numbers them: a 36px circle each, filled `text` while picked. */
+.scheduled-days {
+  display: flex;
+  gap: 6px;
+}
+
+.scheduled-day {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.scheduled-day[aria-pressed="false"]:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.scheduled-day[aria-pressed="true"] {
+  color: var(--color-white);
+  background: var(--color-text);
+}
+
+.scheduled-task-hint {
+  color: var(--color-text-muted);
 }
 
 /* ── Plugins screen: each kind of plugin a placeholder card under its label ── */

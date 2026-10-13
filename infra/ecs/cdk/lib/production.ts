@@ -20,6 +20,9 @@ import { PrivateCredentialService } from './private-credential-service.js';
 import { PrivateEgressStack } from './private-egress-stack.js';
 import { WebLatencyStack } from './web-latency-stack.js';
 
+const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
+const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
+
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
@@ -71,15 +74,18 @@ interface DeployIdentity {
       cluster: string;
       credentialService: {
         tableName: string;
-        legacyVault?: { tableName: string; mirrored: boolean };
+
         rpcPath: string;
-        environmentKeys: { url: string; invocationToken: string; port: string; keyId: string; vaultTable: string; legacyVaultTable: string };
+        environmentKeys: { url: string; invocationToken: string; port: string; keyId: string; vaultTable: string };
       };
       originPullCaCertificate: string;
       originPullClientSecretName: string;
       originTokenSecretName: string;
       parkedDnsTarget: string;
       previewOriginStackName: string;
+      originOwnership: string;
+      parkedWorkerName: string;
+      originZone: string;
       privateEgress: { stackName: string; natGateway: { name: string; publicSubnetId: string }; routeTableId: string };
       privateNamespace: string;
       publicSubnets: Subnet[];
@@ -162,7 +168,11 @@ export function defineProduction(app: App, options: ProductionOptions) {
     domains: identity.domains.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
     readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
     ...options.webLatency,
-    moments: options.webLatency?.moments ?? Object.keys(JSON.parse(fs.readFileSync(path.join(options.deployRoot, '..', 'latency-budgets.json'), 'utf8')).moments),
+    moments: options.webLatency?.moments ?? Object.keys({
+      ...JSON.parse(fs.readFileSync(path.join(cubeRoot, 'latency-budgets.json'), 'utf8')).moments,
+      ...(fs.existsSync(path.join(options.deployRoot, '..', 'latency-budgets.json'))
+        ? JSON.parse(fs.readFileSync(path.join(options.deployRoot, '..', 'latency-budgets.json'), 'utf8')).moments : {}),
+    }),
   });
   if (options.permissionsBoundary) {
     for (const stack of [storage, egress, health, webLatency]) iam.PermissionsBoundary.of(stack).apply(options.permissionsBoundary);
@@ -204,14 +214,14 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const chatKeys = identity.aws.ecs.chatService.environmentKeys;
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(chatKeys.planUsageOwnerAccountId, planUsageOwner);
-  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.deployRoot, options.originConfig);
+  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.originConfig);
   const credentialConfig = identity.aws.ecs.credentialService;
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
     ...(options.executionRole ? { executionRole: options.executionRole } : {}),
     ...(options.kmsKey ? { kmsKey: options.kmsKey } : {}),
     ...(options.privateSubnets ? { subnets: options.privateSubnets } : {}),
     cluster: chat.cluster, chatNetwork: chat.network, agentNetwork,
-    tableName: credentialConfig.tableName, ...(credentialConfig.legacyVault ? { legacyVault: credentialConfig.legacyVault } : {}), rpcPath: credentialConfig.rpcPath, environmentKeys: credentialConfig.environmentKeys, namespaceName: identity.aws.ecs.privateNamespace,
+    tableName: credentialConfig.tableName, rpcPath: credentialConfig.rpcPath, environmentKeys: credentialConfig.environmentKeys, namespaceName: identity.aws.ecs.privateNamespace,
     alertsTopicName: identity.aws.ecs.alertsTopicName, port: identity.aws.credentialService.port,
     image: images.credential, authBrowserId: identity.aws.agentCore.privateNatBrowser.id,
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
@@ -223,7 +233,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   for (const task of [chat.task, credentials.task]) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
-  addFiles(origin, chat, storage, agentComputer, chatKeys, options.deployRoot, options.originConfig);
+  addFiles(origin, chat, storage, agentComputer, chatKeys, options.originConfig);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
@@ -284,11 +294,14 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     stackName: identity.aws.ecs.previewOriginStackName,
     hostname: new URL(identity.domains.chatServicePreview).hostname,
     production: { hostname: new URL(identity.domains.chatService).hostname },
-    repositoryRoot, originProviderPath: path.join(options.deployRoot, 'ecs', 'origin-provider'),
+    repositoryRoot, originProviderPath: path.join(cubeRoot, 'infra/ecs/origin-provider'),
     vpcId: identity.aws.credentialService.vpcId,
     publicSubnets: identity.aws.ecs.publicSubnets,
     cloudflareCidrs: input.cloudflareCidrs, clientVersion: input.clientVersion,
     tokenSecretName: identity.aws.ecs.originTokenSecretName,
+    originOwnership: identity.aws.ecs.originOwnership,
+    parkedWorkerName: identity.aws.ecs.parkedWorkerName,
+    originZone: identity.aws.ecs.originZone,
     clientSecretName: identity.aws.ecs.originPullClientSecretName,
     caPath: identity.aws.ecs.originPullCaCertificate,
     corsOrigins: identity.domains.corsOrigins,
@@ -330,7 +343,6 @@ function addAgentComputerBrowser(
   chat: PreviewChatService,
   storage: ChatStorageStack,
   agentCore: DeployIdentity['aws']['agentCore'],
-  deployRoot: string,
   names?: ProductionOptions['originConfig'],
 ) {
   const network = new ec2.SecurityGroup(origin, 'AgentComputerBrowsers', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', names?.agentComputerSecurityGroupName) });
@@ -346,7 +358,7 @@ function addAgentComputerBrowser(
   }));
   const { subnets } = agentCore.privateNatBrowser;
   const managedPolicy = new Asset(origin, 'AgentComputerChromeManagedPolicy', {
-    path: path.join(deployRoot, 'agent-computer', 'chrome-managed-policy.json'),
+    path: path.join(cubeRoot, 'infra/agent-computer/chrome-managed-policy.json'),
   });
   const browser = new CfnBrowserCustom(origin, 'AgentComputerBrowser', {
     name: agentCore.agentComputerBrowser.name,
@@ -375,7 +387,6 @@ function addFiles(
   storage: ChatStorageStack,
   browsers: { network: ec2.ISecurityGroup; subnets: Subnet[] },
   keys: DeployIdentity['aws']['ecs']['chatService']['environmentKeys'],
-  deployRoot: string,
   names?: ProductionOptions['originConfig'],
 ) {
   const mountTargets = new ec2.SecurityGroup(origin, 'FilesMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false, ...optionalPhysicalName('securityGroupName', names?.filesMountTargetsSecurityGroupName) });
@@ -383,7 +394,7 @@ function addFiles(
   browsers.subnets.forEach((subnet, index) => new CfnMountTarget(origin, `FilesMountTarget${index}`, {
     fileSystemId: storage.filesFileSystem.attrFileSystemId, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
   }));
-  const policy = new Asset(origin, 'AgentComputerChromePolicy', { path: path.join(deployRoot, 'agent-computer', 'chrome-policy.json') });
+  const policy = new Asset(origin, 'AgentComputerChromePolicy', { path: path.join(cubeRoot, 'infra/agent-computer/chrome-policy.json') });
   policy.grantRead(chat.task.taskRole);
   const fileSystemArn = storage.filesFileSystem.attrFileSystemArn;
   chat.container.addEnvironment(keys.filesBucket, storage.filesBucket.bucketName);

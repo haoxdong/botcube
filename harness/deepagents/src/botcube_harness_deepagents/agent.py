@@ -53,6 +53,7 @@ class PlainState(DeepAgentState):
     # The Session's Memory block (`session_memory.SessionMemoryMiddleware`). Every graph on the
     # Session record carries it, so a session API post keeps it in the next checkpoint.
     session_memory: NotRequired[Annotated[str, PrivateStateAttr]]
+    last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
 
 
 class _SkillsState(AgentState):

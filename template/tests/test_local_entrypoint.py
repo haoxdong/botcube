@@ -51,7 +51,7 @@ printf browser > "$2/agent-browser-linux-arm64"
 ''',
         'docker': '''#!/bin/sh
 set -eu
-for artifact in cartridge-contract/pyproject.toml cartridge-contract/src/botcube_cartridge/__init__.py bin/template-cli package.json cartridge/template.whl agent-browser-linux-x64 agent-browser-linux-arm64; do
+for artifact in cartridge-contract/pyproject.toml cartridge-contract/src/botcube_cartridge/__init__.py bin/template-cli package.json cartridge/template.whl; do
   test -f "$LOCAL_CUBE/harness/deepagents/.tool-dist/$artifact" || exit 32
 done
 printf '%s\\n' "$@"
@@ -92,8 +92,6 @@ def test_fresh_local_checkout_stages_tools_before_build(local_checkout: Path) ->
 @pytest.mark.parametrize('symlinked', [False, True])
 def test_local_staging_with_real_npm_through_symlink(local_checkout: Path, symlinked: bool) -> None:
     deploy = local_checkout / 'template/deploy'
-    source = Path(__file__).resolve().parents[2]
-    shutil.copyfile(source / 'template/deploy/stage-browser-tools.mjs', deploy / 'stage-browser-tools.mjs')
     release = local_checkout.parent / 'release'
     (release / 'bin').mkdir(parents=True)
     (release / 'package.json').write_text('{"name":"agent-browser","version":"0.38.1"}')
@@ -141,13 +139,6 @@ def test_local_staging_with_real_npm_through_symlink(local_checkout: Path, symli
     assert (destination / 'bin/template-cli').read_text() == 'cli'
     assert json.loads((destination / 'package.json').read_text()) == manifest
     assert (destination / 'cartridge/template.whl').read_text() == 'wheel'
-    assert (destination / 'licenses/agent-browser/LICENSE').read_text() == 'fixture license'
-    for name in ('LICENSE-axe-core.txt', 'LICENSE-axe-core-THIRD-PARTY.txt'):
-        assert (destination / 'licenses/agent-browser' / name).read_text() == 'fixture notice'
-    for architecture in ('x64', 'arm64'):
-        browser = destination / f'agent-browser-linux-{architecture}'
-        assert browser.read_bytes() == b'fixture browser'
-        assert browser.stat().st_mode & 0o111 == 0o111
     assert not (destination / 'node_modules').exists()
 
 
@@ -177,7 +168,6 @@ def test_local_staging_trust_is_scoped_to_build_tools(local_checkout: Path, buil
         assert capture.read_text().splitlines() == [
             f'npm|{bundle}|{bundle}',
             f'uv|{bundle}|{bundle}',
-            f'node|{bundle}|{bundle}',
             'docker|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
         ]
         assert result.stdout.splitlines() == [
@@ -189,7 +179,6 @@ def test_local_staging_trust_is_scoped_to_build_tools(local_checkout: Path, buil
         assert capture.read_text().splitlines() == [
             'npm|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
             'uv|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
-            'node|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
             'docker|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
         ]
 
@@ -212,60 +201,11 @@ def test_local_unreadable_build_ca_prevents_staging_and_compose(local_checkout: 
     assert not (local_checkout / 'harness/deepagents/.tool-dist').exists()
 
 
-def test_browser_staging_uses_the_staging_installation(tmp_path: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
-    script = tmp_path / 'stage-browser-tools.mjs'
-    shutil.copyfile(source / 'template/deploy/stage-browser-tools.mjs', script)
-    destination = tmp_path / 'tools'
-    package = destination / 'node_modules/agent-browser'
-    (package / 'bin').mkdir(parents=True)
-    (destination / 'package.json').write_text('{}')
-    (package / 'package.json').write_text('{"name":"agent-browser","version":"0.38.1"}')
-    (package / 'LICENSE').write_text('fixture license')
-    notices = package / 'cli/src/native/a11y'
-    notices.mkdir(parents=True)
-    for name in ('LICENSE-axe-core.txt', 'LICENSE-axe-core-THIRD-PARTY.txt'):
-        (notices / name).write_text('fixture notice')
-    for architecture in ('x64', 'arm64'):
-        (package / f'bin/agent-browser-linux-{architecture}').write_bytes(b'fixture browser')
-
-    result = subprocess.run(
-        ['node', str(script), str(destination)],
-        env={key: value for key, value in os.environ.items() if key != 'NODE_PATH'},
-        capture_output=True, text=True, check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert (destination / 'licenses/agent-browser/LICENSE').read_text() == 'fixture license'
-    for name in ('LICENSE-axe-core.txt', 'LICENSE-axe-core-THIRD-PARTY.txt'):
-        assert (destination / 'licenses/agent-browser' / name).read_text() == 'fixture notice'
-    for architecture in ('x64', 'arm64'):
-        staged = destination / f'agent-browser-linux-{architecture}'
-        assert staged.read_bytes() == b'fixture browser'
-        assert staged.stat().st_mode & 0o111 == 0o111
-
-
 def test_local_browser_install_failure_prevents_compose(local_checkout: Path) -> None:
     result = run_local(local_checkout, STAGING_FAILURE='npm')
 
     assert result.returncode == 28
     assert result.stdout == ''
-
-
-def test_browser_staging_missing_release_fails(tmp_path: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
-    script = tmp_path / 'stage-browser-tools.mjs'
-    shutil.copyfile(source / 'template/deploy/stage-browser-tools.mjs', script)
-
-    result = subprocess.run(
-        ['node', str(script), str(tmp_path)],
-        capture_output=True, text=True, check=False,
-    )
-
-    assert result.returncode != 0
-    assert 'ENOENT' in result.stderr
-    assert not (tmp_path / 'agent-browser-linux-x64').exists()
-    assert not (tmp_path / 'agent-browser-linux-arm64').exists()
 
 
 def test_local_corrupt_browser_release_prevents_compose(local_checkout: Path) -> None:

@@ -37,9 +37,17 @@ interface Task {
   schedule: string;
   timezone: string;
   model?: string;
+  endDate?: string;
   paused: boolean;
   proposalId: string;
+  nextRun?: string;
+  ended: boolean;
+  /** Whether its Side Chat exists: the Chat Service's view of a task says, the store's does not. */
+  sideChat?: boolean;
 }
+
+/** The task as the store holds it, without what the Chat Service's view adds. */
+const stored = ({ sideChat: _, ...task }: Task): Task => task;
 
 const request = (owner: string, path: string, init: { method?: string; body?: unknown } = {}) =>
   stack.app.request(path, {
@@ -61,6 +69,9 @@ async function listed(owner: string): Promise<Task[]> {
 }
 
 const owner = () => `owner-${Math.random().toString(36).slice(2)}`;
+
+/** The task once paused: it has no next run. */
+const asPaused = ({ nextRun: _, ...task }: Task): Task => ({ ...task, paused: true });
 
 describe('rate schedule cadence', () => {
   it.each([
@@ -160,6 +171,126 @@ describe('rate schedule cadence', () => {
   });
 });
 
+describe('next run', () => {
+  const at = async <T>(now: string, act: () => T | Promise<T>) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(now));
+    try {
+      return await act();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it.each([
+    // Friday 9:00 AM in New York: the next weekday 8:00 AM there is Monday's.
+    ['cron(0 8 ? * MON-FRI *)', 'America/New_York', '2030-10-07T12:00:00.000Z'],
+    // EventBridge numbers the days from 1, Sunday: 2 is Monday.
+    ['cron(30 9 ? * 2 *)', 'America/New_York', '2030-10-07T13:30:00.000Z'],
+    ['cron(0 7 * * ? *)', 'Europe/London', '2030-10-05T06:00:00.000Z'],
+    // EventBridge steps from a number, as minute 1, 11, 21 and on.
+    ['cron(1/10 * * * ? *)', 'UTC', '2030-10-04T13:01:00.000Z'],
+    // A lone L in the days of the week is the week's last day, Saturday.
+    ['cron(0 9 ? * L *)', 'UTC', '2030-10-05T09:00:00.000Z'],
+    // A cron that names its year waits for it.
+    ['cron(0 8 ? * MON-FRI 2031)', 'America/New_York', '2031-01-01T13:00:00.000Z'],
+    ['at(2030-10-20T09:00:00)', 'America/New_York', '2030-10-20T13:00:00.000Z'],
+    // EventBridge's L, W and # forms: the month's last day, the weekday nearest the 15th, the second Tuesday (3).
+    ['cron(0 9 L * ? *)', 'UTC', '2030-10-31T09:00:00.000Z'],
+    ['cron(0 9 15W * ? *)', 'UTC', '2030-10-15T09:00:00.000Z'],
+    ['cron(0 9 ? * 3#2 *)', 'UTC', '2030-10-08T09:00:00.000Z'],
+    // The month's last Friday (6).
+    ['cron(0 9 ? * 6L *)', 'UTC', '2030-10-25T09:00:00.000Z'],
+    // Every second year, counted from 1970.
+    ['cron(0 9 * * ? */2)', 'UTC', '2030-10-05T09:00:00.000Z'],
+  ])('lists %s in %s as next running at %s', async (schedule, timezone, nextRun) => {
+    const account = owner();
+    await at('2030-10-04T13:00:00.000Z', async () => {
+      await confirm(account, { ...MORNING_BRIEF, schedule, timezone });
+      expect((await listed(account))[0]?.nextRun).toBe(nextRun);
+    });
+  });
+
+  it('refuses a schedule whose next run it cannot read, storing nothing', async () => {
+    const account = owner();
+    const { id } = await confirm(account);
+
+    // EventBridge's crons have six fields; this one has five.
+    const created = await request(account, '/scheduled-tasks', { method: 'POST', body: { ...MORNING_BRIEF, schedule: 'cron(0 8 * * ?)', proposalId: randomUUID() } });
+    const edited = await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { schedule: 'cron(0 8 * * ?)' } });
+
+    expect([created.status, edited.status]).toEqual([400, 400]);
+    expect(await created.json()).toEqual({ detail: 'The schedule cron(0 8 * * ?) cannot be read: Scheduled task cron cron(0 8 * * ?) does not have six fields' });
+    expect((await listed(account)).map(({ id: listedId, schedule }) => [listedId, schedule])).toEqual([[id, MORNING_BRIEF.schedule]]);
+    expect(await scheduler.schedule(id)).toMatchObject({ ScheduleExpression: MORNING_BRIEF.schedule });
+  });
+
+  // ADR 0030: a schedule Scheduler took that the list cannot read says so, and fails neither the list nor the task.
+  it('lists a stored schedule it cannot read with an unknown next run, and still edits the task', async () => {
+    const account = owner();
+    const task = await confirm(account);
+    await DynamoDBDocumentClient.from(stack.table.client).send(new UpdateCommand({
+      TableName: stack.table.name, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${task.id}` },
+      UpdateExpression: 'SET schedule = :schedule', ExpressionAttributeValues: { ':schedule': 'cron(0 9 W * ? *)' },
+    }));
+
+    const { nextRun: _, ...unread } = { ...task, schedule: 'cron(0 9 W * ? *)' };
+    const [read] = await listed(account);
+    expect(read).toEqual({ ...unread, nextRunUnknown: "The schedule cron(0 9 W * ? *) cannot be read: CronPattern: nearestWeekdays is not a number: 'W'" });
+    const edited = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { title: 'Renamed brief' } });
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toEqual({ ...read, title: 'Renamed brief' });
+  });
+
+  it('lists a rate on the ticks of its creation', async () => {
+    const account = owner();
+    const task = await at('2030-10-06T09:39:32.000Z', () => confirm(account, { ...MORNING_BRIEF, schedule: 'rate(2 hours)' }));
+
+    expect(task.nextRun).toBe('2030-10-06T11:39:32.000Z');
+    expect(await at('2030-10-06T12:00:00.000Z', async () => (await listed(account))[0]?.nextRun)).toBe('2030-10-06T13:39:32.000Z');
+  });
+
+  it('lists no next run while paused, nor for a one-off that has passed', async () => {
+    const account = owner();
+    const { id } = await at('2030-10-04T13:00:00.000Z', () => confirm(account, { ...MORNING_BRIEF, schedule: 'at(2030-10-20T09:00:00)' }));
+    const other = await at('2030-10-04T13:00:00.000Z', () => confirm(account));
+
+    const paused = await request(account, `/scheduled-tasks/${other.id}`, { method: 'PATCH', body: { paused: true } });
+
+    expect(await paused.json()).not.toHaveProperty('nextRun');
+    const tasks = await at('2030-10-21T00:00:00.000Z', () => listed(account));
+    expect(tasks.find((task) => task.id === id)).not.toHaveProperty('nextRun');
+    expect(tasks.find((task) => task.id === other.id)).not.toHaveProperty('nextRun');
+  });
+
+  // Scheduler runs nothing past the stop time, so neither does the listed next run.
+  it('lists no next run once past its stop time, nor one after it', async () => {
+    const account = owner();
+    const { id } = await at('2030-10-04T13:00:00.000Z', () => confirm(account, { ...MORNING_BRIEF, schedule: 'cron(0 8 * * ? *)', timezone: 'UTC', endDate: '2030-10-06T12:00:00.000Z' }));
+
+    expect(await at('2030-10-05T09:00:00.000Z', async () => (await listed(account))[0])).toMatchObject({ nextRun: '2030-10-06T08:00:00.000Z', ended: false });
+    // Its last run before the stop time has gone: the next would fall after it, so it has ended before its stop time.
+    expect(await at('2030-10-06T09:00:00.000Z', async () => (await listed(account)).find((task) => task.id === id))).not.toHaveProperty('nextRun');
+    expect(await at('2030-10-06T09:00:00.000Z', async () => (await listed(account)).find((task) => task.id === id)?.ended)).toBe(true);
+    expect(await at('2030-10-07T09:00:00.000Z', async () => (await listed(account)).find((task) => task.id === id))).not.toHaveProperty('nextRun');
+    expect(await at('2030-10-07T09:00:00.000Z', async () => (await listed(account)).find((task) => task.id === id)?.ended)).toBe(true);
+  });
+
+  // The Chat Service says when a task has ended, so the sheet need not work it out; Ended beats Paused.
+  it.each([
+    ['a one-off whose time has passed', { schedule: 'at(2030-10-05T09:00:00)', timezone: 'UTC' }, false],
+    ['a cron whose last year has passed', { schedule: 'cron(0 8 * * ? 2030)', timezone: 'UTC' }, false],
+    ['a paused task past its stop time', { endDate: '2030-12-31T12:00:00.000Z' }, true],
+  ])('says %s has ended', async (_, fields, paused) => {
+    const account = owner();
+    const { id } = await at('2030-10-04T13:00:00.000Z', () => confirm(account, { ...MORNING_BRIEF, ...fields }));
+    if (paused) await at('2030-10-04T13:00:00.000Z', () => request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: true } }));
+
+    expect(await at('2030-10-04T13:00:00.000Z', async () => (await listed(account))[0]?.ended)).toBe(false);
+    expect(await at('2031-01-02T00:00:00.000Z', async () => (await listed(account))[0])).toMatchObject({ paused, ended: true });
+  });
+});
+
 describe('POST /scheduled-tasks', () => {
   it('refuses task creation admitted before account history deletion completes', async () => {
     const account = owner();
@@ -218,7 +349,7 @@ describe('POST /scheduled-tasks', () => {
       timezone: ' America/New_York ',
     }, 'call-1');
 
-    expect(task).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), ...MORNING_BRIEF, paused: false, proposalId: 'call-1' });
+    expect(task).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), ...MORNING_BRIEF, paused: false, proposalId: 'call-1', nextRun: expect.any(String), ended: false, sideChat: false });
     expect(await listed(account)).toEqual([task]);
     expect(await scheduler.schedule(task.id)).toMatchObject({
       Name: task.id,
@@ -233,6 +364,22 @@ describe('POST /scheduled-tasks', () => {
         Input: JSON.stringify({ owner: account, taskId: task.id }),
       },
     });
+  });
+
+  it('stops its schedule at the stop time the user confirmed', async () => {
+    const account = owner();
+
+    const task = await confirm(account, { ...MORNING_BRIEF, endDate: '2026-12-31T22:00:00.000Z' });
+
+    expect(task).toMatchObject({ endDate: '2026-12-31T22:00:00.000Z' });
+    expect(await listed(account)).toEqual([task]);
+    expect(await scheduler.schedule(task.id)).toMatchObject({ EndDate: Date.parse('2026-12-31T22:00:00Z') / 1000 });
+  });
+
+  it('runs a one-off task once, at its time, and lets Scheduler delete its schedule after', async () => {
+    const task = await confirm(owner(), { ...MORNING_BRIEF, schedule: 'at(2026-11-02T09:30:00)' });
+
+    expect(await scheduler.schedule(task.id)).toMatchObject({ ScheduleExpression: 'at(2026-11-02T09:30:00)', ActionAfterCompletion: 'DELETE' });
   });
 
   it('names no model: its runs use the account default until an edit picks one', async () => {
@@ -269,6 +416,7 @@ describe('POST /scheduled-tasks', () => {
     ['a field that is not text', { ...MORNING_BRIEF, schedule: 8 }, 'schedule is required'],
     ['a proposal without its ID', MORNING_BRIEF, 'proposalId is required'],
     ['a blank proposal ID', { ...MORNING_BRIEF, proposalId: ' ' }, 'proposalId is required'],
+    ['a stop time that is not a time', { ...MORNING_BRIEF, endDate: 'Friday' }, 'endDate must be an ISO date and time'],
   ])('refuses %s and schedules nothing', async (_, body, detail) => {
     const account = owner();
 
@@ -346,9 +494,9 @@ describe('PATCH /scheduled-tasks/:id', () => {
     const paused = await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: true } });
 
     expect(paused.status).toBe(200);
-    expect(await paused.json()).toEqual({ id, ...MORNING_BRIEF, paused: true, proposalId: 'call-1' });
+    expect(await paused.json()).toEqual({ id, ...MORNING_BRIEF, paused: true, proposalId: 'call-1', ended: false, sideChat: false });
     expect(await scheduler.schedule(id)).toMatchObject({ State: 'DISABLED', ScheduleExpression: MORNING_BRIEF.schedule });
-    expect(await listed(account)).toEqual([{ id, ...MORNING_BRIEF, paused: true, proposalId: 'call-1' }]);
+    expect(await listed(account)).toEqual([{ id, ...MORNING_BRIEF, paused: true, proposalId: 'call-1', ended: false, sideChat: false }]);
 
     await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: false } });
 
@@ -372,6 +520,8 @@ describe('PATCH /scheduled-tasks/:id', () => {
       schedule: 'rate(1 day)',
       paused: true,
       proposalId: 'call-1',
+      ended: false,
+      sideChat: false,
     };
     expect(await edited.json()).toEqual(expected);
     expect(await listed(account)).toEqual([expected]);
@@ -383,8 +533,64 @@ describe('PATCH /scheduled-tasks/:id', () => {
     });
   });
 
+  it('moves a stop time, and clears it so the schedule runs on', async () => {
+    const account = owner();
+    const task = await confirm(account, { ...MORNING_BRIEF, endDate: '2026-12-31T22:00:00.000Z' });
+
+    const moved = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { endDate: '2027-01-31T22:00:00.000Z' } });
+
+    expect(await moved.json()).toEqual({ ...task, endDate: '2027-01-31T22:00:00.000Z' });
+    expect(await scheduler.schedule(task.id)).toMatchObject({ EndDate: Date.parse('2027-01-31T22:00:00Z') / 1000 });
+
+    const cleared = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { endDate: null } });
+
+    const { endDate: _, ...unending } = task;
+    expect(await cleared.json()).toEqual(unending);
+    expect(await listed(account)).toEqual([unending]);
+    // Scheduler holds no stop time: moto answers null where Scheduler leaves EndDate out.
+    expect(await scheduler.schedule(task.id)).not.toMatchObject({ EndDate: expect.anything() });
+  });
+
+  it('refuses to resume a task past its stop time until the stop time moves', async () => {
+    const account = owner();
+    const task = await confirm(account, { ...MORNING_BRIEF, endDate: '2026-12-31T22:00:00.000Z' });
+    await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: true } });
+    vi.useFakeTimers({ now: Date.parse('2027-01-01T00:00:00Z'), toFake: ['Date'] });
+    try {
+      const refused = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: false } });
+
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ detail: 'This task has ended: move or clear its stop time to resume it' });
+      expect(await scheduler.schedule(task.id)).toMatchObject({ State: 'DISABLED' });
+
+      const resumed = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: false, endDate: '2027-06-30T22:00:00.000Z' } });
+
+      expect(await resumed.json()).toMatchObject({ paused: false, endDate: '2027-06-30T22:00:00.000Z' });
+      expect(await scheduler.schedule(task.id)).toMatchObject({ State: 'ENABLED' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refuses to resume a one-off whose time passed while paused until its schedule changes', async () => {
+    const account = owner();
+    const task = await confirm(account, { ...MORNING_BRIEF, schedule: 'at(2026-12-31T09:00:00)' });
+    await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: true } });
+    vi.useFakeTimers({ now: Date.parse('2027-01-01T00:00:00Z'), toFake: ['Date'] });
+    try {
+      const refused = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: false } });
+
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ detail: 'This task has ended: change its schedule to resume it' });
+      expect(await scheduler.schedule(task.id)).toMatchObject({ State: 'DISABLED' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['paused that is not true or false', { paused: 'yes' }, 'paused must be true or false'],
+    ['a stop time that is not a time', { endDate: '2026-13-45' }, 'endDate must be an ISO date and time'],
     ['a blank field', { title: ' ' }, 'title is required'],
     ["a model that is not the account's", { model: 'retired' }, 'Model "retired" is not available to this account'],
     ['a model that is not a key', { model: 5 }, 'Model 5 is not available to this account'],
@@ -397,6 +603,24 @@ describe('PATCH /scheduled-tasks/:id', () => {
 
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({ detail });
+    expect(await listed(account)).toEqual([task]);
+  });
+
+  // Scheduler deletes a one-off's schedule once it fires; its run then retires the task.
+  it('refuses to change a one-off whose schedule has fired, keeping it for its run to retire', async () => {
+    const account = owner();
+    const task = await confirm(account, { ...MORNING_BRIEF, schedule: 'at(2026-10-02T13:30:00)' });
+    const client = new SchedulerClient({
+      region: 'us-east-1', endpoint: inject('dynamodbEndpoint'),
+      credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+    });
+    // ActionAfterCompletion: DELETE, once its run is delivered.
+    await client.send(new DeleteScheduleCommand({ Name: task.id, GroupName: scheduler.runs.group }));
+
+    const response = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { paused: true } });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ detail: 'This one-off task has already run: it leaves Scheduled once its run reaches the Main Chat' });
     expect(await listed(account)).toEqual([task]);
   });
 
@@ -532,6 +756,29 @@ describe('DELETE /scheduled-tasks/:id', () => {
 });
 
 describe("an account's scheduled tasks", () => {
+  // Scheduler's API reference promises no past EndDate: an ended task's schedule stays off without one.
+  it('move an ended task with its schedule disabled and no stop time sent, keeping its stop time to move', async () => {
+    const [source, destination] = [owner(), owner()];
+    const task = await confirm(source, { ...MORNING_BRIEF, endDate: '2026-12-31T22:00:00.000Z' });
+    vi.useFakeTimers({ now: Date.parse('2027-01-01T00:00:00Z'), toFake: ['Date'] });
+    try {
+      await stack.history.transfer(source, destination);
+
+      const moved = await scheduler.schedule(task.id);
+      expect(moved).toMatchObject({ State: 'DISABLED', Target: { Input: JSON.stringify({ owner: destination, taskId: task.id }) } });
+      expect(moved).not.toMatchObject({ EndDate: expect.anything() });
+      const { nextRun: _, ...ended } = { ...task, ended: true };
+      expect(await listed(destination)).toEqual([ended]);
+
+      const resumed = await request(destination, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { endDate: '2027-06-30T22:00:00.000Z' } });
+
+      expect(await resumed.json()).toMatchObject({ paused: false, ended: false, endDate: '2027-06-30T22:00:00.000Z' });
+      expect(await scheduler.schedule(task.id)).toMatchObject({ State: 'ENABLED', EndDate: Date.parse('2027-06-30T22:00:00Z') / 1000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('move with an Account Claim, scheduled to run as the claiming account', async () => {
     const [source, destination] = [owner(), owner()];
     const kept = await confirm(destination, { ...MORNING_BRIEF, title: 'Kept' });
@@ -542,13 +789,29 @@ describe("an account's scheduled tasks", () => {
     await stack.history.transfer(source, destination);
 
     expect(await listed(source)).toEqual([]);
-    expect(await listed(destination)).toEqual([kept, first, { ...second, paused: true }]);
+    expect(await listed(destination)).toEqual([kept, first, asPaused(second)]);
     expect((await scheduler.schedule(first.id))?.Target.Input).toBe(JSON.stringify({ owner: destination, taskId: first.id }));
     expect(await scheduler.schedule(second.id)).toMatchObject({
       State: 'DISABLED',
       Target: { Input: JSON.stringify({ owner: destination, taskId: second.id }) },
     });
     expect((await request(destination, `/scheduled-tasks/${first.id}`, { method: 'DELETE' })).status).toBe(204);
+  });
+
+  it('move a one-off whose schedule Scheduler already deleted after its run', async () => {
+    const [source, destination] = [owner(), owner()];
+    const once = await confirm(source, { ...MORNING_BRIEF, schedule: 'at(2026-11-06T13:30:00)' });
+    const client = new SchedulerClient({
+      region: 'us-east-1', endpoint: inject('dynamodbEndpoint'),
+      credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY },
+    });
+    // ActionAfterCompletion: DELETE, once its run is delivered.
+    await client.send(new DeleteScheduleCommand({ Name: once.id, GroupName: scheduler.runs.group }));
+
+    await stack.history.transfer(source, destination);
+
+    expect(await listed(source)).toEqual([]);
+    expect(await listed(destination)).toEqual([once]);
   });
 
   it("free the claimed account's places under the cap", async () => {
@@ -580,7 +843,7 @@ describe("an account's scheduled tasks", () => {
 
     await stack.history.transfer(source, destination);
 
-    expect(await listed(destination)).toEqual([...held, tenth, { ...eleventh, paused: true }, { ...twelfth, paused: true }]);
+    expect(await listed(destination)).toEqual([...held, tenth, asPaused(eleventh), asPaused(twelfth)]);
     expect(await scheduler.schedule(tenth.id)).toMatchObject({ State: 'ENABLED' });
     expect(await scheduler.schedule(eleventh.id)).toMatchObject({ State: 'DISABLED' });
     expect(await scheduler.schedule(twelfth.id)).toMatchObject({ State: 'DISABLED' });
@@ -600,7 +863,7 @@ describe("an account's scheduled tasks", () => {
   it.each([
     ['active', false, { paused: false, title: 'Edited active task', schedule: 'rate(1 day)' }],
     ['paused', true, { title: 'Edited paused task', schedule: 'rate(1 day)' }],
-  ])('allow editing a task that stays %s while an Account Claim leaves the account over the cap', async (_, paused, changes) => {
+  ])('allow editing a task that stays %s while an Account Claim leaves the account over the cap', async (_, stays, changes) => {
     const [source, destination] = [owner(), owner()];
     const held: Task[] = [];
     for (let n = 1; n <= 9; n += 1) {
@@ -610,21 +873,22 @@ describe("an account's scheduled tasks", () => {
     const tenth = await confirm(source, { ...MORNING_BRIEF, title: 'Tenth' });
     const eleventh = await confirm(source, { ...MORNING_BRIEF, title: 'Eleventh' });
     await stack.history.transfer(source, destination);
-    const current = paused ? { ...eleventh, paused: true } : tenth;
+    const current = stays ? asPaused(eleventh) : tenth;
 
     const response = await request(destination, `/scheduled-tasks/${current.id}`, { method: 'PATCH', body: changes });
 
-    const edited = { ...current, ...changes };
+    // An active task's new schedule moves its next run.
+    const edited = { ...current, ...changes, ...(stays ? {} : { nextRun: expect.any(String) }) };
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(edited);
     expect(await listed(destination)).toEqual([
       ...held,
-      paused ? tenth : edited,
-      paused ? edited : { ...eleventh, paused: true },
+      stays ? tenth : edited,
+      stays ? edited : asPaused(eleventh),
     ]);
     expect(await scheduler.schedule(current.id)).toMatchObject({
       ScheduleExpression: 'rate(1 day)',
-      State: paused ? 'DISABLED' : 'ENABLED',
+      State: stays ? 'DISABLED' : 'ENABLED',
       Target: { Input: JSON.stringify({ owner: destination, taskId: current.id }) },
     });
   });
@@ -695,6 +959,46 @@ describe('ScheduledTasks', () => {
     runs = await createScheduledRuns(endpoint);
     dynamodb = new DynamoDBClient({ ...aws, endpoint });
     realScheduler = new SchedulerClient({ ...aws, endpoint });
+  });
+
+  it("records a run's end on its task, and nothing for a task deleted while it ran", async () => {
+    const owner = `runs-${randomUUID()}`;
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task: kept } = await tasks.create(owner, randomUUID(), MORNING_BRIEF);
+    const { task: deleted } = await tasks.create(owner, randomUUID(), MORNING_BRIEF);
+    await tasks.delete(owner, deleted.id);
+
+    await tasks.recordRun(owner, kept.id, { at: '2030-10-07T12:00:00.000Z', status: 'sign-in' });
+    await tasks.recordRun(owner, deleted.id, { at: '2030-10-07T12:00:00.000Z', status: 'done' });
+
+    expect(await tasks.get(owner, kept.id)).toMatchObject({ lastRun: { at: '2030-10-07T12:00:00.000Z', status: 'sign-in' } });
+    expect(await tasks.get(owner, deleted.id)).toBeNull();
+    expect((await tasks.list(owner)).map(({ id }) => id)).toEqual([kept.id]);
+  });
+
+  it('counts each delivery that ran toward a count of runs once, ending the task at its count', async () => {
+    const owner = `runs-${randomUUID()}`;
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await tasks.create(owner, randomUUID(), { ...MORNING_BRIEF, maxRuns: 2 });
+
+    await tasks.countRun(owner, task.id, 'first');
+    // A redelivered run starts again.
+    await tasks.countRun(owner, task.id, 'first');
+    expect(await tasks.get(owner, task.id)).toMatchObject({ maxRuns: 2, runsMade: 1, ended: false, nextRun: expect.any(String) });
+
+    await tasks.countRun(owner, task.id, 'second');
+    const ended = await tasks.get(owner, task.id);
+    expect(ended).toMatchObject({ runsMade: 2, ended: true });
+    expect(ended).not.toHaveProperty('nextRun');
+  });
+
+  it('fails loud retiring a one-off whose time it cannot read, keeping the task', async () => {
+    const owner = `runs-${randomUUID()}`;
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await tasks.create(owner, randomUUID(), { ...MORNING_BRIEF, schedule: 'at(2026-11-02T09:30:00)' });
+
+    await expect(tasks.retire(owner, { ...task, schedule: 'at(soon)' })).rejects.toThrow('Scheduled task schedule at(soon) has no readable time');
+    expect(await tasks.get(owner, task.id)).not.toBeNull();
   });
 
   /** Scheduler that refuses its first request as this error, then answers as moto does. */
@@ -812,10 +1116,10 @@ describe('ScheduledTasks', () => {
     });
 
     expect(again.status).toBe(200);
-    expect(await again.json()).toEqual(task);
+    expect(await again.json()).toEqual({ ...task, sideChat: false });
     const listed = await serviceForTasks(account, original).app.request('/scheduled-tasks');
     expect(listed.status).toBe(200);
-    expect(await listed.json()).toEqual({ tasks: [task] });
+    expect(await listed.json()).toEqual({ tasks: [{ ...task, sideChat: false }] });
   });
 
   it('edits metadata while Scheduler is unavailable and still honors explicit pause and resume', async () => {
@@ -1114,7 +1418,7 @@ describe('ScheduledTasks', () => {
       const completedDuplicate = await confirm();
       expect(completedDuplicate.status).toBe(200);
       expect(await completedDuplicate.json()).toEqual(created);
-      expect(await tasks.list(account)).toEqual([created]);
+      expect(await tasks.list(account)).toEqual([stored(created as Task)]);
       expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule((created as Task).id)).toMatchObject({ State: 'ENABLED' });
     } finally {
       resume();
@@ -1136,7 +1440,7 @@ describe('ScheduledTasks', () => {
     const retry = await confirm();
     expect(retry.status).toBe(201);
     const created = await retry.json() as Task;
-    expect(await tasks.list(account)).toEqual([created]);
+    expect(await tasks.list(account)).toEqual([stored(created)]);
     expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
   });
 
@@ -1167,7 +1471,7 @@ describe('ScheduledTasks', () => {
     const retry = await confirm();
     expect(retry.status).toBe(201);
     const created = await retry.json() as Task;
-    expect(await tasks.list(account)).toEqual([created]);
+    expect(await tasks.list(account)).toEqual([stored(created)]);
     expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(created.id)).toMatchObject({ State: 'ENABLED' });
   });
 
@@ -1256,7 +1560,7 @@ describe('ScheduledTasks', () => {
       const recovered = await confirm();
       expect(recovered.status).toBe(200);
       const created = await recovered.json() as Task;
-      expect(await tasks.list(account)).toEqual([created]);
+      expect(await tasks.list(account)).toEqual([stored(created)]);
       for (let count = 1; count < 10; count += 1) {
         // eslint-disable-next-line no-await-in-loop -- fill the account's existing ten-task cap
         await tasks.create(account, randomUUID(), MORNING_BRIEF);
@@ -1311,7 +1615,7 @@ describe('ScheduledTasks', () => {
     }
     const recovered = await confirm();
     expect(recovered.status).toBe(200);
-    expect(await recovered.json()).toEqual(created);
+    expect(await recovered.json()).toEqual({ ...created, sideChat: false });
     expect((await confirm()).status).toBe(200);
     expect(await tasks.list(account)).toEqual([created]);
   });
@@ -1570,7 +1874,7 @@ describe('ScheduledTasks', () => {
 
     const held = await tasks.list(destination);
     expect(held.filter((task) => !task.paused)).toHaveLength(10);
-    expect(held.find((task) => task.id === moved.id)).toEqual({ ...moved, paused: true });
+    expect(held.find((task) => task.id === moved.id)).toEqual(asPaused(moved));
     expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(moved.id)).toMatchObject({
       State: 'DISABLED',
       Target: { Input: JSON.stringify({ owner: destination, taskId: moved.id }) },

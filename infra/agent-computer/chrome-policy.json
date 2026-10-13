@@ -1,0 +1,5 @@
+{
+  "DownloadDirectory": "/mnt/files",
+  "PromptForDownloadLocation": false,
+  "AlwaysOpenPdfExternally": true
+}

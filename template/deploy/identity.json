@@ -48,18 +48,13 @@
       "privateNamespace": "bot-cube.internal",
       "credentialService": {
         "tableName": "credential-vault-by-provider",
-        "legacyVault": {
-          "tableName": "credential-vault",
-          "mirrored": false
-        },
         "rpcPath": "",
         "environmentKeys": {
           "url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
           "invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
           "port": "PORT",
           "keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
-          "vaultTable": "BOTCUBE_VAULT_TABLE",
-          "legacyVaultTable": "BOTCUBE_LEGACY_VAULT_TABLE"
+          "vaultTable": "BOTCUBE_VAULT_TABLE"
         }
       },
       "chatService": {
@@ -109,7 +104,14 @@
           "id": "subnet-placeholder-b",
           "availabilityZone": "us-east-1c"
         }
-      ]
+      ],
+      "originOwnership": "bot-cube:preview-origin",
+      "parkedWorkerName": "bot-cube-parked",
+      "originZone": "example.invalid",
+      "originPullOrganization": "bot-cube",
+      "deployPolicyName": "bot-cube-ecs-deploy",
+      "rollbackTaskFamilyPrefix": "bot-cube-preview-rollback-",
+      "rollbackPolicyName": "bot-cube-preview-rollback"
     },
     "ecr": {
       "repository": "bot-cube/runtime"
@@ -152,7 +154,8 @@
     },
     "secrets": {
       "cloudflareOriginApiToken": "CLOUDFLARE_ORIGIN_API_TOKEN"
-    }
+    },
+    "oidcSubject": "repo:example/bot:environment:production"
   },
   "artifacts": {
     "chatService": {
@@ -162,5 +165,10 @@
       "hook": "template/deploy/stage-tools.sh",
       "directory": "harness/deepagents/.tool-dist"
     }
+  },
+  "verification": {
+    "acceptanceHook": "ecs/acceptance.py",
+    "userAgent": "BotCube-Preview-Verification/1.0",
+    "originUserAgent": "BotCube-Origin-Verification/1.0"
   }
 }

@@ -39,6 +39,12 @@ const nameFields =
   "aws.ecs.originPullClientSecretName": "/botcube/cloudflare/origin-pull-client",
   "aws.ecs.originTokenSecretName": "/botcube/cloudflare/origin-api-token",
   "aws.ecs.previewOriginStackName": "botcube-preview-origin",
+  "aws.ecs.originOwnership": "botcube:preview-origin",
+  "aws.ecs.parkedWorkerName": "botcube-parked",
+  "aws.ecs.originPullOrganization": "botcube",
+  "aws.ecs.deployPolicyName": "botcube-ecs-deploy",
+  "aws.ecs.rollbackTaskFamilyPrefix": "botcube-preview-rollback-",
+  "aws.ecs.rollbackPolicyName": "botcube-preview-rollback",
   "aws.ecs.privateEgress.stackName": "botcube-private-egress",
   "aws.ecs.privateEgress.natGateway.name": "botcube-private-egress",
   "aws.ecs.apiHealth.stackName": "botcube-api-health",
@@ -64,13 +70,17 @@ const nameFields =
 };
 // Runtime variable names belong to the Cartridge protocol, not its display name.
 const runtimeFields = {
+  "aws.ecs.originZone": "example.invalid",
+  "github.oidcSubject": "repo:example/bot:environment:production",
+  "verification.acceptanceHook": "ecs/acceptance.py",
+  "verification.userAgent": "BotCube-Preview-Verification/1.0",
+  "verification.originUserAgent": "BotCube-Origin-Verification/1.0",
   "aws.ecs.credentialService.rpcPath": "",
   "aws.ecs.credentialService.environmentKeys.url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
   "aws.ecs.credentialService.environmentKeys.invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
   "aws.ecs.credentialService.environmentKeys.port": "PORT",
   "aws.ecs.credentialService.environmentKeys.keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
   "aws.ecs.credentialService.environmentKeys.vaultTable": "BOTCUBE_VAULT_TABLE",
-  "aws.ecs.credentialService.environmentKeys.legacyVaultTable": "BOTCUBE_LEGACY_VAULT_TABLE",
   "aws.ecs.chatService.environmentKeys.planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
   "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "TEMPLATE_COMPUTER_CDP_URL"
 };

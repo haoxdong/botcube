@@ -24,7 +24,7 @@ describe('loadAgentProfile', () => {
   });
 });
 
-const IDENTITY_TAB = { chatServiceUrl: 'http://chat.test', revision: 0, onSaved: () => {} };
+const IDENTITY_TAB = { chatServiceUrl: 'http://chat.test', revision: 0, onSaved: () => {}, onOpenChat: () => {} };
 
 const render = (props: Parameters<typeof AgentProfile>[0]) => renderToStaticMarkup(React.createElement(AgentProfile, props));
 

@@ -521,13 +521,26 @@ it("shows a scheduled task's edit fields as fields", () => {
   field.remove();
 });
 
+it("fills a Weekly day while it is picked, as a primary button is, and leaves the others secondary", () => {
+  const days = document.createElement('div');
+  days.className = 'scheduled-days';
+  days.innerHTML = '<button class="scheduled-day" aria-pressed="true">M</button><button class="scheduled-day" aria-pressed="false">T</button>';
+  document.body.append(days);
+
+  const [picked, other] = [styleOf(days, '[aria-pressed="true"]'), styleOf(days, '[aria-pressed="false"]')];
+  expect([picked.color, picked.backgroundColor]).toEqual(['#fff', '#0d0d0d']);
+  expect([other.color, other.backgroundColor]).toEqual(['#0d0d0d', '#f4f4f4']);
+  expect([picked.width, picked.height, picked.borderRadius]).toEqual(['36px', '36px', '50%']);
+  days.remove();
+});
+
 it('spaces a scheduled-task proposal in a message by its own gap, not prose paragraph margins', () => {
   const { message, prose } = inAssistantMessage('');
   render(
     <ScheduledTaskProposalCard
       chatServiceUrl="http://chat.test"
       proposalId="call-1"
-      proposal={{ title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' }}
+      proposal={{ title: 'Morning brief', prompt: 'Brief me on rates', frequency: 'weekdays', time: '08:00' }}
     />,
     { container: prose },
   );
@@ -755,7 +768,7 @@ it('fills the Main chat pill only while it is the open chat, and opens the drawe
     expect(phone.width).toBe('80%');
     expect(phone.mainChat.fontSize).toBe('17px');
     expect(phone.sideChat.fontSize).toBe('17px');
-    expect(phone.sideChat.paddingTop).toBe('11px');
+    expect(phone.sideChat.paddingTop).toBe('9px');
     expect(phone.sideChat.lineHeight).toBe(phone.mainChat.lineHeight);
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
@@ -913,7 +926,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         for (const selector of ['.sidebar-new-chat']) {
           expect(styleOf(container, selector).width).toBe('44px');
           expect(styleOf(container, selector).height).toBe('44px');
-          // A phone's plus is as light as the rows' × marks
+          // A phone's plus is as light as the rows' icons
           expect(styleOf(container, `${selector} svg`).width).toBe('20px');
         }
         // On a phone, memo 0049 Fig 21's drawer
@@ -1231,20 +1244,63 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
       expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#6b6b6b' });
       expect(plus.backgroundColor || 'transparent').toMatch(/^(transparent|none|rgba\(0, 0, 0, 0\))$/);
       expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
-      // Side chats step at the rows' 44px pitch, the text on the labels' 20px, each × in the plus's 44px column.
-      expect(styleOf(container, '.sidebar-list').padding).toBe('0px 12px 0px 8px');
-      expect(zero(styleOf(container, '.sidebar-item').marginBottom)).toBe('0px');
+      // Every row a 40px fill inset 2px in its 44px slot, so no two fills touch; Side chats across the nav pills' width.
+      for (const selector of ['.sidebar-nav-item', '.sidebar-item']) {
+        expect({ height: styleOf(container, selector).height, margin: styleOf(container, selector).margin }).toEqual({ height: '40px', margin: '2px 0px' });
+      }
+      expect(styleOf(container, '.sidebar-list').padding).toBe('0px 8px');
       expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#e0e0e0');
+      expect(styleOf(container, '.sidebar-item').borderRadius).toBe('9999px');
+      // happy-dom matches no :hover, so this reads the sheet: a hovered row takes the lighter #efefef, never the open row.
+      for (const name of ['sidebar-nav-item', 'sidebar-item']) {
+        expect(sheet).toMatch(new RegExp(`\\.${name}:not\\(\\.${name}-active\\):hover \\{\\s*background: var\\(--color-selected\\);`));
+      }
       const row = styleOf(container, '.sidebar-item-btn');
-      expect({ top: row.paddingTop, bottom: row.paddingBottom, lineHeight: row.lineHeight }).toEqual({ top: '11px', bottom: '11px', lineHeight: '22px' });
+      expect({ top: row.paddingTop, bottom: row.paddingBottom, left: row.paddingLeft, lineHeight: row.lineHeight }).toEqual({ top: '9px', bottom: '9px', left: '12px', lineHeight: '22px' });
+      // With a mouse, a 32px delete centred under the plus, 26px from the row's end (10px in); happy-dom leaves calc() as written.
       const remove = styleOf(container, '.sidebar-item-delete');
-      expect({ width: remove.width, padding: remove.padding }).toEqual({ width: '44px', padding: '0px' });
+      expect({ width: remove.width, padding: remove.padding, end: remove.marginRight }).toEqual({ width: '32px', padding: '0px', end: 'calc(26px - 32px / 2)' });
       expect(styleOf(container, '.user-menu-trigger').padding).toBe('8px');
     } finally {
       unmount();
     }
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+// The menu, plus and Close buttons were 8px squares, the account row and the name field rectangles among pill rows, and
+// a Side Chat's rename and delete icons sat on their buttons' left edge (DESIGN.md: buttons and sidebar rows are round).
+it("rounds the sidebar's buttons and rows, and centres a Side Chat's icons in their buttons", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  // A touch screen shows rename and delete at rest.
+  happyDOM.settings.navigator.maxTouchPoints = 5;
+  const { container, unmount } = render(
+    <aside className="sidebar sidebar-expanded">
+      <div className="sidebar-brand"><button className="sidebar-logo-btn"><svg /></button></div>
+      <div className="sidebar-section-header"><button className="header-btn sidebar-new-chat"><svg /></button></div>
+      <div className="sidebar-list">
+        <div className="sidebar-item"><button className="sidebar-item-btn">Rates</button><button className="sidebar-item-rename"><svg /></button><button className="sidebar-item-delete"><svg /></button></div>
+        <div className="sidebar-item"><input className="sidebar-item-name" /></div>
+      </div>
+      <div className="sidebar-bottom"><button className="user-menu-trigger" /></div>
+    </aside>,
+  );
+  try {
+    for (const selector of ['.sidebar-logo-btn', '.header-btn']) {
+      expect(styleOf(container, selector).borderRadius).toBe('50%');
+    }
+    for (const selector of ['.user-menu-trigger', '.sidebar-item-name', '.sidebar-item-rename', '.sidebar-item-delete']) {
+      expect(styleOf(container, selector).borderRadius).toBe('9999px');
+    }
+    for (const selector of ['.sidebar-item-rename', '.sidebar-item-delete']) {
+      const button = styleOf(container, selector);
+      expect({ display: button.display, align: button.alignItems, justify: button.justifyContent })
+        .toEqual({ display: 'inline-flex', align: 'center', justify: 'center' });
+    }
+  } finally {
+    unmount();
+    happyDOM.settings.navigator.maxTouchPoints = 0;
   }
 });
 
@@ -1265,6 +1321,8 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     } finally {
       shut.unmount();
     }
+    // A phone is a touch screen.
+    happyDOM.settings.navigator.maxTouchPoints = 5;
     const open = render(desktopApp('sidebar-expanded'));
     try {
       expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f7f7f8');
@@ -1276,16 +1334,21 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*(\/\*[^*]*\*\/\s*)?:root \{[^}]*--font-label: 0\.8125rem;/);
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*\.sidebar-side-chats-toggle \{\s*font-size: var\(--font-label\);\s*letter-spacing: 0\.04em;/);
       expect(styleOf(open.container, '.sidebar-side-chats-toggle').textTransform).toBe('uppercase');
-      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 20px 0px 8px');
+      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 10px');
       expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
       expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#efefef');
-      expect(styleOf(open.container, '.sidebar-item-btn').paddingTop).toBe('11px');
-      expect(styleOf(open.container, '.sidebar-item-delete').width).toBe('44px');
+      const nav = styleOf(open.container, '.sidebar-nav-item');
+      expect({ top: nav.paddingTop, margin: nav.margin }).toEqual({ top: '8px', margin: '2px 0px' });
+      const row = styleOf(open.container, '.sidebar-item-btn');
+      expect({ top: row.paddingTop, left: row.paddingLeft }).toEqual({ top: '9px', left: '10px' });
+      const remove = styleOf(open.container, '.sidebar-item-delete');
+      expect({ width: remove.width, end: remove.marginRight }).toEqual({ width: '44px', end: 'calc(32px - 44px / 2)' });
       expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('13px');
     } finally {
       open.unmount();
     }
   } finally {
+    happyDOM.settings.navigator.maxTouchPoints = 0;
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
 });

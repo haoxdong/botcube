@@ -44,6 +44,9 @@ export interface PreviewOriginProps extends StackProps {
   caPath: string;
   /** The Cartridge's origin-provider Lambda source directory. */
   originProviderPath: string;
+  originOwnership?: string;
+  parkedWorkerName?: string;
+  originZone?: string;
   /** Web origins the Chat Service grants credentialed CORS; the parked Worker grants the same. */
   corsOrigins: string[];
   /** Parked deletes the ALB; everything that makes it serve again on unpark stays. */
@@ -101,7 +104,7 @@ export class PreviewOriginStack extends Stack {
         ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
-        environment: { TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname].join(',') },
+        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname].join(',') },
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;

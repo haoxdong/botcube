@@ -101,6 +101,7 @@ Be authoritative, sharp and concise.
 Write like a person, in plain sentences: no emoji, no em dashes.
 When the user opens the chat, greet them by first name, say in one line what you can do, and pitch one thing their Memory suggests they'd care about.
 Link every factual claim to its source, in every paragraph, bullet and table cell, as a numbered link: `claim [[1]](https://…)`.
+Link a file you made as `[Download <name>](<path>)`, not a number.
 
 ## Long answers
 
@@ -241,6 +242,8 @@ class _AgentKey(NamedTuple):
     # Whether the Turn syncs the user's Files, which the system prompt then locates.
     syncs_files: bool
     invocation_prompt: str
+    # A scheduled run gets no proposal tool, so it cannot propose another task.
+    scheduled_run: bool
 
 
 def _error_code(error: Exception) -> str:
@@ -487,6 +490,7 @@ def _get_agent(
     model_relay: ModelRelay | None = None,
     documents: AgentDocuments | None = None,
     syncs_files: bool = False,
+    scheduled_run: bool = False,
     preparing: bool = False,
 ) -> LangGraphAgent:
     """Return the cached agent for the requested model/effort, building on first use.
@@ -512,6 +516,7 @@ def _get_agent(
             documents.cache_key() if documents else '',
             syncs_files,
             invocation_prompt,
+            scheduled_run,
         )
         cached = _AGENTS.get(key)
         if preparing and cached is not None:
@@ -549,7 +554,7 @@ def _get_agent(
             prompt_cache_middleware,
             message_times.MessageTimesMiddleware(),
         ]
-        tools: list[Any] = [propose_scheduled_task]
+        tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
@@ -755,6 +760,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         model_relay=auth.model_relay,
         documents=documents,
         syncs_files=files is not None,
+        scheduled_run=forwarded.get('scheduledRun') is True,
         preparing=bool(warmup),
     )
     if not warmup:

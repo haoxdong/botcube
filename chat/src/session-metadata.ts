@@ -40,6 +40,8 @@ export interface SessionSummary {
   provider?: string;
   /** When the Session's latest relayed Turn started, until its relay ends. */
   turn_running_since?: string;
+  /** The Scheduled task whose runs land here, once its first run has: the drawer marks its Side Chat. */
+  scheduled_task_id?: string;
   /** The run ID of that Turn, which a Stop names. */
   turn_run_id?: string;
   /** The accepted Turn has not yet emitted RUN_STARTED, so Stop cannot reach it. */
@@ -69,6 +71,9 @@ export type FencedSession = SessionSummary & SessionPurge;
 
 /** The Turn's Session, or its owner's whole history, is deleted: it takes no more Turns. */
 export class SessionDeletedError extends Error {}
+
+/** A Scheduled task's Side Chat already has a Turn going: two Turns never interleave there, so the newcomer is refused. */
+export class SessionBusyError extends Error {}
 
 /** A registered writer has not acknowledged dispatch/completion yet; deletion must keep waiting. */
 export class SessionDispatchPendingError extends Error {}
@@ -138,6 +143,16 @@ function turnAdmissionCondition(creating: boolean, provider: string): string {
   return `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)${provider}`;
 }
 
+function scheduledWrite(scheduledTaskId?: string, postAcceptance?: true): { set: string; condition: string; values: Record<string, string> } {
+  return {
+    set: scheduledTaskId === undefined ? '' : ', scheduled_task_id = if_not_exists(scheduled_task_id, :task_id)',
+    values: scheduledTaskId === undefined ? {} : { ':task_id': scheduledTaskId },
+    condition: postAcceptance ? '' : scheduledTaskId === undefined
+      ? ' AND (attribute_not_exists(scheduled_task_id) OR attribute_not_exists(turn_running_since))'
+      : ' AND attribute_not_exists(turn_running_since)',
+  };
+}
+
 function compatibleAdmission(error: unknown, provider: string | undefined): boolean {
   const existing = (error as Partial<TransactionCanceledException>).CancellationReasons?.[1]?.Item?.provider?.S;
   return provider === undefined || existing === undefined || existing === provider;
@@ -186,7 +201,7 @@ export interface SessionMetadata {
   recordTurn(
     owner: string,
     sessionId: string,
-    turn: { filingUserId: string; title: string; provider?: string; running?: RunningTurn; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined },
+    turn: { filingUserId: string; title: string; provider?: string; running?: RunningTurn; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
   ): Promise<string>;
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
   turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void>;
@@ -723,13 +738,15 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       messageId,
       warmup,
       postAcceptance,
-    }: { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined },
+      scheduledTaskId,
+    }: { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
   ): Promise<string> {
     const { creating, binding, filing } = await this.turnIdentity(owner, sessionId, filingUserId);
     filingUserId = filing;
     const newUnbound = provider === undefined && creating;
     const providerUpdate = providerWrite(provider, newUnbound);
     const runningUpdate = runningWrite(running, postAcceptance);
+    const scheduledUpdate = scheduledWrite(scheduledTaskId, postAcceptance);
     try {
       await this.documents.send(
         new TransactWriteCommand({
@@ -752,9 +769,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   'filing_user_id = if_not_exists(filing_user_id, :filing_user_id)' +
                   (binding === undefined ? '' : ', runtime_binding = :binding, runtime_generation = :generation') +
                   (messageId === undefined ? '' : ', latest_message_id = :latest_message_id') +
+                  scheduledUpdate.set +
                   runningUpdate.set +
                   providerUpdate.set + turnRemoval(runningUpdate.remove, provider, postAcceptance),
-                ConditionExpression: turnAdmissionCondition(creating, providerUpdate.condition),
+                ConditionExpression: turnAdmissionCondition(creating, providerUpdate.condition) +
+                  scheduledUpdate.condition,
                 ExpressionAttributeValues: {
                   ':session_id': sessionId,
                   ':now': now(),
@@ -762,6 +781,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   ...(binding === undefined ? {} : { ':binding': binding, ':generation': 'tracked-v1' }),
                   ':filing_user_id': filingUserId,
                   ...(messageId === undefined ? {} : { ':latest_message_id': messageId }),
+                  ...scheduledUpdate.values,
                   ...runningUpdate.values,
                   ...providerUpdate.values,
                 },
@@ -781,8 +801,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       );
     } catch (error) {
       if ((error as Partial<TransactionCanceledException>).CancellationReasons?.[3]?.Code === 'ConditionalCheckFailed') throw new SessionNamespaceNotReadyError();
-      if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, provider))) {
-        return this.recordTurn(owner, sessionId, { filingUserId, title, provider, running, messageId, warmup, postAcceptance });
+      if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, provider), scheduledTaskId)) {
+        return this.recordTurn(owner, sessionId, { filingUserId, title, provider, running, messageId, warmup, postAcceptance, scheduledTaskId });
       }
     }
     return this.acceptedFilingUserId(owner, sessionId);
@@ -1275,12 +1295,15 @@ function fenceRefusal(error: unknown, sessionId: string): unknown {
   return reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed') ? new SessionDeletedError(sessionId) : error;
 }
 
-function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean): boolean {
+function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean, scheduledTaskId?: string): boolean {
   const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
   const [ownerFence, session, claimFence] = reasons ?? [];
   if (ownerFence?.Code === 'ConditionalCheckFailed' || (session?.Code === 'ConditionalCheckFailed' && session.Item?.deleted_at !== undefined)) throw new SessionDeletedError(sessionId);
   if (claimFence?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
   if (session?.Code === 'ConditionalCheckFailed') {
+    if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {
+      throw new SessionBusyError('The previous Turn is still going');
+    }
     if (newUnbound) return true;
     throw new SessionProviderError(storedProvider(session.Item));
   }

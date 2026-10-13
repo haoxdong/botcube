@@ -1,6 +1,6 @@
 import { positiveInteger } from './config.js';
 import { randomUUID } from 'node:crypto';
-import { DynamoDBClient, type TransactionCanceledException } from '@aws-sdk/client-dynamodb';
+import { ConditionalCheckFailedException, DynamoDBClient, type TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -19,7 +19,9 @@ import {
   UpdateScheduleCommand,
   ValidationException,
 } from '@aws-sdk/client-scheduler';
+import { Cron } from 'croner';
 import { HttpError } from './cartridge.js';
+import type { ScheduledRunCard } from './session-api.js';
 
 /** The most tasks one account may schedule, so costs stay bounded until there is data. */
 const SCHEDULED_TASK_CAP = positiveInteger(process.env, 'BOTCUBE_SCHEDULED_TASK_CAP', 10);
@@ -34,15 +36,58 @@ export interface ScheduledTaskDefinition {
   timezone: string;
   /** The model key each run uses; absent, runs use the account's default model. */
   model?: string;
+  /** The stop time, an ISO instant: Scheduler's `EndDate`, after which the schedule no longer runs. */
+  endDate?: string;
+  /** How many runs it makes before it retires itself, as iCalendar RRULE's `COUNT` beside `UNTIL`. */
+  maxRuns?: number;
 }
 
-/** A task the agent runs on its schedule, each run in a fresh Side Chat. */
+/** An edit: any definition fields but the count of runs, a stop time cleared with null, and whether the task is paused. */
+export type TaskChanges = Partial<Omit<ScheduledTaskDefinition, 'endDate' | 'maxRuns'>> & { endDate?: string | null; paused?: boolean };
+
+/** Whether a schedule runs once: Scheduler's `at(...)`. */
+const once = (schedule: string) => schedule.startsWith('at(');
+
+/** The clock a time zone shows at an instant, read as if it were UTC. */
+const shownAsUtc = (at: number, timeZone: string) =>
+  Date.parse(`${new Intl.DateTimeFormat('sv-SE', { timeZone, dateStyle: 'short', timeStyle: 'medium' }).format(at).replace(' ', 'T')}Z`);
+
+/** Whether a one-off's time, `at(...)` in its time zone, has come. */
+function due({ schedule, timezone }: { schedule: string; timezone: string }): boolean {
+  const wall = Date.parse(`${/^at\((.+)\)$/.exec(schedule)?.[1] ?? ''}Z`);
+  if (Number.isNaN(wall)) throw new Error(`Scheduled task schedule ${schedule} has no readable time`);
+  return wall - (shownAsUtc(wall, timezone) - wall) <= Date.now();
+}
+
+/** Whether a one-off has fired: Scheduler has delivered its one run and deleted its schedule (`ActionAfterCompletion: DELETE`). */
+export const fired = (task: { schedule: string; timezone: string }) => once(task.schedule) && due(task);
+
+/** How a task's latest run ended: Done, Failed, or Needs sign-in in its sheet. */
+export interface ScheduledTaskRun {
+  at: string;
+  status: Exclude<ScheduledRunCard['status'], 'skipped'>;
+}
+
+/** A task the agent runs on its schedule, each run in its one Side Chat. */
 export interface ScheduledTask extends ScheduledTaskDefinition {
   id: string;
   paused: boolean;
   /** The proposal's tool call, so a chat can tell its proposal is already confirmed. */
   proposalId: string;
+  /** Absent until its first run ends. */
+  lastRun?: ScheduledTaskRun;
+  /** When it next runs; absent while paused or once it has ended. */
+  nextRun?: string;
+  /** Why its next run cannot be read from a schedule Scheduler took, in place of `nextRun` (ADR 0030 probe semantics). */
+  nextRunUnknown?: string;
+  /** Whether it runs no more: past its stop time, no runs left before it, or its count of runs made. Ended beats paused. */
+  ended: boolean;
+  /** How many runs it has made, for a task with a count of runs. */
+  runsMade?: number;
 }
+
+/** Whether a task has made its count of runs, so it runs no more and its last run retires it. */
+export const spent = (task: { maxRuns?: number | undefined; runsMade?: number | undefined }) => task.maxRuns !== undefined && (task.runsMade ?? 0) >= task.maxRuns;
 
 /** The message a schedule delivers to the run queue when it is due. */
 export interface ScheduledRunMessage {
@@ -72,18 +117,106 @@ const countKey = (owner: string) => ({ pk: ownerPk(owner), sk: 'COUNT' });
 /** The confirmed proposal, so confirming it again answers the task it made. */
 const proposalKey = (owner: string, proposalId: string) => ({ pk: ownerPk(owner), sk: `PROPOSAL#${proposalId}` });
 
-type TaskItem = Omit<ScheduledTask, 'proposalId'> & { pk: string; sk: string; created_at: string; proposal_id: string; pending_creation?: boolean; creation_refused?: boolean; schedule_group?: string };
+type TaskItem = Omit<ScheduledTask, 'proposalId' | 'lastRun' | 'nextRun' | 'nextRunUnknown' | 'ended' | 'runsMade'> & {
+  pk: string; sk: string; created_at: string; proposal_id: string; pending_creation?: boolean; creation_refused?: boolean; schedule_group?: string; last_run?: ScheduledTaskRun;
+  /** The deliveries that ran, for a task with a count of runs: a set, so a redelivered run counts once. */
+  run_deliveries?: Set<string>;
+};
 
-const task = ({ id, title, prompt, schedule, timezone, model, paused, proposal_id }: TaskItem): ScheduledTask => ({
-  id,
-  title,
-  prompt,
-  schedule,
-  timezone,
-  ...(model === undefined ? {} : { model }),
-  paused,
-  proposalId: proposal_id,
-});
+const runsMade = (item: TaskItem) => (item.maxRuns === undefined ? undefined : (item.run_deliveries?.size ?? 0));
+
+/** A `rate(...)` schedule's first tick after now, counted from the task's creation as its schedule starts there. */
+function nextRateTick(schedule: string, createdAt: string): Date | undefined {
+  const rate = /^rate\(\s*([1-9]\d*)\s+(minute|hour|day)s?\s*\)$/.exec(schedule);
+  if (rate === null) return undefined;
+  const units = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
+  const period = Number(rate[1]) * units[rate[2] as keyof typeof units];
+  const anchor = new Date(createdAt).getTime();
+  return new Date(anchor + Math.max(1, Math.floor((Date.now() - anchor) / period) + 1) * period);
+}
+
+/** What the task's schedule says of its runs: its next, or why that cannot be read, and why it runs no more. */
+interface Runs {
+  next?: Date;
+  unknown?: string;
+  /** What ended it: its stop time passed or comes before its next run, its schedule has no runs left, or it made its count. */
+  ended?: 'stop time' | 'schedule' | 'count';
+}
+
+/** The task's runs, its pause aside: Scheduler runs nothing past the stop time. */
+function runs(item: TaskItem): Runs {
+  const { schedule, timezone, created_at, endDate, maxRuns } = item;
+  if (spent({ maxRuns, runsMade: runsMade(item) })) return { ended: 'count' };
+  const stop = endDate === undefined ? Infinity : Date.parse(endDate);
+  if (stop <= Date.now()) return { ended: 'stop time' };
+  let next: Date | undefined;
+  try {
+    next = scheduledRun(schedule, timezone, created_at);
+  } catch (error) {
+    // Probe semantics (ADR 0030): a schedule Scheduler took but croner cannot read is reported unread, failing nothing.
+    return { unknown: unreadable(schedule, error) };
+  }
+  if (next === undefined) return { ended: 'schedule' };
+  return next.getTime() > stop ? { ended: 'stop time' } : { next };
+}
+
+/**
+ * The schedule's next run after now, ignoring pause and stop time, read as EventBridge Scheduler reads it in its time
+ * zone: a cron's six fields end with the year, its days of the week count from 1, Sunday, and `?` reads as any.
+ * Croner takes seconds first.
+ */
+function scheduledRun(schedule: string, timezone: string, created_at: string): Date | undefined {
+  const cron = /^cron\((.+)\)$/.exec(schedule)?.[1];
+  if (cron !== undefined) {
+    const fields = cron.trim().split(/\s+/).map((field, index) =>
+      // Croner counts the days of the week from 0, Sunday; a lone L is the week's last day, Saturday (7).
+      index === 4 ? (field === 'L' ? '7' : field).replace(/(?<![#/\d])\d/g, (number) => String(Number(number) - 1))
+        // Croner steps a year's `*` from year 0, which it refuses; EventBridge's years start at 1970.
+        : index === 5 ? field.replace(/^\*\//, '1970/') : field);
+    if (fields.length !== 6) throw new Error(`Scheduled task cron ${schedule} does not have six fields`);
+    // Sloppy ranges read EventBridge's steps from a number (`1/10`), which croner's strict parser refuses.
+    return new Cron(['0', ...fields.map((field) => (field === '?' ? '*' : field))].join(' '), { timezone, sloppyRanges: true }).nextRun() ?? undefined;
+  }
+  const at = /^at\((.+)\)$/.exec(schedule)?.[1];
+  if (at !== undefined) return new Cron(at, { timezone }).nextRun() ?? undefined;
+  const tick = nextRateTick(schedule, created_at);
+  if (tick === undefined) throw new Error(`Scheduled task schedule ${schedule} is not cron(...), rate(...) or at(...)`);
+  return tick;
+}
+
+const unreadable = (schedule: string, error: unknown) => `The schedule ${schedule} cannot be read: ${error instanceof Error ? error.message : String(error)}`;
+
+/** A new schedule the sheet cannot read its next run from is the user's 400, refused before anything is stored. */
+function assertReadable({ schedule, timezone, created_at }: TaskItem): void {
+  try {
+    scheduledRun(schedule, timezone, created_at);
+  } catch (error) {
+    throw new HttpError(400, unreadable(schedule, error));
+  }
+}
+
+const task = (item: TaskItem): ScheduledTask => {
+  const { id, title, prompt, schedule, timezone, model, endDate, maxRuns, paused, proposal_id, last_run } = item;
+  const { next, unknown, ended } = runs(item);
+  const made = runsMade(item);
+  return {
+    id,
+    title,
+    prompt,
+    schedule,
+    timezone,
+    ...(model === undefined ? {} : { model }),
+    ...(endDate === undefined ? {} : { endDate }),
+    ...(maxRuns === undefined ? {} : { maxRuns }),
+    paused,
+    proposalId: proposal_id,
+    ...(last_run === undefined ? {} : { lastRun: last_run }),
+    ...(next === undefined || paused ? {} : { nextRun: next.toISOString() }),
+    ...(unknown === undefined || paused ? {} : { nextRunUnknown: unknown }),
+    ended: ended !== undefined,
+    ...(made === undefined ? {} : { runsMade: made }),
+  };
+};
 
 const cancelledOn = (error: unknown, index: number) =>
   (error as Partial<TransactionCanceledException>).CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
@@ -158,6 +291,7 @@ export class ScheduledTasks {
       pending_creation: true,
       schedule_group: group,
     };
+    assertReadable(item);
     try {
       await this.documents.send(
         new TransactWriteCommand({
@@ -197,7 +331,6 @@ export class ScheduledTasks {
       }
       throw error;
     }
-    const created = task(item);
     try {
       await this.scheduler.send(new CreateScheduleCommand(this.schedule(owner, item, group)));
     } catch (error) {
@@ -205,7 +338,8 @@ export class ScheduledTasks {
       throw schedulerRefusal(error);
     }
     await this.completeCreation(owner, item);
-    return { task: created, created: true };
+    // Read only once Scheduler has taken the schedule, so reading it never strands a pending task.
+    return { task: task(item), created: true };
   }
 
   /** Record a definite refusal and attempt rollback, retaining every recovery failure. */
@@ -285,26 +419,42 @@ export class ScheduledTasks {
   }
 
   /** Change the task's definition or pause it; its schedule changes to match. Null when there is no such task. */
-  async update(
-    owner: string,
-    id: string,
-    changes: Partial<ScheduledTaskDefinition> & { paused?: boolean },
-  ): Promise<ScheduledTask | null> {
+  async update(owner: string, id: string, changes: TaskChanges): Promise<ScheduledTask | null> {
     const item = await this.taskItem(owner, id);
     if (item === undefined) return null;
     // An Account Claim can leave the account over the cap with the overflow paused: none resumes until it is back under.
     if (item.paused && changes.paused === false && (await this.count(owner)) > SCHEDULED_TASK_CAP) {
       throw new HttpError(409, `An account can schedule at most ${SCHEDULED_TASK_CAP} tasks: delete one to resume another`);
     }
-    const updated: TaskItem = { ...item, ...changes };
-    if (changes.schedule !== undefined || changes.timezone !== undefined || changes.paused !== undefined) {
-      try {
-        await this.scheduler.send(new UpdateScheduleCommand(this.schedule(owner, updated)));
-      } catch (error) {
-        throw schedulerRefusal(error);
-      }
+    const updated = withChanges(item, changes);
+    // A stored schedule unread is reported, not refused: only a new one must be readable.
+    if (changes.schedule !== undefined) assertReadable(updated);
+    // Scheduler runs nothing past the stop time, so an ended task resumes only once its stop time moves or clears.
+    const { ended } = runs(updated);
+    if (item.paused && changes.paused === false && ended !== undefined) {
+      throw new HttpError(409, `This task has ended: ${ended === 'stop time' ? 'move or clear its stop time' : 'change its schedule'} to resume it`);
     }
-    const entries = Object.entries(changes);
+    if (['schedule', 'timezone', 'paused', 'endDate'].some((field) => field in changes)) await this.reschedule(owner, item, updated);
+    return (await this.writeChanges(owner, id, changes)) ? this.get(owner, id) : null;
+  }
+
+  /** Move the task's schedule to match its changed item; a one-off whose schedule is gone has already run. */
+  private async reschedule(owner: string, item: TaskItem, updated: TaskItem): Promise<void> {
+    try {
+      await this.scheduler.send(new UpdateScheduleCommand(this.schedule(owner, updated)));
+    } catch (error) {
+      if (error instanceof ResourceNotFoundException && once(item.schedule)) {
+        const refusal = new HttpError(409, 'This one-off task has already run: it leaves Scheduled once its run reaches the Main Chat');
+        refusal.cause = error;
+        throw refusal;
+      }
+      throw schedulerRefusal(error);
+    }
+  }
+
+  /** Store the task's changes unless the account history was deleted; false when the task is gone. */
+  private async writeChanges(owner: string, id: string, changes: TaskChanges): Promise<boolean> {
+    const expression = changeExpression(changes);
     const taskCondition = {
       TableName: this.tableName,
       Key: taskKey(owner, id),
@@ -320,22 +470,43 @@ export class ScheduledTasks {
               ConditionExpression: 'attribute_not_exists(pk)',
             },
           },
-          entries.length === 0 ? { ConditionCheck: taskCondition } : {
-            Update: {
-              ...taskCondition,
-              UpdateExpression: `SET ${entries.map((_, index) => `#field${index} = :value${index}`).join(', ')}`,
-              ExpressionAttributeNames: Object.fromEntries(entries.map(([name], index) => [`#field${index}`, name])),
-              ExpressionAttributeValues: Object.fromEntries(entries.map(([, value], index) => [`:value${index}`, value])),
-            },
-          },
+          expression === null ? { ConditionCheck: taskCondition } : { Update: { ...taskCondition, ...expression } },
         ],
       }));
     } catch (error) {
       if (cancelledOn(error, 0)) throw new HttpError(410, 'The account history was deleted');
-      if (cancelledOn(error, 1)) return null;
+      if (cancelledOn(error, 1)) return false;
       throw error;
     }
-    return this.get(owner, id);
+    return true;
+  }
+
+  /** Record how the task's latest run ended; a task deleted while it ran has nothing to record it on. */
+  async recordRun(owner: string, id: string, run: ScheduledTaskRun): Promise<void> {
+    await this.updateRunning(owner, id, 'SET last_run = :run', { ':run': run });
+  }
+
+  /**
+   * Count a run toward the task's count of runs as it starts, so no later delivery runs past it; a set of the
+   * deliveries that ran, so a redelivered run counts once.
+   */
+  async countRun(owner: string, id: string, deliveryId: string): Promise<void> {
+    await this.updateRunning(owner, id, 'ADD run_deliveries :delivery', { ':delivery': new Set([deliveryId]) });
+  }
+
+  /** Update a task a run is under way on; a task deleted while it ran has nothing to update. */
+  private async updateRunning(owner: string, id: string, expression: string, values: Record<string, unknown>): Promise<void> {
+    try {
+      await this.documents.send(new UpdateCommand({
+        TableName: this.tableName,
+        Key: taskKey(owner, id),
+        UpdateExpression: expression,
+        ConditionExpression: 'attribute_exists(pk)',
+        ExpressionAttributeValues: values,
+      }));
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) throw error;
+    }
   }
 
   /** Delete the task's schedule, then the task; false when there is no such task. */
@@ -356,6 +527,24 @@ export class ScheduledTasks {
       failure.cause = error;
       throw failure;
     }
+  }
+
+  /**
+   * Once a one-off's run has reached the Main Chat, however it ended: Scheduler has deleted its schedule
+   * (`ActionAfterCompletion: DELETE`), so it can never run again, and the task leaves the account, freeing its place
+   * under the cap. Its Side Chat and run card keep the record. A task that has made its count of runs leaves with its
+   * schedule. Any other recurring task stays.
+   */
+  async retire(owner: string, task: ScheduledTask): Promise<void> {
+    // A run queued before the task was made one-off leaves it until its own time comes.
+    if (fired(task)) {
+      await this.remove(owner, task.id, task.proposalId);
+      return;
+    }
+    if (task.maxRuns === undefined) return;
+    // The run just recorded is not in the task as its run read it.
+    const current = await this.get(owner, task.id);
+    if (current !== null && spent(current)) await this.delete(owner, task.id);
   }
 
   /** Account deletion: every task goes, schedule first. */
@@ -409,7 +598,12 @@ export class ScheduledTasks {
    * the cap is free. Whether it landed: false when the cap refused it.
    */
   private async move(source: string, destination: string, item: TaskItem): Promise<boolean> {
-    await this.scheduler.send(new UpdateScheduleCommand(this.schedule(destination, item)));
+    try {
+      await this.scheduler.send(new UpdateScheduleCommand(this.schedule(destination, item)));
+    } catch (error) {
+      // Scheduler deletes a one-off's schedule once its run is delivered; the task moves until its run retires it.
+      if (!(error instanceof ResourceNotFoundException && once(item.schedule))) throw error;
+    }
     const destinationCount = {
       Update: {
         TableName: this.tableName,
@@ -507,28 +701,47 @@ export class ScheduledTasks {
     }
   }
 
-  private schedule(owner: string, { id, schedule, timezone, paused, created_at }: TaskItem, group = this.config.group) {
+  private schedule(owner: string, { id, schedule, timezone, endDate, paused, created_at }: TaskItem, group = this.config.group) {
     const message: ScheduledRunMessage = { owner, taskId: id };
-    const rate = /^rate\(\s*([1-9]\d*)\s+(minute|hour|day)s?\s*\)$/.exec(schedule);
-    let startDate: Date | undefined;
-    if (rate !== null) {
-      const units = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
-      const period = Number(rate[1]) * units[rate[2] as keyof typeof units];
-      const anchor = new Date(created_at).getTime();
-      const tick = Math.max(1, Math.floor((Date.now() - anchor) / period) + 1);
-      startDate = new Date(anchor + tick * period);
-    }
+    const startDate = nextRateTick(schedule, created_at);
+    // Scheduler's API reference promises no past EndDate, so a schedule past its stop time goes without one, disabled:
+    // the task keeps its stop time, to move or clear.
+    const stopped = endDate !== undefined && Date.parse(endDate) <= Date.now();
     return {
       Name: id,
       GroupName: group,
       ScheduleExpression: schedule,
       ScheduleExpressionTimezone: timezone,
       ...(startDate === undefined ? {} : { StartDate: startDate }),
-      State: paused ? ('DISABLED' as const) : ('ENABLED' as const),
+      ...(endDate === undefined || stopped ? {} : { EndDate: new Date(endDate) }),
+      // A one-off schedule is gone once it has run; its run retires the task.
+      ...(once(schedule) ? { ActionAfterCompletion: 'DELETE' as const } : {}),
+      State: paused || stopped ? ('DISABLED' as const) : ('ENABLED' as const),
       FlexibleTimeWindow: { Mode: 'OFF' as const },
       Target: { Arn: this.config.queueArn, RoleArn: this.config.roleArn, Input: JSON.stringify(message) },
     };
   }
+}
+
+/** The task with an edit applied: a stop time cleared with null leaves it without one. */
+function withChanges(item: TaskItem, { endDate, ...rest }: TaskChanges): TaskItem {
+  const { endDate: previous, ...kept } = item;
+  const stop = endDate === undefined ? previous : (endDate ?? undefined);
+  return { ...kept, ...rest, ...(stop === undefined ? {} : { endDate: stop }) };
+}
+
+/** The DynamoDB update an edit makes: SET each field it sends, REMOVE each it clears; null when it changes none. */
+function changeExpression(changes: TaskChanges) {
+  const fields = Object.entries(changes);
+  if (fields.length === 0) return null;
+  const set = fields.flatMap(([, value], index) => (value === null ? [] : [`#field${index} = :value${index}`]));
+  const removed = fields.flatMap(([, value], index) => (value === null ? [`#field${index}`] : []));
+  const values = fields.flatMap(([, value], index) => (value === null ? [] : [[`:value${index}`, value] as const]));
+  return {
+    UpdateExpression: [set.length === 0 ? '' : `SET ${set.join(', ')}`, removed.length === 0 ? '' : `REMOVE ${removed.join(', ')}`].join(' ').trim(),
+    ExpressionAttributeNames: Object.fromEntries(fields.map(([name], index) => [`#field${index}`, name])),
+    ...(values.length === 0 ? {} : { ExpressionAttributeValues: Object.fromEntries(values) }),
+  };
 }
 
 /** Scheduler's refusal of an expression or timezone is the user's 400; anything else propagates. */

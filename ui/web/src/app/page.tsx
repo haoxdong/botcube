@@ -2,7 +2,7 @@
 
 import { Children, lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Blocks, ChevronDown, ChevronRight, MessageCircle, Pencil, Plus } from "lucide-react";
+import { Blocks, ChevronDown, ChevronRight, Clock, MessageCircle, Pencil, Plus, X } from "lucide-react";
 import "@copilotkit/react-core/v2/styles.css";
 import { KeptChat } from "./kept-chat";
 import { usePhoneSidebarSwipe } from "./phone-sidebar-swipe";
@@ -17,6 +17,7 @@ import {
 } from "./agent-profile";
 import { openingMainChat, useSessionNavigation, type HistoryMoment } from "./session-navigation";
 import { forgetMainChatCopy, withStorage, type StoredMainChatCopy } from "./main-chat-copy";
+import { forgetQueuedFollowUps } from "./queued-follow-up";
 import { endOpeningMoment } from "./latency";
 import { rumConfig, startRum } from "./rum";
 import { useModelSelection, type ModelList } from "./model-selection";
@@ -436,7 +437,7 @@ function App({
     }
   }
   const {
-    current: { id: activeId, newChat, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure },
+    current: { id: activeId, openAt, newChat, provider: activeProvider, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure, turnRunning, turnMayRun },
     mainChatId,
     sideChats: { entries: sideChats, error: sideChatsError },
     failures: { mainChat: mainChatError, linkedChat: linkedChatError, refresh: mainChatRefreshError, stop: stopError },
@@ -453,6 +454,11 @@ function App({
   });
   const { model: offeredModel, effort } = picker;
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Five Side Chats, five more per Show more; the open one shows wherever it falls.
+  const [sideChatsShown, setSideChatsShown] = useState(5);
+  const shownSideChats = sideChats.slice(0, Math.max(sideChatsShown, sideChats.findIndex(c => c.id === activeId) + 1));
+  // Show more can reveal the last batch and unmount itself, so focus moves to the first row it revealed.
+  const revealedSideChat = useRef<string | null>(null);
   /** A changed, non-blank name is saved as typed; any other leaves the Side Chat's name as it was. */
   const finishRename = (conversation: ConversationEntry, name: string | null) => {
     setRenamingId(null);
@@ -683,7 +689,7 @@ function App({
                 <span>Side chats are an optional way to organize your conversations by topic.</span>
               </div>
             )}
-            {sideChats.map((c) => (
+            {shownSideChats.map((c) => (
               <div
                 key={c.id}
                 className={`sidebar-item ${!pluginsOpen && c.id === activeId ? "sidebar-item-active" : ""}`}
@@ -694,8 +700,16 @@ function App({
                   <>
                     <button
                       className="sidebar-item-btn"
+                      ref={(button) => {
+                        if (button && c.id === revealedSideChat.current) {
+                          revealedSideChat.current = null;
+                          button.focus();
+                        }
+                      }}
                       onClick={() => { showMain('chat'); void handleSelectConversation(c); }}
                     >
+                      {/* A scheduled task's Side Chat, beside the user's own topic chats */}
+                      {c.scheduled && <Clock className="sidebar-item-icon" role="img" aria-label="Scheduled" aria-hidden={false} />}
                       {c.title}
                     </button>
                     <button
@@ -706,17 +720,29 @@ function App({
                     >
                       <Pencil size={16} aria-hidden />
                     </button>
+                    <button
+                      className="sidebar-item-delete"
+                      onClick={() => { void handleDeleteConversation(c); }}
+                      aria-label="Delete side chat"
+                      title="Delete side chat"
+                    >
+                      <X size={16} aria-hidden />
+                    </button>
                   </>
                 )}
-                <button
-                  className="sidebar-item-delete"
-                  onClick={() => { void handleDeleteConversation(c); }}
-                  aria-label="Delete conversation"
-                >
-                  &times;
-                </button>
               </div>
             ))}
+            {shownSideChats.length < sideChats.length && (
+              <button
+                className="sidebar-show-more"
+                onClick={() => {
+                  revealedSideChat.current = sideChats[shownSideChats.length]?.id ?? null;
+                  setSideChatsShown(shownSideChats.length + 5);
+                }}
+              >
+                Show more
+              </button>
+            )}
           </div>
         </div>
 
@@ -734,7 +760,11 @@ function App({
               try {
                 forgetMainChatCopy();
               } finally {
-                auth.logout();
+                try {
+                  forgetQueuedFollowUps();
+                } finally {
+                  auth.logout();
+                }
               }
             }}
           />
@@ -781,6 +811,9 @@ function App({
                 key={activeId}
                 agent={agent}
                 threadId={activeId}
+                accountId={accountId}
+                turnRunning={turnRunning}
+                turnMayRun={turnMayRun}
                 onOpened={() => setKeptChatShown(false)}
                 showWelcome={showWelcome}
                 userName={auth.user?.name}
@@ -790,6 +823,8 @@ function App({
                 onMessageSubmitted={messageSubmitted}
                 stopServerTurn={stopServerTurn}
                 savedFailure={turnFailure}
+                openAt={openAt}
+                onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)}
               >
                 <div className="chat-model-picker">
                   <ModelEffortPicker {...picker} />
@@ -836,6 +871,11 @@ function App({
           onClose={profileSwipe.close}
           revision={agentDocumentsRevision}
           onSaved={() => void refreshAgentProfile()}
+          onOpenChat={(id, title) => {
+            profileSwipe.close();
+            showMain('chat');
+            void handleSelectConversation({ id, title });
+          }}
           isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
           tabs={webUiPlugin.agentProfileTabs}
         />,

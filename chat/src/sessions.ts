@@ -5,11 +5,13 @@ import type { ScheduledTasks } from './scheduled-tasks.js';
 import type { SessionApi } from './session-api.js';
 import { trackedRuntime, type SessionMetadata, type SessionPurge, type SessionSummary } from './session-metadata.js';
 
-const threadSummary = ({ session_id, title, created_at, updated_at }: SessionSummary) => ({
+const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_task_id }: SessionSummary) => ({
   id: session_id,
   title,
   created_at,
   updated_at,
+  // A scheduled task's Side Chat, which the drawer marks.
+  ...(scheduled_task_id === undefined ? {} : { scheduled: true }),
 });
 
 /**

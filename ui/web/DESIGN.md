@@ -103,7 +103,7 @@ from `botcube-ui-web/ui`.
 - **Close** (`.agent-profile-close`, the Agent Profile): a 44px circle on `surface` holding a `text` ✕ (hover
   `border`), 16px from the top and left edges (Muse Figs 13-16).
 - **Field** (`<Field>`, `.field`: `input`, `textarea`, `select`): `body` text, 10px × 12px, a `border` line, `radius-lg`, its `detail`
-  label 4px above.
+  label 4px above. The sidebar's inline rename field is a pill, the shape of the row it replaces.
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason.
   The disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey

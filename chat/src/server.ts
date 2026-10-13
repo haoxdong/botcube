@@ -32,6 +32,7 @@ import {
   trackedRuntime,
   SessionClaimError,
   SessionProviderError,
+  SessionBusyError,
   type SessionMetadata,
   type TurnActivity,
   type SessionPurge,
@@ -39,7 +40,9 @@ import {
 import {
   ScheduledTasks,
   schedulerConfigFromEnv,
+  type ScheduledTask,
   type ScheduledTaskDefinition,
+  type TaskChanges,
 } from './scheduled-tasks.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
 import { persistedTurnError, relayTurn, sseFrameData, stopTurn, turnCredentialGuard, turnCredentials, turnErrorDetails, type HeldIds } from './turn-stream.js';
@@ -186,16 +189,33 @@ function takeHeldIds(forwardedProps: Record<string, unknown>): HeldIds {
 
 const TASK_FIELDS = ['title', 'prompt', 'schedule', 'timezone'] as const;
 
+/** An edit, or a new task, which alone takes a count of runs. */
+type TaskFields = TaskChanges & Pick<ScheduledTaskDefinition, 'maxRuns'>;
+
 /** A task's definition fields from a request body: all of them, or (`required` false) any present. */
-function taskDefinition(body: unknown, required: boolean): Partial<ScheduledTaskDefinition> {
+function taskDefinition(body: unknown, required: boolean): TaskFields {
   if (!isRecord(body)) throw new HttpError(422, 'Expected a JSON object');
-  const definition: Partial<ScheduledTaskDefinition> = {};
+  const definition: TaskFields = {};
   for (const field of TASK_FIELDS) {
     const value = body[field];
     if (value === undefined && !required) continue;
     if (typeof value !== 'string' || !value.trim()) throw new HttpError(422, `${field} is required`);
     definition[field] = value.trim();
   }
+  // The stop time: an instant, when Scheduler stops the schedule; on an edit, null clears it.
+  const endDate = body.endDate;
+  if (endDate === null && !required) definition.endDate = null;
+  else if (endDate !== undefined) {
+    if (typeof endDate !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(endDate) || Number.isNaN(Date.parse(endDate))) {
+      throw new HttpError(422, 'endDate must be an ISO date and time');
+    }
+    definition.endDate = new Date(endDate).toISOString();
+  }
+  // How many runs a new task makes before it retires itself.
+  const maxRuns = body.maxRuns;
+  if (!required || maxRuns === undefined) return definition;
+  if (!Number.isInteger(maxRuns) || (maxRuns as number) < 1) throw new HttpError(422, 'maxRuns must be a whole number from 1');
+  definition.maxRuns = maxRuns as number;
   return definition;
 }
 
@@ -337,6 +357,7 @@ export function createChatService(
   };
 
   const sessionAccessError = (error: unknown): unknown => {
+    if (error instanceof SessionBusyError) return new HttpError(409, 'The previous Turn is still going');
     if (error instanceof SessionClaimError) return new HttpError(409, 'Account Claim is in progress. Finish signing in and retry.');
     if (error instanceof SessionDeletedError) return new HttpError(410, 'The Session was deleted');
     return error;
@@ -680,9 +701,12 @@ export function createChatService(
     return scheduledTasks;
   };
 
+  /** The task as its sheet shows it: with whether its Side Chat, named by the task's ID once it has run there, exists. */
+  const taskView = async (owner: string, task: ScheduledTask) => ({ ...task, sideChat: (await sessionMetadata.get(owner, task.id)) !== null });
+
   app.get('/scheduled-tasks', async (c) => {
     const { owner } = await cartridge.requester(c);
-    return c.json({ tasks: await tasks().list(owner) });
+    return c.json({ tasks: await Promise.all((await tasks().list(owner)).map((task) => taskView(owner, task))) });
   });
 
   app.post('/scheduled-tasks', async (c) => {
@@ -694,7 +718,7 @@ export function createChatService(
     const proposalId = (body as Record<string, unknown>).proposalId;
     if (typeof proposalId !== 'string' || !proposalId.trim()) throw new HttpError(422, 'proposalId is required');
     const { task, created } = await scheduled.create(owner, proposalId, definition);
-    return c.json(task, created ? 201 : 200);
+    return c.json(await taskView(owner, task), created ? 201 : 200);
   });
 
   app.patch('/scheduled-tasks/:id', async (c) => {
@@ -711,7 +735,7 @@ export function createChatService(
     }
     const updated = await tasks().update(owner, c.req.param('id'), paused === undefined ? changes : { ...changes, paused });
     if (updated === null) throw new HttpError(404, 'Scheduled task not found');
-    return c.json(updated);
+    return c.json(await taskView(owner, updated));
   });
 
   app.delete('/scheduled-tasks/:id', async (c) => {

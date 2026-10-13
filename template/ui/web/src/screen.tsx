@@ -17,6 +17,7 @@ export function Screen({
   cover,
   actions,
   onAsleep,
+  onFrame,
   onError,
 }: {
   url: string | null;
@@ -25,6 +26,7 @@ export function Screen({
   /** Controls at the end of the window's title bar. */
   actions?: ReactNode;
   onAsleep: () => void;
+  onFrame?: () => void;
   onError: (message: string) => void;
 }) {
   const [frame, setFrame] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function Screen({
           if (shown !== null) URL.revokeObjectURL(shown);
           shown = image;
           setFrame(image);
+          onFrame?.();
           timer = setTimeout(next, FRAME_MS);
         },
         (cause: Error) => {

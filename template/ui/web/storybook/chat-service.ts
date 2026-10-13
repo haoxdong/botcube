@@ -77,6 +77,7 @@ const AWAKE = { state: 'awake', browserSessionId: 'browser-shot', control: 'agen
 /** The awake computer's view: its state, wake, and the browser's image. */
 export const awakeComputer = {
   '/agent-computer': reply('/agent-computer', AWAKE),
+  liveUrl: reply('/browser-live-view-url', { signedUrl: `${CHAT_SERVICE_ORIGIN}/agent-computer/view?thread_id=chat-1` }),
   wake: http.post(`${CHAT_SERVICE_ORIGIN}/agent-computer/wake`, () => HttpResponse.json(AWAKE)),
   view: http.get(`${CHAT_SERVICE_ORIGIN}/agent-computer/view`, async () =>
     new HttpResponse(await (await fetch(SCREEN)).blob(), { headers: { 'content-type': 'image/svg+xml' } })

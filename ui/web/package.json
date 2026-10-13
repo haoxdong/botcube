@@ -8,7 +8,19 @@
     "./latency": "./src/app/latency.ts",
     "./load-state": "./src/app/load-state.tsx",
     "./ui": "./src/components/ui/index.ts",
-    "./storybook-page": "./src/app/page.tsx"
+    "./storybook-page": "./src/app/page.tsx",
+    "./computer": "./src/computer/index.ts",
+    "./account-session": "./src/account-session.ts",
+    "./computer/styles.css": "./src/computer/styles.css",
+    "./computer/agent-computer": "./src/computer/agent-computer.tsx",
+    "./computer/browser-live-frame": "./src/computer/browser-live-frame.tsx",
+    "./computer/browser-live-view-url": "./src/computer/browser-live-view-url.ts",
+    "./computer/browser-view": "./src/computer/browser-view.tsx",
+    "./computer/computer-view": "./src/computer/computer-view.tsx",
+    "./computer/remote-viewport": "./src/computer/remote-viewport.tsx",
+    "./computer/files-app": "./src/computer/files-app.tsx",
+    "./computer/failure-detail": "./src/computer/failure-detail.ts",
+    "./dcv-assets": "./src/config/dcv-assets.mjs"
   },
   "scripts": {
     "dev": "next dev --port 3001",
@@ -40,7 +52,8 @@
     "serve": "^14.2.6",
     "shadcn": "^4.21.2",
     "streamdown": "^2.7.0",
-    "tailwind-merge": "^3.7.0"
+    "tailwind-merge": "^3.7.0",
+    "bedrock-agentcore": "^0.4.5"
   },
   "devDependencies": {
     "@storybook/addon-a11y": "^10.6.1",

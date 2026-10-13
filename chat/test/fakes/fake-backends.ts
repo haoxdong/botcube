@@ -1,3 +1,4 @@
+import type { ScheduledRunCard } from '../../src/session-api.js';
 import { HttpFake, sendJson } from './http-fake.js';
 
 type SessionOperation = 'get' | 'purge' | 'post';
@@ -11,6 +12,8 @@ export type SessionApiEvent =
       content?: string;
       /** The ID a `post` gives that message. */
       messageId?: string;
+      /** The run card a scheduled run's `post` carries. */
+      scheduledRun?: ScheduledRunCard;
       /** The message a `get` names, which the history it reads must hold. */
       contains?: string;
     }

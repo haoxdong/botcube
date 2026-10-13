@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -68,42 +69,55 @@ def actor_memory_records(
 def opening_memory(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str) -> str:
     """The Memory block a Session opens with (ADR 0031): preferences, then facts with Pending Memory first, newest first."""
     now = utc_now()
-    events = _session_events(
-        client, memory_id=memory_id, actor_id=actor_id, session_ids=_save_session_ids(now, PENDING_MEMORY_WINDOW),
-    )
+    save_sessions = _save_session_ids(now, PENDING_MEMORY_WINDOW)
+    pending_sessions = pending_memory_session_ids(now)
+    session_ids = [*save_sessions, *pending_sessions]
+    kinds = ('preferences', 'facts')
+    # The reads are independent, so the opening pays one round trip, not one per read.
+    with ThreadPoolExecutor(max_workers=len(session_ids) + len(kinds)) as pool:
+        reads: list[Future[Any]] = [
+            *(pool.submit(_list_session_events, client, memory_id=memory_id, actor_id=actor_id, session_id=session_id)
+              for session_id in session_ids),
+            *(pool.submit(list_memory_record_summaries, client, memory_id=memory_id, namespace=actor_namespace(actor_id, kind))
+              for kind in kinds),
+        ]
+    # Every read has finished, each bounded by botocore's timeouts; the first failure in read order fails the opening (ADR 0030).
+    results = [read.result() for read in reads]
+    save_events, pending_events = results[:len(save_sessions)], results[len(save_sessions):len(session_ids)]
+    preferences, facts = results[len(session_ids):]
+    events = [event for session in save_events for event in session]
+    pending = pending_memory_texts([event for session in pending_events for event in session], now=now)
     journal = _journal_entries(events, now, PENDING_MEMORY_WINDOW)
     saves = {save['recordId']: save['text'] for save in journal}
-    preferences, facts = (
-        list_memory_record_summaries(client, memory_id=memory_id, namespace=actor_namespace(actor_id, kind))
-        for kind in ('preferences', 'facts')
-    )
     preferences, facts = _actor_memory_records(preferences, facts, saves)
-    pending = pending_memory_texts(
-        _session_events(client, memory_id=memory_id, actor_id=actor_id, session_ids=pending_memory_session_ids(now)),
-        now=now,
-    )
     block = render_memory(_record_texts(_newest_first(preferences)), [*pending, *_record_texts(facts)])
+    context = _corrections_context(journal, saves)
+    if context:
+        block = f'{block}\n\n{context}' if block else context
+    return block
+
+
+def _corrections_context(journal: Sequence[Mapping[str, Any]], saves: Mapping[str, str | None]) -> str:
     previous: dict[str, list[str]] = {}
     for save in journal:
         if 'previousText' in save:
             texts = previous.setdefault(save['recordId'], [])
             if save['previousText'] not in texts:
                 texts.append(save['previousText'])
-    corrections = []
-    for record_id, texts in previous.items():
-        replacement = saves[record_id]
-        corrections.extend(
-            json.dumps({'previousText': text, 'text': replacement}) for text in texts if text != replacement
-        )
-    if corrections:
-        context = (
-            'Memory page corrections (authoritative):\n'
-            'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
-            'Each previousText is superseded by text; null means forgotten and must not be used. '
-            'Keep unrelated facts from those saves.\n' + '\n'.join(corrections)
-        )
-        block = f'{block}\n\n{context}' if block else context
-    return block
+    corrections = [
+        json.dumps({'previousText': text, 'text': saves[record_id]})
+        for record_id, texts in previous.items()
+        for text in texts
+        if text != saves[record_id]
+    ]
+    if not corrections:
+        return ''
+    return (
+        'Memory page corrections (authoritative):\n'
+        'These corrections override conflicting memories above, including paraphrases and parts of compound saves. '
+        'Each previousText is superseded by text; null means forgotten and must not be used. '
+        'Keep unrelated facts from those saves.\n' + '\n'.join(corrections)
+    )
 
 
 def _record_texts(records: Sequence[MemoryRecordSummaryTypeDef]) -> list[str]:
@@ -141,18 +155,25 @@ def _session_events(
     client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, session_ids: Sequence[str],
 ) -> list[EventTypeDef]:
     """Every event of the actor's sessions; a session never written to has none."""
+    return [
+        event for session_id in session_ids
+        for event in _list_session_events(client, memory_id=memory_id, actor_id=actor_id, session_id=session_id)
+    ]
+
+
+def _list_session_events(
+    client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, session_id: str,
+) -> list[EventTypeDef]:
     events: list[EventTypeDef] = []
-    for session_id in session_ids:
-        kwargs: dict[str, Any] = {
-            'memoryId': memory_id, 'actorId': actor_id, 'sessionId': session_id, 'includePayloads': True, 'maxResults': 100,
-        }
-        while True:
-            response = client.list_events(**kwargs)
-            events += response['events']
-            if 'nextToken' not in response:
-                break
-            kwargs['nextToken'] = response['nextToken']
-    return events
+    kwargs: dict[str, Any] = {
+        'memoryId': memory_id, 'actorId': actor_id, 'sessionId': session_id, 'includePayloads': True, 'maxResults': 100,
+    }
+    while True:
+        response = client.list_events(**kwargs)
+        events += response['events']
+        if 'nextToken' not in response:
+            return events
+        kwargs['nextToken'] = response['nextToken']
 
 
 def _saves_from_events(

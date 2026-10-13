@@ -37,18 +37,11 @@ const near = async (actual: number, expected: number, tolerance = 1) => expect(M
 async function noPageScroll(root: HTMLElement) {
   await expect(root.ownerDocument.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 }
-/** The Computer tab's screen: the panel's full width, a 16:10 viewport, and its bar 12px under it. */
+/** The shared desktop keeps its browser at 16:9 and its dock below it. */
 async function computerGeometry(panel: HTMLElement) {
-  const content = panel.getBoundingClientRect();
-  const style = getComputedStyle(panel);
-  const screen = box(panel, '.template-screen');
-  const glass = box(panel, '.template-screen-glass');
-  const bar = box(panel, '.template-computer-bar');
-  await near(screen.left, content.left + parseFloat(style.paddingLeft));
-  await near(screen.right, content.right - parseFloat(style.paddingRight));
-  await near(glass.width / glass.height, 1.6, 0.01);
-  await near(bar.top - screen.bottom, 12);
-  await near(box(panel, '.template-computer-bar .button').right, screen.right);
+  const screen = box(panel, '.agent-computer-window');
+  await near(screen.width / screen.height, 16 / 9, 0.01);
+  await expect(panel.querySelector('.agent-computer-dock')).toBeVisible();
   return screen;
 }
 
@@ -146,8 +139,7 @@ export const ProfileComputer: Story = {
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
     const panel = computerPanel(canvasElement);
-    await within(panel).findByRole('button', { name: 'Wake' }, { timeout: 30000 });
-    await waitFor(() => expect(within(panel).getByRole('button', { name: 'Wake' })).toBeEnabled());
+    await visible(panel, '.agent-computer-desktop');
     await computerGeometry(panel);
     await noPageScroll(canvasElement);
   }),
@@ -158,7 +150,7 @@ export const ProfileComputerAwake: Story = {
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Computer');
     const panel = computerPanel(canvasElement);
-    const covered = box(panel, '.template-screen');
+    const covered = box(panel, '.agent-computer-window');
     await visible(panel, '.template-screen-image');
     // The screen keeps its place and size from its cover to its first frame.
     const live = await computerGeometry(panel);

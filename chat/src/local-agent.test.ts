@@ -861,7 +861,7 @@ describe('a Turn against a local Harness', () => {
     try {
       await expect(runScheduledTask({
         cartridge, sessionMetadata: metadata, agentDocuments, invokeSessionApi: post,
-        scheduledTasks: { get: async () => ({ id: 'scheduled-gate', proposalId: 'proposal-gate', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false }) },
+        scheduledTasks: { get: async () => ({ id: 'scheduled-gate', proposalId: 'proposal-gate', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
         upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), runtimeNamespaceRequired: true, turnIdentity: null,
         summarizeTurn: async () => ({ title: 'Brief', summary: 'Brief summary' }),
       }, { owner: 'acct_owner', taskId: 'scheduled-gate', deliveryId: 'scheduled-gate-delivery' })).rejects.toMatchObject({ status: 503 });

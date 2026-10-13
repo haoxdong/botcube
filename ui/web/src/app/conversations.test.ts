@@ -142,6 +142,20 @@ describe('Side Chat listing', () => {
       { id: 'numeric-title', title: 'Untitled conversation', created_at: '2026-07-10T10:00:00.000Z', updated_at: '2026-07-10T10:02:00.000Z' },
     ]);
   });
+
+  it("keeps a scheduled task's Side Chat marked as scheduled", async () => {
+    const { fetchImpl } = recordingFetch(json({
+      threads: [
+        { id: 'task-1', title: 'Morning brief', scheduled: true },
+        { id: 'topic', title: 'My topic' },
+      ],
+    }));
+
+    expect(await fetchSideChats({ chatServiceUrl: SERVICE, fetchImpl })).toEqual([
+      { id: 'task-1', title: 'Morning brief', created_at: null, updated_at: null, scheduled: true },
+      { id: 'topic', title: 'My topic', created_at: null, updated_at: null },
+    ]);
+  });
 });
 
 describe('direct agent saved messages', () => {

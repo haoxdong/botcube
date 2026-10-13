@@ -6,7 +6,7 @@ export type UpstreamScript =
    * 200 SSE: each frame is followed by a blank line; `drop` cuts the connection after them.
    * Frames given as a function are built from the invocation's forwarded props.
    */
-  | { kind: 'stream'; frames: string[] | ((forwardedProps: Record<string, unknown>) => string[]); drop?: boolean }
+  | { kind: 'stream'; frames: string[] | ((forwardedProps: Record<string, unknown>) => string[]); drop?: boolean; hold?: Promise<void> }
   /** A non-2xx answer; a null body is cut off before it can be read. */
   | { kind: 'error'; status: number; body: string | null };
 
@@ -94,6 +94,11 @@ export function playRuntime(script: UpstreamScript, forwardedProps: Record<strin
   const body = frames.map((frame) => `${frame}\n\n`).join('');
   if (script.drop) {
     response.write(body, () => response.socket?.destroy());
+    return;
+  }
+  if (script.hold !== undefined) {
+    response.write(`${frames[0]}\n\n`);
+    void script.hold.then(() => response.end(frames.slice(1).map((frame) => `${frame}\n\n`).join('')));
     return;
   }
   response.end(body);

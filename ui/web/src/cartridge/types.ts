@@ -98,6 +98,11 @@ export interface WebUiPlugin {
   agentProfileTabs?: Partial<Record<AgentProfileTab, ComponentType>>;
   /** A short-lived URL for one of the agent's files, by the path a reply names it with, such as `/chart.svg`. */
   fileUrl?: (path: string) => Promise<string>;
+  /**
+   * Uploads a file the user attached in the composer to the agent's files; resolves to the path the agent reads it by,
+   * such as `/report.csv`. Without it, the composer has no +. Rejects with the reason it failed.
+   */
+  uploadFile?: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
   /** The binary every agent command runs, with its trailing space, such as `tool `: a command's step label drops it. */
   commandPrefix?: string;
   theme: Record<string, string>;

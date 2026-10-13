@@ -8,7 +8,7 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import { PrivateCredentialService, type PrivateCredentialServiceProps } from '../lib/private-credential-service';
 
-function synth(legacyVault?: PrivateCredentialServiceProps['legacyVault'], corporate = false, invocationTokenLength?: number, overrides: Partial<PrivateCredentialServiceProps> | ((stack: Stack) => Partial<PrivateCredentialServiceProps>) = {}) {
+function synth(corporate = false, invocationTokenLength?: number, overrides: Partial<PrivateCredentialServiceProps> | ((stack: Stack) => Partial<PrivateCredentialServiceProps>) = {}) {
   const stack = new Stack(new App(), 'Credentials', { env: { account: '123456789012', region: 'us-east-1' } });
   const vpc = ec2.Vpc.fromVpcAttributes(stack, 'Vpc', {
     vpcId: 'vpc-fixture12345678', availabilityZones: ['us-east-1a', 'us-east-1c'],
@@ -25,9 +25,8 @@ function synth(legacyVault?: PrivateCredentialServiceProps['legacyVault'], corpo
     cluster, chatNetwork: ec2.SecurityGroup.fromSecurityGroupId(stack, 'Chat', 'sg-fixture11111111'),
     agentNetwork: ec2.SecurityGroup.fromSecurityGroupId(stack, 'Agent', 'sg-fixture22222222'),
     image: ecs.ContainerImage.fromRegistry('test-image'), tableName: 'test-vault',
-    ...(legacyVault ? { legacyVault } : {}),
     ...(invocationTokenLength === undefined ? {} : { invocationTokenLength }),
-    rpcPath: '/rpc', environmentKeys: { port: 'SERVICE_PORT', invocationToken: 'RPC_TOKEN', keyId: 'KEY', vaultTable: 'VAULT', legacyVaultTable: 'LEGACY_VAULT' },
+    rpcPath: '/rpc', environmentKeys: { port: 'SERVICE_PORT', invocationToken: 'RPC_TOKEN', keyId: 'KEY', vaultTable: 'VAULT' },
     namespaceName: 'test.internal', alertsTopicName: 'existing-alerts', port: 8081, parked: false,
     authBrowserId: 'test_auth_browser-1234567890', agentComputerBrowserId: 'test_agent_computer-1234567890', ...(typeof overrides === 'function' ? overrides(stack) : overrides),
   });
@@ -174,11 +173,11 @@ test('the invocation token is a generated 64-character alphanumeric secret', () 
 });
 
 test.each([1, 31, 0, -1, 32.5, NaN, Infinity, -Infinity])('rejects invocation token length %s before generating a signing secret', invocationTokenLength => {
-  expect(() => synth(undefined, false, invocationTokenLength)).toThrow('invocationTokenLength must be an integer of at least 32 characters');
+  expect(() => synth(false, invocationTokenLength)).toThrow('invocationTokenLength must be an integer of at least 32 characters');
 });
 
 test.each([32, 96])('generates the requested secure %s-character invocation token', invocationTokenLength => {
-  expect(only(synth(undefined, false, invocationTokenLength), 'AWS::SecretsManager::Secret').Properties)
+  expect(only(synth(false, invocationTokenLength), 'AWS::SecretsManager::Secret').Properties)
     .toEqual({ GenerateSecretString: { ExcludePunctuation: true, PasswordLength: invocationTokenLength } });
 });
 
@@ -216,53 +215,8 @@ test('the construct outputs its URL and the ids the Smoke Test reads', () => {
   });
 });
 
-describe('while the account-keyed Vault is kept for its migration', () => {
-  const tables = (template: Template) => Object.fromEntries(Object.entries(template.findResources('AWS::DynamoDB::Table'))
-    .map(([id, resource]) => [resource.Properties.TableName, { id, ...resource }]));
-
-  test('it stays under the construct ID it was deployed with, retained and closed to every other principal', () => {
-    const template = synth({ tableName: 'legacy-vault', mirrored: true });
-    const taskRole = only(template, 'AWS::ECS::TaskDefinition').Properties.TaskRoleArn;
-    const { 'legacy-vault': legacy, 'test-vault': vault } = tables(template);
-    assert(legacy && vault);
-    expect(legacy.id).toMatch(/^ServiceVault[0-9A-F]{8}$/);
-    expect(vault.id).toMatch(/^ServiceProviderVault[0-9A-F]{8}$/);
-    expect(legacy).toMatchObject({ DeletionPolicy: 'Retain', Properties: {
-      KeySchema: [{ AttributeName: 'accountId', KeyType: 'HASH' }], DeletionProtectionEnabled: true,
-      ResourcePolicy: { PolicyDocument: { Statement: [expect.objectContaining({ Effect: 'Deny', Condition: { ArnNotEquals: { 'aws:PrincipalArn': taskRole } } })] } },
-    } });
-  });
-
-  test('the task role can scan it and condition a copy on it, and reaches the provider-keyed Vault only by key', () => {
-    const template = synth({ tableName: 'legacy-vault', mirrored: true });
-    const taskRole = only(template, 'AWS::ECS::TaskDefinition').Properties.TaskRoleArn;
-    const { 'legacy-vault': legacy, 'test-vault': vault } = tables(template);
-    assert(legacy && vault);
-    const [policy] = Object.values(template.findResources('AWS::IAM::Policy')).filter(resource => resource.Properties.Roles[0].Ref === taskRole['Fn::GetAtt'][0]);
-    assert(policy);
-    expect(policy.Properties.PolicyDocument.Statement).toEqual(expect.arrayContaining([
-      { Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'], Effect: 'Allow', Resource: [{ 'Fn::GetAtt': [vault.id, 'Arn'] }] },
-      { Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:Scan', 'dynamodb:ConditionCheckItem'], Effect: 'Allow', Resource: [{ 'Fn::GetAtt': [legacy.id, 'Arn'] }] },
-    ]));
-  });
-
-  test.each([
-    [true, true],
-    [false, false],
-  ])('mirrored=%s names it to the service: %s', (mirrored, named) => {
-    const template = synth({ tableName: 'legacy-vault', mirrored });
-    const { 'legacy-vault': legacy } = tables(template);
-    assert(legacy);
-    const [container] = only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions;
-    expect(container.Environment.filter((entry: { Name: string }) => entry.Name === 'LEGACY_VAULT'))
-      .toEqual(named ? [{ Name: 'LEGACY_VAULT', Value: { Ref: legacy.id } }] : []);
-    expect(template.toJSON().Outputs.CredentialLegacyVaultTableName).toEqual({ Value: { Ref: legacy.id } });
-  });
-});
-
-
 test('corporate resources supply the real execution role and vault key without generated replacements', () => {
-  const template = synth(undefined, true);
+  const template = synth(true);
   expect(Object.values(template.findResources('AWS::ECS::TaskDefinition')).map(resource => ({ cpu: resource.Properties.Cpu, memory: resource.Properties.Memory, executionRole: resource.Properties.ExecutionRoleArn }))).toMatchSnapshot();
   expect(Object.values(synth().findResources('AWS::ECS::TaskDefinition')).map(resource => ({ cpu: resource.Properties.Cpu, memory: resource.Properties.Memory, executionRole: resource.Properties.ExecutionRoleArn }))).toMatchSnapshot();
   template.hasResourceProperties('AWS::ECS::TaskDefinition', {
@@ -277,7 +231,7 @@ test('corporate resources supply the real execution role and vault key without g
 });
 
 test('adopter names reach Credential Service tasks, roles, network, secret and error alarm', () => {
-  const template = synth(undefined, false, undefined, {
+  const template = synth(false, undefined, {
     errorMetricFilterName: 'adopter-vault-filter', taskFamily: 'adopter-vault-task', taskRoleName: 'adopter-vault-role', executionRoleName: 'adopter-vault-execution',
     securityGroupName: 'adopter-vault-network', invocationSecretName: 'adopter-vault-secret', errorAlarmName: 'adopter-vault-errors',
   });
@@ -291,9 +245,9 @@ test('adopter names reach Credential Service tasks, roles, network, secret and e
 
 test('adopter invocation secret is reused and retains ownership of its name', () => {
   const imported = (stack: Stack) => secretsmanager.Secret.fromSecretCompleteArn(stack, 'OwnedSecret', 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF');
-  const template = synth(undefined, false, undefined, stack => ({ invocationSecret: imported(stack) }));
+  const template = synth(false, undefined, stack => ({ invocationSecret: imported(stack) }));
   template.resourceCountIs('AWS::SecretsManager::Secret', 0);
   template.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: [Match.objectLike({ Secrets: [{ Name: 'RPC_TOKEN', ValueFrom: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF' }] })] });
-  expect(() => synth(undefined, false, undefined, stack => ({ invocationSecret: imported(stack), invocationSecretName: 'replacement' }))).toThrow('imported invocationSecret owns its name');
-  expect(() => synth(undefined, true, undefined, { executionRoleName: 'replacement' })).toThrow('imported executionRole owns its name');
+  expect(() => synth(false, undefined, stack => ({ invocationSecret: imported(stack), invocationSecretName: 'replacement' }))).toThrow('imported invocationSecret owns its name');
+  expect(() => synth(true, undefined, { executionRoleName: 'replacement' })).toThrow('imported executionRole owns its name');
 });

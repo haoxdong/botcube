@@ -7,7 +7,9 @@ from today's and yesterday's sessions) while AgentCore's strategy extraction cat
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, NoReturn, cast
 
 import pytest
@@ -320,3 +322,82 @@ def test_correction_authority_is_not_lost_when_fact_section_is_capped(memory: Fa
     assert 'semantic facts:\n- Unrelated fact 50' in block
     assert '\n- Amber telescope' not in block
     assert json.dumps({'previousText': 'Copper telescope', 'text': 'Amber telescope'}) in block
+
+
+class _SlowMemory:
+    """The fake Memory with a round trip of LATENCY on every read."""
+
+    LATENCY = 0.1
+
+    def __init__(self, memory: FakeAgentCoreMemory) -> None:
+        self._memory = memory
+        self.reads = 0
+
+    def _read(self) -> None:
+        self.reads += 1
+        time.sleep(self.LATENCY)
+
+    def list_events(self, **params: Any) -> dict[str, Any]:
+        self._read()
+        return self._memory.list_events(**params)
+
+    def get_paginator(self, operation: str) -> Any:
+        paginate = self._memory.get_paginator(operation).paginate
+
+        def slow(**params: Any) -> Any:
+            self._read()
+            return paginate(**params)
+
+        return SimpleNamespace(paginate=slow)
+
+
+def test_the_opening_reads_memory_concurrently(memory: FakeAgentCoreMemory) -> None:
+    memory.records += [_preference('User prefers dark mode'), _fact('Copper is an industrial metal')]
+    slow = _SlowMemory(memory)
+
+    started = time.perf_counter()
+    block = memory_document.opening_memory(cast(Any, slow), memory_id=MEMORY_ID, actor_id=ACTOR)
+    elapsed = time.perf_counter() - started
+
+    assert block == 'user preferences:\n- User prefers dark mode\n\nsemantic facts:\n- Copper is an industrial metal'
+    assert slow.reads == 8
+    # One round trip, not eight.
+    assert elapsed < 2 * _SlowMemory.LATENCY, f'{slow.reads} reads took {elapsed:.3f}s'
+
+
+def test_a_failing_record_listing_fails_the_load(memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch) -> None:
+    error = EXCEPTIONS.ThrottledException(
+        {'Error': {'Code': 'ThrottledException', 'Message': 'slow down'}}, 'ListMemoryRecords',
+    )
+
+    def paginate(**_params: Any) -> NoReturn:
+        raise error
+
+    monkeypatch.setattr(memory, 'get_paginator', lambda _operation: SimpleNamespace(paginate=paginate))
+
+    with pytest.raises(EXCEPTIONS.ThrottledException):
+        _open(memory)
+
+
+def test_when_several_reads_fail_the_first_in_read_order_fails_the_load(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The event reads come first; the record listings fail sooner but must not win the race."""
+    first = EXCEPTIONS.ThrottledException({'Error': {'Code': 'ThrottledException', 'Message': 'events'}}, 'ListEvents')
+    later = EXCEPTIONS.ThrottledException(
+        {'Error': {'Code': 'ThrottledException', 'Message': 'records'}}, 'ListMemoryRecords',
+    )
+
+    def slow_list_events(**_params: Any) -> NoReturn:
+        time.sleep(0.1)
+        raise first
+
+    def paginate(**_params: Any) -> NoReturn:
+        raise later
+
+    monkeypatch.setattr(memory, 'list_events', slow_list_events)
+    monkeypatch.setattr(memory, 'get_paginator', lambda _operation: SimpleNamespace(paginate=paginate))
+
+    with pytest.raises(EXCEPTIONS.ThrottledException) as raised:
+        _open(memory)
+    assert raised.value is first

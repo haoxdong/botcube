@@ -1,13 +1,7 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { signCredentialServiceInvocation } from 'botcube-chat/credential-service-token';
+import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { accountsNeedingSignIn, templateRequester } from './account.js';
-
-export function invocationToken(secret: string, account: string, session: string, scope?: string): string {
-  if (!secret.trim() || !account.trim() || !session.trim()) throw new Error('Template Credential Service signing configuration is required');
-  const body = { account_id: account, expires_at: Math.floor(Date.now() / 1000) + 600, ...(scope ? { scope } : {}), session_id: session };
-  const payload = Buffer.from(JSON.stringify(body)).toString('base64url');
-  return `v1.${payload}.${createHmac('sha256', secret).update(payload).digest('base64url')}`;
-}
 
 export interface SiteSignInOptions {
   serviceUrl: () => string;
@@ -23,7 +17,7 @@ export function siteSignInRoutes(options: SiteSignInOptions): Hono {
     if (!url) throw new Error('Template Credential Service URL is required');
     const response = await fetchImpl(`${url}/fake-site/${path}`, {
       method,
-      headers: { Authorization: `Bearer ${invocationToken(options.secret(), account, 'template-link', scope)}` },
+      headers: { Authorization: `Bearer ${signCredentialServiceInvocation(options.secret(), account, 'template-link', { scope })}` },
     });
     if (!response.ok) throw new Error(`Template Credential Service HTTP ${response.status}`);
     const body = await response.json() as { status: string };
