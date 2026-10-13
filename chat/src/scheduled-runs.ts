@@ -274,6 +274,8 @@ async function runInSideChat(
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
       actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
+    // A scheduled run is a Turn of its Side Chat, so its browser starts as a chat Turn's does (ADR 0077 decision 1).
+    cartridge.turnStarting?.(requester, sideChat);
     const current = await deps.scheduledTasks.get(owner, task.id, deliveryContext);
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
     const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
