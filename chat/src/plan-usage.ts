@@ -6,6 +6,7 @@ import { jsonPayload } from './payload.js';
 export interface OperatorInvocation { token: string; accountId: string; sessionId: string; }
 export interface PlanUsageSink { ingestPlanUsage(operator: OperatorInvocation, signIn: Record<string, unknown>): Promise<string>; revokePlanUsage(operator: OperatorInvocation): Promise<void>; }
 export interface PlanUsageAccounts { loadAccount(accountId: string): Promise<unknown | null>; requireOpenAIIdentityFree(accountId: string, identity: string): Promise<void>; recordOpenAISignIn(accountId: string, identity: string): Promise<unknown>; removeOpenAISignIn(accountId: string): Promise<unknown>; }
+/** The Credential Service's URL and the invocation token that signs requests to it. */
 export interface CredentialServiceBinding { url: string; invocationToken: string; }
 
 export interface PlanUsageDeps {

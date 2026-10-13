@@ -559,6 +559,48 @@ def test_a_sandbox_belongs_to_one_conversation_actor_and_environment(service: _S
     assert len(service.prepared) == 4
 
 
+_BROWSER_ENV = 'run: echo "$AGENT_BROWSER_CDP $AGENT_BROWSER_SESSION $AGENT_BROWSER_IDLE_TIMEOUT_MS [$AGENT_BROWSER_SOCKET_DIR]"'
+
+
+def _browser_env(events: list[dict[str, Any]]) -> list[str]:
+    return _tool_output(events).split('\n')[0].split(' ')
+
+
+@pytest.fixture
+def no_browser_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ('AGENT_BROWSER_CDP', 'AGENT_BROWSER_SESSION', 'AGENT_BROWSER_IDLE_TIMEOUT_MS', 'AGENT_BROWSER_SOCKET_DIR'):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.usefixtures('no_browser_env')
+def test_agent_browser_drives_the_sessions_agent_computer_through_each_turns_url(service: _Service) -> None:
+    first = _browser_env(service.turn(_BROWSER_ENV, agentComputerCdpUrl='ws://chat.test/cdp?token=first'))
+    renewed = _browser_env(service.turn(_BROWSER_ENV, agentComputerCdpUrl='ws://chat.test/cdp?token=renewed'))
+    other_owner = _browser_env(service.turn(_BROWSER_ENV, user='user-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
+    other_session = _browser_env(service.turn(_BROWSER_ENV, thread='thread-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
+
+    assert first[0] == 'ws://chat.test/cdp?token=first'
+    assert renewed[0] == 'ws://chat.test/cdp?token=renewed'
+    # One agent-browser session per Session keeps its snapshot refs; the cached agent takes each Turn's URL.
+    assert renewed[1] == first[1]
+    assert len(service.recorder.builds) == 3
+    assert len({first[1], other_owner[1], other_session[1]}) == 3
+    # An hour idle; agent-browser's own socket directory, where a Cartridge's CLI may find its daemons.
+    assert first[2:] == ['3600000', '[]']
+
+
+@pytest.mark.usefixtures('no_browser_env')
+def test_without_an_agent_computer_the_shell_gets_no_browser_wiring(service: _Service) -> None:
+    assert _browser_env(service.turn(_BROWSER_ENV)) == ['', '', '', '[]']
+
+
+@pytest.mark.parametrize('url', ['', 42])
+def test_an_unusable_agent_computer_url_fails_the_turn(service: _Service, url: object) -> None:
+    events = service.turn(_BROWSER_ENV, agentComputerCdpUrl=url)
+
+    assert events == [{'type': 'RUN_ERROR', 'message': 'agentComputerCdpUrl must be a non-empty URL', 'code': 'INTERNAL_ERROR'}]
+
+
 def test_the_agent_gets_deepagents_execute_description_verbatim(service: _Service) -> None:
     service.turn('hello')
 

@@ -1,5 +1,8 @@
 import { EventType } from '@ag-ui/client';
 
+/** The CUSTOM event a Turn streams when the agent's browser Session opens or closes, unless the Cartridge names another. */
+export const BROWSER_LIVE_VIEW_EVENT = 'botcube:browser-live-view';
+
 // A streamed delta may still be growing, so it names a browser Session only once
 // whitespace follows the ID; complete text may also end with it.
 const SESSION_PARTIAL = /\bSession:\s*([A-Za-z0-9._:-]+)(?=\s)/;

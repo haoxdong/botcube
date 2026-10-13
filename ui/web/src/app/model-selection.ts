@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { webUiPlugin } from "@cartridge-ui";
 import { fetchAgentModels, type AgentModel } from "./conversations";
-
-const { config: UI_CONFIG } = webUiPlugin;
 
 /** The account's models, or why they could not load (no reason while they load). */
 export type ModelList = { loaded: true; accountId: string | undefined; models: AgentModel[] } | { loaded: false; error: string | null };
@@ -38,9 +35,16 @@ function readChoice(): { stored: PickerChoice; readError: string | null } {
   }
 }
 
+/** The effort levels the BotCube harness takes (its `EFFORT_LEVELS`), Medium by default. */
+export const EFFORT_LEVELS = [
+  { key: "low", label: "Low" },
+  { key: "medium", label: "Medium" },
+  { key: "high", label: "High" },
+  { key: "max", label: "Max" },
+];
+
 function offeredEffort(effort: string | undefined): string {
-  const { effortLevels, defaultEffort } = UI_CONFIG.agentOptions;
-  return effortLevels.find(({ key }) => key === effort)?.key ?? defaultEffort;
+  return EFFORT_LEVELS.find(({ key }) => key === effort)?.key ?? "medium";
 }
 
 function modelInList(models: ModelList, selected: string | undefined): string | undefined {

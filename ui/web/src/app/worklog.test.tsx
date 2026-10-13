@@ -2,7 +2,7 @@ import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitPro
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
-import { ThoughtStep, ToolStep, worklogRows, type TurnMessage } from './worklog';
+import { ThoughtStep, ToolStep, Worklog, worklogRows, type TurnMessage } from './worklog';
 
 const START = Date.parse('2026-10-11T14:05:41Z');
 /** When a replayed message started and ended, `from` and `to` seconds into its Turn. */
@@ -108,6 +108,22 @@ describe('a Worklog', () => {
     render(<Chat messages={messages} running />);
 
     expect(head()).toHaveTextContent(/^Working · 5s$/);
+  });
+
+  it('times a Turn from its head with no rows, which opens to nothing, and carries that clock on to its rows', () => {
+    vi.useFakeTimers({ now: START });
+    const messages = turn('head');
+    const view = render(<Worklog id="headu" running asked="headu" />);
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(view.container).toHaveTextContent(/^Working · 1s$/);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    view.rerender(<Chat messages={messages.slice(0, 3)} running />);
+
+    expect(head()).toHaveTextContent(/^Working · 3s$/);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('stays open, while its Turn runs, as its answer streams in', () => {

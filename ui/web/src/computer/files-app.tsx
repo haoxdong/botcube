@@ -74,7 +74,7 @@ async function newUploadUrl(name: string, signal: AbortSignal, { chatServiceUrl,
   return ((await response.json()) as { url: string }).url;
 }
 
-interface UploadOptions {
+export interface UploadOptions {
   onProgress: (fraction: number) => void;
   signal: AbortSignal;
 }

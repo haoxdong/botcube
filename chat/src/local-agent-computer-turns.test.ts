@@ -2,30 +2,32 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { templateCartridgeFactory } from '../../template/chat/src/cartridge.js';
+import { localAgentComputer } from './local-agent-computer.js';
 import { startInProcess } from '../test/in-process.js';
 
 it.each(['missing', 'starting'] as const)(
-  'answers an ordinary Turn while the configured computer is %s',
+  'answers an ordinary Turn while the local computer is %s',
   { timeout: 15_000 },
   async (kind) => {
-    const directory = await mkdtemp(join(tmpdir(), 'template-turn-browser-'));
+    const directory = await mkdtemp(join(tmpdir(), 'local-turn-browser-'));
     const executable = join(directory, 'chromium');
     if (kind === 'starting')
       await writeFile(executable, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
-    let stopComputer: (() => Promise<void>) | undefined;
-    const cartridge = templateCartridgeFactory({
-      TEMPLATE_SITE_URL: 'http://127.0.0.1:1',
-      TEMPLATE_CHROMIUM_PATH: executable,
-    }, (stop) => { stopComputer = stop; })({
-      ownsMainChat: async () => false,
-      owns: async () => true,
-      delete: async () => undefined,
-      transfer: async () => undefined,
+    const computer = localAgentComputer({
+      history: { owns: async () => true, ownsMainChat: async () => false },
+      requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'account-1' }),
+      env: { BOTCUBE_CHROMIUM_PATH: executable },
     });
-    const stack = await startInProcess({ cartridge });
-    const account = await stack.app.request('/account/session');
-    const cookie = account.headers.get('set-cookie')?.split(';')[0] ?? '';
+    const stack = await startInProcess({ cartridge: {
+      routes: computer.routes,
+      invocationPayload: async (input, { owner }) => ({
+        ...input,
+        forwardedProps: { ...input.forwardedProps, ...(await computer.forwardedProps(owner, input.threadId)) },
+      }),
+      credentialProps: ['agentComputerCdpUrl'],
+      turnStarting: computer.turnStarting,
+      browserLiveView: computer.browserLiveView,
+    } });
     const threadId = `ordinary-${kind}`;
     stack.agentcore.script(threadId, { kind: 'stream', frames: [
       'data: {"type":"RUN_STARTED"}',
@@ -35,10 +37,10 @@ it.each(['missing', 'starting'] as const)(
       'data: {"type":"RUN_FINISHED"}',
     ] });
     const response = Promise.resolve(stack.app.request('/', { method: 'POST',
-      headers: { 'content-type': 'application/json', cookie },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threadId, runId: 'ordinary-run', state: {},
         messages: [{ id: 'question', role: 'user', content: 'hello' }],
-        tools: [], context: [], forwardedProps: { model: 'echo' } }),
+        tools: [], context: [], forwardedProps: { model: 'quick' } }),
     }));
     try {
       const completed = await Promise.race([
@@ -49,18 +51,17 @@ it.each(['missing', 'starting'] as const)(
       expect(completed.text).toContain('"delta":"Hello"');
       expect(completed.text).toContain('RUN_FINISHED');
       if (kind === 'starting') expect(completed.text).toContain('botcube:browser-live-view');
+      expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps.agentComputerCdpUrl)
+        .toMatch(/^ws:\/\/127\.0\.0\.1:8123\/agent-computer\/cdp\?token=/);
       if (kind === 'missing') {
-        await expect.poll(async () => (await stack.app.request(
-          `/agent-computer?thread_id=${threadId}`, {
-            headers: { cookie },
-          }
-        )).status).toBe(503);
+        await expect(computer.state('account-1', threadId)).rejects.toMatchObject({
+          status: 503,
+          detail: `Agent Computer failed to start: Chromium is not installed at ${executable} (ENOENT): install it or set BOTCUBE_CHROMIUM_PATH`,
+        });
       }
     } finally {
-      if (stopComputer) {
-        if (kind === 'missing') await expect(stopComputer()).rejects.toMatchObject({ status: 503 });
-        else await stopComputer();
-      }
+      if (kind === 'missing') await expect(computer.stop()).rejects.toMatchObject({ status: 503 });
+      else await computer.stop();
       await response;
       await stack.stop();
       await rm(directory, { recursive: true, force: true });

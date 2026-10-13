@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/nextjs-vite';
 import { AgentComputer, FilesWindow } from 'botcube-ui-web/computer';
 import { expect, within } from 'storybook/test';
-import 'botcube-ui-web/computer/styles.css';
 
 /** Public component fixtures exercise the desktop independently of a bot's sign-in and branding. */
 const meta = {

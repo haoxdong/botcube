@@ -744,12 +744,11 @@ it("sets Personalization's file cards side by side, as Muse's (Fig 16)", () => {
   expect(styleOf(container, '.agent-file-cards').gridTemplateColumns).toBe('1fr 1fr');
 });
 
-it("paints the file cards in a neutral grey unless a cartridge's theme brings the agent's colours", () => {
+// The template ships Marq's Soul and Memory colours, so a Cartridge brings none.
+it("paints the Soul card periwinkle and the Memory card a deeper navy unless a cartridge's theme brings its own", () => {
   // happy-dom leaves var() unresolved, so this reads the sheet.
-  for (const file of ['soul', 'memory']) {
-    expect(sheet).toMatch(
-      new RegExp(`:root \\{[^}]*--agent-${file}-from: var\\(--color-text-muted\\);\\s*--agent-${file}-to: var\\(--color-text\\);\\s*--agent-${file}-glow: var\\(--color-control\\);`),
-    );
+  for (const [file, from, to, glow] of [['soul', '#6c90bc', '#3f5f8a', '#acc4e0'], ['memory', '#3f5f8a', '#1c2b45', '#acc4e0']]) {
+    expect(sheet).toMatch(new RegExp(`:root \\{[^}]*--agent-${file}-from: ${from};\\s*--agent-${file}-to: ${to};\\s*--agent-${file}-glow: ${glow};`));
     expect(sheet).toMatch(new RegExp(`\\.agent-file-tint-${file} \\{[^}]*--file-from: var\\(--agent-${file}-from\\);`));
   }
 });

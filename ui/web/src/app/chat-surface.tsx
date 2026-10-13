@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
@@ -18,9 +18,10 @@ import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
 import { Menu } from "@base-ui/react/menu";
 import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
 import type { AbstractAgent } from "@ag-ui/client";
-import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
+import { runStarted, stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
 import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
+import { agentFiles } from "./agent-files";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
 import MarkdownRenderer from "./markdown-renderer";
@@ -31,14 +32,15 @@ import { useComposerResizesOnLayout } from "./composer-layout-height";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
+import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/ui/button";
 import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
-import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
+import { ThoughtStep, ToolStep, Worklog, worklogRows } from "./worklog";
 import { useQueuedFollowUp } from "./queued-follow-up";
 
 const UI_CONFIG = webUiPlugin.config;
 const AGENT_ID = UI_CONFIG.agentId;
-const CHAT_SERVICE_URL = process.env.NEXT_PUBLIC_CHAT_SERVICE_URL ?? UI_CONFIG.chatServiceUrl;
+const CHAT_SERVICE_URL = chatServiceUrl();
 
 function WelcomeScreen({ userName }: { userName?: string | undefined }) {
   const firstName = userName?.split(" ")[0];
@@ -124,7 +126,7 @@ const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
 const QueuedMessage = createContext<{ text: string; unkept: boolean; cancel: () => void } | null>(null);
 /** Stops the chat's Turn that runs on the server with no stream here, while one does. */
 const ServerTurnStop = createContext<(() => void) | null>(null);
-/** The files attached in the composer, with the cartridge's `uploadFile`; null without it, and the composer has no +. */
+/** The files attached in the chat's composer; null outside a chat, where the composer has no +. */
 const AttachedFiles = createContext<ComposerFiles | null>(null);
 
 /**
@@ -243,6 +245,9 @@ interface TurnFailure {
 }
 
 const RunError = createContext<TurnFailure | null>(null);
+
+/** Whether the Turn streaming here has started: its RUN_STARTED has arrived. */
+const RunStarted = createContext(false);
 
 /** The message a chat opens at, as Open on a run's card opens its Side Chat at the run; null, it opens at its latest. */
 const OpensAt = createContext<string | null>(null);
@@ -495,7 +500,7 @@ function SentMessage({ content }: { content: string }) {
   const { text, paths } = sentFilesOf(content);
   return (
     <>
-      <SentFileCards paths={paths} fileUrl={webUiPlugin.fileUrl} />
+      <SentFileCards paths={paths} fileUrl={agentFiles.url} />
       {text && <CopilotChatUserMessage.MessageRenderer content={text} />}
     </>
   );
@@ -546,6 +551,17 @@ function scrollParent(element: Element): Element | null {
 function messagesScroller(wrapper: Element | null): Element | null {
   const list = wrapper?.querySelector('[data-testid="copilot-message-list"]');
   return list ? scrollParent(list) : null;
+}
+
+/**
+ * Whether the chat in `wrapper` has padded its content by its composer's height. CopilotKit measures the composer some
+ * commits after it mounts and pads by only 32px until then, so a chat at its end before that moves once the padding
+ * arrives (#3697). A chat without both parts has no composer to make room for.
+ */
+function hasComposerRoom(wrapper: Element | null): boolean {
+  const content = wrapper?.querySelector<HTMLElement>('[data-testid="copilot-scroll-content"]');
+  const composer = wrapper?.querySelector<HTMLElement>('[data-testid="copilot-input-overlay"]');
+  return !content || !composer || parseFloat(content.style.paddingBottom) >= composer.offsetHeight;
 }
 
 /** A row the user was reading, its scroll view, and where the row was in the scroll view's content. */
@@ -685,7 +701,7 @@ function QueuedSent({ message }: { message: string }) {
   const { text, paths } = sentFilesOf(message);
   return (
     <>
-      <SentFileCards paths={paths} fileUrl={webUiPlugin.fileUrl} />
+      <SentFileCards paths={paths} fileUrl={agentFiles.url} />
       {text && <div className="chat-queued-bubble">{text}</div>}
     </>
   );
@@ -699,33 +715,38 @@ function QueuedSent({ message }: { message: string }) {
 function ChatMessages(props: CopilotChatMessageViewProps) {
   const runError = useContext(RunError);
   const queued = useContext(QueuedMessage);
+  const started = useContext(RunStarted);
   return (
     <>
       <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
-        {({ messageElements, messages, isRunning, interruptElement }) => (
-          <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
-            <ReplyImageTurnRunning.Provider value={isRunning}>
-              <MessageRows rows={worklogRows(messageElements, messages, isRunning)} messages={messages} />
-            </ReplyImageTurnRunning.Provider>
-            {interruptElement}
-            {isRunning && messages.at(-1)?.role !== "reasoning" && (
-              <div className="cpk:mt-2">
-                {/* Once the Turn shows its work, its Worklog's clock says it runs. */}
-                {(messages.at(-1)?.role ?? "user") === "user" && <CopilotChatMessageView.Cursor />}
-                <MomentEnds moment="send-acknowledged" />
-              </div>
-            )}
-            {queued !== null && (
-              <div className="chat-queued-message" role="status" aria-label="Queued message">
-                <QueuedSent message={queued.text} />
-                <div className="chat-queued-footer">
-                  <span>{queued.unkept ? "Not kept in this browser: leaving this chat or reloading loses it" : "Sends when this reply ends"}</span>
-                  <button type="button" className="chat-queued-cancel" onClick={queued.cancel} aria-label="Cancel queued message">Cancel</button>
+        {({ messageElements, messages, isRunning, interruptElement }) => {
+          const last = messages.at(-1);
+          return (
+            <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
+              <ReplyImageTurnRunning.Provider value={isRunning}>
+                <MessageRows rows={worklogRows(messageElements, messages, isRunning)} messages={messages} />
+              </ReplyImageTurnRunning.Provider>
+              {/* Until the Turn shows its work, the cursor says it runs, then from RUN_STARTED its Worklog's head. */}
+              {isRunning && started && last?.role === "user" && <Worklog id={last.id} running asked={last.id} />}
+              {interruptElement}
+              {isRunning && last?.role !== "reasoning" && (
+                <div className="cpk:mt-2">
+                  {(last?.role ?? "user") === "user" && !started && <CopilotChatMessageView.Cursor />}
+                  <MomentEnds moment="send-acknowledged" />
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+              {queued !== null && (
+                <div className="chat-queued-message" role="status" aria-label="Queued message">
+                  <QueuedSent message={queued.text} />
+                  <div className="chat-queued-footer">
+                    <span>{queued.unkept ? "Not kept in this browser: leaving this chat or reloading loses it" : "Sends when this reply ends"}</span>
+                    <button type="button" className="chat-queued-cancel" onClick={queued.cancel} aria-label="Cancel queued message">Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }}
       </CopilotChatMessageView>
       {runError !== null && (
         <p className="chat-run-error" role="alert">{runError.message}</p>
@@ -813,15 +834,16 @@ function ChatThread({
   // Stryker disable next-line ArrayDeclaration: a chat opens at its message once, as it mounts
   []);
   // CopilotKit's scroll view reaches the latest message some frames after it mounts (#3697). The chat is open on the
-  // first frame it shows there or has nothing to scroll, or a second on, wherever it shows: a chat that never comes to
-  // rest there, as a reply streams in, still opens.
+  // first frame it shows there (or has nothing to scroll) with room made for its composer, or a second on, wherever it
+  // shows: a chat that never comes to rest there, as a reply streams in, still opens.
   const onOpenedRef = useRef(onOpened);
   onOpenedRef.current = onOpened;
   useEffect(() => {
     const started = performance.now();
     let frame = requestAnimationFrame(function checkOpened(now) {
       const scroller = messagesScroller(wrapperRef.current);
-      if (scroller === null || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1 || now - started >= OPENING_MS) {
+      const atEnd = scroller === null || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
+      if ((atEnd && hasComposerRoom(wrapperRef.current)) || now - started >= OPENING_MS) {
         onOpenedRef.current();
       } else {
         frame = requestAnimationFrame(checkOpened);
@@ -855,6 +877,12 @@ function ChatThread({
     return () => subscription.unsubscribe();
   }, [agent]);
   const running = turnRunning || agentRunning;
+  // Read from the agent, so a chat opened again mid-Turn knows its run has started.
+  const subscribeRun = useCallback((listener: () => void) => {
+    const subscription = agent.subscribe({ onRunStartedEvent: listener, onRunFinalized: listener });
+    return () => subscription.unsubscribe();
+  }, [agent]);
+  const started = useSyncExternalStore(subscribeRun, () => runStarted(agent), () => false);
   // A follow-up waits out a lost connection too, held, rather than going to a Retry a reload would lose.
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const runningRef = useRef(running);
@@ -912,10 +940,10 @@ function ChatThread({
   }, [agent]);
 
   // A chat opens with no files attached: page.tsx mounts a ChatThread for each chat.
-  const attachedFiles = useComposerFiles(webUiPlugin.uploadFile, accountId);
+  const attachedFiles = useComposerFiles(agentFiles.upload, accountId);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Enter" || e.shiftKey || !navigator.onLine || !modelsReady() || attachedFiles?.sendable === false) return;
+    if (e.key !== "Enter" || e.shiftKey || !navigator.onLine || !modelsReady() || !attachedFiles.sendable) return;
     const text = e.currentTarget.querySelector("textarea")?.value.trim();
     if (!text) return;
     if (firedRef.current) return;
@@ -975,6 +1003,7 @@ function ChatThread({
         cancel: () => queued.cancel(() => setRunError({ message: "Your queued message could not be taken out of this browser's storage, so it was not cancelled. Reload the page to try again." })),
       }}>
         <RunError.Provider value={runError}>
+        <RunStarted.Provider value={started}>
           <CopilotChat
             agentId={AGENT_ID}
             threadId={threadId}
@@ -1001,6 +1030,7 @@ function ChatThread({
               );
             }}
           />
+        </RunStarted.Provider>
         </RunError.Provider>
       </QueuedMessage.Provider>
       </OpensAt.Provider>

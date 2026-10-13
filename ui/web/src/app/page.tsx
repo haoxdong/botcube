@@ -20,7 +20,7 @@ import { forgetMainChatCopy, withStorage, type StoredMainChatCopy } from "./main
 import { forgetQueuedFollowUps } from "./queued-follow-up";
 import { endOpeningMoment } from "./latency";
 import { rumConfig, startRum } from "./rum";
-import { useModelSelection, type ModelList } from "./model-selection";
+import { EFFORT_LEVELS, useModelSelection, type ModelList } from "./model-selection";
 import { Avatar } from "./avatar";
 import { PluginsScreen } from "./plugins";
 import { ProfileEditor } from "./profile-editor";
@@ -28,6 +28,7 @@ import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { SessionGate } from "./session-gate";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthStatus, AuthUiState, AuthUser } from "../cartridge/index.js";
+import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { SidebarRow } from "@/components/ui/sidebar-row";
 
 import { ChatComputers } from "./chat-computers";
@@ -37,7 +38,7 @@ const ChatSurface = lazy(() => import("./chat-surface"));
 
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
-const CHAT_SERVICE_URL = process.env.NEXT_PUBLIC_CHAT_SERVICE_URL ?? UI_CONFIG.chatServiceUrl;
+const CHAT_SERVICE_URL = chatServiceUrl();
 // AgentCore reaps a Sandbox after 15 idle minutes, so one warmed in the last 5 is still up; each warmup
 // exchanges credentials and holds the Session, so coming back sooner warms nothing.
 const REWARM_AFTER_MS = 5 * 60_000;
@@ -238,7 +239,7 @@ function UserMenu({
                       <polyline points="16 17 21 12 16 7" />
                       <line x1="21" y1="12" x2="9" y2="12" />
                     </svg>
-                    <span>{UI_CONFIG.logoutLabel}</span>
+                    <span>{UI_CONFIG.logoutLabel ?? "Log out"}</span>
                   </button>
                 </>
               ) : (
@@ -283,7 +284,7 @@ function ModelEffortPicker({
 
   const options = models.loaded ? models.models : [];
   const modelLabel = models.loaded ? options.find((item) => item.key === model)?.label : (models.error ?? "Loading models…");
-  const effortLabel = UI_CONFIG.agentOptions.effortLevels.find((item) => item.key === effort)?.label ?? effort;
+  const effortLabel = EFFORT_LEVELS.find((item) => item.key === effort)?.label ?? effort;
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -358,7 +359,7 @@ function ModelEffortPicker({
                 <span className="mep-option-name">Effort</span>
               </button>
               <div className="mep-separator" />
-              {UI_CONFIG.agentOptions.effortLevels.map((e) => (
+              {EFFORT_LEVELS.map((e) => (
                 <button
                   key={e.key}
                   className="mep-option"
@@ -868,14 +869,14 @@ function App({
               {keptChatShown && keptChat}
             </div>
             {layoutElement !== null && createPortal(<>
-              {webUiPlugin.auxiliaryPanels.map((Panel, index) => (
+              {webUiPlugin.auxiliaryPanels?.map((Panel, index) => (
                 <Panel
                   key={index}
                   agentId={AGENT_ID}
                   conversation={{ id: activeId, service: "chat-service" }}
                 />
               ))}
-              {webUiPlugin.toolResultRenderers.map((Renderer, index) => <Renderer key={index} />)}
+              {webUiPlugin.toolResultRenderers?.map((Renderer, index) => <Renderer key={index} />)}
               {auth.overlay}
             </>, layoutElement)}
             </>}

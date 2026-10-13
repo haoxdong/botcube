@@ -29,11 +29,6 @@ const nameFields =
   "aws.agentCore.privateNatBrowser.extension.prefix": "botcube/browser-extensions/provider-user-agent/v2.zip",
   "aws.ecs.privateNamespace": "botcube.internal",
   "aws.ecs.chatService.planUsageOwnerAccountParameter": "/botcube/plan-usage/owner-account-id",
-  "aws.ecs.chatService.environmentKeys.filesBucket": "BOTCUBE_FILES_BUCKET",
-  "aws.ecs.chatService.environmentKeys.filesFileSystemArn": "BOTCUBE_FILES_FILE_SYSTEM_ARN",
-  "aws.ecs.chatService.environmentKeys.agentComputerPolicyBucket": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
-  "aws.ecs.chatService.environmentKeys.agentComputerPolicyKey": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY",
-  "aws.ecs.chatService.environmentKeys.filesSyncRoleArn": "BOTCUBE_FILES_SYNC_ROLE_ARN",
   "aws.ecs.cluster": "botcube",
   "aws.ecs.deployRoleName": "botcube-ecs-github-deploy",
   "aws.ecs.originPullClientSecretName": "/botcube/cloudflare/origin-pull-client",
@@ -82,7 +77,12 @@ const runtimeFields = {
   "aws.ecs.credentialService.environmentKeys.keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
   "aws.ecs.credentialService.environmentKeys.vaultTable": "BOTCUBE_VAULT_TABLE",
   "aws.ecs.chatService.environmentKeys.planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
-  "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "TEMPLATE_COMPUTER_CDP_URL"
+  "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "BOTCUBE_AGENT_COMPUTER_CDP_URL",
+  "aws.ecs.chatService.environmentKeys.filesBucket": "BOTCUBE_FILES_BUCKET",
+  "aws.ecs.chatService.environmentKeys.filesFileSystemArn": "BOTCUBE_FILES_FILE_SYSTEM_ARN",
+  "aws.ecs.chatService.environmentKeys.agentComputerPolicyBucket": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
+  "aws.ecs.chatService.environmentKeys.agentComputerPolicyKey": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY",
+  "aws.ecs.chatService.environmentKeys.filesSyncRoleArn": "BOTCUBE_FILES_SYNC_ROLE_ARN"
 };
 for (const [path, pattern] of Object.entries({ ...nameFields, ...runtimeFields })) {
   const parts = path.split('.');
@@ -103,8 +103,10 @@ const outputs = {
   'deploy/agentcore/agentcore.json': json(agentcore),
   'deploy/agentcore/aws-targets.json': json([{ name: 'template', account: deployment.aws.account, region: deployment.aws.region }]),
 };
-for (const [path, source] of Object.entries(outputs)) {
-  const contents = await format(source, { parser: path.endsWith('.ts') ? 'typescript' : 'json', singleQuote: true, trailingComma: 'es5', printWidth: 80 });
+const formatted = await Promise.all(
+  Object.entries(outputs).map(async ([path, source]) => [path, await format(source, { parser: path.endsWith('.ts') ? 'typescript' : 'json', singleQuote: true, trailingComma: 'es5', printWidth: 80 })])
+);
+for (const [path, contents] of formatted) {
   if (process.argv.includes('--check')) {
     if (readFileSync(join(root, path), 'utf8') !== contents) throw new Error(`Stale template identity output ${path}. Run node template/deploy/prepare-identity.mjs from the BotCube repository root.`);
   } else {

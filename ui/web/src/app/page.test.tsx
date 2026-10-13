@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import type { ButtonHTMLAttributes, ComponentType, ReactElement, ReactNode } from 'react';
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
-import { afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type { AuthUiState, AuxiliaryPanelHostProps, WebUiPlugin } from '../cartridge/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
@@ -33,6 +33,14 @@ const copilot = vi.hoisted(() => ({
 // The oversized-copy test owns storage reconciliation, not parsing its megabyte replies as markdown.
 // Every other page test, and kept-chat.test.tsx, keeps the real kept-view renderer.
 const copyBoundary = vi.hoisted(() => ({ isolateRendering: false }));
+// The build's Chat Service, read as the page's modules load.
+vi.hoisted(() => {
+  vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 vi.mock('./kept-chat', async (importOriginal) => {
   const original = await importOriginal<typeof import('./kept-chat')>();
   return { ...original, KeptChat: (props: Parameters<typeof original.KeptChat>[0]) => copyBoundary.isolateRendering ? null : <original.KeptChat {...props} /> };
@@ -219,7 +227,6 @@ vi.mock('@cartridge-ui', () => {
   const webUiPlugin: WebUiPlugin = {
     config: {
       agentId: 'research-agent',
-      chatServiceUrl: 'http://chat.test',
       title: 'Research Bot',
       agentName: 'Ada',
       subtitle: 'Ask about markets',
@@ -228,13 +235,6 @@ vi.mock('@cartridge-ui', () => {
       relinkLabel: 'Relink account',
       logoutLabel: 'Sign out',
       accountLabel: 'Research Account',
-      agentOptions: {
-        effortLevels: [
-          { key: 'low', label: 'Low' },
-          { key: 'high', label: 'High' },
-        ],
-        defaultEffort: 'max',
-      },
     },
     toolResultRenderers: [() => <p>tool result renderer</p>],
     auxiliaryPanels: [
@@ -259,17 +259,24 @@ vi.mock('@cartridge-ui', () => {
       return <>{children(cartridge.auth)}</>;
     },
     agentProfileTabs: { 'Sign-ins': () => <p>the cartridge&apos;s Sign-ins</p> },
-    // Files has no `/missing.svg`.
-    fileUrl: (path) => (path === '/missing.svg' ? Promise.reject(new Error('Files download failed: 404')) : Promise.resolve(`https://files.test${path}?signed`)),
     theme: { '--accent': 'rebeccapurple' },
   };
   return { webUiPlugin };
 });
 
+// The agent's Files: no `/missing.svg`, and an upload only a test that attaches answers.
+vi.mock('./agent-files', () => ({
+  agentFiles: {
+    url: (path: string) => (path === '/missing.svg' ? Promise.reject(new Error('Files download failed: 404')) : Promise.resolve(`https://files.test${path}?signed`)),
+    upload: () => Promise.reject(new Error('No upload in this test')),
+  },
+}));
+
 const rum = vi.hoisted(() => ({ config: vi.fn(() => null as null | { appMonitorId: string; identityPoolId: string; region: string }), start: vi.fn(() => Promise.resolve()) }));
 vi.mock('./rum', () => ({ rumConfig: rum.config, startRum: rum.start }));
 
 const { default: Page } = await import('./page');
+const { agentFiles } = await import('./agent-files');
 
 function auth(overrides: Partial<AuthUiState> = {}): AuthUiState {
   return {
@@ -538,12 +545,12 @@ describe('cartridge wiring', () => {
     }
   });
 
-  it("offers the account's models and the cartridge effort levels, starting from the first model and the default effort", async () => {
+  it("offers the account's models and the harness's effort levels, starting from the first model and Medium", async () => {
     await renderPage();
 
     const pill = present(screen.getByText('Deep').closest('button'), 'the model pill');
-    expect(pill).toHaveTextContent(/^Deepmax$/);
-    expect(kit().properties).toEqual({ model: 'deep', effort: 'max', sandbox: true });
+    expect(pill).toHaveTextContent(/^DeepMedium$/);
+    expect(kit().properties).toEqual({ model: 'deep', effort: 'medium', sandbox: true });
 
     await userEvent.click(pill);
     expect(
@@ -591,18 +598,18 @@ describe('cartridge wiring', () => {
     expect(warmups()).toEqual([
       [
         'http://chat.test/warmup',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{"mainChat":true,"effort":"max"}' },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{"mainChat":true,"effort":"medium"}' },
       ],
       [
         'http://chat.test/warmup',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{"threadId":"main-1","model":"deep","effort":"max"}' },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: '{"threadId":"main-1","model":"deep","effort":"medium"}' },
       ],
     ]);
 
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
-    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"max"}');
+    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"medium"}');
   });
 
   // Unnamed, the Chat Service warms the account's first model, and the Harness skips a second warmup while one prepares.
@@ -612,8 +619,8 @@ describe('cartridge wiring', () => {
     await renderPage(auth({ accountId: 'acct-first' }));
 
     expect(warmups().map(([, init]) => init.body)).toEqual([
-      '{"mainChat":true,"model":"fast","effort":"max"}',
-      '{"threadId":"main-1","model":"fast","effort":"max"}',
+      '{"mainChat":true,"model":"fast","effort":"medium"}',
+      '{"threadId":"main-1","model":"fast","effort":"medium"}',
     ]);
   });
 
@@ -623,8 +630,8 @@ describe('cartridge wiring', () => {
     await renderPage(auth({ accountId: 'acct-first' }));
 
     expect(warmups().map(([, init]) => init.body)).toEqual([
-      '{"mainChat":true,"effort":"max"}',
-      '{"threadId":"main-1","model":"deep","effort":"max"}',
+      '{"mainChat":true,"effort":"medium"}',
+      '{"threadId":"main-1","model":"deep","effort":"medium"}',
     ]);
   });
 
@@ -660,14 +667,14 @@ describe('cartridge wiring', () => {
     await settle();
 
     expect(warmups()).toHaveLength(2);
-    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"main-1","model":"deep","effort":"max"}');
+    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"main-1","model":"deep","effort":"medium"}');
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('keeps the latest selected effort when Main Chat warmups wait for provisioning', async () => {
     let finishBoot!: (response: Response) => void;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"max"}') {
+      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"medium"}') {
         return new Promise<Response>((resolve) => { finishBoot = resolve; });
       }
       return chatService(url, init);
@@ -711,7 +718,7 @@ describe('cartridge wiring', () => {
     let current = true;
     let finishBoot!: (response: Response) => void;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"max"}') {
+      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"medium"}') {
         return new Promise<Response>((resolve) => { finishBoot = resolve; });
       }
       return chatService(url, init);
@@ -727,7 +734,7 @@ describe('cartridge wiring', () => {
   it('prepares a Side Chat independently of a provisioning Main Chat', async () => {
     let finishBoot!: (response: Response) => void;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"max"}') {
+      if (url === 'http://chat.test/warmup' && init?.body === '{"mainChat":true,"effort":"medium"}') {
         return new Promise<Response>((resolve) => { finishBoot = resolve; });
       }
       return chatService(url, init);
@@ -737,7 +744,7 @@ describe('cartridge wiring', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     await settle();
 
-    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"max"}');
+    expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"medium"}');
     const before = warmups().length;
     await act(async () => { finishBoot(answer(200)); });
     await settle();
@@ -1297,8 +1304,7 @@ describe('an assistant reply', () => {
   });
 
   it('keeps unsafe paths and unrelated relative references out of Files', async () => {
-    const { webUiPlugin } = await import('@cartridge-ui');
-    const lookup = vi.spyOn(webUiPlugin, 'fileUrl');
+    const lookup = vi.spyOn(agentFiles, 'url');
     copilot.reply = ['../chart.svg', '%2e%2e%2fchart.svg', '/%2e%2e/chart.svg', '//external.test/chart.svg', 'folder/chart.svg', 'chart.svg?query', 'chart.svg#fragment', 'bad%ZZ.svg', 'javascript:alert%281%29', 'data:image/svg+xml,evil', '@s1.c3', 'reference'].map((path, index) => `![unsafe ${index}](${path}) [unsafe ${index}](${path})`).join('\n\n') + '\n\n![Safe](safe.svg) [Safe download](safe.svg)';
     await renderPage();
     const list = screen.getByTestId('copilot-message-list');
@@ -1312,8 +1318,7 @@ describe('an assistant reply', () => {
   });
 
   it('preserves external images and links without a Files lookup', async () => {
-    const { webUiPlugin } = await import('@cartridge-ui');
-    const lookup = vi.spyOn(webUiPlugin, 'fileUrl');
+    const lookup = vi.spyOn(agentFiles, 'url');
     copilot.reply = '![External](https://example.com/chart.svg) [External download](https://example.com/chart.svg)';
     await renderPage();
     const list = screen.getByTestId('copilot-message-list');
@@ -1334,10 +1339,8 @@ describe('an assistant reply', () => {
   });
 
   it('requests a fresh URL when a file download link is clicked', async () => {
-    const { webUiPlugin } = await import('@cartridge-ui');
-    const lookup = vi.spyOn(webUiPlugin, 'fileUrl');
-    assert(webUiPlugin.fileUrl);
-    vi.mocked(webUiPlugin.fileUrl).mockResolvedValueOnce('https://files.test/chart.svg?initial').mockRejectedValueOnce(new Error('Files download failed: 403'));
+    const lookup = vi.spyOn(agentFiles, 'url');
+    lookup.mockResolvedValueOnce('https://files.test/chart.svg?initial').mockRejectedValueOnce(new Error('Files download failed: 403'));
     copilot.reply = '[Download chart](chart.svg)';
     await renderPage();
     const list = screen.getByTestId('copilot-message-list');
@@ -1435,10 +1438,7 @@ describe('an assistant reply', () => {
   });
 
   it('keeps a failed refreshed file lookup visible', async () => {
-    const { webUiPlugin } = await import('@cartridge-ui');
-    vi.spyOn(webUiPlugin, 'fileUrl');
-    assert(webUiPlugin.fileUrl);
-    vi.mocked(webUiPlugin.fileUrl).mockResolvedValueOnce('https://files.test/chart.svg?signed').mockRejectedValueOnce(new Error('Files download failed: 403'));
+    vi.spyOn(agentFiles, 'url').mockResolvedValueOnce('https://files.test/chart.svg?signed').mockRejectedValueOnce(new Error('Files download failed: 403'));
     copilot.running = true;
     copilot.reply = '![Chart](/chart.svg)';
     const view = await renderPage();
@@ -1451,8 +1451,7 @@ describe('an assistant reply', () => {
   });
 
   it('keeps a healthy live image when the Turn finishes without another lookup', async () => {
-    const { webUiPlugin } = await import('@cartridge-ui');
-    const lookup = vi.spyOn(webUiPlugin, 'fileUrl');
+    const lookup = vi.spyOn(agentFiles, 'url');
     copilot.running = true;
     copilot.reply = '![Chart](/chart.svg)';
     const view = await renderPage();
@@ -1918,6 +1917,37 @@ describe('the kept Main Chat over the chat as it opens', () => {
 
     expect(keptChat()).toBeNull();
     expect(opening()).toBeNull();
+  });
+
+  it('stays at the latest message until the chat has made room for its composer below it', async () => {
+    // Like a ResizeObserver: CopilotKit measures its composer some commits after it mounts. Until then, its content
+    // ends 32px below the latest message, and a chat at its end there moves once the composer's room arrives.
+    const observed = new Map<Element, ResizeObserverCallback[]>();
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe(target: Element) {
+          observed.set(target, [...(observed.get(target) ?? []), this.callback]);
+        }
+        disconnect() {}
+      },
+    );
+    await renderPage(auth({ accountId: 'acct-first' }));
+    const overlay = screen.getByTestId('copilot-input-overlay');
+    Object.defineProperty(overlay, 'offsetHeight', { configurable: true, value: 98 });
+    layOut(() => 870, () => 570);
+
+    await frame();
+    expect(keptChat()).not.toBeNull();
+
+    await act(async () => {
+      const entry = { target: overlay, contentRect: { height: 98 } } as unknown as ResizeObserverEntry;
+      for (const callback of observed.get(overlay) ?? []) callback([entry], {} as ResizeObserver);
+    });
+    await frame();
+
+    expect(keptChat()).toBeNull();
   });
 
   it('stays while a reply in flight grows the chat past its latest message, then lifts there', async () => {
@@ -2503,6 +2533,76 @@ describe('Main Chat', () => {
     expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
   });
 
+  // The cursor stood for the model's first ~7 s on a Main Turn: from RUN_STARTED, the Worklog's head says it works (#4013).
+  describe('once the run starts', () => {
+    const question: Message = { id: 'started-question', role: 'user', content: 'What moved the 10y?' };
+    /** Streams `events` into the running Turn, then lays the chat out again, as CopilotKit does on each message. */
+    let send: (...events: Record<string, unknown>[]) => Promise<void>;
+    let finish: () => Promise<void>;
+
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      copilot.rows = true;
+      copilot.running = true;
+      const view = await renderPage();
+      const current = agent();
+      let stream!: ReadableStreamDefaultController<Uint8Array>;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+        url === 'http://chat.test' && init?.method === 'POST'
+          ? new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } }), { headers: { 'content-type': 'text/event-stream' } })
+          : chatService(url, init),
+      );
+      send = async (...events) => {
+        for (const event of events) stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+        await settle();
+        view.rerender(<Page />);
+        await settle();
+      };
+      let turn!: Promise<unknown>;
+      await act(async () => {
+        current.addMessage(question);
+        turn = current.runAgent({ runId: 'started-run' }).catch(() => undefined);
+      });
+      finish = async () => {
+        await send({ type: 'RUN_FINISHED', threadId: current.threadId, runId: 'started-run' });
+        await act(async () => { stream.close(); await turn; });
+      };
+      await settle();
+      expect(screen.getByTestId('copilot-loading-cursor')).toBeInTheDocument();
+      await send({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'started-run' });
+    });
+
+    afterEach(() => finish());
+
+    it('shows the Worklog head in place of the cursor', () => {
+      expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
+      expect(document.querySelector('.worklog')).toHaveTextContent(/^Working · 1s$/);
+    });
+
+    it('gives way to an answer that comes with no rows', async () => {
+      await send(
+        { type: 'TEXT_MESSAGE_START', messageId: 'started-answer', role: 'assistant' },
+        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'started-answer', delta: 'It rose 4bp.' },
+      );
+
+      expect(document.querySelector('[data-message-row="started-answer"]')).not.toBeNull();
+      expect(document.querySelector('.worklog')).toBeNull();
+      expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
+    });
+
+    // Only the page hands the head and its rows' Worklog the same clock, the question's id.
+    it("folds the Turn's rows under its head as they come, carrying on its clock", async () => {
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      await send({ type: 'TOOL_CALL_START', toolCallId: 'started-call', toolCallName: 'read_file', parentMessageId: 'started-note' });
+
+      expect(document.querySelectorAll('.worklog')).toHaveLength(1);
+      const head = screen.getByRole('button', { name: /^Working/ });
+      expect(head).toHaveTextContent(/^Working · 3s$/);
+      expect(document.querySelector('.worklog-body [data-message-row="started-note"]')).not.toBeNull();
+      expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
+    });
+  });
+
   it('returns to the Main Chat from a Side Chat', async () => {
     service.sideChats = [sideChat('side', 'Side question')];
     await renderPage();
@@ -2895,7 +2995,7 @@ describe('a user coming back to the page', () => {
 
     await userComesBack(event);
 
-    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"max"}']);
+    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"medium"}']);
   });
 
   it('warms the open Side Chat again with its model and effort', async () => {
@@ -2997,7 +3097,7 @@ describe('a user coming back to the page', () => {
     await act(async () => { vi.advanceTimersByTime(3_000); });
     await settle();
 
-    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"max"}']);
+    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"medium"}']);
   });
 
   it('does not rewarm after a server Turn ends without a comeback', async () => {
@@ -5869,6 +5969,13 @@ describe('agent profile', () => {
   const detail = (sheet: HTMLElement, term: string) => within(sheet).getByText(term, { selector: 'dt' }).nextElementSibling?.textContent;
   /** The Edit form's line saying why Save can't yet. */
   const why = (sheet: HTMLElement) => within(sheet).getByRole('status').textContent;
+  /** Opens the Edit form's Advanced, over Starts, Ends and the model. */
+  const advanced = (inSheet: ReturnType<typeof within>) => userEvent.click(inSheet.getByRole('button', { name: 'Advanced' }));
+  /** Types a count into Interval's Every. */
+  const every = async (inSheet: ReturnType<typeof within>, count: string) => {
+    await userEvent.clear(inSheet.getByLabelText('Every'));
+    await userEvent.type(inSheet.getByLabelText('Every'), count);
+  };
   /** "Three updates only" (#3960): every minute from 3:02 PM New York on 6 October, for 3 runs. */
   const COUNTED = {
     ...MORNING_BRIEF,
@@ -6012,10 +6119,11 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    // Every minute isn't one of Repeats' listed choices, so it is one of its own, where it sorts (#4021).
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every minute');
-    expect(within(inSheet.getByLabelText('Repeats')).getAllByRole('option').slice(0, 3).map((option) => option.textContent))
-      .toEqual(['Never', 'Every minute', 'Every 5 minutes']);
+    // Every minute is an Interval of 1 minute, the count bare, with no box (#4041).
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Interval');
+    expect(inSheet.getByLabelText('Every')).toHaveValue('1');
+    expect(inSheet.getByLabelText('Unit')).toHaveDisplayValue('minute');
+    await advanced(inSheet);
     // The sheet is named for what it does while the Title field shows the title.
     expect(sheet).toHaveAccessibleName('Edit task');
     // No line under the rows while Save can.
@@ -6065,13 +6173,14 @@ describe('agent profile', () => {
     ]);
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
+    await advanced(within(sheet));
 
     expect(within(sheet).getByLabelText('End date')).toHaveValue('2026-10-06T15:04');
   });
 
   it.each([
     ['Starts', '2026-10-07T09:30', '2026-10-07T09:30', { startDate: '2026-10-07T13:30:00.000Z' }],
-    ['Repeats', 'Every 5 minutes', '2026-10-06T15:07', { schedule: 'rate(5 minutes)', startDate: '2026-10-06T19:02:00.000Z' }],
+    ['Every', '5', '2026-10-06T15:07', { schedule: 'rate(5 minutes)', startDate: '2026-10-06T19:02:00.000Z' }],
   ])('keeps only the remaining run when a counted task changes %s', async (label, value, ending, changes) => {
     beforeCountedRuns();
     vi.setSystemTime('2026-10-06T19:03:30Z');
@@ -6080,13 +6189,15 @@ describe('agent profile', () => {
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    if (label === 'Repeats') await userEvent.selectOptions(inSheet.getByLabelText(label), value);
+    await advanced(inSheet);
+    if (label === 'Every') await every(inSheet, value);
     else fireEvent.change(inSheet.getByLabelText(label), { target: { value } });
 
     expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: COUNTED.title, prompt: COUNTED.prompt, ...changes }]);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
   });
 
@@ -6098,6 +6209,7 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.clear(inSheet.getByLabelText('Starts'));
     expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(why(sheet)).toBe('Starts needs a date and time');
@@ -6122,10 +6234,13 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     // A daily task's Starts is its first run, at the time of day it runs.
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every day');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 2 hours');
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Daily');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Interval');
+    await every(inSheet, '2');
+    await userEvent.selectOptions(inSheet.getByLabelText('Unit'), 'hour');
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6142,6 +6257,7 @@ describe('agent profile', () => {
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
     expect(inSheet.getByLabelText('End date')).toHaveValue('');
@@ -6149,6 +6265,7 @@ describe('agent profile', () => {
     expect(detail(sheet, 'Ends')).toBe('Never');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     // Where the browser can't open its picker when asked (Safari before 16.4), On a date… focuses the picker, which then
     // takes the row's taps.
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
@@ -6167,6 +6284,7 @@ describe('agent profile', () => {
     expect(detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     // Never, then the same date again, is the ending Edit opened with: Save leaves it alone.
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
@@ -6206,6 +6324,7 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     // Read in the task's own time zone.
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Wed, Jan 1, 12:00 AM ET');
     expect(inSheet.getByLabelText('End date')).toHaveValue('2020-01-01T00:00');
@@ -6218,6 +6337,7 @@ describe('agent profile', () => {
     expect(inSheet.getByRole('button', { name: 'Resume' })).toBeEnabled();
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6233,13 +6353,14 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Never');
-    // A task that runs once ends after it runs; its Starts is its only run.
-    expect(inSheet.getByLabelText('Ends')).toBeDisabled();
-    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('After it runs');
-    expect(inSheet.getAllByLabelText('Starts')).toHaveLength(1);
-    await userEvent.clear(inSheet.getByLabelText('Starts'));
-    await userEvent.type(inSheet.getByLabelText('Starts'), '2099-11-06T08:30');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Once');
+    // A task that runs once ends after it runs: its Time is its only run, and Advanced holds only the model.
+    await advanced(inSheet);
+    expect(rows(sheet)).toEqual(['Repeat', 'Time', 'Model']);
+    expect(inSheet.getByLabelText('Time')).toHaveValue('2099-01-01T08:00');
+    await userEvent.clear(inSheet.getByLabelText('Time'));
+    expect(why(sheet)).toBe('Time needs a date and time');
+    await userEvent.type(inSheet.getByLabelText('Time'), '2099-11-06T08:30');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     // Its schedule carries its time, so it sends no start.
@@ -6364,7 +6485,7 @@ describe('agent profile', () => {
 
   /** The Edit form's settings rows, by their labels. */
   const rows = (sheet: HTMLElement) => [...sheet.querySelectorAll('.scheduled-edit .settings-row')].map((row) => row.firstElementChild?.textContent);
-  const choices = (sheet: HTMLElement) => within(within(sheet).getByLabelText('Repeats')).getAllByRole('option').map((option) => option.textContent);
+  const choices = (sheet: HTMLElement) => within(within(sheet).getByLabelText('Repeat')).getAllByRole('option').map((option) => option.textContent);
 
   it('keeps a schedule as written when an edit leaves its controls alone', async () => {
     beforeCountedRuns();
@@ -6374,9 +6495,12 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    // Weekly on two days is none of the listed choices: it is its own, where it sorts. With no start, Starts is today.
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every week on Monday and Thursday');
-    expect(choices(sheet).slice(-3)).toEqual(['Every weekday', 'Every week on Monday and Thursday', 'Every week on Tuesday']);
+    // Weekly on two days is none of Repeat's choices: it is Custom, in its own words. With no start, Starts is today.
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
+    expect(choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once', 'Custom']);
+    expect(rows(sheet)).toEqual(['Repeat', 'Schedule']);
+    expect(inSheet.getByText('Every week on Monday and Thursday at 8:08 AM')).toBeInTheDocument();
+    await advanced(inSheet);
     expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T08:08');
     await userEvent.type(inSheet.getByLabelText('Title'), ' (FX)');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6394,12 +6518,13 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     expect(inSheet.queryByLabelText('Schedule')).toBeNull();
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every weekday');
-    // A task from before tasks kept their first run starts at its next one; Starts' time of day is when it runs.
-    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T08:00');
-    expect(inSheet.getByText('Tue, Oct 6, 8:00 AM ET')).toBeInTheDocument();
-    await userEvent.clear(inSheet.getByLabelText('Starts'));
-    await userEvent.type(inSheet.getByLabelText('Starts'), '2026-10-06T10:00');
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Weekdays');
+    // A task from before tasks kept their first run starts at its next one; Time is the time of day it runs.
+    expect(inSheet.getByLabelText('Time')).toHaveValue('08:00');
+    expect(inSheet.getByText('8:00 AM ET')).toBeInTheDocument();
+    fireEvent.change(inSheet.getByLabelText('Time'), { target: { value: '10:00' } });
+    expect(inSheet.getByText('10:00 AM ET')).toBeInTheDocument();
+    await advanced(inSheet);
     expect(inSheet.getByText('Tue, Oct 6, 10:00 AM ET')).toBeInTheDocument();
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -6410,95 +6535,104 @@ describe('agent profile', () => {
     expect(detail(sheet, 'Repeats')).toBe('Every weekday at 10:00 AM');
   });
 
-  // The maintainer (#4021): "we need one single schdueld job us intead of changing depends on frequency or other factsr".
-  it('gives every task the same rows, Starts, Repeats and Ends, whatever it repeats; a rate(1 day) task keeps Every 24 hours as its own choice (#4021)', async () => {
+  // The maintainer (#4041): "we want simple screen, so just should frequencty like minute, hour, day etc and every x,
+  // but avoid the stupid regtangle box?"; "more deafult collapsed, with more things like start, end, model"; "lets just
+  // follow codex?".
+  it('shows Repeat and only what it needs, with Starts, Ends and the model under Advanced, shut (#4041)', async () => {
     beforeCountedRuns();
     // Dev's daily task: rate(1 day), from 7:15 AM New York on 6 October.
     service.scheduled = [{ ...MORNING_BRIEF, schedule: 'rate(1 day)', startDate: '2026-10-06T11:15:00.000Z' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
-    // It runs every 24 hours, so a clock change moves it off 7:15 AM: it isn't Every day.
+    // It runs every 24 hours, so a clock change moves it off 7:15 AM: it isn't Daily.
     expect(detail(sheet, 'Repeats')).toBe('Every 24 hours');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every 24 hours');
-    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T07:15');
-    // Weekly runs on Starts' weekday, a Tuesday; its own schedule, which none says, goes last.
-    const listed = [
-      'Never', 'Every 5 minutes', 'Every 15 minutes', 'Every 30 minutes', 'Every hour', 'Every 2 hours', 'Every 6 hours', 'Every 12 hours',
-      'Every day', 'Every weekday', 'Every week on Tuesday', 'Every 24 hours',
-    ];
-    expect(choices(sheet)).toEqual(listed);
-    for (const choice of listed) {
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Interval');
+    expect(inSheet.getByLabelText('Every')).toHaveValue('1');
+    expect(inSheet.getByLabelText('Unit')).toHaveDisplayValue('day');
+    expect(choices(sheet)).toEqual(['Interval', 'Daily', 'Weekdays', 'Weekly', 'Once']);
+    expect(inSheet.getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'false');
+    const shut = { Interval: ['Repeat', 'Every'], Daily: ['Repeat', 'Time'], Weekdays: ['Repeat', 'Time'], Weekly: ['Repeat', 'Day', 'Time'], Once: ['Repeat', 'Time'] };
+    for (const [choice, labels] of Object.entries(shut)) {
       // eslint-disable-next-line no-await-in-loop -- one choice at a time
-      await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), choice);
-      expect(rows(sheet)).toEqual(['Starts', 'Repeats', 'Ends', 'Model']);
+      await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), choice);
+      expect(rows(sheet)).toEqual(labels);
       expect(inSheet.queryByRole('status')).toBeNull();
-      // A task that runs once ends after it runs.
-      expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue(choice === 'Never' ? 'After it runs' : 'Never');
-      if (choice === 'Never') expect(inSheet.getByLabelText('Ends')).toBeDisabled();
-      else expect(inSheet.getByLabelText('Ends')).toBeEnabled();
     }
-    expect(inSheet.queryByRole('button', { name: 'More' })).toBeNull();
+    // Weekly runs on Starts' weekday, a Tuesday, until Day picks another.
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Weekly');
+    expect(inSheet.getByLabelText('Day')).toHaveDisplayValue('Tuesday');
+    expect(inSheet.getByText('7:15 AM ET')).toBeInTheDocument();
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Interval');
+    await advanced(inSheet);
+    expect(inSheet.getByRole('button', { name: 'Advanced' })).toHaveAttribute('aria-expanded', 'true');
+    expect(rows(sheet)).toEqual(['Repeat', 'Every', 'Starts', 'Ends', 'Model']);
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T07:15');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
-    // Back on its own choice, it stays rate(1 day).
+    // Back on Interval, 1 day, it stays rate(1 day).
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on rates' }]);
     expect(detail(sheet, 'Repeats')).toBe('Every 24 hours');
   });
 
-  it('moves a daily task to every 5 minutes, weekly on Starts\' weekday, Never, and back to daily (#4021)', async () => {
+  it('moves a daily task to every 5 minutes, weekly on Thursday, once, and back to daily (#4041)', async () => {
     beforeCountedRuns();
     service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(30 7 ? * * *)', startDate: '2026-10-06T11:30:00.000Z' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
-    const edit = async (choice: string, starts?: string) => {
+    const edit = async (choice: string, pick?: () => Promise<void>) => {
       await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-      if (starts !== undefined) fireEvent.change(inSheet.getByLabelText('Starts'), { target: { value: starts } });
-      await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), choice);
+      await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), choice);
+      await pick?.();
       await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     };
     expect(detail(sheet, 'Repeats')).toBe('Every day at 7:30 AM');
 
-    await edit('Every 5 minutes');
+    await edit('Interval', () => every(inSheet, '5'));
     expect(detail(sheet, 'Repeats')).toBe('Every 5 minutes');
-    // Thursday 8 October: Weekly follows Starts' weekday.
-    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(inSheet.getByLabelText('Starts'), { target: { value: '2026-10-08T07:30' } });
-    expect(choices(sheet).at(-1)).toBe('Every week on Thursday');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every week on Thursday');
-    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await edit('Weekly', () => userEvent.selectOptions(inSheet.getByLabelText('Day'), 'Thursday'));
     expect(detail(sheet, 'Repeats')).toBe('Every week on Thursday at 7:30 AM');
-    await edit('Never');
+    // Thursday 8 October.
+    await edit('Once', async () => {
+      fireEvent.change(inSheet.getByLabelText('Time'), { target: { value: '2026-10-08T07:30' } });
+    });
     expect(detail(sheet, 'Repeats')).toBe('Never');
-    await edit('Every day');
+    await edit('Daily');
     expect(detail(sheet, 'Repeats')).toBe('Every day at 7:30 AM');
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { ...fields, schedule: 'rate(5 minutes)', startDate: '2026-10-06T11:30:00.000Z' },
-      { ...fields, schedule: 'cron(30 7 ? * THU *)', startDate: '2026-10-08T11:30:00.000Z' },
+      { ...fields, schedule: 'cron(30 7 ? * THU *)', startDate: '2026-10-06T11:30:00.000Z' },
       { ...fields, schedule: 'at(2026-10-08T07:30:00)', startDate: null },
       { ...fields, schedule: 'cron(30 7 * * ? *)', startDate: '2026-10-08T11:30:00.000Z' },
     ]);
   });
 
-  it('keeps every 3 hours as its own choice, where it sorts, until another is picked (#4021)', async () => {
+  it('keeps every 3 hours when Every goes to 6 and back, and saves Every only as a whole number (#4041)', async () => {
     service.scheduled = [{ ...MORNING_BRIEF, schedule: 'rate(3 hours)', startDate: '2026-10-06T11:00:00.000Z' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Every 3 hours');
-    expect(choices(sheet).slice(5, 8)).toEqual(['Every 2 hours', 'Every 3 hours', 'Every 6 hours']);
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 6 hours');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 3 hours');
+    expect(inSheet.getByLabelText('Every')).toHaveValue('3');
+    expect(inSheet.getByLabelText('Unit')).toHaveDisplayValue('hours');
+    await userEvent.clear(inSheet.getByLabelText('Every'));
+    expect(why(sheet)).toBe('Every needs a whole number from 1');
+    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
+    // It takes digits alone.
+    await userEvent.type(inSheet.getByLabelText('Every'), '0');
+    expect(why(sheet)).toBe('Every needs a whole number from 1');
+    await every(inSheet, '6.');
+    expect(inSheet.getByLabelText('Every')).toHaveValue('6');
+    await every(inSheet, '3');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every 6 hours');
+    await every(inSheet, '6');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
@@ -6506,26 +6640,44 @@ describe('agent profile', () => {
   });
 
   it.each([
-    ['cron(0 8 1 * ? *)', 'At 8:00 AM, on day 1 of the month'],
-    ['rate(3 days)', 'Every 3 days'],
-  ])('keeps %s, which no listed choice says, as its own choice in its words, and Save leaves it alone (#4021)', async (schedule, words) => {
-    service.scheduled = [{ ...MORNING_BRIEF, schedule }];
+    ['rate(3 days)', '3', 'days', 'rate(4 days)'],
+    ['rate(14 days)', '2', 'weeks', 'rate(28 days)'],
+  ])('opens %s as Every %s %s, and Every 4 makes %s (#4041)', async (schedule, count, unit, changed) => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule, startDate: '2026-10-06T11:00:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Interval');
+    expect(inSheet.getByLabelText('Every')).toHaveValue(count);
+    expect(inSheet.getByLabelText('Unit')).toHaveDisplayValue(unit);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await every(inSheet, '4');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, schedule: changed, startDate: '2026-10-06T11:00:00.000Z' }]);
+  });
+
+  it('keeps a schedule no other choice says as Custom, in its words, and Save leaves it alone (#4041)', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(0 8 1 * ? *)' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue(words);
-    expect(choices(sheet).at(-1)).toBe(words);
-    expect(rows(sheet)).toEqual(['Starts', 'Repeats', 'Ends', 'Model']);
-    expect(inSheet.queryByText(/to change it/)).toBeNull();
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Every day');
-    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), words);
+    expect(inSheet.getByLabelText('Repeat')).toHaveDisplayValue('Custom');
+    expect(rows(sheet)).toEqual(['Repeat', 'Schedule']);
+    expect(inSheet.getByText('At 8:00 AM, on day 1 of the month')).toBeInTheDocument();
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Daily');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeat'), 'Custom');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
     await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on FX' }]);
-    expect(service.scheduled[0]?.schedule).toBe(schedule);
+    expect(service.scheduled[0]?.schedule).toBe('cron(0 8 1 * ? *)');
   });
 
   it("runs a scheduled task on the account's default model until the user picks another", async () => {
@@ -6539,12 +6691,15 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(task));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     expect(inSheet.getByLabelText('Model')).toHaveValue('plan');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
@@ -6558,6 +6713,7 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(await openScheduled()));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
 
     const model = inSheet.getByLabelText('Model');
     expect(model).toHaveValue('retired');
@@ -6577,6 +6733,7 @@ describe('agent profile', () => {
     expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
     expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     expect(inSheet.getByLabelText('Model')).toBeDisabled();
     expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
@@ -6604,6 +6761,7 @@ describe('agent profile', () => {
     await panel.findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     const chooser = inSheet.getByLabelText('Model');
     expect(chooser).toBeEnabled();
     expect(chooser).toHaveValue(model ?? '');
@@ -6611,9 +6769,11 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
     if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
@@ -6632,6 +6792,7 @@ describe('agent profile', () => {
     await within(openProfile()).findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await advanced(inSheet);
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
     expect(inSheet.getByLabelText('Model')).toHaveValue('');
@@ -7849,7 +8010,7 @@ describe('model and effort picker', () => {
   it('opens by keyboard with its full model and reasoning name', async () => {
     service.models = [{ key: 'gpt-plan', label: 'GPT Plan', provider: 'openai' }];
     await renderPage();
-    const trigger = screen.getByRole('button', { name: 'Model GPT Plan, reasoning max' });
+    const trigger = screen.getByRole('button', { name: 'Model GPT Plan, reasoning Medium' });
     expect(trigger).toHaveAttribute('type', 'button');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     trigger.focus();
@@ -7863,10 +8024,9 @@ describe('model and effort picker', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('omits unavailable attachment and microphone controls', async () => {
+  it('omits the unavailable microphone control', async () => {
     await renderPage();
-    expect(screen.queryByRole('button', { name: /Microphone|Add/ })).not.toBeInTheDocument();
-    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Microphone/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
   });
 
@@ -7874,8 +8034,8 @@ describe('model and effort picker', () => {
     service.models = [{ key: 'gpt-plan', label: 'GPT Plan', provider: 'openai' }];
     await renderPage();
 
-    expect(pill()).toHaveTextContent(/^GPT Planmax$/);
-    expect(kit().properties).toEqual({ model: 'gpt-plan', effort: 'max', sandbox: true });
+    expect(pill()).toHaveTextContent(/^GPT PlanMedium$/);
+    expect(kit().properties).toEqual({ model: 'gpt-plan', effort: 'medium', sandbox: true });
     await userEvent.click(pill());
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
       'GPT Plan',
@@ -7905,14 +8065,14 @@ describe('model and effort picker', () => {
       service.replies.set('on-plan', [{ id: 'm1', role: 'user', content: 'On the plan' }]);
       service.providers.set('on-plan', 'openai');
       await renderPage();
-      expect(pill()).toHaveTextContent(/^Deepmax$/);
+      expect(pill()).toHaveTextContent(/^DeepMedium$/);
 
       await userEvent.click(sidebar().getByText('On the plan'));
       await settle();
 
       const replays = copilot.kits.filter((entry) => entry.selfManagedAgents['research-agent']?.threadId === 'on-plan');
       expect(replays.length).toBeGreaterThan(0);
-      for (const entry of replays) expect(entry.properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
+      for (const entry of replays) expect(entry.properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
     });
 
     it("moving a replayed Session off another provider's model", async () => {
@@ -7923,8 +8083,8 @@ describe('model and effort picker', () => {
 
       await userEvent.click(sidebar().getByText('On the plan'));
 
-      expect(pill()).toHaveTextContent(/^Planmax$/);
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
+      expect(pill()).toHaveTextContent(/^PlanMedium$/);
+      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
       await userEvent.click(pill());
       expect(names()).toEqual(['Plan', 'Effort']);
     });
@@ -7945,7 +8105,7 @@ describe('model and effort picker', () => {
       await sendMessage('Hello');
 
       expect(names()).toEqual(['Deep', 'Fast', 'Effort']);
-      expect(kit().properties).toEqual({ model: 'fast', effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
     });
 
     it('again offering every model in a new chat', async () => {
@@ -7964,7 +8124,7 @@ describe('model and effort picker', () => {
     service.failing.set('GET /agent/models', 503);
     await renderPage();
 
-    expect(pill()).toHaveTextContent(/^Models could not load: Failed to load the models: 503max$/);
+    expect(pill()).toHaveTextContent(/^Models could not load: Failed to load the models: 503Medium$/);
     await sendMessage('What is 2+2? One word.');
     expect(copilot.runAgent).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
@@ -7987,8 +8147,8 @@ describe('model and effort picker', () => {
     ]);
     await userEvent.click(within(openDropdown()).getByText('Fast'));
 
-    expect(kit().properties).toEqual({ model: 'fast', effort: 'max', sandbox: true });
-    expect(pill()).toHaveTextContent(/^Fastmax$/);
+    expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
+    expect(pill()).toHaveTextContent(/^FastMedium$/);
     expect(checked()).toEqual(['Fast']);
   });
 
@@ -8000,9 +8160,11 @@ describe('model and effort picker', () => {
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
       'Effort',
       'Low',
+      'Medium',
       'High',
+      'Max',
     ]);
-    expect(checked()).toEqual([]);
+    expect(checked()).toEqual(['Medium']);
     await userEvent.click(within(openDropdown()).getByText('High'));
 
     expect(kit().properties).toEqual({ model: 'deep', effort: 'high', sandbox: true });
@@ -8078,12 +8240,12 @@ describe('model and effort picker', () => {
         await userEvent.click(within(openDropdown()).getByText(picked));
         await userEvent.keyboard('{Escape}');
       }
-      expect(pill()).toHaveTextContent(`${picked}max`);
+      expect(pill()).toHaveTextContent(`${picked}Medium`);
 
       service.models = [plan, ...service.models];
       await switchAccount(view, 'acct-linked');
 
-      expect(kit().properties).toEqual({ model: expected, effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: expected, effort: 'medium', sandbox: true });
       await userEvent.click(pill());
       expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
         'Plan',
@@ -8101,8 +8263,8 @@ describe('model and effort picker', () => {
       service.models = [plan, { key: 'deep', label: 'Deep', provider: 'anthropic' }];
       await switchAccount(view, 'acct-linked');
 
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
-      expect(pill()).toHaveTextContent(/^Planmax$/);
+      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
+      expect(pill()).toHaveTextContent(/^PlanMedium$/);
     });
 
     it('uses a later account default after the chosen model was replaced by an implicit fallback', async () => {
@@ -8112,10 +8274,10 @@ describe('model and effort picker', () => {
       await userEvent.keyboard('{Escape}');
       service.models = [plan];
       await switchAccount(view, 'acct-linked');
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
       service.models = [{ key: 'astra', label: 'Astra', provider: 'openai' }, plan];
       await switchAccount(view, 'acct-another');
-      expect(kit().properties).toEqual({ model: 'astra', effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: 'astra', effort: 'medium', sandbox: true });
     });
 
     // The previous account's Main Chat stayed open, marked Main chat, and its first message became a Side Chat.
@@ -8227,7 +8389,7 @@ describe('model and effort picker', () => {
       expect(copilot.runAgent).not.toHaveBeenCalled();
       expect(screen.getByRole('alert')).toHaveTextContent(/^Your models are still loading\. Send it again once they have\.$/);
       await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
       expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     });
 
@@ -8257,7 +8419,7 @@ describe('model and effort picker', () => {
       service.models = [plan];
       await switchAccount(view, 'acct-linked');
 
-      expect(pill()).toHaveTextContent(/^Loading models…max$/);
+      expect(pill()).toHaveTextContent(/^Loading models…Medium$/);
       const sideChatsBefore = sideChatLoads();
       await sendMessage('What is 2+2? One word.');
       expect(copilot.runAgent).not.toHaveBeenCalled();
@@ -8268,7 +8430,7 @@ describe('model and effort picker', () => {
       await settle();
       await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
-      expect(kit().properties).toEqual({ model: 'plan', effort: 'max', sandbox: true });
+      expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
       expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     });
   });
@@ -8324,7 +8486,7 @@ describe('the model and effort the user last picked', () => {
   // An in-page sign-in preserves the selected model. A reload keeps that choice too.
   it.each([
     ['an anonymous pick, then a link', 'acct-anonymous', 'acct-linked', true, { model: 'fast', effort: 'high' }],
-    ['no pick, then a link', 'acct-anonymous', 'acct-linked', false, { model: 'plan', effort: 'max' }],
+    ['no pick, then a link', 'acct-anonymous', 'acct-linked', false, { model: 'plan', effort: 'medium' }],
     ['a pick on one linked account, then another', 'acct-linked', 'acct-other', true, { model: 'fast', effort: 'high' }],
   ])('after %s in the page, and after a reload there', async (_, from, to, picks, expected) => {
     const view = await renderPage(auth({ accountId: from }));
@@ -8358,7 +8520,7 @@ describe('the model and effort the user last picked', () => {
 
     await renderPage();
 
-    expect(kit().properties).toEqual({ model: 'deep', effort: 'max', sandbox: true });
+    expect(kit().properties).toEqual({ model: 'deep', effort: 'medium', sandbox: true });
   });
 
   it('leave the picker working where the browser blocks storage, and say the choice is not kept', async () => {
@@ -9142,10 +9304,10 @@ describe('an offline first Turn refused before dispatch', () => {
     await sendMessage('Create one reminder');
     await openModels();
     await userEvent.click(screen.getByText('Astra'));
-    expect(kit().properties).toEqual({ model: 'astra', effort: 'max', sandbox: true });
+    expect(kit().properties).toEqual({ model: 'astra', effort: 'medium', sandbox: true });
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(submittedProperties).toEqual([{ model: 'astra', effort: 'max', sandbox: true }]);
+    expect(submittedProperties).toEqual([{ model: 'astra', effort: 'medium', sandbox: true }]);
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     await openModels();
     expect(modelNames()).toEqual(['Astra', 'Effort']);
@@ -9185,7 +9347,7 @@ describe('Main Chat navigation failure visibility', () => {
     await settle();
     expect(agent()).toBe(current);
     expect(screen.getByLabelText('Message')).toHaveValue('Draft remains');
-    expect(kit().properties).toEqual({ model: 'fast', effort: 'max', sandbox: true });
+    expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
     expect(screen.getByRole('alert')).toHaveTextContent('Your Main Chat could not be opened.');
     service.failing.delete('GET /main-chat');
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -9281,18 +9443,14 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
   }
 });
 
-// With the cartridge's uploadFile, a + attaches files, and the message names them for the agent.
+// A + attaches files to the agent's Files, and the message names them for the agent.
 describe('attaching files', () => {
   const uploads: { name: string; resolve: (path: string) => void; reject: (error: Error) => void }[] = [];
   beforeEach(async () => {
     uploads.length = 0;
-    const { webUiPlugin } = await import('@cartridge-ui');
-    webUiPlugin.uploadFile = (file) => new Promise((resolve, reject) => {
+    vi.spyOn(agentFiles, 'upload').mockImplementation((file) => new Promise((resolve, reject) => {
       uploads.push({ name: file.name, resolve, reject });
-    });
-    onTestFinished(() => {
-      delete webUiPlugin.uploadFile;
-    });
+    }));
   });
   const chips = () => [...document.querySelectorAll('.copilotKitInput .composer-file')].map((chip) => chip.textContent);
   const attach = async (...names: string[]) => {

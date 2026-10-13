@@ -1,9 +1,10 @@
-import { Cdp } from 'botcube-chat/cdp';
 import { spawn } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { HttpError } from 'botcube-chat';
+import { delimiter, join } from 'node:path';
+import { HttpError } from './cartridge.js';
+import { Cdp } from './cdp.js';
 
 export class ComputerStartupCancelled extends HttpError {
   constructor() {
@@ -11,7 +12,40 @@ export class ComputerStartupCancelled extends HttpError {
   }
 }
 
-export interface LocalComputer {
+/** The names Chromium and Chrome install under on PATH. */
+const CHROMIUM_COMMANDS = ['chromium', 'chromium-browser', 'google-chrome-stable', 'google-chrome'];
+/** Where macOS installs them, off PATH. */
+const CHROMIUM_APPS = [
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+];
+
+/** BOTCUBE_CHROMIUM_PATH, else the first Chromium or Chrome on PATH or in /Applications; throws naming the fix when there is none. */
+export function findChromium(env: NodeJS.ProcessEnv): string {
+  const configured = env.BOTCUBE_CHROMIUM_PATH?.trim();
+  if (configured) return configured;
+  const candidates = (env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .flatMap((dir) => CHROMIUM_COMMANDS.map((name) => join(dir, name)))
+    .concat(CHROMIUM_APPS);
+  const found = candidates.find((path) => {
+    try {
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!found)
+    throw new Error(
+      `No Chromium found on PATH (${CHROMIUM_COMMANDS.join(', ')}) or in /Applications: install Chromium or set BOTCUBE_CHROMIUM_PATH`
+    );
+  return found;
+}
+
+/** A Chromium process on this Chat Service's host, with a private profile it deletes on exit. */
+export interface LocalChromium {
   readonly endpoint: string;
   readonly alive: boolean;
   readonly closed: Promise<void>;
@@ -24,12 +58,13 @@ async function command(endpoint: string, method: string, params: object = {}, se
   try { return await cdp.send(method, { params, ...(sessionId ? { sessionId } : {}) }); } finally { cdp.close(); }
 }
 
-export async function startLocalComputer(
+/** Start headless Chromium on `startPage`; answers once its DevTools endpoint has a page. */
+export async function startLocalChromium(
   chromiumPath: string,
-  siteUrl: string,
+  startPage: string,
   signal: AbortSignal
-): Promise<LocalComputer> {
-  const profile = await mkdtemp(join(tmpdir(), 'template-computer-'));
+): Promise<LocalChromium> {
+  const profile = await mkdtemp(join(tmpdir(), 'agent-computer-'));
   if (signal.aborted) {
     await rm(profile, { recursive: true, force: true });
     throw new ComputerStartupCancelled();
@@ -45,7 +80,7 @@ export async function startLocalComputer(
       '--remote-debugging-port=0',
       '--window-size=1280,720',
       `--user-data-dir=${profile}`,
-      new URL('/login', siteUrl).href,
+      startPage,
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
@@ -83,7 +118,13 @@ export async function startLocalComputer(
         if (error) reject(error);
         else if (value) resolve(value);
       };
-      child.once('error', (error) => finish(error));
+      child.once('error', (error: NodeJS.ErrnoException) =>
+        finish(
+          error.code === 'ENOENT'
+            ? new Error(`Chromium is not installed at ${chromiumPath} (ENOENT): install it or set BOTCUBE_CHROMIUM_PATH`, { cause: error })
+            : error
+        )
+      );
       child.once('close', () =>
         finish(new Error('Agent Computer Chromium exited before startup'))
       );

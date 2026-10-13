@@ -1,8 +1,6 @@
 import asyncio
 import json
-from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,68 +36,15 @@ def test_template_deploy_identity_is_placeholder_only() -> None:
     assert identity['domains']['chatService'] == 'http://localhost:8123'
 
 
-def test_browser_tool_isolates_capabilities_and_retires_idle_daemons() -> None:
-    first = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'first', 'forwardedProps': {'agentComputerCdpUrl': 'ws://chat.test/cdp?token=first'}})
-    second = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'second', 'forwardedProps': {'agentComputerCdpUrl': 'ws://chat.test/cdp?token=second'}})
-    renewed = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'first', 'forwardedProps': {'agentComputerCdpUrl': 'ws://chat.test/cdp?token=renewed'}})
-    assert first.environment is not None
-    environments = [auth.environment for auth in (first, second, renewed)]
-    assert all(environment is not None for environment in environments)
-    assert first.environment['AGENT_BROWSER_CDP'] == 'ws://chat.test/cdp?token=first'
-    assert len({environment['AGENT_BROWSER_SESSION'] for environment in environments if environment is not None}) == 3
-    assert first.environment['AGENT_BROWSER_IDLE_TIMEOUT_MS'] == '10000'
+def test_a_rotating_site_invocation_keeps_the_sessions_agent() -> None:
+    def environment(credential: str) -> Any:
+        props = {'sessionUserId': 'owner-one', 'credentialServiceInvocationToken': credential}
+        return HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': props}).environment
 
+    first, renewed = environment('credential-first'), environment('credential-renewed')
 
-def test_rotating_browser_capabilities_reuse_the_session_agent_and_refresh_its_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    from botcube_harness_deepagents import serving
-
-    class Backend:
-        def __init__(self, environment: dict[str, str]) -> None:
-            self._env = environment
-
-        def execute(self, command: str) -> tuple[str, str]:
-            return self._env['AGENT_BROWSER_CDP'], self._env['AGENT_BROWSER_SESSION']
-
-    class Agent:
-        def __init__(self, **kwargs: Any) -> None:
-            pass
-
-    monkeypatch.setattr(serving, '_cartridge', None)
-    serving.configure_harness_definition(HARNESS_CARTRIDGE)
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), build_backend=Backend))
-    for name in ('_AGENTS', '_AGENT_BACKENDS', '_BACKEND_BY_AGENT', '_BACKENDS', '_MODEL_RELAYS'):
-        monkeypatch.setattr(serving, name, {})
-    monkeypatch.setattr(serving, '_ensure_memory_backends', lambda: None)
-    monkeypatch.setattr(serving, 'build_model', lambda **kwargs: None)
-    monkeypatch.setattr(serving, 'install_prompt_cache_usage_callback', lambda model: model)
-    monkeypatch.setattr(serving, 'build_agent', lambda **kwargs: SimpleNamespace(config={'recursion_limit': 10}))
-    monkeypatch.setattr(serving, '_SessionAgent', Agent)
-
-    def turn(account: str, session: str, capability: str, credential: str | None = None) -> Any:
-        props = {'sessionUserId': account, 'agentComputerCdpUrl': f'ws://chat.test/cdp?token={capability}'}
-        if credential is not None:
-            props['credentialServiceInvocation'] = credential
-        auth = HARNESS_CARTRIDGE.prepare_invocation({'threadId': session, 'forwardedProps': props})
-        return serving._get_agent(actor_id=account, session_user_id=account, thread_id=session, persistent_memory=False, environment=auth.environment)
-
-    first = turn('owner-one', 'session-one', 'first')
-    renewed = turn('owner-one', 'session-one', 'renewed')
-    assert renewed is first
-    assert len(serving._AGENTS) == 1
-    assert len(serving._BACKENDS) == 1
-    latest = HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': {'agentComputerCdpUrl': 'ws://chat.test/cdp?token=renewed'}})
-    assert latest.environment is not None
-    assert serving._BACKEND_BY_AGENT[renewed].execute('agent-browser get url') == ('ws://chat.test/cdp?token=renewed', latest.environment['AGENT_BROWSER_SESSION'])
-    other_owner = turn('owner-two', 'session-one', 'other-owner')
-    other_session = turn('owner-one', 'session-two', 'other-session')
-    assert other_owner is not first
-    assert other_session is not first
-    assert serving._BACKEND_BY_AGENT[other_owner] is not serving._BACKEND_BY_AGENT[first]
-    assert serving._BACKEND_BY_AGENT[other_session] is not serving._BACKEND_BY_AGENT[first]
-    credential_first = turn('owner-one', 'session-one', 'first', 'credential-first')
-    credential_renewed = turn('owner-one', 'session-one', 'renewed', 'credential-renewed')
-    assert credential_first is not credential_renewed
-    assert serving._BACKEND_BY_AGENT[credential_renewed]._env['TEMPLATE_CREDENTIAL_INVOCATION'] == 'credential-renewed'
+    assert renewed['TEMPLATE_CREDENTIAL_INVOCATION'] == 'credential-renewed'
+    assert HARNESS_CARTRIDGE.environment_cache_key(renewed) == HARNESS_CARTRIDGE.environment_cache_key(first)
 
 
 def test_shared_invocation_preserves_each_templates_filing_identity(monkeypatch: pytest.MonkeyPatch) -> None:

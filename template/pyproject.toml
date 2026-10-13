@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "botcube-cartridge",
     "botcube-credential-service",
-    "uvicorn>=0.34",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]

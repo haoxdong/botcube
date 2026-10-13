@@ -305,6 +305,11 @@ class SavedMessagesHttpAgent extends HttpAgent {
     return this.isRunning && this.turn !== undefined && this.turn.stop !== "idle";
   }
 
+  /** Whether the Turn streaming here has started: its RUN_STARTED has arrived. */
+  runStarted(): boolean {
+    return this.turn?.active === true && this.turn.admitted;
+  }
+
   override async connectAgent(
     parameters?: RunAgentParameters,
     subscriber?: AgentSubscriber,
@@ -385,6 +390,11 @@ export function toolCancellationStore(agent: AbstractAgent): ToolCancellationSto
 /** Whether the user stopped `agent`'s streaming Turn here, rather than a newer Turn replacing it. */
 export function stoppedHere(agent: AbstractAgent): boolean {
   return agent instanceof SavedMessagesHttpAgent && agent.stoppedHere();
+}
+
+/** Whether `agent`'s Turn streaming here has started: its RUN_STARTED has arrived. */
+export function runStarted(agent: AbstractAgent): boolean {
+  return agent instanceof SavedMessagesHttpAgent && agent.runStarted();
 }
 
 /** Why a Stop could not stop the Turn on the server. */

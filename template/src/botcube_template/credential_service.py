@@ -44,7 +44,7 @@ def main() -> None:
     keys = LocalDataKeyProvider(Path(local_key)) if local_key else Boto3KmsDataKeyProvider(key_id=os.environ['BOTCUBE_VAULT_KMS_KEY_ID'])
     vault = DynamoDbCredentialVault(table, keys)
     app = template_credential_service(lambda: vault, os.environ['TEMPLATE_SITE_URL'], lambda: os.environ['BOTCUBE_CREDENTIAL_INVOCATION_SECRET'])
-    uvicorn.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', '8125')))
+    uvicorn.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', '8081')))
 
 
 if __name__ == '__main__':

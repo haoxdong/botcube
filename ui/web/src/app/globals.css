@@ -37,13 +37,13 @@ body {
   --color-file-pdf: #e5484d;
   --color-file-sheet: #10a37f;
 
-  /* The agent's colours for its Soul and Memory cards, a cartridge `theme` hook (DESIGN.md); by default a neutral grey. */
-  --agent-soul-from: var(--color-text-muted);
-  --agent-soul-to: var(--color-text);
-  --agent-soul-glow: var(--color-control);
-  --agent-memory-from: var(--color-text-muted);
-  --agent-memory-to: var(--color-text);
-  --agent-memory-glow: var(--color-control);
+  /* The agent's colours for its Soul and Memory cards (DESIGN.md): Soul a periwinkle, Memory a deeper navy, Soul's darker sibling. */
+  --agent-soul-from: #6c90bc;
+  --agent-soul-to: #3f5f8a;
+  --agent-soul-glow: #acc4e0;
+  --agent-memory-from: #3f5f8a;
+  --agent-memory-to: #1c2b45;
+  --agent-memory-glow: #acc4e0;
 
   /* The type scale (DESIGN.md): ChatGPT's Mac app here, iOS's defaults in the 640px query below */
   --font-title: 1.125rem;
@@ -1312,10 +1312,13 @@ cpk-web-inspector,
   padding: 4px 8px 4px 0;
   font-size: var(--font-detail);
   color: var(--color-text-muted);
+}
+
+button.worklog-head {
   cursor: pointer;
 }
 
-.worklog-head:hover {
+button.worklog-head:hover {
   color: var(--color-text);
 }
 
@@ -4206,6 +4209,61 @@ button.worklog-step-head:hover {
   right: 0;
   translate: 0 -50%;
   pointer-events: none;
+}
+
+/* Interval's Every, as Codex's: the count bare and editable in place, then its unit muted; no box. */
+.settings-every {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.settings-every input,
+.settings-every select {
+  padding: 0;
+  border: none;
+  font: inherit;
+  font-size: var(--font-body);
+  background: none;
+  appearance: none;
+}
+
+.settings-every input {
+  text-align: right;
+  color: var(--color-text);
+}
+
+.settings-every input:focus-visible {
+  outline: auto;
+}
+
+.settings-every select {
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+/* Advanced, as Codex's: muted words and a chevron under the card, which turns up while open. */
+.settings-advanced {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  font: inherit;
+  font-size: var(--font-body);
+  color: var(--color-text-muted);
+  background: none;
+  cursor: pointer;
+}
+
+.settings-advanced svg {
+  transition: rotate 0.2s;
+}
+
+.settings-advanced[aria-expanded="true"] svg {
+  rotate: 180deg;
 }
 
 /* A date and time in words, as Codex's Time reads; the native picker lies unseen over the whole row to take the tap. */

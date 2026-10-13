@@ -12,7 +12,8 @@ interface LoginPage {
 }
 
 export const AUTH_BROWSER_SESSION_TTL_SECONDS = 180;
-type JarCookie = Record<string, unknown> & { name: string; value: string };
+/** A cookie in a cookie-jar file, as the auth browser reads and writes it. */
+export type JarCookie = Record<string, unknown> & { name: string; value: string };
 const NAVIGATION_TIMEOUT_MS = 15_000;
 /** Reads the page's visible inputs' types and names; never a value. */
 const LOGIN_PAGE_EXPRESSION = `({

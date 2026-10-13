@@ -305,7 +305,7 @@ describe('a Turn', () => {
 
     expect(await response.text()).toBe(
       'data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"Session: S-1 "}\n\n' +
-        'data: {"type":"CUSTOM","name":"test:browser-live-view","value":{"open":true,"sessionId":"S-1"}}\n\n' +
+        'data: {"type":"CUSTOM","name":"botcube:browser-live-view","value":{"open":true,"sessionId":"S-1"}}\n\n' +
         'data: {"type":"RUN_ERROR","message":"AgentCore upstream stream ended before the Turn finished","code":"AGENTCORE_UPSTREAM_STREAM_ERROR"}\n\n',
     );
   });

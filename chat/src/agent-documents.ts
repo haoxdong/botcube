@@ -11,6 +11,23 @@ export type AgentDocumentEdit = { document: 'agentIdentity'; content: AgentIdent
 
 const IDENTITY_FIELDS = ['name', 'character', 'vibe', 'avatar'] as const;
 
+/**
+ * A Cartridge's Agent Identity and Soul templates: its own name, character and avatar
+ * (empty for the name's initial), on BotCube's vibe and Soul.
+ */
+export function agentDocumentTemplates({ name, character, avatar = '' }: Pick<AgentIdentity, 'name' | 'character'> & { avatar?: string }): AgentDocumentSet {
+  return {
+    agentIdentity: { name, character, vibe: 'Direct, precise, and calm', avatar },
+    // Stryker disable next-line ArrayDeclaration: the Soul template is product copy the user may rewrite; no behavior reads its lines
+    soul: [
+      'Lead with the answer, then the evidence behind it.',
+      'Be candid about what you found, what you could not find, and how sure you are.',
+      "Respect the user's time: no filler, no flattery.",
+      'Learn how this user likes to work, and adapt to it.',
+    ].join('\n'),
+  };
+}
+
 /** The Agent Identity in this value, or a 422 naming what is wrong with it. */
 export function agentIdentity(value: unknown): AgentIdentity {
   const fields = (value ?? {}) as Record<string, unknown>;

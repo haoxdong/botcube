@@ -39,7 +39,7 @@ def _run_worker(request: Request) -> Result:
         return cast(Result, response)
 
 
-class PolicyShellBackend(LocalShellBackend):
+class WorkerShellBackend(LocalShellBackend):
     """deepagents' local shell, run in a per-command worker process."""
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:

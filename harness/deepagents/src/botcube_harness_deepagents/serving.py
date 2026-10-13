@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import importlib.metadata
 import json
@@ -17,7 +18,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from time import perf_counter
@@ -91,7 +92,7 @@ from .prompt_cache_observability import (
 )
 from .scheduled_tasks import propose_scheduled_task
 from .session_format import SessionFormatLegacyError, latest_checkpoint
-from .shell_backend import PolicyShellBackend
+from .shell_backend import WorkerShellBackend
 from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
 
 log = logging.getLogger(__name__)
@@ -145,10 +146,10 @@ def configure_harness(cartridge: HarnessCartridge) -> None:
 def configure_harness_definition(definition: HarnessDefinition) -> None:
     """Adapt a framework-neutral Cartridge definition to this Harness."""
 
-    def build_backend(environment: dict[str, str]) -> PolicyShellBackend:
+    def build_backend(environment: dict[str, str]) -> WorkerShellBackend:
         root = _workspace()
         definition.prepare_root(root)
-        return PolicyShellBackend(
+        return WorkerShellBackend(
             root_dir=root,
             virtual_mode=True,
             env=definition.build_shell_env(environment),
@@ -156,8 +157,8 @@ def configure_harness_definition(definition: HarnessDefinition) -> None:
         )
 
     def apply_session_id(backend: LocalShellBackend, session_id: str | None) -> None:
-        # The backend is the PolicyShellBackend build_backend made.
-        cast(PolicyShellBackend, backend).set_environment_variable(  # pragma: no mutate: cast is a runtime no-op
+        # The backend is the WorkerShellBackend build_backend made.
+        cast(WorkerShellBackend, backend).set_environment_variable(  # pragma: no mutate: cast is a runtime no-op
             definition.session_id_env_var,
             str(session_id) if session_id else None,
         )
@@ -481,7 +482,10 @@ def _get_agent(
         conversation_id = thread_id or 'default'
         resolved_model = resolve_model(model)
         resolved_effort = resolve_effort(effort)
-        environment_key = _require_cartridge().environment_cache_key(environment)
+        # The Agent Computer's CDP URL carries each Turn's token: a cached agent's shell takes the new one.
+        environment_key = _require_cartridge().environment_cache_key(
+            {name: value for name, value in (environment or {}).items() if name != 'AGENT_BROWSER_CDP'}
+        )
         key = _AgentKey(
             conversation_id,
             actor_id,
@@ -677,6 +681,26 @@ def _apply_session_env(backend: LocalShellBackend, session_id: str) -> None:
     _require_cartridge().apply_session_id(backend, session_id)
 
 
+def _with_agent_computer(auth: InvocationAuth, forwarded: dict[str, Any], session: tuple[str, str]) -> InvocationAuth:
+    """Point agent-browser at the Session's Agent Computer, through the Chat Service's per-Turn CDP URL (ADR 0075).
+
+    One agent-browser session per Session keeps a Turn's snapshot refs between its commands, and its
+    daemon reconnects when a later Turn brings a new URL. A daemon outlives its browser, so it exits
+    after an hour idle, when its Turn's CDP token (agent-computer-token.ts) has expired.
+    """
+    cdp_url = forwarded.pop('agentComputerCdpUrl', None)
+    if cdp_url is None:
+        return auth
+    if not isinstance(cdp_url, str) or not cdp_url:
+        raise RuntimeError('agentComputerCdpUrl must be a non-empty URL')
+    return replace(auth, environment={
+        **(auth.environment or {}),
+        'AGENT_BROWSER_CDP': cdp_url,
+        'AGENT_BROWSER_SESSION': hashlib.sha256(json.dumps(session).encode()).hexdigest()[:32],
+        'AGENT_BROWSER_IDLE_TIMEOUT_MS': str(60 * 60 * 1000),
+    })
+
+
 def _require_session_user_id(session_user_id: str | None) -> str:
     if not session_user_id:
         raise MissingUserIdError(
@@ -711,6 +735,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
             'Invocation carries no user ID; the Chat Service must forward the account ID'
         )
     session_user_id = _require_session_user_id(session_user_id)
+    auth = _with_agent_computer(auth, forwarded, (session_user_id, input_data.thread_id))
     turn_identity = forwarded.pop('turnIdentity', None)
     if AGENTCORE_MEMORY_ID and not (isinstance(turn_identity, str) and turn_identity):
         raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')

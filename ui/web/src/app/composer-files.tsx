@@ -3,10 +3,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { File as FileIcon, FileSpreadsheet, FileText, RotateCw, X } from "lucide-react";
-import type { WebUiPlugin } from "../cartridge/index.js";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../cartridge/file-account";
 
-type Upload = NonNullable<WebUiPlugin["uploadFile"]>;
+type Upload = (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
 
 /** Where a file the user attached stands: on its way to the agent's files, there by its path, or refused and why. */
 type ComposerFileState = { status: "uploading"; progress: number } | { status: "uploaded"; path: string } | { status: "failed"; error: string };
@@ -39,10 +38,10 @@ function probeAttachmentAccountEpoch(): string | null | typeof unavailableAccoun
 }
 
 /**
- * The files attached in a chat's composer, each uploading as it is added; null without the cartridge's `upload`, as the
- * composer then has no +. Removing a file, or the composer unmounting, aborts its upload.
+ * The files attached in a chat's composer, each uploading as it is added. Removing a file, or the composer unmounting,
+ * aborts its upload.
  */
-export function useComposerFiles(upload: Upload | undefined, accountId: string | undefined): ComposerFiles | null {
+export function useComposerFiles(upload: Upload, accountId: string | undefined): ComposerFiles {
   const epoch = useSyncExternalStore(subscribeAttachmentAccount, probeAttachmentAccountEpoch, () => null);
   const [state, setState] = useState({ accountId, epoch, files: [] as ComposerFile[] });
   const files = state.files;
@@ -57,8 +56,6 @@ export function useComposerFiles(upload: Upload | undefined, accountId: string |
       running.clear();
     };
   }, [accountId, epoch]);
-  if (!upload) return null;
-
   // A file removed meanwhile matches no entry, so an update never brings its chip back.
   const settle = (id: string, state: ComposerFileState) => setFiles((current) => current.map((entry) => (entry.id === id ? { ...entry, state } : entry)));
   const start = (id: string, file: File) => {
@@ -101,8 +98,10 @@ export function useComposerFiles(upload: Upload | undefined, accountId: string |
       for (const id of [...uploads.current.keys()]) abort(id);
       setFiles(() => []);
     },
+    // With no file attached, the message names no path another account could own, so neither the account nor storage holds it.
     get sendable() {
-      return state.accountId === accountId && state.epoch === probeAttachmentAccountEpoch() && (files.length === 0 || state.epoch !== unavailableAccountEpoch) && files.every(({ state }) => state.status === "uploaded");
+      if (files.length === 0) return true;
+      return state.accountId === accountId && state.epoch === probeAttachmentAccountEpoch() && state.epoch !== unavailableAccountEpoch && files.every(({ state }) => state.status === "uploaded");
     },
   };
 }
@@ -230,8 +229,8 @@ function SentImage({ path, name, fileUrl }: { path: string; name: string; fileUr
 }
 
 /**
- * A sent message's files, as ChatGPT shows them above its bubble: an image as its thumbnail, from the cartridge's
- * `fileUrl`, any other file as a card of its kind's tile, its name and its kind.
+ * A sent message's files, as ChatGPT shows them above its bubble: an image as its thumbnail, from `fileUrl`, any other
+ * file as a card of its kind's tile, its name and its kind.
  */
 export function SentFileCards({ paths, fileUrl }: { paths: string[]; fileUrl?: ((path: string) => Promise<string>) | undefined }) {
   if (paths.length === 0) return null;

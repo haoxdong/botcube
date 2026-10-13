@@ -8,10 +8,6 @@ const history: AccountHistory = { delete: async () => undefined, transfer: async
       owns: async () => true };
 
 describe('the template Chat Service Cartridge', () => {
-  it('names its browser live-view event for BotCube', () => {
-    expect(templateCartridge(history).browserEventName).toBe('botcube:browser-live-view');
-  });
-
   it('offers the echo model, which the template Harness answers, and no others', async () => {
     const cartridge = templateCartridge(history);
 
@@ -27,7 +23,7 @@ describe('the template Chat Service Cartridge', () => {
     expect(await response.json()).toEqual({ status: 'ready', actorId: 'template-user' });
   });
 
-  it('files every request under the one local actor and forwards the Turn unchanged', async () => {
+  it('files every request under the one local actor and forwards the Turn with its Agent Computer', async () => {
     const cartridge = templateCartridge(history);
     const input = {
       threadId: 'session-1', runId: 'run-1', state: {}, messages: [], tools: [], context: [],
@@ -41,12 +37,22 @@ describe('the template Chat Service Cartridge', () => {
 
     expect(requester.owner).toMatch(/^template-/);
     expect(cartridge.filingUserId(requester.owner)).toBe(requester.owner);
-    expect(await cartridge.invocationPayload(input, requester, cartridge.models[0])).toEqual(input);
+    expect(await cartridge.invocationPayload(input, requester, cartridge.models[0])).toEqual({
+      ...input,
+      forwardedProps: { model: 'echo', agentComputerCdpUrl: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:8123\/agent-computer\/cdp\?token=/) },
+    });
   });
 });
 
-it('discards a client-supplied CDP endpoint when the server computer is disabled', async () => {
-  const cartridge = templateCartridgeFactory({}, () => undefined)(history);
+it("replaces a client-supplied CDP endpoint with its own Agent Computer's", async () => {
+  const cartridge = templateCartridgeFactory({ BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://chat-service:8123/agent-computer/cdp' }, () => undefined)(history);
   const input = { threadId: 'session-1', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: { model: 'echo', agentComputerCdpUrl: 'ws://untrusted.invalid' } } as RunAgentInput;
-  expect(await cartridge.invocationPayload(input, { owner: 'owner' }, cartridge.models[0])).toEqual({ ...input, forwardedProps: { model: 'echo' } });
+  expect(await cartridge.invocationPayload(input, { owner: 'owner' }, cartridge.models[0])).toEqual({
+    ...input,
+    forwardedProps: { model: 'echo', agentComputerCdpUrl: expect.stringMatching(/^ws:\/\/chat-service:8123\/agent-computer\/cdp\?token=/) },
+  });
+});
+
+it("opens its Agent Computer on the fake site's login page, which must be a URL", () => {
+  expect(() => templateCartridgeFactory({ TEMPLATE_SITE_URL: 'not-a-url' }, () => undefined)(history)).toThrow('Invalid URL');
 });

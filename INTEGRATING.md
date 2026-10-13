@@ -62,8 +62,8 @@ The export writes the UI files to `ui-artifact/`. Omit `--target` and `--output`
 and add an image tag to build its static server image, which listens on port 3001. Set `CARTRIDGE_UI_PACKAGE` and, when needed, `CARTRIDGE_UI_BUILD_CONFIG`
 through build arguments to bind your UI Cartridge. Chat and Credential Service
 Dockerfiles above bind the neutral template; supply your own Cartridge build
-inputs when replacing it. The neutral Chat image's default Computer configuration and the Credential
-Service need `TEMPLATE_SITE_URL` at runtime. Set it to your reachable, caller-owned HTTPS site URL. Configure the
+inputs when replacing it. The Credential Service needs `TEMPLATE_SITE_URL` at runtime; on the Chat Service it is
+optional and opens the Agent Computer on that site's login page. Set it to your reachable, caller-owned HTTPS site URL. Configure the
 Credential Vault and invocation settings as described in the
 [template README](template/README.md).
 
@@ -186,10 +186,8 @@ For Cartridge-specific container settings, pass an `environment` map to
 forwards `chat.environment` and `credentials.environment`. For the neutral
 serving images' default configuration, set `TEMPLATE_SITE_URL` in both maps to your reachable HTTPS
 site URL. Framework-owned values, including serving ports and regions, take
-precedence over caller entries. The Chat image enables Chromium by default;
-its Computer configuration requires the site URL and Chromium path together.
-An echo-only API fixture can disable Computer by setting
-`TEMPLATE_CHROMIUM_PATH` to an empty string and omitting `TEMPLATE_SITE_URL`.
+precedence over caller entries. The Chat image installs Chromium, which the
+local Agent Computer runs with no configuration.
 
 For the generic ECS CDK entry point, set `BOTCUBE_REPOSITORY_ROOT` to the absolute checkout root when running from a standalone BotCube mirror. This controls the image build context and Cartridge asset paths. If unset, it retains the current monorepo root; relative values resolve from `infra/ecs/cdk`.
 
@@ -243,8 +241,9 @@ Unset options preserve the current behavior. Names below are environment variabl
 | BOTCUBE_HARNESS_ENDPOINT, BOTCUBE_HARNESS_SIGV4                                                                                                           | unset; true when endpoint set. Complete HTTPS invocation URL, no path appended. Region comes from AGENTCORE_REGION. | chat/src/upstream.ts; server.ts                                                         |
 | BOTCUBE_LOCAL_HARNESS_URL, BOTCUBE_LOCAL_SESSION_API_URL, BOTCUBE_SESSION_API_FUNCTION_ARN, AWS_ENDPOINT_URL_LAMBDA                                       | unset                                                                                                               | chat/src/server.ts                                                                      |
 | BOTCUBE_HARNESS_CONNECT_TIMEOUT_MS, BOTCUBE_WARMUP_TIMEOUT_MS                                                                                             | 30000, 60000                                                                                                        | chat/src/server.ts                                                                      |
-| BOTCUBE_CHAT_TABLE, BOTCUBE_CORS_ORIGINS, AGENTCORE_BROWSER_ID, PORT, BOTCUBE_CHAT_HOST                                                                   | chat, Cartridge origins, aws.browser.v1, 8123, 0.0.0.0                                                              | chat/src/server.ts                                                                      |
+| BOTCUBE_CHAT_TABLE, BOTCUBE_CORS_ORIGINS, AGENTCORE_BROWSER_ID, PORT, BOTCUBE_CHAT_HOST                                                                   | chat, local UI origins, aws.browser.v1, 8123, 0.0.0.0                                                               | chat/src/server.ts                                                                      |
 | BOTCUBE_LIVE_VIEW_URL_EXPIRES_SECONDS                                                                                                                     | 300                                                                                                                 | chat/src/server.ts                                                                      |
+| BOTCUBE_CHROMIUM_PATH, BOTCUBE_AGENT_COMPUTER_CDP_URL                                                                                                     | /usr/bin/chromium, ws://127.0.0.1:$PORT/agent-computer/cdp; the local Agent Computer                                | chat/src/local-agent-computer.ts                                                        |
 | BOTCUBE_TURN_SUMMARY_MODEL, AWS_ENDPOINT_URL_BEDROCK_RUNTIME                                                                                              | us.anthropic.claude-haiku-4-5-20251001-v1:0, regional Bedrock Runtime URL                                           | chat/src/turn-summaries.ts                                                              |
 | BOTCUBE_CHAT_KEEPALIVE_MS                                                                                                                                 | 15000                                                                                                               | chat/src/turn-stream.ts                                                                 |
 | BOTCUBE_TURN_BOUND_MS                                                                                                                                     | 3600000; match runtime maxLifetime                                                                                  | chat/src/sessions.ts                                                                    |
@@ -376,9 +375,9 @@ For each Turn, `invocationPayload` signs a Credential Service invocation bound t
 
 ### Connect the Agent Computer
 
-The [computer adapter](template/chat/src/computer.ts) authorizes the owning Account and Session. Its [local implementation](template/chat/src/local-computer.ts) manages Chromium with a private profile and issues a ten-minute signed CDP URL. The Harness exposes the URL as `AGENT_BROWSER_CDP` to its permitted browser commands.
+A Cartridge with no AgentCore browser wires BotCube's [local Agent Computer](chat/src/local-agent-computer.ts), as the template's Chat Cartridge does: it authorizes the owning Account and Session and runs a [local Chromium](chat/src/local-chromium.ts) with a private profile per Session, opened on the Cartridge's start page (`about:blank` unless given). Each Turn gets a signed CDP URL for its Account and Session, valid for an hour; the agent's connection wakes the Session's computer. The Harness exposes the URL as `AGENT_BROWSER_CDP`, with one `AGENT_BROWSER_SESSION` per Session, to its permitted browser commands; a Cartridge adds no browser wiring. With no configuration it runs the `/usr/bin/chromium` the Chat image installs, and a Chromium missing there fails the computer's start with HTTP 503.
 
-The adapter filters credential-export commands and cookie data from network events. Retirement closes CDP channels, deletes the private profile, and invalidates its signed URL. The [Computer view](template/ui/web/src/computer-view.tsx) uses the owner-authorized live-view endpoint. This local adapter has no Take-over; AWS browser acceptance remains a separate check.
+The same [CDP channel](chat/src/agent-computer-cdp.ts) as an AgentCore Agent Computer's filters credential-export commands and cookie data from network events. Retirement closes CDP channels and deletes the private profile. The [Computer view](template/ui/web/src/computer-view.tsx) uses the owner-authorized live-view endpoint. The local computer has no Take-over; AWS browser acceptance remains a separate check.
 
 ### Bind scheduled runs to the Account
 
@@ -388,7 +387,7 @@ The template echo model does not propose or execute tools. Run `pnpm test:chat -
 
 ### Bind the UI slots
 
-The [UI plugin](template/ui/web/src/index.ts) exports `webUiPlugin`. It supplies the auth provider, Sign-ins tab, Computer view, browser panels, site-data renderer, file links, and theme through the [typed UI contract](ui/web/src/cartridge/types.ts). Replace those slots in your Cartridge and bind its package with `CARTRIDGE_UI_PACKAGE`.
+The [UI plugin](template/ui/web/src/index.ts) exports `webUiPlugin`. It supplies the auth provider, Sign-ins tab, Computer view, browser panels, site-data renderer, and theme through the [typed UI contract](ui/web/src/cartridge/types.ts). Replace those slots in your Cartridge and bind its package with `CARTRIDGE_UI_PACKAGE`.
 
 ### Keep deployment choices in the Cartridge
 

@@ -1,12 +1,12 @@
 import { templateFiles, templateFileContent } from './files.js';
 import { computerFilesRoutes } from 'botcube-chat/computer-files-routes';
 import { TEMPLATE_IDENTITY } from '../../identity.js';
-import { LOCAL_UI_ORIGINS, type CartridgeFactory } from 'botcube-chat';
+import { agentDocumentTemplates, type CartridgeFactory } from 'botcube-chat';
 import { Hono } from 'hono';
 import { accountsNeedingSignIn, templateRequester } from './account.js';
 import { siteSignInRoutes } from './sign-in.js';
 import { signCredentialServiceInvocation } from 'botcube-chat/credential-service-token';
-import { templateComputer, templateComputerConfig } from './computer.js';
+import { localAgentComputer } from 'botcube-chat/local-agent-computer';
 
 const TEMPLATE_ACTOR_ID = 'template-user';
 
@@ -15,28 +15,26 @@ export function templateCartridgeFactory(
   onTaskStop: (stop: () => Promise<void>) => void
 ): CartridgeFactory {
   return (history) => {
-    const config = templateComputerConfig(env);
-    const computer =
-      config &&
-      templateComputer({ ...config, history, requester: templateRequester });
-    if (computer) onTaskStop(computer.stop);
+    // BotCube's local Agent Computer, opened on the fake site's login page when there is one.
+    const computer = localAgentComputer({
+      history,
+      requester: templateRequester,
+      env,
+      startPage: env.TEMPLATE_SITE_URL ? new URL('/login', env.TEMPLATE_SITE_URL).href : undefined,
+    });
+    onTaskStop(computer.stop);
     return {
-      corsOrigins: LOCAL_UI_ORIGINS,
-      agentDocuments: {
-        agentIdentity: {
-          name: TEMPLATE_IDENTITY.name,
-          character: 'A template agent',
-          vibe: 'Plain and friendly',
-          avatar: TEMPLATE_IDENTITY.avatar,
-        },
-        soul: 'Be helpful and honest. Say so when you do not know.',
-      },
+      agentDocuments: agentDocumentTemplates({
+        name: TEMPLATE_IDENTITY.name,
+        character: 'A template agent',
+        avatar: TEMPLATE_IDENTITY.avatar,
+      }),
       models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
       accountModels: async () => [],
       accountModel: async () => undefined,
-      browserEventName: 'botcube:browser-live-view',
       routes: new Hono()
-        .route('/', computer ? computer.routes : computerFilesRoutes({ requester: templateRequester, history, computers: { async state() { return { state: 'asleep', screenshot: null }; }, async wake() { throw new Error('Agent Computer is not configured'); } }, files: (c) => templateFiles(c.req.url) }))
+        .route('/', computer.routes)
+        .route('/', computerFilesRoutes({ requester: templateRequester, history, computers: computer, files: (c) => templateFiles(c.req.url) }))
         .route('/', templateFileContent)
         .route(
           '/',
@@ -60,37 +58,28 @@ export function templateCartridgeFactory(
     accountsNeedingSignIn.add(owner);
     return message;
   },
-      invocationPayload: async (input, requester) => {
-        const forwardedProps = { ...input.forwardedProps };
-        delete forwardedProps.agentComputerCdpUrl;
-        return {
+      invocationPayload: async (input, requester) => ({
           ...input,
           forwardedProps: {
-            ...forwardedProps,
+            ...input.forwardedProps,
             ...(env.TEMPLATE_CREDENTIAL_SERVICE_URL
               ? {
                   credentialServiceUrl: env.TEMPLATE_CREDENTIAL_SERVICE_URL,
-                  credentialServiceInvocation: signCredentialServiceInvocation(
+                  credentialServiceInvocationToken: signCredentialServiceInvocation(
                     env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
                     requester.owner,
                     input.threadId
                   ),
                 }
               : {}),
-            ...(computer
-              ? await computer.forwardedProps(requester.owner, input.threadId)
-              : {}),
+            ...(await computer.forwardedProps(requester.owner, input.threadId)),
           },
-        };
-      },
-      credentialProps: ['credentialServiceInvocation', 'agentComputerCdpUrl'],
-      authorizeBrowserLiveView: computer
-        ? computer.authorizeBrowserLiveView
-        : async () => {
-            throw new Error('Agent Computer is not configured');
-          },
-      warmSession: computer ? computer.warmSession : async () => undefined,
-      ...(computer ? { browserLiveView: computer.browserLiveView } : {}),
+        }),
+      credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
+      authorizeBrowserLiveView: computer.authorizeBrowserLiveView,
+      warmSession: computer.warmSession,
+      turnStarting: computer.turnStarting,
+      browserLiveView: computer.browserLiveView,
     };
   };
 }

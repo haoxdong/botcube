@@ -67,15 +67,15 @@ function keep(clocks: Map<string, Clock>, id: string, clock: Clock) {
 }
 
 /**
- * How long `id` has run here: from when it first ran until `running` ends, re-rendering each second. A row remounted
- * mid-run carries on from its kept start.
+ * How long `id` has run here: from when it, or else `since`, first ran until `running` ends, re-rendering each second.
+ * A row remounted mid-run carries on from its kept start.
  */
-function useClock(clocks: Map<string, Clock>, id: string, running: boolean): number | undefined {
-  const [clock, setClock] = useState(() => clocks.get(id));
+function useClock(clocks: Map<string, Clock>, id: string, running: boolean, since?: string): number | undefined {
+  const [clock, setClock] = useState(() => clocks.get(id) ?? clocks.get(since ?? id));
   const [, tick] = useState(0);
   useEffect(() => {
     if (!running) return undefined;
-    const live = { started: clocks.get(id)?.started ?? Date.now() };
+    const live = { started: (clocks.get(id) ?? clocks.get(since ?? id))?.started ?? Date.now() };
     keep(clocks, id, live);
     setClock(live);
     const timer = setInterval(() => tick((n) => n + 1), 1000);
@@ -85,7 +85,7 @@ function useClock(clocks: Map<string, Clock>, id: string, running: boolean): num
       keep(clocks, id, ended);
       setClock(ended);
     };
-  }, [clocks, id, running]);
+  }, [clocks, id, running, since]);
   return clock && (clock.ended ?? Date.now()) - clock.started;
 }
 
@@ -171,23 +171,29 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
 
 /**
  * Open while its Turn runs, folded once it ends. A tap overrides either until the run starts or ends or the user asks
- * again (`asked`, their latest message's id). Live, it times the Turn itself; replayed, its messages' stamps (`took`).
+ * again (`asked`, their latest message's id). Live, it times the Turn itself, carrying on the clock of the head its
+ * Turn showed under `asked` before any row; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
  */
-function Worklog({ id, took, running, asked, children }: {
+export function Worklog({ id, took, running, asked, children }: {
   id: string;
-  took: number | undefined;
+  took?: number | undefined;
   running: boolean;
   asked: string | undefined;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   const [chosen, setChosen] = useState<{ open: boolean; running: boolean; asked: string | undefined } | null>(null);
   const open = chosen?.running === running && chosen.asked === asked ? chosen.open : running;
-  const time = useClock(turnClocks, id, running) ?? took;
-  const title = running ? `Working · ${spoken(time ?? 0)}` : time === undefined ? "Worked" : `Worked for ${spoken(time)}`;
+  const time = useClock(turnClocks, id, running, running ? asked : undefined) ?? took;
+  const title = (
+    <span className="worklog-title" data-live={running || undefined}>
+      {running ? `Working · ${spoken(time ?? 0)}` : time === undefined ? "Worked" : `Worked for ${spoken(time)}`}
+    </span>
+  );
+  if (children === undefined) return <div className="worklog"><div className="worklog-head">{title}</div></div>;
   return (
     <div className="worklog" data-open={open || undefined}>
       <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, running, asked })}>
-        <span className="worklog-title" data-live={running || undefined}>{title}</span>
+        {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
       </button>
       {open && <div className="worklog-body">{children}</div>}

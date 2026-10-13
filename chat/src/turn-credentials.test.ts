@@ -33,6 +33,39 @@ async function turn(threadId: string): Promise<string> {
   return response.text();
 }
 
+describe('a client that claims an identity or credential', () => {
+  it("reaches the Cartridge without BotCube's, the credential or the identity props", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const claimed = await startInProcess({
+      cartridge: {
+        invocationPayload: async (input) => {
+          seen.push(input.forwardedProps as Record<string, unknown>);
+          return { ...input, forwardedProps: { ...(input.forwardedProps as Record<string, unknown>) } };
+        },
+        credentialProps: ['signedToken'],
+        identityProps: ['accountId'],
+      },
+    });
+    try {
+      const response = await claimed.app.request('/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          threadId: 'credentials-client-claims', runId: 'run-1', state: {}, messages: [], tools: [], context: [],
+          forwardedProps: {
+            agentComputerCdpUrl: 'ws://spoofed', credentialServiceInvocationToken: 'spoofed', credentialServiceUrl: 'http://spoofed',
+            files: FILES, signedToken: 'spoofed', accountId: 'spoofed', model: 'quick',
+          },
+        }),
+      });
+      await response.text();
+      expect(seen).toEqual([{ model: 'quick' }]);
+    } finally {
+      await claimed.stop();
+    }
+  });
+});
+
 describe("a credential the Cartridge forwards in its own prop", () => {
   it('never reaches the client', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);

@@ -55,8 +55,8 @@ export interface AccountHistory {
  * Chat Service (ADR 0068 §3), bound at build time by the product's entry point.
  */
 export interface ChatServiceCartridge<R extends Requester = Requester> {
-  /** The origins allowed by default; BOTCUBE_CORS_ORIGINS overrides them. */
-  readonly corsOrigins: readonly string[];
+  /** The origins allowed when BOTCUBE_CORS_ORIGINS is unset; the local UI's (LOCAL_UI_ORIGINS) unless given. */
+  readonly corsOrigins?: readonly string[];
   /** The Agent Identity and Soul templates every account's agent starts from. */
   readonly agentDocuments: AgentDocumentSet;
   /**
@@ -76,8 +76,8 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
    * model neither resolves is refused.
    */
   accountModel(requester: R, key: string): Promise<AgentModel | undefined>;
-  /** The CUSTOM event name that carries browser live-view open/close events. */
-  readonly browserEventName: string;
+  /** The CUSTOM event name that carries browser live-view open/close events; 'botcube:browser-live-view' unless given. */
+  readonly browserEventName?: string;
   /** The Cartridge's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
   /**
@@ -100,6 +100,11 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
    * which the Chat Service never relays to the client.
    */
   readonly credentialProps: readonly string[];
+  /**
+   * The forwarded props in which `invocationPayload` tells the Harness who the requester is.
+   * The Chat Service strips any a client sent, with the credential props and BotCube's own.
+   */
+  readonly identityProps?: readonly string[];
   /** The requester a scheduled run of the owner's acts as, with no request to resolve it from. */
   scheduledRequester(owner: string): Promise<R>;
   /**

@@ -110,8 +110,8 @@ export function describeSchedule(expression: string): string {
   return count === "1" ? `Every ${unit}` : `Every ${count} ${unit}s`;
 }
 
-/** 7:00 AM, as the Scheduled list and Activity show times. */
-function clock(time: string): string {
+/** 7:00 AM, as the Scheduled list, Activity and the Edit form's Time show times. */
+export function clock(time: string): string {
   const [hour = 0, minute = 0] = time.split(":").map(Number);
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
 }
@@ -122,7 +122,7 @@ function dayList(days: Weekday[]): string {
 }
 
 /** How often a cadence repeats, as the Edit form's Repeats names it: Never, Every 5 minutes, Every day, Every week on Monday. */
-export function repeatsOption(cadence: Cadence): string {
+function repeatsOption(cadence: Cadence): string {
   switch (cadence.frequency) {
     case "minutes":
     case "hours":

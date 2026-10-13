@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from deepagents.backends.protocol import ExecuteResponse
 
-from botcube_harness_deepagents.shell_backend import PolicyShellBackend
+from botcube_harness_deepagents.shell_backend import WorkerShellBackend
 
 
-def _backend(tmp_path: Path) -> PolicyShellBackend:
-    return PolicyShellBackend(
+def _backend(tmp_path: Path) -> WorkerShellBackend:
+    return WorkerShellBackend(
         root_dir=tmp_path,
         virtual_mode=True,
         timeout=60,
@@ -31,7 +31,7 @@ def test_a_command_keeps_its_own_timeout(tmp_path: Path) -> None:
 
 
 def test_a_command_keeps_the_output_cap(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, max_output_bytes=16, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, max_output_bytes=16, inherit_env=False)
 
     result = backend.execute('printf "%050d" 0')
 
@@ -41,7 +41,7 @@ def test_a_command_keeps_the_output_cap(tmp_path: Path) -> None:
 
 
 def test_timeout_terminates_pipeline_descendants(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     result = backend.execute('(sleep 2; touch survived) | cat', timeout=1)
 
@@ -51,7 +51,7 @@ def test_timeout_terminates_pipeline_descendants(tmp_path: Path) -> None:
 
 
 def test_nonzero_command_keeps_stderr_and_status(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     result = backend.execute('printf "failure\\n" >&2; exit 7')
 
@@ -59,13 +59,13 @@ def test_nonzero_command_keeps_stderr_and_status(tmp_path: Path) -> None:
 
 
 def test_command_without_output_keeps_the_upstream_result(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     assert backend.execute('true') == ExecuteResponse(output='<no output>', exit_code=0)
 
 
 def test_invalid_command_and_timeout_keep_the_upstream_errors(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     assert backend.execute('') == ExecuteResponse(output='Error: Command must be a non-empty string.', exit_code=1)
     with pytest.raises(ValueError, match='timeout must be positive, got 0'):
@@ -74,7 +74,7 @@ def test_invalid_command_and_timeout_keep_the_upstream_errors(tmp_path: Path) ->
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux runtime process ownership')
 def test_timeout_terminates_detached_descendants(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     result = backend.execute("setsid sh -c 'sleep 2; touch survived' >/dev/null 2>&1 & wait", timeout=1)
 
@@ -85,7 +85,7 @@ def test_timeout_terminates_detached_descendants(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux runtime process ownership')
 def test_timeout_does_not_wait_for_detached_output_pipes(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
     started = time.monotonic()
 
     result = backend.execute("setsid sh -c 'sleep 4' & wait", timeout=1)
@@ -104,7 +104,7 @@ import os
 import resource
 from pathlib import Path
 from threading import Event, Thread
-from botcube_harness_deepagents.shell_backend import PolicyShellBackend
+from botcube_harness_deepagents.shell_backend import WorkerShellBackend
 stop = Event()
 worker_samples = []
 monitor_errors = []
@@ -133,9 +133,9 @@ thread = Thread(target=monitor)
 thread.start()
 before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 try:
-    result = PolicyShellBackend(root_dir='.', max_output_bytes=100000).execute('head -c 67108864 /dev/zero; sleep 0.2')
+    result = WorkerShellBackend(root_dir='.', max_output_bytes=100000).execute('head -c 67108864 /dev/zero; sleep 0.2')
     assert result.exit_code == 0 and result.truncated
-    endless = PolicyShellBackend(root_dir='.', max_output_bytes=100000).execute('yes', timeout=1)
+    endless = WorkerShellBackend(root_dir='.', max_output_bytes=100000).execute('yes', timeout=1)
     assert endless.exit_code == 124
 finally:
     stop.set()
@@ -150,7 +150,7 @@ assert max(worker_samples) < 32768, max(worker_samples)
 
 
 def test_success_preserves_detached_background_work(tmp_path: Path) -> None:
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
 
     result = backend.execute("(sleep 0.2; touch completed) >/dev/null 2>&1 &", timeout=1)
 
@@ -164,7 +164,7 @@ def test_success_preserves_detached_background_work(tmp_path: Path) -> None:
 def test_timeout_does_not_kill_a_concurrent_invocation(tmp_path: Path) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
-    backend = PolicyShellBackend(root_dir=tmp_path, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
     with ThreadPoolExecutor(max_workers=2) as executor:
         surviving = executor.submit(backend.execute, 'sleep 1.5; echo completed', timeout=3)
         timed_out = executor.submit(backend.execute, 'sleep 5', timeout=1)
@@ -176,7 +176,7 @@ def test_timeout_does_not_kill_a_concurrent_invocation(tmp_path: Path) -> None:
 def test_missing_working_directory_reports_execution_failure(tmp_path: Path) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
-    backend = PolicyShellBackend(root_dir=workspace, inherit_env=False)
+    backend = WorkerShellBackend(root_dir=workspace, inherit_env=False)
     workspace.rmdir()
 
     result = backend.execute('true')

@@ -140,11 +140,11 @@ def _page_seen(field: InputField, active: Mapping[str, object]) -> str:
 
 async def type_credentials(
     page: CdpPage, entries: tuple[tuple[InputField, str], ...], *,
-    origins: frozenset[str], origin_error: str, wait_seconds: float = FIELD_WAIT_SECONDS,
+    origins: frozenset[str], origin_error: str,
 ) -> None:
     """Type credentials using trusted provider policy, checking origin before each field."""
     entry = InputOnly(page, tuple(field for field, _ in entries))
-    deadline = time.monotonic() + wait_seconds
+    deadline = time.monotonic() + FIELD_WAIT_SECONDS
     for field, text in entries:
         try:
             await _await_focused(entry, field, deadline, origins, origin_error)

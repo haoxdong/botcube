@@ -48,25 +48,31 @@ Harness image. The packaged skill drives that executable. From the public reposi
 Chat Service unit tests and neutral HTTP smoke. `pnpm test:chat:unit` runs only
 the generic unit tests.
 
-The Agent Computer is a real local Chromium browser with a private profile for
-each Account's Session. The Chat Service container installs Chromium and opens
-the fake site's login page when a Turn starts. The Harness receives a ten-minute
-signed CDP URL bound to that Account, Session and browser instance. The Chat
-Service filters cookie, storage and network-export commands and removes cookie
-data from network events. Ordinary web navigation and page evaluation remain
-available. Its HTTP live-view endpoint returns an owner-authorized browser image.
+The Agent Computer is BotCube's local one: a real Chromium browser with a
+private profile for each Account's Session. The Chat Service container installs
+Chromium and opens the fake site's login page, or `about:blank` without
+`TEMPLATE_SITE_URL`, when a Turn starts. The Harness receives an hour-long
+signed CDP URL bound to that Account and Session. The Chat Service filters
+cookie, storage and network-export commands and removes cookie data from
+network events. Ordinary web navigation and page evaluation remain available.
+Its HTTP live-view endpoint returns an owner-authorized browser image.
 
 A computer sleeps after ten idle minutes. A Turn or permitted CDP command
 refreshes its idle timer. Reading state or polling images does not. Retirement
-closes CDP channels, removes the private profile and invalidates the old signed
-CDP URL. State then returns `asleep`; the image endpoint returns HTTP 409 until
-the computer wakes again. Stopping the Chat Service also cancels pending startup
-and puts its computers to sleep.
+closes CDP channels and removes the private profile. State then returns
+`asleep`; the image endpoint returns HTTP 409 until the computer wakes again,
+as the agent's next CDP connection does. Stopping the Chat Service also cancels
+pending startup and puts its computers to sleep.
 
-For a process-based local run, set `TEMPLATE_SITE_URL` and
-`TEMPLATE_CHROMIUM_PATH` on the Chat Service. Set `TEMPLATE_COMPUTER_CDP_URL`
-when the Harness reaches it through a different hostname. Compose uses
-`ws://chat-service:8123/agent-computer/cdp`. The live-view URL uses the platform's
+The browser is on with zero configuration. `docker compose up` runs the
+Chromium the Chat Service image installs. A process run finds `chromium`,
+`chromium-browser`, `google-chrome-stable` or `google-chrome` on `PATH`, or
+Chromium or Google Chrome in `/Applications` on macOS. Set
+`BOTCUBE_CHROMIUM_PATH` to run another. With no Chromium, waking the computer
+fails with HTTP 503: install Chromium, or set `BOTCUBE_CHROMIUM_PATH`. Set
+`TEMPLATE_SITE_URL` to open the fake site, and `BOTCUBE_AGENT_COMPUTER_CDP_URL`
+when the Harness reaches the Chat Service through a hostname other than
+`127.0.0.1`. Compose uses `ws://chat-service:8123/agent-computer/cdp`. The live-view URL uses the platform's
 `signedUrl` response field and still requires the owning Account's cookie.
 The template does not provide local Take-over. This browser adapter establishes
 offline behavior; AWS browser deployment acceptance remains a separate check.

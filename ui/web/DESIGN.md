@@ -115,10 +115,11 @@ from `botcube-ui-web/ui`.
   same chevron (Tue, Oct 6, 3:02 PM ET), a native picker unseen over the row (`.settings-when`); a read-only one has
   no chevron. Text fields above the cards (`.settings-text`)
   are the same `radius-xl` box with 14px × 18px padding, the instructions 120px tall with 18px padding. Under them,
-  every task's Edit form has the same card, after Apple Calendar's event editor: Starts (its first run, whose time and
-  weekday a calendar cadence runs on), Repeats (one menu, Never to Every week on Starts' weekday, plus the task's own
-  schedule in its words where it is none of them) and Ends (After it runs, disabled, for Never); Model has a card of
-  its own. Cancel and Save end the form at the right, pills 12px apart and at least 36px tall (44px on a phone).
+  every task's Edit form has the same card, after Codex's Schedule a task: Repeat (one menu: Interval, Daily, Weekdays,
+  Weekly, Once; Custom only for a schedule none of them says, read in its words and saved as written), then the one
+  row it needs: Every with a bare count and a `text-muted` unit, Time, Day over Time, or Once's date and time. Advanced,
+  shut by default, holds Starts, Ends and Model (Model alone for Once). Cancel and Save end the form at the right,
+  pills 12px apart and at least 36px tall (44px on a phone).
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The
   disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey line
@@ -153,6 +154,8 @@ from `botcube-ui-web/ui`.
   cartridge's `fileUrl`, `surface-hover` until it loads; one that
   can't load keeps its tile beside its name and why, `meta` in `danger`. The bubble holds only what the user typed; a
   message of files alone has none.
+- **Worklog** (`Worklog`, `.worklog`; layout in `globals.css`): a Turn's work under one `detail` head in `text-muted`,
+  "Working · 9s" while it runs. From the run's start (RUN_STARTED) until its first row, the head alone, with no chevron, stands in for the cursor.
 - **Status pill** (`<StatusPill>`, `.status-pill`; Sign-ins, Scheduled's Paused, Coming soon): `label` at medium, 3px × 10px, on a soft tint of its colour: `blue` on
   `blue-soft`, `danger` on `danger-soft`, `text-muted` on `surface-hover`.
 - **Profile header** (`.agent-profile-header`): the 96px avatar with a pencil badge (`.agent-profile-edit`, Edit agent)
@@ -203,18 +206,17 @@ from `botcube-ui-web/ui`.
 
 The file tints are ours, after ChatGPT's coloured file tiles, not measured from it.
 
-**Agent colours** (`--agent-soul-*`, `--agent-memory-*`): the Soul and Memory cards' colours, a cartridge `theme` hook,
-so each agent brings its own; the defaults are a neutral grey, which the template keeps. Each card's white captions keep
-4.5:1 on its `to`, measured on the rendered card.
+**Agent colours** (`--agent-soul-*`, `--agent-memory-*`): the Soul and Memory cards' colours, after Marq's avatar; a
+cartridge `theme` may bring its own. Each card's white captions keep 4.5:1 on its `to`, measured on the rendered card.
 
-| Token               | Default      | Marq (from its avatar)              |
-| ------------------- | ------------ | ----------------------------------- |
-| `agent-soul-from`   | `text-muted` | `#6c90bc`, its outline periwinkle   |
-| `agent-soul-to`     | `text`       | `#3f5f8a`, a deeper navy periwinkle |
-| `agent-soul-glow`   | `control`    | `#acc4e0`, its body                 |
-| `agent-memory-from` | `text-muted` | `#3f5f8a`, Soul's navy              |
-| `agent-memory-to`   | `text`       | `#1c2b45`, a deeper navy            |
-| `agent-memory-glow` | `control`    | `#acc4e0`, its body, as Soul's      |
+| Token               | Default                             |
+| ------------------- | ----------------------------------- |
+| `agent-soul-from`   | `#6c90bc`, a periwinkle             |
+| `agent-soul-to`     | `#3f5f8a`, a deeper navy periwinkle |
+| `agent-soul-glow`   | `#acc4e0`, a pale periwinkle        |
+| `agent-memory-from` | `#3f5f8a`, Soul's navy              |
+| `agent-memory-to`   | `#1c2b45`, a deeper navy            |
+| `agent-memory-glow` | `#acc4e0`, as Soul's                |
 
 ## Border Radius
 

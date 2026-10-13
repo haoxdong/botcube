@@ -17,10 +17,11 @@ RUN --mount=type=secret,id=build_ca \
   pnpm --filter botcube-template-chat build
 
 FROM ${NODE_IMAGE}
+# The local Agent Computer finds this Chromium on PATH, as /usr/bin/chromium.
 RUN apt-get update && apt-get install -y --no-install-recommends chromium \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/chat-service
 COPY --from=build /workspace/botcube/template/chat/dist/ dist/
-ENV PORT=8123 TEMPLATE_CHROMIUM_PATH=/usr/bin/chromium
+ENV PORT=8123
 EXPOSE 8123
 CMD ["node", "dist/main.js"]

@@ -45,10 +45,10 @@ const ANSWERS: Record<string, unknown> = {
   '/agent/identity': {
     name: TEMPLATE_IDENTITY.name,
     character: 'A template agent',
-    vibe: 'Plain and friendly',
+    vibe: 'Direct, precise, and calm',
     avatar: TEMPLATE_IDENTITY.avatar,
   },
-  '/agent/soul': { content: 'Be helpful and honest. Say so when you do not know.' },
+  '/agent/soul': { content: 'Lead with the answer, then the evidence behind it.\nBe candid about what you found, what you could not find, and how sure you are.\nRespect the user\'s time: no filler, no flattery.\nLearn how this user likes to work, and adapt to it.' },
   '/agent/memory': { lines: [] },
   '/agent-computer': { state: 'asleep', screenshot: null },
   '/main-chat': { id: 'main-shots', messages },

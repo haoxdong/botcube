@@ -15,6 +15,7 @@ RUN npx esbuild template/chat/src/main.ts --bundle --platform=node --format=esm 
 
 FROM ${NODE_IMAGE}
 
+# The local Agent Computer runs this Chromium, at its default /usr/bin/chromium.
 RUN apt-get update && apt-get install -y --no-install-recommends chromium \
   && rm -rf /var/lib/apt/lists/*
 
@@ -24,6 +25,5 @@ COPY --from=build /workspace/dist/ dist/
 ENV BOTCUBE_LOCAL_HARNESS_URL=http://harness:8080
 ENV BOTCUBE_LOCAL_SESSION_API_URL=http://session-api:8081
 ENV PORT=8123
-ENV TEMPLATE_CHROMIUM_PATH=/usr/bin/chromium
 EXPOSE 8123
 CMD ["node", "dist/main.js"]

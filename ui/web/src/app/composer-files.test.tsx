@@ -109,32 +109,32 @@ describe('useComposerFiles', () => {
   it('aborts pending uploads and clears completed paths when their owning account changes', async () => {
     const { upload, uploads } = deferredUploads();
     const { result, rerender } = renderHook(({ accountId }) => useComposerFiles(upload, accountId), { initialProps: { accountId: 'account-a' } });
-    act(() => result.current?.add([report, notes]));
+    act(() => result.current.add([report, notes]));
     await act(async () => uploads[0]?.resolve('/report.csv'));
 
     rerender({ accountId: 'account-b' });
 
     expect(uploads[1]?.signal.aborted).toBe(true);
-    expect(result.current?.files).toEqual([]);
+    expect(result.current.files).toEqual([]);
     await act(async () => uploads[1]?.resolve('/notes.md'));
-    expect(result.current?.files).toEqual([]);
-    act(() => result.current?.add([report]));
+    expect(result.current.files).toEqual([]);
+    act(() => result.current.add([report]));
     await act(async () => uploads[2]?.resolve('/report (1).csv'));
-    expect(result.current?.files.map(({ state }) => state)).toEqual([{ status: 'uploaded', path: '/report (1).csv' }]);
+    expect(result.current.files.map(({ state }) => state)).toEqual([{ status: 'uploaded', path: '/report (1).csv' }]);
   });
 
   it("invalidates stale paths before another tab's account claim can submit them", async () => {
     const { upload, uploads } = deferredUploads();
     const { result } = renderHook(() => useComposerFiles(upload, 'account-a'));
-    act(() => result.current?.add([report, notes]));
+    act(() => result.current.add([report, notes]));
     await act(async () => uploads[0]?.resolve('/report.csv'));
     const stale = result.current;
     act(() => {
       localStorage.setItem(FILE_ACCOUNT_LOCK, 'another-tab-claim');
-      expect(stale?.sendable).toBe(false);
+      expect(stale.sendable).toBe(false);
       window.dispatchEvent(new StorageEvent('storage', { key: FILE_ACCOUNT_LOCK }));
     });
-    expect(result.current?.files).toEqual([]);
+    expect(result.current.files).toEqual([]);
     expect(uploads[1]?.signal.aborted).toBe(true);
   });
 
@@ -145,11 +145,11 @@ describe('useComposerFiles', () => {
     const { result } = renderHook(() => {
       const attached = useComposerFiles(upload, 'account-a');
       useLayoutEffect(() => {
-        if (changing && attached && attached.files.length > 0) sendable.push(attached.sendable);
+        if (changing && attached.files.length > 0) sendable.push(attached.sendable);
       });
       return attached;
     });
-    act(() => result.current?.add([report]));
+    act(() => result.current.add([report]));
     await act(async () => uploads[0]?.resolve('/report.csv'));
     changing = true;
     act(() => {
@@ -158,88 +158,84 @@ describe('useComposerFiles', () => {
     });
     expect(sendable).toContain(false);
     expect(sendable).not.toContain(true);
-    expect(result.current?.files).toEqual([]);
-  });
-
-  it('has no files to attach without the cartridge uploading them', () => {
-    expect(renderHook(() => useComposerFiles(undefined, 'account-a')).result.current).toBeNull();
+    expect(result.current.files).toEqual([]);
   });
 
   it('uploads each file added, showing its progress, and lets the message go once every file has uploaded', async () => {
     const { upload, uploads } = deferredUploads();
     const { result } = renderHook(() => useComposerFiles(upload, 'account-a'));
 
-    act(() => result.current?.add([report, notes]));
-    expect(result.current?.files.map(({ file, state }) => [file.name, state])).toEqual([
+    act(() => result.current.add([report, notes]));
+    expect(result.current.files.map(({ file, state }) => [file.name, state])).toEqual([
       ['report.csv', { status: 'uploading', progress: 0 }],
       ['notes.md', { status: 'uploading', progress: 0 }],
     ]);
-    expect(result.current?.sendable).toBe(false);
+    expect(result.current.sendable).toBe(false);
 
     act(() => uploads[0]?.progress(0.42));
-    expect(result.current?.files[0]?.state).toEqual({ status: 'uploading', progress: 0.42 });
+    expect(result.current.files[0]?.state).toEqual({ status: 'uploading', progress: 0.42 });
 
     await act(async () => uploads[0]?.resolve('/report.csv'));
-    expect(result.current?.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
-    expect(result.current?.sendable).toBe(false);
+    expect(result.current.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
+    expect(result.current.sendable).toBe(false);
 
     await act(async () => uploads[1]?.resolve('/notes.md'));
-    expect(result.current?.sendable).toBe(true);
+    expect(result.current.sendable).toBe(true);
   });
 
   it('shows why an upload failed, holding the message, and uploads the file again on Retry', async () => {
     const { upload, uploads } = deferredUploads();
     const { result } = renderHook(() => useComposerFiles(upload, 'account-a'));
-    act(() => result.current?.add([report]));
+    act(() => result.current.add([report]));
 
     await act(async () => uploads[0]?.reject(new Error('Upload failed: 403')));
-    expect(result.current?.files[0]?.state).toEqual({ status: 'failed', error: 'Upload failed: 403' });
-    expect(result.current?.sendable).toBe(false);
+    expect(result.current.files[0]?.state).toEqual({ status: 'failed', error: 'Upload failed: 403' });
+    expect(result.current.sendable).toBe(false);
 
-    const id = result.current?.files[0]?.id ?? '';
-    act(() => result.current?.retry(id));
-    expect(result.current?.files[0]?.state).toEqual({ status: 'uploading', progress: 0 });
+    const id = result.current.files[0]?.id ?? '';
+    act(() => result.current.retry(id));
+    expect(result.current.files[0]?.state).toEqual({ status: 'uploading', progress: 0 });
     expect(uploads[1]?.file).toBe(report);
 
     await act(async () => uploads[1]?.resolve('/report.csv'));
-    expect(result.current?.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
-    expect(result.current?.sendable).toBe(true);
+    expect(result.current.files[0]?.state).toEqual({ status: 'uploaded', path: '/report.csv' });
+    expect(result.current.sendable).toBe(true);
   });
 
   it('refuses a hidden file without uploading it, as the agent would never see it in its workspace', () => {
     const { upload } = deferredUploads();
     const { result } = renderHook(() => useComposerFiles(upload, 'account-a'));
 
-    act(() => result.current?.add([new File(['KEY=1'], '.env')]));
+    act(() => result.current.add([new File(['KEY=1'], '.env')]));
 
-    expect(result.current?.files[0]?.state).toEqual({
+    expect(result.current.files[0]?.state).toEqual({
       status: 'failed',
       error: "The agent can't read hidden files like .env. Rename it without the leading dot.",
     });
-    expect(result.current?.sendable).toBe(false);
+    expect(result.current.sendable).toBe(false);
     expect(upload).not.toHaveBeenCalled();
   });
 
   it('aborts the upload of a file removed, which never comes back as its upload ends', async () => {
     const { upload, uploads } = deferredUploads();
     const { result } = renderHook(() => useComposerFiles(upload, 'account-a'));
-    act(() => result.current?.add([report, notes]));
+    act(() => result.current.add([report, notes]));
 
-    act(() => result.current?.remove(result.current.files[0]?.id ?? ''));
+    act(() => result.current.remove(result.current.files[0]?.id ?? ''));
     expect(uploads[0]?.signal.aborted).toBe(true);
     await act(async () => uploads[0]?.reject(new DOMException('Upload aborted', 'AbortError')));
-    expect(result.current?.files.map(({ file }) => file.name)).toEqual(['notes.md']);
+    expect(result.current.files.map(({ file }) => file.name)).toEqual(['notes.md']);
   });
 
   it('empties on clear, as a message sends, and aborts what is still uploading as the composer goes', () => {
     const { upload, uploads } = deferredUploads();
     const { result, unmount } = renderHook(() => useComposerFiles(upload, 'account-a'));
-    act(() => result.current?.add([report]));
-    act(() => result.current?.clear());
-    expect(result.current?.files).toEqual([]);
-    expect(result.current?.sendable).toBe(true);
+    act(() => result.current.add([report]));
+    act(() => result.current.clear());
+    expect(result.current.files).toEqual([]);
+    expect(result.current.sendable).toBe(true);
 
-    act(() => result.current?.add([notes]));
+    act(() => result.current.add([notes]));
     unmount();
     expect(uploads[1]?.signal.aborted).toBe(true);
   });
@@ -344,7 +340,6 @@ describe('attachPastedImages', () => {
   /** The composer's text box and chips, its paste attaching through the composer's files. */
   function PasteComposer({ upload }: { upload: ReturnType<typeof deferredUploads>['upload'] }) {
     const attached = useComposerFiles(upload, 'account-a');
-    if (!attached) throw new Error('No composer files without an upload');
     return (
       <>
         <textarea aria-label="Message" onPaste={attachPastedImages(attached.add)} />

@@ -1,4 +1,5 @@
 import "./globals.css";
+import "../computer/styles.css";
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
 import { webUiPlugin } from "@cartridge-ui";

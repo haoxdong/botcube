@@ -1,5 +1,4 @@
 import { CopilotChatAssistantMessage } from "@copilotkit/react-core/v2";
-import { webUiPlugin } from "@cartridge-ui";
 
 import { MARKDOWN_RENDERER } from "./markdown";
 import { remarkRepairedBracketMath } from "./remark-bracket-math";
@@ -13,7 +12,7 @@ export default function MarkdownRenderer({ content }: { content: string }) {
     <CopilotChatAssistantMessage.MarkdownRenderer
       {...MARKDOWN_RENDERER}
       remarkPlugins={[...MARKDOWN_RENDERER.remarkPlugins, [remarkRepairedBracketMath, content]]}
-      rehypePlugins={webUiPlugin.fileUrl ? REPLY_REHYPE_PLUGINS : MARKDOWN_RENDERER.rehypePlugins}
+      rehypePlugins={REPLY_REHYPE_PLUGINS}
       components={REPLY_MARKDOWN.components}
       content={content}
     />

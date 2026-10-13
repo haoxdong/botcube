@@ -17,8 +17,9 @@ it('shows the cartridge auxiliary view', () => {
   expect(render(<BrowserViewPage />).container.innerHTML).toBe('<p>browser session</p>');
 });
 
-it('shows nothing when the cartridge has no auxiliary view', () => {
+// BotCube's live browser view is the default, so a Cartridge on AgentCore Browser brings none.
+it("shows BotCube's live browser view when the cartridge has none", () => {
   delete plugin.webUiPlugin.AuxiliaryView;
 
-  expect(render(<BrowserViewPage />).container.innerHTML).toBe('');
+  expect(render(<BrowserViewPage />).container).toHaveTextContent('Missing browser session.');
 });

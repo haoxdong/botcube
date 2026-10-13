@@ -58,8 +58,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.43.108" },
-    { name = "certifi", specifier = ">=2026.2.25" },
-    { name = "cryptography", specifier = ">=48.0.1" },
+    { name = "certifi", specifier = ">=2026.7.22" },
+    { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.142.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },

@@ -2,7 +2,7 @@
 
 import { useContext, useEffect, useRef, useState, type ComponentProps } from "react";
 import { DownloadIcon } from "lucide-react";
-import { webUiPlugin } from "@cartridge-ui";
+import { agentFiles } from "./agent-files";
 
 import { replyFilePath } from "./reply-file-path";
 import { ReplyImageTurnRunning } from "./reply-image-turn";
@@ -28,23 +28,22 @@ const reason = (error: unknown) => (error instanceof Error ? error.message : Str
 
 /**
  * An image an assistant reply embeds, in place of streamdown's own and with its look and Download button. An image
- * the reply names by a path is one of the agent's files: it shows from the short-lived URL the Cartridge's `fileUrl`
- * gives it, and downloads from a fresh one; one that fails to show is named in its place. Without `fileUrl`, a path
- * stays as written.
+ * the reply names by a path is one of the agent's files: it shows from a short-lived URL to it in Files, and downloads
+ * from a fresh one; one that fails to show is named in its place.
  */
 export function ReplyImage({ src, alt, title }: ComponentProps<"img">) {
-  const path = typeof src === "string" && webUiPlugin.fileUrl ? replyFilePath(src) : null;
+  const path = typeof src === "string" ? replyFilePath(src) : null;
   const running = useContext(ReplyImageTurnRunning);
   const runningNow = useRef(running);
   runningNow.current = running;
   const [shown, setShown] = useState<ImageAttempt | null>(path ? null : { status: "image", url: typeof src === "string" ? src : "", recoverAfterTurn: false });
   const [downloadError, setDownloadError] = useState<string | null>(null);
   useEffect(() => {
-    if (!path || !webUiPlugin.fileUrl) return;
+    if (!path) return;
     let current = true;
     const recoverAfterTurn = runningNow.current;
     setShown(null);
-    webUiPlugin.fileUrl(path).then(
+    agentFiles.url(path).then(
       (url) => current && setShown({ status: "image", url, recoverAfterTurn }),
       (error: unknown) => current && setShown({ status: "file-error", error: reason(error) }),
     );
@@ -59,9 +58,9 @@ export function ReplyImage({ src, alt, title }: ComponentProps<"img">) {
     }
   }, [running, shown]);
   useEffect(() => {
-    if (shown?.status !== "refreshing" || !path || !webUiPlugin.fileUrl) return;
+    if (shown?.status !== "refreshing" || !path) return;
     let current = true;
-    webUiPlugin.fileUrl(path).then(
+    agentFiles.url(path).then(
       (url) => current && setShown({ status: "image", url, recoverAfterTurn: false }),
       (error: unknown) => current && setShown({ status: "file-error", error: reason(error) }),
     );
@@ -74,7 +73,7 @@ export function ReplyImage({ src, alt, title }: ComponentProps<"img">) {
   if (shown.status !== "image") return <span role="alert">{`${alt || path} could not load: ${shown.error}`}</span>;
   const download = () => {
     setDownloadError(null);
-    void (path && webUiPlugin.fileUrl ? webUiPlugin.fileUrl(path).then((url) => window.location.assign(url)) : saveImage(shown.url)).catch(
+    void (path ? agentFiles.url(path).then((url) => window.location.assign(url)) : saveImage(shown.url)).catch(
       (error: unknown) => setDownloadError(reason(error)),
     );
   };

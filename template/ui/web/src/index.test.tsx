@@ -87,12 +87,11 @@ const frame = () => new Response(new Blob(['png']), { headers: { 'content-type':
 describe('the template web UI plugin', () => {
   it("fills every slot with BotCube's default name, theme and views", () => {
     expect(webUiPlugin.config).toEqual({
-      agentId: 'template', chatServiceUrl: CHAT,
+      agentId: 'template',
       title: TEMPLATE_IDENTITY.name, agentName: TEMPLATE_IDENTITY.name,
       subtitle: 'A local agent built with BotCube.',
       disclaimer: 'This local template uses stand-ins for external services.',
       loginLabel: 'Connect', relinkLabel: 'Reconnect', logoutLabel: 'Reset', accountLabel: 'Account',
-      agentOptions: { effortLevels: [{ key: 'medium', label: 'Medium' }], defaultEffort: 'medium' },
     });
     expect(TEMPLATE_IDENTITY.name).toBe('BotCube');
     expect(webUiPlugin.toolResultRenderers).toEqual([SiteDataResult]);
@@ -101,23 +100,8 @@ describe('the template web UI plugin', () => {
     expect(webUiPlugin.ComputerView).toBe(ComputerView);
     expect(webUiPlugin.AuthProvider).toBe(TemplateAuthProvider);
     expect(webUiPlugin.agentProfileTabs).toEqual({ 'Sign-ins': SignInsTab });
-    expect(webUiPlugin.fileUrl).toEqual(expect.any(Function));
     expect(webUiPlugin.theme).toEqual(TEMPLATE_IDENTITY.theme);
     expect(webUiPlugin.theme).toEqual({ '--color-blue': '#2563eb', '--color-blue-soft': '#eff6ff' });
-  });
-
-  it("resolves an agent file's encoded path through the Chat Service and fails loud", async () => {
-    const { fileUrl } = webUiPlugin;
-    if (!fileUrl) throw new Error('The plugin has no file URL slot');
-    answers['GET /files/download-url'] = (url) =>
-      url.searchParams.get('name') === 'sample.txt' ? Response.json({ url: `${CHAT}/files/sample.txt` }) : new Response(null, { status: 404 });
-    await expect(fileUrl('/sample%2Etxt')).resolves.toBe(`${CHAT}/files/sample.txt`);
-    expect(requests).toEqual(['GET /files/download-url?name=sample.txt']);
-    await expect(fileUrl('/missing.txt')).rejects.toThrow('File download failed: 404');
-    await expect(fileUrl('sample.txt')).rejects.toThrow('Agent file path must start with /');
-    await expect(fileUrl('/%ZZ')).rejects.toThrow(URIError);
-    answers['GET /files/download-url'] = () => Response.json({});
-    await expect(fileUrl('/sample.txt')).rejects.toThrow('File download returned no URL');
   });
 });
 

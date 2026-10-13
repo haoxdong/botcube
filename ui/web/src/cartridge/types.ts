@@ -60,22 +60,9 @@ export interface ComputerViewProps extends AuxiliaryPanelHostProps {
   };
 }
 
-interface AgentOption {
-  key: string;
-  label: string;
-  description?: string;
-}
-
-/** The effort levels the model selector offers; its models are the account's, from the Chat Service. */
-interface AgentOptions {
-  effortLevels: AgentOption[];
-  defaultEffort: string;
-}
-
 export interface WebUiPlugin {
   config: {
     agentId: string;
-    chatServiceUrl: string;
     title: string;
     /** The agent's name until its Agent Identity loads. */
     agentName: string;
@@ -83,29 +70,24 @@ export interface WebUiPlugin {
     disclaimer: string;
     loginLabel: string;
     relinkLabel: string;
-    logoutLabel: string;
+    /** `Log out` without one. */
+    logoutLabel?: string;
     /** What the user's own account is called in the account menu. */
     accountLabel: string;
-    agentOptions: AgentOptions;
   };
-  toolResultRenderers: ComponentType[];
-  auxiliaryPanels: ComponentType<AuxiliaryPanelHostProps>[];
+  toolResultRenderers?: ComponentType[];
+  auxiliaryPanels?: ComponentType<AuxiliaryPanelHostProps>[];
+  /** The pop-out window's view; BotCube's live browser view without one. */
   AuxiliaryView?: ComponentType;
   /** The Agent Computer, shown in the Agent Profile's Computer tab for the open chat. */
   ComputerView?: ComponentType<ComputerViewProps>;
   AuthProvider: ComponentType<AuthProviderProps>;
   /** Panels for the Agent Profile's tabs, rendered inside `AuthProvider`; a tab without one has nothing yet. */
   agentProfileTabs?: Partial<Record<AgentProfileTab, ComponentType>>;
-  /** A short-lived URL for one of the agent's files, by the path a reply names it with, such as `/chart.svg`. */
-  fileUrl?: (path: string) => Promise<string>;
-  /**
-   * Uploads a file the user attached in the composer to the agent's files; resolves to the path the agent reads it by,
-   * such as `/report.csv`. Without it, the composer has no +. Rejects with the reason it failed.
-   */
-  uploadFile?: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;
   /** The binary every agent command runs, with its trailing space, such as `tool `: a command's step label drops it. */
   commandPrefix?: string;
-  theme: Record<string, string>;
+  /** CSS custom-property values over the shell's tokens (`globals.css`). */
+  theme?: Record<string, string>;
 }
 
 export type AgentProfileTab = 'Activity' | 'Sign-ins' | 'Computer' | 'Scheduled' | 'Personalization';

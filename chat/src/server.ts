@@ -17,7 +17,8 @@ import {
 } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
 import { HttpError, type AccountHistory, type AgentModel, type CartridgeFactory, type Requester } from './cartridge.js';
-import { cors } from './cors.js';
+import { cors, LOCAL_UI_ORIGINS } from './cors.js';
+import { BROWSER_LIVE_VIEW_EVENT } from './live-view.js';
 import { picture, pictureUrl } from './pictures.js';
 import { accountDefaultModel, accountModelList, namedModel, requireAllowedModel } from './models.js';
 import { sessionOperations } from './sessions.js';
@@ -66,6 +67,8 @@ import {
 } from './upstream.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
+/** The forwarded props BotCube's Credential Service, Agent Computer and Files bindings hand the Harness. */
+const BOTCUBE_CREDENTIAL_PROPS = ['agentComputerCdpUrl', 'credentialServiceInvocationToken', 'credentialServiceUrl', 'files'];
 
 function preparationFailure(error: unknown, credentials: readonly string[]): TurnFailure {
   const message = error instanceof Error ? error.message : String(error);
@@ -336,7 +339,7 @@ export function createChatService(
     scheduled.onClose?.(stop);
   }
 
-  app.use(cors(config.corsOrigins ?? cartridge.corsOrigins));
+  app.use(cors(config.corsOrigins ?? cartridge.corsOrigins ?? LOCAL_UI_ORIGINS));
   app.onError((error, c) => {
     if (!(error instanceof HttpError) || error.cause !== undefined) {
       console.error(`${c.req.method} ${c.req.path} failed`, error);
@@ -351,7 +354,10 @@ export function createChatService(
 
   /** What the Harness gets for a Turn on `input`, but its Session's filing ID: the Cartridge's payload with the Agent Documents. */
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void) => {
-    const preparing = cartridge.invocationPayload(input, requester, model).then((payload) => {
+    // A client must not claim an identity or credential: the Cartridge sets these props itself, or the Harness gets none.
+    const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
+    for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...cartridge.credentialProps, ...(cartridge.identityProps ?? [])]) delete forwardedProps[prop];
+    const preparing = cartridge.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
       captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
       return payload;
     });
@@ -431,7 +437,7 @@ export function createChatService(
           body: JSON.stringify(payload),
           sessionId: input.threadId,
           accept: c.req.header('accept'),
-          browserEventName: cartridge.browserEventName,
+          browserEventName: cartridge.browserEventName ?? BROWSER_LIVE_VIEW_EVENT,
           ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
           saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
           credentials,

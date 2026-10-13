@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from botcube_cartridge import InvocationAuth, ModelRelay
+from botcube_cartridge import InvocationAuth, ModelRelay, environment_cache_key
 
 
 def test_invocation_binding_preserves_the_turn_relay() -> None:
@@ -17,3 +17,12 @@ def test_invocation_binding_preserves_the_turn_relay() -> None:
 
 def test_invocations_without_plan_usage_need_no_relay() -> None:
     assert InvocationAuth('account-one', True, None).model_relay is None
+
+
+def test_per_turn_values_leave_the_cache_key() -> None:
+    key = environment_cache_key('CLI_TOKEN')
+    turn = {'ACCOUNT': 'account-one', 'CLI_TOKEN': 'turn-token'}
+    renewed = {**turn, 'CLI_TOKEN': 'renewed-token'}
+    assert key(turn) == key(renewed) == (('ACCOUNT', 'account-one'),)
+    assert key({**turn, 'ACCOUNT': 'account-two'}) != key(turn)
+    assert key(None) == ()

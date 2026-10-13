@@ -1,17 +1,16 @@
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
+import { testChromiumPath } from './chromium.js';
 
 export async function realSingleClientBrowser() {
   const profile = mkdtempSync(join(tmpdir(), 'cdp-browser-'));
-  const executable = process.env.TEMPLATE_TEST_CHROMIUM_PATH ?? ['/usr/bin/chromium', '/usr/bin/google-chrome'].find(existsSync);
-  if (!executable) throw new Error('The real-client CDP regression requires Chromium');
-  const chrome = spawn(executable, ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const chrome = spawn(testChromiumPath(), ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const endpoint = await new Promise<string>((resolve, reject) => {
     let output = '';
     chrome.stderr.on('data', (data: Buffer) => {

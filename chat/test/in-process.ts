@@ -81,7 +81,6 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     ],
     accountModels: async () => [{ key: 'plan', label: 'Plan', provider: 'openai' }],
     accountModel: async (_requester, key) => (key === 'plan' ? { key: 'plan', label: 'Plan', provider: 'openai' } : undefined),
-    browserEventName: 'test:browser-live-view',
     routes: new Hono(),
     requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? OWNER }),
     filingUserId: (owner) => `filed-${owner}`,

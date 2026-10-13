@@ -32,7 +32,11 @@ plugin supplies six extension points:
 - `auxiliaryPanels`: optional panel hosts such as a live browser view
 - `AuxiliaryView`: an optional standalone view for a panel pop-out route
 - `AuthProvider`: account/session UI state and any authentication overlay
-- `theme`: CSS custom-property values
+- `theme`: optional CSS custom-property values over the shell's tokens
+
+The shell itself ships the rest: the effort levels the harness takes, reply file
+links and composer uploads through the Chat Service's Files routes, the Agent
+Computer's stylesheet, and the Soul and Memory card colours.
 
 The template imports the selected plugin only through `@cartridge-ui`.
 `ui/web/src/cartridge/default.tsx` is the neutral standalone implementation.

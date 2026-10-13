@@ -54,7 +54,7 @@
   "memories": [
     {
       "name": "bot_cube",
-      "eventExpiryDuration": 30,
+      "eventExpiryDuration": 365,
       "strategies": [
         {
           "type": "USER_PREFERENCE",

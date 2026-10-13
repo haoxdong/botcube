@@ -142,7 +142,7 @@ services:
       TEMPLATE_SITE_URL: http://fake-site:8124
       TEMPLATE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret
-      TEMPLATE_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
+      BOTCUBE_AGENT_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
       BOTCUBE_CORS_ORIGINS: http://localhost:${BOTCUBE_LOCAL_UI_PORT:-3001},http://127.0.0.1:${BOTCUBE_LOCAL_UI_PORT:-3001}
     ports:
       - "${BOTCUBE_LOCAL_CHAT_PORT:-8123}:8123"
