@@ -65,11 +65,17 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
    */
   readonly models: readonly [AgentModel, ...AgentModel[]];
   /**
-   * The models this account may also run beyond the Cartridge's own, such as its plan's. Only
-   * listing the models or a Turn naming a model not among `models` asks for them, so a Turn on a
-   * Cartridge model never depends on them. A Turn naming a model in neither is refused.
+   * The models this account may also run beyond the Cartridge's own, such as its plan's. Listing the
+   * models asks for them afresh (`refresh`); a Turn, warmup or scheduled run naming no model (whose
+   * default is the first) reads the ones the account kept.
    */
-  accountModels(requester: R): Promise<readonly AgentModel[]>;
+  accountModels(requester: R, options?: { refresh?: boolean }): Promise<readonly AgentModel[]>;
+  /**
+   * The account model `key` names, or undefined when the account may not run it. A Turn naming a
+   * model not among `models` runs on this, read from the models the account kept. A Turn naming a
+   * model neither resolves is refused.
+   */
+  accountModel(requester: R, key: string): Promise<AgentModel | undefined>;
   /** The CUSTOM event name that carries browser live-view open/close events. */
   readonly browserEventName: string;
   /** The Cartridge's own routes (auth and account), mounted at the root. */

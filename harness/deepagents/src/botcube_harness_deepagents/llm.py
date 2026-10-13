@@ -12,6 +12,8 @@ from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk
 from opentelemetry import baggage, propagate
 
+from . import turn_timing
+
 if TYPE_CHECKING:
     from openai import APIError
 
@@ -170,7 +172,8 @@ def _plan_request_headers(kwargs: Mapping[str, Any]) -> dict[str, str]:
     if (run_id := baggage.get_baggage('run.id')) is not None:
         headers['x-botcube-run-id'] = str(run_id)
     manager = kwargs.get('run_manager')
-    headers['x-botcube-model-step-id'] = str(manager.run_id if manager is not None else uuid4())
+    step = manager.run_id if manager is not None else turn_timing.model_run()
+    headers['x-botcube-model-step-id'] = str(step or uuid4())
     propagate.inject(headers)
     return headers
 
@@ -197,22 +200,14 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
         async def _astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
             headers = _plan_request_headers(kwargs)
             kwargs['extra_headers'] = headers
-            from . import answer_timing
-            timing = answer_timing.current()
-            step = timing.begin(headers['x-botcube-model-step-id']) if timing else None
-            token = answer_timing._step.set(step.id if step else None)
             try:
                 async for chunk in super()._astream(*args, **kwargs):
-                    if timing and step:
-                        timing.received(chunk.message, step)
                     yield chunk
             except openai.APIError as error:
                 classified = _plan_usage_error(error)
                 if classified is None:
                     raise
                 raise classified from error
-            finally:
-                answer_timing._step.reset(token)
 
     current = relay()
     plan_kwargs: dict[str, Any] = {
@@ -228,8 +223,8 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
         'max_retries': 0,
     }
     model = ChatGPTPlanModel(**plan_kwargs)
-    from .answer_timing import dispatched
-    model.root_async_client._client.event_hooks['request'].append(dispatched)
+    # Inference Latency starts when the request leaves, after LangChain serializes the conversation.
+    model.root_async_client._client.event_hooks['request'].append(turn_timing.dispatched)
     return model
 
 

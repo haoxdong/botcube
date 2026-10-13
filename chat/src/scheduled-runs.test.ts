@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { DescribeTasksCommand, ECSClient, type DescribeTasksCommandOutput } from '@aws-sdk/client-ecs';
 import { ChangeMessageVisibilityCommand, DeleteMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
@@ -69,10 +70,9 @@ async function run(account: string, script: UpstreamScript, title = 'Morning bri
   stack.agentcore.scriptPrompt(prompt, script);
   const response = await request(account, '/scheduled-tasks', {
     method: 'POST',
-    body: { title, prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt },
+    body: { title, prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt, ...chosen },
   });
   const { id } = (await response.json()) as { id: string };
-  if (chosen.model !== undefined) await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: chosen });
   await scheduler.fire(id);
   return { id, prompt };
 }
@@ -270,39 +270,82 @@ describe('a scheduled run', () => {
     expect(threads).toEqual([expect.objectContaining({ title: 'Payrolls' })]);
   });
 
-  it('retires a task after its count of runs, so a run queued after the last one runs nothing (#3950)', async () => {
+  it('discards an old queued occurrence and invokes only the fenced post-cutover occurrence', async () => {
     const account = owner();
-    const main = await mainChat(account);
-    const prompt = `US rates ${Math.random().toString(36).slice(2)}`;
-    stack.agentcore.scriptPrompt(prompt, stream(...text('rates', 'Rates update.')));
-    const response = await request(account, '/scheduled-tasks', {
-      method: 'POST', body: { title: 'US rates', prompt, schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 3, proposalId: prompt },
-    });
-    const { id, maxRuns } = (await response.json()) as { id: string; maxRuns?: number };
-    expect(maxRuns).toBe(3);
-    const { Target } = defined(await scheduler.schedule(id), 'the task schedule');
-    const posts = async () => (await posted(main)).length;
-
-    for (let n = 1; n <= 3; n += 1) {
-      // eslint-disable-next-line no-await-in-loop -- one run at a time
-      await scheduler.fire(id);
-      // eslint-disable-next-line no-await-in-loop -- one run at a time
-      await vi.waitFor(async () => expect(await posts()).toBe(n), { timeout: 10_000 });
-    }
-
-    await vi.waitFor(async () => expect(await scheduler.schedule(id)).toBeNull(), { timeout: 10_000 });
-    const { tasks } = (await (await request(account, '/scheduled-tasks')).json()) as { tasks: { id: string }[] };
-    expect(tasks.map((task) => task.id)).not.toContain(id);
-    // Delivered before Scheduler deleted the schedule.
-    await scheduler.deliver(Target.Input);
-    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0), { timeout: 10_000 });
-    expect(await posts()).toBe(3);
+    const prompt = `Cutover ${randomUUID()}`;
+    stack.agentcore.scriptPrompt(prompt, stream(...text('cutover', 'A bounded update.')));
+    const response = await request(account, '/scheduled-tasks', { method: 'POST', body: {
+      title: 'Cutover', prompt, schedule: 'rate(1 minute)', timezone: 'UTC', endDate: '2099-01-01T00:00:00.000Z', proposalId: prompt,
+    } });
+    const { id } = await response.json() as { id: string };
+    await DynamoDBDocumentClient.from(stack.table.client).send(new UpdateCommand({
+      TableName: stack.table.name, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${id}` },
+      UpdateExpression: 'SET deliveryFence = :fence', ExpressionAttributeValues: { ':fence': 'frozen-cutover' },
+    }));
+    const before = stack.agentcore.invocations().length;
+    await scheduler.fire(id);
+    await vi.waitFor(async () => expect(await scheduler.queued()).toBe(0));
+    expect(stack.agentcore.invocations()).toHaveLength(before);
+    expect(await activity(account, 0)).toEqual([]);
+    expect((await request(account, `/scheduled-tasks/${id}`, { method: 'PATCH', body: { paused: false } })).status).toBe(200);
+    await scheduler.fire(id);
+    await vi.waitFor(async () => expect(await activity(account, 0)).toHaveLength(1));
+    expect(stack.agentcore.invocations()).toHaveLength(before + 1);
+    await request(account, `/scheduled-tasks/${id}`, { method: 'DELETE' });
   });
 
-  it.each(['spent', 'retired'] as const)('skips a stale admitted delivery after the final run is %s (#3950)', async (state) => {
+  it.each(['reserved', 'completed'] as const)('handles a pre-cutover %s delivery without invoking it again', async (phase) => {
     const account = owner();
     const response = await request(account, '/scheduled-tasks', { method: 'POST', body: {
-      title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 1, proposalId: account,
+      title: 'Cutover', prompt: 'Cutover', schedule: 'rate(1 minute)', timezone: 'UTC', endDate: '2099-01-01T00:00:00.000Z', proposalId: account,
+    } });
+    const { id } = await response.json() as { id: string };
+    const tasks = new ScheduledTasks(stack.table.name, scheduler.runs, stack.table.client,
+      new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+    const main = await mainChat(account);
+    const store = defined(stack.sessionMetadata.scheduledRuns, 'delivery store');
+    const delivery = await store.claim(account, id, 'pre-cutover', `filed-${account}`, main);
+    const documents = DynamoDBDocumentClient.from(stack.table.client);
+    await documents.send(new UpdateCommand({
+      TableName: stack.table.name, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${id}` },
+      UpdateExpression: 'SET deliveryFence = :fence', ExpressionAttributeValues: { ':fence': 'frozen-cutover' },
+    }));
+    if (phase === 'completed') await documents.send(new UpdateCommand({
+      TableName: stack.table.name, Key: { pk: `SESSIONS#${account}`, sk: 'SCHEDULED_DELIVERY#pre-cutover' },
+      UpdateExpression: 'SET #phase = :phase, #status = :status, postSession = :session, postToken = :token, failed = :failed',
+      ExpressionAttributeNames: { '#phase': 'phase', '#status': 'status' }, ExpressionAttributeValues: {
+        ':phase': phase, ':status': 'done', ':failed': false, ':token': randomUUID(),
+        ':session': { session_id: main, filing_user_id: `filed-${account}`, runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'tracked-v1' },
+      },
+    }));
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModel: async () => undefined,
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
+    const post = vi.fn(async () => ({}));
+    await runScheduledTask({
+      runtimeNamespaceRequired: false, turnIdentity: null, cartridge, sessionMetadata: stack.sessionMetadata,
+      agentDocuments: new DynamoDBAgentDocuments(stack.table.name, stack.table.client), scheduledTasks: tasks,
+      summarizeTurn: async () => ({ title: 'Cutover', summary: 'Cutover' }),
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
+    }, { owner: account, taskId: id, deliveryId: delivery.deliveryId });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(await store.get(account, delivery.deliveryId, id)).toMatchObject({ phase });
+    const current = await tasks.get(account, id);
+    if (phase === 'completed') expect(current?.lastRun).toEqual({ at: delivery.startedAt, status: 'done' });
+    else expect(current).not.toHaveProperty('lastRun');
+  });
+
+  it.each(['expired', 'retired', 'elapsed'] as const)('rechecks an admitted delivery during setup when its window is %s (#3968)', async (state) => {
+    const account = owner();
+    const response = await request(account, '/scheduled-tasks', { method: 'POST', body: {
+      title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', endDate: '2099-01-01T00:00:00.000Z', proposalId: account,
     } });
     const { id } = await response.json() as { id: string };
     const tasks = new ScheduledTasks(stack.table.name, scheduler.runs, stack.table.client,
@@ -314,7 +357,7 @@ describe('a scheduled run', () => {
     const released = new Promise<void>((resolve) => { release = resolve; });
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
@@ -333,77 +376,41 @@ describe('a scheduled run', () => {
       scheduledTasks: tasks,
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
     };
-    const retirement = state === 'spent' ? vi.spyOn(tasks, 'retire').mockResolvedValue(undefined) : undefined;
     const stale = runScheduledTask({ ...deps, cartridge: { ...cartridge, scheduledRequester: async (value) => {
       enter(); await released; return { owner: value };
     } } }, { owner: account, taskId: id, deliveryId: 'stale-admission' });
     try {
       await Promise.race([entered, stale.then(() => { throw new Error('Stale delivery never reached requester'); })]);
       await runScheduledTask(deps, { owner: account, taskId: id, deliveryId: 'final-run' });
-      if (state === 'spent') expect(await tasks.get(account, id)).toMatchObject({ runsMade: 1, maxRuns: 1 });
-      else expect(await tasks.get(account, id)).toBeNull();
+      if (state === 'elapsed') vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2099-01-01T00:00:01.000Z'));
+      else await tasks.update(account, id, { endDate: '2000-01-01T00:00:00.000Z' });
+      if (state === 'retired') await tasks.delete(account, id);
       release();
       await stale;
       expect(post.mock.calls.map(([event]) => event)).toEqual([
         expect.objectContaining({ content: 'Scheduled task "US rates": Rates update.' }),
-        expect.objectContaining({ content: state === 'spent'
-          ? 'Scheduled task "US rates" skipped: the task had already made its count of runs'
+        expect.objectContaining({ content: state === 'elapsed' ? 'Scheduled task "US rates": Rates update.' : state === 'expired'
+          ? 'Scheduled task "US rates" skipped: the task was outside its active time window'
           : 'Scheduled task "US rates" skipped: the task was no longer available' }),
       ]);
-      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenCalledTimes(state === 'elapsed' ? 2 : 1);
       const session = await stack.sessionMetadata.get(account, id);
       expect(session).toMatchObject({ scheduled_task_id: id });
       expect(session).not.toHaveProperty('turn_running_since');
       expect(session).not.toHaveProperty('turn_run_id');
     } finally {
-      release(); await stale.catch(() => undefined); retirement?.mockRestore();
+      vi.spyOn(Date, 'now').mockRestore();
+      release(); await stale.catch(() => undefined);
     }
   });
 
-  it('clears the running mark after counting fails so the next occurrence runs (#3950)', async () => {
-    const isolated = await startInProcess({ scheduled: true });
-    const scheduler = defined(isolated.scheduler, 'the task scheduler');
+  it.each([['before Starts', { startDate: '2099-01-01T00:00:00.000Z' }], ['after Ends', { endDate: '2000-01-01T00:00:00.000Z' }]] as const)('runs nothing %s while task metadata is still present (#3968)', async (_, bounds) => {
     const account = owner();
-    const call = (path: string, body?: unknown) => isolated.app.request(path, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json', 'x-test-owner': account },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const { id: main } = await (await call('/main-chat')).json() as { id: string };
-    const prompt = `Counting recovery ${Math.random().toString(36).slice(2)}`;
-    isolated.agentcore.scriptPrompt(prompt, stream(...text('recovered', 'Recovered brief.')));
-    const response = await call('/scheduled-tasks', {
-      title: 'Counting recovery', prompt, schedule: 'rate(1 minute)', timezone: 'UTC', maxRuns: 3, proposalId: prompt,
-    });
-    const { id } = await response.json() as { id: string };
-    const counting = vi.spyOn(ScheduledTasks.prototype, 'countRun').mockRejectedValueOnce(new Error('Task count unavailable'));
-    try {
-      await scheduler.fire(id);
-      await vi.waitFor(async () => expect(await posted(main, isolated.sessionApi)).toEqual([
-        expect.objectContaining({ content: 'Scheduled task "Counting recovery" failed: Task count unavailable' }),
-      ]), { timeout: 10_000 });
-      const { threads } = await (await call('/threads')).json() as { threads: { id: string }[] };
-      const sideChat = defined(threads[0], 'the scheduled Side Chat').id;
-      expect(await isolated.sessionMetadata.get(account, sideChat)).not.toHaveProperty('turn_running_since');
-      await scheduler.fire(id);
-      await vi.waitFor(async () => expect(await posted(main, isolated.sessionApi)).toEqual([
-        expect.objectContaining({ content: 'Scheduled task "Counting recovery" failed: Task count unavailable' }),
-        expect.objectContaining({ content: 'Scheduled task "Counting recovery": Recovered brief.' }),
-      ]), { timeout: 10_000 });
-      expect(counting).toHaveBeenCalledTimes(2);
-    } finally {
-      counting.mockRestore();
-      await isolated.stop();
-    }
-  }, 15_000);
-
-  it('runs nothing for a task whose count of runs is spent but not yet retired (#3950)', async () => {
-    const account = owner();
-    const task = { id: 'spent', proposalId: 'spent-proposal', title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', paused: false, ended: true, maxRuns: 3, runsMade: 3 };
+    const task = { id: 'spent', proposalId: 'spent-proposal', title: 'US rates', prompt: 'US rates', schedule: 'rate(1 minute)', timezone: 'UTC', paused: false, ended: true, ...bounds };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
@@ -421,14 +428,14 @@ describe('a scheduled run', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire },
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
       invokeSessionApi: post,
     }, { owner: account, taskId: task.id, deliveryId: 'after-the-last-run' });
 
     expect(invoke).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
-    expect(retire).toHaveBeenCalledWith(account, task);
+    expect(retire).not.toHaveBeenCalled();
   });
 
   it('retires a one-off under the claiming account when Account Claim moves it mid-run', async () => {
@@ -870,7 +877,7 @@ describe('a scheduled run', () => {
     });
   });
 
-  it('runs on the model the task names', async () => {
+  it('runs on the proposing model confirmed at creation', async () => {
     const account = owner();
     const main = await mainChat(account);
 
@@ -884,12 +891,12 @@ describe('a scheduled run', () => {
     });
   });
 
-  it("runs on a Cartridge model the task names without the account's plan catalog", async () => {
+  it.each(['thorough', 'plan'])("runs on the model %s the task names without the account's plan catalog", async (model) => {
     const account = owner();
     const main = await mainChat(account);
     unavailableCatalogs.add(account);
 
-    await run(account, stream(...text('a1', 'Done.')), 'Morning brief', { model: 'thorough' });
+    await run(account, stream(...text('a1', 'Done.')), 'Morning brief', { model });
 
     expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: `filed-${account}` }]);
   });
@@ -1362,6 +1369,68 @@ describe('pollScheduledRuns', () => {
 
   const neverDraining = async () => false;
 
+  it('settles expired tasks before receiving without requiring a scheduled delivery', async () => {
+    const events: string[] = [];
+    const maintenance = vi.fn(async () => { events.push('maintenance'); });
+    let received = false;
+    const stop = pollScheduledRuns({
+      receive: async (signal) => {
+        if (!received) { received = true; events.push('receive'); return []; }
+        return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+      },
+      delete: async () => undefined,
+    }, async () => undefined, neverDraining, undefined, maintenance);
+    await vi.waitFor(() => expect(events.slice(0, 2)).toEqual(['maintenance', 'receive']));
+    stop();
+  });
+
+  it('stops and reports expiration maintenance failure without deleting queued work', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { fake, deleted, receives } = queue('{"owner":"a","taskId":"t1"}');
+    const failure = new Error('Expiry storage unavailable');
+    const failed = vi.fn();
+    const run = vi.fn();
+    const stop = pollScheduledRuns(fake, run, neverDraining, failed, async () => { throw failure; });
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledWith(failure));
+    expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: expired task maintenance failed', failure);
+    expect(deleted).toEqual([]);
+    expect(receives()).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('finishes a message claimed while a long receive was in flight before stopping for drain', async () => {
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    let draining = false;
+    const receive = vi.fn(async () => {
+      draining = true;
+      return [{ body: '{"owner":"a","taskId":"t1"}', receipt: 'in-flight', deliveryId: 'claimed' }];
+    });
+    const remove = vi.fn(async () => undefined);
+    const run = vi.fn(async () => undefined);
+    const stop = pollScheduledRuns({ receive, delete: remove }, run, async () => draining, undefined, async () => undefined);
+    try {
+      await vi.waitFor(() => expect(remove).toHaveBeenCalledWith('in-flight'));
+      expect(run).toHaveBeenCalledWith({ owner: 'a', taskId: 't1', deliveryId: 'claimed' });
+      expect(receive).toHaveBeenCalledTimes(1);
+      expect(logs).toHaveBeenCalledWith('This Chat Service task is draining; it takes no more scheduled runs');
+    } finally { stop(); }
+  });
+
+  it('stops and reports queue infrastructure failure', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('SQS unavailable');
+    const failed = vi.fn();
+    const run = vi.fn();
+    const receive = vi.fn(async () => { throw failure; });
+    const stop = pollScheduledRuns({ receive, delete: async () => undefined }, run, neverDraining, failed);
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledWith(failure));
+    expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: queue receive failed', failure);
+    expect(receive).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled();
+    stop();
+  });
+
   it('runs each delivery and then deletes it', async () => {
     const { fake, deleted } = queue('{"owner":"a","taskId":"t1"}', '{"owner":"b","taskId":"t2"}');
     const runs: ScheduledRunMessage[] = [];
@@ -1631,7 +1700,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const cartridge: ChatServiceCartridge = {
         corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
@@ -1683,7 +1752,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const cartridge: ChatServiceCartridge = {
         corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
@@ -1720,7 +1789,7 @@ describe('scheduled persistence dispatch admission', () => {
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
       const cartridge: ChatServiceCartridge = {
         corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+        models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
@@ -1732,7 +1801,7 @@ describe('scheduled persistence dispatch admission', () => {
         return tasks.retire(...args);
       };
       const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
-        agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), countRun: tasks.countRun.bind(tasks), retire },
+        agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), retire },
         upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
       };
@@ -1772,7 +1841,7 @@ describe('scheduled persistence dispatch admission', () => {
     const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: claimed.agentcore.url });
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
-      models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
+      models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
       browserEventName: 'test:browser', routes: new Hono(), requester: async () => ({ owner: source }), scheduledRequester: async (account) => ({ owner: account }),
       filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
@@ -1894,7 +1963,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
@@ -1916,7 +1985,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
     };
@@ -2051,7 +2120,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
@@ -2069,7 +2138,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task, recordRun, countRun: async () => undefined, retire: async () => undefined },
+      scheduledTasks: { get: async () => task, recordRun, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
     };
@@ -2089,7 +2158,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }),
       scheduledRequester: async (value) => {
         await stack.sessionMetadata.fenceOwner(value);
@@ -2109,7 +2178,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
+      scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
       invokeSessionApi: post,
     }, { owner: account, taskId: 'deleted-run', deliveryId: 'deleted-run-occurrence' })).rejects.toThrow(SessionDeletedError);
@@ -2123,7 +2192,7 @@ describe('scheduled persistence dispatch admission', () => {
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
     const cartridge: ChatServiceCartridge = {
       corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], browserEventName: 'test:browser', routes: new Hono(),
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
@@ -2141,7 +2210,7 @@ describe('scheduled persistence dispatch admission', () => {
       runtimeNamespaceRequired: false, turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
-      scheduledTasks: { get: async () => task, recordRun: async () => undefined, countRun: async () => undefined, retire: async () => undefined },
+      scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),
       invokeSessionApi: async (event) => {
         if (event.operation === 'post') {

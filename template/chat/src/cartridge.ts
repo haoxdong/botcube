@@ -33,6 +33,7 @@ export function templateCartridgeFactory(
       },
       models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
       accountModels: async () => [],
+      accountModel: async () => undefined,
       browserEventName: 'botcube:browser-live-view',
       routes: new Hono()
         .route('/', computer ? computer.routes : computerFilesRoutes({ requester: templateRequester, history, computers: { async state() { return { state: 'asleep', screenshot: null }; }, async wake() { throw new Error('Agent Computer is not configured'); } }, files: (c) => templateFiles(c.req.url) }))

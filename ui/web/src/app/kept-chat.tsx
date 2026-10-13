@@ -5,6 +5,7 @@ import { contentToText, type Message } from "@ag-ui/client";
 import { defaultRemarkPlugins, Streamdown } from "streamdown";
 import { remarkRepairedBracketMath } from "./remark-bracket-math";
 import { REPLY_MARKDOWN } from "./reply-markdown";
+import { SentFileCards, sentFilesOf } from "./composer-files";
 import { worklogRows } from "./worklog";
 
 /** CopilotKit's side padding around the messages and the composer, inside the chat's container. */
@@ -25,14 +26,19 @@ const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px
  */
 function keptRow(message: Message): ReactElement | null {
   switch (message.role) {
-    case "user":
+    case "user": {
+      const { text, paths } = sentFilesOf(contentToText(message.content));
       return (
         <div data-copilotkit className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10" key={message.id}>
-          <div className="cpk:prose cpk:dark:prose-invert cpk:bg-muted cpk:relative cpk:max-w-[80%] cpk:rounded-[18px] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap">
-            {contentToText(message.content)}
-          </div>
+          <SentFileCards paths={paths} />
+          {text && (
+            <div className="cpk:prose cpk:dark:prose-invert cpk:bg-muted cpk:relative cpk:max-w-[80%] cpk:rounded-[18px] cpk:px-4 cpk:py-1.5 cpk:data-[multiline]:py-3 cpk:inline-block cpk:whitespace-pre-wrap">
+              {text}
+            </div>
+          )}
         </div>
       );
+    }
     case "assistant":
       return (
         <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>

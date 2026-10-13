@@ -50,6 +50,25 @@ it("shows the user's questions as they are and the replies formatted, and no too
   expect(list).not.toHaveTextContent('4.12}');
 });
 
+it("shows a kept question's files as cards above its bubble, which holds only what the user typed", () => {
+  const view = render(
+    <KeptChat
+      messages={[
+        { id: 'm1', role: 'user', content: 'check this\n\nAttached files:\n- /AI_Trends_2026.pdf' },
+        { id: 'm2', role: 'user', content: '\n\nAttached files:\n- /report.csv' },
+      ]}
+      disclaimer="Check important info."
+    />,
+  );
+  const [question, filesOnly] = view.container.querySelectorAll('.copilotKitUserMessage');
+
+  expect(question?.querySelector('.sent-files')).toHaveTextContent('AI_Trends_2026.pdfPDF');
+  expect(question?.querySelector('[class*="cpk:prose"]')).toHaveTextContent(/^check this$/);
+  expect(view.container).not.toHaveTextContent('Attached files:');
+  expect(filesOnly?.querySelector('.sent-files')).toHaveTextContent('report.csvCSV');
+  expect(filesOnly?.querySelector('[class*="cpk:prose"]')).toBeNull();
+});
+
 it('shows the disclaimer and the composer accessory where the composer will be', () => {
   renderKept();
 

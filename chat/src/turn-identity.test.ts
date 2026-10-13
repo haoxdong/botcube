@@ -53,6 +53,10 @@ describe('OIDC discovery', () => {
     ]);
   });
 
+  it.each(['/.well-known/openid-configuration', '/.well-known/jwks.json'])('lets STS cache %s for five minutes', async (path) => {
+    expect((await stack.app.request(path)).headers.get('cache-control')).toBe('public, max-age=300');
+  });
+
   it('serves no discovery when the Chat Service has no Turn identity keys', async () => {
     const bare = await startInProcess();
     try {

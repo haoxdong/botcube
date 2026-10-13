@@ -1,5 +1,5 @@
 import { optionalPhysicalName } from './physical-name.js';
-import { CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, Stack, type StackProps } from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as rum from 'aws-cdk-lib/aws-rum';
@@ -17,6 +17,8 @@ export interface WebLatencyStackProps extends StackProps {
   readerSubject: string;
   /** The moments the web is held to, each its own Latency metric. */
   moments: string[];
+  /** The log groups holding the Turn timing lines, by name or name pattern: the Chat Service's and the Harness runtime's. */
+  turnLogGroups: string[];
 }
 
 /** The custom metric namespace; CloudWatch RUM publishes it as `RUM/CustomMetrics/<namespace>`. */
@@ -69,7 +71,7 @@ export class WebLatencyStack extends Stack {
         }],
       },
     });
-    // The daily Latency budgets workflow reads the metrics, and nothing else, from main.
+    // The daily Latency budgets workflow reads the metrics and queries the Turn timing logs, and nothing else, from main.
     const reader = new iam.Role(this, 'Reader', {
       ...optionalPhysicalName('roleName', props.readerRoleName),
       assumedBy: new iam.FederatedPrincipal(this.formatArn({ service: 'iam', region: '', resource: 'oidc-provider', resourceName: 'token.actions.githubusercontent.com' }), {
@@ -77,6 +79,12 @@ export class WebLatencyStack extends Stack {
       }, 'sts:AssumeRoleWithWebIdentity'),
     });
     reader.addToPolicy(new iam.PolicyStatement({ actions: ['cloudwatch:ListMetrics', 'cloudwatch:GetMetricStatistics'], resources: ['*'] }));
+    reader.addToPolicy(new iam.PolicyStatement({ actions: ['logs:DescribeLogGroups', 'logs:GetQueryResults'], resources: ['*'] }));
+    reader.addToPolicy(new iam.PolicyStatement({
+      actions: ['logs:StartQuery'],
+      resources: props.turnLogGroups.flatMap(name => [name, `${name}:*`])
+        .map(resourceName => this.formatArn({ service: 'logs', resource: 'log-group', resourceName, arnFormat: ArnFormat.COLON_RESOURCE_NAME })),
+    }));
     new CfnOutput(this, 'AppMonitorId', { value: monitor.attrId });
     new CfnOutput(this, 'IdentityPoolId', { value: pool.ref });
     new CfnOutput(this, 'ReaderRoleArn', { value: reader.roleArn });

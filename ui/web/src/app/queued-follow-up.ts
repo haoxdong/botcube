@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { messageWithFiles, sentFilesOf } from "./composer-files";
 import { withStorage } from "./main-chat-copy";
 
 const KEY = "botcube.queued-follow-ups";
@@ -57,8 +58,12 @@ export function forgetQueuedFollowUps() {
   }
 }
 
-/** One follow-up after another, as they go: one message, a blank line between. */
-const join = (first: string | null, then: string | null) => first === null ? then : then === null ? first : `${first}\n\n${then}`;
+/** One follow-up after another, as they go: one message, a blank line between their texts, then all their files. */
+function join(first: string | null, then: string | null) {
+  if (first === null || then === null) return first ?? then;
+  const [one, two] = [sentFilesOf(first), sentFilesOf(then)];
+  return messageWithFiles(`${one.text}\n\n${two.text}`, [...one.paths, ...two.paths]);
+}
 
 /**
  * The chat's held follow-up: what this browser's storage holds for every tab, as this tab last read or wrote it, and

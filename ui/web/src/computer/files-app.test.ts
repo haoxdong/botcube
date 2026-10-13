@@ -142,14 +142,32 @@ describe('uploading a file the user attached in the chat', () => {
     expect(onProgress).toHaveBeenCalledWith(3 / 7);
   });
 
-  it('fails with the Chat Service\'s conflict when Files already holds the name, sending the name as the user gave it', async () => {
-    const fetchImpl = service(['plan.txt']);
+  it.each([
+    ['plan.txt', 'plan (3).txt', ['plan.txt', 'plan (2).txt']],
+    ['plan.txt', 'plan (102).txt', ['plan.txt', ...Array.from({ length: 100 }, (_, index) => `plan (${index + 2}).txt`)]],
+    ['Makefile', 'Makefile (2)', ['Makefile']],
+    ['archive.tar.gz', 'archive.tar (2).gz', ['archive.tar.gz']],
+    ['résumé.txt', 'résumé (2).txt', ['résumé.txt']],
+    ['a.' + 'b'.repeat(253), 'a (2).' + 'b'.repeat(249), ['a.' + 'b'.repeat(253)]],
+    ['😀'.repeat(62) + '.txt', '😀'.repeat(61) + ' (2).txt', ['😀'.repeat(62) + '.txt']],
+  ])('keeps a copy of %s under its available stored name', async (original, stored, taken) => {
+    const fetchImpl = service(taken);
+    const body = new File(['new bytes'], original);
+    const uploading = uploadFile(body, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl });
+    const request = await put();
+    request.respond(200);
+    expect(await uploading).toBe(`/${stored}`);
+    expect(request).toMatchObject({ url: `https://s3.test/upload/${encodeURIComponent(stored)}`, body });
+  });
 
-    await expect(uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl })).rejects.toThrow(
-      'A file named plan.txt is already in Files',
-    );
-    expect(fetchImpl.mock.calls.map(([, init]) => init?.body)).toEqual(['{"name":"plan.txt"}']);
-    expect(puts).toEqual([]);
+  it('keeps both composer attachments when Files already holds the name', async () => {
+    const fetchImpl = service(['plan.txt']);
+    const uploading = uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl })
+      .catch((error: Error) => error.message);
+    (await put()).respond(200);
+
+    expect(await uploading).toBe('/plan (2).txt');
+    expect(fetchImpl.mock.calls.map(([, init]) => init?.body)).toEqual(['{"name":"plan.txt"}', '{"name":"plan (2).txt"}']);
   });
 
   it("fails with the Chat Service's reason when it refuses an upload URL", async () => {
@@ -165,13 +183,65 @@ describe('uploading a file the user attached in the chat', () => {
   it('fails with the status when the storage refuses the PUT, or says the network failed', async () => {
     const options = { onProgress: vi.fn(), signal: new AbortController().signal };
     const refused = uploadFile(file, options, { ...CHAT, fetchImpl: service() });
-    (await put()).respond(412);
-    await expect(refused).rejects.toThrow('Upload failed: 412');
+    (await put()).respond(403);
+    await expect(refused).rejects.toThrow('Upload failed: 403');
 
     puts.length = 0;
     const offline = uploadFile(file, options, { ...CHAT, fetchImpl: service() });
     (await put()).onerror?.();
     await expect(offline).rejects.toThrow('Upload failed: network error');
+  });
+
+  it('advances when concurrent uploaders claim the same name at the conditional PUT', async () => {
+    const fetchImpl = service();
+    const options = { onProgress: vi.fn(), signal: new AbortController().signal };
+    const uploading = uploadFile(file, options, { ...CHAT, fetchImpl });
+    (await put()).respond(412);
+    await vi.waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1]?.url).toBe('https://s3.test/upload/plan%20(2).txt');
+    expect(puts[1]?.headers).toEqual({ 'If-None-Match': '*' });
+    puts[1]?.respond(412);
+    await vi.waitFor(() => expect(puts).toHaveLength(3));
+    puts[2]?.respond(200);
+    expect(await uploading).toBe('/plan (3).txt');
+  });
+
+  it('aborts the active PUT after selecting a new name for a concurrent collision', async () => {
+    const controller = new AbortController();
+    const uploading = uploadFile(file, { onProgress: vi.fn(), signal: controller.signal }, { ...CHAT, fetchImpl: service() });
+    (await put()).respond(412);
+    await vi.waitFor(() => expect(puts).toHaveLength(2));
+    controller.abort();
+    await expect(uploading).rejects.toMatchObject({ name: 'AbortError' });
+    expect(puts[1]?.aborted).toBe(true);
+  });
+
+  it('stops collision advancement when the attachment is removed', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async () => {
+      controller.abort();
+      return Response.json({ detail: 'A file named plan.txt is already in Files' }, { status: 409 });
+    });
+    await expect(uploadFile(file, { onProgress: vi.fn(), signal: controller.signal }, { ...CHAT, fetchImpl })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(puts).toEqual([]);
+  });
+
+  it('propagates an unavailable service after a name collision', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ detail: 'A file named plan.txt is already in Files' }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ detail: 'Files unavailable' }, { status: 503 }));
+    await expect(uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl })).rejects.toThrow('Files unavailable');
+    expect(fetchImpl.mock.calls.map(([, init]) => (init as RequestInit).body)).toEqual(['{"name":"plan.txt"}', '{"name":"plan (2).txt"}']);
+  });
+
+  it('propagates an account conflict without allocating another attachment name', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ detail: 'Account deletion is pending' }, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({ detail: 'Unexpected second request' }, { status: 503 }));
+    await expect(uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl })).rejects.toThrow('Account deletion is pending');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await expect(withUploadsSettled(async () => 'settled')).resolves.toBe('settled');
   });
 
   it('drains uploads before an account change and refuses new uploads until the change finishes', async () => {
@@ -203,9 +273,9 @@ describe('uploading a file the user attached in the chat', () => {
     const request = await put();
     const change = vi.fn(async () => {});
     const transition = withUploadsSettled(change);
-    request.respond(412);
-    await expect(uploading).rejects.toThrow('Upload failed: 412');
-    await expect(transition).rejects.toThrow('Upload failed: 412');
+    request.respond(403);
+    await expect(uploading).rejects.toThrow('Upload failed: 403');
+    await expect(transition).rejects.toThrow('Upload failed: 403');
     expect(change).not.toHaveBeenCalled();
     puts.length = 0;
     const next = uploadFile(file, options, { ...CHAT, fetchImpl: service() });

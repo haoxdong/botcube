@@ -1,4 +1,4 @@
-import type { FirstAnswerTiming } from './first-answer-timing.js';
+import type { TurnTiming } from './turn-timing.js';
 import { positiveInteger } from './config.js';
 import { EventType } from '@ag-ui/client';
 import { applyPatch, type Operation } from 'fast-json-patch';
@@ -599,7 +599,7 @@ export function persistedTurnError(message: string): string {
 
 /** One Turn to send upstream, and what its relay does with the answer. */
 interface RelayedTurn {
-  timing?: FirstAnswerTiming;
+  timing?: TurnTiming;
   body: string;
   sessionId: string;
   accept?: string | undefined;
@@ -635,21 +635,21 @@ interface RelayedTurn {
 export async function relayTurn(upstream: Upstream, turn: RelayedTurn): Promise<Response> {
   let response: Response;
   try {
-    turn.timing?.invoke();
+    turn.timing?.mark('invoke');
     response = await upstream.invoke(turn.body, turn.sessionId, { accept: turn.accept });
   } catch (error) {
-    turn.timing?.finish();
     console.error(`${upstream.label} request failed before the stream opened`, error);
     const message = `${upstream.label} request failed`;
     const details = turnErrorDetails(reason(error), turn.credentials);
     await tellEnd(turn, { code: 'AGENTCORE_UPSTREAM_REQUEST_ERROR', message: persistedTurnError(`${message}: ${details}`) });
+    turn.timing?.finish();
     return json({ error: message, details }, 502);
   }
   // A bodiless success (a 204, say) carries no answer to relay.
   if (!response.ok || response.body === null) {
-    turn.timing?.finish();
     const failed = await upstreamError(upstream, response, turn.credentials);
     await tellEnd(turn, failed.failure);
+    turn.timing?.finish();
     return failed.response;
   }
   return new Response(
@@ -1020,8 +1020,8 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
         turn.timing?.emitted(next.out.split('\n\n').flatMap((text) => dataEvents(text.split('\n'))));
       }
       if (!next.end) return;
-      turn.timing?.finish();
       const endFailure = await ending;
+      turn.timing?.finish();
       if (endFailure === undefined) {
         controller.close();
         logEnd('attached', false);
@@ -1042,7 +1042,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
         next = await relayInOrder();
       } while (!next.end);
       const endFailure = await ending;
-      turn.timing?.finish();
+      turn.timing?.finish('gone');
       logEnd('gone', endFailure !== undefined);
     },
   });

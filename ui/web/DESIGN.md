@@ -15,6 +15,10 @@ component: the `@theme inline` block in `globals.css` sets shadcn's color names 
 `accent`…), the type roles (`text-detail`) and the weights to these tokens, and its radius classes read the radius
 tokens. There is no dark theme; when `shadcn add` writes its own palette into `globals.css`, delete it.
 
+## Style
+
+Native minimal. A screen looks like the platform's own app (iPhone on a phone, ChatGPT's Mac app on a desktop) and keeps only what is essential: the system font, neutral greys, white cards, and colour only where it carries meaning. Drop a row, line or option that is only marginally useful.
+
 ## Typography
 
 The phone uses iOS's Dynamic Type defaults (Title 2 22, Headline 17 semibold, Body 17, Subheadline 15, Footnote 13).
@@ -104,11 +108,49 @@ from `botcube-ui-web/ui`.
   `border`), 16px from the top and left edges (Muse Figs 13-16).
 - **Field** (`<Field>`, `.field`: `input`, `textarea`, `select`): `body` text, 10px × 12px, a `border` line, `radius-lg`, its `detail`
   label 4px above. The sidebar's inline rename field is a pill, the shape of the row it replaces.
+- **Settings rows** (`.settings-group`, `.settings-row`; a Scheduled task's sheet and its Edit form): Codex's Schedule a
+  task dialog, measured from the maintainer's screenshot. A `white` `radius-xl` card with a `border` edge; its rows 48px
+  tall with 20px sides, the label in `text` at the left, the value in `text-muted` at the right, split by `border`
+  hairlines inset 16px. An editable value is a bare select ending in a 16px chevron; a date or time in words over the
+  same chevron (Tue, Oct 6, 3:02 PM ET), a native picker unseen over the row (`.settings-when`); a read-only one has
+  no chevron. Text fields above the cards (`.settings-text`)
+  are the same `radius-xl` box with 14px × 18px padding, the instructions 120px tall with 18px padding. A More
+  disclosure (`.settings-disclosure`, `text-muted`, shut by default) holds further cards 12px apart. Cancel and
+  Save end the form at the right, pills 12px apart and at least 36px tall (44px on a phone).
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
-  the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason.
-  The disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey
-  line on a phone. The desktop composer is one 62px row. The phone stacks the text over the picker and Send in a
-  90px box with a `composer` fill and shadow. Send has a 44px target; the phone draws a 32px circle inside it.
+  the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The
+  disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey line
+  on a phone. The desktop composer (768px and wider) is ChatGPT's one 52px row (#3962): 36px +, picker and Send inside
+  7px of padding and the 1px border, the + 9px and Send 11px inside its outer edges, the text 12px right of the +. Once
+  its text takes two lines (CopilotKit's `expanded`), it goes across the top, 8px in so its left edge sits on the +'s
+  glyph, over a 36px row of the + at the left and the picker and Send at the right: 108px for two lines, scrolling past
+  CopilotKit's five. That follows ChatGPT's pattern on the measured controls and padding; its multi-line values were not
+  measured. The phone stacks the text over the picker and Send in a 90px box with a `composer` fill and shadow; its
+  controls have 44px targets, and it draws a 32px Send circle inside its target.
+- **Add menu** (`AddMenu`, `.add-menu`; the composer's +): ChatGPT's + menu, a `white` `radius-xl` popover with the
+  `popover` shadow, at least 220px wide, 8px above the composer and on its left edge, 6px around its items. Each item is
+  44px tall, 10px in from the sides, a 20px line icon 6px from its `body` label in `text`; the highlighted item fills
+  `surface-hover` at `radius-md`. As ChatGPT splits them: Add photos, beside a paperclip, picks images; Add files, beside
+  a file-plus, picks any file; both upload alike. Only items we support. Measured from a 2x
+  screenshot of chatgpt.com, logged out (2026-10-12), whose Cloudflare check blocked a live reading; the hover is ours,
+  as nothing was hovered in it.
+- **File tile** (`FileTile`, `.file-tile`): a 40px `radius-lg` square in a file's kind tint (`file-pdf`, `file-sheet`,
+  else `text-muted`) holding a white icon; a file wears the same tile in the composer and once sent.
+- **Composer files** (`<ComposerFileChips>`, `.composer-file`): a `white` chip per attached file inside the composer
+  above its text, a `border` edge and `radius-xl`: the file tile, the name over its upload's progress, its kind or why
+  it failed, and Remove. An image (by name, as in Sent files; `.composer-image`) is its sent thumbnail instead, from
+  the local file, with a 20px `text` Remove circle 4px inside its top right corner and no text on it: uploading, it
+  dims under a white progress ring; failed, under a 24px Retry ringed in `danger`, and a `meta` line in `danger` under
+  the chips says why ("Couldn't upload name: reason"), wrapping onto at most two lines. One the browser can't show
+  is a chip. On a phone Retry's hit area grows 12px each way and Remove's only up and right, so a tap on either circle
+  reaches it. Pasting an image alone attaches it; pasting text that carries an image too pastes only the text.
+- **Sent files** (`<SentFileCards>`, `.sent-files`; a sent or queued message's attachments): one `white` card per file
+  above the bubble, right-aligned, with a `border` edge and `radius-xl`: the file tile, then the file's name (`body`,
+  medium, cut short) over its kind (`meta`, `text-muted`, such as PDF). An image (`.image-thumb`) is ChatGPT's square
+  thumbnail instead (by extension: PNG, JPG, JPEG, GIF, WEBP, as in the composer), 56px at `radius-lg`, from the
+  cartridge's `fileUrl`, `surface-hover` until it loads; one that
+  can't load keeps its tile beside its name and why, `meta` in `danger`. The bubble holds only what the user typed; a
+  message of files alone has none.
 - **Status pill** (`<StatusPill>`, `.status-pill`; Sign-ins, Scheduled's Paused, Coming soon): `label` at medium, 3px × 10px, on a soft tint of its colour: `blue` on
   `blue-soft`, `danger` on `danger-soft`, `text-muted` on `surface-hover`.
 - **Profile header** (`.agent-profile-header`): the 96px avatar with a pencil badge (`.agent-profile-edit`, Edit agent)
@@ -154,6 +196,10 @@ from `botcube-ui-web/ui`.
 | `danger`        | `#dc2626` | Errors, failed rows, Delete, Re-link required (AA on white)                                            |
 | `danger-soft`   | `#fef2f2` | A failed row's icon tile, the Re-link required pill                                                    |
 | `black`         | `#000`    | CopilotKit primary, active send button                                                                 |
+| `file-pdf`      | `#e5484d` | A sent PDF's tile (white icon 4.7:1)                                                                   |
+| `file-sheet`    | `#10a37f` | A sent spreadsheet's tile: CSV, XLS, XLSX (white icon 3.2:1)                                           |
+
+The file tints are ours, after ChatGPT's coloured file tiles, not measured from it.
 
 **Agent colours** (`--agent-soul-*`, `--agent-memory-*`): the Soul and Memory cards' colours, a cartridge `theme` hook,
 so each agent brings its own; the defaults are a neutral grey, which the template keeps. Each card's white captions keep
@@ -174,25 +220,26 @@ A panel rounds only where it reaches into the safe zone, following an iPhone's r
 chat card beside the drawer does; a panel that meets no rounded corner, such as the desktop chat stage, stays square.
 Controls inside a panel, such as the composer and message bubbles, keep their own radius.
 
-| Token  | Value  | Use                                                                 |
-| ------ | ------ | ------------------------------------------------------------------- |
-| `sm`   | 4px    | Inline code, the sidebar's delete button                            |
-| `md`   | 8px    | Header and sidebar icon buttons, the computer's window              |
-| `lg`   | 12px   | Fields, dropdowns, chat error, proposal card                        |
-| `xl`   | 16px   | Agent files' grouped lists, Plugin placeholders                     |
-| `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet, file cards |
-| `3xl`  | 26px   | The composer                                                        |
-| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile      |
-| `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)               |
+| Token  | Value  | Use                                                                  |
+| ------ | ------ | -------------------------------------------------------------------- |
+| `sm`   | 4px    | Inline code, the sidebar's delete button                             |
+| `md`   | 8px    | Header and sidebar icon buttons, the computer's window, + menu items |
+| `lg`   | 12px   | Fields, dropdowns, chat error, proposal card                         |
+| `xl`   | 16px   | Agent files' grouped lists, Plugin placeholders, the + menu          |
+| `2xl`  | 20px   | Message bubbles, the sign-in sheet, the Scheduled sheet, file cards  |
+| `3xl`  | 26px   | The composer                                                         |
+| `4xl`  | 64px   | The chat card beside the phone drawer (Muse Fig 21) or profile       |
+| `pill` | 9999px | Buttons, pills, tabs, scrollbar thumbs (circles: 50%)                |
 
 ## Shadows
 
-| Token      | Value                         | Use                                                            |
-| ---------- | ----------------------------- | -------------------------------------------------------------- |
-| `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`  | The desktop composer (resting)                                 |
-| `elevated` | `0 4px 20px rgba(0,0,0,0.15)` | Dropdowns, popovers, the Scheduled sheet                       |
-| `composer` | `0 8px 36px rgba(0,0,0,0.11)` | The phone composer, focused or not (ChatGPT Work's)            |
-| `soft`     | `0 0 40px rgba(0,0,0,0.23)`   | The chat card beside the phone drawer (Muse Fig 21) or profile |
+| Token      | Value                                                   | Use                                                            |
+| ---------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| `subtle`   | `0 1px 6px rgba(0,0,0,0.08)`                            | The desktop composer (resting)                                 |
+| `elevated` | `0 4px 20px rgba(0,0,0,0.15)`                           | Dropdowns, popovers, the Scheduled sheet                       |
+| `composer` | `0 8px 36px rgba(0,0,0,0.11)`                           | The phone composer, focused or not (ChatGPT Work's)            |
+| `popover`  | `0 8px 16px rgba(0,0,0,0.08), 0 0 1px rgba(0,0,0,0.62)` | The composer's + menu (ChatGPT's)                              |
+| `soft`     | `0 0 40px rgba(0,0,0,0.23)`                             | The chat card beside the phone drawer (Muse Fig 21) or profile |
 
 ## Transitions
 

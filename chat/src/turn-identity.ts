@@ -130,9 +130,15 @@ export async function forwardTurnIdentity(identity: TurnIdentity | null, forward
   return token;
 }
 
+/**
+ * STS fetches these to validate Turn tokens, which can take seconds. A key rotation waits out this lifetime between
+ * publishing a new `kid` and signing with it.
+ */
+const ISSUER_CACHE = { 'Cache-Control': 'public, max-age=300' };
+
 export function turnIdentityRoutes(identity: TurnIdentity): Hono {
   const app = new Hono();
-  app.get('/.well-known/openid-configuration', (c) => c.json(identity.discovery()));
-  app.get(JWKS_PATH, (c) => c.json(identity.jwks()));
+  app.get('/.well-known/openid-configuration', (c) => c.json(identity.discovery(), 200, ISSUER_CACHE));
+  app.get(JWKS_PATH, (c) => c.json(identity.jwks(), 200, ISSUER_CACHE));
   return app;
 }

@@ -12,6 +12,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest, ToolRuntime
 from moto import mock_aws
 
+from botcube_harness_deepagents import turn_timing
 from botcube_harness_deepagents.files_sync import (
     FilesSync,
     FilesSyncError,
@@ -256,3 +257,21 @@ def test_absent_files_binding_passes_workspace_tool_through(tmp_path: Path) -> N
         assert isinstance(result, ToolMessage)
         assert result.content == 'Local workspace'
         assert not readiness.ready
+
+
+def test_the_turns_files_pull_is_timed_once(tmp_path: Path, files: tuple[FilesSync, Any]) -> None:
+    sync, _ = files
+    timing = turn_timing.TurnTiming('run', 'session', 'model', warmup=False, receipt=0.0)
+
+    async def read(request: ToolCallRequest) -> ToolMessage:
+        return ToolMessage((tmp_path / 'report.csv').read_text(), tool_call_id=request.tool_call['id'])
+
+    async def turn() -> None:
+        with turn_timing.use(timing), turn_files(sync, tmp_path, excluded_paths(())):
+            for name in ('read_file', 'ls'):
+                await LazyFilesMiddleware().awrap_tool_call(_request(name), read)
+
+    asyncio.run(turn())
+    record = timing.record(turn_timing.perf_counter(), 'finished')
+    assert record['phaseCounts'] == {'files_pull': 1}
+    assert record['phasesMs']['files_pull'] > 0

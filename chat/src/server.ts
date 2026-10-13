@@ -1,4 +1,4 @@
-import { FirstAnswerTiming } from './first-answer-timing.js';
+import { TurnTiming } from './turn-timing.js';
 import { positiveInteger } from './config.js';
 import { TurnIdentity, forwardTurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import type { TurnFailure } from './session-metadata.js';
@@ -44,6 +44,7 @@ import {
   type ScheduledTaskDefinition,
   type TaskChanges,
 } from './scheduled-tasks.js';
+import { isScheduledInstant } from './schedule-time.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
 import { persistedTurnError, relayTurn, sseFrameData, stopTurn, turnCredentialGuard, turnCredentials, turnErrorDetails, type HeldIds } from './turn-stream.js';
 import {
@@ -189,8 +190,7 @@ function takeHeldIds(forwardedProps: Record<string, unknown>): HeldIds {
 
 const TASK_FIELDS = ['title', 'prompt', 'schedule', 'timezone'] as const;
 
-/** An edit, or a new task, which alone takes a count of runs. */
-type TaskFields = TaskChanges & Pick<ScheduledTaskDefinition, 'maxRuns'>;
+type TaskFields = TaskChanges;
 
 /** A task's definition fields from a request body: all of them, or (`required` false) any present. */
 function taskDefinition(body: unknown, required: boolean): TaskFields {
@@ -202,21 +202,24 @@ function taskDefinition(body: unknown, required: boolean): TaskFields {
     if (typeof value !== 'string' || !value.trim()) throw new HttpError(422, `${field} is required`);
     definition[field] = value.trim();
   }
-  // The stop time: an instant, when Scheduler stops the schedule; on an edit, null clears it.
-  const endDate = body.endDate;
-  if (endDate === null && !required) definition.endDate = null;
-  else if (endDate !== undefined) {
-    if (typeof endDate !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(endDate) || Number.isNaN(Date.parse(endDate))) {
-      throw new HttpError(422, 'endDate must be an ISO date and time');
-    }
-    definition.endDate = new Date(endDate).toISOString();
+  if ('maxRuns' in body || 'count' in body) throw new HttpError(422, 'Use startDate and endDate instead of a run count');
+  for (const field of ['startDate', 'endDate'] as const) {
+    const value = taskInstant(body[field], field, required);
+    if (value !== undefined) definition[field] = value;
   }
-  // How many runs a new task makes before it retires itself.
-  const maxRuns = body.maxRuns;
-  if (!required || maxRuns === undefined) return definition;
-  if (!Number.isInteger(maxRuns) || (maxRuns as number) < 1) throw new HttpError(422, 'maxRuns must be a whole number from 1');
-  definition.maxRuns = maxRuns as number;
+  if (definition.schedule?.startsWith('at(') && (typeof definition.startDate === 'string' || typeof definition.endDate === 'string')) throw new HttpError(422, 'One-off tasks do not support startDate or endDate');
+  if (typeof definition.startDate === 'string' && typeof definition.endDate === 'string' && Date.parse(definition.endDate) <= Date.parse(definition.startDate)) {
+    throw new HttpError(422, 'endDate must be after startDate');
+  }
+
   return definition;
+}
+
+function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: boolean): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null && !required) return null;
+  if (!isScheduledInstant(value)) throw new HttpError(422, `${field} must be an ISO instant with a timezone`);
+  return new Date(value).toISOString();
 }
 
 type Message = RunAgentInput['messages'][number];
@@ -325,6 +328,11 @@ export function createChatService(
     const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, runtimeNamespaceRequired, summarizeTurn, turnIdentity };
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
+    }, async () => {
+      await scheduled.tasks.checkHealth();
+      for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
+        console.error('Scheduled task retirement failed', { owner, taskId }, error);
+      }
     });
     scheduled.onClose?.(stop);
   }
@@ -364,87 +372,100 @@ export function createChatService(
   };
 
   app.post('/', async (c) => {
-    const timing = new FirstAnswerTiming(performance.now());
+    const receipt = performance.now();
     const body = withoutOptionalNulls(await c.req.json().catch(() => undefined));
     const parsed = RunAgentInputSchema.safeParse(body);
     if (!parsed.success) return c.json({ detail: parsed.error.issues }, 422);
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
-    const [, requester] = await Promise.all([requireRuntimeNamespace(), cartridge.requester(c)]);
-    // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
-    const input = body as RunAgentInput;
-    const validatedInput = parsed.data as RunAgentInput;
-    const initialMessages = structuredClone(input.messages);
-    const held = takeHeldIds(input.forwardedProps ?? {});
-    const model = await requireAllowedModel(input, cartridge, requester);
-    const running = { startedAt: new Date().toISOString(), runId: input.runId };
-    const request = validatedInput.messages.slice().reverse().find((message) => userText(message) !== '');
-    let filingUserId: string;
+    const timing = new TurnTiming(receipt, parsed.data.runId, parsed.data.threadId, c.req.header('user-agent'));
     try {
-      filingUserId = await sessionMetadata.recordTurn(requester.owner, input.threadId, {
-        filingUserId: cartridge.filingUserId(requester.owner),
-        title: title(validatedInput.messages),
-        provider: model.provider,
-        running,
-        messageId: input.runId,
-      });
-    } catch (error) {
-      if (error instanceof SessionProviderError) {
-        throw new HttpError(
-          409,
-          `Model ${JSON.stringify(model.key)} is from ${model.provider}; this Session runs on ${error.provider} models`,
-        );
-      }
-      throw sessionAccessError(error);
-    }
-    timing.admitted(input.runId, input.threadId, model.key, initialMessages);
-    const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
-    let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
-    try {
-      const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; });
-      const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
-        actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
-      });
-      if (identity !== undefined) credentials = [...credentials, identity];
-      payload.forwardedProps.sessionUserId = filingUserId;
-      cartridge.turnStarting?.(requester, input.threadId);
-      const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
-      const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
-      const complete = await sessionMetadata.beginDispatch(requester.owner, input.threadId, undefined, running);
-      return await relayTurn({ label: upstream.label, invoke: (body, sessionId, init) => upstream.invokeRegistered(body, complete.session ?? { session_id: sessionId, filing_user_id: filingUserId }, complete, init) }, {
-        timing,
-        body: JSON.stringify(payload),
-        sessionId: input.threadId,
-        accept: c.req.header('accept'),
-        browserEventName: cartridge.browserEventName,
-        ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
-        saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
-        credentials,
-        initialMessages,
-        held,
-        finished: async (answer) => {
-          if (request === undefined) return;
-          try {
-            await recordTurnSummary(summarizeTurn, async (finished) => saveTurn(finished), input.threadId, { request: userText(request), answer });
-          } catch (error) {
-            // The stream has closed: the Session record takes the failure to the thread's next read.
-            const failure = { code: 'TURN_SUMMARY_FAILED', message: (error as Error).message };
-            await sessionMetadata.turnSummaryFailed(requester.owner, input.threadId, running, failure).catch((recordError: unknown) => {
-              throw new AggregateError([error, recordError], 'The Turn summary failed and its failure could not be recorded');
-            });
-            throw error;
-          }
-        },
-        failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),
-        ended: end,
-        started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running),
-      });
-    } catch (error) {
+      const [, requester] = await Promise.all([requireRuntimeNamespace(), cartridge.requester(c)]);
+      timing.mark('requester');
+      // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
+      const input = body as RunAgentInput;
+      const validatedInput = parsed.data as RunAgentInput;
+      const initialMessages = structuredClone(input.messages);
+      const held = takeHeldIds(input.forwardedProps ?? {});
+      const model = await requireAllowedModel(input, cartridge, requester);
+      timing.model = model.key;
+      timing.mark('model');
+      const running = { startedAt: new Date().toISOString(), runId: input.runId };
+      const request = validatedInput.messages.slice().reverse().find((message) => userText(message) !== '');
+      let filingUserId: string;
       try {
-        await end(preparationFailure(error, credentials));
-      } catch (cleanupError) {
-        throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
+        filingUserId = await sessionMetadata.recordTurn(requester.owner, input.threadId, {
+          filingUserId: cartridge.filingUserId(requester.owner),
+          title: title(validatedInput.messages),
+          provider: model.provider,
+          running,
+          messageId: input.runId,
+        });
+      } catch (error) {
+        if (error instanceof SessionProviderError) {
+          throw new HttpError(
+            409,
+            `Model ${JSON.stringify(model.key)} is from ${model.provider}; this Session runs on ${error.provider} models`,
+          );
+        }
+        throw sessionAccessError(error);
       }
-      throw sessionAccessError(error);
+      timing.mark('admitted');
+      const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
+      let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
+      try {
+        const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; });
+        timing.mark('payload');
+        const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
+          actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
+        });
+        timing.mark('identity');
+        if (identity !== undefined) credentials = [...credentials, identity];
+        payload.forwardedProps.sessionUserId = filingUserId;
+        cartridge.turnStarting?.(requester, input.threadId);
+        const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
+        timing.mark('liveView');
+        const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
+        const complete = await sessionMetadata.beginDispatch(requester.owner, input.threadId, undefined, running);
+        timing.mark('dispatch');
+        return await relayTurn({ label: upstream.label, invoke: (body, sessionId, init) => upstream.invokeRegistered(body, complete.session ?? { session_id: sessionId, filing_user_id: filingUserId }, complete, init) }, {
+          timing,
+          body: JSON.stringify(payload),
+          sessionId: input.threadId,
+          accept: c.req.header('accept'),
+          browserEventName: cartridge.browserEventName,
+          ...(browserLiveView ? { initialBrowserSessionId: browserLiveView.sessionId } : {}),
+          saveAgentDocumentEdit: (edit) => agentDocuments.save(requester.owner, agentDocumentEdit(edit)),
+          credentials,
+          initialMessages,
+          held,
+          finished: async (answer) => {
+            if (request === undefined) return;
+            try {
+              await recordTurnSummary(summarizeTurn, async (finished) => saveTurn(finished), input.threadId, { request: userText(request), answer });
+            } catch (error) {
+              // The stream has closed: the Session record takes the failure to the thread's next read.
+              const failure = { code: 'TURN_SUMMARY_FAILED', message: (error as Error).message };
+              await sessionMetadata.turnSummaryFailed(requester.owner, input.threadId, running, failure).catch((recordError: unknown) => {
+                throw new AggregateError([error, recordError], 'The Turn summary failed and its failure could not be recorded');
+              });
+              throw error;
+            }
+          },
+          failed: (message) => request === undefined ? undefined : saveTurn(turnActivity(userText(request), message)),
+          ended: end,
+          started: () => sessionMetadata.turnStarted(requester.owner, input.threadId, running),
+        });
+      } catch (error) {
+        try {
+          await end(preparationFailure(error, credentials));
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
+        }
+        throw sessionAccessError(error);
+      }
+    } catch (error) {
+      timing.finish();
+      throw error;
     }
   });
 
@@ -578,13 +599,14 @@ export function createChatService(
 
   app.get('/health', async (c) => {
     await initialRecovery;
-    if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
     try {
       await sessionMetadata.checkHealth();
     } catch (error) {
       console.error('Session Metadata readiness probe failed', error);
       throw new HttpError(503, 'Session Metadata storage is unavailable');
     }
+    if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
+    await scheduledTasks?.checkHealth();
     await requireRuntimeNamespace();
     if (recoveryError !== undefined) throw new HttpError(503, 'Session purge recovery is unavailable');
     return c.json({ status: 'ok' });
@@ -621,7 +643,7 @@ export function createChatService(
   app.get('/agent/models', async (c) => {
     const requester = await cartridge.requester(c);
     try {
-      return c.json({ models: await accountModelList(cartridge, requester) });
+      return c.json({ models: await accountModelList(cartridge, requester, { refresh: true }) });
     } catch (error) {
       // A failed account catalog remains a failure; these are independently available explicit choices.
       if (error instanceof HttpError && (error.status === 502 || error.status === 503)) {
@@ -710,10 +732,13 @@ export function createChatService(
   });
 
   app.post('/scheduled-tasks', async (c) => {
-    const { owner } = await cartridge.requester(c);
+    const requester = await cartridge.requester(c);
+    const { owner } = requester;
     const scheduled = tasks();
     const body: unknown = await c.req.json().catch(() => undefined);
     const definition = taskDefinition(body, true) as ScheduledTaskDefinition;
+    const model = isRecord(body) ? body.model : undefined;
+    if (model !== undefined) definition.model = (await namedModel(cartridge, requester, model)).key;
     // The proposal's tool call: a second confirmation of it answers the task the first made.
     const proposalId = (body as Record<string, unknown>).proposalId;
     if (typeof proposalId !== 'string' || !proposalId.trim()) throw new HttpError(422, 'proposalId is required');
@@ -722,17 +747,15 @@ export function createChatService(
   });
 
   app.patch('/scheduled-tasks/:id', async (c) => {
-    const { owner } = await cartridge.requester(c);
+    const requester = await cartridge.requester(c);
+    const { owner } = requester;
     const body: unknown = await c.req.json().catch(() => undefined);
     const changes = taskDefinition(body, false);
     const paused = isRecord(body) ? body.paused : undefined;
     if (paused !== undefined && typeof paused !== 'boolean') throw new HttpError(422, 'paused must be true or false');
     // A task that names no model runs on the account's default; a model it names must be one its runs may use.
     const model = isRecord(body) ? body.model : undefined;
-    if (model !== undefined) {
-      const requester = await cartridge.scheduledRequester(owner);
-      changes.model = (await namedModel(cartridge, requester, model)).key;
-    }
+    if (model !== undefined) changes.model = (await namedModel(cartridge, requester, model)).key;
     const updated = await tasks().update(owner, c.req.param('id'), paused === undefined ? changes : { ...changes, paused });
     if (updated === null) throw new HttpError(404, 'Scheduled task not found');
     return c.json(await taskView(owner, updated));

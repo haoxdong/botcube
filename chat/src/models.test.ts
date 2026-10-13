@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpError } from './cartridge.js';
 import { accountDefaultModel } from './models.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
@@ -52,40 +52,32 @@ describe("an account's allowed models", () => {
 
       expect((await listed('account-with-plan')).models.map(({ key }) => key)).toEqual(['plan', 'quick']);
       expect((await listed('account-without-plan')).models.map(({ key }) => key)).toEqual(['quick']);
-
-      const refused = await perAccount.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-test-owner': 'account-without-plan' },
-        body: turn('session-other-accounts-model', { model: 'plan' }),
-      });
-      expect(refused.status).toBe(422);
-      expect(await refused.json()).toEqual({ detail: 'Model "plan" is not available to this account' });
     } finally {
       await perAccount.stop();
     }
   });
 
-  it("leave a Turn naming a Cartridge model to run when the account's own cannot be listed, and fail one naming none", async () => {
-    const failing = await startInProcess({
-      cartridge: {
-        accountModels: async () => {
-          throw new HttpError(502, 'The plan catalog is unavailable');
-        },
-      },
+  // A Turn naming a plan model used to wait on the plan catalog before the Harness heard of it.
+  it("leave a Turn naming a model to run without asking for the account's own, and fail one naming none when they cannot be listed", async () => {
+    const accountModels = vi.fn(async () => {
+      throw new HttpError(502, 'The plan catalog is unavailable');
     });
+    const failing = await startInProcess({ cartridge: { accountModels } });
     try {
       const post = (threadId: string, forwardedProps: Record<string, unknown>) =>
         failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, forwardedProps) });
 
       const named = await post('session-cartridge-model', { model: 'thorough' });
-      const unnamed = await post('session-default-model', {});
       const plan = await post('session-account-model', { model: 'plan' });
-      const listed = await failing.app.request('/agent/models');
+      await Promise.all([named.text(), plan.text()]);
+      expect([named.status, plan.status]).toEqual([200, 200]);
+      expect(failing.agentcore.invocationFor('session-account-model').payload.forwardedProps).toMatchObject({ model: 'plan' });
+      expect(accountModels).not.toHaveBeenCalled();
 
-      expect(named.status).toBe(200);
-      await named.text();
+      const unnamed = await post('session-default-model', {});
+      const listed = await failing.app.request('/agent/models');
       // Naming none, the Turn runs on the account's default, which the failed catalog leaves unknown.
-      expect([unnamed.status, plan.status, listed.status]).toEqual([502, 502, 502]);
+      expect([unnamed.status, listed.status]).toEqual([502, 502]);
       expect(await unnamed.json()).toEqual({ detail: 'The plan catalog is unavailable' });
       expect(await listed.json()).toEqual({
         detail: 'The plan catalog is unavailable',

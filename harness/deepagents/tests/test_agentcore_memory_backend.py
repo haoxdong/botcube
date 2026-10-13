@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -9,11 +10,13 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.awsrequest import AWSResponse, HTTPHeaders
 from botocore.stub import Stubber
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
 )
 
+from agentcore_fake import USER_MEMORY_ROLE_ARN, FakeSts, turn_identity
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import purge as purge_module
 from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
@@ -128,3 +131,91 @@ def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second_in_the
 
     # The first delete goes at once; each next waits out the rest of its 0.2 s slot.
     assert sleeps == [0.0, pytest.approx(0.2), pytest.approx(0.2)]
+
+
+@pytest.fixture
+def microvm(monkeypatch: pytest.MonkeyPatch) -> FakeSts:
+    """A new microVM, whose STS exchange answers from the fake."""
+    sts = FakeSts()
+    real_client = boto3.client
+    monkeypatch.setattr(boto3, 'client', lambda service_name, **options: sts if service_name == 'sts' else real_client(service_name, **options))
+    monkeypatch.setattr(agentcore, '_MEMORY', None)
+    monkeypatch.setattr(agentcore, 'USER_MEMORY_ROLE_ARN', USER_MEMORY_ROLE_ARN)
+    return sts
+
+
+def test_each_turn_signs_the_microvms_one_memory_client_with_its_own_credentials(microvm: FakeSts) -> None:
+    signed: list[str] = []
+
+    def answer(request: Any, **_: Any) -> Any:
+        signed.append(request.headers['Authorization'].decode().split('Credential=')[1].split('/')[0])
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"memoryRecordSummaries": []}'))
+
+    clients = []
+    for run in ('run-1', 'run-2'):
+        saver, store = agentcore.turn_memory(MEMORY_ID, turn_identity(), region_name='us-west-2', run_id=run, turn=agentcore.next_turn())
+        if not clients:
+            store.client.meta.events.register('before-send.bedrock-agentcore', answer)
+        store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actor/user-1/facts')
+        clients.append((saver.checkpoint_event_client.client._client, store.client))
+
+    assert signed == list(microvm.issued)
+    assert len(signed) == 2
+    assert all(client is clients[0][1] for client in (*clients[0], *clients[1]))
+
+
+def test_account_claim_keeps_the_microvms_memory_client_for_the_new_actor(microvm: FakeSts) -> None:
+    _, before = agentcore.turn_memory(MEMORY_ID, turn_identity('guest-1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+    _, after = agentcore.turn_memory(MEMORY_ID, turn_identity('user-1', filing='guest-1'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+
+    assert after.client is before.client
+
+
+def test_a_turn_whose_sts_exchange_finishes_last_keeps_the_newer_turns_credentials(microvm: FakeSts, monkeypatch: pytest.MonkeyPatch) -> None:
+    signed: list[str] = []
+
+    def answer(request: Any, **_: Any) -> Any:
+        signed.append(request.headers['Authorization'].decode().split('Credential=')[1].split('/')[0])
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"memoryRecordSummaries": []}'))
+
+    exchanging, exchanged = threading.Event(), threading.Event()
+    issue = microvm.assume_role_with_web_identity
+
+    def exchange(**params: Any) -> dict[str, Any]:
+        if threading.current_thread().name == 'guest-turn':
+            exchanging.set()
+            exchanged.wait(5)
+        return issue(**params)
+
+    monkeypatch.setattr(microvm, 'assume_role_with_web_identity', exchange)
+    guest = threading.Thread(
+        target=agentcore.turn_memory, args=(MEMORY_ID, turn_identity('guest-1')),
+        kwargs={'region_name': 'us-west-2', 'run_id': 'run-1', 'turn': agentcore.next_turn()}, name='guest-turn')
+    guest.start()
+    assert exchanging.wait(5)
+    # The Account Claim Turn arrives next, and its STS exchange finishes first.
+    _, store = agentcore.turn_memory(MEMORY_ID, turn_identity('user-1', filing='guest-1'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+    exchanged.set()
+    guest.join(5)
+    store.client.meta.events.register('before-send.bedrock-agentcore', answer)
+    store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/user-1/facts/')
+
+    assert [microvm.issued[key]['actorId'] for key in signed] == ['user-1']
+
+
+@pytest.mark.parametrize('identity', [turn_identity(session='thread-2'), turn_identity('user-2')])
+def test_a_turn_for_another_session_sandbox_fails_on_the_microvm(microvm: FakeSts, identity: str) -> None:
+    agentcore.turn_memory(MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+
+    with pytest.raises(agentcore.MemorySandboxError) as failure:
+        agentcore.turn_memory(MEMORY_ID, identity, region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+
+    assert failure.value.code == 'MEMORY_SANDBOX_MISMATCH'
+
+
+class _Body:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    def stream(self) -> Iterator[bytes]:
+        yield self._content

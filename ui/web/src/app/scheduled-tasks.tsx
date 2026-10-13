@@ -1,17 +1,17 @@
 "use client";
 
-import { CalendarClock } from "lucide-react";
-import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import { CalendarClock, ChevronDown, ChevronUp } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
-import { Field } from "../components/ui/field";
 import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { Sheet } from "../components/ui/sheet";
 import { StatusPill } from "../components/ui/status-pill";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
 import { throwIfRefused } from "./refusal";
 import {
-  DAY_NAMES, WEEKDAYS, describeEnd, describeSchedule, fromExpression, listing, stopInstant, toExpression, wallTime, type Cadence, type Weekday,
+  DAY_NAMES, WEEKDAYS, dayTime, describeSchedule, fromExpression, lastRun, listing, repeatsWords, runs, stopInstant, summary, toExpression, unitOf, wallTime, wallWords,
+  type Cadence, type Ending, type Weekday,
 } from "./schedule";
 
 /**
@@ -39,12 +39,8 @@ export const RUN_STATUS: Record<ScheduledRun["status"], { label: string; tone: "
   skipped: { label: "Skipped", tone: "neutral" },
 };
 
-/**
- * What the agent proposes, as its `propose_scheduled_task` tool call carries it: the Edit form's fields, or, from
- * before proposals carried them, a Scheduler expression; any stop time, as a date and time (YYYY-MM-DDTHH:MM); and any
- * count of runs it makes before it stops.
- */
-export type ScheduledTaskProposal = { title: string; prompt: string; ends?: string | null; count?: number | null } & (Cadence | { schedule: string });
+/** The agent's proposal, including obsolete count fields retained in saved chats. */
+export type ScheduledTaskProposal = { title: string; prompt: string; timezone?: string | null; starts?: string | null; ends?: string | null; count?: number | null } & (Cadence | { schedule: string });
 
 /** A task the agent runs on its schedule, as the Chat Service's `/scheduled-tasks` lists it. */
 export interface ScheduledTask {
@@ -56,10 +52,14 @@ export interface ScheduledTask {
   timezone: string;
   /** The model its runs use; absent, they use the account's default, the first of its models. */
   model?: string;
+  /** Its first run, an ISO instant; absent for a one-off, whose schedule says when, and a schedule the Chat Service can't read. */
+  startDate?: string;
   /** The stop time, an ISO instant, after which the task no longer runs. */
   endDate?: string;
   /** How many runs it makes before it leaves the account. */
   maxRuns?: number;
+  /** How many of those runs it has made. */
+  runsMade?: number;
   paused: boolean;
   /** The tool call ID of the proposal the task was confirmed from. */
   proposalId: string;
@@ -107,8 +107,55 @@ function byFrequency(tasks: ScheduledTask[]): { label: string; tasks: ScheduledT
   return [...groups].map(([label, grouped]) => ({ label, tasks: grouped }));
 }
 
+type Counted = Extract<Ending, { kind: "after" }>;
+
+/** After N runs, with the last of them counted on from the first still to come, where that is known. */
+function afterRuns(maxRuns: number, runsMade: number, cadence: Cadence | null, first: number | undefined, timezone: string): Counted {
+  const left = maxRuns - runsMade;
+  const last = cadence === null || first === undefined || left < 1 ? undefined : lastRun(cadence, first, left, timezone);
+  return { kind: "after", runs: maxRuns, last };
+}
+
+function countedEnding(task: ScheduledTask, count: number, cadence: Cadence | null, start: number | undefined, timezone: string): Counted {
+  let first = start ?? (task.nextRun === undefined ? Date.now() : Date.parse(task.nextRun));
+  if (start !== undefined && cadence !== null && "every" in cadence) {
+    const period = cadence.every * (cadence.frequency === "minutes" ? 60_000 : 3_600_000);
+    first = start + Math.max(0, Math.floor((Date.now() - start) / period) + 1) * period;
+  } else if (start !== undefined) first = Math.max(start, Date.now() + 1);
+  return afterRuns(count, task.runsMade ?? 0, cadence, first, timezone);
+}
+
+/** How a task ends, in its sheet: Never, or its stop time; a counted task's last run, or its count where its schedule can't say that. */
+function endsWords(task: ScheduledTask, cadence: Cadence | null): string {
+  if (task.maxRuns != null) {
+    const { last } = countedEnding(task, task.maxRuns, cadence, task.startDate === undefined ? undefined : Date.parse(task.startDate), task.timezone);
+    const stop = task.endDate === undefined ? undefined : Date.parse(task.endDate);
+    if (last !== undefined) return dayTime(stop === undefined ? last : Math.min(last, stop), task.timezone);
+    const count = `After ${task.maxRuns} ${unitOf("run", task.maxRuns)}`;
+    return stop === undefined ? count : `${count} or ${dayTime(stop, task.timezone)}, whichever comes first`;
+  }
+  return task.endDate ? dayTime(task.endDate, task.timezone) : "Never";
+}
+
 /**
- * The agent's proposal as a card the user confirms; confirming schedules it in the browser's timezone.
+ * A proposal's schedule in one line, as its task would run if confirmed now: a rate first runs a period from now. A
+ * count of runs reads as the last of them, as the task's sheet says it.
+ */
+function proposalSummary(schedule: string, timezone: string, endDate: string | undefined, count: number | null | undefined, startDate?: string): string {
+  const now = Date.now();
+  const cadence = fromExpression(schedule);
+  const first = cadence === null || cadence.frequency === "once" ? undefined : runs(cadence, now, 2, timezone)["every" in cadence ? 1 : 0];
+  // A field sent as null is unused, as the Harness reads it.
+  const counted = count == null ? undefined : afterRuns(count, 0, cadence, first, timezone);
+  const stop = endDate === undefined ? undefined : Date.parse(endDate);
+  const ending: Ending = stop !== undefined && (counted?.last === undefined || stop < counted.last)
+    ? { kind: "on", at: stop } : counted ?? { kind: "never" };
+  const words = summary(schedule, timezone, first, ending, now, startDate === undefined ? undefined : Date.parse(startDate));
+  return counted !== undefined && counted.last === undefined && stop !== undefined ? `${words}, up to ${counted.runs} ${unitOf("run", counted.runs)}` : words;
+}
+
+/**
+ * The agent's proposal as a card the user confirms; confirming schedules it in its proposed timezone.
  * The proposal's tool call ID names it, so a card confirmed again answers the task it already made,
  * and a card whose proposal the account's tasks already hold shows it scheduled.
  */
@@ -116,10 +163,12 @@ export function ScheduledTaskProposalCard({
   chatServiceUrl,
   proposalId,
   proposal,
+  result,
 }: {
   chatServiceUrl: string;
   proposalId: string;
   proposal: ScheduledTaskProposal;
+  result: unknown;
 }) {
   // Busy until the account's tasks say whether this proposal is already confirmed.
   const [state, setState] = useState<"proposed" | "busy" | "scheduled">("busy");
@@ -139,14 +188,25 @@ export function ScheduledTaskProposalCard({
     [chatServiceUrl, proposalId],
   );
 
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const timezone = proposal.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   // The proposal's expression and stop time, or why its fields make none.
   let schedule: string | null = null;
+  let startDate: string | undefined;
   let endDate: string | undefined;
   let unscheduled: string | null = null;
+  let model: string | undefined;
   try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
     schedule = "schedule" in proposal ? proposal.schedule : toExpression(proposal);
+    if (result !== "Proposed. Nothing is scheduled until the user confirms it in the chat.") {
+      const provenance: unknown = typeof result === "string" ? JSON.parse(result) : result;
+      if (typeof provenance !== "object" || provenance === null || !("model" in provenance) || typeof provenance.model !== "string" || !provenance.model.trim()) {
+        throw new Error("The proposing Turn has no model key");
+      }
+      model = provenance.model;
+    }
     // A field sent as null is unused, as the Harness reads it.
+    if (proposal.starts != null) startDate = stopInstant(proposal.starts, timezone);
     if (proposal.ends != null) endDate = stopInstant(proposal.ends, timezone);
   } catch (failure) {
     schedule = null;
@@ -157,9 +217,9 @@ export function ScheduledTaskProposalCard({
     setState("busy");
     setError(null);
     try {
-      const { title, prompt, count } = proposal;
-      // A field sent as null is unused, as the Harness reads it.
-      const task = { title, prompt, schedule, timezone, ...(endDate === undefined ? {} : { endDate }), ...(count == null ? {} : { maxRuns: count }), proposalId };
+      if (proposal.count != null) throw new Error('This proposal uses a run count. Ask the agent for start and end times.');
+      const { title, prompt } = proposal;
+      const task = { title, prompt, schedule, timezone, ...(model === undefined ? {} : { model }), ...(startDate === undefined ? {} : { startDate }), ...(endDate === undefined ? {} : { endDate }), proposalId };
       await sendTask(chatServiceUrl, "/scheduled-tasks", "POST", task, "Scheduling failed");
       setState("scheduled");
     } catch (failure) {
@@ -176,9 +236,7 @@ export function ScheduledTaskProposalCard({
         <p className="agent-profile-error">{unscheduled}</p>
       ) : (
         <>
-          <ScheduleWords schedule={schedule} timezone={timezone} element="p" />
-          {endDate !== undefined && <StopWords endDate={endDate} timezone={timezone} />}
-          {proposal.count != null && <RunCountWords maxRuns={proposal.count} />}
+          <p className="scheduled-task-schedule">{proposalSummary(schedule, timezone, endDate, proposal.count, startDate)}</p>
           {state === "scheduled" ? (
             <p className="scheduled-proposal-done">Scheduled. Manage it in the Scheduled tab.</p>
           ) : passed(schedule, timezone) ? (
@@ -196,50 +254,48 @@ export function ScheduledTaskProposalCard({
   );
 }
 
-/**
- * The task's next run, or Ended, Paused or Unknown, and how its last run ended, each time in the task's time zone (spec story 73).
- */
-function TaskRuns({ task }: { task: ScheduledTask }) {
-  const when = (at: string) =>
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: task.timezone,
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(new Date(at));
-  // A schedule the Chat Service cannot read runs at a time it can't say: Unknown, with why on hover.
-  const unknown = !task.ended && !task.paused && task.nextRunUnknown !== undefined;
-  const next = task.ended ? "Ended" : task.paused ? "Paused" : unknown ? "Unknown" : task.nextRun === undefined ? null : when(task.nextRun);
-  const last = task.lastRun;
+/** One term of a task's details and what it reads, as a settings row (DESIGN.md). */
+function Detail({ term, title, children }: { term: string; title?: string; children: ReactNode }) {
   return (
-    <dl className="scheduled-sheet-runs">
-      {next !== null && (
-        <div>
-          <dt>Next run</dt>
-          <dd title={unknown ? task.nextRunUnknown : undefined}>{next}</dd>
-        </div>
-      )}
-      {last && (
-        <div>
-          <dt>Last run</dt>
-          <dd>
-            {when(last.at)}
-            <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
-          </dd>
-        </div>
-      )}
-    </dl>
+    <div className="settings-row">
+      <dt>{term}</dt>
+      <dd title={title}>{children}</dd>
+    </div>
   );
 }
 
-/** A schedule in plain words and its time zone. The separator wraps with the zone it introduces, never alone at a line's end. */
-function ScheduleWords({ schedule, timezone, element: Element = "span" }: { schedule: string; timezone: string; element?: "p" | "span" }) {
+/** Next run: Ended, Paused, Unknown or its day and time; nothing while it has none yet. */
+function NextRun({ task }: { task: ScheduledTask }) {
+  if (task.ended) return <Detail term="Next run">Ended</Detail>;
+  if (task.paused) return <Detail term="Next run">Paused</Detail>;
+  // A schedule the Chat Service cannot read runs at a time it can't say: Unknown, with why on hover.
+  if (task.nextRunUnknown !== undefined) return <Detail term="Next run" title={task.nextRunUnknown}>Unknown</Detail>;
+  return task.nextRun === undefined ? null : <Detail term="Next run">{dayTime(task.nextRun, task.timezone)}</Detail>;
+}
+
+/**
+ * What a task's sheet says of it, each time in its time zone: how it repeats, when it starts while that is ahead or
+ * else its next run, when it ends, and how its last run ended (spec story 73).
+ */
+function TaskDetails({ task }: { task: ScheduledTask }) {
+  const cadence = fromExpression(task.schedule);
+  const once = cadence?.frequency === "once";
+  const starts = once ? stopInstant(`${cadence.date}T${cadence.time}`, task.timezone) : task.startDate;
+  const ahead = starts !== undefined && Date.parse(starts) > Date.now();
+  const last = task.lastRun;
   return (
-    <Element className="scheduled-task-schedule">
-      {describeSchedule(schedule)} <span className="scheduled-task-zone">· {timezone}</span>
-    </Element>
+    <dl className="settings-group">
+      <Detail term="Repeats">{cadence === null ? describeSchedule(task.schedule) : repeatsWords(cadence)}</Detail>
+      {ahead ? <Detail term="Starts">{dayTime(starts, task.timezone)}</Detail> : <NextRun task={task} />}
+      {/* A stop time in the past reads as its time: Next run alone says Ended (issues #3860, #3861). */}
+      {!once && <Detail term="Ends">{endsWords(task, cadence)}</Detail>}
+      {last && (
+        <Detail term="Last run">
+          {dayTime(last.at, task.timezone)}
+          <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
+        </Detail>
+      )}
+    </dl>
   );
 }
 
@@ -255,118 +311,326 @@ function TaskStatus({ task }: { task: ScheduledTask }) {
   return task.paused ? <StatusPill>Paused</StatusPill> : null;
 }
 
-/** When a task stops, or stopped, in plain words in its time zone. */
-function StopWords({ endDate, timezone }: { endDate: string; timezone: string }) {
-  return <p className="scheduled-task-ends">{describeEnd(endDate, timezone)}</p>;
-}
-
-/** How many runs a task makes before it stops. */
-function RunCountWords({ maxRuns }: { maxRuns: number }) {
-  return <p className="scheduled-task-ends">Stops after {maxRuns} {maxRuns === 1 ? "run" : "runs"}</p>;
-}
-
-/** The Edit form's schedule controls, as typed: a frequency, N, a time, days and a date, each kept as the frequency changes. */
+/** The Edit form's Repeats controls, as typed: how often, every how many, and Weekly's days, each kept as Repeats changes. */
 interface Picked {
   frequency: Cadence["frequency"];
   every: string;
-  time: string;
   days: Weekday[];
-  date: string;
 }
 
 const FREQUENCIES: [Cadence["frequency"], string][] = [
-  ["minutes", "Every N minutes"],
-  ["hours", "Every N hours"],
+  ["once", "Once"],
+  ["minutes", "Minutes"],
+  ["hours", "Hours"],
   ["daily", "Daily"],
   ["weekdays", "Weekdays"],
   ["weekly", "Weekly"],
-  ["once", "Once"],
 ];
 
-/** The controls showing a schedule; null when they can't show it. */
-function picked(schedule: string): Picked | null {
-  const cadence = fromExpression(schedule);
-  if (cadence === null) return null;
+/** The controls showing a cadence. */
+function picked(cadence: Cadence): Picked {
   return {
-    every: "every" in cadence ? String(cadence.every) : "1",
-    time: "time" in cadence ? cadence.time : "09:00",
-    days: "days" in cadence ? cadence.days : ["MON"],
-    date: "date" in cadence ? cadence.date : new Date().toISOString().slice(0, 10),
     frequency: cadence.frequency,
+    every: "every" in cadence ? String(cadence.every) : "1",
+    days: "days" in cadence ? cadence.days : ["MON"],
   };
 }
 
-/** The expression the controls make, or why they make none yet. */
-function pickedExpression({ frequency, every, time, days, date }: Picked): { expression: string } | { why: string } {
+/**
+ * The cadence, expression and first run (an ISO instant) the controls make with Starts, which holds a once task's date
+ * and any time of day, or why they make none yet.
+ */
+function pickedSchedule({ frequency, every, days }: Picked, starts: string, timezone: string): { cadence: Cadence; expression: string; start: string } | { why: string } {
+  let start: string;
   try {
-    if (frequency === "minutes" || frequency === "hours") return { expression: toExpression({ frequency, every: Number(every) }) };
-    if (frequency === "once") return { expression: toExpression({ frequency, date, time }) };
-    return { expression: toExpression(frequency === "weekly" ? { frequency, time, days } : { frequency, time }) };
+    start = stopInstant(starts, timezone);
+  } catch {
+    return { why: "Starts needs a date and time" };
+  }
+  const [date = "", time = ""] = starts.split("T");
+  const cadence: Cadence =
+    frequency === "minutes" || frequency === "hours"
+      ? { frequency, every: Number(every) }
+      : frequency === "once"
+        ? { frequency, date, time }
+        : frequency === "weekly"
+          ? { frequency, time, days }
+          : { frequency, time };
+  try {
+    return { cadence, expression: toExpression(cadence), start };
   } catch (failure) {
-    return { why: (failure as Error).message };
+    return { why: `No schedule yet: ${(failure as Error).message}` };
   }
 }
 
-/** The time zones a task can run in, its own among them. */
-function timeZones(current: string): string[] {
-  const zones = Intl.supportedValuesOf("timeZone");
-  return zones.includes(current) ? zones : [current, ...zones];
+/** A settings row (DESIGN.md) choosing from a list: its choice muted at the right, over a chevron. */
+function SelectRow({ label, value, disabled, onChange, children }: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="settings-row">
+      <span>{label}</span>
+      <span className="settings-select">
+        <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}>
+          {children}
+        </select>
+        <ChevronDown size={16} aria-hidden />
+      </span>
+    </label>
+  );
 }
 
-/** Frequency, then N or the time, then on Weekly the days or on Once the date, as the Scheduled list labels them. */
-function SchedulePicker({ value, disabled, onChange }: { value: Picked; disabled: boolean; onChange: (value: Picked) => void }) {
-  const interval = value.frequency === "minutes" || value.frequency === "hours";
-  const daysLabel = useId();
+/** The part of a date and time (YYYY-MM-DDTHH:MM) a row holds: the native picker for it, and how it reads and writes that part. */
+const PARTS = {
+  date: { type: "date", of: (wall: string) => wall.split("T")[0] ?? "", into: (wall: string, date: string) => `${date}T${wall.split("T")[1] ?? ""}` },
+  time: { type: "time", of: (wall: string) => wall.split("T")[1] ?? "", into: (wall: string, time: string) => `${wall.split("T")[0] ?? ""}T${time}` },
+  both: { type: "datetime-local", of: (wall: string) => wall, into: (_wall: string, picked: string) => picked },
+} as const;
+
+type Part = keyof typeof PARTS;
+
+/** What Starts holds under More: a calendar cadence's date, its time of day in the Time row; a rate's date and time. */
+const STARTS_PART: Record<Exclude<Cadence["frequency"], "once">, Part> = { minutes: "both", hours: "both", daily: "date", weekdays: "date", weekly: "date" };
+
+/**
+ * A date and time in words, the time alone in a row holding only that; Choose while it isn't one, as the line under the
+ * rows says why.
+ */
+function whenWords(value: string, timezone: string, part: Part): string {
+  try {
+    return wallWords(value, timezone, part === "time");
+  } catch {
+    return "Choose";
+  }
+}
+
+/**
+ * A settings row holding a date and time (YYYY-MM-DDTHH:MM), or its date or time, shown as words over a chevron as
+ * Codex's Time is: a native picker lies unseen over the whole row, so a tap anywhere on it opens the picker.
+ */
+function WhenRow({ label, value, part = "both", timezone, disabled, onChange }: {
+  label: string;
+  value: string;
+  part?: Part;
+  timezone: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { type, of, into } = PARTS[part];
+  return (
+    <div className="settings-row settings-when">
+      <span>{label}</span>
+      <span className="settings-select" aria-hidden>
+        <span>{whenWords(value, timezone, part)}</span>
+        <ChevronDown size={16} />
+      </span>
+      <input
+        type={type}
+        aria-label={label}
+        disabled={disabled}
+        value={of(value)}
+        // A desktop browser opens its picker only from its own calendar icon, hidden here, unless asked; Safari before 16.4 can't be.
+        onClick={(event) => {
+          if ("showPicker" in event.currentTarget) event.currentTarget.showPicker();
+        }}
+        onChange={(event) => onChange(into(value, event.target.value))}
+      />
+    </div>
+  );
+}
+
+/** Every's choices for a rate, the count it has among them where it isn't one. */
+const EVERY: Record<"minutes" | "hours", number[]> = { minutes: [1, 5, 10, 15, 30], hours: [1, 2, 3, 6, 12] };
+
+/** Every, as Repeats is: a menu of counts with their unit, as "5 minutes" reads. */
+function EveryRow({ frequency, value, disabled, onChange }: { frequency: "minutes" | "hours"; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const counts = EVERY[frequency].includes(Number(value)) ? EVERY[frequency] : [...EVERY[frequency], Number(value)].sort((a, b) => a - b);
+  return (
+    <SelectRow label="Every" value={value} disabled={disabled} onChange={onChange}>
+      {counts.map((count) => (
+        <option key={count} value={String(count)}>
+          {count} {unitOf(frequency.slice(0, -1), count)}
+        </option>
+      ))}
+    </SelectRow>
+  );
+}
+
+/** Weekly's days, Sunday first as EventBridge numbers them, under their label. */
+function DaysRow({ days, disabled, onChange }: { days: Weekday[]; disabled: boolean; onChange: (days: Weekday[]) => void }) {
+  const label = useId();
+  return (
+    <div className="settings-row settings-row-stacked">
+      <span id={label}>Days</span>
+      <div className="scheduled-days" role="group" aria-labelledby={label}>
+        {WEEKDAYS.map((day, index) => {
+          const on = days.includes(day);
+          return (
+            <button
+              key={day}
+              type="button"
+              className="scheduled-day"
+              aria-label={DAY_NAMES[index]}
+              aria-pressed={on}
+              disabled={disabled}
+              onClick={() => onChange(on ? days.filter((other) => other !== day) : [...days, day])}
+            >
+              {DAY_NAMES[index]?.[0]}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Repeats, as Codex's Repeat card: then Every for a rate; Weekly's days; the time of day a daily, weekdays or weekly
+ * task runs at; or a one-off's date and time, its only run.
+ */
+function RepeatRows({ value, starts, timezone, disabled, onChange, onStarts }: {
+  value: Picked;
+  starts: string;
+  /** The task's time zone, which Starts is in. */
+  timezone: string;
+  disabled: boolean;
+  onChange: (value: Picked) => void;
+  onStarts: (starts: string) => void;
+}) {
   return (
     <>
-      <div className="scheduled-task-row">
-        <Field className="scheduled-task-field" label="Frequency">
-          <select disabled={disabled} value={value.frequency} onChange={(event) => onChange({ ...value, frequency: event.target.value as Picked["frequency"] })}>
-            {FREQUENCIES.map(([frequency, label]) => (
-              <option key={frequency} value={frequency}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {interval ? (
-          <Field className="scheduled-task-field" label="Every">
-            <input type="number" inputMode="numeric" min={1} disabled={disabled} value={value.every} onChange={(event) => onChange({ ...value, every: event.target.value })} />
-          </Field>
-        ) : (
-          <Field className="scheduled-task-field" label="Time">
-            <input type="time" disabled={disabled} value={value.time} onChange={(event) => onChange({ ...value, time: event.target.value })} />
-          </Field>
-        )}
-      </div>
-      {value.frequency === "once" && (
-        <Field className="scheduled-task-field" label="Date">
-          <input type="date" disabled={disabled} value={value.date} onChange={(event) => onChange({ ...value, date: event.target.value })} />
-        </Field>
+      <SelectRow label="Repeats" value={value.frequency} disabled={disabled} onChange={(frequency) => onChange({ ...value, frequency: frequency as Picked["frequency"] })}>
+        {FREQUENCIES.map(([frequency, label]) => (
+          <option key={frequency} value={frequency}>
+            {label}
+          </option>
+        ))}
+      </SelectRow>
+      {(value.frequency === "minutes" || value.frequency === "hours") && (
+        <EveryRow frequency={value.frequency} value={value.every} disabled={disabled} onChange={(every) => onChange({ ...value, every })} />
       )}
-      {value.frequency === "weekly" && (
-        <div className="scheduled-task-field field">
-          <span id={daysLabel}>Days</span>
-          <div className="scheduled-days" role="group" aria-labelledby={daysLabel}>
-            {WEEKDAYS.map((day, index) => {
-              const on = value.days.includes(day);
-              return (
-                <button
-                  key={day}
-                  type="button"
-                  className="scheduled-day"
-                  aria-label={DAY_NAMES[index]}
-                  aria-pressed={on}
-                  disabled={disabled}
-                  onClick={() => onChange({ ...value, days: on ? value.days.filter((other) => other !== day) : [...value.days, day] })}
-                >
-                  {DAY_NAMES[index]?.[0]}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+      {value.frequency === "weekly" && <DaysRow days={value.days} disabled={disabled} onChange={(days) => onChange({ ...value, days })} />}
+      {value.frequency === "once" ? (
+        <WhenRow label="Starts" value={starts} timezone={timezone} disabled={disabled} onChange={onStarts} />
+      ) : (
+        STARTS_PART[value.frequency] === "date" && <WhenRow label="Time" part="time" value={starts} timezone={timezone} disabled={disabled} onChange={onStarts} />
       )}
+    </>
+  );
+}
+
+/**
+ * How a task ends as Ends shows it: Never, or its date and time in the task's time zone. A task made with a count of
+ * runs ends at the last of them, which follows Starts and Repeats, until another date is picked.
+ */
+interface Ends {
+  choice: "never" | "on";
+  on: string;
+  /** The task's count of runs while its end is the last of them; null once a date is picked. */
+  count: number | null;
+}
+
+/** The ending Ends picks in a time zone, a counted task's from its count of runs. */
+function pickedEnding(ends: Ends, timezone: string, counted: (count: number) => Ending): Ending {
+  if (ends.choice === "never") return { kind: "never" };
+  if (ends.count !== null) return counted(ends.count);
+  return { kind: "on", at: Date.parse(stopInstant(ends.on, timezone)) };
+}
+
+/**
+ * The stop time an ending saves: null for Never, else its instant; none for a count of runs, which the task keeps, as
+ * its last tick is a stop time Scheduler may not fire at.
+ */
+function stopOf(ending: Ending): string | null | undefined {
+  switch (ending.kind) {
+    case "never":
+      return null;
+    case "on":
+      return new Date(ending.at).toISOString();
+    case "after":
+      return undefined;
+  }
+}
+
+/**
+ * Ends, as iOS Calendar's End Repeat: one row reading Never or the end's date and time, a counted task's last run until
+ * another is picked. Its menu offers Never and On a date…, which opens the native picker unseen under the row; the
+ * date picked becomes the row's value, and a picker shut with none leaves the row as it was.
+ */
+function EndsRow({ value, counted, timezone, disabled, onChange }: {
+  value: Ends;
+  /** A counted task's last run (YYYY-MM-DDTHH:MM), where its schedule says. */
+  counted: string | undefined;
+  timezone: string;
+  disabled: boolean;
+  onChange: (value: Ends) => void;
+}) {
+  const picker = useRef<HTMLInputElement>(null);
+  // Where the browser can't open a picker when asked (Safari before 16.4), the picker takes the row's taps instead.
+  const [direct, setDirect] = useState(false);
+  const on = value.choice === "on" ? (counted ?? value.on) : "";
+  // A counted task whose last run can't be said yet ends after its count, as its sheet says.
+  const words = on ? wallWords(on, timezone) : value.choice === "on" && value.count !== null ? `After ${value.count} ${unitOf("run", value.count)}` : "Never";
+  const never: Ends = { choice: "never", on: "", count: null };
+  return (
+    <div className={direct ? "settings-row settings-ends settings-ends-direct" : "settings-row settings-ends"}>
+      <span>Ends</span>
+      <span className="settings-select">
+        {/* The row's value is a hidden choice, so picking either option, even On a date… again, is a change. */}
+        <select
+          aria-label="Ends"
+          disabled={disabled}
+          value=""
+          onChange={(event) => {
+            const input = picker.current;
+            if (event.target.value === "never") onChange(never);
+            else if (input !== null) {
+              // lib.dom gives every input showPicker, which Safari before 16.4 lacks.
+              if (typeof (input as { showPicker?: unknown }).showPicker === "function") input.showPicker();
+              else {
+                setDirect(true);
+                input.focus();
+                input.click();
+              }
+            }
+          }}
+        >
+          <option value="" hidden>
+            {words}
+          </option>
+          <option value="never">Never</option>
+          <option value="on">On a date…</option>
+        </select>
+        <ChevronDown size={16} aria-hidden />
+      </span>
+      <input
+        ref={picker}
+        type="datetime-local"
+        aria-label="End date"
+        tabIndex={-1}
+        disabled={disabled}
+        value={on}
+        onChange={(event) => onChange(event.target.value ? { choice: "on", on: event.target.value, count: null } : never)}
+      />
+    </div>
+  );
+}
+
+/** More, shut until opened: the cards under it. */
+function MoreRows({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const Chevron = open ? ChevronUp : ChevronDown;
+  return (
+    <>
+      <button type="button" className="settings-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>
+        More
+        <Chevron size={16} aria-hidden />
+      </button>
+      {open && <div className="settings-cards">{children}</div>}
     </>
   );
 }
@@ -374,18 +638,95 @@ function SchedulePicker({ value, disabled, onChange }: { value: Picked; disabled
 interface Draft {
   title: string;
   prompt: string;
-  timezone: string;
   model: string;
   /** Null for a schedule the controls can't show, which stays as it is. */
   schedule: Picked | null;
-  /** What the controls made of the task's schedule when Edit opened: saved unchanged, the expression stays as written. */
-  unchanged: string | null;
-  /** The stop time as Ends shows it, a date and time in the draft's time zone; empty for none. */
-  ends: string;
+  /** The first run as Starts shows it: a date and time (YYYY-MM-DDTHH:MM) in the task's time zone. */
+  starts: string;
+  ends: Ends;
+  /** Starts, the expression the controls made and the stop time and count of runs Ends picked, as Edit opened them: Save sends only what moved. */
+  opened: { starts: string; expression: string | null; endDate: string | null; maxRuns: number | null };
+}
+
+/**
+ * Starts as Edit opens it: a one-off's date and time, else the date of the task's first run, or of its next one for a
+ * task from before tasks kept their first, or today, at the time of day it runs, or at the time it starts for a rate.
+ */
+function startsOf(task: ScheduledTask, cadence: Cadence | null): string {
+  if (cadence?.frequency === "once") return `${cadence.date}T${cadence.time}`;
+  const wall = wallTime(task.startDate ?? task.nextRun ?? Date.now(), task.timezone);
+  return cadence !== null && "time" in cadence ? `${wall.slice(0, 10)}T${cadence.time}` : wall;
+}
+
+/** The Edit form over a task: On its last run for a counted task, else On its stop time, else Never. */
+function draftOf(task: ScheduledTask, model: string): Draft {
+  const cadence = fromExpression(task.schedule);
+  const schedule = cadence === null ? null : picked(cadence);
+  const starts = startsOf(task, cadence);
+  const made = schedule === null ? null : pickedSchedule(schedule, starts, task.timezone);
+  const on = task.endDate ? wallTime(task.endDate, task.timezone) : "";
+  const ends: Ends = { choice: task.maxRuns != null || task.endDate ? "on" : "never", on, count: task.maxRuns ?? null };
+  return {
+    title: task.title, prompt: task.prompt, model, schedule, starts, ends,
+    opened: {
+      starts,
+      expression: made !== null && "expression" in made ? made.expression : null,
+      endDate: task.endDate ? stopInstant(on, task.timezone) : null,
+      maxRuns: task.maxRuns ?? null,
+    },
+  };
+}
+
+/** A change to a task: its fields, with a start, a stop time or a count of runs cleared with null. */
+type TaskChanges = Partial<Omit<ScheduledTask, "startDate" | "endDate" | "maxRuns">> & {
+  startDate?: string | null;
+  endDate?: string | null;
+  maxRuns?: number | null;
+};
+
+/**
+ * What Repeats and Starts save, with the cadence and first run a counted ending follows, or why they can't yet. A
+ * schedule the controls can't show stays as written, from the task's start.
+ */
+function editedSchedule(draft: Draft, task: ScheduledTask): { changes: TaskChanges; cadence: Cadence | null; start: number | undefined } | { why: string } {
+  if (draft.schedule === null) {
+    return { changes: {}, cadence: null, start: task.startDate === undefined ? undefined : Date.parse(task.startDate) };
+  }
+  const made = pickedSchedule(draft.schedule, draft.starts, task.timezone);
+  if ("why" in made) return made;
+  const changes: TaskChanges = {};
+  if (made.expression !== draft.opened.expression) changes.schedule = made.expression;
+  // A new schedule, as a one-off made to repeat has, starts at Starts: a rate would otherwise count from its creation.
+  const moved = made.start !== stopInstant(draft.opened.starts, task.timezone) || changes.schedule !== undefined;
+  if (made.cadence.frequency === "once" && task.startDate !== undefined) changes.startDate = null;
+  else if (made.cadence.frequency !== "once" && moved) changes.startDate = made.start;
+  return { changes, cadence: made.cadence, start: Date.parse(made.start) };
+}
+
+/**
+ * What Save sends, with the ending it picks, or why it can't yet. It sends the title and prompt, and only what else
+ * moved: a task keeps its expression as written, its start, its ending and the account's default model until the
+ * controls pick another. A counted task keeps its count until Ends picks Never or a date, which it sends with no count;
+ * a one-off has nothing to end.
+ */
+function edited(draft: Draft, task: ScheduledTask, model: string): { changes: TaskChanges; ending: Ending } | { why: string } {
+  const schedule = editedSchedule(draft, task);
+  if ("why" in schedule) return schedule;
+  const { cadence, start } = schedule;
+  const ending = cadence?.frequency === "once" ? ({ kind: "never" } as const) : pickedEnding(draft.ends, task.timezone, (count) => {
+    const ending = countedEnding(task, count, cadence, start, task.timezone);
+    return draft.ends.on && ending.last !== undefined ? { ...ending, last: Math.min(ending.last, Date.parse(stopInstant(draft.ends.on, task.timezone))) } : ending;
+  });
+
+  const changes: TaskChanges = { title: draft.title, prompt: draft.prompt, ...schedule.changes };
+  const endDate = stopOf(ending);
+  if (endDate !== undefined && (endDate !== draft.opened.endDate || draft.opened.maxRuns !== null)) Object.assign(changes, { endDate });
+  if (draft.model !== model) changes.model = draft.model;
+  return { changes, ending };
 }
 
 /** The model a task's runs use: the account's, with the one it names marked when the account no longer has it. */
-function ModelField({ task, models, modelsFailed, runsOn, value, disabled, onChange }: {
+function ModelRow({ task, models, modelsFailed, runsOn, value, disabled, onChange }: {
   task: ScheduledTask;
   models: AgentModel[] | null;
   modelsFailed: boolean;
@@ -397,60 +738,132 @@ function ModelField({ task, models, modelsFailed, runsOn, value, disabled, onCha
   // A named model the account no longer has: its runs fail, so it shows as unavailable.
   const unavailable = task.model !== undefined && models !== null && !models.some(({ key }) => key === task.model);
   return (
-    <Field className="scheduled-task-field" label="Model">
-      <select disabled={disabled || models === null} value={value} onChange={(event) => onChange(event.target.value)}>
-        {(models === null || (modelsFailed && runsOn === undefined)) && <option value={runsOn ?? ""}>{task.model ?? "Account default"} (models unavailable)</option>}
-        {unavailable && (
-          <option value={task.model} disabled>
-            {task.model} ({modelsFailed ? "models unavailable" : "unavailable"})
-          </option>
-        )}
-        {(models ?? []).map(({ key, label }) => (
-          <option key={key} value={key}>
-            {label}
-          </option>
-        ))}
-      </select>
-    </Field>
+    <SelectRow label="Model" value={value} disabled={disabled || models === null} onChange={onChange}>
+      {(models === null || (modelsFailed && runsOn === undefined)) && <option value={runsOn ?? ""}>{task.model ?? "Account default"} (models unavailable)</option>}
+      {unavailable && (
+        <option value={task.model} disabled>
+          {task.model} ({modelsFailed ? "models unavailable" : "unavailable"})
+        </option>
+      )}
+      {(models ?? []).map(({ key, label }) => (
+        <option key={key} value={key}>
+          {label}
+        </option>
+      ))}
+    </SelectRow>
   );
 }
 
-/** A change to a task: its fields, and a stop time cleared with null. */
-type TaskChanges = Partial<Omit<ScheduledTask, "endDate">> & { endDate?: string | null };
-
-/**
- * The stop time Save sends, or why Ends makes none: an instant, or null for none. A once task has nothing to stop.
- */
-function draftStop(draft: Draft): { endDate: string | null } | { why: string } {
-  if (draft.schedule?.frequency === "once" || draft.ends === "") return { endDate: null };
-  try {
-    return { endDate: stopInstant(draft.ends, draft.timezone) };
-  } catch (failure) {
-    return { why: (failure as Error).message };
-  }
+/** A counted task's last run as End date holds it (YYYY-MM-DDTHH:MM), where the draft says it. */
+function countedWall(save: ReturnType<typeof edited>, timezone: string): string | undefined {
+  return "ending" in save && save.ending.kind === "after" && save.ending.last !== undefined ? wallTime(save.ending.last, timezone) : undefined;
 }
 
 /**
- * What Save changes: the title and prompt, and only what the controls changed. A task keeps its expression as written,
- * its time zone, its stop time, and the account's default model, until the controls pick another.
+ * More's first card: Starts, the first run's date (with its time for a rate, whose Time it is), then Ends. A schedule
+ * the controls can't show keeps its start, so it has only Ends.
  */
-function edited(draft: Draft, schedule: string | null, endDate: string | null, task: ScheduledTask, model: string): TaskChanges {
-  return {
-    title: draft.title,
-    prompt: draft.prompt,
-    ...(schedule === null || schedule === draft.unchanged ? {} : { schedule }),
-    ...(draft.timezone === task.timezone ? {} : { timezone: draft.timezone }),
-    ...(endDate === (task.endDate ?? null) ? {} : { endDate }),
-    ...(draft.model === model ? {} : { model: draft.model }),
-  };
+function StartsEndsCard({ draft, timezone, counted, disabled, set }: {
+  draft: Draft;
+  timezone: string;
+  counted: string | undefined;
+  disabled: boolean;
+  set: (changes: Partial<Draft>) => void;
+}) {
+  const frequency = draft.schedule?.frequency;
+  return (
+    <div className="settings-group">
+      {frequency !== undefined && frequency !== "once" && (
+        <WhenRow label="Starts" part={STARTS_PART[frequency]} value={draft.starts} timezone={timezone} disabled={disabled} onChange={(starts) => set({ starts })} />
+      )}
+      <EndsRow value={draft.ends} counted={counted} timezone={timezone} disabled={disabled} onChange={(ends) => set({ ends })} />
+    </div>
+  );
+}
+
+/**
+ * The Edit form, in settings rows after Codex's Schedule a task (DESIGN.md): the title and what it asks; how it repeats
+ * and at what time; under More, when it starts and ends and its model; then, while Save can't, why, over Cancel and
+ * Save. Its times are in the task's time zone.
+ */
+function TaskEditForm({ task, agentName, models, modelsFailed, runsOn, notices, onChange, onDone }: {
+  task: ScheduledTask;
+  agentName: string;
+  models: AgentModel[] | null;
+  modelsFailed: boolean;
+  /** The model its runs use; unknown while the catalog failed and it names none. */
+  runsOn: string | undefined;
+  notices: ReactNode;
+  onChange: (changes: TaskChanges) => Promise<boolean>;
+  onDone: () => void;
+}) {
+  const model = runsOn ?? "";
+  const [draft, setDraft] = useState(() => draftOf(task, model));
+  const [saving, setSaving] = useState(false);
+  const set = (changes: Partial<Draft>) => setDraft({ ...draft, ...changes });
+  const save = edited(draft, task, model);
+  return (
+    <div className="scheduled-sheet-body scheduled-edit">
+      <input className="settings-text" aria-label="Title" placeholder="Title" disabled={saving} value={draft.title} onChange={(event) => set({ title: event.target.value })} />
+      <textarea
+        className="settings-text"
+        aria-label="Prompt"
+        placeholder="Instructions…"
+        rows={4}
+        disabled={saving}
+        value={draft.prompt}
+        onChange={(event) => set({ prompt: event.target.value })}
+      />
+      {draft.schedule === null ? (
+        <p className="scheduled-task-hint">Ask {agentName} to change it.</p>
+      ) : (
+        <div className="settings-group">
+          <RepeatRows value={draft.schedule} starts={draft.starts} timezone={task.timezone} disabled={saving} onChange={(schedule) => set({ schedule })} onStarts={(starts) => set({ starts })} />
+        </div>
+      )}
+      <MoreRows>
+        {draft.schedule?.frequency !== "once" && (
+          <StartsEndsCard draft={draft} timezone={task.timezone} counted={countedWall(save, task.timezone)} disabled={saving} set={set} />
+        )}
+        <div className="settings-group">
+          <ModelRow task={task} models={models} modelsFailed={modelsFailed} runsOn={runsOn} value={draft.model} disabled={saving} onChange={(picked) => set({ model: picked })} />
+        </div>
+      </MoreRows>
+      {"why" in save && (
+        <p className="scheduled-task-hint" role="status">
+          {save.why}
+        </p>
+      )}
+      {notices}
+      <div className="scheduled-edit-actions">
+        <Button disabled={saving} onClick={onDone}>Cancel</Button>
+        <Button
+          variant="primary"
+          disabled={saving || "why" in save}
+          onClick={async () => {
+            if ("why" in save) return;
+            setSaving(true);
+            const saved = await onChange(save.changes);
+            setSaving(false);
+            if (saved) onDone();
+          }}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /**
  * An open task's sheet: what it asks and when, with Pause or Resume, Edit and Delete (spec story 52). Editing turns it
- * into the task's fields: what it asks, when, in which time zone, and on which model. Delete asks first, as iOS does.
+ * into the task's fields: what it asks; how it repeats, starts and ends; in which time zone; and on which model, over a
+ * line saying it in words. Delete asks first, as iOS does.
  */
 function ScheduledTaskSheet({
   task,
+  editing,
+  onEditing,
   agentName,
   models,
   modelsFailed,
@@ -460,6 +873,9 @@ function ScheduledTaskSheet({
   onOpenChat,
 }: {
   task: ScheduledTask;
+  /** Showing the Edit form, which the sheet's title names Edit task. */
+  editing: boolean;
+  onEditing: (editing: boolean) => void;
   /** Who to ask to change a schedule the Edit form can't show. */
   agentName: string;
   /** The account's models, the default first; null until they load; only the Cartridge's, or null, when the catalog failed. */
@@ -473,87 +889,28 @@ function ScheduledTaskSheet({
   /** Opens the task's Side Chat, whose ID is the task's. */
   onOpenChat: () => void;
 }) {
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   // The model its runs use: the one it names, else the account's default; unknown until the models load.
   const runsOn = modelsFailed ? task.model : models === null ? undefined : (task.model ?? models[0]?.key);
-  const initialModel = runsOn ?? "";
 
-  if (draft) {
-    const field = (name: "title" | "prompt", label: string) => (
-      <Field className="scheduled-task-field" label={label}>
-        <input disabled={saving} value={draft[name]} onChange={(event) => setDraft({ ...draft, [name]: event.target.value })} />
-      </Field>
-    );
-    // What the controls make; a schedule they can't show stays as it is.
-    const made = draft.schedule === null ? { expression: task.schedule } : pickedExpression(draft.schedule);
-    const schedule = "expression" in made ? made.expression : null;
-    const stop = draftStop(draft);
+  if (editing) {
     return (
-      <div className="scheduled-sheet-body">
-        {field("title", "Title")}
-        {field("prompt", "Prompt")}
-        {draft.schedule !== null && <SchedulePicker value={draft.schedule} disabled={saving} onChange={(picked) => setDraft({ ...draft, schedule: picked })} />}
-        <Field className="scheduled-task-field" label="Time zone">
-          <select disabled={saving} value={draft.timezone} onChange={(event) => setDraft({ ...draft, timezone: event.target.value })}>
-            {timeZones(task.timezone).map((zone) => (
-              <option key={zone} value={zone}>
-                {zone}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {"why" in made ? <p className="scheduled-task-hint">No schedule yet: {made.why}</p> : <ScheduleWords schedule={made.expression} timezone={draft.timezone} />}
-        {draft.schedule === null && <p className="scheduled-task-hint">Ask {agentName} to change it.</p>}
-        {draft.schedule?.frequency !== "once" && (
-          <div className="scheduled-task-row">
-            <Field className="scheduled-task-field" label="Ends">
-              <input type="datetime-local" disabled={saving} value={draft.ends} onChange={(event) => setDraft({ ...draft, ends: event.target.value })} />
-            </Field>
-            <Button className="scheduled-task-clear" disabled={saving || draft.ends === ""} onClick={() => setDraft({ ...draft, ends: "" })}>
-              No stop time
-            </Button>
-          </div>
-        )}
-        {"why" in stop && <p className="scheduled-task-hint">No stop time yet: {stop.why}</p>}
-        <ModelField
-          task={task}
-          models={models}
-          modelsFailed={modelsFailed}
-          runsOn={runsOn}
-          value={draft.model}
-          disabled={saving}
-          onChange={(model) => setDraft({ ...draft, model })}
-        />
-        {notices}
-        <div className="scheduled-sheet-edit-actions">
-          <Button disabled={saving} onClick={() => setDraft(null)}>Cancel</Button>
-          <Button
-            variant="primary"
-            disabled={saving || schedule === null || "why" in stop}
-            onClick={async () => {
-              if ("why" in stop) return;
-              setSaving(true);
-              const saved = await onChange(edited(draft, schedule, stop.endDate, task, initialModel));
-              setSaving(false);
-              if (saved) setDraft(null);
-            }}
-          >
-            Save
-          </Button>
-        </div>
-      </div>
+      <TaskEditForm
+        task={task}
+        agentName={agentName}
+        models={models}
+        modelsFailed={modelsFailed}
+        runsOn={runsOn}
+        notices={notices}
+        onChange={onChange}
+        onDone={() => onEditing(false)}
+      />
     );
   }
   return (
     <div className="scheduled-sheet-body">
       <p className="scheduled-task-prompt">{task.prompt}</p>
-      <ScheduleWords schedule={task.schedule} timezone={task.timezone} />
-      {/* Its Next run reads Ended once it has, over Paused, and only there (issues #3860, #3861). */}
-      {task.endDate && !task.ended && <StopWords endDate={task.endDate} timezone={task.timezone} />}
-      {task.maxRuns !== undefined && <RunCountWords maxRuns={task.maxRuns} />}
-      <TaskRuns task={task} />
+      <TaskDetails task={task} />
       {notices}
       {confirmingDelete ? (
         <div className="scheduled-sheet-actions">
@@ -572,18 +929,7 @@ function ScheduledTaskSheet({
         <div className="scheduled-sheet-actions">
           {task.sideChat && <Button onClick={onOpenChat}>Open chat</Button>}
           {!task.ended && <Button onClick={() => void onChange({ paused: !task.paused })}>{task.paused ? "Resume" : "Pause"}</Button>}
-          <Button
-            disabled={runsOn === undefined && !modelsFailed}
-            onClick={() => {
-              const schedule = picked(task.schedule);
-              const made = schedule === null ? { expression: task.schedule } : pickedExpression(schedule);
-              setDraft({
-                title: task.title, prompt: task.prompt, timezone: task.timezone, model: initialModel, schedule,
-                unchanged: "expression" in made ? made.expression : null,
-                ends: task.endDate ? wallTime(task.endDate, task.timezone) : "",
-              });
-            }}
-          >
+          <Button disabled={runsOn === undefined && !modelsFailed} onClick={() => onEditing(true)}>
             Edit
           </Button>
           <Button variant="destructive" onClick={() => setConfirmingDelete(true)}>
@@ -636,7 +982,7 @@ export function ScheduledPanel({
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The task whose sheet is open, kept while it closes so it still shows as it slides away.
-  const [sheet, setSheet] = useState<{ task: ScheduledTask; open: boolean } | null>(null);
+  const [sheet, setSheet] = useState<{ task: ScheduledTask; open: boolean; editing: boolean } | null>(null);
   // The sheet rises over the Agent Profile, as its phone sheet covers the screen.
   const [profile, setProfile] = useState<HTMLElement | null>(null);
   const panelRef = useCallback((node: HTMLElement | null) => setProfile(node?.closest<HTMLElement>(".agent-profile") ?? null), []);
@@ -713,7 +1059,7 @@ export function ScheduledPanel({
                     onOpen={() => {
                       // A failure belongs to the task it was for; another task's sheet starts clear of it.
                       setError(null);
-                      setSheet({ task, open: true });
+                      setSheet({ task, open: true, editing: false });
                     }}
                   />
                 ))}
@@ -723,10 +1069,12 @@ export function ScheduledPanel({
         </div>
       )}
       {sheet && (
-        <Sheet open={sheet.open} onClose={() => setSheet((current) => current && { ...current, open: false })} title={sheet.task.title} container={profile} className="scheduled-sheet">
+        <Sheet open={sheet.open} onClose={() => setSheet((current) => current && { ...current, open: false })} title={sheet.editing ? "Edit task" : sheet.task.title} container={profile} className="scheduled-sheet">
           <ScheduledTaskSheet
             key={sheet.task.id}
             task={sheet.task}
+            editing={sheet.editing}
+            onEditing={(editing) => setSheet((current) => current && { ...current, editing })}
             agentName={agentName}
             models={models}
             modelsFailed={modelsError !== null}

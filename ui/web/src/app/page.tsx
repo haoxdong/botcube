@@ -38,6 +38,9 @@ const ChatSurface = lazy(() => import("./chat-surface"));
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
 const CHAT_SERVICE_URL = process.env.NEXT_PUBLIC_CHAT_SERVICE_URL ?? UI_CONFIG.chatServiceUrl;
+// AgentCore reaps a Sandbox after 15 idle minutes, so one warmed in the last 5 is still up; each warmup
+// exchanges credentials and holds the Session, so coming back sooner warms nothing.
+const REWARM_AFTER_MS = 5 * 60_000;
 
 /** Closes an open menu on Escape, returning focus to its trigger. */
 function useCloseOnEscape(open: boolean, setOpen: (open: boolean) => void, triggerRef: RefObject<HTMLButtonElement | null>) {
@@ -540,15 +543,20 @@ function App({
   const [warmupError, setWarmupError] = useState<{ accountId: typeof accountId; message: string } | null>(null);
   const warmupRequest = useRef(0);
   const pendingWarmups = useRef(new Map<string, Promise<void>>());
+  const warmedAt = useRef(new Map<string, number>());
+  const pendingComeback = useRef<{ accountId: typeof accountId; threadId: string } | null>(null);
 
   // Pre-warm the Session's Sandbox and the requester's agent for its model, so the first message starts without either.
   // Only the latest warmup, the one for the open chat, its model and account, may report or clear a failure.
-  const warmup = (target: { threadId: string; newChat?: true } | { mainChat: true }) => {
-    const request = ++warmupRequest.current;
+  const warmup = (target: { threadId: string; newChat?: true } | { mainChat: true }, comeback = false) => {
     // Replay names the same Main Chat that boot used before its id was known. Its Sandbox must
     // finish provisioning before another warmup invokes it; other chats and accounts stay independent.
     const runtime = "mainChat" in target || target.threadId === mainChatId ? { mainChat: true } : target;
     const key = JSON.stringify({ accountId, ...runtime });
+    if (comeback && pendingWarmups.current.has(key)) return;
+    if (comeback && Date.now() - (warmedAt.current.get(key) ?? -Infinity) < REWARM_AFTER_MS) return;
+    warmedAt.current.set(key, Date.now());
+    const request = ++warmupRequest.current;
     const prepare = () => auth.isAccountCurrent?.(accountId) === false ? Promise.resolve() : fetch(`${CHAT_SERVICE_URL}/warmup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -580,6 +588,33 @@ function App({
   useEffect(() => {
     if (ready && activeId !== null) warmup({ threadId: activeId, ...(newChat && { newChat: true }) });
   }, [ready, activeId, newChat, offeredModel, effort]);
+  // A user coming back warms the open chat again, whose Sandbox AgentCore may have reaped meanwhile.
+  useEffect(() => {
+    if (!ready || activeId === null) {
+      pendingComeback.current = null;
+      return;
+    }
+    if (pendingComeback.current?.accountId !== accountId || pendingComeback.current?.threadId !== activeId) {
+      pendingComeback.current = null;
+    }
+    const resumeComeback = () => {
+      if (pendingComeback.current === null || document.visibilityState !== "visible" || turnRunning || agent.isRunning) return;
+      pendingComeback.current = null;
+      warmup({ threadId: activeId, ...(newChat && { newChat: true }) }, true);
+    };
+    const rewarm = () => {
+      if (document.visibilityState !== "visible") return;
+      pendingComeback.current = { accountId, threadId: activeId };
+      resumeComeback();
+    };
+    resumeComeback();
+    window.addEventListener("focus", rewarm);
+    document.addEventListener("visibilitychange", rewarm);
+    return () => {
+      window.removeEventListener("focus", rewarm);
+      document.removeEventListener("visibilitychange", rewarm);
+    };
+  }, [ready, activeId, mainChatId, newChat, offeredModel, effort, turnRunning, agent, accountId]);
 
   useEffect(() => {
     const subscription = agent.subscribe({

@@ -434,6 +434,10 @@ class OpenAIProvider:
             account_id, OPENAI_PROVIDER, request_context if context is None else context,
         )
         headers = {name: request.headers[name] for name in _FORWARDED_HEADERS if name in request.headers}
+        if context is not None:
+            # OpenAI keys a conversation's cache affinity on session-id, which Codex sets to its prompt_cache_key
+            # (openai/codex client.rs responses_session_id); the Harness's prompt_cache_key is this Session.
+            headers['session-id'] = request_context['sessionId']
         client = self._client()
         upstream_request = client.build_request(
             request.method, f'{self._settings.api_origin}/{path}', params=request.url.query or None,

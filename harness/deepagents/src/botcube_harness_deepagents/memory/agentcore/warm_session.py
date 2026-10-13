@@ -46,10 +46,17 @@ from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
 )
 from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
+from ... import turn_timing
+
 __all__ = ['WarmSessionSaver']
 
 # The Sessions one microVM keeps warm: a Runtime session serves one member's few chats.
 WARM_SESSIONS = 16
+
+# The ListEvents page that finds a Session's newest checkpoint. The filter applies within a page, and every
+# snapshot comes back in it: on a 742-event Session, a page of 100 cost ~800 ms without payloads and 67 MB with
+# them, against ~200 ms and 2.5 MB for 5, while the newest checkpoint sits among the newest few events.
+CHECKPOINT_PAGE = 5
 
 # (memory ID, filing actor, AgentCore session ID): where a Session's checkpoints live.
 _Key = tuple[str, str, str]
@@ -201,7 +208,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         """The newest snapshot checkpoint's key, read as the stock saver finds it, without payloads."""
         params: dict[str, Any] = {
             'memoryId': self.memory_id, 'actorId': config.actor_id, 'sessionId': config.session_id,
-            'includePayloads': False, 'maxResults': self.max_results,
+            'includePayloads': False, 'maxResults': CHECKPOINT_PAGE,
             'filter': {'eventMetadata': [{
                 'left': {'metadataKey': 'lc_kind'}, 'operator': 'EQUALS_TO',
                 'right': {'metadataValue': {'stringValue': 'checkpoint'}},
@@ -224,7 +231,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         """Load the Session's latest snapshot in full, and hold it unless the Session changed since `version`."""
         self._confirmed.pop(key, None)
         events = self.checkpoint_event_client.get_snapshot(
-            checkpoint_config.session_id, checkpoint_config.actor_id, None, self.max_results,
+            checkpoint_config.session_id, checkpoint_config.actor_id, None, CHECKPOINT_PAGE,
         )
         if events is None:
             # The legacy layout: the stock saver's walk, never held.
@@ -261,7 +268,8 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._confirmed.pop(key, None)
         self.checkpoint_event_client.kept = None
         try:
-            stored = super().put_with_writes(config, checkpoint, metadata, new_versions, pending_writes)
+            with turn_timing.phase('checkpoint_write'):
+                stored = super().put_with_writes(config, checkpoint, metadata, new_versions, pending_writes)
         except BaseException:
             # Memory may hold the checkpoint or not: lapse every Turn's confirmation, even one made mid-write.
             _SESSIONS.touch(key)
@@ -274,6 +282,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
 
     def put_writes(self, config: RunnableConfig, writes: Sequence[tuple[str, Any]], task_id: str, task_path: str = '') -> None:
         try:
-            super().put_writes(config, writes, task_id, task_path)
+            with turn_timing.phase('checkpoint_write'):
+                super().put_writes(config, writes, task_id, task_path)
         finally:
             _SESSIONS.touch(self._key(CheckpointerConfig.from_runnable_config(dict(config))))

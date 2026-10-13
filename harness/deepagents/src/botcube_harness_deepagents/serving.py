@@ -53,7 +53,7 @@ from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
 
-from . import answer_timing, message_times
+from . import message_times, session_memory, turn_timing
 from ._env import positive_float, positive_int
 from .actor_identity import (
     ANONYMOUS_ACTOR_ID,
@@ -75,7 +75,7 @@ from .files_sync import (
     files_prompt,
     pop_files_sync,
 )
-from .lazy_files import turn_files
+from .lazy_files import TurnFiles, turn_files
 from .llm import PlanUsageError, build_model, resolve_effort, resolve_model
 from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
@@ -273,7 +273,9 @@ class _SessionAgent(LangGraphAgent):
     _graph_stream: Any = None
 
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+        # The graph's raw events carry the Session's history, which no client reads; skip
+        # building and JSON-converting them for every streamed event.
+        super().__init__(**{'emit_raw_events': False, **kwargs})
         self._model_lane: str | None = None
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
@@ -329,9 +331,6 @@ class _SessionAgent(LangGraphAgent):
         try:
             async with aclosing(super()._handle_single_event(event, state)) as events:
                 async for emitted in events:
-                    timing = answer_timing.current()
-                    if timing and _is_assistant_text(emitted):
-                        timing.alias(event.get('data', {}).get('chunk'), emitted.message_id)
                     yield emitted
         finally:
             self._model_lane = None
@@ -367,7 +366,10 @@ class _SessionAgent(LangGraphAgent):
                 for call in message.tool_calls or []:
                     if call.function.arguments:
                         json.loads(call.function.arguments)
-        with answer_timing.phase('state_preparation'):
+        if (timing := turn_timing.current()) is not None:
+            timing.history_messages = len(agent_state.values.get('messages', []))
+        config.setdefault('configurable', {})['scheduled_task_model'] = (input.forwarded_props or {}).get('model')
+        with turn_timing.phase('state_preparation'):
             prepared = await super().prepare_stream(input, agent_state, config)
         self._graph_stream = prepared.get('stream')
         return prepared
@@ -529,12 +531,12 @@ def _get_agent(
             _BACKEND_BY_AGENT[cached] = backend
             return cached
 
-        with answer_timing.phase('memory_backends'):
+        with turn_timing.phase('memory_backends'):
             store = _ensure_memory_backends()
-        with answer_timing.phase('workspace'):
+        with turn_timing.phase('workspace'):
             backend = _backend_for((conversation_id, session_user_id, actor_id, environment_key), environment)
 
-        with answer_timing.phase('model_client'):
+        with turn_timing.phase('model_client'):
             m = install_prompt_cache_usage_callback(
                 build_model(
                     model=model,
@@ -566,7 +568,7 @@ def _get_agent(
         system_prompt = '\n\n'.join(
             part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
         )
-        with answer_timing.phase('graph_build'):
+        with turn_timing.phase('graph_build'):
             graph = build_agent(
                 model=m,
                 tools=tools,
@@ -589,7 +591,7 @@ def _get_agent(
         # checkpoint or log carries it. The _SessionAgent call below stays mutated, and dropping
         # the name there fails the required argument.
         identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
-        with answer_timing.phase('stream_adapter'):
+        with turn_timing.phase('stream_adapter'):
             agent = _SessionAgent(**identity, graph=graph, config=config)
         _AGENTS[key] = agent
         _AGENT_BACKENDS[key] = backend
@@ -644,15 +646,17 @@ def _agent_and_backend(**kwargs: Any) -> tuple[LangGraphAgent, LocalShellBackend
     with _CACHE_LOCK:
         agent = _get_agent(**kwargs)
         backend = _BACKEND_BY_AGENT[agent]
-    if (timing := answer_timing.current()) is not None:
+    if (timing := turn_timing.current()) is not None:
         timing.prepared()
     return agent, backend
 
 
 async def _turn_memory(turn_identity: str, run_id: str) -> tuple[Any, Any]:
-    with answer_timing.phase('memory_credentials'):
+    turn = agentcore_memory_backend.next_turn()
+    with turn_timing.phase('memory_credentials'):
         return await asyncio.to_thread(
-            agentcore_memory_backend.turn_memory, AGENTCORE_MEMORY_ID, turn_identity, region_name=AGENTCORE_REGION, run_id=run_id,
+            agentcore_memory_backend.turn_memory, AGENTCORE_MEMORY_ID, turn_identity,
+            region_name=AGENTCORE_REGION, run_id=run_id, turn=turn,
         )
 
 
@@ -725,7 +729,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         return
     documents = pop_agent_documents(forwarded)
     files = pop_files_sync(forwarded)
-    with answer_timing.phase('invocation_auth'):
+    with turn_timing.phase('invocation_auth'):
         auth = _require_cartridge().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
     if not auth.actor_id:
@@ -766,7 +770,12 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
     if not warmup:
         async def prepare() -> tuple[LangGraphAgent, Path]:
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory)
-            await latest_checkpoint(agent.graph, _session_config(session))
+            if AGENTCORE_MEMORY_ID and persistent_memory:
+                # The Memory block needs only the Turn's credentials, so it reads alongside the history.
+                store = agent.graph.store
+                session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id)
+            with turn_timing.phase('checkpoint_read'):
+                await latest_checkpoint(agent.graph, _session_config(session))
             _apply_session_env(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
 
@@ -777,12 +786,32 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
     reads_history = forwarded.get('preparationScope', 'recorded') != 'startup'
     async with _SESSION_TURNS.preparation(session) as allowed:
         if allowed:
-            agent, _backend = await _turn_agent(
+            agent, backend = await _turn_agent(
                 build, turn_identity if reads_history else None, input_data.run_id, persistent_memory,
             )
-            if reads_history:
-                with answer_timing.phase('warmup_history'):
-                    await latest_checkpoint(agent.graph, _session_config(session))
+
+            async def read_history() -> None:
+                reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, _session_config(session))]
+                if AGENTCORE_MEMORY_ID and persistent_memory:
+                    # The opening Memory read, so the Turn's own finds the Memory client's connections open.
+                    reads.append(asyncio.to_thread(agentcore_memory_backend.opening, agent.graph.store, auth.actor_id))
+                with turn_timing.phase('warmup_history'):
+                    await asyncio.gather(*reads)
+
+            # The Turn's first workspace tool then finds its Files current and downloads nothing.
+            pull = asyncio.create_task(
+                TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).aensure()
+            )
+            work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
+            try:
+                done, _ = await asyncio.wait(work, return_when=asyncio.FIRST_EXCEPTION)
+            finally:
+                # A failure stops the history read; the pull, mutating the workspace, ends before the lock is released.
+                for task in work[1:]:
+                    task.cancel()
+                await asyncio.wait(work)
+            for task in [*done, *work]:
+                task.result()
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
 
 
@@ -1010,6 +1039,7 @@ class _SessionTurns:
                 self._flush_failures[session] = failure
             raise
         finally:
+            session_memory.settle_prefetch()
             otel_context.detach(trace_token)
             # Still the latest, no Turn waits on the lock: the idle Session keeps neither.
             if self._turns.get(session) is turn:
@@ -1037,9 +1067,9 @@ async def _turn_events(
     put: Callable[[Any], None],
 ) -> None:
     async for event in agent.run(input_data):
-        # The graph's raw events and its state carry the Session's history, which no client reads.
-        if event.type not in (EventType.RAW, EventType.STATE_SNAPSHOT):
-            put(event.model_copy(update={'raw_event': None}))
+        # The graph's state carries the Session's history, which no client reads.
+        if event.type != EventType.STATE_SNAPSHOT:
+            put(event)
             if event.type == EventType.RUN_FINISHED:
                 graph_end = getattr(agent, '_graph_ended_at', None)
                 if graph_end is not None:
@@ -1089,44 +1119,55 @@ async def invocations(request: Request) -> Any:
 
     context = _RequestContext(request.headers.get(SESSION_ID_HEADER))
     encoder = EventEncoder(accept=request.headers.get('accept', ''))
-    timing = answer_timing.AnswerTiming(run_input.run_id, run_input.thread_id,
-        (run_input.forwarded_props or {}).get('model'), receipt)
+    forwarded = run_input.forwarded_props or {}
+    warmup = bool(forwarded.get('warmup'))
+    timing = turn_timing.TurnTiming(
+        run_input.run_id, run_input.thread_id, forwarded.get('model'), warmup=warmup, receipt=receipt,
+    )
 
-    async def event_generator():
-        token = answer_timing._current.set(timing)
-        error: RunErrorEvent | None = None
-        try:
-            async for event in _events_with_response_check(run_input, context):
-                frame = encoder.encode(event)
-                if _is_assistant_text(event):
-                    timing.frame(frame, event.message_id)
-                yield frame
-        except (
-            MissingUserIdError,
-            AgentDocumentsError,
-            FilesSyncError,
-            FilesSyncRecordError,
-            PlanUsageError,
-            SessionFormatLegacyError,
-            TurnFeedError,
-            TurnIdentityError,
-        ) as e:
-            log.error('Rejected invocation: %s', e)
-            yield encoder.encode(error := RunErrorEvent(message=str(e), code=e.code))
-        except Exception as e:
-            log.exception('Error during AG-UI event streaming')
-            yield encoder.encode(error := RunErrorEvent(message=str(e), code=_error_code(e)))
-        finally:
-            answer_timing._current.reset(token)
-        if error is None:
-            return
-        if (run_input.forwarded_props or {}).get('warmup'):
+    return StreamingResponse(
+        _kept_alive(_invocation_frames(run_input, context, encoder, timing)), media_type=encoder.get_content_type(),
+    )
+
+
+async def _invocation_frames(
+    run_input: RunAgentInput, context: _RequestContext, encoder: EventEncoder, timing: turn_timing.TurnTiming,
+) -> AsyncGenerator[str, None]:
+    error: RunErrorEvent | None = None
+    failed = finished = False
+    try:
+        with turn_timing.use(timing):
+            try:
+                async for event in _events_with_response_check(run_input, context):
+                    frame = encoder.encode(event)
+                    if _is_assistant_text(event):
+                        timing.text()
+                    failed |= event.type == EventType.RUN_ERROR
+                    yield frame
+                # A Turn that streamed to its end without a RUN_ERROR; a warmup ends without RUN_FINISHED.
+                finished = not failed
+            except (
+                MissingUserIdError,
+                AgentDocumentsError,
+                FilesSyncError,
+                FilesSyncRecordError,
+                PlanUsageError,
+                SessionFormatLegacyError,
+                TurnFeedError,
+                TurnIdentityError,
+            ) as e:
+                log.error('Rejected invocation: %s', e)
+                yield encoder.encode(error := RunErrorEvent(message=str(e), code=e.code))
+            except Exception as e:
+                log.exception('Error during AG-UI event streaming')
+                yield encoder.encode(error := RunErrorEvent(message=str(e), code=_error_code(e)))
+        if error is not None and timing.warmup:
             yield encoder.encode(_preparation_event(run_input, 'failed', error))
+    finally:
+        timing.finish('finished' if finished else 'failed')
 
-    return StreamingResponse(_kept_alive(event_generator(), timing), media_type=encoder.get_content_type())
 
-
-async def _kept_alive(frames: AsyncIterator[str], timing: answer_timing.AnswerTiming | None = None) -> AsyncGenerator[str, None]:
+async def _kept_alive(frames: AsyncIterator[str]) -> AsyncGenerator[str, None]:
     """`frames`, with `_KEEPALIVE` after each quiet `_KEEPALIVE_SECONDS`.
 
     One task reads `frames` from start to end, so the Turn's events are made in one context as before.
@@ -1151,17 +1192,11 @@ async def _kept_alive(frames: AsyncIterator[str], timing: answer_timing.AnswerTi
             frame = waiting.result()
             if frame is None:
                 break
-            if timing:
-                timing.emitted(frame)
             yield frame
             waiting = asyncio.create_task(queue.get())
         await reading
     finally:
-        try:
-            await _cancel_keepalive_tasks(reading, waiting)
-        finally:
-            if timing:
-                timing.finish()
+        await _cancel_keepalive_tasks(reading, waiting)
 
 
 async def _cancel_keepalive_tasks(*tasks: asyncio.Task[object]) -> None:
@@ -1187,7 +1222,8 @@ def ping() -> JSONResponse:
 def main() -> None:
     import uvicorn
 
-    importlib.import_module('openai.resources')
+    # `openai.resources` leaves out the Responses resource the plan model's first request imports.
+    importlib.import_module('openai.resources.responses')
     if _cartridge is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
         if module_name:
@@ -1205,7 +1241,7 @@ def main() -> None:
         },
         'root': {'level': 'INFO', 'handlers': ['named']},
         'loggers': {
-            'botcube_harness_deepagents.answer_timing': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
+            'botcube_harness_deepagents.turn_timing': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })

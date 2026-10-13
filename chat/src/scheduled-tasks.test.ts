@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { CreateScheduleGroupCommand, DeleteScheduleCommand, ListSchedulesCommand, SchedulerClient, SchedulerServiceException, ValidationException } from '@aws-sdk/client-scheduler';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { inject } from 'vitest';
 import { Hono } from 'hono';
-import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
@@ -382,10 +382,25 @@ describe('POST /scheduled-tasks', () => {
     expect(await scheduler.schedule(task.id)).toMatchObject({ ScheduleExpression: 'at(2026-11-02T09:30:00)', ActionAfterCompletion: 'DELETE' });
   });
 
+  it('preserves the proposing model when confirmed', async () => {
+    const account = owner();
+    const task = await confirm(account, { ...MORNING_BRIEF, model: 'thorough' });
+    expect(task).toMatchObject({ model: 'thorough' });
+    expect(await listed(account)).toEqual([task]);
+  });
+
+  it.each(['unavailable', null, 7])('refuses a confirmed model unavailable to this account %s', async (model) => {
+    const account = owner();
+    const response = await request(account, '/scheduled-tasks', { method: 'POST', body: { ...MORNING_BRIEF, proposalId: randomUUID(), model } });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ detail: `Model ${JSON.stringify(model)} is not available to this account` });
+    expect(await listed(account)).toEqual([]);
+  });
+
   it('names no model: its runs use the account default until an edit picks one', async () => {
     const account = owner();
 
-    const task = await confirm(account, { ...MORNING_BRIEF, model: 'thorough' });
+    const task = await confirm(account, MORNING_BRIEF);
     const edited = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { model: 'plan' } });
 
     expect(task).not.toHaveProperty('model');
@@ -416,7 +431,9 @@ describe('POST /scheduled-tasks', () => {
     ['a field that is not text', { ...MORNING_BRIEF, schedule: 8 }, 'schedule is required'],
     ['a proposal without its ID', MORNING_BRIEF, 'proposalId is required'],
     ['a blank proposal ID', { ...MORNING_BRIEF, proposalId: ' ' }, 'proposalId is required'],
-    ['a stop time that is not a time', { ...MORNING_BRIEF, endDate: 'Friday' }, 'endDate must be an ISO date and time'],
+    ['a stop time that is not a time', { ...MORNING_BRIEF, endDate: 'Friday' }, 'endDate must be an ISO instant with a timezone'],
+    ['a one-off with startDate', { ...MORNING_BRIEF, schedule: 'at(2090-01-01T12:00:00)', startDate: '2090-01-01T10:00:00Z' }, 'One-off tasks do not support startDate or endDate'],
+    ['a one-off with endDate', { ...MORNING_BRIEF, schedule: 'at(2090-01-01T12:00:00)', endDate: '2090-01-01T10:00:00Z' }, 'One-off tasks do not support startDate or endDate'],
   ])('refuses %s and schedules nothing', async (_, body, detail) => {
     const account = owner();
 
@@ -590,7 +607,9 @@ describe('PATCH /scheduled-tasks/:id', () => {
 
   it.each([
     ['paused that is not true or false', { paused: 'yes' }, 'paused must be true or false'],
-    ['a stop time that is not a time', { endDate: '2026-13-45' }, 'endDate must be an ISO date and time'],
+    ['a stop time that is not a time', { endDate: '2026-13-45' }, 'endDate must be an ISO instant with a timezone'],
+    ['a one-off with startDate', { schedule: 'at(2090-01-01T12:00:00)', startDate: '2090-01-01T10:00:00Z' }, 'One-off tasks do not support startDate or endDate'],
+    ['a one-off with endDate', { schedule: 'at(2090-01-01T12:00:00)', endDate: '2090-01-01T10:00:00Z' }, 'One-off tasks do not support startDate or endDate'],
     ['a blank field', { title: ' ' }, 'title is required'],
     ["a model that is not the account's", { model: 'retired' }, 'Model "retired" is not available to this account'],
     ['a model that is not a key', { model: 5 }, 'Model 5 is not available to this account'],
@@ -976,20 +995,24 @@ describe('ScheduledTasks', () => {
     expect((await tasks.list(owner)).map(({ id }) => id)).toEqual([kept.id]);
   });
 
-  it('counts each delivery that ran toward a count of runs once, ending the task at its count', async () => {
-    const owner = `runs-${randomUUID()}`;
+  it('retires a paused expired recurring task without a delivery and releases capacity once', async () => {
+    const account = owner();
     const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
-    const { task } = await tasks.create(owner, randomUUID(), { ...MORNING_BRIEF, maxRuns: 2 });
-
-    await tasks.countRun(owner, task.id, 'first');
-    // A redelivered run starts again.
-    await tasks.countRun(owner, task.id, 'first');
-    expect(await tasks.get(owner, task.id)).toMatchObject({ maxRuns: 2, runsMade: 1, ended: false, nextRun: expect.any(String) });
-
-    await tasks.countRun(owner, task.id, 'second');
-    const ended = await tasks.get(owner, task.id);
-    expect(ended).toMatchObject({ runsMade: 2, ended: true });
-    expect(ended).not.toHaveProperty('nextRun');
+    const { task } = await tasks.create(account, randomUUID(), { ...MORNING_BRIEF, endDate: '2000-01-01T00:00:00.000Z' });
+    await tasks.update(account, task.id, { paused: true });
+    for (let page = 0; page < 20; page += 1) {
+      // eslint-disable-next-line no-await-in-loop -- advance the bounded maintenance cursor
+      await tasks.retireExpired();
+      // eslint-disable-next-line no-await-in-loop -- stop once the task has been retired
+      if (await tasks.get(account, task.id) === null) break;
+    }
+    expect(await tasks.get(account, task.id)).toBeNull();
+    await tasks.retireExpired();
+    for (let n = 0; n < 10; n += 1) {
+      // eslint-disable-next-line no-await-in-loop -- refill the shared capacity counter after expiry
+      await tasks.create(account, randomUUID(), MORNING_BRIEF);
+    }
+    await expect(tasks.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
   });
 
   it('fails loud retiring a one-off whose time it cannot read, keeping the task', async () => {
@@ -1016,7 +1039,8 @@ describe('ScheduledTasks', () => {
   };
   const invalid = () => new ValidationException({ Message: 'Invalid Schedule Expression', message: 'Invalid Schedule Expression', $metadata: {} });
 
-  function serviceForTasks(account: string, tasks: ScheduledTasks) {
+  function serviceForTasks(account: string, tasks: ScheduledTasks, queue: import("./scheduled-runs.js").RunQueue = { receive: () => new Promise(() => undefined), delete: async () => undefined }, runtime = false) {
+    let stop: () => void = () => undefined;
     let history: AccountHistory | undefined;
     const app = createChatService(
       (hooks) => {
@@ -1025,7 +1049,7 @@ describe('ScheduledTasks', () => {
           corsOrigins: [],
           agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
           models: [{ key: 'test', label: 'Test', provider: 'test' }],
-          accountModels: async () => [],
+          accountModels: async () => [], accountModel: async () => undefined,
           browserEventName: 'test:browser',
           routes: new Hono(),
           requester: async () => ({ owner: account }),
@@ -1039,7 +1063,7 @@ describe('ScheduledTasks', () => {
         };
       },
       {
-        agentCore: null, localHarnessUrl: null, corsOrigins: null,
+        agentCore: runtime ? { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url } : null, localHarnessUrl: null, corsOrigins: null,
         region: 'us-east-1', agentCoreEndpoint: stack.agentcore.url, browserId: 'test',
         sessionApi: { localUrl: stack.sessionApi.url }, warmupTimeoutMs: 10_000,
         turnSummaryModel: { region: 'us-east-1', url: `${stack.bedrock.url}/model/summary/converse` },
@@ -1049,12 +1073,200 @@ describe('ScheduledTasks', () => {
       undefined,
       {
         tasks,
-        queue: { receive: () => new Promise(() => undefined), delete: async () => undefined },
+        queue,
         draining: async () => false,
+        onClose: (close) => { stop = close; },
       },
     );
-    return { app, history: defined(history, 'the Chat Service Account History') };
+    return { app, history: defined(history, 'the Chat Service Account History'), stop: () => stop() };
   }
+
+  it.each(['Scheduler refusal', 'unknown schedule group'] as const)('keeps scheduled work healthy across a persistent retirement failure from %s', async (failureKind) => {
+    const account = owner();
+    const isolatedTable = `expiry-${randomUUID()}`;
+    await createChatTable(inject('dynamodbEndpoint'), isolatedTable);
+    const normal = new ScheduledTasks(isolatedTable, runs, dynamodb, realScheduler);
+    const { task: poison } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, endDate: '2000-01-01T00:00:00.000Z' });
+    const { task: expired } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, endDate: '2000-01-01T00:00:00.000Z' });
+    const prompt = `Healthy delivery ${randomUUID()}`;
+    const { task: healthy } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt });
+    const documents = DynamoDBDocumentClient.from(dynamodb);
+    if (failureKind === 'unknown schedule group') {
+      await realScheduler.send(new DeleteScheduleCommand({ Name: poison.id, GroupName: runs.group }));
+      await documents.send(new UpdateCommand({
+        TableName: isolatedTable, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${poison.id}` },
+        UpdateExpression: 'REMOVE schedule_group SET mutation = :mutation',
+        ExpressionAttributeValues: { ':mutation': { kind: 'retire', token: randomUUID() } },
+      }));
+    }
+    const refusal = new SchedulerServiceException({ name: 'AccessDeniedException', message: 'Retirement denied', $fault: 'client', $metadata: { httpStatusCode: 403 } });
+    const failingScheduler = {
+      send: (command: unknown) => {
+        if (failureKind === 'Scheduler refusal' && command instanceof DeleteScheduleCommand && command.input.Name === poison.id) return Promise.reject(refusal);
+        return realScheduler.send(command as Parameters<SchedulerClient['send']>[0]);
+      },
+    } as unknown as SchedulerClient;
+    const tasks = new ScheduledTasks(isolatedTable, runs, dynamodb, failingScheduler);
+    stack.agentcore.scriptPrompt(prompt, {
+      kind: 'stream',
+      frames: [
+        { type: 'RUN_STARTED' },
+        { type: 'TEXT_MESSAGE_START', messageId: 'healthy', role: 'assistant' },
+        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'healthy', delta: 'Healthy task completed.' },
+        { type: 'TEXT_MESSAGE_END', messageId: 'healthy' },
+        { type: 'RUN_FINISHED' },
+      ].map((frame) => `data: ${JSON.stringify(frame)}`),
+    });
+    let delivered = false;
+    const deleted: string[] = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const service = serviceForTasks(account, tasks, {
+      receive: async (signal) => {
+        if (!delivered) {
+          delivered = true;
+          return [{ body: JSON.stringify({ owner: account, taskId: healthy.id }), receipt: 'healthy-receipt', deliveryId: randomUUID() }];
+        }
+        return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+      },
+      delete: async (receipt) => { deleted.push(receipt); },
+    }, true);
+    try {
+      await vi.waitFor(() => expect(delivered || errors.mock.calls.some(([message]) => String(message).startsWith('Scheduled runs stopped:'))).toBe(true));
+      expect((await service.app.request('/health')).status).toBe(200);
+      await vi.waitFor(() => expect(deleted).toEqual(['healthy-receipt']));
+      expect(await normal.get(account, expired.id)).toBeNull();
+      expect(await normal.get(account, healthy.id)).toMatchObject({ lastRun: { status: 'done' } });
+      expect(await normal.get(account, poison.id)).toMatchObject({ id: poison.id });
+      expect((await service.app.request('/health')).status).toBe(200);
+      expect(errors).toHaveBeenCalledWith('Scheduled task retirement failed', { owner: account, taskId: poison.id },
+        failureKind === 'Scheduler refusal' ? refusal : expect.objectContaining({ status: 503, detail: 'Scheduled task schedule group is unknown', cause: expect.objectContaining({ name: 'ResourceNotFoundException' }) }));
+      const row = await dynamodb.send(new GetItemCommand({ TableName: isolatedTable, Key: { pk: { S: `SCHEDULED#${account}` }, sk: { S: `TASK#${poison.id}` } } }));
+      expect(row.Item?.id).toEqual({ S: poison.id });
+      if (failureKind === 'Scheduler refusal') expect(row.Item?.mutation).toMatchObject({ M: { kind: { S: 'retire' } } });
+      for (let n = 0; n < 8; n += 1) {
+        // eslint-disable-next-line no-await-in-loop -- refill capacity after only the healthy expiry
+        await normal.create(account, randomUUID(), MORNING_BRIEF);
+      }
+      await expect(normal.create(account, randomUUID(), MORNING_BRIEF)).rejects.toMatchObject({ status: 409 });
+    } finally {
+      service.stop();
+      errors.mockRestore();
+    }
+  });
+
+  it('acks a delivery for an active task with durable retirement intent without running it, then posts healthy work', async () => {
+    const account = owner();
+    const isolatedTable = `retiring-${randomUUID()}`;
+    await createChatTable(inject('dynamodbEndpoint'), isolatedTable);
+    const normal = new ScheduledTasks(isolatedTable, runs, dynamodb, realScheduler);
+    const retiredPrompt = `Retired delivery ${randomUUID()}`;
+    const healthyPrompt = `Healthy after retirement ${randomUUID()}`;
+    const { task: retiring } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt: retiredPrompt });
+    const { task: healthy } = await normal.create(account, randomUUID(), { ...MORNING_BRIEF, prompt: healthyPrompt });
+    const failure = new Error('Scheduler connection reset');
+    const failingScheduler = {
+      send: (command: unknown) => {
+        if (command instanceof DeleteScheduleCommand && command.input.Name === retiring.id) return Promise.reject(failure);
+        return realScheduler.send(command as Parameters<SchedulerClient['send']>[0]);
+      },
+    } as unknown as SchedulerClient;
+    const tasks = new ScheduledTasks(isolatedTable, runs, dynamodb, failingScheduler);
+    await expect(tasks.delete(account, retiring.id)).rejects.toBe(failure);
+    const row = () => dynamodb.send(new GetItemCommand({ TableName: isolatedTable, Key: { pk: { S: `SCHEDULED#${account}` }, sk: { S: `TASK#${retiring.id}` } } }));
+    expect((await row()).Item?.mutation).toMatchObject({ M: { kind: { S: 'retire' } } });
+    for (const [prompt, answer] of [[retiredPrompt, 'Retired task must never run.'], [healthyPrompt, 'Healthy task completed.']] as const) {
+      stack.agentcore.scriptPrompt(prompt, {
+        kind: 'stream',
+        frames: [
+          { type: 'RUN_STARTED' },
+          { type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' },
+          { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: answer },
+          { type: 'TEXT_MESSAGE_END', messageId: 'answer' },
+          { type: 'RUN_FINISHED' },
+        ].map((frame) => `data: ${JSON.stringify(frame)}`),
+      });
+    }
+    const main = await new DynamoDBSessionMetadata(table, dynamodb).mainChat(account, account);
+    let delivered = false;
+    const deleted: string[] = [];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const service = serviceForTasks(account, tasks, {
+      receive: async (signal) => {
+        if (!delivered) {
+          delivered = true;
+          return [
+            { body: JSON.stringify({ owner: account, taskId: retiring.id }), receipt: 'retiring-receipt', deliveryId: randomUUID() },
+            { body: JSON.stringify({ owner: account, taskId: healthy.id }), receipt: 'healthy-receipt', deliveryId: randomUUID() },
+          ];
+        }
+        return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+      },
+      delete: async (receipt) => { deleted.push(receipt); },
+    }, true);
+    try {
+      await vi.waitFor(() => expect(deleted).toEqual(['retiring-receipt', 'healthy-receipt']));
+      expect(stack.sessionApi.events().flatMap((event) => event.operation === 'post' && event.sessionId === main ? [event.content] : [])).toEqual([
+        'Scheduled task "Morning brief": Healthy task completed.',
+      ]);
+      expect(stack.agentcore.invocations().filter(({ body }) => body.includes(retiredPrompt))).toEqual([]);
+      expect(await normal.get(account, healthy.id)).toMatchObject({ lastRun: { status: 'done' } });
+      expect((await row()).Item).toMatchObject({ id: { S: retiring.id }, mutation: { M: { kind: { S: 'retire' } } } });
+      expect((await service.app.request('/health')).status).toBe(200);
+    } finally {
+      service.stop();
+      errors.mockRestore();
+    }
+  });
+
+  it.each(['expiry scan', 'queue receive'] as const)('fails service health when the %s infrastructure fails', async (stage) => {
+    const account = owner();
+    const failure = new Error(`${stage} unavailable`);
+    const brokenStorage = new DynamoDBClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    const tasks = new ScheduledTasks(table, runs, brokenStorage, realScheduler);
+    await tasks.checkHealth();
+    brokenStorage.middlewareStack.add((next, context) => async (args) => {
+      if (context.commandName === 'ScanCommand' && stage === 'expiry scan') throw failure;
+      return next(args);
+    }, { step: 'initialize' });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const service = serviceForTasks(account, tasks, {
+      receive: async () => { throw failure; },
+      delete: async () => undefined,
+    });
+    try {
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledWith(
+        stage === 'expiry scan' ? 'Scheduled runs stopped: expired task maintenance failed' : 'Scheduled runs stopped: queue receive failed', failure,
+      ));
+      expect((await service.app.request('/health')).status).toBe(503);
+    } finally {
+      service.stop();
+      errors.mockRestore();
+      brokenStorage.destroy();
+    }
+  });
+
+  it.each(['maxRuns', 'run_deliveries'])('refuses to receive queue work at startup with legacy %s', async (field) => {
+    const account = owner();
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await tasks.create(account, randomUUID(), MORNING_BRIEF);
+    const documents = DynamoDBDocumentClient.from(dynamodb);
+    await documents.send(new UpdateCommand({ TableName: table, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${task.id}` },
+      UpdateExpression: 'SET #legacy = :legacy', ExpressionAttributeNames: { '#legacy': field },
+      ExpressionAttributeValues: { ':legacy': field === 'maxRuns' ? 1 : new Set(['old']) } }));
+    const receive = vi.fn(() => new Promise<never>(() => undefined));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { app } = serviceForTasks(account, tasks, { receive, delete: async () => undefined });
+      await expect(app.request('/health')).resolves.toMatchObject({ status: 503 });
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledWith('Scheduled runs stopped: expired task maintenance failed', expect.objectContaining({ status: 503 })));
+      expect(receive).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+      await documents.send(new UpdateCommand({ TableName: table, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${task.id}` },
+        UpdateExpression: 'REMOVE #legacy', ExpressionAttributeNames: { '#legacy': field } }));
+      await tasks.delete(account, task.id);
+    }
+  });
 
   it.each(['title', 'prompt'] as const)('keeps an acknowledged pause when an earlier %s edit resumes', async (field) => {
     const account = owner();
@@ -1142,6 +1354,7 @@ describe('ScheduledTasks', () => {
       })).status).toBe(500);
       expect(await original.get(account, task.id)).toMatchObject({ paused: false });
     } finally { errors.mockRestore(); }
+    await original.recoverMutation(account, task.id);
     const working = serviceForTasks(account, original).app;
     const patch = (body: object) => working.request(`/scheduled-tasks/${task.id}`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -1344,6 +1557,28 @@ describe('ScheduledTasks', () => {
       await creating;
       errors.mockRestore();
     }
+  });
+
+  it('allows account deletion to retire a task whose update loses to the owner fence', async () => {
+    const account = owner();
+    const tasks = new ScheduledTasks(table, runs, dynamodb, realScheduler);
+    const { task } = await tasks.create(account, randomUUID(), MORNING_BRIEF);
+    const intercepted = new DynamoDBClient({ ...aws, endpoint: inject('dynamodbEndpoint') });
+    let deleted = false;
+    intercepted.middlewareStack.add((next, context) => async (args) => {
+      if (!deleted && context.commandName === 'TransactWriteItemsCommand') {
+        deleted = true;
+        await DynamoDBDocumentClient.from(dynamodb).send(new PutCommand({
+          TableName: table, Item: { pk: `SESSIONS#${account}`, sk: 'DELETED', deleted_at: new Date().toISOString() },
+        }));
+      }
+      return next(args);
+    }, { step: 'initialize' });
+    const updating = new ScheduledTasks(table, runs, intercepted, realScheduler);
+    await expect(updating.update(account, task.id, { paused: true })).rejects.toMatchObject({ status: 410 });
+    await tasks.deleteAll(account);
+    expect(await tasks.list(account)).toEqual([]);
+    expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toBeNull();
   });
 
   it.each(['account', 'task'] as const)('does not restore a task updated after %s deletion completes', async (deleted) => {
@@ -1665,7 +1900,7 @@ describe('ScheduledTasks', () => {
     expect(await new SchedulerView(inject('dynamodbEndpoint'), runs).schedule(task.id)).toBeNull();
     expect(await tasks.get(account, task.id)).toEqual(task);
 
-    await expect(tasks.deleteAll(account)).rejects.toMatchObject({ status: 404, detail: 'Scheduled task schedule not found' });
+    await tasks.deleteAll(account);
     expect(await tasks.list(account)).toEqual([]);
     await tasks.deleteAll(account);
     const replacement = await tasks.create(account, proposalId, MORNING_BRIEF);
@@ -1810,9 +2045,8 @@ describe('ScheduledTasks', () => {
     );
     const tasks = new ScheduledTasks(table, runs, dynamodb, concurrentScheduler);
 
-    const deletions = await Promise.allSettled([tasks.delete(account, task.id), tasks.delete(account, task.id)]);
-    expect(deletions.filter(({ status }) => status === 'rejected')).toHaveLength(1);
-    expect(deletions).toContainEqual({ status: 'rejected', reason: expect.objectContaining({ status: 404 }) });
+    const deletions = await Promise.all([tasks.delete(account, task.id), tasks.delete(account, task.id)]);
+    expect(deletions.sort()).toEqual([false, true]);
 
     expect(await tasks.list(account)).toEqual([]);
     for (let n = 0; n < 10; n += 1) {
@@ -1907,5 +2141,55 @@ describe('schedulerConfigFromEnv', () => {
 
   it.each(Object.keys(env))('leaves scheduled tasks unconfigured without %s', (name) => {
     expect(schedulerConfigFromEnv({ ...env, [name]: '' })).toBeNull();
+  });
+});
+
+
+describe('scheduled task migration cutover', () => {
+  it.each(['maxRuns', 'run_deliveries'])('refuses readiness and task admission with an unmigrated %s row', async (field) => {
+    const isolated = await startInProcess({ scheduled: true });
+    try {
+      const created = await isolated.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...MORNING_BRIEF, proposalId: 'cutover' }),
+      });
+      const task = await created.json() as Task;
+      await DynamoDBDocumentClient.from(isolated.table.client).send(new UpdateCommand({
+        TableName: isolated.table.name, Key: { pk: 'SCHEDULED#account-1', sk: `TASK#${task.id}` },
+        UpdateExpression: 'SET #legacy = :value', ExpressionAttributeNames: { '#legacy': field },
+        ExpressionAttributeValues: { ':value': field === 'maxRuns' ? 3 : new Set(['old-run']) },
+      }));
+      const checks = new ScheduledTasks(isolated.table.name, defined(isolated.scheduler, 'scheduled stack').runs, isolated.table.client,
+        new SchedulerClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
+      await expect(checks.checkHealth()).rejects.toMatchObject({ status: 503 });
+      await expect(checks.get('account-1', task.id)).rejects.toMatchObject({ status: 503 });
+      expect((await isolated.app.request('/scheduled-tasks')).status).toBe(503);
+    } finally { await isolated.stop(); }
+  });
+
+  it('admits only fenced migrated deliveries and retains the fence across edits and account claims', async () => {
+    const endpoint = inject('dynamodbEndpoint');
+    const table = `cutover-${randomUUID()}`;
+    await createChatTable(endpoint, table);
+    const runs = await createScheduledRuns(endpoint);
+    const dynamodb = new DynamoDBClient({ region: 'us-east-1', endpoint, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
+    const schedulerClient = new SchedulerClient({ region: 'us-east-1', endpoint, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
+    const tasks = new ScheduledTasks(table, runs, dynamodb, schedulerClient);
+    const { task } = await tasks.create('source', 'cutover', MORNING_BRIEF);
+    await DynamoDBDocumentClient.from(dynamodb).send(new UpdateCommand({
+      TableName: table, Key: { pk: 'SCHEDULED#source', sk: `TASK#${task.id}` },
+      UpdateExpression: 'SET deliveryFence = :fence', ExpressionAttributeValues: { ':fence': 'frozen-cutover' },
+    }));
+    expect(await tasks.get('source', task.id, {})).toBeNull();
+    expect(await tasks.get('source', task.id, { deliveryFence: 'wrong' })).toBeNull();
+    expect(await tasks.get('source', task.id, { deliveryFence: 'frozen-cutover' })).toMatchObject({ id: task.id });
+    expect(await tasks.get('source', task.id)).not.toHaveProperty('deliveryFence');
+    await tasks.update('source', task.id, { timezone: 'UTC' });
+    const view = new SchedulerView(endpoint, runs);
+    expect(JSON.parse(defined(await view.schedule(task.id), 'edited schedule').Target.Input)).toEqual({ owner: 'source', taskId: task.id, deliveryFence: 'frozen-cutover' });
+    await tasks.transfer('source', 'destination');
+    expect(await tasks.get('destination', task.id, {})).toBeNull();
+    expect(await tasks.get('destination', task.id, { deliveryFence: 'frozen-cutover' })).toMatchObject({ id: task.id });
+    expect(JSON.parse(defined(await view.schedule(task.id), 'claimed schedule').Target.Input)).toEqual({ owner: 'destination', taskId: task.id, deliveryFence: 'frozen-cutover' });
   });
 });

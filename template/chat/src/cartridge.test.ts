@@ -17,6 +17,7 @@ describe('the template Chat Service Cartridge', () => {
 
     expect(cartridge.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
     expect(await cartridge.accountModels({ owner: 'template-user' })).toEqual([]);
+    await expect(cartridge.accountModel({ owner: 'template-user' }, 'openai-plan:gpt-5.5')).resolves.toBeUndefined();
   });
 
   it('mounts its auth route through the Chat Service seam', async () => {

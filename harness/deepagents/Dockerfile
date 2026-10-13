@@ -20,6 +20,7 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1
 
 WORKDIR /opt/python-tools
 COPY tools/pyproject.toml tools/uv.lock ./

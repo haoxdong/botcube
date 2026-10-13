@@ -69,6 +69,7 @@ export function useModelSelection({
   const modelChosen = useRef(false);
   /** The choice stored in this browser, whose model an account starts on only if it was picked there. */
   const [{ stored, readError }] = useState(readChoice);
+  const storedModel = stored.account === accountId ? stored.model : undefined;
   const [choiceError, setChoiceError] = useState(readError);
   /** Keep the choice in this browser; one that blocks storage says so, and the choice lasts until the page reloads. */
   const rememberChoice = (change: PickerChoice) => {
@@ -96,7 +97,7 @@ export function useModelSelection({
           setModels({ loaded: true, accountId, models: loaded });
           // A model picked in this page stays the choice on the account the page moves to, after a reload too.
           if (modelChosen.current) rememberChoice({ account: accountId });
-          else setModel(stored.account === accountId ? stored.model : undefined);
+          else setModel(storedModel);
         },
         (error: Error) => {
           console.error(error);
@@ -115,8 +116,9 @@ export function useModelSelection({
     !models.loaded || sessionProvider === undefined
       ? models
       : { ...models, models: models.models.filter(({ provider }) => provider === sessionProvider) };
-  // Use the provider's valid selection in this render, before the effect remembers it.
-  const offeredModel = modelInList(offeredModels, model);
+  // Use the provider's valid selection in this render, before the effect remembers it. Until the account's models load,
+  // offer the model picked here, so a chat's opening warmup prepares its Turn's model, not the Chat Service's default.
+  const offeredModel = modelInList(offeredModels, model ?? (models.loaded ? undefined : storedModel));
   const properties = useMemo(() => ({ model: offeredModel, effort, sandbox: true }), [offeredModel, effort]);
   useEffect(() => {
     if (offeredModel !== model) {

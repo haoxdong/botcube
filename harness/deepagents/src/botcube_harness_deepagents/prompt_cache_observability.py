@@ -17,12 +17,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
-from ._env import positive_int
 from .turn_memory import latest_turn_messages
 
 log = logging.getLogger('botcube_harness_deepagents.prompt_cache')
-TURN_MESSAGE_LOG_LIMIT = positive_int('BOTCUBE_TURN_MESSAGE_LOG_LIMIT', 2_000)
-_TRUNCATION_SUFFIX = '...'
 _current_collector: ContextVar[_PromptCacheUsageCollector | None] = ContextVar(
     'botcube_prompt_cache_usage_collector',
     default=None,
@@ -186,15 +183,12 @@ class PromptCacheUsageMiddleware(AgentMiddleware):
         self._log_usage(state)
 
     def _log_usage(self, state: Any) -> None:
-        turn_messages = latest_turn_messages(state['messages'])
-        usage = prompt_cache_usage_from_messages(turn_messages)
+        usage = prompt_cache_usage_from_messages(latest_turn_messages(state['messages']))
         collector = _current_collector.get()
         if collector is not None:
             usage = collector.resolve(usage)
         if usage is None:
             return
-
-        input_message, output_message = _turn_message_text(turn_messages)
 
         payload = {
             'event': 'bedrock_prompt_cache_usage',
@@ -211,31 +205,8 @@ class PromptCacheUsageMiddleware(AgentMiddleware):
                 usage.cache_read_input_tokens,
                 usage.cache_creation_input_tokens,
             ),
-            'input_message': input_message,
-            'output_message': output_message,
         }
         log.info(json.dumps(payload, sort_keys=True))
-
-
-def _turn_message_text(messages: Sequence[BaseMessage]) -> tuple[str, str]:
-    # A turn opens with its one human message.
-    human, *rest = messages
-    replies = [text for message in rest if message.type == 'ai' and (text := _bounded_message_text(message))]
-    return _bounded_message_text(human), replies[-1] if replies else ''
-
-
-def _bounded_message_text(message: BaseMessage) -> str:
-    normalized = _message_text(message.content).replace('\r\n', '\n').replace('\r', '\n').replace('\n', ' ')
-    if len(normalized) <= TURN_MESSAGE_LOG_LIMIT:
-        return normalized
-    return normalized[: TURN_MESSAGE_LOG_LIMIT - len(_TRUNCATION_SUFFIX)] + _TRUNCATION_SUFFIX
-
-
-def _message_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    # A content-block list: its text blocks, without images, reasoning or tool blocks.
-    return ' '.join(block['text'] for block in content if block['type'] == 'text')
 
 
 def prompt_cache_usage_from_messages(

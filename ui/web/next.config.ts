@@ -37,10 +37,13 @@ const turbopackTarget = (target: string) =>
   path.isAbsolute(target) ? path.relative(appRoot, target) : target;
 
 export default async function createConfig(phase: string): Promise<NextConfig> {
-  const cartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG
+  const cartridgeBuildConfig: CartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG
     ? await import(path.resolve(repoRoot, process.env.CARTRIDGE_UI_BUILD_CONFIG))
       .then((module) => (module.default ?? module)({ appRoot, repoRoot }) as CartridgeBuildConfig)
-    : {};
+    : await import('./src/config/dcv-assets.mjs').then(({ dcvAliases, materializeDcvAssets }) => {
+      materializeDcvAssets(appRoot);
+      return { turbopackAliases: dcvAliases, webpackAliases: dcvAliases };
+    });
 
   const cartridgeUi = cartridgeBuildConfig.cartridgeUiEntry ?? cartridgeUiPackage;
 

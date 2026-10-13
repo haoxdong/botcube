@@ -47,5 +47,13 @@
       "to": "its list is visible",
       "budgetMs": 300
     }
+  },
+  "orchestrationOverhead": {
+    "description": "Each Turn case's Orchestration Overhead up to its first model dispatch over the last day, a case breaching only with minTurns Turns behind it; the gap between a multi-call Turn's model calls is reported beside it. Cold: its process's first Turn within coldWithinMs of the process starting. Main-size: mainHistoryMessages or more. Single or multi: one model call, or several.",
+    "percentile": 90,
+    "budgetMs": 1000,
+    "minTurns": 10,
+    "coldWithinMs": 60000,
+    "mainHistoryMessages": 100
   }
 }

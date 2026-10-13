@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import partial
 from time import time
 from typing import Any
 
@@ -12,13 +17,26 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import SystemMessage
 
-from . import answer_timing
+from . import turn_timing
 
 MEMORY_LIMIT = 50
 PROMPT_CACHE_TTL_SECONDS = 300
 PREFERENCE_SECTION = 'user preferences:'
 FACT_SECTION = 'semantic facts:'
 SPILLOVER_NOTE = 'More memories are available. Use memory retrieve to search beyond the startup memory block.'
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class _Prefetch:
+    """The Turn's Memory block, read while the Turn reads its history; `taken` once the Turn uses it."""
+
+    run_id: str
+    read: asyncio.Task[str]
+    taken: bool = False
+
+
+_prefetched: ContextVar[_Prefetch | None] = ContextVar('session_memory_prefetched', default=None)
 
 
 def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
@@ -33,6 +51,26 @@ def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
     return '\n\n'.join(sections)
 
 
+def prefetch(load: Callable[[], str], run_id: str) -> None:
+    """Start reading the Turn's Memory block on a worker thread; the Turn's middleware takes it rather than reading again."""
+    _prefetched.set(_Prefetch(run_id, asyncio.create_task(asyncio.to_thread(load))))
+
+
+def settle_prefetch() -> None:
+    """At the Turn's end, log the failure of a read it never took, as a hedge that lost (ADR 0030); one it took failed the Turn."""
+    prefetched = _prefetched.get()
+    if prefetched is not None and not prefetched.taken:
+        prefetched.read.add_done_callback(partial(_log_unused_failure, prefetched.run_id))
+
+
+def _log_unused_failure(run_id: str, read: asyncio.Task[str]) -> None:
+    if not read.cancelled() and (error := read.exception()) is not None:
+        log.warning(json.dumps(
+            {'event': 'harness_unused_memory_read_failed', 'runId': run_id, 'errorClass': type(error).__name__},
+            separators=(',', ':'),
+        ))
+
+
 class SessionMemoryMiddleware(AgentMiddleware):
     def __init__(self, load: Callable[[Any], str]) -> None:
         super().__init__()
@@ -40,13 +78,17 @@ class SessionMemoryMiddleware(AgentMiddleware):
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, str] | None:
         last_model_call_at = state.get('last_model_call_at')
+        prefetched = _prefetched.get()
         if (
             state.get('session_memory')
             and last_model_call_at is not None
             and time() - last_model_call_at <= PROMPT_CACHE_TTL_SECONDS
         ):
             return None
-        with answer_timing.phase('personal_memory'):
+        with turn_timing.phase('personal_memory'):
+            if prefetched is not None:
+                prefetched.taken = True
+                return {'session_memory': await prefetched.read}
             return {'session_memory': await asyncio.to_thread(self._load, runtime.store)}
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, float]:

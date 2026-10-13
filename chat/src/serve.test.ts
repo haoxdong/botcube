@@ -17,7 +17,7 @@ const cartridge: ChatServiceCartridge = {
   corsOrigins: ['https://cartridge.example.com'],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-  accountModels: async () => [],
+  accountModels: async () => [], accountModel: async () => undefined,
   browserEventName: 'test:browser-live-view',
   routes: new Hono(),
   requester: async () => ({ owner: 'account-1' }),
@@ -109,12 +109,16 @@ describe('the Chat Service served from the environment', () => {
       delete: async () => undefined,
     });
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', inject('dynamodbEndpoint'));
     const server = serveChatService(() => cartridge, {
-      PORT: '0',
+      PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(),
       BOTCUBE_SCHEDULE_GROUP: 'test-group',
       BOTCUBE_SCHEDULER_ROLE_ARN: 'arn:aws:iam::123456789012:role/scheduler',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: 'arn:aws:sqs:us-east-1:123456789012:runs',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/123456789012/runs',
+    });
+    closers.push(async () => {
+      if (server.listening) await new Promise((resolve) => server.close(resolve));
     });
     await once(server, 'listening');
     const signal = await received;

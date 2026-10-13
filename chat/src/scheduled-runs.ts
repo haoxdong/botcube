@@ -5,7 +5,7 @@ import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError, type ChatServiceCartridge } from './cartridge.js';
 import { accountDefaultModel, accountModelList, namedModel } from './models.js';
-import { fired, spent, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
+import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
 import type { ScheduledRunCard, SessionApi } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { sseFrameData, turnCredentialGuard, turnCredentials, turnErrorDetails } from './turn-stream.js';
@@ -21,7 +21,7 @@ export interface ScheduledRunDeps {
   sessionMetadata: SessionMetadata;
   agentDocuments: AgentDocuments;
   invokeSessionApi: SessionApi;
-  scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'countRun' | 'retire'>;
+  scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire'>;
   upstream: ReturnType<typeof sessionLifecycle> | null;
   summarizeTurn: TurnSummarizer;
 }
@@ -73,14 +73,15 @@ async function readRun(response: Response, label: string, credentials: readonly 
  * a summary of the outcome is posted to the account's Main Chat. A run that
  * fails, or needs the user to sign in, says so there (ADR 0030).
  */
-export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, deliveryId }: ScheduledRunMessage & { deliveryId?: string }): Promise<void> {
+export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, deliveryId, deliveryFence }: ScheduledRunMessage & { deliveryId?: string }): Promise<void> {
   const { cartridge, sessionMetadata, invokeSessionApi } = deps;
   if (typeof deliveryId !== 'string' || deliveryId.trim() === '') throw new HttpError(503, 'Scheduled delivery identity is unavailable');
   const store = sessionMetadata.scheduledRuns;
   if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
   const previous = await store.get(owner, deliveryId, taskId);
   if (previous !== null && previous.phase !== 'reserved') return finishRedelivery(deps, store, previous);
-  const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous);
+  const deliveryContext = deliveryFence === undefined ? {} : { deliveryFence };
+  const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous, deliveryContext);
   if (admission === null) return;
   const { executionOwner, task } = admission;
   if (deps.runtimeNamespaceRequired) await assertRuntimeNamespaceReady(sessionMetadata);
@@ -117,7 +118,7 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
   let outcome: RunOutcome;
   try {
     // A one-off paused after it fired never runs again: its delivery only tells the Main Chat so.
-    outcome = task.paused ? { status: 'skipped', text: 'the task was paused' } : await runInSideChat(deps, executionOwner, task, filingUserId, delivery, reached);
+    outcome = task.paused ? { status: 'skipped', text: 'the task was paused' } : await runInSideChat(deps, executionOwner, task, filingUserId, delivery, reached, deliveryContext);
   } catch (error) {
     if (error instanceof SessionDeletedError) throw error;
     // The Main Chat hears of every failed run; the delivery still fails, so the queue redelivers it.
@@ -158,19 +159,15 @@ function runSummary({ title, status, text }: ScheduledRunCard): string {
   return `Scheduled task "${title}"${said} ${text}`;
 }
 
-async function scheduledTaskAdmission(deps: ScheduledRunDeps, store: ScheduledRunStore, owner: string, taskId: string, previous: ScheduledDelivery | null) {
+async function scheduledTaskAdmission(deps: ScheduledRunDeps, store: ScheduledRunStore, owner: string, taskId: string, previous: ScheduledDelivery | null, delivery: Pick<ScheduledRunMessage, 'deliveryFence'>) {
   const executionOwner = previous === null ? owner : await store.executionOwner(previous);
-  const task = await deps.scheduledTasks.get(executionOwner, taskId);
+  const task = await deps.scheduledTasks.get(executionOwner, taskId, delivery);
   // A paused task runs nothing; a paused one-off that fired still reaches the Main Chat, as it will never run.
   if (task === null || (task.paused && !fired(task))) {
     if (executionOwner !== owner) throw new HttpError(503, 'Reserved scheduled task is unavailable; delivery remains pending');
     return null;
   }
-  // A task that has made its count of runs runs nothing more; it leaves the account, should its last run not have retired it.
-  if (spent(task)) {
-    await deps.scheduledTasks.retire(executionOwner, task);
-    return null;
-  }
+  if (!fired(task) && outsideBounds(task)) return null;
   return { executionOwner, task };
 }
 
@@ -229,6 +226,7 @@ async function runInSideChat(
   filingUserId: string,
   delivery: ScheduledDelivery,
   reached: { sideChat: boolean },
+  deliveryContext: Pick<ScheduledRunMessage, 'deliveryFence'>,
 ): Promise<RunOutcome> {
   const { cartridge, sessionMetadata } = deps;
   if (deps.upstream === null) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
@@ -266,12 +264,6 @@ async function runInSideChat(
   reached.sideChat = true;
   let output: RunOutput;
   try {
-    if (task.maxRuns !== undefined) {
-      const current = await deps.scheduledTasks.get(owner, task.id);
-      if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
-      if (spent(current)) return { status: 'skipped', text: 'the task had already made its count of runs' };
-      await deps.scheduledTasks.countRun(owner, task.id, delivery.deliveryId);
-    }
     const payload = await cartridge.invocationPayload(input, requester, model);
     const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
@@ -282,6 +274,10 @@ async function runInSideChat(
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
       actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
+    const current = await deps.scheduledTasks.get(owner, task.id, deliveryContext);
+    if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
+    const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
+    if (!fired(current) && (current.paused || (boundsChanged && outsideBounds(current)))) return { status: 'skipped', text: 'the task was outside its active time window' };
     const complete = await sessionMetadata.beginDispatch(owner, sideChat, undefined, running);
     output = await readRun(
       await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session ?? { session_id: sideChat, filing_user_id: sessionUserId }, complete),
@@ -379,40 +375,61 @@ export function pollScheduledRuns(
   run: (message: ScheduledRunMessage & { deliveryId: string }) => Promise<void>,
   draining: () => Promise<boolean>,
   onFailure?: (error: unknown) => void,
+  maintenance?: () => Promise<void>,
 ): () => void {
   const stop = new AbortController();
   const stopped = () => stop.signal.aborted;
+  const receiveBatch = async () => {
+    let failure = 'cannot tell whether this task is draining';
+    try {
+      if (await draining()) {
+        console.log('This Chat Service task is draining; it takes no more scheduled runs');
+        return null;
+      }
+      if (maintenance !== undefined) {
+        failure = 'expired task maintenance failed';
+        await maintenance();
+        failure = 'cannot tell whether this task is draining';
+        if (await draining()) return null;
+      }
+      failure = 'queue receive failed';
+      return await queue.receive(stop.signal);
+    } catch (error) {
+      if (failure === 'queue receive failed' && stopped()) return null;
+      console.error(`Scheduled runs stopped: ${failure}`, error);
+      if (onFailure === undefined) throw error;
+      onFailure(error);
+      return null;
+    }
+  };
+  const executeBatch = async (messages: Awaited<ReturnType<RunQueue['receive']>>) => {
+    try {
+      for (const { body, receipt, deliveryId } of messages) {
+        // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
+        await run({ ...JSON.parse(body) as ScheduledRunMessage, deliveryId });
+        // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
+        await queue.delete(receipt);
+      }
+    } catch (error) {
+      if (stopped()) return;
+      console.error('Scheduled run failed', error);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  };
   void (async () => {
     // Stryker disable next-line BlockStatement: an emptied loop spins synchronously forever, hanging any test as a timeout
     while (!stopped()) {
-      try {
-        // eslint-disable-next-line no-await-in-loop -- checked before every receive
-        if (await draining()) {
-          console.log('This Chat Service task is draining; it takes no more scheduled runs');
-          return;
-        }
-      } catch (error) {
-        console.error('Scheduled runs stopped: cannot tell whether this task is draining', error);
-        if (onFailure === undefined) throw error;
-        onFailure(error);
-        return;
-      }
-      // Stryker disable next-line BlockStatement: an emptied try spins synchronously forever, hanging any test as a timeout
-      try {
-        // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-        for (const { body, receipt, deliveryId } of await queue.receive(stop.signal)) {
-          // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-          await run({ ...JSON.parse(body) as ScheduledRunMessage, deliveryId });
-          // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
-          await queue.delete(receipt);
-        }
-      } catch (error) {
-        if (stopped()) return;
-        console.error('Scheduled run failed', error);
-        // eslint-disable-next-line no-await-in-loop -- back off before the next receive
-        await new Promise((resolve) => setTimeout(resolve, 5_000));
-      }
+      // eslint-disable-next-line no-await-in-loop -- one receive batch at a time
+      const messages = await receiveBatch();
+      if (messages === null) return;
+      // eslint-disable-next-line no-await-in-loop -- runs are taken one at a time
+      await executeBatch(messages);
     }
   })();
   return () => stop.abort();
+}
+
+function outsideBounds(task: ScheduledTask): boolean {
+  const now = Date.now();
+  return (task.startDate !== undefined && now < Date.parse(task.startDate)) || (task.endDate !== undefined && now >= Date.parse(task.endDate));
 }

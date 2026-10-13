@@ -8,12 +8,15 @@ import {
   CopilotChatInput,
   CopilotChatMessageView,
   type CopilotChatReasoningMessage,
+  CopilotChatUserMessage,
   CopilotChatView,
   type CopilotChatAssistantMessageProps,
   type CopilotChatInputProps,
   type CopilotChatMessageViewProps,
 } from "@copilotkit/react-core/v2";
 import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
+import { Menu } from "@base-ui/react/menu";
+import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
 import type { AbstractAgent } from "@ag-ui/client";
 import { stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
 import { endMoment, startMoment, type Moment } from "./latency";
@@ -24,11 +27,12 @@ import MarkdownRenderer from "./markdown-renderer";
 import { ReplyImageTurnRunning } from "./reply-image-turn";
 import { pageHeld } from "./phone-page-hold";
 import { useComposerBacking } from "./phone-composer-backing";
+import { useComposerResizesOnLayout } from "./composer-layout-height";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
 import { Button } from "@/components/ui/button";
-import { ComposerFilePicker, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
+import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
 import { useQueuedFollowUp } from "./queued-follow-up";
 
@@ -52,12 +56,14 @@ function ToolCallRenderer({ agent }: { agent: AbstractAgent }) {
   const stoppedIds = useSyncExternalStore(cancellations.subscribe, cancellations.getSnapshot, cancellations.getSnapshot);
   useDefaultRenderTool({
     render: ({ name, toolCallId, status, parameters, result }) => {
-      if (name === "propose_scheduled_task" && status === "complete") {
+      if (name === "propose_scheduled_task" && status === "complete" &&
+        !(typeof result === "string" && result.startsWith("Error invoking tool 'propose_scheduled_task'"))) {
         return (
           <ScheduledTaskProposalCard
             chatServiceUrl={CHAT_SERVICE_URL}
             proposalId={toolCallId}
             proposal={parameters as ScheduledTaskProposal}
+            result={result}
           />
         );
       }
@@ -79,6 +85,35 @@ function NoAddMenuButton() {
   return null;
 }
 
+/**
+ * The composer's + and its menu, as ChatGPT's: a white popover over the composer's left edge whose items open the file
+ * picker, Add photos for images and Add files for any file. CopilotKit's own menu draws no icons.
+ */
+function AddMenu({ disabled, onAddFile }: { disabled?: boolean | undefined; onAddFile?: ((accept?: string) => void) | undefined }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <Menu.Root>
+      <Menu.Trigger ref={trigger} data-testid="copilot-add-menu-button" aria-label="Add photos & files" disabled={disabled ?? false}>
+        <Plus size={20} aria-hidden />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".copilotKitInput") ?? null} side="top" align="start" sideOffset={8}>
+          <Menu.Popup className="add-menu">
+            <Menu.Item className="add-menu-item" onClick={() => onAddFile?.("image/*")}>
+              <Paperclip size={20} aria-hidden />
+              Add photos
+            </Menu.Item>
+            <Menu.Item className="add-menu-item" onClick={() => onAddFile?.()}>
+              <FilePlusCorner size={20} aria-hidden />
+              Add files
+            </Menu.Item>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
 type Submit = NonNullable<CopilotChatInputProps["onSubmitMessage"]>;
 
 const ComposerAccessory = createContext<React.ReactNode>(null);
@@ -92,10 +127,18 @@ const ServerTurnStop = createContext<(() => void) | null>(null);
 /** The files attached in the composer, with the cartridge's `uploadFile`; null without it, and the composer has no +. */
 const AttachedFiles = createContext<ComposerFiles | null>(null);
 
-/** The + slot: with files to attach, named for its menu, whose item opens the file picker; none with nothing to add. */
-function addMenuSlot(attached: ComposerFiles | null, picker: RefObject<HTMLInputElement | null>, { onAddFile, toolsMenu }: CopilotChatInputProps) {
-  if (attached) return { addMenuButton: { "aria-label": "Add photos & files" }, onAddFile: () => picker.current?.click() };
-  return !onAddFile && !toolsMenu?.length ? { addMenuButton: NoAddMenuButton } : {};
+/**
+ * The + slot: with files to attach, our menu, whose items open the file picker for the types they name, and any file
+ * from CopilotKit's slash menu; none with nothing to add.
+ */
+function addMenuSlot(attached: ComposerFiles | null, picker: RefObject<HTMLInputElement | null>) {
+  if (!attached) return { addMenuButton: NoAddMenuButton };
+  const onAddFile = (accept = "") => {
+    if (!picker.current) return;
+    picker.current.accept = accept;
+    picker.current.click();
+  };
+  return { addMenuButton: AddMenu, onAddFile };
 }
 
 /**
@@ -114,28 +157,29 @@ function sendWithFiles(message: string, attachedRef: RefObject<ComposerFiles | n
 }
 
 /** CopilotChatInput's send button turns into an icon-only Stop while the agent runs, with no name of its own; Stop is never held back. */
-function sendButtonSlot(mode: CopilotChatInputProps["mode"], isRunning: boolean, held: boolean) {
+function sendButtonSlot(mode: CopilotChatInputProps["mode"], isRunning: boolean, held: boolean, sendFiles?: () => void) {
   if (mode === "transcribe") return {};
-  return { sendButton: { "aria-label": isRunning ? "Stop" : "Send", ...(held && !isRunning ? { disabled: true } : {}) } };
+  return { sendButton: { "aria-label": isRunning ? "Stop" : "Send", ...(!isRunning && sendFiles ? { disabled: held, onClick: sendFiles } : held && !isRunning ? { disabled: true } : {}) } };
 }
 
 /**
  * Swallows the Enter that would send, while the message is `held` for its files, or would stop a running Turn from an
  * empty text box.
  */
-function holdEnter(held: boolean, isRunning: boolean) {
+function holdEnter(held: boolean, isRunning: boolean, sendFiles?: () => void) {
   return (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Enter" && !event.shiftKey && (held || (isRunning && !event.currentTarget.value.trim()))) {
+    if (event.key === "Enter" && !event.shiftKey && (held || sendFiles || (isRunning && !event.currentTarget.value.trim()))) {
       event.preventDefault();
       event.stopPropagation();
+      if (!held) sendFiles?.();
     }
   };
 }
 
 /**
  * CopilotChat's input with the cartridge's accessory above its text box, in the composer's own overlay, and the files
- * attached with its + as chips inside its box, above the text.
+ * attached with its + or pasted into its text as chips inside its box, above the text.
  */
 function ComposerInput(props: CopilotChatInputProps) {
   const accessory = useContext(ComposerAccessory);
@@ -149,6 +193,9 @@ function ComposerInput(props: CopilotChatInputProps) {
   const held = attached?.sendable === false;
   const composerSubmit = useContext(ComposerSubmit);
   const submit = props.onSubmitMessage;
+  const [draft, setDraft] = useState(props.value ?? "");
+  const fileOnly = !((props.value ?? draft).trim()) && (attached?.files.length ?? 0) > 0;
+  const sendFiles = fileOnly && submit && submitTurn ? () => sendWithFiles("", attachedRef, submitTurn, submit) : undefined;
   useLayoutEffect(() => {
     if (composerSubmit !== null) composerSubmit.current = submit ?? null;
   });
@@ -167,12 +214,13 @@ function ComposerInput(props: CopilotChatInputProps) {
       <CopilotChatInput
         {...props}
         isRunning={isRunning}
+        onChange={(value: string) => { setDraft(value); props.onChange?.(value); }}
         disclaimer="chat-disclaimer"
-        {...addMenuSlot(attached, picker, props)}
-        textArea={{ onKeyDownCapture: holdEnter(held, isRunning) }}
+        {...addMenuSlot(attached, picker)}
+        textArea={{ onKeyDownCapture: holdEnter(held, isRunning, sendFiles), ...(attached ? { onPaste: attachPastedImages(attached.add) } : {}) }}
         {...(stopsServerTurn ? { onStop: stopServerTurn } : {})}
         {...(submit && submitTurn ? { onSubmitMessage: (message: string) => sendWithFiles(message, attachedRef, submitTurn, submit) } : {})}
-        {...sendButtonSlot(props.mode, isRunning, held)}
+        {...sendButtonSlot(props.mode, isRunning, held, sendFiles)}
       />
     </>
   );
@@ -442,6 +490,20 @@ const ASSISTANT_MESSAGE_SLOT = AssistantMessage as typeof CopilotChatAssistantMe
  */
 const REASONING_MESSAGE = ThoughtStep as unknown as typeof CopilotChatReasoningMessage;
 
+/** A user message's files as cards, then its bubble holding what the user typed, none when they typed nothing. */
+function SentMessage({ content }: { content: string }) {
+  const { text, paths } = sentFilesOf(content);
+  return (
+    <>
+      <SentFileCards paths={paths} fileUrl={webUiPlugin.fileUrl} />
+      {text && <CopilotChatUserMessage.MessageRenderer content={text} />}
+    </>
+  );
+}
+
+/** The user message slot: CopilotKit's own, its text shown by SentMessage. A constant, like CHAT_SCROLL_VIEW. */
+const USER_MESSAGE = { messageRenderer: SentMessage };
+
 /** Ends `moment` as it is first on screen. */
 function MomentEnds({ moment }: { moment: Moment }) {
   useEffect(() => endMoment(moment), [moment]);
@@ -618,6 +680,17 @@ function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: reado
   );
 }
 
+/** The held follow-up's files as cards, then its faded bubble. */
+function QueuedSent({ message }: { message: string }) {
+  const { text, paths } = sentFilesOf(message);
+  return (
+    <>
+      <SentFileCards paths={paths} fileUrl={webUiPlugin.fileUrl} />
+      {text && <div className="chat-queued-bubble">{text}</div>}
+    </>
+  );
+}
+
 /**
  * CopilotChat's messages, then why the last Turn failed, in the message flow below them. The messages are laid out
  * here, as CopilotKit 1.61's own list does, because a `children` render prop stops CopilotKit virtualizing a chat over 50
@@ -628,7 +701,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
   const queued = useContext(QueuedMessage);
   return (
     <>
-      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE_SLOT} reasoningMessage={REASONING_MESSAGE}>
+      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
         {({ messageElements, messages, isRunning, interruptElement }) => (
           <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
             <ReplyImageTurnRunning.Provider value={isRunning}>
@@ -644,7 +717,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
             )}
             {queued !== null && (
               <div className="chat-queued-message" role="status" aria-label="Queued message">
-                <div className="chat-queued-bubble">{queued.text}</div>
+                <QueuedSent message={queued.text} />
                 <div className="chat-queued-footer">
                   <span>{queued.unkept ? "Not kept in this browser: leaving this chat or reloading loses it" : "Sends when this reply ends"}</span>
                   <button type="button" className="chat-queued-cancel" onClick={queued.cancel} aria-label="Cancel queued message">Cancel</button>
@@ -730,6 +803,7 @@ function ChatThread({
   const refreshTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  useComposerResizesOnLayout(wrapperRef);
   const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
   useEffect(() => {
     const wrapper = wrapperRef.current;

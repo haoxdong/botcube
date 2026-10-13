@@ -103,7 +103,7 @@ def test_relay_reports_failed_stream_even_after_answer(prefix: bytes) -> None:
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         return b''.join([cast("bytes", chunk) async for chunk in response.body_iterator])
 
@@ -141,7 +141,7 @@ def test_dispatch_clock_starts_after_body_preparation(monkeypatch: pytest.Monkey
                                   transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=TimedStream())))
         request = PreparedRequest({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                                    'headers': [], 'query_string': b''})
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         async for _ in response.body_iterator:
             pass
@@ -175,9 +175,9 @@ def test_dispatch_failures_have_no_success_metric(failure: BaseException) -> Non
                            'headers': [], 'query_string': b''}, receive=receive)
         if isinstance(failure, asyncio.CancelledError):
             with pytest.raises(asyncio.CancelledError):
-                await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+                await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         else:
-            response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+            response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
             assert response.status_code == 504
 
     asyncio.run(run())
@@ -215,7 +215,7 @@ def test_relay_does_not_parse_or_change_the_forwarded_request(content: bytes) ->
                                        (b'traceparent', b'00-1234567890abcdef1234567890abcdef-1234567890abcdef-01')]},
                           receive=receive)
         response = await provider.relay(request, 'v1/responses', 'access', account_id='account',
-                                        request_context={'modelId': 'gpt-6-astra'})
+                                        request_context={'sessionId': 'session', 'modelId': 'gpt-6-astra'})
         assert response.status_code == 400
         assert response.body == b'upstream rejection'
 
@@ -259,7 +259,7 @@ def test_audit_failure_propagates_after_both_stream_resources_close(audit_event:
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         with pytest.raises(RuntimeError, match='audit failed'):
             async for _ in response.body_iterator:
@@ -311,7 +311,7 @@ def test_upstream_phases_separate_monotonic_boundaries_and_never_log_trace_info(
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
         response = await provider.relay(request, 'v1/responses', 'secret-access', account_id='account',
-                                        request_context={'runId': 'run', 'modelStepId': 'step', 'traceId': 'trace'})
+                                        request_context={'sessionId': 'session', 'runId': 'run', 'modelStepId': 'step', 'traceId': 'trace'})
         assert isinstance(response, StreamingResponse)
         return b''.join([cast('bytes', chunk) async for chunk in response.body_iterator])
 
@@ -392,7 +392,7 @@ def test_real_http_transport_reports_only_allowlisted_connection_and_header_mile
             request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                                'headers': [], 'query_string': b''}, receive=receive)
             response = await provider.relay(request, 'v1/responses', 'secret-access', account_id='account',
-                                            request_context={'runId': 'run', 'modelStepId': 'step'})
+                                            request_context={'sessionId': 'session', 'runId': 'run', 'modelStepId': 'step'})
             assert isinstance(response, StreamingResponse)
             forwarded = b''.join([cast('bytes', chunk) async for chunk in response.body_iterator])
             await asyncio.wait_for(served.wait(), 5)
@@ -445,7 +445,7 @@ def test_closing_or_failing_the_body_preserves_absent_eof_and_closes_resources(f
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         body = cast('AsyncGenerator[bytes, None]', response.body_iterator)
         assert await anext(body) == frame('response.in_progress')
@@ -489,7 +489,7 @@ def test_interleaved_requests_keep_phases_and_joins_request_local() -> None:
             request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                                'headers': [], 'query_string': b''}, receive=receive)
             response = await provider.relay(request, 'v1/responses', f'secret-{name}', account_id=f'account-{name}',
-                                            request_context={'runId': name, 'modelStepId': f'step-{name}', 'traceId': f'trace-{name}'})
+                                            request_context={'sessionId': 'session', 'runId': name, 'modelStepId': f'step-{name}', 'traceId': f'trace-{name}'})
             assert isinstance(response, StreamingResponse)
             assert b''.join([cast('bytes', chunk) async for chunk in response.body_iterator]) == frame('response.output_text.delta', delta='private answer')
 
@@ -527,7 +527,7 @@ def test_upstream_content_encoding_is_a_safe_enum_on_failed_responses(
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'secret-access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'secret-access', account_id='account', request_context={'sessionId': 'session'})
         assert response.status_code == 503
 
     asyncio.run(run())
@@ -575,7 +575,7 @@ def test_answer_and_completed_frames_forward_before_the_decoded_stream_eof(
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         body = cast('AsyncGenerator[bytes, None]', response.body_iterator)
         assert await anext(body) == answer
@@ -616,7 +616,7 @@ def test_grouped_answer_and_completed_keep_the_same_decoded_chunk_boundary(monke
 
         request = Request({'type': 'http', 'method': 'POST', 'path': '/v1/responses',
                            'headers': [], 'query_string': b''}, receive=receive)
-        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={})
+        response = await provider.relay(request, 'v1/responses', 'access', account_id='account', request_context={'sessionId': 'session'})
         assert isinstance(response, StreamingResponse)
         return b''.join([cast('bytes', chunk) async for chunk in response.body_iterator])
 

@@ -25,6 +25,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory, fresh_warm_sessions
+from botcube_harness_deepagents import turn_timing
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
@@ -118,6 +119,20 @@ def test_a_turns_later_reads_reuse_its_confirmation(memory: FakeAgentCoreMemory,
         assert _said(saver, tmp_path) == ['Question 1', 'Answer 1']
 
     assert len(client.calls) == 2
+
+
+def test_a_turns_checkpoint_writes_are_timed_one_per_memory_write(memory: FakeAgentCoreMemory, tmp_path: Path) -> None:
+    saver, client = _turn(memory)
+    timing = turn_timing.TurnTiming('run', 'session-1', 'model', warmup=False, receipt=turn_timing.perf_counter())
+
+    with turn_timing.use(timing):
+        _ask(saver, tmp_path, 'Question 1', 'Answer 1')
+
+    writes = sum(operation == 'create_event' for operation, _, _ in client.calls)
+    record = timing.record(turn_timing.perf_counter(), 'finished')
+    assert writes > 0
+    assert record['phaseCounts']['checkpoint_write'] == writes
+    assert record['phasesMs']['checkpoint_write'] > 0
 
 
 def test_a_checkpoint_another_microvm_wrote_since_loads_in_full(memory: FakeAgentCoreMemory, tmp_path: Path) -> None:
@@ -285,3 +300,28 @@ def test_a_failed_confirmation_read_fails_without_waiting_for_its_sibling(
         assert time.perf_counter() - started < 1
     finally:
         released.set()
+
+
+@pytest.mark.parametrize('warm', [True, False], ids=['warm', 'cold'])
+def test_reading_the_newest_checkpoint_asks_memory_for_small_pages(
+    memory: FakeAgentCoreMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, warm: bool,
+) -> None:
+    # Each page returns every snapshot it holds: a page of 100 cost ~800 ms without payloads and 67 MB with them.
+    _ask(_turn(memory)[0], tmp_path, 'Question 1', 'Answer 1')
+    # The turn feed's untagged event, newer than the checkpoint, sends a load past its first one-event page.
+    memory.create_event(memoryId=MEMORY_ID, actorId='user-1', sessionId='session-1', eventTimestamp=time.time(),
+                        payload=[{'conversational': {'content': {'text': 'Question 1'}, 'role': 'USER'}}])
+    if not warm:
+        fresh_warm_sessions(monkeypatch)
+    pages: list[int] = []
+    list_events = memory.list_events
+
+    def recorded(**params: Any) -> Any:
+        if params['sessionId'] == 'session-1':
+            pages.append(params['maxResults'])
+        return list_events(**params)
+
+    monkeypatch.setattr(memory, 'list_events', recorded)
+
+    assert _said(_turn(memory)[0], tmp_path) == ['Question 1', 'Answer 1']
+    assert pages == ([5] if warm else [1, 5])

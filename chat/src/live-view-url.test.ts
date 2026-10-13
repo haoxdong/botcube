@@ -9,7 +9,7 @@ const cartridge: ChatServiceCartridge = {
   corsOrigins: [],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-  accountModels: async () => [],
+  accountModels: async () => [], accountModel: async () => undefined,
   browserEventName: 'test:browser-live-view',
   routes: new Hono(),
   requester: async () => ({ owner: 'acct_owner' }),

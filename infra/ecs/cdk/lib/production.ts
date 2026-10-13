@@ -44,6 +44,7 @@ interface DeployIdentity {
     account: string;
     region: string;
     agentCore: {
+      runtime: string;
       runtimeNetworkParameter: string;
       sessionApiFunction: string;
       sessionApiAlias: string;
@@ -167,6 +168,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     // The web and its Dev environment: every https origin the Chat Service serves.
     domains: identity.domains.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
     readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
+    turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
     ...options.webLatency,
     moments: options.webLatency?.moments ?? Object.keys({
       ...JSON.parse(fs.readFileSync(path.join(cubeRoot, 'latency-budgets.json'), 'utf8')).moments,

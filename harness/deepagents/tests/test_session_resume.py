@@ -40,6 +40,7 @@ from langgraph_checkpoint_aws import AgentCoreMemorySaver
 from agentcore_fake import (
     MEMORY_ID,
     PAGE_SIZE,
+    another_microvm,
     install_tagged_memory,
     turn_identity,
 )
@@ -129,7 +130,7 @@ def test_a_session_written_turn_by_turn_by_the_harness_replays_fully(
 
     def turn_checkpointer() -> BaseCheckpointSaver[str]:
         identity = turn_identity('user-1', 'user-1', 'session-1')
-        return agentcore.turn_memory(MEMORY_ID, identity, region_name='us-east-1', run_id='run-1')[0]
+        return agentcore.turn_memory(MEMORY_ID, identity, region_name='us-east-1', run_id='run-1', turn=0)[0]
 
     writer = _graph(turn_checkpointer(), tmp_path, [f'Answer {turn}' for turn in range(TURNS)])
 
@@ -465,6 +466,7 @@ def test_concurrent_sessions_keep_their_active_turns_and_replay_independent(
             # Completion before the model accepts this request is an observable failed stream, not a wait.
             await asyncio.wait([first, admission], return_when=asyncio.FIRST_COMPLETED)
             assert held.is_set()
+            another_microvm()
             second = asyncio.create_task(second_session.events([
                 {'id': 'second-user-message', 'role': 'user', 'content': 'List the second session files'},
             ]))
@@ -935,7 +937,17 @@ def test_a_turn_streams_neither_the_graphs_raw_events_nor_its_state_issue_3291(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both carry the Session's history, and the web's chat deep-copies the state once per message on each render."""
+    from ag_ui_langgraph import LangGraphAgent
+
     session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
+    dispatched: list[str] = []
+    dispatch = LangGraphAgent._dispatch_event
+
+    def recording(self: LangGraphAgent, event: Any) -> Any:
+        dispatched.append(event.type)
+        return dispatch(self, event)
+
+    monkeypatch.setattr(LangGraphAgent, '_dispatch_event', recording)
 
     events = asyncio.run(session.events([{'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}]))
     streamed = {event.type for event in events}
@@ -943,6 +955,8 @@ def test_a_turn_streams_neither_the_graphs_raw_events_nor_its_state_issue_3291(
     assert streamed.isdisjoint({'RAW', 'STATE_SNAPSHOT'})
     # Each streamed token carried the graph's raw chunk too, and a reply's end its model input.
     assert [event.type for event in events if event.raw_event is not None] == []
+    # Nor does the Turn build them only to drop them: each was a JSON-safe copy of the history.
+    assert 'RAW' not in dispatched
 
 
 class _MissingToolModel(_ToolCallingModel):

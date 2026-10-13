@@ -51,7 +51,7 @@ def test_a_delegated_task_completes_and_resumes_writing_only_its_session_and_wri
 
     def agent() -> Any:
         saver, _ = turn_memory(MEMORY_ID, turn_identity('account-fixture', 'filing-fixture', SESSION),
-                               region_name='us-east-1', run_id='run-1')
+                               region_name='us-east-1', run_id='run-1', turn=0)
         return build_agent(model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
                            skills=[], memory=[], subagents=[], checkpointer=saver)
 

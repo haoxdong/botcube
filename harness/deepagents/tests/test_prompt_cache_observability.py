@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.messages.ai import InputTokenDetails, UsageMetadata
 
 from botcube_harness_deepagents.prompt_cache_observability import (
@@ -73,7 +73,8 @@ def test_prompt_cache_usage_middleware_emits_structured_turn_counters(caplog: py
         asyncio.run(middleware.aafter_agent(state, runtime=object()))
 
     assert len(caplog.records) == 1
-    payload = json.loads(caplog.records[0].message)
+    line = caplog.records[0].message
+    payload = json.loads(line)
     assert list(payload) == sorted(payload)
     assert payload == {
         'event': 'bedrock_prompt_cache_usage',
@@ -87,56 +88,9 @@ def test_prompt_cache_usage_middleware_emits_structured_turn_counters(caplog: py
         'cache_read_input_tokens': 950,
         'cache_creation_input_tokens': 350,
         'cache_read_to_creation_ratio': 2.714286,
-        'input_message': 'current turn',
-        'output_message': 'second current answer',
     }
-
-
-def test_prompt_cache_usage_middleware_logs_bounded_text_messages(caplog: pytest.LogCaptureFixture) -> None:
-    middleware = PromptCacheUsageMiddleware(
-        thread_id='thread-1',
-        model='us.anthropic.claude-sonnet-4-6',
-        effort='medium',
-    )
-    state = {
-        'messages': [
-            HumanMessage(content='prior turn'),
-            AIMessage(content='prior answer'),
-            HumanMessage(content=[
-                {'type': 'text', 'text': '  current\ninput  '},
-                {'type': 'image_url', 'image_url': {'url': 'private-image'}},
-                {'type': 'text', 'text': 'windows\r\nline\rold mac line'},
-            ]),
-            AIMessage(content='', tool_calls=[{
-                'name': 'lookup',
-                'args': {'secret': 'tool payload'},
-                'id': 'call-1',
-                'type': 'tool_call',
-            }]),
-            ToolMessage(content='private tool result', tool_call_id='call-1'),
-            AIMessage(
-                content='  final\nanswer  ' + ('x' * 2_100),
-                usage_metadata={
-                    'input_tokens': 10,
-                    'output_tokens': 2,
-                    'total_tokens': 12,
-                },
-            ),
-        ]
-    }
-
-    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.prompt_cache'), prompt_cache_turn():
-        asyncio.run(middleware.aafter_agent(state, runtime=object()))
-
-    payload = json.loads(caplog.records[0].message)
-    assert payload['input_message'] == '  current input   windows line old mac line'
-    assert payload['output_message'] == '  final answer  ' + 'x' * 1_981 + '...'
-    assert (payload['input_tokens'], payload['cache_read_input_tokens'], payload['cache_creation_input_tokens']) == (
-        10,
-        0,
-        0,
-    )
-    assert payload['cache_read_to_creation_ratio'] is None
+    for message in state['messages']:
+        assert message.content not in line
 
 
 def _log_turn(caplog: pytest.LogCaptureFixture, messages: list[BaseMessage]) -> dict[str, object]:
@@ -150,16 +104,11 @@ def _usage(tokens: int, **details: Unpack[InputTokenDetails]) -> UsageMetadata:
     return {'input_tokens': tokens, 'output_tokens': 1, 'total_tokens': tokens + 1, 'input_token_details': details}
 
 
-def test_a_message_at_the_log_limit_is_logged_whole(caplog: pytest.LogCaptureFixture) -> None:
-    payload = _log_turn(caplog, [HumanMessage('q'), AIMessage('y' * 2_000, usage_metadata=_usage(10))])
+def test_a_turn_without_cache_counters_logs_zeros_and_no_ratio(caplog: pytest.LogCaptureFixture) -> None:
+    payload = _log_turn(caplog, [HumanMessage('q'), AIMessage('a', usage_metadata=_usage(10))])
 
-    assert payload['output_message'] == 'y' * 2_000
-
-
-def test_a_turn_without_a_text_reply_logs_an_empty_output_message(caplog: pytest.LogCaptureFixture) -> None:
-    ask = AIMessage('', tool_calls=[{'name': 'ls', 'args': {}, 'id': 'call-1', 'type': 'tool_call'}], usage_metadata=_usage(10))
-
-    assert _log_turn(caplog, [HumanMessage('q'), ask])['output_message'] == ''
+    assert (payload['cache_read_input_tokens'], payload['cache_creation_input_tokens']) == (0, 0)
+    assert payload['cache_read_to_creation_ratio'] is None
 
 
 def test_the_ratio_divides_by_a_single_written_token(caplog: pytest.LogCaptureFixture) -> None:

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './cartridge.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
+import { recordRoundTrips, serialDepth, type RoundTrip } from '../test/fakes/round-trips.js';
 
 let stack: InProcessStack;
 const authorized: string[] = [];
@@ -188,7 +189,7 @@ describe('Account History Session ownership', () => {
   });
 });
 
-it('records first-answer attribution receipt, admission and actual dispatch around native preparation', async () => {
+it('logs one chat_turn_timing line for a relayed Turn, timed to its last token', async () => {
   let now = 100;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
   const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -212,14 +213,102 @@ it('records first-answer attribution receipt, admission and actual dispatch arou
   ]; } });
   try {
     const response = await target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ threadId: sessionId, runId, state: {}, messages: [{ id: 'user', role: 'user', content: 'private prompt' }], tools: [], context: [], forwardedProps: {} }) });
+      body: JSON.stringify({ threadId: sessionId, runId, state: {}, messages: [{ id: 'earlier', role: 'assistant', content: 'hi' }, { id: 'user', role: 'user', content: 'private prompt' }], tools: [], context: [], forwardedProps: {} }) });
     expect(await response.text()).toContain('private answer');
-    const boundary = log.mock.calls.map(([line]) => String(line)).find((line) => line.startsWith('{"event":"chat_first_answer_boundary"'));
-    expect(boundary).toBeDefined();
-    expect(JSON.parse(boundary ?? '{}')).toMatchObject({ runId, sessionId, publicMessageId: 'first', status: 'complete',
-      offsetsMs: { receipt: 0, admissionComplete: 60, invokeDispatch: 90, answerReceived: 140, answerEmitted: 140 } });
-    expect(boundary).not.toContain('private');
+    const timings = log.mock.calls.map(([line]) => String(line)).filter((line) => line.startsWith('{"event":"chat_turn_timing"'));
+    expect(timings).toHaveLength(1);
+    expect(timings[0]).not.toContain('private');
+    const timing = JSON.parse(timings[0] ?? '{}');
+    expect(timing).toEqual({ event: 'chat_turn_timing', runId, sessionId, model: expect.any(String), status: 'finished', e2eMs: 140,
+      chatMs: { requester: 20, model: 20, admitted: 60, payload: 90, identity: 90, liveView: 90, dispatch: 90, invoke: 90, firstFrame: 140, firstToken: 140, lastToken: 140, end: 140 } });
+    expect(Object.keys(timing.chatMs)).toEqual(['requester', 'model', 'admitted', 'payload', 'identity', 'liveView', 'dispatch', 'invoke', 'firstFrame', 'firstToken', 'lastToken', 'end']);
   } finally { await target.stop(); }
+});
+
+it('logs one failed chat_turn_timing line for a Turn whose preparation fails', async () => {
+  const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const target = await startInProcess({ cartridge: { invocationPayload: async () => { throw new Error('payload failed'); } } });
+  try {
+    const response = await target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: '33333333-3333-4333-8333-333333333333', runId: '44444444-4444-4444-8444-444444444444', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }) });
+    expect(response.status).toBe(500);
+    const timings = log.mock.calls.map(([line]) => String(line)).filter((line) => line.startsWith('{"event":"chat_turn_timing"'));
+    expect(timings).toHaveLength(1);
+    const timing = JSON.parse(timings[0] ?? '{}');
+    expect(timing).toMatchObject({ status: 'failed', e2eMs: timing.chatMs.end });
+    expect(Object.keys(timing.chatMs)).toEqual(['requester', 'model', 'admitted', 'end']);
+  } finally { await target.stop(); }
+});
+
+// Milliseconds each external call is held, so calls made together overlap.
+const ROUND_TRIP_MS = 20;
+
+const turnPost = (threadId: string, messages: unknown[]) => ({ method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ threadId, runId: crypto.randomUUID(), state: {}, messages, tools: [], context: [], forwardedProps: {} }) });
+
+/** The external calls a Turn on `threadId` waited for before its invoke went out, in the order they started. */
+async function roundTripsToInvoke(target: InProcessStack, trips: RoundTrip[], threadId: string): Promise<RoundTrip[]> {
+  const sent = performance.now();
+  const response = await target.app.request('/', turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]));
+  expect(await response.text()).toContain('RUN_FINISHED');
+  const turn = trips.filter((trip) => trip.start >= sent).sort((a, b) => a.start - b.start);
+  const invoke = turn.find((trip) => trip.name.endsWith('/invocations'));
+  if (invoke === undefined) throw new Error('The Turn never invoked the Runtime');
+  return turn.filter((trip) => trip.end <= invoke.start);
+}
+
+// Chat's share of Orchestration Overhead: each call a Turn waits for before its invoke is a round trip to AWS.
+// Count the round trips it waits for one after another, not the wall time, which a busy CI host stretches.
+describe("a Turn's round trips before its invoke", () => {
+  it('are ten, one after another, on a new thread', async () => {
+    const target = await startInProcess();
+    try {
+      // Once the purge recovery the service starts with is done, only the Turn's calls are timed.
+      expect((await target.app.request('/health')).status).toBe(200);
+      const trips = recordRoundTrips(target.table.client, ROUND_TRIP_MS);
+
+      const waited = await roundTripsToInvoke(target, trips, '77777777-7777-4777-8777-777777777777');
+
+      expect(waited.map((trip) => trip.name)).toEqual([
+        'DynamoDBSessionMetadata.checkRuntimeNamespaceReady',
+        'DynamoDBSessionMetadata.get',
+        'DynamoDBSessionMetadata.queryPartition',
+        'DynamoDBSessionMetadata.mainIdentity',
+        'DynamoDBSessionMetadata.recordTurn',
+        'DynamoDBSessionMetadata.acceptedFilingUserId',
+        'DynamoDBAgentDocuments.get',
+        'DynamoDBSessionMetadata.claimDestination',
+        'DynamoDBSessionMetadata.get',
+        'DynamoDBSessionMetadata.beginDispatch',
+      ]);
+      expect(serialDepth(waited)).toBe(10);
+    } finally { await target.stop(); }
+  });
+
+  it('are eight, one after another, on a continuing thread', async () => {
+    const target = await startInProcess();
+    const threadId = '88888888-8888-4888-8888-888888888888';
+    try {
+      // A first Turn with no user message, so no Turn summary is still being written behind it.
+      expect(await (await target.app.request('/', turnPost(threadId, []))).text()).toContain('RUN_FINISHED');
+      const trips = recordRoundTrips(target.table.client, ROUND_TRIP_MS);
+
+      const waited = await roundTripsToInvoke(target, trips, threadId);
+
+      expect(waited.map((trip) => trip.name)).toEqual([
+        'DynamoDBSessionMetadata.checkRuntimeNamespaceReady',
+        'DynamoDBSessionMetadata.get',
+        'DynamoDBSessionMetadata.recordTurn',
+        'DynamoDBSessionMetadata.acceptedFilingUserId',
+        'DynamoDBAgentDocuments.get',
+        'DynamoDBSessionMetadata.claimDestination',
+        'DynamoDBSessionMetadata.get',
+        'DynamoDBSessionMetadata.beginDispatch',
+      ]);
+      expect(serialDepth(waited)).toBe(8);
+    } finally { await target.stop(); }
+  });
 });
 
 function admissionGate<T>() {

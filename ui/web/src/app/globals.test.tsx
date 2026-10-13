@@ -156,6 +156,27 @@ it("shows the user's own messages in blackish", () => {
   message.remove();
 });
 
+it("shows a sent message's files as white cards above its blackish bubble, each on its kind's tile", () => {
+  const message = document.createElement('div');
+  message.className = 'copilotKitMessage copilotKitUserMessage';
+  message.innerHTML = `<ul class="sent-files">
+      <li class="sent-file"><span class="file-tile" data-kind="pdf"></span><span class="sent-file-name">a.pdf</span><span class="sent-file-kind">PDF</span></li>
+      <li class="sent-file"><span class="file-tile" data-kind="sheet"></span></li>
+      <li class="sent-file"><span class="file-tile" data-kind="file"></span></li>
+    </ul><div class="bubble">check this</div>`;
+  document.body.append(message);
+
+  expect(styleOf(message, '.bubble').backgroundColor).toBe('#0d0d0d');
+  const card = styleOf(message, '.sent-file');
+  expect([card.backgroundColor, card.borderColor, card.borderRadius]).toEqual(['#fff', '#e0e0e0', '16px']);
+  const tile = styleOf(message, '.file-tile');
+  expect([tile.width, tile.height, tile.color]).toEqual(['40px', '40px', '#fff']);
+  expect(['pdf', 'sheet', 'file'].map((kind) => styleOf(message, `[data-kind="${kind}"]`).backgroundColor)).toEqual(['#e5484d', '#10a37f', '#6b6b6b']);
+  expect(styleOf(message, '.sent-file-name').fontWeight).toBe('500');
+  expect(styleOf(message, '.sent-file-kind').color).toBe('#6b6b6b');
+  message.remove();
+});
+
 // focus anywhere in the composer, on the model pill or an empty text box, turned send dark with nothing to send.
 it('shows the send button grey at rest and while the empty composer has focus, and dark once it can send', () => {
   const input = document.createElement('div');
@@ -185,61 +206,98 @@ it('shows the send button grey at rest and while the empty composer has focus, a
   }
 });
 
-it('keeps phone text above right controls and desktop text beside controls for empty and typed drafts', () => {
+// The text is the `message` role and the picker `detail`, whose phone sizes start at 640px.
+const composerSizes = [[440, '17px', '15px'], [641, '14px', '13px'], [767, '14px', '13px'], [768, '14px', '13px'], [1440, '14px', '13px']] as const;
+// CopilotKit lays a phone's out `expanded` always, a desktop's once its text takes two lines.
+const composerCases = composerSizes.flatMap(([width, textSize, pickerSize]) =>
+  (width < 768
+    ? [['empty', '', 'expanded'], ['one-line', 'What moved US rates?', 'expanded']] as const
+    : [['empty', '', 'compact'], ['one-line', 'What moved US rates?', 'compact'], ['two-line', 'What moved US rates?\nAnd why?', 'expanded']] as const
+  ).map(([draft, text, layoutName]) => ({ width, textSize, pickerSize, draft, text, layoutName })),
+);
+// Paddings read top, right, bottom, left.
+const composerLayouts = {
+  phone: { rows: 'minmax(44px, auto) 44px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '0px', '0px', '0px'], padding: ['0px', '15px', '0px', '15px'], columnGap: undefined, target: '44px' },
+  // ChatGPT's desktop composer: 36px controls in a 52px row, inside 7px of padding and the 1px border.
+  compact: { rows: 'auto', textColumn: '1', controlsRow: '1', textPadding: ['8px', '0px', '8px', '0px'], padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', target: '36px' },
+  // Two lines on a desktop, ChatGPT's pattern: the text across the top, its left edge on the +'s glyph, over the 36px
+  // row of controls.
+  expanded: { rows: 'auto 36px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '8px', '8px', '8px'], padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', target: '36px' },
+} as const;
+
+it.each(composerCases)('keeps phone text above right controls, and desktop text beside them until it takes two lines ($width px, $draft draft)', ({ width, textSize, pickerSize, text, layoutName }) => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   try {
-    // The text is the `message` role and the picker `detail`, whose phone sizes start at 640px.
-    for (const [width, textSize, pickerSize] of [[440, '17px', '15px'], [641, '14px', '13px'], [767, '14px', '13px'], [768, '14px', '13px'], [1440, '14px', '13px']] as const) {
-      happyDOM.setViewport({ width, height: 844 });
-      // The type roles are the root's tokens, whose kept style a changed attribute drops.
-      document.documentElement.dataset.width = String(width);
-      for (const text of ['', 'What moved US rates?']) {
-        const input = document.createElement('div');
-        input.className = 'copilotKitInput';
-        input.innerHTML = `<div class="cpk:grid" data-layout="expanded">
-          <div class="cpk:col-start-1"></div>
-          <div class="cpk:col-span-3"><textarea placeholder="Ask anything"></textarea></div>
-          <div class="cpk:col-start-3"><div class="chat-model-picker"><div class="mep">
-            <button class="mep-pill"><span class="mep-pill-model">Model</span><span class="mep-pill-effort">Medium</span></button><div class="mep-dropdown"></div>
-          </div></div><button type="button" data-testid="copilot-send-button">Send</button></div>
-        </div>`;
-        const textarea = input.querySelector('textarea');
-        if (textarea === null) throw new Error('no textarea');
-        textarea.value = text;
-        textarea.classList.toggle('placeholder-shown', text === '');
-        document.body.append(input);
-        const expected = width < 768
-          ? { rows: 'minmax(44px, auto) 44px', textColumn: '1 / -1', controlsRow: '2' }
-          : { rows: 'auto', textColumn: '1', controlsRow: '1' };
-        expect(styleOf(input, '[data-layout]').gridTemplateRows).toBe(expected.rows);
-        if (width < 768) {
-          const layout = styleOf(input, '[data-layout]');
-          expect(layout.paddingTop).toBe('0px');
-          expect(layout.paddingBottom).toBe('0px');
-          expect(layout.paddingLeft).toBe('15px');
-          expect(layout.paddingRight).toBe('15px');
-          expect(styleOf(input, 'textarea').paddingTop).toBe('8px');
-        }
-        expect(styleOf(input, '[class*="col-start-1"]').display).toBe('none');
-        expect(styleOf(input, '[class*="col-span-3"]').gridColumn).toBe(expected.textColumn);
-        expect(styleOf(input, '[class*="col-span-3"]').gridRow).toBe('1');
-        expect(styleOf(input, '[class*="col-start-3"]').gridRow).toBe(expected.controlsRow);
-        expect(styleOf(input, 'textarea').paddingLeft).toBe('0px');
-        expect(styleOf(input, 'textarea').fontSize).toBe(textSize);
-        // A desktop's text sits on ChatGPT Mac's 20px line; a phone's keeps CopilotKit's, which happy-dom does not load.
-        if (width > 640) expect(styleOf(input, 'textarea').lineHeight).toBe('20px');
-        expect(styleOf(input, '.mep-pill').fontSize).toBe(pickerSize);
-        expect(styleOf(input, '.mep-pill-effort').display).not.toBe('none');
-        expect(styleOf(input, '.mep-pill').minHeight).toBe('44px');
-        expect(styleOf(input, '[data-testid="copilot-send-button"]').width).toBe('44px');
-        expect(getComputedStyle(input).position).toBe('relative');
-        expect(styleOf(input, '.mep').position).toBe('static');
-        expect(styleOf(input, '.mep-dropdown').bottom).toBe('calc(100% + 8px)');
-      }
-    }
+    happyDOM.setViewport({ width, height: 844 });
+    // The type roles are the root's tokens, whose kept style a changed attribute drops.
+    document.documentElement.dataset.width = String(width);
+    const input = document.createElement('div');
+    input.className = 'copilotKitInput';
+    input.innerHTML = `<div class="cpk:grid" data-layout="${layoutName}">
+      <div class="cpk:col-start-1"></div>
+      <div class="cpk:col-span-3"><textarea placeholder="Ask anything"></textarea></div>
+      <div class="cpk:col-start-3"><div class="chat-model-picker"><div class="mep">
+        <button class="mep-pill"><span class="mep-pill-model">Model</span><span class="mep-pill-effort">Medium</span></button><div class="mep-dropdown"></div>
+      </div></div><button type="button" data-testid="copilot-send-button">Send</button></div>
+    </div>`;
+    const textarea = input.querySelector('textarea');
+    if (textarea === null) throw new Error('no textarea');
+    textarea.value = text;
+    textarea.classList.toggle('placeholder-shown', text === '');
+    document.body.append(input);
+    const expected = composerLayouts[width < 768 ? 'phone' : layoutName];
+
+    const layout = styleOf(input, '[data-layout]');
+    expect(layout.gridTemplateRows).toBe(expected.rows);
+    expect([layout.paddingTop, layout.paddingRight, layout.paddingBottom, layout.paddingLeft]).toEqual(expected.padding);
+    if (expected.columnGap !== undefined) expect(layout.columnGap).toBe(expected.columnGap);
+    const textStyle = styleOf(input, 'textarea');
+    expect([textStyle.paddingTop, textStyle.paddingRight, textStyle.paddingBottom, textStyle.paddingLeft]).toEqual(expected.textPadding);
+    expect(styleOf(input, '[class*="col-start-1"]').display).toBe('none');
+    expect(styleOf(input, '[class*="col-span-3"]').gridColumn).toBe(expected.textColumn);
+    expect(styleOf(input, '[class*="col-span-3"]').gridRow).toBe('1');
+    expect(styleOf(input, '[class*="col-start-3"]').gridRow).toBe(expected.controlsRow);
+    expect(textStyle.fontSize).toBe(textSize);
+    // A desktop's text sits on ChatGPT Mac's 20px line; a phone's keeps CopilotKit's, which happy-dom does not load.
+    if (width > 640) expect(textStyle.lineHeight).toBe('20px');
+    expect(styleOf(input, '.mep-pill').fontSize).toBe(pickerSize);
+    expect(styleOf(input, '.mep-pill-effort').display).not.toBe('none');
+    expect(styleOf(input, '.mep-pill').minHeight).toBe(expected.target);
+    expect(styleOf(input, '[data-testid="copilot-send-button"]').width).toBe(expected.target);
+    expect(styleOf(input, '[data-testid="copilot-send-button"]').height).toBe(expected.target);
+    expect(getComputedStyle(input).position).toBe('relative');
+    expect(styleOf(input, '.mep').position).toBe('static');
+    expect(styleOf(input, '.mep-dropdown').bottom).toBe('calc(100% + 8px)');
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
     delete document.documentElement.dataset.width;
+    document.querySelectorAll('.copilotKitInput').forEach((input) => input.remove());
+  }
+});
+
+it("puts a desktop's + under two lines of text, at the left of the controls' row, and beside one line", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  try {
+    happyDOM.setViewport({ width: 1440, height: 844 });
+    for (const [layoutName, cells] of [
+      ['compact', { add: ['1', '1'], text: ['2', '1'], controls: ['3', '1'] }],
+      ['expanded', { add: ['1', '2'], text: ['1 / -1', '1'], controls: ['3', '2'] }],
+    ] as const) {
+      const input = document.createElement('div');
+      input.className = 'copilotKitInput';
+      input.innerHTML = `<div class="cpk:grid" data-layout="${layoutName}">
+        <div class="cpk:col-start-1"><button type="button" data-testid="copilot-add-menu-button">+</button></div>
+        <div class="cpk:col-span-3"><textarea></textarea></div>
+        <div class="cpk:col-start-3"><button type="button" data-testid="copilot-send-button">Send</button></div>
+      </div>`;
+      document.body.append(input);
+      const place = (selector: string) => [styleOf(input, selector).gridColumn, styleOf(input, selector).gridRow];
+      expect({ add: place('[class*="col-start-1"]'), text: place('[class*="col-span-3"]'), controls: place('[class*="col-start-3"]') }).toEqual(cells);
+      expect(styleOf(input, '[data-testid="copilot-add-menu-button"]').width).toBe('36px');
+      input.remove();
+    }
+  } finally {
+    happyDOM.setViewport({ width: 1024, height: 768 });
     document.querySelectorAll('.copilotKitInput').forEach((input) => input.remove());
   }
 });
@@ -508,17 +566,24 @@ it('hides the kept Agent Profile when closed and shows it again at each viewport
 });
 
 // a scheduled task's edit fields had no border or background, so they read as static text.
-it("shows a scheduled task's edit fields as fields", () => {
-  const field = document.createElement('label');
-  field.className = 'field scheduled-task-field';
-  field.innerHTML = '<input value="Morning brief" /><select></select>';
-  document.body.append(field);
+it("shows a scheduled task's Title and instructions as fields, and its schedule as settings rows after Codex's", () => {
+  const form = document.createElement('div');
+  form.innerHTML =
+    '<input class="settings-text" value="Morning brief" /><textarea class="settings-text"></textarea>' +
+    '<div class="settings-group"><label class="settings-row"><span>Repeats</span><span class="settings-select"><select></select></span></label></div>';
+  document.body.append(form);
 
-  for (const control of ['input', 'select']) {
-    expect(styleOf(field, control).borderStyle).toBe('solid');
-    expect(styleOf(field, control).backgroundColor).toBe('#fff');
+  for (const control of ['input', 'textarea']) {
+    expect(styleOf(form, control).borderStyle).toBe('solid');
+    expect(styleOf(form, control).backgroundColor).toBe('#fff');
+    expect(styleOf(form, control).borderRadius).toBe('16px');
   }
-  field.remove();
+  expect(styleOf(form, 'textarea').minHeight).toBe('120px');
+  expect([styleOf(form, '.settings-group').borderStyle, styleOf(form, '.settings-group').borderRadius]).toEqual(['solid', '16px']);
+  expect([styleOf(form, '.settings-row').minHeight, styleOf(form, '.settings-row').padding]).toEqual(['48px', '8px 20px']);
+  expect(styleOf(form, '.settings-row').color).toBe('#0d0d0d');
+  expect(styleOf(form, 'select').color).toBe('#6b6b6b');
+  form.remove();
 });
 
 it("fills a Weekly day while it is picked, as a primary button is, and leaves the others secondary", () => {
@@ -538,6 +603,7 @@ it('spaces a scheduled-task proposal in a message by its own gap, not prose para
   const { message, prose } = inAssistantMessage('');
   render(
     <ScheduledTaskProposalCard
+      result='Proposed. Nothing is scheduled until the user confirms it in the chat.'
       chatServiceUrl="http://chat.test"
       proposalId="call-1"
       proposal={{ title: 'Morning brief', prompt: 'Brief me on rates', frequency: 'weekdays', time: '08:00' }}

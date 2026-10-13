@@ -44,12 +44,21 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
   // unless a `children` render prop lays out its
   // message elements.
-  const MessageRow = ({ id }: { id: string }) => {
+  const MessageRow = ({ id, children }: { id: string; children?: ReactNode }) => {
     useEffect(() => {
       copilot.rowMounts += 1;
     }, []);
-    return <div data-message-row={id} />;
+    return <div data-message-row={id}>{children}</div>;
   };
+  // Like CopilotChatUserMessage: its message renderer slot shows the message's text in the bubble.
+  type UserProps = { message: Message; messageRenderer?: ComponentType<{ content: string }> };
+  const UserMessageRenderer = ({ content, className = '' }: { content: string; className?: string }) => <div className={`cpk:prose ${className}`}>{content}</div>;
+  const CopilotChatUserMessage = Object.assign(
+    ({ message, messageRenderer: Renderer = UserMessageRenderer }: UserProps) => (
+      <div className="copilotKitMessage copilotKitUserMessage"><Renderer content={message.content as string} /></div>
+    ),
+    { MessageRenderer: UserMessageRenderer },
+  );
   type MessageViewParts = { messageElements: ReactNode[]; messages: Message[]; isRunning: boolean; interruptElement: ReactNode };
   type AssistantProps = { message: Message; markdownRenderer?: ComponentType<{ content: string }> };
   const CopilotChatAssistantMessage = Object.assign(
@@ -58,11 +67,13 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     { MarkdownRenderer: ({ content, ...props }: { content: string }) => <Streamdown {...props}>{content}</Streamdown> },
   );
   const CopilotChatMessageView = Object.assign(
-    ({ assistantMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
+    ({ assistantMessage, userMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; userMessage?: Partial<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
       const agentMessages = copilot.kits.at(-1)?.selfManagedAgents['research-agent']?.messages ?? [];
       const rows = copilot.rows
         ? agentMessages.flatMap((message) => {
-            const row = message.role === 'tool' ? [] : [<MessageRow key={message.id} id={message.id} />];
+            const row = message.role === 'tool' ? [] : [
+              <MessageRow key={message.id} id={message.id}>{message.role === 'user' && <CopilotChatUserMessage message={message} {...userMessage} />}</MessageRow>,
+            ];
             return copilot.slots ? [<Fragment key={`${message.id}-custom-before`} />, ...row, <Fragment key={`${message.id}-custom-after`} />] : row;
           })
         : [];
@@ -75,7 +86,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     },
     { Cursor: () => <div data-testid="copilot-loading-cursor" /> },
   );
-  const CopilotChatInput = ({ isRunning = false, sendButton, addMenuButton, onAddFile, onSubmitMessage, onStop, textArea }: { textArea?: Record<string, unknown>; isRunning?: boolean; sendButton?: Record<string, unknown> | ComponentType<ButtonHTMLAttributes<HTMLButtonElement>>; addMenuButton?: ButtonHTMLAttributes<HTMLButtonElement> | ComponentType; onAddFile?: () => void; onSubmitMessage?: (message: string) => void; onStop?: () => void }) => {
+  const CopilotChatInput = ({ isRunning = false, sendButton, addMenuButton, onAddFile, onSubmitMessage, onStop, onChange, textArea }:  { textArea?: Record<string, unknown>; onChange?: (value: string) => void; isRunning?: boolean; sendButton?: Record<string, unknown> | ComponentType<ButtonHTMLAttributes<HTMLButtonElement>>; addMenuButton?: ButtonHTMLAttributes<HTMLButtonElement> | ComponentType<{ onAddFile?: (() => void) | undefined }>; onAddFile?: () => void; onSubmitMessage?: (message: string) => void; onStop?: () => void }) => {
     const sendCellShown = useSyncExternalStore(
       (listener) => {
         copilot.listeners.add(listener);
@@ -90,8 +101,8 @@ vi.mock('@copilotkit/react-core/v2', async () => {
           <div className="copilotKitInput">
             <div data-layout="compact">
               {sendCellShown && <div className="cpk:col-start-1" data-testid="add-cell">{/* Its + opens a menu whose one item, with onAddFile, adds files: here a click on it adds them. */}
-                {typeof addMenuButton === 'function' ? createElement(addMenuButton) : <button type="button" data-testid="copilot-add-menu-button" disabled={!onAddFile} onClick={onAddFile} aria-label="Add files" {...addMenuButton} />}</div>}
-              <textarea aria-label="Message" {...textArea} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey) { if (isRunning && !event.currentTarget.value.trim()) onStop?.(); else onSubmitMessage?.(event.currentTarget.value); } }} />
+                {typeof addMenuButton === 'function' ? createElement(addMenuButton, { onAddFile }) : <button type="button" data-testid="copilot-add-menu-button" disabled={!onAddFile} onClick={onAddFile} aria-label="Add files" {...addMenuButton} />}</div>}
+              <textarea aria-label="Message" {...textArea} onChange={(event) => onChange?.(event.currentTarget.value)} onKeyDown={(event) => { if (event.nativeEvent.isComposing || event.keyCode === 229) return; if (event.key === 'Enter' && !event.shiftKey) { if (isRunning && !event.currentTarget.value.trim()) onStop?.(); else onSubmitMessage?.(event.currentTarget.value); } }} />
               {sendCellShown && (
                 <div className="cpk:col-start-3" data-testid="send-cell">
                   {typeof sendButton === 'function'
@@ -185,6 +196,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
       );
     },
     CopilotChatAssistantMessage,
+    CopilotChatUserMessage,
     CopilotChatInput,
     CopilotChatMessageView,
     CopilotChatView: { ScrollToBottomButton, ScrollView: CopilotChatScrollView },
@@ -444,7 +456,7 @@ async function settle() {
 
 async function sendMessage(text: string) {
   const textarea = screen.getByLabelText<HTMLTextAreaElement>('Message');
-  textarea.value = text;
+  fireEvent.change(textarea, { target: { value: text } });
   fireEvent.keyDown(textarea, { key: 'Enter' });
   await settle();
 }
@@ -591,6 +603,29 @@ describe('cartridge wiring', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
     expect(warmups().at(-1)?.[1].body).toBe('{"threadId":"new-1","newChat":true,"model":"deep","effort":"max"}');
+  });
+
+  // Unnamed, the Chat Service warms the account's first model, and the Harness skips a second warmup while one prepares.
+  it("warms the Main Chat as it opens for the model this browser picked on the account, not the account's first", async () => {
+    localStorage.setItem('botcube.picker-choice', JSON.stringify({ model: 'fast', account: 'acct-first' }));
+
+    await renderPage(auth({ accountId: 'acct-first' }));
+
+    expect(warmups().map(([, init]) => init.body)).toEqual([
+      '{"mainChat":true,"model":"fast","effort":"max"}',
+      '{"threadId":"main-1","model":"fast","effort":"max"}',
+    ]);
+  });
+
+  it("leaves the Main Chat's opening warmup to the account's first model when this browser picked on another account", async () => {
+    localStorage.setItem('botcube.picker-choice', JSON.stringify({ model: 'fast', account: 'acct-other' }));
+
+    await renderPage(auth({ accountId: 'acct-first' }));
+
+    expect(warmups().map(([, init]) => init.body)).toEqual([
+      '{"mainChat":true,"effort":"max"}',
+      '{"threadId":"main-1","model":"deep","effort":"max"}',
+    ]);
   });
 
   it("does not allocate the previous account's new Side Chat after an account switch", async () => {
@@ -2842,6 +2877,164 @@ describe('a scheduled post to the open Main Chat', () => {
 
     expect(mainChatLoads()).toBe(1);
     expect(sideChatLoads()).toBe(1);
+  });
+});
+
+// AgentCore reaps a Sandbox idle for 15 minutes, and a user coming back sent the next Turn to a cold one.
+describe('a user coming back to the page', () => {
+  const warmupBodies = () => warmups().map(([, init]) => init.body);
+  const minutesPass = (minutes: number) => {
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + minutes * 60_000);
+  };
+
+  it.each(comeBackEvents)('warms the open Main Chat again (%s)', async (event) => {
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(5);
+
+    await userComesBack(event);
+
+    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"max"}']);
+  });
+
+  it('warms the open Side Chat again with its model and effort', async () => {
+    await renderPage();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
+    await userEvent.click(present(document.querySelector<HTMLElement>('.mep-pill'), 'model picker'));
+    const dropdown = within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'model dropdown'));
+    await userEvent.click(dropdown.getByText('Effort'));
+    await userEvent.click(dropdown.getByText('High'));
+    await settle();
+    const before = warmups().length;
+    minutesPass(5);
+
+    await userComesBack();
+
+    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"new-1","newChat":true,"model":"deep","effort":"high"}']);
+  });
+
+  it('leaves a chat warmed in the last 5 minutes alone', async () => {
+    await renderPage();
+    const before = warmups().length;
+
+    minutesPass(4);
+    await userComesBack('visibilitychange');
+    expect(warmups()).toHaveLength(before);
+
+    minutesPass(1);
+    await userComesBack('visibilitychange');
+    await userComesBack('focus');
+    expect(warmups()).toHaveLength(before + 1);
+  });
+
+  it('does not queue a comeback behind a warmup still in flight after five minutes', async () => {
+    await renderPage();
+    const pending: ((response: Response) => void)[] = [];
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === 'http://chat.test/warmup') return new Promise<Response>((resolve) => pending.push(resolve));
+      return chatService(url, init);
+    });
+    minutesPass(5);
+    await userComesBack();
+    expect(pending).toHaveLength(1);
+    const before = warmups().length;
+    minutesPass(5);
+
+    await userComesBack('visibilitychange');
+    await userComesBack('focus');
+    fetchMock.mockImplementation(chatService);
+    await act(async () => { present(pending[0], 'the pending comeback warmup')(answer(200)); });
+    await settle();
+
+    expect(warmups()).toHaveLength(before);
+  });
+
+  it('waits while the page is hidden', async () => {
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(5);
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+
+    await userComesBack('visibilitychange');
+
+    expect(warmups()).toHaveLength(before);
+  });
+
+  it('leaves a running Turn alone', async () => {
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(5);
+    agent().isRunning = true;
+
+    await userComesBack();
+
+    expect(warmups()).toHaveLength(before);
+  });
+
+  it('leaves a Turn running on the server alone', async () => {
+    service.mainChat = { id: 'main-1', messages: [], running: true, runId: 'background-run' };
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(5);
+
+    await userComesBack();
+
+    expect(warmups()).toHaveLength(before);
+  });
+
+  it.each(comeBackEvents)('warms once stale server Turn state clears after comeback (%s)', async (event) => {
+    vi.useFakeTimers();
+    service.mainChat = { id: 'main-1', messages: [], running: true, runId: 'background-run' };
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(16);
+
+    await userComesBack(event);
+    expect(warmups()).toHaveLength(before);
+    service.mainChat = { id: 'main-1', messages: [], running: false };
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    await settle();
+
+    expect(warmupBodies().slice(before)).toEqual(['{"threadId":"main-1","model":"deep","effort":"max"}']);
+  });
+
+  it('does not rewarm after a server Turn ends without a comeback', async () => {
+    vi.useFakeTimers();
+    service.mainChat = { id: 'main-1', messages: [], running: true, runId: 'background-run' };
+    await renderPage();
+    const before = warmups().length;
+    minutesPass(16);
+    service.mainChat = { id: 'main-1', messages: [], running: false };
+    await act(async () => { vi.advanceTimersByTime(3_000); });
+    await settle();
+
+    expect(warmups()).toHaveLength(before);
+  });
+
+  it('reports a failed warmup', async () => {
+    await renderPage();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === 'http://chat.test/warmup') throw new Error('offline');
+      return chatService(url, init);
+    });
+    minutesPass(5);
+
+    await userComesBack();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Your agent could not be prepared: offline');
+  });
+
+  it.each(comeBackEvents)('stops listening once the page is gone (%s)', async (event) => {
+    const { unmount } = await renderPage();
+    const before = warmups().length;
+    unmount();
+    minutesPass(5);
+
+    await userComesBack(event);
+
+    expect(warmups()).toHaveLength(before);
   });
 });
 
@@ -5671,6 +5864,26 @@ describe('agent profile', () => {
     fetchMock.mock.calls
       .filter(([url, init]) => url === `http://chat.test${path}` && init?.method === method)
       .map(([, init]) => JSON.parse((init as RequestInit).body as string) as unknown);
+  /** The sheet's details, each term with what it reads. */
+  const details = (sheet: HTMLElement) => [...sheet.querySelectorAll('dl > div')].map((row) => [row.querySelector('dt')?.textContent, row.querySelector('dd')?.textContent]);
+  const detail = (sheet: HTMLElement, term: string) => within(sheet).getByText(term, { selector: 'dt' }).nextElementSibling?.textContent;
+  /** The Edit form's line saying why Save can't yet. */
+  const why = (sheet: HTMLElement) => within(sheet).getByRole('status').textContent;
+  /** "Three updates only" (#3960): every minute from 3:02 PM New York on 6 October, for 3 runs. */
+  const COUNTED = {
+    ...MORNING_BRIEF,
+    title: 'US rates analysis: three minute-by-minute updates',
+    schedule: 'rate(1 minute)',
+    startDate: '2026-10-06T19:02:00.000Z',
+    nextRun: '2026-10-06T19:02:00.000Z',
+    maxRuns: 3,
+    runsMade: 0,
+  };
+  /** 1:00 AM New York on 6 October, before the counted task's first run. */
+  const beforeCountedRuns = () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime('2026-10-06T05:00:00Z');
+  };
 
   it('lists each scheduled task under how often it runs, with its time and what it asks', async () => {
     service.scheduled = [MORNING_BRIEF];
@@ -5742,7 +5955,7 @@ describe('agent profile', () => {
     await closeTask(sheet);
 
     const open = await openTask(present(later, 'the later task'));
-    expect(open.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Ends December 31, 2099 at 5:00 PM$/);
+    expect(detail(open, 'Ends')).toBe('Thu, Dec 31, 5:00 PM');
     expect(within(open).getByRole('button', { name: 'Pause' })).toBeEnabled();
   });
 
@@ -5765,16 +5978,216 @@ describe('agent profile', () => {
     expect(within(task).getByText('Ended')).toHaveClass('status-pill');
     const sheet = await openTask(task);
     expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
-    expect(sheet.querySelector('.scheduled-task-ends')).toBeNull();
+    // Its stop time reads as a time; Next run alone says Ended.
+    expect(detail(sheet, 'Ends')).toBe('Thu, Dec 31, 5:00 PM');
+    expect(within(sheet).getAllByText(/Ended/)).toHaveLength(1);
     expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
   });
 
+  // Its last run is unknown on a schedule the controls can't show.
   it('says in its sheet how many runs a task makes before it stops (#3950)', async () => {
-    service.scheduled = [{ ...MORNING_BRIEF, maxRuns: 1 }];
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(0 8 1 * ? *)', maxRuns: 1 }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
 
-    expect(sheet.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Stops after 1 run$/);
+    expect(detail(sheet, 'Ends')).toBe('After 1 run');
+  });
+
+  // The maintainer: "dont want to see "N", and 3 rounds or 3min? and start and end time why not set?"; and then
+  // preferred start and end times to a count of runs.
+  it('shows a counted every-minute task as Repeats, Starts and Ends at its last run, with no N anywhere (#3960)', async () => {
+    beforeCountedRuns();
+    service.scheduled = [COUNTED];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    // Its start is ahead, so Starts stands for its next run.
+    expect(details(sheet)).toEqual([
+      ['Repeats', 'Every minute'],
+      ['Starts', 'Tue, Oct 6, 3:02 PM'],
+      ['Ends', 'Tue, Oct 6, 3:04 PM'],
+    ]);
+    expect(sheet).not.toHaveTextContent(/\bN\b/);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Minutes');
+    expect(inSheet.getByLabelText('Every')).toHaveDisplayValue('1 minute');
+    // The sheet is named for what it does while the Title field shows the title.
+    expect(sheet).toHaveAccessibleName('Edit task');
+    // Starts, Ends and Model wait under More, shut until opened; no line under the rows while Save can.
+    expect(inSheet.queryByRole('status')).toBeNull();
+    for (const label of ['Starts', 'Ends', 'Model']) expect(inSheet.queryByLabelText(label)).toBeNull();
+    await userEvent.click(inSheet.getByRole('button', { name: 'More', expanded: false }));
+    expect(inSheet.getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'true');
+    // A rate's Starts is its date and time, in words as Ends reads.
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06T15:02');
+    expect(inSheet.getByText('Tue, Oct 6, 3:02 PM ET')).toBeInTheDocument();
+    // One Ends row, Never or a date and time: a counted task's is its last run.
+    expect(within(inSheet.getByLabelText('Ends')).getAllByRole('option').map((option) => option.textContent)).toEqual(['Never', 'On a date…']);
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Tue, Oct 6, 3:04 PM ET');
+    expect(inSheet.getByLabelText('End date')).toHaveValue('2026-10-06T15:04');
+    expect(inSheet.queryByLabelText('Runs')).toBeNull();
+    expect(inSheet.queryByLabelText('Time zone')).toBeNull();
+    expect(sheet).not.toHaveTextContent(/\bN\b/);
+    // Cancel, then Save, as Codex's footer.
+    expect(within(present(sheet.querySelector<HTMLElement>('.scheduled-edit-actions'), 'the actions')).getAllByRole('button').map((button) => button.textContent)).toEqual(['Cancel', 'Save']);
+
+    // Saved with only its title changed, it keeps its count: a stop time at its last tick may cut that run.
+    await userEvent.type(inSheet.getByLabelText('Title'), ' (US)');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: `${COUNTED.title} (US)`, prompt: 'Brief me on rates' }]);
+    expect(sheet).toHaveAccessibleName(`${COUNTED.title} (US)`);
+    expect(detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM');
+  });
+
+  it("counts a paused task's last run on from its start (#3960)", async () => {
+    beforeCountedRuns();
+    vi.setSystemTime('2026-10-06T19:02:30Z');
+    service.scheduled = [{ ...COUNTED, paused: true, runsMade: 1, nextRun: undefined }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    expect(detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM');
+  });
+
+  it('counts the last run on from the runs a task has made, from its next run once Starts has passed (#3960)', async () => {
+    beforeCountedRuns();
+    vi.setSystemTime('2026-10-06T19:02:30Z');
+    service.scheduled = [{ ...COUNTED, runsMade: 1, nextRun: '2026-10-06T19:03:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    // Its start has passed, so Next run stands in its place.
+    expect(details(sheet)).toEqual([
+      ['Repeats', 'Every minute'],
+      ['Next run', 'Tue, Oct 6, 3:03 PM'],
+      ['Ends', 'Tue, Oct 6, 3:04 PM'],
+    ]);
+
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'More' }));
+
+    expect(within(sheet).getByLabelText('End date')).toHaveValue('2026-10-06T15:04');
+  });
+
+  it.each([
+    ['Starts', '2026-10-07T09:30', '2026-10-07T09:30', { startDate: '2026-10-07T13:30:00.000Z' }],
+    ['Every', '5 minutes', '2026-10-06T15:07', { schedule: 'rate(5 minutes)', startDate: '2026-10-06T19:02:00.000Z' }],
+  ])('keeps only the remaining run when a counted task changes %s', async (label, value, ending, changes) => {
+    beforeCountedRuns();
+    vi.setSystemTime('2026-10-06T19:03:30Z');
+    service.scheduled = [{ ...COUNTED, runsMade: 2, nextRun: '2026-10-06T19:04:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    if (label === 'Every') await userEvent.selectOptions(inSheet.getByLabelText(label), value);
+    else fireEvent.change(inSheet.getByLabelText(label), { target: { value } });
+
+    expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: COUNTED.title, prompt: COUNTED.prompt, ...changes }]);
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    expect(inSheet.getByLabelText('End date')).toHaveValue(ending);
+  });
+
+  it('moves the first run from Starts, sent as its instant (#3960)', async () => {
+    beforeCountedRuns();
+    service.scheduled = [COUNTED];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    await userEvent.clear(inSheet.getByLabelText('Starts'));
+    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(why(sheet)).toBe('Starts needs a date and time');
+    await userEvent.type(inSheet.getByLabelText('Starts'), '2026-10-07T09:30');
+    expect(inSheet.queryByRole('status')).toBeNull();
+    // A counted task's End date follows its start.
+    expect(inSheet.getByLabelText('End date')).toHaveValue('2026-10-07T09:32');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    // It keeps its count, whose last run follows the new start.
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { title: COUNTED.title, prompt: 'Brief me on rates', startDate: '2026-10-07T13:30:00.000Z' },
+    ]);
+    expect(detail(sheet, 'Starts')).toBe('Wed, Oct 7, 9:30 AM');
+    expect(detail(sheet, 'Ends')).toBe('Wed, Oct 7, 9:32 AM');
+  });
+
+  // A rate counts its ticks from its start, else from its creation: a new schedule starts at the Starts the form showed.
+  it('starts a schedule changed to a rate at the Starts the form showed (#3960)', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'cron(0 9 * * ? *)', startDate: '2026-10-13T13:00:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    // A daily task's Starts is its date; Time gives the time of day.
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13');
+    expect(inSheet.getByLabelText('Time')).toHaveValue('09:00');
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Hours');
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-13T09:00');
+    await userEvent.selectOptions(inSheet.getByLabelText('Every'), '2 hours');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'rate(2 hours)', startDate: '2026-10-13T13:00:00.000Z' },
+    ]);
+  });
+
+  it('ends a task never or on a date and time, sending a stop time and no count of runs (#3960)', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, endDate: '2026-10-08T12:01:00.000Z' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
+    expect(inSheet.getByLabelText('End date')).toHaveValue('');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(detail(sheet, 'Ends')).toBe('Never');
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    // Where the browser can't open its picker when asked (Safari before 16.4), On a date… focuses the picker, which then
+    // takes the row's taps.
+    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
+    expect(inSheet.getByLabelText('End date')).toHaveFocus();
+    expect(inSheet.getByLabelText('End date').closest('.settings-row')).toHaveClass('settings-ends-direct');
+    // Elsewhere On a date… opens the native picker, and the row stays Never until it picks a date.
+    const showPicker = vi.fn();
+    Object.defineProperty(HTMLInputElement.prototype, 'showPicker', { configurable: true, value: showPicker });
+    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'On a date…');
+    Reflect.deleteProperty(HTMLInputElement.prototype, 'showPicker');
+    expect(showPicker.mock.contexts).toEqual([inSheet.getByLabelText('End date')]);
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
+    await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Tue, Jun 30, 6:00 PM ET');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+    expect(detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM');
+
+    await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    // Never, then the same date again, is the ending Edit opened with: Save leaves it alone.
+    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
+    await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
+    await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
+
+    expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
+      { ...fields, endDate: null },
+      { ...fields, endDate: '2099-06-30T22:00:00.000Z' },
+      fields,
+    ]);
   });
 
   it('says a task whose schedule the Chat Service cannot read runs next at an unknown time', async () => {
@@ -5804,10 +6217,12 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     // Read in the task's own time zone.
-    expect(inSheet.getByLabelText('Ends')).toHaveValue('2020-01-01T00:00');
-    await userEvent.clear(inSheet.getByLabelText('Ends'));
-    await userEvent.type(inSheet.getByLabelText('Ends'), '2099-06-30T18:00');
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Wed, Jan 1, 12:00 AM ET');
+    expect(inSheet.getByLabelText('End date')).toHaveValue('2020-01-01T00:00');
+    await userEvent.clear(inSheet.getByLabelText('End date'));
+    await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: 'Morning brief', prompt: 'Brief me on rates', endDate: '2099-06-30T22:00:00.000Z' }]);
@@ -5815,34 +6230,36 @@ describe('agent profile', () => {
     expect(inSheet.getByRole('button', { name: 'Resume' })).toBeEnabled();
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.click(inSheet.getByRole('button', { name: 'No stop time' }));
-    expect(inSheet.getByLabelText('Ends')).toHaveValue('');
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    await userEvent.selectOptions(inSheet.getByLabelText('Ends'), 'Never');
+    expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Never');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1').at(-1)).toEqual({ title: 'Morning brief', prompt: 'Brief me on rates', endDate: null });
-    expect(sheet.querySelector('.scheduled-task-ends')).toBeNull();
+    expect(detail(sheet, 'Ends')).toBe('Never');
   });
 
   it('makes a task run once, at a date and time, from the Edit form', async () => {
-    service.scheduled = [{ ...MORNING_BRIEF, endDate: '2099-12-31T22:00:00.000Z' }];
+    service.scheduled = [{ ...MORNING_BRIEF, startDate: '2099-01-01T13:00:00.000Z', endDate: '2099-12-31T22:00:00.000Z' }];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Once');
-    // A task that runs once has nothing to stop.
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Once');
+    // A task that runs once has nothing to end, and its Starts, its only run, is in the main card.
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.queryByLabelText('Ends')).toBeNull();
-    await userEvent.clear(inSheet.getByLabelText('Date'));
-    await userEvent.type(inSheet.getByLabelText('Date'), '2026-11-06');
-    await userEvent.clear(inSheet.getByLabelText('Time'));
-    await userEvent.type(inSheet.getByLabelText('Time'), '08:30');
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Once on November 6, 2026 at 8:30 AM · America\/New_York$/);
+    expect(inSheet.getAllByLabelText('Starts')).toHaveLength(1);
+    await userEvent.clear(inSheet.getByLabelText('Starts'));
+    await userEvent.type(inSheet.getByLabelText('Starts'), '2099-11-06T08:30');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
+    // Its schedule carries its time, so it sends no start.
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'at(2026-11-06T08:30:00)', endDate: null },
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'at(2099-11-06T08:30:00)', endDate: null, startDate: null },
     ]);
+    expect(details(sheet).slice(0, 2)).toEqual([['Repeats', 'Once'], ['Starts', 'Fri, Nov 6, 8:30 AM']]);
   });
 
   it("opens a task's sheet on a tap, saying what it asks and when it runs in words, or as written", async () => {
@@ -5861,16 +6278,12 @@ describe('agent profile', () => {
       const sheet = await openTask(task);
       expect(sheet.querySelector('.scheduled-task-prompt')).toHaveTextContent(/^Brief me on rates$/);
       expect(within(sheet).getByRole('button', { name: 'Pause' })).toBeEnabled();
-      words.push(sheet.querySelector('.scheduled-task-schedule')?.textContent);
+      words.push(detail(sheet, 'Repeats'));
       // eslint-disable-next-line no-await-in-loop -- one sheet open at a time
       await closeTask(sheet);
     }
 
-    expect(words).toEqual([
-      'At 8:00 AM, Monday through Friday · America/New_York',
-      'Every hour · America/New_York',
-      'cron(nonsense) · America/New_York',
-    ]);
+    expect(words).toEqual(['Weekdays at 8:00 AM', 'Every hour', 'cron(nonsense)']);
   });
 
   it('keeps a failed scheduled edit and saves the same draft on retry', async () => {
@@ -5969,7 +6382,7 @@ describe('agent profile', () => {
     const inSheet = within(sheet);
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    expect(inSheet.getByLabelText('Frequency')).toHaveDisplayValue('Weekly');
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Weekly');
     await userEvent.type(inSheet.getByLabelText('Title'), ' (FX)');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
@@ -5977,7 +6390,8 @@ describe('agent profile', () => {
   });
 
   // Changing a schedule meant writing an AWS expression such as cron(0 9 ? * MON-FRI *).
-  it('moves a weekday task to 10:00 in another time zone without an AWS expression', async () => {
+  it('moves a weekday task to 10:00 without an AWS expression', async () => {
+    beforeCountedRuns();
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const sheet = await openTask(await openScheduled());
@@ -5985,47 +6399,53 @@ describe('agent profile', () => {
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     expect(inSheet.queryByLabelText('Schedule')).toBeNull();
-    expect(inSheet.getByLabelText('Frequency')).toHaveDisplayValue('Weekdays');
+    expect(inSheet.getByLabelText('Repeats')).toHaveDisplayValue('Weekdays');
+    // The time of day sits by Repeats, in words, as Codex's Time.
     expect(inSheet.getByLabelText('Time')).toHaveValue('08:00');
-    expect(inSheet.getByLabelText('Time zone')).toHaveValue('America/New_York');
+    expect(inSheet.getByText('8:00 AM ET')).toBeInTheDocument();
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
+    // A task from before tasks kept their first run starts today; Starts picks its date and says its time as well.
+    expect(inSheet.getByLabelText('Starts')).toHaveValue('2026-10-06');
+    expect(inSheet.getByText('Tue, Oct 6, 8:00 AM ET')).toBeInTheDocument();
     await userEvent.clear(inSheet.getByLabelText('Time'));
     await userEvent.type(inSheet.getByLabelText('Time'), '10:00');
-    await userEvent.selectOptions(inSheet.getByLabelText('Time zone'), 'Europe/London');
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 10:00 AM, Monday through Friday · Europe\/London$/);
+    expect(inSheet.getByText('10:00 AM ET')).toBeInTheDocument();
+    expect(inSheet.getByText('Tue, Oct 6, 10:00 AM ET')).toBeInTheDocument();
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
+    // It keeps its time zone.
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 10 ? * MON-FRI *)', timezone: 'Europe/London' },
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 10 ? * MON-FRI *)', startDate: '2026-10-06T14:00:00.000Z' },
     ]);
-    expect(sheet.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^At 10:00 AM, Monday through Friday · Europe\/London$/);
+    expect(detail(sheet, 'Repeats')).toBe('Weekdays at 10:00 AM');
   });
 
-  it('runs a task every N minutes or hours, daily, or weekly on the days picked', async () => {
+  it('runs a task every so many minutes or hours, daily, or weekly on the days picked', async () => {
+    beforeCountedRuns();
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
-    const words = () => sheet.querySelector('.scheduled-task-schedule')?.textContent;
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
-    const options = within(inSheet.getByLabelText('Frequency')).getAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['Every N minutes', 'Every N hours', 'Daily', 'Weekdays', 'Weekly', 'Once']);
-
-    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Every N hours');
-    expect(inSheet.queryByLabelText('Time')).toBeNull();
-    await userEvent.clear(inSheet.getByLabelText('Every'));
-    await userEvent.type(inSheet.getByLabelText('Every'), '3');
-    expect(words()).toBe('Every 3 hours · America/New_York');
-    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Every N minutes');
-    expect(words()).toBe('Every 3 minutes · America/New_York');
-    await userEvent.clear(inSheet.getByLabelText('Every'));
-    expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(inSheet.getByText('No schedule yet: every minute needs a whole number from 1')).toBeInTheDocument();
-
-    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Daily');
+    const options = within(inSheet.getByLabelText('Repeats')).getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['Once', 'Minutes', 'Hours', 'Daily', 'Weekdays', 'Weekly']);
     expect(inSheet.queryByLabelText('Every')).toBeNull();
-    expect(words()).toBe('At 8:00 AM · America/New_York');
 
-    await userEvent.selectOptions(inSheet.getByLabelText('Frequency'), 'Weekly');
+    // Every is a menu, as Repeats is: a rate's usual counts with their unit.
+    const every = () => within(inSheet.getByLabelText('Every')).getAllByRole('option').map((option) => option.textContent);
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Hours');
+    expect(every()).toEqual(['1 hour', '2 hours', '3 hours', '6 hours', '12 hours']);
+    await userEvent.selectOptions(inSheet.getByLabelText('Every'), '3 hours');
+    // A count that isn't one of the unit's is sorted in among them.
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Minutes');
+    expect(inSheet.getByLabelText('Every')).toHaveDisplayValue('3 minutes');
+    expect(every()).toEqual(['1 minute', '3 minutes', '5 minutes', '10 minutes', '15 minutes', '30 minutes']);
+
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Daily');
+    expect(inSheet.queryByLabelText('Every')).toBeNull();
+    expect(inSheet.queryByRole('status')).toBeNull();
+
+    await userEvent.selectOptions(inSheet.getByLabelText('Repeats'), 'Weekly');
     const days = within(inSheet.getByRole('group', { name: 'Days' }));
     expect(days.getAllByRole('button').map((day) => [day.textContent, day.getAttribute('aria-pressed')])).toEqual([
       ['S', 'false'], ['M', 'true'], ['T', 'false'], ['W', 'false'], ['T', 'false'], ['F', 'false'], ['S', 'false'],
@@ -6034,13 +6454,13 @@ describe('agent profile', () => {
     await userEvent.click(days.getByRole('button', { name: 'Monday' }));
     await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
     expect(inSheet.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(inSheet.getByText('No schedule yet: a weekly task needs its days')).toBeInTheDocument();
+    expect(why(sheet)).toBe('No schedule yet: a weekly task needs its days');
     await userEvent.click(days.getByRole('button', { name: 'Thursday' }));
     await userEvent.click(days.getByRole('button', { name: 'Monday' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
 
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
-      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON,THU *)' },
+      { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON,THU *)', startDate: '2026-10-06T12:00:00.000Z' },
     ]);
     await closeTask(sheet);
     expect(within(openProfile()).getByRole('region', { name: 'Every Monday, Thursday' })).toHaveTextContent(/8:00 AM · Brief me on rates$/);
@@ -6053,12 +6473,9 @@ describe('agent profile', () => {
       await renderPage();
       const sheet = await openTask(await openScheduled());
       const inSheet = within(sheet);
-      const words = sheet.querySelector('.scheduled-task-schedule')?.textContent;
-
       await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
 
-      expect(inSheet.queryByLabelText('Frequency')).toBeNull();
-      expect(sheet.querySelector('.scheduled-task-schedule')?.textContent).toBe(words);
+      expect(inSheet.queryByLabelText('Repeats')).toBeNull();
       expect(inSheet.getByText('Ask Ada Bot to change it.')).toBeInTheDocument();
       await userEvent.clear(inSheet.getByLabelText('Prompt'));
       await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
@@ -6079,12 +6496,15 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(task));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toHaveValue('plan');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
 
     const fields = { title: 'Morning brief', prompt: 'Brief me on rates' };
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([fields, { ...fields, model: 'sonnet' }]);
@@ -6098,6 +6518,7 @@ describe('agent profile', () => {
     const inSheet = within(await openTask(await openScheduled()));
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
 
     const model = inSheet.getByLabelText('Model');
     expect(model).toHaveValue('retired');
@@ -6117,6 +6538,7 @@ describe('agent profile', () => {
     expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
     expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toBeDisabled();
     expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
@@ -6144,6 +6566,7 @@ describe('agent profile', () => {
     await panel.findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     const chooser = inSheet.getByLabelText('Model');
     expect(chooser).toBeEnabled();
     expect(chooser).toHaveValue(model ?? '');
@@ -6151,9 +6574,11 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')[0]).not.toHaveProperty('model');
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     expect(inSheet.getByLabelText('Model')).toHaveValue('sonnet');
     if (model !== 'sonnet') expect(sent('PATCH', '/scheduled-tasks/task-1')[1]).toHaveProperty('model', 'sonnet');
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
@@ -6172,6 +6597,7 @@ describe('agent profile', () => {
     await within(openProfile()).findByText(/Failed to load the models: 503/);
     const inSheet = within(await openTask(task));
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
+    await userEvent.click(inSheet.getByRole('button', { name: 'More' }));
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Sonnet');
     await userEvent.selectOptions(inSheet.getByLabelText('Model'), 'Account default (models unavailable)');
     expect(inSheet.getByLabelText('Model')).toHaveValue('');
@@ -8000,14 +8426,14 @@ describe('account reload responses', () => {
 describe('a proposed scheduled task', () => {
   const proposal = { title: 'Morning brief', prompt: 'Brief me on rates', frequency: 'weekdays', time: '08:00' };
   const task = { title: 'Morning brief', prompt: 'Brief me on rates', schedule: 'cron(0 8 ? * MON-FRI *)' };
-  const renderProposal = () =>
+  const renderProposal = (result: unknown = 'Proposed. Nothing is scheduled until the user confirms it in the chat.') =>
     render(
       present(copilot.renderTool, 'the tool renderer')({
         name: 'propose_scheduled_task',
         toolCallId: 'call-1',
         status: 'complete',
         parameters: proposal,
-        result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+        result,
       })
     );
   /** The Confirm button, once the card has checked the account's tasks for its proposal. */
@@ -8016,6 +8442,67 @@ describe('a proposed scheduled task', () => {
     await waitFor(() => expect(button).toBeEnabled());
     return button;
   };
+  /** The card's one line saying how its task would run. */
+  const words = (container: HTMLElement) => container.querySelector('.scheduled-task-schedule')?.textContent;
+
+  // 5:00 AM UTC on Tuesday 6 October, so the card's first runs are known.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime('2026-10-06T05:00:00Z');
+  });
+
+  it("inherits the proposing thread's model instead of the account default", async () => {
+    localStorage.setItem('botcube.picker-choice', JSON.stringify({ model: 'fast', account: 'acct-first' }));
+    await renderPage(auth({ accountId: 'acct-first' }));
+    expect(kit().properties).toMatchObject({ model: 'fast' });
+    const { container } = renderProposal(JSON.stringify({ model: 'fast' }));
+
+    await userEvent.click(await confirmButton(container));
+
+    const [, init] = present(
+      fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'),
+      'the confirmation'
+    );
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ model: 'fast' });
+  });
+
+  it('keeps the recorded proposal model after the picker changes and the card is restored', async () => {
+    localStorage.setItem('botcube.picker-choice', JSON.stringify({ model: 'fast', account: 'acct-first' }));
+    await renderPage(auth({ accountId: 'acct-first' }));
+    expect(kit().properties).toMatchObject({ model: 'fast' });
+    const recorded = JSON.stringify({ model: 'fast' });
+    const original = renderProposal(recorded);
+    original.unmount();
+    await userEvent.click(present(document.querySelector<HTMLElement>('.mep-pill'), 'the model picker'));
+    await userEvent.click(within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'the dropdown')).getByText('Deep'));
+    expect(kit().properties).toMatchObject({ model: 'deep' });
+    const { container } = renderProposal(recorded);
+    await userEvent.click(await confirmButton(container));
+    const [, init] = present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation');
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ model: 'fast' });
+  });
+
+  it.each(['Error invoking tool', '{}', '{"model":null}', '{"model":""}', undefined])('refuses confirmation with invalid model provenance %s', async (result) => {
+    await renderPage();
+    const { container } = render(present(copilot.renderTool, 'the tool renderer')({ name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: proposal, result }));
+    expect(container).toHaveTextContent('This proposal has no schedule:');
+    expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST')).toBe(false);
+  });
+
+  it('shows a missing-timezone tool refusal without offering Confirm', async () => {
+    await renderPage();
+    const refusal = "Error invoking tool 'propose_scheduled_task' with error:\n timezone: Field required";
+    const { container } = render(present(copilot.renderTool, 'the tool renderer')({
+      name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete',
+      parameters: proposal, result: refusal,
+    }));
+
+    expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
+    await userEvent.click(within(container).getByRole('button', { name: /Proposed a schedule/ }));
+    expect(container).toHaveTextContent("Error invoking tool 'propose_scheduled_task'");
+    expect(container).toHaveTextContent('timezone: Field required');
+  });
 
   it('stays scheduled after a reload once the account holds the task its proposal made', async () => {
     service.scheduled = [{ id: 'task-1', ...task, timezone: 'America/New_York', paused: false, proposalId: 'call-1' }];
@@ -8053,8 +8540,8 @@ describe('a proposed scheduled task', () => {
     const { container } = renderProposal();
     expect(container).toHaveTextContent('Morning brief');
     expect(container).toHaveTextContent('Brief me on rates');
-    // The words and time zone its task's sheet and Edit form will show.
-    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(`At 8:00 AM, Monday through Friday · ${zone}`);
+    // The words its task's Edit form will show.
+    expect(words(container)).toBe('Weekdays at 8:00 AM UTC');
 
     await userEvent.click(await confirmButton(container));
 
@@ -8073,24 +8560,58 @@ describe('a proposed scheduled task', () => {
   });
 
   it.each([
-    [{ frequency: 'minutes', every: 1 }, 'rate(1 minute)', 'Every minute'],
-    [{ frequency: 'hours', every: 2 }, 'rate(2 hours)', 'Every 2 hours'],
-    [{ frequency: 'daily', time: '18:30' }, 'cron(30 18 * * ? *)', 'At 6:30 PM'],
+    ['UTC', 'UTC', '2026-10-14T12:08:00.000Z', '2026-10-14T12:24:00.000Z'],
+    ['America/New_York', 'ET', '2026-10-14T16:08:00.000Z', '2026-10-14T16:24:00.000Z'],
+    ['Asia/Tokyo', 'GMT+9', '2026-10-14T03:08:00.000Z', '2026-10-14T03:24:00.000Z'],
+  ])('preserves explicit %s on the card and confirmed schedule', async (timezone, zone, startDate, endDate) => {
+    await renderPage();
+    const { container } = render(present(copilot.renderTool, 'the tool renderer')({
+      name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete',
+      parameters: { title: 'Hello', prompt: 'Say hello.', frequency: 'minutes', every: 5, timezone, starts: '2026-10-14T12:08', ends: '2026-10-14T12:24' },
+      result: JSON.stringify({ model: 'fast' }),
+    }));
+    expect(words(container)).toBe(`Every 5 minutes, starts Oct 14, 12:08 PM, ends Oct 14, 12:24 PM ${zone}`);
+
+    await userEvent.click(await confirmButton(container));
+
+    const [, init] = present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      title: 'Hello', prompt: 'Say hello.', schedule: 'rate(5 minutes)', timezone, model: 'fast', startDate, endDate, proposalId: 'call-1',
+    });
+    expect(container).toHaveTextContent('Scheduled. Manage it in the Scheduled tab.');
+  });
+
+  it('refuses an explicit invalid timezone even without start or end fields', async () => {
+    await renderPage();
+    const { container } = render(present(copilot.renderTool, 'the tool renderer')({
+      name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete',
+      parameters: { ...proposal, timezone: 'Mars/Olympus' }, result: 'Proposed.',
+    }));
+
+    expect(container).toHaveTextContent('This proposal has no schedule:');
+    expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
+  });
+
+  it.each([
+    // A rate first runs a period after it is confirmed.
+    [{ frequency: 'minutes', every: 1 }, 'rate(1 minute)', 'Every minute from 5:01 AM UTC'],
+    [{ frequency: 'hours', every: 2 }, 'rate(2 hours)', 'Every 2 hours from 7:00 AM UTC'],
+    [{ frequency: 'daily', time: '18:30' }, 'cron(30 18 * * ? *)', 'Daily at 6:30 PM UTC'],
     // The Harness takes an unused field sent as null.
-    [{ frequency: 'weekdays', time: '08:00', every: null, days: null }, 'cron(0 8 ? * MON-FRI *)', 'At 8:00 AM, Monday through Friday'],
-    [{ frequency: 'weekly', time: '07:05', days: ['THU', 'MON'] }, 'cron(5 7 ? * MON,THU *)', 'At 7:05 AM, only on Monday and Thursday'],
-    [{ frequency: 'once', date: '2026-11-06', time: '08:30' }, 'at(2026-11-06T08:30:00)', 'Once on November 6, 2026 at 8:30 AM'],
-    [{ frequency: 'daily', time: '18:30', date: null, ends: null }, 'cron(30 18 * * ? *)', 'At 6:30 PM'],
+    [{ frequency: 'weekdays', time: '08:00', every: null, days: null }, 'cron(0 8 ? * MON-FRI *)', 'Weekdays at 8:00 AM UTC'],
+    [{ frequency: 'weekly', time: '07:05', days: ['THU', 'MON'] }, 'cron(5 7 ? * MON,THU *)', 'Weekly on Mon, Thu at 7:05 AM UTC'],
+    [{ frequency: 'once', date: '2026-11-06', time: '08:30' }, 'at(2026-11-06T08:30:00)', 'Once on Nov 6, 8:30 AM UTC'],
+    [{ frequency: 'daily', time: '18:30', date: null, ends: null }, 'cron(30 18 * * ? *)', 'Daily at 6:30 PM UTC'],
     // A proposal made before proposals carried the Edit form's fields.
-    [{ schedule: 'cron(0 8 ? * MON-FRI *)' }, 'cron(0 8 ? * MON-FRI *)', 'At 8:00 AM, Monday through Friday'],
-  ])('schedules a proposal of %j as %s', async (fields, schedule, words) => {
+    [{ schedule: 'cron(0 8 ? * MON-FRI *)' }, 'cron(0 8 ? * MON-FRI *)', 'Weekdays at 8:00 AM UTC'],
+  ])('schedules a proposal of %j as %s', async (fields, schedule, summary) => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
       })
     );
-    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(new RegExp(`^${words} · `));
+    expect(words(container)).toBe(summary);
 
     await userEvent.click(await confirmButton(container));
 
@@ -8109,11 +8630,12 @@ describe('a proposed scheduled task', () => {
     [{ frequency: 'daily', time: '08:00', every: 1 }, 'every is not allowed for daily'],
     [{ frequency: 'daily', time: '08:00', date: '2026-11-06' }, 'date is not allowed for daily'],
     [{ frequency: 'once', date: '2026-11-06', time: '08:00', ends: '2026-12-31T17:00' }, 'ends is not allowed for once'],
+    [{ frequency: 'once', date: '2026-11-06', time: '08:00', starts: '2026-12-31T17:00' }, 'starts is not allowed for once'],
   ])('says why a proposal of %j makes no schedule, and offers no Confirm', async (fields, why) => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Error',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
       })
     );
 
@@ -8126,31 +8648,74 @@ describe('a proposed scheduled task', () => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, ends: '2026-12-31T17:00' }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, ends: '2026-12-31T17:00' }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
       })
     );
 
-    expect(container.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Ends December 31, 2026 at 5:00 PM$/);
+    expect(words(container)).toBe('Weekdays at 8:00 AM, ends Dec 31, 5:00 PM UTC');
     await userEvent.click(await confirmButton(container));
 
     expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
       .toEqual({ ...task, timezone: 'UTC', endDate: '2026-12-31T17:00:00.000Z', proposalId: 'call-1' });
   });
 
-  // "Three updates only" is a count of runs: the card says it, and the task retires itself after them (#3950).
-  it('says how many runs a proposed task makes, and schedules it to stop after them', async () => {
+  it('carries a proposed future start through confirmation in the browser timezone', async () => {
+    await renderPage();
+    const { container } = render(present(copilot.renderTool, 'the tool renderer')({
+      name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete',
+      parameters: { ...proposal, starts: '2099-12-01T09:30', ends: '2099-12-31T17:00' }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+    }));
+    expect(words(container)).toBe('Weekdays at 8:00 AM, starts Dec 1, 2099, 9:30 AM, ends Dec 31, 2099, 5:00 PM UTC');
+    await userEvent.click(await confirmButton(container));
+    expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
+      .toEqual({ ...task, timezone: 'UTC', startDate: '2099-12-01T09:30:00.000Z', endDate: '2099-12-31T17:00:00.000Z', proposalId: 'call-1' });
+  });
+
+  it('refuses confirmation of an obsolete counted proposal without sending a request', async () => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3 }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3 }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
       })
     );
 
-    expect(container.querySelector('.scheduled-task-ends')).toHaveTextContent(/^Stops after 3 runs$/);
+    // Tuesday's, Wednesday's and Thursday's runs.
+    expect(words(container)).toBe('Weekdays at 8:00 AM, ends Oct 8, 8:00 AM UTC');
     await userEvent.click(await confirmButton(container));
 
-    expect(JSON.parse(present(fetchMock.mock.calls.find(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST'), 'the confirmation')[1]?.body as string))
-      .toEqual({ ...task, timezone: 'UTC', maxRuns: 3, proposalId: 'call-1' });
+    expect(container).toHaveTextContent('This proposal uses a run count. Ask the agent for start and end times.');
+    expect(fetchMock.mock.calls.some(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST')).toBe(false);
+  });
+
+  it.each([
+    [{ frequency: 'daily', time: '08:00' }, 'Daily at 8:00 AM, 1000000000 runs UTC'],
+    [{ schedule: 'rate(1 day)', ends: '2026-10-07T12:00' }, 'Every day, ends Oct 7, 12:00 PM UTC, up to 1000000000 runs'],
+  ])('renders a large counted proposal with fields %j', async (fields, expected) => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', ...fields, count: 1_000_000_000 }, result: 'Proposed.',
+      })
+    );
+    expect(words(container)).toBe(expected);
+    expect(await confirmButton(container)).toBeEnabled();
+  });
+
+  it.each([
+    ['2026-10-06T07:00', 'Weekdays at 8:00 AM, ends 7:00 AM UTC'],
+    ['2026-10-07T12:00', 'Weekdays at 8:00 AM, ends Oct 7, 12:00 PM UTC'],
+    ['2026-10-09T12:00', 'Weekdays at 8:00 AM, ends Oct 8, 8:00 AM UTC'],
+  ])('shows the earlier ending when a proposal has a count and stop time %s', async (ends, expected) => {
+    await renderPage();
+    const { container } = render(
+      present(copilot.renderTool, 'the tool renderer')({
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { ...proposal, count: 3, ends }, result: 'Proposed.',
+      })
+    );
+    expect(words(container)).toBe(expected);
+    await userEvent.click(await confirmButton(container));
+    expect(container).toHaveTextContent('This proposal uses a run count. Ask the agent for start and end times.');
+    expect(fetchMock.mock.calls.some(([url, sent]) => url === 'http://chat.test/scheduled-tasks' && sent?.method === 'POST')).toBe(false);
   });
 
   // A one-off task leaves the account once it has run, so its card must not offer to schedule it again.
@@ -8158,12 +8723,12 @@ describe('a proposed scheduled task', () => {
     await renderPage();
     const { container } = render(
       present(copilot.renderTool, 'the tool renderer')({
-        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', frequency: 'once', date: '2020-01-02', time: '08:30' }, result: 'Proposed.',
+        name: 'propose_scheduled_task', toolCallId: 'call-1', status: 'complete', parameters: { title: 'Brief', prompt: 'Brief me', frequency: 'once', date: '2020-01-02', time: '08:30' }, result: 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
       })
     );
 
     expect(await within(container).findByText('Its time has passed.')).toBeInTheDocument();
-    expect(container.querySelector('.scheduled-task-schedule')).toHaveTextContent(/^Once on January 2, 2020 at 8:30 AM · /);
+    expect(words(container)).toBe('Once on Jan 2, 2020, 8:30 AM UTC');
     expect(within(container).queryByRole('button', { name: 'Confirm' })).toBeNull();
   });
 
@@ -8702,21 +9267,61 @@ describe('attaching files', () => {
     expect(picker.value).toBe('');
   };
 
-  it("shows the + that opens CopilotKit's add menu at Add photos & files, a multi-file picker", async () => {
+  it.each(['click', 'Enter'])('sends an uploaded image without filler text using %s', async (method) => {
+    await renderPage();
+    await attach('screenshot.png');
+    await act(async () => uploads[0]?.resolve('/screenshot.png'));
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    expect(input).toHaveValue('');
+    if (method === 'click') await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    else await userEvent.type(input, '{Enter}');
+    expect(agent().messages.at(-1)?.content).toBe('\n\nAttached files:\n- /screenshot.png');
+    expect(chips()).toEqual([]);
+  });
+
+  it.each([
+    { name: 'Add photos', icon: 'svg.lucide-paperclip', accept: 'image/*' },
+    { name: 'Add files', icon: 'svg.lucide-file-plus-corner', accept: '' },
+  ])('shows the + whose menu has Add photos and Add files; $name opens a multi-file picker for $accept', async ({ name, icon, accept }) => {
     await renderPage();
     const add = screen.getByRole('button', { name: 'Add photos & files' });
     const picker = present(document.querySelector<HTMLInputElement>('input[type="file"]'), 'the file picker');
-    const opened = vi.spyOn(picker, 'click');
+    picker.accept = 'stale';
+    let opensFor: string | undefined;
+    const opened = vi.spyOn(picker, 'click').mockImplementation(() => {
+      opensFor = picker.accept;
+    });
 
     await userEvent.click(add);
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Add photos', 'Add files']);
+    const item = within(menu).getByRole('menuitem', { name });
+    expect(item.querySelector(icon)).not.toBeNull();
+    await userEvent.click(item);
 
     expect(add).toHaveAttribute('data-testid', 'copilot-add-menu-button');
+    // CopilotKit's slash menu names its add command by this label.
     expect(copilot.chat?.labels).toMatchObject({ chatInputToolbarAddButtonLabel: 'Add photos & files' });
     expect(picker.multiple).toBe(true);
     expect(opened).toHaveBeenCalledOnce();
+    expect(opensFor).toBe(accept);
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+  });
+
+  it('closes the + menu on Escape, back on the +', async () => {
+    await renderPage();
+    const add = screen.getByRole('button', { name: 'Add photos & files' });
+
+    await userEvent.click(add);
+    await screen.findByRole('menu');
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    expect(add).toHaveFocus();
   });
 
   it('holds the message while a file uploads or has failed, then sends it naming the files by their paths', async () => {
+    copilot.rows = true;
     await renderPage();
     await attach('report.csv', 'notes.md');
     expect(chips()).toEqual(['report.csvUploading… 0%', 'notes.mdUploading… 0%']);
@@ -8742,6 +9347,20 @@ describe('attaching files', () => {
       { id: 'submitted', role: 'user', content: 'Summarise these\n\nAttached files:\n- /report.csv\n- /notes (1).md' },
     ]);
     expect(chips()).toEqual([]);
+    const sent = present(document.querySelector('.copilotKitUserMessage'), 'the sent message');
+    expect([...sent.querySelectorAll('.sent-file')].map((card) => card.textContent)).toEqual(['report.csvCSV', 'notes (1).mdMD']);
+    expect(sent.querySelector('[class*="cpk:prose"]')).toHaveTextContent(/^Summarise these$/);
+  });
+
+  it("shows a reloaded message's files as cards, and the bubble only what the user typed", async () => {
+    copilot.rows = true;
+    service.mainChat = { id: 'main-1', messages: [{ id: 'u1', role: 'user', content: 'check this\n\nAttached files:\n- /AI_Trends_2026.pdf' }] };
+    await renderPage();
+
+    const sent = present(document.querySelector<HTMLElement>('.copilotKitUserMessage'), 'the reloaded message');
+    expect(within(sent).getByRole('list', { name: 'Attached files' })).toHaveTextContent(/^AI_Trends_2026\.pdfPDF$/);
+    expect(sent.querySelector('[class*="cpk:prose"]')).toHaveTextContent(/^check this$/);
+    expect(sent).not.toHaveTextContent('Attached files:');
   });
 
   it('clears uploaded chips when a follow-up queues, keeping their paths in that queued message only', async () => {
@@ -8751,12 +9370,16 @@ describe('attaching files', () => {
     await act(async () => uploads[0]?.resolve('/report.csv'));
     await sendMessage('Summarise this');
 
-    expect(screen.getByRole('status', { name: 'Queued message' })).toHaveTextContent('/report.csv');
+    const queuedMessage = () => screen.getByRole('status', { name: 'Queued message' });
+    expect(within(queuedMessage()).getByRole('list', { name: 'Attached files' })).toHaveTextContent(/^report\.csvCSV$/);
+    expect(queuedMessage().querySelector('.chat-queued-bubble')).toHaveTextContent(/^Summarise this$/);
     expect(chips()).toEqual([]);
     await sendMessage('Then explain');
-    expect(screen.getByRole('status', { name: 'Queued message' })).toHaveTextContent('Then explain');
+    // A follow-up joins the held one's text; its files stay one block at the end, still shown as cards.
+    expect(queuedMessage().querySelector('.chat-queued-bubble')?.textContent).toBe('Summarise this\n\nThen explain');
+    expect(within(queuedMessage()).getByRole('list', { name: 'Attached files' })).toHaveTextContent(/^report\.csvCSV$/);
     const stored = localStorage.getItem('botcube.queued-follow-ups:acct-first');
-    expect(stored && JSON.parse(stored)['main-1']).toBe('Summarise this\n\nAttached files:\n- /report.csv\n\nThen explain');
+    expect(stored && JSON.parse(stored)['main-1']).toBe('Summarise this\n\nThen explain\n\nAttached files:\n- /report.csv');
   });
 
   it('keeps uploaded chips for an offline send, then clears them when Retry sends their paths', async () => {

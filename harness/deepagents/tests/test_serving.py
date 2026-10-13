@@ -49,6 +49,7 @@ from agentcore_fake import (
     MEMORY_ID,
     FakeAgentCoreMemory,
     FakeSts,
+    another_microvm,
     fresh_warm_sessions,
     install_tagged_memory,
     turn_identity,
@@ -606,17 +607,69 @@ def test_a_guest_gets_the_generic_prompt_and_no_memory_tool(service: _Service) -
 
 
 def test_the_agent_proposes_a_scheduled_task_for_the_user_to_confirm(service: _Service) -> None:
-    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'frequency': 'weekdays', 'time': '08:00'}
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'timezone': 'UTC', 'frequency': 'weekdays', 'time': '08:00'}
 
-    events = service.turn(f'propose: {json.dumps(proposal)}')
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='sonnet-4.6')
 
     [call] = [event for event in events if event['type'] == 'TOOL_CALL_START']
     assert call['toolCallName'] == 'propose_scheduled_task'
-    assert _tool_output(events) == 'Proposed. Nothing is scheduled until the user confirms it in the chat.'
+    assert json.loads(_tool_output(events)) == {
+        'model': 'sonnet-4.6',
+        'proposal': proposal,
+        'message': 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+    }
     assert 'one Side Chat' in service.recorder.descriptions[0]['propose_scheduled_task']
     assert 'fresh chat' not in service.recorder.descriptions[0]['propose_scheduled_task']
     assert 'without when or how often it runs' in serving.propose_scheduled_task.args['prompt']['description']
-    assert 'How many runs' in serving.propose_scheduled_task.args['count']['description']
+    assert 'count' not in serving.propose_scheduled_task.args
+    assert 'When a recurring task starts' in serving.propose_scheduled_task.args['starts']['description']
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'America/New_York', 'Asia/Tokyo'])
+def test_a_schedule_preserves_its_explicit_timezone_and_returns_accepted_fields(service: _Service, timezone: str) -> None:
+    proposal = {
+        'title': 'Say hello', 'prompt': 'Say hello.', 'frequency': 'minutes', 'every': 5,
+        'timezone': timezone, 'starts': '2026-10-14T12:08', 'ends': '2026-10-14T12:24',
+    }
+
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='sonnet-4.6')
+
+    result = json.loads(_tool_output(events))
+    assert result == {
+        'model': 'sonnet-4.6',
+        'proposal': proposal,
+        'message': 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+    }
+    assert _said(events) == f'Tool said: {_tool_output(events)}'
+
+
+@pytest.mark.parametrize('timezone', [None, 'Mars/Olympus'])
+def test_a_schedule_without_a_known_timezone_is_refused(service: _Service, timezone: str | None) -> None:
+    proposal = {'title': 'Hello', 'prompt': 'Say hello.', 'frequency': 'minutes', 'every': 5}
+    if timezone is not None:
+        proposal['timezone'] = timezone
+
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='sonnet-4.6')
+
+    assert "Error invoking tool 'propose_scheduled_task'" in _said(events)
+    assert 'timezone: ' in _said(events)
+
+
+def test_a_proposal_records_its_turn_model_key_for_confirmation_after_a_model_switch(service: _Service) -> None:
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'timezone': 'UTC', 'frequency': 'weekdays', 'time': '08:00'}
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='opus-4.6')
+    expected = {
+        'model': 'opus-4.6',
+        'proposal': proposal,
+        'message': 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+    }
+    assert json.loads(_tool_output(events)) == expected
+
+    service.turn('hello', model='sonnet-4.6')
+    session_api._GRAPH = None
+    messages = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    [result] = [message['content'] for message in messages if message['role'] == 'tool']
+    assert json.loads(result) == expected
 
 
 def test_a_scheduled_run_whose_prompt_says_every_minute_makes_no_proposal(service: _Service) -> None:
@@ -634,15 +687,19 @@ def test_a_scheduled_run_whose_prompt_says_every_minute_makes_no_proposal(servic
     [
         {'frequency': 'once', 'date': '2026-11-06', 'time': '08:30'},
         {'frequency': 'weekdays', 'time': '08:00', 'ends': '2026-12-31T17:00'},
-        {'frequency': 'minutes', 'every': 1, 'count': 3},
+        {'frequency': 'minutes', 'every': 1, 'starts': '2026-11-06T08:00', 'ends': '2026-11-06T09:00'},
     ],
 )
 def test_the_agent_proposes_a_one_off_task_or_a_stop_time(service: _Service, fields: dict[str, Any]) -> None:
-    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', **fields}
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'timezone': 'UTC', **fields}
 
-    events = service.turn(f'propose: {json.dumps(proposal)}')
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='sonnet-4.6')
 
-    assert _tool_output(events) == 'Proposed. Nothing is scheduled until the user confirms it in the chat.'
+    assert json.loads(_tool_output(events)) == {
+        'model': 'sonnet-4.6',
+        'proposal': proposal,
+        'message': 'Proposed. Nothing is scheduled until the user confirms it in the chat.',
+    }
 
 
 @pytest.mark.parametrize(
@@ -659,13 +716,17 @@ def test_the_agent_proposes_a_one_off_task_or_a_stop_time(service: _Service, fie
         ({'frequency': 'daily', 'time': '08:00', 'ends': 'Friday'}, 'ends'),
         ({'frequency': 'once', 'time': '08:00', 'date': '2026-11-06', 'ends': '2026-12-31T17:00'}, 'ends'),
         ({'frequency': 'minutes', 'every': 1, 'count': 0}, 'count'),
+        ({'frequency': 'minutes', 'every': 1, 'count': 3}, 'count'),
+        ({'frequency': 'minutes', 'every': 1, 'starts': '2026-02-30T08:00'}, 'starts'),
+        ({'frequency': 'minutes', 'every': 1, 'starts': '2026-11-06T10:00', 'ends': '2026-11-06T09:00'}, 'starts'),
+        ({'frequency': 'once', 'time': '08:00', 'date': '2026-11-06', 'starts': '2026-11-06T07:00'}, 'starts'),
         ({'frequency': 'once', 'time': '08:00', 'date': '2026-11-06', 'count': 3}, 'count'),
     ],
 )
 def test_the_agent_is_told_why_a_schedule_it_proposed_cannot_be_shown(service: _Service, fields: dict[str, Any], why: str) -> None:
-    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', **fields}
+    proposal = {'title': 'Morning brief', 'prompt': 'Brief me on rates', 'timezone': 'UTC', **fields}
 
-    events = service.turn(f'propose: {json.dumps(proposal)}')
+    events = service.turn(f'propose: {json.dumps(proposal)}', model='sonnet-4.6')
 
     # The tool's refusal reaches the agent, which says what it was told.
     said = _said(events)
@@ -1167,11 +1228,8 @@ def test_a_file_put_in_files_reaches_the_agent(service: _Service, files_bucket: 
     assert not any(service.home.rglob('secret.txt'))
 
 
-def test_warm_turns_read_unchanged_files_without_downloading_them_again_issue_3701(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
+def _recorded_downloads(files_bucket: Any, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The keys the Harness downloads from Files, in order."""
     monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
     downloads: list[str] = []
     download = files_bucket.get_object
@@ -1181,12 +1239,102 @@ def test_warm_turns_read_unchanged_files_without_downloading_them_again_issue_37
         return download(**kwargs)
 
     monkeypatch.setattr(files_bucket, 'get_object', record_download)
+    return downloads
+
+
+def test_warm_turns_read_unchanged_files_without_downloading_them_again_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
+    downloads = _recorded_downloads(files_bucket, monkeypatch)
     for _ in range(2):
         events = service.turn('read: /plan.txt', files=_files())
         assert events[-1]['type'] == 'RUN_FINISHED'
         assert 'from Files' in _tool_output(events)
         assert (service.home / 'plan.txt').read_bytes() == b'from Files'
     assert downloads.count(key) == 1
+
+
+def test_a_warmup_pulls_files_so_the_turns_first_tool_downloads_nothing_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = f'{FILES_PREFIX}plan.txt'
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
+    downloads = _recorded_downloads(files_bucket, monkeypatch)
+
+    warmup = service.turn('', warmup=True, files=_files())
+
+    assert warmup[-1]['value']['outcome'] == 'prepared'
+    assert (service.home / 'plan.txt').read_bytes() == b'from Files'
+    assert downloads == [key]
+    events = service.turn('read: /plan.txt', files=_files())
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert 'from Files' in _tool_output(events)
+    assert downloads == [key]
+
+
+def test_a_warmup_whose_files_pull_fails_reports_it_failed_issue_3701(service: _Service, files_bucket: Any) -> None:
+    record = service.home / files_sync.RECORD_PATH
+    record.parent.mkdir(parents=True)
+    record.write_text('not json')
+
+    warmup = service.turn('', warmup=True, files=_files())
+
+    assert warmup[-1]['value']['outcome'] == 'failed'
+    assert warmup[-1]['value']['error']['code'] == 'FILES_SYNC_RECORD'
+
+
+def test_a_warmup_whose_files_pull_fails_first_stops_its_history_read_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
+
+    def files_down(**kwargs: Any) -> Any:
+        raise ConnectionError('Files unreachable')
+
+    monkeypatch.setattr(files_bucket, 'list_objects_v2', files_down)
+    stopped: list[bool] = []
+
+    async def slow_history(*args: Any) -> None:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            stopped.append(True)
+            raise
+        stopped.append(False)
+
+    monkeypatch.setattr(serving, 'latest_checkpoint', slow_history)
+
+    warmup = service.turn('', warmup=True, files=_files())
+
+    assert warmup[-1]['value']['outcome'] == 'failed'
+    assert 'Files unreachable' in warmup[-1]['value']['error']['message']
+    assert stopped == [True]
+
+
+def test_a_turn_after_a_warmup_whose_files_listing_failed_pulls_its_files_issue_3701(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'from Files')
+    downloads = _recorded_downloads(files_bucket, monkeypatch)
+    listing = files_bucket.list_objects_v2
+    outages = [ConnectionError('Files unreachable')]
+
+    def listing_once_down(**kwargs: Any) -> Any:
+        if outages:
+            raise outages.pop()
+        return listing(**kwargs)
+
+    monkeypatch.setattr(files_bucket, 'list_objects_v2', listing_once_down)
+
+    warmup = service.turn('', warmup=True, files=_files())
+    events = service.turn('read: /plan.txt', files=_files())
+
+    assert warmup[-1]['value']['outcome'] == 'failed'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert 'from Files' in _tool_output(events)
+    assert downloads == [f'{FILES_PREFIX}plan.txt']
 
 
 def test_a_files_replacement_between_listing_and_download_cannot_poison_the_next_turn_issue_3701(
@@ -1924,16 +2072,16 @@ def test_named_warmup_requires_a_turn_identity_and_reads_original_history(
         'runId': 'named-warmup', 'sessionId': 'original-logical-session', 'outcome': 'prepared',
     }}]
     assert service.recorder.prompts == prompts
-    # Memory loads on the Session's first Turn, never at warmup.
-    assert all(operation not in {'create_event', 'delete_event', 'list_memory_records'}
-               for operation, _ in operations)
-    session_reads = [params for operation, params in operations if operation == 'list_events']
-    assert session_reads
-    assert all(read['actorId'] == 'original-filing' for read in session_reads)
+    # The warmup writes nothing, but makes the opening Memory read, so the Turn finds the client's connections open.
+    assert all(operation not in {'create_event', 'delete_event'} for operation, _ in operations)
+    assert sorted(params['namespace'] for operation, params in operations if operation == 'list_memory_records') == [
+        '/actors/current-owner/facts/', '/actors/current-owner/preferences/']
     # The snapshot checkpointer's writes-session prefix for the Session.
     writes = 'lgw-a3df2202f27feb0d3080068e6084400e-'
-    assert all(read['sessionId'] == 'original-logical-session' or read['sessionId'].startswith(writes)
-               for read in session_reads)
+    session_reads = [params for operation, params in operations if operation == 'list_events' and (
+        params['sessionId'] == 'original-logical-session' or params['sessionId'].startswith(writes))]
+    assert session_reads
+    assert all(read['actorId'] == 'original-filing' for read in session_reads)
 
 
 def test_on_agentcore_the_turn_credential_exchange_overlaps_the_agent_build(
@@ -1993,6 +2141,39 @@ def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
     assert earlier[-1]['code'] == 'TURN_STOPPED'
     assert later[-1]['type'] == 'RUN_FINISHED'
     assert service.recorder.heard == [['later']]
+
+
+def test_on_agentcore_an_older_turns_late_worker_leaves_memory_signing_as_the_newer_turn(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory import agentcore
+
+    preparing, release = threading.Event(), threading.Event()
+    turn_memory = agentcore.turn_memory
+    exchanges: list[str] = []
+
+    def exchange(*args: Any, **kwargs: Any) -> Any:
+        exchanges.append(kwargs['run_id'])
+        # The guest Turn's worker thread starts its exchange only after the claimed owner's has finished.
+        if len(exchanges) == 1:
+            preparing.set()
+            assert release.wait(5), 'The guest Turn was never released'
+        return turn_memory(*args, **kwargs)
+
+    monkeypatch.setattr(agentcore, 'turn_memory', exchange)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        guest = pool.submit(service.turn, 'as guest', actor='guest-1', user='guest-1', memory=True)
+        try:
+            assert preparing.wait(5), 'The guest Turn never began preparing'
+            claimed = service.turn('as owner', actor='user-1', user='guest-1', memory=True)
+        finally:
+            release.set()
+        guest.result(timeout=10)
+
+    assert claimed[-1]['type'] == 'RUN_FINISHED'
+    assert agentcore._MEMORY is not None
+    signing = agentcore._MEMORY[0].get_frozen_credentials().access_key
+    assert agentcore_memory.sts.issued[str(signing)]['actorId'] == 'user-1'
 
 
 def test_on_agentcore_a_failed_credential_exchange_fails_the_turn_after_the_build_settles(
@@ -2063,16 +2244,53 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     service.fed()
     agentcore_memory.latency = MEMORY_ROUND_TRIP
     calls.clear()
-    started = time.perf_counter()
 
     events = service.turn('second question', **member)
 
     assert _said(events) == 'Echo: second question'
     assert service.recorder.heard[-1] == ['first question', 'second question']
     # The newest checkpoint's key without payloads, read alongside its pending writes; checkpoint writes run behind.
-    assert sorted(before_model) == [('list_events', 'lgw-', True), ('list_events', 'thre', False)]
-    # Three reads of the Session, three ListEvents each, took nine round trips.
-    assert (reached[-1] - started) / MEMORY_ROUND_TRIP < 2
+    # The Memory block reads alongside them too, though the Session keeps its block.
+    session_reads = sorted(read for read in before_model if read[1] in ('lgw-', 'thre'))
+    assert session_reads == [('list_events', 'lgw-', True), ('list_events', 'thre', False)]
+    # Three reads of the Session, three ListEvents each, took nine round trips. Count the round trips the
+    # model waited for one after another, not the wall time, which a busy CI host stretches: the Turn
+    # identity's exchange for credentials, then every Memory read at once.
+    waited, depth = _waited_for(agentcore_memory, reached[-1])
+    assert (waited[0], sorted(waited[1:]), depth) == (
+        'assume_role_with_web_identity', ['list_events'] * 8 + ['list_memory_records'] * 2, 2)
+
+
+def test_on_agentcore_a_new_sessions_turn_reaches_its_model_after_two_serial_round_trips_issue_4012(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached: list[float] = []
+    stream = _ScriptedModel._stream
+
+    def first_model_call(self: _ScriptedModel, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        reached.append(time.perf_counter())
+        agentcore_memory.latency = 0
+        return stream(self, *args, **kwargs)
+
+    monkeypatch.setattr(_ScriptedModel, '_stream', first_model_call)
+    agentcore_memory.latency = MEMORY_ROUND_TRIP
+
+    events = service.turn('first question', actor='actor-1', user='actor-1', memory=True)
+
+    assert _said(events) == 'Echo: first question'
+    # The Turn identity's exchange for credentials, then every Memory read at once.
+    waited, depth = _waited_for(agentcore_memory, reached[0])
+    assert (waited[0], sorted(waited[1:]), depth) == (
+        'assume_role_with_web_identity', ['list_events'] * 7 + ['list_memory_records'] * 2, 2)
+
+
+def _waited_for(memory: FakeAgentCoreMemory, reached: float) -> tuple[list[str], int]:
+    """The round trips done before the model was reached, by start, and how many of them ran one after another."""
+    waited = sorted((start, end, operation) for operation, start, end in memory.round_trips if end <= reached)
+    depths: list[int] = []
+    for start, _, _ in waited:
+        depths.append(1 + max((depth for (_, end, _), depth in zip(waited, depths, strict=False) if end <= start), default=0))
+    return [operation for _, _, operation in waited], max(depths, default=0)
 
 
 @pytest.mark.parametrize('identity', [
@@ -2136,6 +2354,7 @@ def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _S
     member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
 
     saved = service.turn('remember: prefers copper', thread='thread-a', **member)
+    another_microvm()
     service.turn('hello', thread='thread-b', **member)
 
     assert _tool_output(saved) == RECORD_REPLY
@@ -2229,6 +2448,7 @@ def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the
     _memory_operation('memory-delete', recordId=COPPER)
     service.turn('hello again', thread='thread-a', **member)
     continued = service.recorder.prompts[-1]
+    another_microvm()
     service.turn('hello', thread='thread-b', **member)
 
     assert document == {
@@ -2296,6 +2516,7 @@ def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_l
     _memory_operation('memory-edit', recordId=PARIS, text='Lives in London')
     _memory_operation('memory-delete', recordId=COPPER)
     document = _memory_operation('memory')
+    another_microvm()
     service.turn('hello', thread='thread-b', **member)
 
     assert document == {
@@ -2638,6 +2859,8 @@ def test_same_session_id_isolates_each_filing_user(
         user="filing-a",
         thread="shared-session",
     )
+    # Each filing user's Session is its own sandbox, on its own microVM.
+    another_microvm()
     second = service.turn(
         "synthetic B question",
         actor="owner-b",
@@ -2646,6 +2869,7 @@ def test_same_session_id_isolates_each_filing_user(
     )
     assert first[-1]["type"] == second[-1]["type"] == "RUN_FINISHED"
     assert service.recorder.heard[-1] == ["synthetic B question"]
+    another_microvm()
     service.turn(
         "synthetic A next", actor="owner-a", user="filing-a", thread="shared-session"
     )
@@ -2662,6 +2886,7 @@ def test_same_session_id_isolates_each_filing_user(
         serving._AGENT_BACKENDS.clear()
         serving._BACKEND_BY_AGENT.clear()
         serving._CHECKPOINTER = serving._build_checkpointer()
+        another_microvm()
         cold = service.turn(
             "synthetic B cold",
             actor="owner-b",
@@ -2956,3 +3181,11 @@ def test_cached_warmup_skips_history_for_startup_and_leaves_live_token_unchanged
     assert all(all(config['configurable'][key] == value for key, value in expected.items()) for config in reads)
     assert backend._env['TOKEN'] == 'live'
     assert len(service.recorder.builds) == builds
+
+
+def test_a_recorded_warmup_with_local_memory_prepares(service: _Service) -> None:
+    service.turn('hello', memory=True)
+
+    events = service.turn('hello', memory=True, warmup=True, preparationScope='recorded')
+
+    assert events[-1]['value']['outcome'] == 'prepared'

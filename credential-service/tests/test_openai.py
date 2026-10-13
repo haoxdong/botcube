@@ -440,6 +440,22 @@ def test_a_streaming_response_is_relayed_through_as_openai_sent_it(vault: Dynamo
     assert call.headers['content-type'] == 'application/json'
 
 
+def test_openai_routes_each_sessions_responses_to_its_cache_by_session_id_issue_3980(vault: DynamoDbCredentialVault) -> None:
+    _stored(vault)
+    openai = FakeOpenAI()
+    body = b'{"model":"gpt-6-astra","input":[],"stream":true,"store":false}'
+
+    _client(vault, openai).post(
+        '/openai/v1/responses', content=body,
+        headers={**_bound_turn('openai', 'gpt-6-astra', session_id='thread-7'), 'content-type': 'application/json'},
+    )
+    _client(vault, openai).get('/openai/v1/models', headers=_turn())
+
+    responses, models = openai.api_calls()
+    assert responses.headers['session-id'] == 'thread-7'
+    assert 'session-id' not in models.headers
+
+
 def test_openai_sees_the_access_token_and_none_of_the_invocation(vault: DynamoDbCredentialVault) -> None:
     _stored(vault)
     openai = FakeOpenAI()

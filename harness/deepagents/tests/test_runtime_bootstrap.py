@@ -40,6 +40,8 @@ def test_first_plan_model_needs_no_sdk_resource_imports_after_runtime_is_ready()
                 model = build_model(model='openai-plan:gpt-6-astra', relay=lambda: relay)
                 assert model.model_name == 'gpt-6-astra'
                 assert model.streaming is True
+                # The first request reaches the SDK's Responses resource.
+                assert model.root_async_client.responses is not None
                 model.root_client.close()
                 asyncio.run(model.root_async_client.close())
                 print('plan model ready without late SDK resources')

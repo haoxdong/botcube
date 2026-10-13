@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import threading
+import time
 from typing import Any
 
 import pytest
 
 from agentcore_fake import fresh_warm_sessions, turn_identity
 from botcube_harness_deepagents import serving, session_memory
+from botcube_harness_deepagents.memory import agentcore as agentcore_memory_backend
 from test_serving import (
     _memory_block,
     _memory_record,
@@ -61,6 +66,31 @@ def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl
     assert _memory_block(service.recorder.prompts[-1]) == (
         'semantic facts:\n- Trades copper futures\n- Lives in Paris'
     )
+
+
+def test_the_turn_reads_its_memory_block_alongside_its_history_issue_3986(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
+    opening, latest_checkpoint = agentcore_memory_backend.opening, serving.latest_checkpoint
+    started, reads = threading.Event(), []
+
+    def read_memory(store: Any, actor_id: str) -> str:
+        reads.append(actor_id)
+        started.set()
+        return opening(store, actor_id)
+
+    async def read_history(*args: Any) -> Any:
+        # Read one after the other, the history would wait here for a Memory read that never starts.
+        assert await asyncio.to_thread(started.wait, 5)
+        return await latest_checkpoint(*args)
+
+    monkeypatch.setattr(agentcore_memory_backend, 'opening', read_memory)
+    monkeypatch.setattr(serving, 'latest_checkpoint', read_history)
+    assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    assert reads == ['actor-1']
 
 
 @pytest.mark.parametrize('scope', ['startup', 'recorded', None])
@@ -144,7 +174,7 @@ def test_warmup_without_a_turn_identity_or_during_session_work_does_not_read_mem
 
 
 def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     now = 1000.0
     monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
@@ -167,6 +197,40 @@ def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
     agentcore_memory.records.append(_memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('retry', **member)[-1]['type'] == 'RUN_FINISHED'
     assert 'Lives in Paris' in _memory_block(service.recorder.prompts[-1])
+    # The failed read was the Turn's own: it failed the Turn, so nothing logs it as unused.
+    assert [record for record in caplog.records if record.name == session_memory.__name__] == []
+
+
+def test_a_failed_memory_read_the_turn_never_used_is_logged_not_raised_issue_3986(
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    now = 1000.0
+    monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
+    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
+    assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
+    now = 1200.0
+    list_events = agentcore_memory.list_events
+
+    def throttled(**params: Any) -> dict[str, Any]:
+        if params['sessionId'].startswith('pending-memory-'):
+            raise RuntimeError('Memory throttled')
+        return list_events(**params)
+
+    monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
+    caplog.set_level(logging.WARNING, logger=session_memory.__name__)
+    # Inside the prompt-cache window the Turn keeps its block, so the read it started alongside its history goes unused.
+    assert service.turn('hello again', **member)[-1]['type'] == 'RUN_FINISHED'
+    assert _memory_block(service.recorder.prompts[-1]) == 'semantic facts:\n- Trades copper futures'
+    deadline = time.monotonic() + 5
+    def unused() -> list[dict[str, Any]]:
+        return [json.loads(record.message) for record in caplog.records if record.name == session_memory.__name__]
+
+    while not unused() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert unused() == [
+        {'event': 'harness_unused_memory_read_failed', 'runId': 'run-1', 'errorClass': 'RuntimeError'},
+    ]
 
 
 def _ack(run_id: str, outcome: str, **error: str) -> dict[str, Any]:

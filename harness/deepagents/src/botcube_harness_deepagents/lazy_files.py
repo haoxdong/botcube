@@ -14,6 +14,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from . import turn_timing
 from .files_sync import FilesSync
 
 _WORKSPACE_TOOLS = frozenset({'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'execute'})
@@ -49,7 +50,8 @@ class TurnFiles:
             pull = self._pull
         if owner:
             try:
-                self._files.pull(self._root, self._excluded)
+                with turn_timing.phase('files_pull'):
+                    self._files.pull(self._root, self._excluded)
             except BaseException as error:
                 pull.set_exception(error)
                 raise

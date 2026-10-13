@@ -10,6 +10,7 @@ import hmac
 import json
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -74,6 +75,16 @@ class FakeAgentCoreMemory:
         self.sessions: dict[str, list[str]] = defaultdict(list)
         # Seconds each call under Turn credentials takes, as a round trip to AgentCore does.
         self.latency = 0.0
+        # Memory clients the Harness built under Turn credentials.
+        self.clients = 0
+        # Each such call's operation and (start, end) on the perf_counter clock, STS's exchange among them.
+        self.round_trips: list[tuple[str, float, float]] = []
+
+    def round_trip(self, operation: str) -> None:
+        if latency := self.latency:
+            start = time.perf_counter()
+            time.sleep(latency)
+            self.round_trips.append((operation, start, time.perf_counter()))
 
     def lag_listing(self) -> None:
         """ListMemoryRecords keeps listing the records as they are now, until it catches up."""
@@ -247,7 +258,9 @@ def _sts_error(code: str, message: str) -> ClientError:
 class FakeSts:
     """STS AssumeRoleWithWebIdentity: checks the JWT and issues credentials carrying its session tags."""
 
-    def __init__(self) -> None:
+    def __init__(self, memory: FakeAgentCoreMemory | None = None) -> None:
+        # Whose latency each exchange takes, as a round trip to STS does.
+        self.memory = memory
         self.calls: list[dict[str, Any]] = []
         self.regions: list[str | None] = []
         # Each issued access key's session tags.
@@ -260,6 +273,8 @@ class FakeSts:
         assert shape is not None
         validate_parameters(params, shape)
         self.calls.append(params)
+        if self.memory is not None:
+            self.memory.round_trip('assume_role_with_web_identity')
         assert params['RoleArn'] == USER_MEMORY_ROLE_ARN, params['RoleArn']
         header, claims, signature = [*params['WebIdentityToken'].split('.'), '', '', ''][:3]
         expected = _b64(hmac.digest(_SIGNING_KEY, f'{header}.{claims}'.encode(), 'sha256'))
@@ -291,15 +306,21 @@ _RECORDS_BY_ID = ('get_memory_record', 'delete_memory_record')
 class TaggedMemoryClient:
     """bedrock-agentcore under credentials whose tags the Memory role's policy evaluates, as IAM does (ADR 0067 §8).
 
-    Each allowed call is recorded in `calls`, as (operation, params).
+    Each call is evaluated under the credentials it is signed with now, and each allowed call is
+    recorded in `calls`, as (operation, params).
     """
 
     exceptions = EXCEPTIONS
 
-    def __init__(self, memory: FakeAgentCoreMemory, tags: dict[str, str], calls: list[tuple[str, dict[str, Any]]]) -> None:
+    def __init__(self, memory: FakeAgentCoreMemory, tags: Callable[[], dict[str, str]],
+                 calls: list[tuple[str, dict[str, Any]]]) -> None:
         self.memory = memory
-        self.tags = tags
+        self._tags = tags
         self.calls = calls
+
+    @property
+    def tags(self) -> dict[str, str]:
+        return self._tags()
 
     def _allowed(self, operation: str, params: dict[str, Any]) -> bool:
         tags = self.tags
@@ -318,7 +339,7 @@ class TaggedMemoryClient:
             if not self._allowed(operation, params):
                 raise _denied(operation, params)
             self.calls.append((operation, params))
-            time.sleep(self.memory.latency)
+            self.memory.round_trip(operation)
             return call(**params)
 
         return scoped
@@ -330,7 +351,7 @@ class TaggedMemoryClient:
             if not self._allowed(operation, params):
                 raise _denied(operation, params)
             self.calls.append((operation, params))
-            time.sleep(self.memory.latency)
+            self.memory.round_trip(operation)
             return paginator.paginate(**params)
 
         return SimpleNamespace(paginate=paginate)
@@ -339,12 +360,12 @@ class TaggedMemoryClient:
 def install_tagged_memory(monkeypatch: Any, memory: FakeAgentCoreMemory) -> FakeSts:
     """Serve STS and AgentCore Memory from `boto3.client`.
 
-    A Memory client built with STS credentials gets their tags' scope and records its calls
-    in `sts.memory_calls`; one built without is the session API under its own role.
+    The Harness's Memory client takes the scope of the Turn credentials it signs each call with and
+    records its calls in `sts.memory_calls`; `boto3.client` serves the session API under its own role.
     """
     from botcube_harness_deepagents.memory import agentcore
 
-    sts = FakeSts()
+    sts = FakeSts(memory)
     real_client = boto3.client
 
     def client(service_name: str, **options: Any) -> Any:
@@ -352,13 +373,26 @@ def install_tagged_memory(monkeypatch: Any, memory: FakeAgentCoreMemory) -> Fake
             sts.regions.append(options.get('region_name'))
             return sts
         if service_name == 'bedrock-agentcore':
-            key = options.get('aws_access_key_id')
-            return memory if key is None else TaggedMemoryClient(memory, sts.issued[key], sts.memory_calls)
+            return memory
         return cast(Any, real_client)(service_name, **options)
 
+    def signed(credentials: Any, like: Any) -> TaggedMemoryClient:
+        memory.clients += 1
+        return TaggedMemoryClient(memory, lambda: sts.issued[credentials.get_frozen_credentials().access_key], sts.memory_calls)
+
     monkeypatch.setattr(boto3, 'client', client)
+    # A new process: its Memory client is built on its first Turn.
+    monkeypatch.setattr(agentcore, '_MEMORY', None)
+    monkeypatch.setattr(agentcore, '_memory_client', signed)
     monkeypatch.setattr(agentcore, 'USER_MEMORY_ROLE_ARN', USER_MEMORY_ROLE_ARN)
     return sts
+
+
+def another_microvm() -> None:
+    """Another Session sandbox's microVM: AgentCore runs each in its own, whose first Turn builds its Memory client."""
+    from botcube_harness_deepagents.memory import agentcore
+
+    agentcore._MEMORY = None
 
 
 def fresh_warm_sessions(monkeypatch: Any) -> None:

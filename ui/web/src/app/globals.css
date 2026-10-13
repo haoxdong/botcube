@@ -34,6 +34,8 @@ body {
   --color-danger: #dc2626;
   --color-danger-soft: #fef2f2;
   --color-black: #000;
+  --color-file-pdf: #e5484d;
+  --color-file-sheet: #10a37f;
 
   /* The agent's colours for its Soul and Memory cards, a cartridge `theme` hook (DESIGN.md); by default a neutral grey. */
   --agent-soul-from: var(--color-text-muted);
@@ -77,6 +79,7 @@ body {
   --shadow-subtle: 0 1px 6px rgba(0,0,0,0.08);
   --shadow-elevated: 0 4px 20px rgba(0,0,0,0.15);
   --shadow-composer: 0 8px 36px rgba(0,0,0,0.11);
+  --shadow-popover: 0 8px 16px rgba(0,0,0,0.08), 0 0 1px rgba(0,0,0,0.62);
   --shadow-soft: 0 0 40px rgba(0,0,0,0.23);
 
   --transition-fast: 0.1s;
@@ -182,32 +185,58 @@ body {
   grid-column: 3 !important;
 }
 
-/* A plain grey + in a 44px target, with a round hover, like the phone sidebar's plus. */
+/* A plain grey 20px + in a 44px target, with a round hover, like the phone sidebar's plus (AddMenu). */
 .copilotKitInput [data-testid="copilot-add-menu-button"] {
-  width: 44px !important;
-  height: 44px !important;
-  min-width: 44px !important;
-  min-height: 44px !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: none !important;
-  border-radius: 50% !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  color: var(--color-text-muted) !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
 }
 
 .copilotKitInput [data-testid="copilot-add-menu-button"]:hover {
-  background: var(--color-surface-hover) !important;
+  background: var(--color-surface-hover);
 }
 
-.copilotKitInput [data-testid="copilot-add-menu-button"] svg {
-  width: 20px !important;
-  height: 20px !important;
+/* The +'s menu, ChatGPT's (DESIGN.md's Composer): a white popover 8px over the composer's left edge,
+   6px around 44px items, each a 20px line icon 6px from its `body` label. */
+.add-menu-positioner {
+  z-index: 50;
 }
 
-/* A desktop's text on ChatGPT Mac's 20px line: its 40px box fits the controls' 44px row, which the grid's 8px padding
-   and the box's 1px border make the composer's 62px. A phone's keeps CopilotKit's `leading-relaxed`. */
+.add-menu {
+  min-width: 220px;
+  padding: 6px;
+  border-radius: var(--radius-xl);
+  background: var(--color-white);
+  box-shadow: var(--shadow-popover);
+  outline: none;
+}
+
+.add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--font-body);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.add-menu-item[data-highlighted] {
+  background: var(--color-surface-hover);
+}
+
+/* A desktop's and tablet's text on ChatGPT Mac's 20px line. A phone's keeps CopilotKit's `leading-relaxed`. */
 @media (min-width: 641px) {
   .copilotKitInput textarea {
     line-height: 20px;
@@ -516,7 +545,7 @@ body {
   padding: 0 !important;
 }
 
-.copilotKitUserMessage > div:first-child {
+.copilotKitUserMessage > div:first-of-type {
   background-color: var(--color-text) !important;
   color: var(--color-white) !important;
   border-radius: var(--radius-2xl) !important;
@@ -526,6 +555,101 @@ body {
   max-width: 80%;
   /* A long URL or token breaks inside the bubble rather than running past it. */
   overflow-wrap: anywhere;
+}
+
+/* A sent message's files, a white card each above its bubble, as ChatGPT's (#3963). */
+.sent-files {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 80%;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.sent-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 8px 16px 8px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-white);
+}
+
+/* A file's kind tile, the same on a composer chip and a sent card. */
+.file-tile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-lg);
+  background: var(--color-text-muted);
+  color: var(--color-white);
+}
+
+.file-tile[data-kind="pdf"] {
+  background: var(--color-file-pdf);
+}
+
+.file-tile[data-kind="sheet"] {
+  background: var(--color-file-sheet);
+}
+
+.file-tile svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sent-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sent-file-name {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sent-file-kind {
+  color: var(--color-text-muted);
+  font-size: var(--font-meta);
+}
+
+/* A sent image that could not load, named with why in its thumbnail's place. */
+.sent-file-error {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-danger);
+  font-size: var(--font-meta);
+}
+
+/* An image's square thumbnail, in the composer and once sent, as ChatGPT's. */
+.image-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-hover);
+}
+
+.image-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 /* A follow-up held until the running Turn ends: the user's bubble, faded, with when it goes and a Cancel (#3920). */
@@ -585,7 +709,7 @@ body {
 /* A desktop's messages run at ChatGPT Mac's `leading-relaxed`. The Worklog's notes keep the line they had, as their
    words and steps keep their own. */
 @media (min-width: 641px) {
-  .copilotKitUserMessage > div:first-child,
+  .copilotKitUserMessage > div:first-of-type,
   .copilotKitAssistantMessage,
   .copilotKitAssistantMessage [class*="cpk:prose"] {
     line-height: 1.625 !important;
@@ -703,30 +827,8 @@ div.copilotKitInput {
   width: min(240px, 75%);
   padding: 6px 4px 6px 6px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--color-white);
-}
-
-.composer-file-icon {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--color-surface-hover);
-  color: var(--color-text-muted);
-}
-
-.composer-file-icon svg {
-  width: 20px;
-  height: 20px;
-}
-
-.composer-file[data-status="failed"] .composer-file-icon {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
 }
 
 .composer-file-text {
@@ -771,12 +873,11 @@ div.copilotKitInput {
 }
 
 .composer-file-error {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--color-danger);
   font-size: var(--font-detail);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .composer-file-retry {
@@ -815,6 +916,99 @@ div.copilotKitInput {
   height: 16px;
 }
 
+/* An uploading image dims under a ring of its progress; a failed one, under a red-ringed Retry. */
+.composer-image-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.composer-image-overlay > svg {
+  width: 24px;
+  height: 24px;
+}
+
+.composer-image-overlay circle {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 2.5;
+}
+
+.composer-image-overlay circle + circle {
+  stroke: var(--color-white);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset var(--transition-layout);
+}
+
+.composer-image-retry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2.5px solid var(--color-danger);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-white);
+  cursor: pointer;
+}
+
+.composer-image-retry svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.composer-image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: var(--color-white);
+  cursor: pointer;
+}
+
+.composer-image-remove svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+/* Why each image failed to upload, under the chips, at most two lines each; the image keeps no text on it. */
+.composer-file-failures {
+  order: -1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 6px 10px 0;
+}
+
+.composer-file-failures > p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--color-danger);
+  font-size: var(--font-meta);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 /* Phones: Remove and Retry are a finger's 44px target; the chip keeps its look. */
 @media (max-width: 767px) {
   .composer-file-remove {
@@ -827,6 +1021,22 @@ div.copilotKitInput {
   .composer-file-retry {
     min-height: 44px;
     margin: -12px 0;
+  }
+
+  /* Remove grows only up and right, off the image, so it never covers Retry; painted after Retry, it keeps its own circle. */
+  .composer-image-remove::before,
+  .composer-image-retry::before {
+    position: absolute;
+    inset: -12px;
+    content: "";
+  }
+
+  .composer-image-remove::before {
+    inset: -12px -12px 0 0;
+  }
+
+  .composer-image-retry {
+    position: relative;
   }
 }
 
@@ -883,6 +1093,63 @@ div.copilotKitInput {
   .copilotKitInput [data-testid="copilot-send-button"]:not(:disabled) {
     border: 6px solid transparent !important;
     background-clip: padding-box !important;
+  }
+}
+
+/* A desktop's composer is ChatGPT's one 52px row: 36px controls inside the grid's 7px padding and the
+   box's 1px border, the + 9px and Send 11px inside its outer edges, the text 12px right of the +. */
+@media (min-width: 768px) {
+  .copilotKitInput > [data-layout] {
+    padding: 7px 10px 7px 8px !important;
+    column-gap: 12px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(2) {
+    min-height: 36px !important;
+  }
+
+  .copilotKitInput textarea {
+    padding: 8px 0 !important;
+  }
+
+  .copilotKitInput [data-testid="copilot-add-menu-button"] {
+    width: 36px;
+    height: 36px;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) button {
+    min-width: 36px !important;
+    min-height: 36px !important;
+  }
+
+  .copilotKitInput [data-testid="copilot-send-button"] {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) > div:has(> [data-testid="copilot-send-button"]) {
+    margin-right: 0 !important;
+  }
+
+  /* Text that takes two lines (CopilotKit's `expanded`) goes across the top, as ChatGPT's does, its left edge on the
+     +'s glyph, over the row of the +, the picker and Send. */
+  .copilotKitInput > [data-layout="expanded"] {
+    grid-template-rows: auto 36px !important;
+  }
+
+  .copilotKitInput > [data-layout="expanded"]:has([data-testid="copilot-add-menu-button"]) > :nth-child(2),
+  .copilotKitInput > [data-layout="expanded"] > :nth-child(2) {
+    grid-column: 1 / -1 !important;
+  }
+
+  .copilotKitInput > [data-layout="expanded"]:has([data-testid="copilot-add-menu-button"]) > :first-child,
+  .copilotKitInput > [data-layout="expanded"] > :nth-child(3) {
+    grid-row: 2 !important;
+  }
+
+  /* Its 8px above and below as on one line, so CopilotKit's height for it stands when the layout changes. */
+  .copilotKitInput > [data-layout="expanded"] textarea {
+    padding: 8px !important;
   }
 }
 
@@ -3835,9 +4102,19 @@ button.worklog-step-head:hover {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 16px;
   font-size: var(--font-detail);
   line-height: 1.4;
+}
+
+/* The Edit form, after Codex's Schedule a task: Title and the instructions, the schedule's card, More, why Save can't,
+   then Cancel and Save at the right; 16px between them. */
+.scheduled-edit {
+  align-items: stretch;
+}
+
+.scheduled-edit > p {
+  margin: 0;
 }
 
 .scheduled-sheet-body .scheduled-task-prompt {
@@ -3846,29 +4123,198 @@ button.worklog-step-head:hover {
   overflow-wrap: anywhere;
 }
 
-/* Next run and Last run: a muted term beside its value, the last run's status pill after its time. */
-.scheduled-sheet-runs {
-  display: grid;
-  grid-template-columns: auto 1fr;
+/* Settings rows (DESIGN.md), measured from Codex's Schedule a task: a `white` `radius-xl` card with a `border` edge,
+   its rows 48px tall with 20px sides, the label in `text` at the left and the value `text-muted` at the right, split
+   by hairlines inset 16px. */
+.settings-group {
+  align-self: stretch;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  font-size: var(--font-body);
+  background: var(--color-white);
+}
+
+.settings-row {
+  position: relative;
+  display: flex;
   align-items: center;
-  gap: 6px 12px;
-  margin: 6px 0 0;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 20px;
+  color: var(--color-text);
 }
 
-.scheduled-sheet-runs > div {
-  display: contents;
+.settings-row + .settings-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 1px solid var(--color-border);
 }
 
-.scheduled-sheet-runs dt {
-  color: var(--color-text-muted);
+.settings-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-block: 12px;
 }
 
-.scheduled-sheet-runs dd {
+.settings-row dt {
+  flex: none;
+}
+
+.settings-row dd {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
   margin: 0;
+  text-align: right;
+  color: var(--color-text-muted);
+}
+
+/* A row's value, choice or date at the right, bare and muted; a choice ends in a 16px chevron. */
+.settings-select {
+  position: relative;
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+
+.settings-select select {
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  font: inherit;
+  font-size: var(--font-body);
+  text-align: right;
+  text-align-last: right;
+  color: var(--color-text-muted);
+  background: none;
+  cursor: pointer;
+}
+
+.settings-select select {
+  padding-right: 22px;
+  appearance: none;
+}
+
+.settings-select svg {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+
+/* A date and time in words, as Codex's Time reads; the native picker lies unseen over the whole row to take the tap. */
+.settings-when .settings-select > span {
+  padding-right: 22px;
+  text-align: right;
+}
+
+.settings-when input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: var(--font-body);
+  opacity: 0;
+  appearance: none;
+  cursor: pointer;
+}
+
+.settings-when input:disabled {
+  cursor: default;
+}
+
+.settings-when:has(input:focus-visible) {
+  outline: auto;
+  outline-offset: -2px;
+}
+
+/* Ends' picker lies unseen under the row, where On a date… opens it; the menu takes the tap. */
+.settings-ends input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Where On a date… can't open the picker, the picker takes the row's taps, so the next tap opens it. */
+.settings-ends-direct input {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Title and the instructions: Codex's box, `radius-xl` with a `border` edge; the instructions 120px tall. */
+.settings-text {
+  padding: 14px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  font: inherit;
+  font-size: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-white);
+}
+
+textarea.settings-text {
+  min-height: 120px;
+  padding: 18px;
+  resize: vertical;
+}
+
+.settings-text::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Advanced, shut until opened: `text-muted` with its chevron, its cards 12px apart under it. */
+.settings-disclosure {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  font-size: var(--font-body);
+  color: var(--color-text-muted);
+  background: none;
+  cursor: pointer;
+}
+
+.settings-disclosure:hover {
+  color: var(--color-text);
+}
+
+.settings-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Cancel then Save, pills at the right 12px apart, at least Codex's 36px tall. */
+.scheduled-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.scheduled-edit-actions .button {
+  min-height: max(36px, var(--button-height));
+  padding: 0 16px;
 }
 
 /* Open chat, Pause or Resume, Edit and Delete, one under another across the sheet. */
@@ -3876,15 +4322,6 @@ button.worklog-step-head:hover {
   display: grid;
   gap: 8px;
   align-self: stretch;
-  margin-top: 10px;
-}
-
-.scheduled-sheet-edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  align-self: stretch;
-  margin-top: 6px;
 }
 
 /* A proposal card, and a scheduled run's card in the Main Chat. */
@@ -3979,13 +4416,8 @@ button.worklog-step-head:hover {
   font-weight: var(--weight-semibold);
 }
 
-.scheduled-task-schedule,
-.scheduled-task-ends {
+.scheduled-task-schedule {
   color: var(--color-text-muted);
-}
-
-.scheduled-task-zone {
-  white-space: nowrap;
 }
 
 .scheduled-task-heading {
@@ -4006,35 +4438,6 @@ button.worklog-step-head:hover {
 
 .scheduled-task-paused .scheduled-task-title {
   color: var(--color-text-muted);
-}
-
-.scheduled-task-field {
-  align-self: stretch;
-  gap: 2px;
-  color: inherit;
-}
-
-/* The Edit form's Frequency, beside its N or its time. */
-.scheduled-task-row {
-  display: flex;
-  gap: 8px;
-  align-self: stretch;
-}
-
-.scheduled-task-row > .scheduled-task-field {
-  flex: 1;
-  min-width: 0;
-}
-
-/* No stop time sits beside Ends, level with its input. */
-.scheduled-task-row > .scheduled-task-clear {
-  flex: none;
-  align-self: flex-end;
-}
-
-/* A time input stands a few pixels taller than a select; side by side, both fill the row. */
-.scheduled-task-row :is(input, select) {
-  flex: 1;
 }
 
 /* Weekly's days, Sunday first as EventBridge numbers them: a 36px circle each, filled `text` while picked. */
@@ -4292,6 +4695,10 @@ button.worklog-step-head:hover {
 
   .agent-profile-tab,
   .mep-pill {
+    min-height: 44px;
+  }
+
+  .settings-disclosure {
     min-height: 44px;
   }
 }

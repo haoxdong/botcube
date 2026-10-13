@@ -55,6 +55,12 @@ export async function renameFile(from: string, to: string, options: ChatServiceO
   );
 }
 
+class UploadHttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 /** A presigned URL that uploads `name` as a new file; the Chat Service refuses a name Files already holds. */
 async function newUploadUrl(name: string, signal: AbortSignal, { chatServiceUrl, fetchImpl = fetch }: ChatServiceOptions): Promise<string> {
   const response = await fetchImpl(new URL('/files/upload-url', chatServiceUrl).toString(), {
@@ -64,7 +70,7 @@ async function newUploadUrl(name: string, signal: AbortSignal, { chatServiceUrl,
     credentials: 'include',
     signal,
   });
-  if (!response.ok) throw new Error(await failureDetail(response, 'Upload failed'));
+  if (!response.ok) throw new UploadHttpError(response.status, await failureDetail(response, 'Upload failed'));
   return ((await response.json()) as { url: string }).url;
 }
 
@@ -82,7 +88,7 @@ function putFile(url: string, file: File, { onProgress, signal }: UploadOptions)
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
     };
-    request.onload = () => (request.status >= 200 && request.status < 300 ? resolve() : reject(new Error(`Upload failed: ${request.status}`)));
+    request.onload = () => (request.status >= 200 && request.status < 300 ? resolve() : reject(new UploadHttpError(request.status, `Upload failed: ${request.status}`)));
     request.onerror = () => reject(new Error('Upload failed: network error'));
     request.onabort = () => reject(new DOMException('Upload aborted', 'AbortError'));
     signal.addEventListener('abort', () => request.abort(), { once: true });
@@ -107,16 +113,45 @@ export async function withUploadsSettled<T>(change: () => Promise<T>): Promise<T
   }
 }
 
+function uploadCopyName(name: string, copy: number): string {
+  const dot = name.lastIndexOf('.');
+  const extension = [...(dot > 0 ? name.slice(dot) : '')];
+  const stem = [...(dot > 0 ? name.slice(0, dot) : name)];
+  const encoder = new TextEncoder();
+  while (extension.length > 0 && encoder.encode(`${stem[0] ?? ''} (${copy})${extension.join('')}`).length > 255) extension.pop();
+  const suffix = ` (${copy})${extension.join('')}`;
+  while (stem.length > 1 && encoder.encode(`${stem.join('')}${suffix}`).length > 255) stem.pop();
+  return `${stem.join('')}${suffix}`;
+}
+
+async function uploadAvailableFile(file: File, options: UploadOptions, service: ChatServiceOptions, copy = 1): Promise<string> {
+  options.signal.throwIfAborted();
+  const name = copy === 1 ? file.name : uploadCopyName(file.name, copy);
+  let url: string;
+  try {
+    url = await newUploadUrl(name, options.signal, service);
+  } catch (error) {
+    if (error instanceof UploadHttpError && error.status === 409 && error.message === `A file named ${name} is already in Files`) {
+      return uploadAvailableFile(file, options, service, copy + 1);
+    }
+    throw error;
+  }
+  options.signal.throwIfAborted();
+  try {
+    await putFile(url, file, options);
+  } catch (error) {
+    if (error instanceof UploadHttpError && error.status === 412) return uploadAvailableFile(file, options, service, copy + 1);
+    throw error;
+  }
+  return `/${name}`;
+}
+
 export async function uploadFile(file: File, options: UploadOptions, service: ChatServiceOptions): Promise<string> {
   if (changingAccount) return Promise.reject(new Error('Uploads are paused while your account changes. Retry after sign-in.'));
   const epoch = attachmentAccountEpoch();
   const pending = navigator.locks.request(FILE_ACCOUNT_LOCK, { mode: 'shared' }, async () => {
     if (epoch !== attachmentAccountEpoch()) throw new Error('Your account changed while this upload waited. Attach the file again.');
-    options.signal.throwIfAborted();
-    const url = await newUploadUrl(file.name, options.signal, service);
-    options.signal.throwIfAborted();
-    await putFile(url, file, options);
-    return `/${file.name}`;
+    return uploadAvailableFile(file, options, service);
   }).then((path) => path).finally(() => pendingUploads.delete(pending));
   pendingUploads.add(pending);
   return pending;
