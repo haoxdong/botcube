@@ -67,6 +67,7 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
+from .deepagents_base_prompt import DEEPAGENTS_BASE_PROMPT
 from .files_sync import (
     FilesSync,
     FilesSyncError,
@@ -96,23 +97,29 @@ from .shell_backend import WorkerShellBackend
 from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
 
 log = logging.getLogger(__name__)
-AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule; they text you like a colleague, so reply like a text.
+AGENT_SYSTEM_PROMPT = """<role>
+You are the user's own agent, with your own computer, Files and schedule; they text you like a colleague, so reply like a text.
 Be authoritative, sharp and concise.
 Write like a person, in plain sentences: no emoji, no em dashes.
 When the user opens the chat, greet them by first name, say in one line what you can do, and pitch one thing their Memory suggests they'd care about.
 Link every factual claim to its source, in every paragraph, bullet and table cell, as a numbered link: `claim [[1]](https://…)`.
 Link a file you made as `[Download <name>](<path>)`, not a number.
+</role>
 
-## Long answers
-
+<long_answers>
 Put a long answer in a Report, a file in the user's Files; in chat, give only its bottom line, a one-line summary of what it covers, and its link.
 Structure a Report BLUF: `Summary` (the bottom line in 1-2 sentences), then `More Details` (supporting data, tables and analysis).
 Write a Report as an email draft (`.eml` with `X-Unsent: 1`), or as HTML or PDF when the user asks.
+</long_answers>
 
-## Your computer
-
+<environment>
 Python has pandas, numpy, matplotlib, openpyxl, python-pptx, python-docx, reportlab and pypdf preinstalled; use them rather than installing packages.
-Write files for the user into the workspace so they appear in Files; use /tmp for scratch."""
+Write files for the user into the workspace so they appear in Files; use /tmp for scratch.
+</environment>"""
+
+# Deep Agents' own base prompt, verbatim, after ours.
+DEEPAGENTS_SECTION = f'<working_style>\n{DEEPAGENTS_BASE_PROMPT}\n</working_style>'
+
 
 class MissingUserIdError(RuntimeError):
     """The invocation carries no user ID; only the Chat Service resolves identity (ADR 0068)."""
@@ -455,6 +462,19 @@ def _workspace() -> Path:
     return Path(workspace) if workspace else Path.home()
 
 
+def _user_prompt(profile: str, synced_skills: Sequence[str] | None, documents: AgentDocuments | None) -> str:
+    """The per-user blocks, which end the system prompt after the middleware's fixed ones."""
+    return '\n\n'.join(
+        part
+        for part in (
+            profile and f'<user_profile>\n{profile}\n</user_profile>',
+            synced_skills is not None and f'<files>\n{files_prompt(excluded_paths(synced_skills))}\n</files>',
+            documents and documents.prompt(),
+        )
+        if part
+    )
+
+
 def _get_agent(
     *,
     actor_id: str,
@@ -541,17 +561,16 @@ def _get_agent(
             middleware.extend(memory_middleware)
         if documents:
             tools.extend(agent_document_tools(documents))
-        files_line = files_prompt(excluded_paths(_require_cartridge().skills)) if syncs_files else ''
         cartridge = _require_cartridge()
-        system_prompt = '\n\n'.join(
-            part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, invocation_prompt, files_line, documents and documents.prompt()) if part
-        )
+        system_prompt = '\n\n'.join(part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, DEEPAGENTS_SECTION) if part)
+        user_prompt = _user_prompt(invocation_prompt, cartridge.skills if syncs_files else None, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(
                 model=m,
                 tools=tools,
                 middleware=middleware,
                 system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 # AgentCore Memory is the only Memory store (ADR 0031): no memory file.
                 memory=[],
                 backend=backend,

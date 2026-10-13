@@ -3,9 +3,9 @@ import { Hono, type Context } from 'hono';
 import { HttpError, type AccountHistory, type Requester } from './cartridge.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import { agentComputerIdleSeconds } from './agent-computer.js';
-import { agentComputerTokens } from './agent-computer-token.js';
+import type { TaskStopSleep } from './task-stop.js';
+import { agentComputerCdpUrls } from './agent-computer-token.js';
 import { ComputerStartupCancelled, findChromium, startLocalChromium, type LocalChromium } from './local-chromium.js';
-import { onThisTask } from './task-address.js';
 
 interface RunningComputer {
   readonly owner: string;
@@ -43,27 +43,19 @@ export function localAgentComputer({
   env: NodeJS.ProcessEnv;
   startPage?: string | undefined;
 }) {
-  const cdpUrl = new URL(
-    env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`
-  ).href;
+  const cdpUrls = agentComputerCdpUrls(
+    new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`).href,
+    env
+  );
   const startUrl = new URL(startPage).href;
   const idleMs = agentComputerIdleSeconds(env) * 1000;
-  const tokens = agentComputerTokens();
-  /** The CDP URL on this ECS task's own address, looked up once it is first needed. */
-  let taskCdpUrl: Promise<string> | undefined;
-  const ownCdpUrl = () =>
-    (taskCdpUrl ??= onThisTask(cdpUrl, env).then(
-      (url) => url ?? cdpUrl,
-      (error: unknown) => {
-        taskCdpUrl = undefined;
-        throw error;
-      }
-    ));
   const running = new Map<string, RunningComputer>();
   const cleanupFailures = new Map<string, HttpError>();
   const retiring = new Set<Promise<void>>();
   let stopping = false;
   let stopped: Promise<void> | undefined;
+  /** Each computer's stop at task stop, settling on its own. */
+  let shutdowns: Promise<void>[] = [];
   const keyOf = (owner: string, threadId: string) => JSON.stringify([owner, threadId]);
   const touch = (computer: RunningComputer) => {
     const key = keyOf(computer.owner, computer.threadId);
@@ -196,7 +188,7 @@ export function localAgentComputer({
         },
         control: async () => 'agent',
       }),
-      verify: tokens.verify,
+      verify: cdpUrls.verify,
     })
   );
   routes.get('/browser-live-view-url', async (c) => {
@@ -224,6 +216,31 @@ export function localAgentComputer({
     return c.body(new Uint8Array(image), 200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
   });
 
+  /** Cancel pending starts and stop every computer; fails with any profile cleanup that failed. */
+  const stop = () =>
+    (stopped ??= (async () => {
+      stopping = true;
+      shutdowns = [...running.values()]
+        .map(async (computer) => {
+          clearTimeout(computer.idleTimer);
+          computer.startup.abort();
+          try {
+            await (await computer.ready).stop();
+          } catch (error) {
+            if (!(error instanceof ComputerStartupCancelled)) {
+              const failure = cleanupFailures.get(keyOf(computer.owner, computer.threadId));
+              if (failure) throw failure;
+              throw error;
+            }
+          }
+        })
+        .concat([...retiring])
+        .concat([...cleanupFailures.values()].map((failure) => Promise.reject(failure)));
+      await Promise.all(shutdowns);
+      running.clear();
+      if (cleanupFailures.size) throw [...cleanupFailures.values()][0];
+    })());
+
   return {
     /** The `/agent-computer/cdp`, live-view and Take-over routes; mount `computerFilesRoutes` over `state` and `wake`. */
     routes,
@@ -231,9 +248,7 @@ export function localAgentComputer({
     /** The Turn's `agentComputerCdpUrl`, tokened for the Session; the agent's connection wakes its computer. */
     async forwardedProps(owner: string, threadId: string) {
       await requireOwner(owner, threadId);
-      const url = new URL(await ownCdpUrl());
-      url.searchParams.set('token', tokens.issue(owner, threadId));
-      return { agentComputerCdpUrl: url.href };
+      return { agentComputerCdpUrl: await cdpUrls.issue(owner, threadId) };
     },
     /** A Turn starts its Session's computer without waiting for it, so the agent's first command joins it. */
     turnStarting({ owner }: Requester, threadId: string) {
@@ -257,31 +272,12 @@ export function localAgentComputer({
       await ownedBrowser(sessionId, c);
       return 'local-agent-computer';
     },
-    /** The task is stopping: cancel pending starts and stop every computer; fails with any profile cleanup that failed. */
-    stop() {
-      return (stopped ??= (async () => {
-        stopping = true;
-        await Promise.all(
-          [...running.values()]
-            .map(async (computer) => {
-              clearTimeout(computer.idleTimer);
-              computer.startup.abort();
-              try {
-                await (await computer.ready).stop();
-              } catch (error) {
-                if (!(error instanceof ComputerStartupCancelled)) {
-                  const failure = cleanupFailures.get(keyOf(computer.owner, computer.threadId));
-                  if (failure) throw failure;
-                  throw error;
-                }
-              }
-            })
-            .concat([...retiring])
-            .concat([...cleanupFailures.values()].map((failure) => Promise.reject(failure)))
-        );
-        running.clear();
-        if (cleanupFailures.size) throw [...cleanupFailures.values()][0];
-      })());
+    /** The task is stopping: stop every computer, answering the browser Sessions it stopped. */
+    sleepAll(): TaskStopSleep {
+      const sessions = [...running.values()].map((computer) => computer.browserSessionId);
+      const slept = stop().then(() => sessions);
+      return { slept, sleeps: shutdowns };
     },
+    stop,
   };
 }

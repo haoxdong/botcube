@@ -35,6 +35,9 @@
   "dependencies": {
     "@ag-ui/client": "1.0.2",
     "@base-ui/react": "^1.8.0",
+    "@cloudscape-design/components": "^3.0.1392",
+    "@cloudscape-design/design-tokens": "^3.0.114",
+    "@cloudscape-design/global-styles": "^1.0.71",
     "@copilotkit/react-core": "^1.77.0",
     "@streamdown/cjk": "^1.0.4",
     "@streamdown/code": "^2.0.0",
@@ -42,6 +45,7 @@
     "@streamdown/mermaid": "^1.0.3",
     "@use-gesture/react": "^10.3.1",
     "aws-rum-web": "^3.2.1",
+    "bedrock-agentcore": "^0.4.5",
     "clsx": "^2.1.1",
     "cronstrue": "^3.29.0",
     "lucide-react": "^0.577.0",
@@ -52,8 +56,7 @@
     "serve": "^14.2.6",
     "shadcn": "^4.21.2",
     "streamdown": "^2.7.0",
-    "tailwind-merge": "^3.7.0",
-    "bedrock-agentcore": "^0.4.5"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@storybook/addon-a11y": "^10.6.1",

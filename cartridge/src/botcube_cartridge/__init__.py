@@ -1,5 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -53,3 +54,17 @@ class HarnessDefinition:
     system_prompt: str = ''
 
 
+_FILING_USER_ID_MAX_LENGTH = 255
+
+
+def filing_user_id(prefix: str, account_id: str) -> str:
+    """The user ID an Account's Sessions and Memory are filed under.
+
+    `<prefix>_` + the ID's UTF-8 hex, or `<prefix>_sha256_` + its SHA-256 when that is too long.
+    The Chat Service's `filingUserId` derives the same ID, so the two must agree byte for byte.
+    """
+    encoded = account_id.encode('utf-8')
+    filed = f'{prefix}_{encoded.hex()}'
+    if len(filed) <= _FILING_USER_ID_MAX_LENGTH:
+        return filed
+    return f'{prefix}_sha256_{sha256(encoded).hexdigest()}'

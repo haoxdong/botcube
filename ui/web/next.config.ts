@@ -32,9 +32,13 @@ const nextPackageRoot = realpathSync(
   path.dirname(createRequire(import.meta.url).resolve('next/package.json')),
 );
 const turbopackRoot = commonAncestor(repoRoot, nextPackageRoot);
-// Turbopack aliases take app-relative paths; build-config paths may be absolute.
-const turbopackTarget = (target: string) =>
-  path.isAbsolute(target) ? path.relative(appRoot, target) : target;
+// Turbopack aliases take app-relative paths; build-config paths may be absolute. A path into the app needs its `./`,
+// or Turbopack reads `node_modules/…` as a package named node_modules (#4054).
+function turbopackTarget(target: string): string {
+  if (!path.isAbsolute(target)) return target;
+  const relative = path.relative(appRoot, target);
+  return relative.startsWith('..') ? relative : `./${relative}`;
+}
 
 export default async function createConfig(phase: string): Promise<NextConfig> {
   const cartridgeBuildConfig: CartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG

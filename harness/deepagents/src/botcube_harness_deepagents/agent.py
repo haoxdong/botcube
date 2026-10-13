@@ -6,13 +6,16 @@ from typing import Annotated, Any, NotRequired
 
 from deepagents import create_deep_agent
 from deepagents.graph import DeepAgentState
+from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.middleware.skills import SkillsMiddleware
+from deepagents.middleware.skills import SKILLS_SYSTEM_PROMPT, SkillsMiddleware
 from deepagents.profiles import HarnessProfile, register_harness_profile
 from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware.todo import WRITE_TODOS_SYSTEM_PROMPT
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
+    ModelRequest,
     OmitFromOutput,
     PrivateStateAttr,
 )
@@ -79,12 +82,36 @@ class _FilesMiddleware(FilesystemMiddleware):
         return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
 
 
+def _tagged(tag: str, prompt: str, heading: str) -> str:
+    """A middleware prompt as one XML block, its Markdown heading replaced by the tag."""
+    if not prompt.startswith(heading):
+        raise RuntimeError(f'{tag} prompt no longer starts with {heading!r}')
+    return f'<{tag}>\n{prompt.removeprefix(heading)}\n</{tag}>'
+
+
+TODOS_PROMPT = _tagged('todos', WRITE_TODOS_SYSTEM_PROMPT, '## `write_todos`\n\n')
+SKILLS_PROMPT = _tagged('skills', SKILLS_SYSTEM_PROMPT, '## Skills System\n\n')
+
+
 class _SchemaSkillsMiddleware(SkillsMiddleware):
+    """Skills, then the Turn's per-user blocks: the innermost prompt middleware, so those blocks end the
+    system prompt after every fixed one."""
+
     state_schema = _SkillsState
+
+    def __init__(self, *, backend: Any, sources: Sequence[str], user_prompt: str = '') -> None:
+        super().__init__(backend=backend, sources=sources, system_prompt=SKILLS_PROMPT)
+        self.user_prompt = user_prompt
 
     @property
     def name(self) -> str:
         return 'SkillsMiddleware'
+
+    def modify_request(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
+        request = super().modify_request(request)
+        if not self.user_prompt:
+            return request
+        return request.override(system_message=append_to_system_message(request.system_message, self.user_prompt))
 
 
 class _UncheckpointedTasksMiddleware(AgentMiddleware):
@@ -179,6 +206,7 @@ def build_agent(
     store: Any | None = None,
     repo_root: Path | str | None = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    user_prompt: str = '',
     middleware: Sequence[Any] | None = None,
     checkpointer: Any | None = None,
 ) -> Any:
@@ -209,8 +237,8 @@ def build_agent(
     }
     kwargs['middleware'] = [
         _FilesMiddleware(backend=resolved_backend),
-        TodoListMiddleware(),
-        _SchemaSkillsMiddleware(backend=resolved_backend, sources=resolved_skills),
+        TodoListMiddleware(system_prompt=TODOS_PROMPT),
+        _SchemaSkillsMiddleware(backend=resolved_backend, sources=resolved_skills, user_prompt=user_prompt),
         _UncheckpointedTasksMiddleware(),
         *(list(middleware) if middleware is not None else []),
     ]

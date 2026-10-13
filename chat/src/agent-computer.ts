@@ -7,6 +7,7 @@ import { BrowserSessions } from './browser-sessions.js';
 import type { Cdp } from './cdp.js';
 import type { AgentComputerRecord } from './account-resources.js';
 import type { AccountFiles, FilesMount } from './files.js';
+import type { TaskStopSleep } from './task-stop.js';
 
 /** An Agent Computer browser nobody touches for this long sleeps. */
 const DEFAULT_IDLE_SECONDS = 600;
@@ -51,13 +52,6 @@ export interface AgentComputerBrowser {
 type BrowserControl = 'user' | 'agent';
 
 /** The sleep of every browser at task stop: each step on its own in `sleeps`, and `slept` over them all. */
-export interface TaskStopSleep {
-  /** The browser Sessions put to sleep, or the first failure (ADR 0030). */
-  slept: Promise<readonly string[]>;
-  /** Every sleep and stop at task stop, each settling on its own. */
-  sleeps: readonly Promise<void>[];
-}
-
 /** Where an account's Agent Computer keeps its browser profile, and each Session its last screenshot. */
 export interface AgentComputerRecords {
   agentComputer(accountId: string): Promise<AgentComputerRecord>;

@@ -16,7 +16,8 @@ import {
   type AgentDocuments,
 } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
-import { HttpError, type AccountHistory, type AgentModel, type CartridgeFactory, type Requester } from './cartridge.js';
+import { HttpError, type AccountHistory, type AgentModel, type CartridgeFactory, type ChatServiceCartridge, type Requester } from './cartridge.js';
+import { sleepComputersAtTaskStop } from './task-stop.js';
 import { cors, LOCAL_UI_ORIGINS } from './cors.js';
 import { BROWSER_LIVE_VIEW_EVENT } from './live-view.js';
 import { picture, pictureUrl } from './pictures.js';
@@ -841,8 +842,9 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
   const table = env.BOTCUBE_CHAT_TABLE || 'chat';
   const scheduler = schedulerConfigFromEnv(env);
   let stopScheduledRuns: (() => void) | undefined;
+  let built: ChatServiceCartridge | undefined;
   const app = createChatService(
-    cartridge,
+    (history) => (built = cartridge(history)),
     config,
     new DynamoDBSessionMetadata(table),
     new DynamoDBAgentDocuments(table),
@@ -861,9 +863,12 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
   const server = serve({ fetch: app.fetch, port, hostname: env.BOTCUBE_CHAT_HOST || '0.0.0.0', websocket }, () =>
     console.log(`Chat Service listening on :${port}`),
   );
+  const sleepAgentComputers = built?.sleepAgentComputers?.bind(built);
+  const unregisterTaskStop = sleepAgentComputers && sleepComputersAtTaskStop(sleepAgentComputers);
   // A Turn's summary runs on after its stream closed: a task stopped meanwhile alarms on it.
   process.on('exit', reportUnsavedTurnSummaries);
   server.once('close', () => {
+    unregisterTaskStop?.();
     stopScheduledRuns?.();
     process.off('exit', reportUnsavedTurnSummaries);
   });

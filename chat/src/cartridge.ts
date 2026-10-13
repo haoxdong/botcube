@@ -1,5 +1,6 @@
 import type { RunAgentInput } from '@ag-ui/client';
 import type { Context, Hono } from 'hono';
+import type { TaskStopSleep } from './task-stop.js';
 
 /** The name, character, vibe, and avatar (an emoji, or empty for the name's initial) a user gives their agent. */
 export interface AgentIdentity {
@@ -122,6 +123,8 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   warmSession(requester: R, sessionId: string): Promise<void>;
   /** Discover durable authorized account deletions and enqueue their recovery without waiting for Session settlement. */
   recoverAccountDeletions?(): Promise<void>;
+  /** The task is stopping: put every awake Agent Computer to sleep before it exits. */
+  sleepAgentComputers?(): TaskStopSleep;
 }
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */

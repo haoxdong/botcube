@@ -15,6 +15,10 @@ allowBuilds:
   sharp: true
   '@parcel/watcher': false
 
+# BrowserLiveView hands out its DCV connection, for Take-over by touch.
+patchedDependencies:
+  bedrock-agentcore@0.4.5: patches/bedrock-agentcore@0.4.5.patch
+
 overrides:
   next: 16.3.8
   '@ag-ui/client': 1.0.2

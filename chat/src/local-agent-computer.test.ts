@@ -505,6 +505,16 @@ it('puts every computer to sleep at task stop and refuses a later wake', { timeo
   expect(await refused.json()).toEqual({ detail: 'Agent Computer task is stopping' });
 });
 
+it('answers one sleep per computer at task stop, so a failed cleanup never abandons the others', { timeout: 15_000 }, async () => {
+  const local = newComputer({ startPage: await fakeSite() });
+  await local.warmSession({ owner: OWNER }, 'first-session');
+  await local.warmSession({ owner: OWNER }, 'second-session');
+  cleanupFault.enabled = true;
+  const { slept, sleeps } = local.sleepAll();
+  await expect(slept).rejects.toMatchObject({ status: 503, detail: 'Agent Computer profile cleanup failed' });
+  expect((await Promise.allSettled(sleeps)).map(({ status }) => status)).toEqual(['rejected', 'rejected']);
+});
+
 it.each(['task stop', 'idle'])(
   'reports failed profile cleanup after %s on HTTP reads, wake, handoff, and task stop',
   { timeout: 15_000 },

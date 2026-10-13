@@ -1,0 +1,82 @@
+diff --git a/dist/src/tools/browser/live-view/BrowserLiveView.d.ts b/dist/src/tools/browser/live-view/BrowserLiveView.d.ts
+index 60e711c4367d3e679ff3f7579399ffdc6b932315..f702f44f9f337a153b337b690e329e4e34ac1d0d 100644
+--- a/dist/src/tools/browser/live-view/BrowserLiveView.d.ts
++++ b/dist/src/tools/browser/live-view/BrowserLiveView.d.ts
+@@ -5,6 +5,12 @@ export interface BrowserLiveViewProps {
+     remoteWidth?: number;
+     /** Remote desktop height — should match viewPort.height from StartSession. Default: 1080. */
+     remoteHeight?: number;
++    /** Called with the DCV connection once it is established. */
++    onConnectionEstablished?: (connection: any) => void;
++    /** Called when the DCV connection closes, or is refused before it connects, with the DCV Web Client's reason. */
++    onDisconnect?: (reason: unknown) => void;
++    /** Called when DCV reports a stream data timeout. */
++    onStreamStalled?: () => void;
+ }
+-export declare const BrowserLiveView: ({ signedUrl: externalSignedUrl, remoteWidth, remoteHeight, }: BrowserLiveViewProps) => import("react/jsx-runtime").JSX.Element | null;
++export declare const BrowserLiveView: ({ signedUrl: externalSignedUrl, remoteWidth, remoteHeight, onConnectionEstablished: onConnection, onDisconnect, onStreamStalled, }: BrowserLiveViewProps) => import("react/jsx-runtime").JSX.Element | null;
+ //# sourceMappingURL=BrowserLiveView.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/tools/browser/live-view/BrowserLiveView.js b/dist/src/tools/browser/live-view/BrowserLiveView.js
+index b6854e3008fffc4b001648e7a6ab9e265c9d2611..22b3b6c4939e42bb0c193068711b8ec66a3ae87a 100644
+--- a/dist/src/tools/browser/live-view/BrowserLiveView.js
++++ b/dist/src/tools/browser/live-view/BrowserLiveView.js
+@@ -8,7 +8,7 @@ const authStateMap = new Map();
+ let instanceCounter = 0;
+ const DEFAULT_REMOTE_WIDTH = 1920;
+ const DEFAULT_REMOTE_HEIGHT = 1080;
+-export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DEFAULT_REMOTE_WIDTH, remoteHeight = DEFAULT_REMOTE_HEIGHT, }) => {
++export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DEFAULT_REMOTE_WIDTH, remoteHeight = DEFAULT_REMOTE_HEIGHT, onConnectionEstablished: onConnection, onDisconnect, onStreamStalled, }) => {
+     const cached = authStateMap.get(externalSignedUrl);
+     const [dcvError, setDcvError] = useState(null);
+     const [authenticated, setAuthenticated] = useState(() => cached?.authenticated ?? false);
+@@ -16,6 +16,12 @@ export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DE
+     const [authToken, setAuthToken] = useState(() => cached?.authToken ?? '');
+     const mountedRef = useRef(true);
+     const connectionRef = useRef(null);
++    const onConnectionRef = useRef(onConnection);
++    onConnectionRef.current = onConnection;
++    const onDisconnectRef = useRef(onDisconnect);
++    onDisconnectRef.current = onDisconnect;
++    const onStreamStalledRef = useRef(onStreamStalled);
++    onStreamStalledRef.current = onStreamStalled;
+     const containerRef = useRef(null);
+     const resizeObserverRef = useRef(null);
+     const mutationObserverRef = useRef(null);
+@@ -58,7 +64,15 @@ export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DE
+             setAuthenticated(true);
+         }
+     }, [externalSignedUrl]);
+-    const handleDisconnect = useCallback((_reason) => { }, []);
++    // Unmounting disconnects the viewer itself, which reports nothing.
++    const handleDisconnect = useCallback((reason) => {
++        if (mountedRef.current)
++            onDisconnectRef.current?.(reason);
++    }, []);
++    const handleNetworkQualityChange = useCallback(({ quality }) => {
++        if (mountedRef.current && quality === 'WARNING')
++            onStreamStalledRef.current?.();
++    }, []);
+     const authenticate = useCallback(() => {
+         const state = authStateMap.get(externalSignedUrl);
+         if (!externalSignedUrl || state?.authenticating || state?.authenticated)
+@@ -94,6 +108,7 @@ export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DE
+     }, [authenticated, externalSignedUrl, authenticate, dcvError]);
+     const onConnectionEstablished = useCallback((conn) => {
+         connectionRef.current = conn;
++        onConnectionRef.current?.(conn);
+         let lastApplyTime = 0;
+         const DEBOUNCE_MS = 100;
+         const lockDisplayLayout = () => {
+@@ -174,7 +189,10 @@ export const BrowserLiveView = ({ signedUrl: externalSignedUrl, remoteWidth = DE
+                 onDisconnect: handleDisconnect,
+                 onConnectionEstablished,
+                 logLevel: dcv.LogLevel.INFO,
+-                observers: { httpExtraSearchParams: httpExtraSearchParamsCb },
++                observers: {
++                    httpExtraSearchParams: httpExtraSearchParamsCb,
++                    ...(onStreamStalled ? { networkQualityChange: handleNetworkQualityChange } : {}),
++                },
+                 divId: divIdRef.current,
+             }, uiConfig: {
+                 toolbar: { visible: false, fullscreenButton: false, multimonitorButton: false },

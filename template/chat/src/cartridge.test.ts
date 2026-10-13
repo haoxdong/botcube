@@ -45,7 +45,7 @@ describe('the template Chat Service Cartridge', () => {
 });
 
 it("replaces a client-supplied CDP endpoint with its own Agent Computer's", async () => {
-  const cartridge = templateCartridgeFactory({ BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://chat-service:8123/agent-computer/cdp' }, () => undefined)(history);
+  const cartridge = templateCartridgeFactory({ BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://chat-service:8123/agent-computer/cdp' })(history);
   const input = { threadId: 'session-1', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: { model: 'echo', agentComputerCdpUrl: 'ws://untrusted.invalid' } } as RunAgentInput;
   expect(await cartridge.invocationPayload(input, { owner: 'owner' }, cartridge.models[0])).toEqual({
     ...input,
@@ -54,5 +54,5 @@ it("replaces a client-supplied CDP endpoint with its own Agent Computer's", asyn
 });
 
 it("opens its Agent Computer on the fake site's login page, which must be a URL", () => {
-  expect(() => templateCartridgeFactory({ TEMPLATE_SITE_URL: 'not-a-url' }, () => undefined)(history)).toThrow('Invalid URL');
+  expect(() => templateCartridgeFactory({ TEMPLATE_SITE_URL: 'not-a-url' })(history)).toThrow('Invalid URL');
 });

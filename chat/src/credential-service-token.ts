@@ -56,6 +56,26 @@ export function signCredentialServiceInvocation(
   return `v1.${payload}.${signature}`;
 }
 
+/**
+ * A Turn's Credential Service binding: the service URL, and a token for the account and Session
+ * that lasts as long as the Runtime (ADR 0029) and names the Turn's model, so the relay serves only it.
+ */
+export function turnCredentialBinding(
+  url: string,
+  secret: string,
+  accountId: string,
+  sessionId: string,
+  model: { provider: string; key: string },
+): { credentialServiceUrl: string; credentialServiceInvocationToken: string } {
+  return {
+    credentialServiceUrl: url,
+    credentialServiceInvocationToken: signCredentialServiceInvocation(secret, accountId, sessionId, {
+      model: { provider: model.provider, id: model.key.replace(/^openai-plan:/, '') },
+      ttlSeconds: 3600,
+    }),
+  };
+}
+
 /** A verified invocation token: the account and Session it binds, and its scope. */
 export interface CredentialServiceInvocation {
   accountId: string;

@@ -5,15 +5,12 @@ import { agentDocumentTemplates, type CartridgeFactory } from 'botcube-chat';
 import { Hono } from 'hono';
 import { accountsNeedingSignIn, templateRequester } from './account.js';
 import { siteSignInRoutes } from './sign-in.js';
-import { signCredentialServiceInvocation } from 'botcube-chat/credential-service-token';
+import { turnCredentialBinding } from 'botcube-chat/credential-service-token';
 import { localAgentComputer } from 'botcube-chat/local-agent-computer';
 
 const TEMPLATE_ACTOR_ID = 'template-user';
 
-export function templateCartridgeFactory(
-  env: NodeJS.ProcessEnv,
-  onTaskStop: (stop: () => Promise<void>) => void
-): CartridgeFactory {
+export function templateCartridgeFactory(env: NodeJS.ProcessEnv): CartridgeFactory {
   return (history) => {
     // BotCube's local Agent Computer, opened on the fake site's login page when there is one.
     const computer = localAgentComputer({
@@ -22,7 +19,6 @@ export function templateCartridgeFactory(
       env,
       startPage: env.TEMPLATE_SITE_URL ? new URL('/login', env.TEMPLATE_SITE_URL).href : undefined,
     });
-    onTaskStop(computer.stop);
     return {
       agentDocuments: agentDocumentTemplates({
         name: TEMPLATE_IDENTITY.name,
@@ -58,19 +54,18 @@ export function templateCartridgeFactory(
     accountsNeedingSignIn.add(owner);
     return message;
   },
-      invocationPayload: async (input, requester) => ({
+      invocationPayload: async (input, requester, model) => ({
           ...input,
           forwardedProps: {
             ...input.forwardedProps,
             ...(env.TEMPLATE_CREDENTIAL_SERVICE_URL
-              ? {
-                  credentialServiceUrl: env.TEMPLATE_CREDENTIAL_SERVICE_URL,
-                  credentialServiceInvocationToken: signCredentialServiceInvocation(
-                    env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
-                    requester.owner,
-                    input.threadId
-                  ),
-                }
+              ? turnCredentialBinding(
+                  env.TEMPLATE_CREDENTIAL_SERVICE_URL,
+                  env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
+                  requester.owner,
+                  input.threadId,
+                  model
+                )
               : {}),
             ...(await computer.forwardedProps(requester.owner, input.threadId)),
           },
@@ -80,11 +75,9 @@ export function templateCartridgeFactory(
       warmSession: computer.warmSession,
       turnStarting: computer.turnStarting,
       browserLiveView: computer.browserLiveView,
+      sleepAgentComputers: computer.sleepAll,
     };
   };
 }
 
-export const templateCartridge: CartridgeFactory = templateCartridgeFactory(
-  process.env,
-  () => undefined
-);
+export const templateCartridge: CartridgeFactory = templateCartridgeFactory(process.env);

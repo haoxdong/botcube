@@ -36,9 +36,15 @@ it('serves the neutral template over HTTP with persisted thread metadata and cla
   cleanup.push(async () => {
     vi.unstubAllEnvs();
   });
-  const server = serveChatService(templateCartridgeFactory(env, () => undefined), env);
-  cleanup.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const taskStops = process.listenerCount('SIGTERM');
+  const server = serveChatService(templateCartridgeFactory(env), env);
+  cleanup.push(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    expect(process.listenerCount('SIGTERM')).toBe(taskStops);
+  });
   await once(server, 'listening');
+  // Stopping the task puts the template's Agent Computers to sleep.
+  expect(process.listenerCount('SIGTERM')).toBe(taskStops + 1);
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   expect((await fetch(`${url}/health`)).status).toBe(200);
   expect(await (await fetch(`${url}/auth/template`)).json()).toEqual({ status: 'ready', actorId: 'template-user' });
