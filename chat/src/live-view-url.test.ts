@@ -29,10 +29,10 @@ const unused = async (): Promise<never> => {
   throw new Error('not used');
 };
 const sessionMetadata: SessionMetadata = {
-  checkRuntimeNamespaceReady: async () => undefined,
   owns: async () => { throw new Error('not used'); },
   checkHealth: unused,
   recordTurn: unused,
+  prepareTurn: unused,
   beginDispatch: unused,
   assertNoDispatch: unused,
   rejectedDispatches: unused,

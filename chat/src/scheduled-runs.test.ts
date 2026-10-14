@@ -329,7 +329,7 @@ describe('a scheduled run', () => {
     const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn(async () => ({}));
     await runScheduledTask({
-      runtimeNamespaceRequired: false, turnIdentity: null, cartridge, sessionMetadata: stack.sessionMetadata,
+      turnIdentity: null, cartridge, sessionMetadata: stack.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(stack.table.name, stack.table.client), scheduledTasks: tasks,
       summarizeTurn: async () => ({ title: 'Cutover', summary: 'Cutover' }),
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), invokeSessionApi: post,
@@ -370,7 +370,7 @@ describe('a scheduled run', () => {
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Rates update."}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<import('./session-api.js').SessionApi>(async () => ({}));
     const deps = {
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: tasks,
@@ -425,7 +425,7 @@ describe('a scheduled run', () => {
     const retire = vi.fn(async () => undefined);
 
     await runScheduledTask({
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'US rates', summary: 'Gave a rates update.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire },
@@ -443,18 +443,13 @@ describe('a scheduled run', () => {
     const source = owner();
     const destination = owner();
     const originalMain = await claimed.sessionMetadata.mainChat(source, `filed-${source}`);
-    let sideChat: string | undefined;
-    const recordTurn = claimed.sessionMetadata.recordTurn.bind(claimed.sessionMetadata);
-    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
-    const recording = vi.spyOn(claimed.sessionMetadata, 'recordTurn').mockImplementation(async (account, sessionId, turn) => {
-      const filingId = await recordTurn(account, sessionId, turn);
-      if (account === source && turn.running !== undefined) sideChat = sessionId;
-      return filingId;
-    });
-    // The Claim lands while the one-off's run is under way.
-    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
-      const complete = await beginDispatch(...args);
-      if (args[0] === source && args[1] === sideChat) await claimed.history.transfer(source, destination);
+    const prepareTurn = claimed.sessionMetadata.prepareTurn.bind(claimed.sessionMetadata);
+    const recording = vi.spyOn(claimed.sessionMetadata, 'prepareTurn').mockImplementation(async (account, sessionId, turn) => {
+      const complete = await prepareTurn(account, sessionId, turn);
+      if (account === source && turn.running !== undefined) {
+        const dispatch = complete.dispatch.bind(complete);
+        complete.dispatch = async () => { const registered = await dispatch(); await claimed.history.transfer(source, destination); return registered; };
+      }
       return complete;
     });
     try {
@@ -472,7 +467,6 @@ describe('a scheduled run', () => {
       await vi.waitFor(async () => expect(await listed()).toEqual([]));
     } finally {
       recording.mockRestore();
-      dispatching.mockRestore();
       await claimed.stop();
     }
   });
@@ -485,27 +479,22 @@ describe('a scheduled run', () => {
     let sideChat: string | undefined;
     let admitted: ((error: unknown) => void) | undefined;
     const admission = new Promise<unknown>((resolve) => { admitted = resolve; });
-    const recordTurn = claimed.sessionMetadata.recordTurn.bind(claimed.sessionMetadata);
-    const beginDispatch = claimed.sessionMetadata.beginDispatch.bind(claimed.sessionMetadata);
-    const recording = vi.spyOn(claimed.sessionMetadata, 'recordTurn').mockImplementation(async (account, sessionId, turn) => {
-      const filingId = await recordTurn(account, sessionId, turn);
+    const prepareTurn = claimed.sessionMetadata.prepareTurn.bind(claimed.sessionMetadata);
+    const recording = vi.spyOn(claimed.sessionMetadata, 'prepareTurn').mockImplementation(async (account, sessionId, turn) => {
+      const complete = await prepareTurn(account, sessionId, turn);
       if (account === source && turn.running !== undefined) {
         sideChat = sessionId;
+        const dispatch = complete.dispatch.bind(complete);
+        complete.dispatch = async () => {
+          try {
+            const registered = await dispatch();
+            await claimed.history.transfer(source, destination);
+            defined(admitted, 'admission result')(undefined);
+            return registered;
+          } catch (error) { defined(admitted, 'admission result')(error); throw error; }
+        };
       }
-      return filingId;
-    });
-    const dispatching = vi.spyOn(claimed.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
-      try {
-        const complete = await beginDispatch(...args);
-        if (args[0] === source && args[1] === sideChat) {
-          await claimed.history.transfer(source, destination);
-          defined(admitted, 'admission result')(undefined);
-        }
-        return complete;
-      } catch (error) {
-        if (args[0] === source && args[1] === sideChat) defined(admitted, 'admission result')(error);
-        throw error;
-      }
+      return complete;
     });
     try {
       const prompt = 'Complete the accepted occurrence';
@@ -528,7 +517,6 @@ describe('a scheduled run', () => {
       })));
     } finally {
       recording.mockRestore();
-      dispatching.mockRestore();
       await claimed.stop();
     }
   });
@@ -690,8 +678,8 @@ describe('a scheduled run', () => {
     let entered!: (sessionId: string) => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const recorded = new Promise<string>((resolve) => { entered = resolve; });
-    const recordTurn = stack.sessionMetadata.recordTurn.bind(stack.sessionMetadata);
-    const paused = vi.spyOn(stack.sessionMetadata, 'recordTurn').mockImplementation(async (owner, sessionId, turn) => {
+    const recordTurn = stack.sessionMetadata.prepareTurn.bind(stack.sessionMetadata);
+    const paused = vi.spyOn(stack.sessionMetadata, 'prepareTurn').mockImplementation(async (owner, sessionId, turn) => {
       const userId = await recordTurn(owner, sessionId, turn);
       if (owner === account && sessionId !== main) {
         entered(sessionId);
@@ -1813,7 +1801,7 @@ describe('scheduled persistence dispatch admission', () => {
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
       };
-      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Brief', summary: 'Checked the curve.' }),
@@ -1865,7 +1853,7 @@ describe('scheduled persistence dispatch admission', () => {
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
       };
-      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
@@ -1908,7 +1896,7 @@ describe('scheduled persistence dispatch admission', () => {
         if (refusals-- > 0) throw new Error('Retirement throttled');
         return tasks.retire(...args);
       };
-      const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), retire },
         upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
@@ -1954,7 +1942,7 @@ describe('scheduled persistence dispatch admission', () => {
       filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
     };
-    const deps = { runtimeNamespaceRequired: true, turnIdentity: null, cartridge, sessionMetadata: claimed.sessionMetadata,
+    const deps = { turnIdentity: null, cartridge, sessionMetadata: claimed.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
       upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
       summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
@@ -2090,7 +2078,7 @@ describe('scheduled persistence dispatch admission', () => {
       return {};
     });
     const deps = {
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined },
@@ -2243,7 +2231,7 @@ describe('scheduled persistence dispatch admission', () => {
     const recordRun = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('Task table unavailable'));
     const post = vi.fn(async () => ({}));
     const deps = {
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun, retire: async () => undefined },
@@ -2283,7 +2271,7 @@ describe('scheduled persistence dispatch admission', () => {
     const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn(async () => ({}));
     await expect(runScheduledTask({
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, retire: async () => undefined },
@@ -2315,7 +2303,7 @@ describe('scheduled persistence dispatch admission', () => {
     const postEntered = new Promise<void>((resolve) => { enteredPost = resolve; });
     let finish: (() => void) | undefined;
     const run = runScheduledTask({
-      runtimeNamespaceRequired: false, turnIdentity: null,
+      turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined },

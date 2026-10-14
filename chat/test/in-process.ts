@@ -28,7 +28,6 @@ export interface InProcessOptions {
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
   table?: 'created' | 'missing';
-  runtimeNamespaceReady?: boolean;
   /** Scheduled tasks: unconfigured (default), or a schedule group and run queue of the stack's own in moto. */
   scheduled?: boolean;
   /** The drain check used by this stack's scheduled-runs poller. */
@@ -58,7 +57,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const endpoint = inject('dynamodbEndpoint');
   const table = `chat-${Math.random().toString(36).slice(2)}`;
   if ((options.table ?? 'created') === 'created') {
-    await createChatTable(endpoint, table, options.runtimeNamespaceReady !== false);
+    await createChatTable(endpoint, table);
   }
   const client = new DynamoDBClient({
     region: 'us-east-1',

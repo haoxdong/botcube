@@ -115,13 +115,13 @@ it.each(['new', 'existing'])('preserves the filing ID when Claim moves a %s Sess
   const released = new Promise<void>((resolve) => { releaseRead = resolve; });
   running.table.client.middlewareStack.add((next, context) => async (args) => {
     const input = args.input as { Key?: { pk?: string; sk?: string }; TransactItems?: Array<{ Update?: { Key?: { sk?: string } } }> };
-    if (context.commandName === 'GetItemCommand' && accepted && !paused && input.Key?.pk === 'SESSIONS#claim-source' && input.Key.sk === `SESSION#${sessionId}`) {
+    const result = await next(args);
+    if (context.commandName === 'TransactWriteItemsCommand' && !accepted && input.TransactItems?.some((item) => item.Update?.Key?.sk === `SESSION#${sessionId}`)) {
+      accepted = true;
       paused = true;
       readHeld();
       await released;
     }
-    const result = await next(args);
-    if (context.commandName === 'TransactWriteItemsCommand' && input.TransactItems?.some((item) => item.Update?.Key?.sk === `SESSION#${sessionId}`)) accepted = true;
     return result;
   }, { step: 'initialize' });
   const turn = running.app.request('/', {

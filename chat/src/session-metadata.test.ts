@@ -50,7 +50,7 @@ afterEach(() => {
 /** Every stored item, ordered by key. */
 async function items(): Promise<Record<string, unknown>[]> {
   const { Items } = await DynamoDBDocumentClient.from(client()).send(new ScanCommand({ TableName: table }));
-  return (Items ?? []).filter((item) => item.pk !== 'RUNTIME_DISPATCHERS').sort((a, b) => `${a.pk}|${a.sk}`.localeCompare(`${b.pk}|${b.sk}`));
+  return (Items ?? []).sort((a, b) => `${a.pk}|${a.sk}`.localeCompare(`${b.pk}|${b.sk}`));
 }
 
 async function tracked(session: SessionPurge): Promise<SessionPurge> {
@@ -1382,48 +1382,6 @@ describe('dispatch isolation between filing identities', () => {
   });
 });
 
-describe('Runtime namespace rollout readiness', () => {
-  it('refuses a missing readiness marker', async () => {
-    await DynamoDBDocumentClient.from(client()).send(new DeleteCommand({ TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } }));
-    await expect(metadata.checkRuntimeNamespaceReady()).rejects.toThrow('Session Runtime namespace is not ready');
-  });
-
-  it.each([false, 'true'])('refuses a readiness marker whose value is %s', async (runtime_namespaced) => {
-    await DynamoDBDocumentClient.from(client()).send(new PutCommand({
-      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: runtime_namespaced },
-    }));
-    await expect(metadata.checkRuntimeNamespaceReady()).rejects.toThrow('Session Runtime namespace is not ready');
-  });
-
-  it('accepts an explicitly ready marker through a strongly consistent read', async () => {
-    await DynamoDBDocumentClient.from(client()).send(new PutCommand({
-      TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
-    }));
-    const recording = client();
-    const reads: unknown[] = [];
-    recording.middlewareStack.add((next, context) => async (args) => {
-      if (context.commandName === 'GetItemCommand') reads.push(args.input);
-      return next(args);
-    }, { step: 'initialize' });
-    await expect(new DynamoDBSessionMetadata(table, recording).checkRuntimeNamespaceReady()).resolves.toBeUndefined();
-    expect(reads).toMatchObject([expect.objectContaining({ ConsistentRead: true, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } })]);
-  });
-
-  it('closes a previously ready instance when rollback removes the marker', async () => {
-    await expect(metadata.checkRuntimeNamespaceReady()).resolves.toBeUndefined();
-    await DynamoDBDocumentClient.from(client()).send(new DeleteCommand({
-      TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' },
-    }));
-    await expect(metadata.checkRuntimeNamespaceReady()).rejects.toThrow('Session Runtime namespace is not ready');
-  });
-
-  it('propagates failure to read the readiness marker', async () => {
-    const failure = new Error('readiness read denied');
-    const denied = metadataWith(async (command) => { if (command === 'GetItemCommand') throw failure; });
-    await expect(denied.checkRuntimeNamespaceReady()).rejects.toBe(failure);
-  });
-});
-
 describe('durable Turn summary erasure recovery', () => {
   it('finishes interrupted summary erasure before acknowledging cleanup and preserves other Session records', async () => {
     await turn('alice', 'shared', T1);
@@ -1673,14 +1631,7 @@ describe('ownsMainChat', () => {
 
 
 describe('tracked new Session Runtime admission', () => {
-  const closed = async () => {
-    await DynamoDBDocumentClient.from(client()).send(new PutCommand({ TableName: table,
-      Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
-    }));
-  };
-
   it('atomically gives concurrent first admissions one opaque binding and retains it through Claim and recovery', async () => {
-    await closed();
     await Promise.all([turn('alice', 'shared', T1), turn('alice', 'shared', T1)]);
     const admitted = await metadata.get('alice', 'shared');
     expect(admitted).toMatchObject({ runtime_generation: 'tracked-v1', runtime_binding: expect.stringMatching(/^runtime-[0-9a-f-]{36}$/) });
@@ -1702,7 +1653,6 @@ describe('tracked new Session Runtime admission', () => {
       pk: 'SESSIONS#alice', sk: 'SESSION#legacy', session_id: 'legacy', filing_user_id: 'filed-alice',
       title: 'Legacy', created_at: T1, updated_at: T1,
     } }));
-    await closed();
     await turn('alice', 'legacy', T2);
     const legacy = await metadata.fence('alice', 'legacy');
     expect(legacy).toMatchObject({ session_id: 'legacy', filing_user_id: 'filed-alice' });
@@ -1710,15 +1660,6 @@ describe('tracked new Session Runtime admission', () => {
     await expect(metadata.assertNoDispatch(defined(legacy, 'stored Session identity'))).rejects.toThrow('legacy settlement is unproved');
     await expect(metadata.completePurge(defined(legacy, 'stored Session identity'))).rejects.toThrow('legacy settlement is unproved');
     expect(await metadata.pendingPurges()).toMatchObject([{ session_id: 'legacy', filing_user_id: 'filed-alice' }]);
-  });
-
-  it('rejects new tracked admission before the closed retirement prerequisite', async () => {
-    await DynamoDBDocumentClient.from(client()).send(new DeleteCommand({ TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } }));
-    await expect(turn('alice', 'new', T1)).rejects.toThrow('old Chat dispatchers');
-    expect(await metadata.get('alice', 'new')).toBeNull();
-    await closed();
-    await turn('alice', 'new', T1);
-    expect(await metadata.get('alice', 'new')).toMatchObject({ runtime_generation: 'tracked-v1' });
   });
 });
 
@@ -1825,9 +1766,9 @@ it('retains one legacy continuation binding through concurrent registration, res
   expect(claimed.session).toEqual(first.session);
   await claimed();
   await metadata.recordTurn('destination', 'legacy-continuation', { filingUserId: 'new-filing', title: 'Next Turn' });
-  expect(await metadata.get('destination', 'legacy-continuation')).toMatchObject(first.session ?? {});
+  expect(await metadata.get('destination', 'legacy-continuation')).toMatchObject(first.session);
   const fenced = defined(await metadata.fence('destination', 'legacy-continuation'), 'fenced continuation');
-  expect(fenced).toMatchObject(first.session ?? {});
+  expect(fenced).toMatchObject(first.session);
   await expect(metadata.assertNoDispatch(fenced)).rejects.toThrow('legacy settlement is unproved');
   await expect(metadata.completePurge(fenced)).rejects.toThrow('legacy settlement is unproved');
   expect(await replacement.pendingPurges()).toContainEqual({ ...first.session, owner: 'destination' });
@@ -1846,17 +1787,6 @@ it.each([
   expect(await metadata.get('source', 'unproved')).toMatchObject(identity);
   const fenced = defined(await metadata.fence('source', 'unproved'), 'fenced unproved identity');
   await expect(metadata.assertNoDispatch(fenced)).rejects.toThrow('legacy settlement is unproved');
-});
-
-it('requires closed retirement before allocating a legacy continuation', async () => {
-  const documents = DynamoDBDocumentClient.from(client());
-  await documents.send(new PutCommand({ TableName: table, Item: {
-    pk: 'SESSIONS#source', sk: 'SESSION#legacy', session_id: 'legacy', filing_user_id: 'original-filing', title: 'Original', created_at: T1, updated_at: T1,
-  } }));
-  await documents.send(new DeleteCommand({ TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } }));
-  await expect(metadata.beginDispatch('source', 'legacy')).rejects.toThrow('old Chat dispatchers');
-  expect(await metadata.get('source', 'legacy')).not.toHaveProperty('runtime_binding');
-  expect((await items()).filter((item) => String(item.pk).startsWith('DISPATCH#'))).toEqual([]);
 });
 
 it('retains a continuation allocated after Account Claim takes its Session snapshot', async () => {
@@ -1881,4 +1811,150 @@ it('retains a continuation allocated after Account Claim takes its Session snaps
   const next = await metadata.beginDispatch('destination', 'legacy-claim-race', undefined, running);
   expect(next.session).toEqual(admitted);
   await next();
+});
+
+
+describe('prepared Turn admission', () => {
+  const running = { startedAt: T1, runId: 'prepared-run' };
+  const input = { filingUserId: 'filed-owner', title: 'Prepared Turn', provider: 'anthropic', running, messageId: 'prepared-message' };
+
+  it('uses one bounded read and two transactions for an existing Session with immutable filing identity', async () => {
+    await metadata.recordTurn('owner', 'existing', { ...input, filingUserId: 'original-filing' });
+    const commands: string[] = [];
+    const observed = metadataWith(async (command) => { commands.push(command); return undefined; });
+    const prepared = await observed.prepareTurn('owner', 'existing', input);
+    expect(commands).toEqual(['TransactGetItemsCommand', 'TransactWriteItemsCommand']);
+    expect(prepared.session.filing_user_id).toBe('original-filing');
+    expect(Object.isFrozen(prepared.session)).toBe(true);
+    expect(Reflect.set(prepared.session, 'filing_user_id', 'mutated-filing')).toBe(false);
+    await expect(metadata.assertNoDispatch(prepared.session)).resolves.toBeUndefined();
+    const complete = await prepared.dispatch();
+    expect(commands).toEqual(['TransactGetItemsCommand', 'TransactWriteItemsCommand', 'TransactWriteItemsCommand']);
+    await expect(metadata.assertNoDispatch(prepared.session)).rejects.toThrow('Session dispatch is still registered');
+    await complete();
+    await expect(metadata.assertNoDispatch(prepared.session)).resolves.toBeUndefined();
+  });
+
+  it('limits new-session proof discovery to retired rows', async () => {
+    const commands: string[] = [];
+    const observed = metadataWith(async (command) => { commands.push(command); return undefined; });
+    const prepared = await observed.prepareTurn('owner', 'new', input);
+    expect(commands).toEqual(['TransactGetItemsCommand', 'QueryCommand', 'TransactWriteItemsCommand']);
+    expect(prepared.session).toMatchObject({ filing_user_id: 'filed-owner', runtime_generation: 'tracked-v1' });
+    const complete = await prepared.dispatch();
+    await complete();
+  });
+
+  it('pins the binding winner when concurrent legacy Turns allocate a continuation', async () => {
+    await DynamoDBDocumentClient.from(client()).send(new PutCommand({ TableName: table, Item: {
+      pk: 'SESSIONS#owner', sk: 'SESSION#legacy-prepared', session_id: 'legacy-prepared', filing_user_id: 'original-filing', title: 'Original', created_at: T1, updated_at: T1,
+    } }));
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const recorded = new Promise<void>((resolve) => { entered = resolve; });
+    let paused = false;
+    const delayed = metadataWith(async (command) => {
+      if (command === 'TransactWriteItemsCommand' && !paused) { paused = true; entered(); await held; }
+      return undefined;
+    });
+    const losing = delayed.prepareTurn('owner', 'legacy-prepared', input);
+    await recorded;
+    const winner = await metadata.prepareTurn('owner', 'legacy-prepared', input);
+    release();
+    const retried = await losing;
+    expect(retried.session).toEqual(winner.session);
+    expect(winner.session).toMatchObject({ filing_user_id: 'original-filing', runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
+    const complete = await retried.dispatch();
+    await complete();
+  });
+
+  it.each(['accepted', 'replacement Turn', 'destination deletion', 'source deletion'])('validates a preparing Turn after Claim: %s', async (outcome) => {
+    const prepared = await metadata.prepareTurn('source', 'claimed-preparing', input);
+    await metadata.transferOwner('source', 'destination');
+    if (outcome === 'replacement Turn') await metadata.recordTurn('destination', 'claimed-preparing', { ...input, running: { startedAt: T1, runId: 'replacement-run' } });
+    if (outcome === 'destination deletion') await metadata.fenceOwner('destination');
+    if (outcome === 'source deletion') await metadata.fenceOwner('source');
+    if (outcome === 'accepted') {
+      const complete = await prepared.dispatch();
+      expect(complete.session).toEqual(prepared.session);
+      await complete();
+    } else {
+      await expect(prepared.dispatch()).rejects.toBeInstanceOf(SessionDeletedError);
+      expect((await items()).filter((item) => String(item.pk).startsWith('DISPATCH#'))).toEqual([]);
+    }
+  });
+
+  it('allows deletion while preparation has not dispatched, then refuses the stale writer', async () => {
+    const prepared = await metadata.prepareTurn('owner', 'prepared-delete', input);
+    const fenced = defined(await metadata.fence('owner', 'prepared-delete'), 'preparing deletion fence');
+    await expect(metadata.assertNoDispatch(fenced)).resolves.toBeUndefined();
+    await expect(prepared.dispatch()).rejects.toBeInstanceOf(SessionDeletedError);
+    expect((await items()).filter((item) => String(item.pk).startsWith('DISPATCH#'))).toEqual([]);
+  });
+});
+
+
+it.each([true, false])('prepares a claimed MAIN-only identity only with original filing proof: %s', async (known) => {
+  await DynamoDBDocumentClient.from(client()).send(new PutCommand({ TableName: table, Item: {
+    pk: 'SESSIONS#source', sk: 'MAIN', session_id: 'source-main-only', ...(known ? { filing_user_id: 'original-filing' } : {}),
+  } }));
+  const destinationMain = await metadata.mainChat('destination', 'destination-filing');
+  await metadata.transferOwner('source', 'destination');
+  const preparing = metadata.prepareTurn('destination', 'source-main-only', { filingUserId: 'destination-filing', title: 'Resume original Main', provider: 'anthropic' });
+  if (!known) {
+    await expect(preparing).rejects.toThrow('legacy settlement is unproved');
+    expect(await metadata.get('destination', 'source-main-only')).toBeNull();
+  } else {
+    const prepared = await preparing;
+    expect(prepared.session).toMatchObject({ filing_user_id: 'original-filing', runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
+    const complete = await prepared.dispatch();
+    expect(complete.session).toEqual(prepared.session);
+    await complete();
+  }
+  expect(await metadata.mainChat('destination', 'destination-filing')).toBe(destinationMain);
+});
+
+it.each(['accepted', 'source deletion', 'destination deletion', 'replacement Turn'] as const)('dispatches an accepted Turn while Claim has fenced the source but has not moved its Session: %s', async (outcome) => {
+  const running = { startedAt: T1, runId: 'partial-claim-run' };
+  const prepared = await metadata.prepareTurn('source', 'partial-claim-session', {
+    filingUserId: 'original-filing', title: 'Accepted before Claim', provider: 'anthropic', running,
+  });
+  let reached!: () => void;
+  let release!: () => void;
+  const fenced = new Promise<void>((resolve) => { reached = resolve; });
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  let queries = 0;
+  const claiming = metadataWith(async (command) => {
+    if (command === 'QueryCommand' && ++queries === 2) {
+      reached();
+      await released;
+    }
+    return undefined;
+  });
+  if (outcome === 'replacement Turn') await metadata.recordTurn('source', 'partial-claim-session', { filingUserId: 'original-filing', title: 'Newer Turn', provider: 'anthropic', running: { startedAt: T1, runId: 'replacement-run' } });
+  const transfer = claiming.transferOwner('source', 'destination');
+  try {
+    await fenced;
+    expect(await metadata.get('source', 'partial-claim-session')).not.toBeNull();
+    expect(await metadata.get('destination', 'partial-claim-session')).toBeNull();
+    if (outcome === 'source deletion') await metadata.fenceOwner('source');
+    if (outcome === 'destination deletion') await metadata.fenceOwner('destination');
+    if (outcome !== 'accepted') {
+      await expect(prepared.dispatch()).rejects.toBeInstanceOf(SessionDeletedError);
+      expect((await items()).filter((item) => String(item.pk).startsWith('DISPATCH#'))).toEqual([]);
+      return;
+    }
+    const complete = await prepared.dispatch();
+    expect(complete.session).toEqual(prepared.session);
+    await expect(metadata.assertNoDispatch(prepared.session)).rejects.toThrow('Session dispatch is still registered');
+    release();
+    await transfer;
+    expect(await metadata.get('destination', 'partial-claim-session')).toMatchObject(prepared.session);
+    await complete();
+    await expect(metadata.assertNoDispatch(prepared.session)).resolves.toBeUndefined();
+  } finally {
+    release();
+    await transfer;
+  }
 });

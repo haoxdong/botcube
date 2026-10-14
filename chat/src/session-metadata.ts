@@ -13,6 +13,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  TransactGetCommand,
   TransactWriteCommand,
   UpdateCommand,
   paginateQuery,
@@ -78,12 +79,6 @@ export class SessionBusyError extends Error {}
 /** A registered writer has not acknowledged dispatch/completion yet; deletion must keep waiting. */
 export class SessionDispatchPendingError extends Error {}
 
-export class SessionNamespaceNotReadyError extends Error {
-  constructor() {
-    super('Session Runtime namespace is not ready; old Chat dispatchers must be retired before tracked admission');
-  }
-}
-
 /** What the agent did in one finished Turn, as the Agent Profile's Activity shows it. */
 export interface TurnSummary {
   /** The task, in a few words. */
@@ -132,6 +127,8 @@ export class SessionOpeningError extends Error {
   constructor() { super("This Session already has a Turn"); }
 }
 
+export type TurnAdmission = { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; opening?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined };
+
 type AcceptedDispatch = RunningTurn | { messageId: string };
 
 export type RegisteredDispatch = (() => Promise<void>) & {
@@ -142,6 +139,19 @@ export type RegisteredDispatch = (() => Promise<void>) & {
   confirmStopped?: () => Promise<void>;
   stopConfirmed?: boolean;
 };
+
+type RegisteredSessionDispatch = RegisteredDispatch & { readonly session: SessionPurge };
+type BoundRuntimeSession = SessionPurge & { runtime_binding: string; runtime_generation: 'tracked-v1' | 'continuation-v1' };
+export interface PreparedTurn { readonly session: Readonly<BoundRuntimeSession>; dispatch(): Promise<RegisteredSessionDispatch> }
+
+function dispatchRuntimeProof(session?: Readonly<BoundRuntimeSession>) {
+  if (session === undefined) return { condition: '', values: {} };
+  const legacy = session.legacy_settlement_unproved;
+  return {
+    condition: ' AND runtime_binding = :expected_binding AND runtime_generation = :expected_generation' + (legacy === undefined ? ' AND attribute_not_exists(legacy_settlement_unproved)' : ' AND legacy_settlement_unproved = :expected_legacy'),
+    values: { ':expected_binding': session.runtime_binding, ':expected_generation': session.runtime_generation, ...(legacy === undefined ? {} : { ':expected_legacy': legacy }) },
+  };
+}
 
 function turnAdmissionCondition(creating: boolean, provider: string): string {
   return `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)${provider}`;
@@ -163,14 +173,12 @@ function compatibleAdmission(error: unknown, provider: string | undefined): bool
 }
 
 export const trackedRuntime = (session: SessionPurge): session is SessionPurge & { runtime_binding: string } => session.legacy_settlement_unproved !== true && session.runtime_generation === 'tracked-v1' && /^runtime-[0-9a-f-]{36}$/.test(session.runtime_binding ?? '');
-export const boundRuntime = (session: SessionPurge): session is SessionPurge & { runtime_binding: string } => trackedRuntime(session) || (session.runtime_generation === 'continuation-v1' && session.legacy_settlement_unproved === true && /^runtime-[0-9a-f-]{36}$/.test(session.runtime_binding ?? ''));
+export const boundRuntime = (session: SessionPurge): session is BoundRuntimeSession => trackedRuntime(session) || (session.runtime_generation === 'continuation-v1' && session.legacy_settlement_unproved === true && /^runtime-[0-9a-f-]{36}$/.test(session.runtime_binding ?? ''));
 const runtimeIdentity = (session: Partial<SessionPurge>): Partial<SessionPurge> => ({
   ...(session.runtime_binding === undefined ? {} : { runtime_binding: session.runtime_binding }),
   ...(session.runtime_generation === undefined ? {} : { runtime_generation: session.runtime_generation }),
   ...(session.legacy_settlement_unproved === undefined ? {} : { legacy_settlement_unproved: session.legacy_settlement_unproved }),
 });
-const retirementKey = { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' };
-const retirementCondition = { ConditionExpression: 'old_chat_retired = :yes', ExpressionAttributeValues: { ':yes': true } };
 
 /**
  * Session Metadata (ADR 0067 §2): the only index of Sessions. The item shape is
@@ -180,10 +188,10 @@ const retirementCondition = { ConditionExpression: 'old_chat_retired = :yes', Ex
  */
 export interface SessionMetadata {
   readonly scheduledRuns?: ScheduledRunStore;
-  /** Require verified retirement of old Chat dispatchers. */
-  checkRuntimeNamespaceReady(): Promise<void>;
   /** Register a persistence writer against the deletion fences; release only after confirmed dispatch/completion. */
   beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<RegisteredDispatch>;
+  /** Accept a Turn with immutable filing/Runtime identity; dispatch registers its writer against the latest deletion/Claim fences. */
+  prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn>;
   /** Refuse deletion while another process may still dispatch or finish a persistence writer. */
   assertNoDispatch(session: SessionPurge, failedAdmissionTokens?: readonly string[]): Promise<void>;
   rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]>;
@@ -205,7 +213,7 @@ export interface SessionMetadata {
   recordTurn(
     owner: string,
     sessionId: string,
-    turn: { filingUserId: string; title: string; provider?: string; running?: RunningTurn; messageId?: string | undefined; warmup?: boolean | undefined; opening?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
+    turn: TurnAdmission,
   ): Promise<string>;
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
   turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void>;
@@ -333,6 +341,33 @@ function turnRemoval(runningRemoval: string, provider: string | undefined, postA
   return ' REMOVE turn_failure' + runningRemoval + (provider === undefined ? '' : ', provider_pending');
 }
 
+function allocatedRuntimeWrite(runtime?: Pick<SessionPurge, 'runtime_binding' | 'runtime_generation' | 'legacy_settlement_unproved'>) {
+  if (runtime === undefined) return { allocating: false, set: '', values: {} };
+  const legacy = runtime.legacy_settlement_unproved === true;
+  return {
+    allocating: true,
+    set: ', runtime_binding = :binding, runtime_generation = :generation' + (legacy ? ', legacy_settlement_unproved = :legacy' : ''),
+    values: { ':binding': runtime.runtime_binding, ':generation': runtime.runtime_generation, ...(legacy ? { ':legacy': true } : {}) },
+  };
+}
+
+function turnRuntimeWrite(creating: boolean, binding?: string, admission?: { session: SessionPurge; continuation: boolean }) {
+  const runtime = admission !== undefined && (creating || admission.continuation) ? admission.session : binding === undefined ? undefined : { runtime_binding: binding, runtime_generation: 'tracked-v1' };
+  const identity = admission === undefined || creating ? undefined : admission;
+  const condition = identity === undefined ? '' : ' AND filing_user_id = :filing_identity' + (identity.continuation
+    ? ' AND attribute_not_exists(runtime_binding) AND attribute_not_exists(runtime_generation)'
+    : ' AND runtime_binding = :runtime_identity AND runtime_generation = :runtime_generation');
+  const allocation = allocatedRuntimeWrite(runtime);
+  return {
+    ...allocation,
+    condition,
+    values: {
+      ...allocation.values,
+      ...(identity === undefined ? {} : { ':filing_identity': identity.session.filing_user_id, ...(identity.continuation ? {} : { ':runtime_identity': identity.session.runtime_binding, ':runtime_generation': identity.session.runtime_generation }) }),
+    },
+  };
+}
+
 function storedProvider(item: Record<string, AttributeValue> | undefined): string {
   return item?.provider?.S ?? 'anthropic';
 }
@@ -360,15 +395,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     this.client = client;
     this.documents = DynamoDBDocumentClient.from(client);
     this.scheduledRuns = new ScheduledRunStore(tableName, client);
-  }
-
-  async checkRuntimeNamespaceReady(): Promise<void> {
-    const { Item } = await this.documents.send(new GetCommand({
-      TableName: this.tableName,
-      Key: retirementKey,
-      ConsistentRead: true,
-    }));
-    if (Item?.old_chat_retired !== true) throw new SessionNamespaceNotReadyError();
   }
 
   async pendingPurges(): Promise<SessionPurge[]> {
@@ -546,11 +572,12 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return transferred !== null && transferred.owner !== owner;
   }
 
-  private dispatchSessionWrite(owner: string, session: SessionPurge, continuation: boolean, condition: string, acceptedTurn?: AcceptedDispatch): NonNullable<TransactWriteCommandInput['TransactItems']>[number] {
+  private dispatchSessionWrite(owner: string, session: SessionPurge, continuation: boolean, condition: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): NonNullable<TransactWriteCommandInput['TransactItems']>[number] {
+    const runtime = dispatchRuntimeProof(expectedSession);
     const write = {
       TableName: this.tableName, Key: key(owner, session.session_id),
-      ConditionExpression: condition,
-      ExpressionAttributeValues: { ':filing': session.filing_user_id, ...this.dispatchProof(acceptedTurn).values },
+      ConditionExpression: condition + runtime.condition,
+      ExpressionAttributeValues: { ':filing': session.filing_user_id, ...this.dispatchProof(acceptedTurn).values, ...runtime.values },
     };
     if (!continuation) return { ConditionCheck: write };
     return { Update: {
@@ -561,7 +588,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: { dispatchOwner: string; session: SessionPurge; claimDestination: string | null }, continuation: boolean, token: string, acceptedTurn?: AcceptedDispatch): TransactWriteCommandInput {
+  private dispatchTransaction(owner: string, identity: { dispatchOwner: string; session: SessionPurge; claimDestination: string | null }, continuation: boolean, token: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): TransactWriteCommandInput {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const conditions = this.dispatchConditions(claimedTurn);
@@ -571,9 +598,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
         ...this.dispatchClaimCondition(conditions.claim, dispatchOwner === owner ? claimDestination : null),
       } },
-      this.dispatchSessionWrite(dispatchOwner, session, continuation, conditions.session, claimedTurn),
+      this.dispatchSessionWrite(dispatchOwner, session, continuation, conditions.session, claimedTurn, expectedSession),
       { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, dispatcher: dispatcherId, created_at: now() } } },
-      ...(continuation ? [{ ConditionCheck: { TableName: this.tableName, Key: retirementKey, ...retirementCondition } }] : []),
       ...(fencedOwner === owner ? [] : [{ ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)' } }]),
     ] };
   }
@@ -585,36 +611,36 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       const winner = await this.get(dispatchOwner, session.session_id);
       if (winner !== null && boundRuntime(winner)) return true;
     }
-    if (continuation && reasons?.[4]?.Code === 'ConditionalCheckFailed') throw new SessionNamespaceNotReadyError();
     const admissionChanged = [reasons?.[1], reasons?.[2]].some((reason) => reason?.Code === 'ConditionalCheckFailed');
     if (acceptedTurn !== undefined && dispatchOwner === owner && admissionChanged) {
       if (await this.dispatchIdentityChanged(owner, session.session_id, claimDestination)) return true;
     }
     if (reasons?.[1]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(owner);
-    if ([reasons?.[0], reasons?.[2], reasons?.[continuation ? 5 : 4]].some((reason) => reason?.Code === 'ConditionalCheckFailed')) throw new SessionDeletedError(session.session_id);
+    if ([reasons?.[0], reasons?.[2], reasons?.[4]].some((reason) => reason?.Code === 'ConditionalCheckFailed')) throw new SessionDeletedError(session.session_id);
     throw error;
   }
 
-  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<RegisteredDispatch> {
+  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): Promise<RegisteredSessionDispatch> {
     const identity = await this.dispatchIdentity(owner, sessionId, warmupFilingUserId, acceptedTurn);
     const { session } = identity;
+    if (expectedSession !== undefined && (['filing_user_id', 'runtime_binding', 'runtime_generation', 'legacy_settlement_unproved'] as const).some((field) => session[field] !== expectedSession[field])) throw new SessionDeletedError(sessionId);
     const continuation = session.runtime_binding === undefined && session.runtime_generation === undefined;
     if (!continuation && !boundRuntime(session)) throw new SessionDispatchPendingError('Session Runtime binding is unproved');
     if (continuation) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
     const token = randomUUID();
     try {
-      await this.documents.send(new TransactWriteCommand(this.dispatchTransaction(owner, identity, continuation, token, acceptedTurn)));
+      await this.documents.send(new TransactWriteCommand(this.dispatchTransaction(owner, identity, continuation, token, acceptedTurn, expectedSession)));
     } catch (error) {
-      if (await this.retryDispatch(error, owner, identity, continuation, acceptedTurn)) return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn);
+      if (await this.retryDispatch(error, owner, identity, continuation, acceptedTurn)) return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, expectedSession);
     }
     // No TTL: a paused dispatcher must never resume after an expired registration permits deletion.
     return this.dispatchAcknowledgement(session, token);
   }
 
-  private dispatchAcknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string): RegisteredDispatch {
+  private dispatchAcknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string): RegisteredSessionDispatch {
     const Key = dispatchKey(session, token);
     const binding = { ':binding': session.runtime_binding, ':generation': session.runtime_generation };
-    const complete: RegisteredDispatch = Object.assign(async () => {
+    const complete: RegisteredSessionDispatch = Object.assign(async () => {
       await this.documents.send(new DeleteCommand({ TableName: this.tableName, Key,
         ...(recovered ? { ConditionExpression: 'attribute_not_exists(pk) OR (rejected_runtime_binding = :binding AND rejected_runtime_generation = :generation AND rejected_runtime_target = :target AND runtime_stop_confirmed = :binding)', ExpressionAttributeValues: { ...binding, ':target': runtimeTarget } } : {}),
       }));
@@ -731,30 +757,13 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return { creating, filing, binding };
   }
 
-  async recordTurn(
-    owner: string,
-    sessionId: string,
-    {
-      filingUserId,
-      title,
-      provider,
-      running,
-      messageId,
-      warmup,
-      opening,
-      postAcceptance,
-      scheduledTaskId,
-    }: { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; opening?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
-  ): Promise<string> {
-    const { creating, binding, filing } = await this.turnIdentity(owner, sessionId, filingUserId);
-    filingUserId = filing;
+  private turnTransaction(owner: string, sessionId: string, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId }: TurnAdmission, creating: boolean, binding?: string, admission?: { session: SessionPurge; continuation: boolean }): TransactWriteCommandInput {
     const newUnbound = provider === undefined && creating;
     const providerUpdate = providerWrite(provider, newUnbound);
     const runningUpdate = runningWrite(running, postAcceptance);
     const scheduledUpdate = scheduledWrite(scheduledTaskId, postAcceptance);
-    try {
-      await this.documents.send(
-        new TransactWriteCommand({
+    const runtime = turnRuntimeWrite(creating, binding, admission);
+    return {
           TransactItems: [
             {
               ConditionCheck: {
@@ -772,18 +781,18 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   'created_at = if_not_exists(created_at, :now), ' +
                   (warmup || opening ? '' : 'title = if_not_exists(title, :title), ') +
                   'filing_user_id = if_not_exists(filing_user_id, :filing_user_id)' +
-                  (binding === undefined ? '' : ', runtime_binding = :binding, runtime_generation = :generation') +
+                  runtime.set +
                   (messageId === undefined ? '' : ', latest_message_id = :latest_message_id') +
                   scheduledUpdate.set +
                   runningUpdate.set +
                   providerUpdate.set + turnRemoval(runningUpdate.remove, provider, postAcceptance),
                 ConditionExpression: turnAdmissionCondition(creating, providerUpdate.condition) +
-                  scheduledUpdate.condition + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
+                  scheduledUpdate.condition + runtime.condition + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
                 ExpressionAttributeValues: {
                   ':session_id': sessionId,
                   ':now': now(),
                   ...(warmup || opening ? {} : { ':title': title }),
-                  ...(binding === undefined ? {} : { ':binding': binding, ':generation': 'tracked-v1' }),
+                  ...runtime.values,
                   ':filing_user_id': filingUserId,
                   ...(messageId === undefined ? {} : { ':latest_message_id': messageId }),
                   ...scheduledUpdate.values,
@@ -800,12 +809,101 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                 ConditionExpression: 'attribute_not_exists(pk)',
               },
             },
-            ...(binding === undefined ? [] : [{ ConditionCheck: { TableName: this.tableName, Key: retirementKey, ...retirementCondition } }]),
           ],
-        }),
-      );
+        };
+  }
+
+  private async unmaterializedMainIdentity(owner: string, sessionId: string, currentMain?: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+    let identity = currentMain?.session_id === sessionId ? currentMain : undefined;
+    if (identity === undefined) {
+      for (const original of (await this.answeringIds(owner)).filter((id) => id !== owner)) {
+        // eslint-disable-next-line no-await-in-loop -- each retired source holds its own original Main identity
+        const source = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: mainChatKey(original), ConsistentRead: true }));
+        if (source.Item?.session_id === sessionId) { identity = source.Item; break; }
+      }
+    }
+    if (identity !== undefined && !trackedRuntime(identity as SessionPurge) && identity.filing_user_id === undefined) throw new SessionDispatchPendingError('Session legacy settlement is unproved; original Main Chat filing identity is unknown');
+    return identity;
+  }
+
+  private async admissionIdentity(owner: string, sessionId: string, filingUserId: string): Promise<{ creating: boolean; session: Readonly<BoundRuntimeSession>; continuation: boolean }> {
+    const { Responses } = await this.documents.send(new TransactGetCommand({ TransactItems: [
+      { Get: { TableName: this.tableName, Key: key(owner, sessionId) } },
+      { Get: { TableName: this.tableName, Key: mainChatKey(owner) } },
+    ] }));
+    const existing = Responses?.[0]?.Item;
+    if (existing !== undefined && fenced(existing as SessionItem)) throw new SessionDeletedError(sessionId);
+    const identity = existing ?? await this.unmaterializedMainIdentity(owner, sessionId, Responses?.[1]?.Item);
+    const session: SessionPurge = {
+      session_id: sessionId,
+      filing_user_id: typeof identity?.filing_user_id === 'string' ? identity.filing_user_id : filingUserId,
+      ...runtimeIdentity(identity ?? {}),
+    };
+    const continuation = identity !== undefined && session.runtime_binding === undefined && session.runtime_generation === undefined;
+    if (identity === undefined) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'tracked-v1' });
+    else if (continuation) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
+    if (!boundRuntime(session)) throw new SessionDispatchPendingError('Session Runtime binding is unproved');
+    return { creating: existing === undefined, session: Object.freeze(session), continuation };
+  }
+
+  private async dispatchTurn(owner: string, session: Readonly<BoundRuntimeSession>, acceptedTurn?: AcceptedDispatch): Promise<RegisteredSessionDispatch> {
+    const token = randomUUID();
+    try {
+      await this.documents.send(new TransactWriteCommand({ TransactItems: [
+        { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
+        { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
+        this.dispatchSessionWrite(owner, session, false, 'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND filing_user_id = :filing', undefined, session),
+        { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, dispatcher: dispatcherId, created_at: now() } } },
+      ] }));
     } catch (error) {
-      if ((error as Partial<TransactionCanceledException>).CancellationReasons?.[3]?.Code === 'ConditionalCheckFailed') throw new SessionNamespaceNotReadyError();
+      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+      if (reasons?.[0]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(session.session_id);
+      if (reasons?.[1]?.Code === 'ConditionalCheckFailed') {
+        if (acceptedTurn !== undefined) return this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, session);
+        throw new SessionClaimError(owner);
+      }
+      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(session.session_id);
+      throw error;
+    }
+    return this.dispatchAcknowledgement(session, token);
+  }
+
+  async prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn> {
+    const { creating, session, continuation } = await this.admissionIdentity(owner, sessionId, turn.filingUserId);
+    const transaction = this.turnTransaction(owner, sessionId, { ...turn, filingUserId: session.filing_user_id }, creating, undefined,
+      { session, continuation });
+    try {
+      await this.documents.send(new TransactWriteCommand(transaction));
+    } catch (error) {
+      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+      const winner = reasons?.[1]?.Item;
+      const bindingChanged = continuation && winner?.runtime_binding?.S !== undefined && winner.filing_user_id?.S === session.filing_user_id;
+      if (retryUnboundTurn(error, sessionId, (creating || bindingChanged) && compatibleAdmission(error, turn.provider), turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
+    }
+    return { session, dispatch: () => this.dispatchTurn(owner, session, turn.running ?? (turn.messageId === undefined ? undefined : { messageId: turn.messageId })) };
+  }
+
+  async recordTurn(
+    owner: string,
+    sessionId: string,
+    {
+      filingUserId,
+      title,
+      provider,
+      running,
+      messageId,
+      warmup,
+      opening,
+      postAcceptance,
+      scheduledTaskId,
+    }: TurnAdmission,
+  ): Promise<string> {
+    const { creating, binding, filing } = await this.turnIdentity(owner, sessionId, filingUserId);
+    filingUserId = filing;
+    try {
+      await this.documents.send(new TransactWriteCommand(this.turnTransaction(owner, sessionId,
+        { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId }, creating, binding)));
+    } catch (error) {
       if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, provider), scheduledTaskId, opening)) {
         return this.recordTurn(owner, sessionId, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId });
       }
@@ -1254,7 +1352,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
         { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
         ...(inherited === undefined ? [
-          { ConditionCheck: { TableName: this.tableName, Key: retirementKey, ...retirementCondition } },
           { Put: { TableName: this.tableName, Item: { ...key(owner, sessionId), session_id: sessionId, filing_user_id: filing, ...binding, created_at: createdAt, updated_at: createdAt, provider_pending: true }, ConditionExpression: 'attribute_not_exists(pk)' } },
         ] : []),
       ] }));
@@ -1263,7 +1360,6 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       if (reasons?.[1]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(sessionId);
       if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
       if (reasons?.[0]?.Code === 'ConditionalCheckFailed') return;
-      if (reasons?.[3]?.Code === 'ConditionalCheckFailed') throw new SessionNamespaceNotReadyError();
       throw error;
     }
   }

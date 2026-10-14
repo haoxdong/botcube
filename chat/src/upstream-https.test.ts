@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { SignatureV4 } from '@smithy/signature-v4';
 import type { IncomingHttpHeaders, ServerResponse } from 'node:http';
@@ -79,23 +78,6 @@ async function recordingServer(answer: (response: ServerResponse) => void) {
 }
 
 describe('HTTPS Harness transport', () => {
-  it('keeps unsigned HTTPS readiness closed until the dispatcher prerequisite exists', async () => {
-    const { url, received } = await recordingServer((response) => response.end('data: {"type":"RUN_FINISHED"}\n\n'));
-    const stack = await startInProcess({ runtimeNamespaceReady: false, config: {
-      agentCore: null,
-      harnessEndpoint: { url, region: 'us-west-2', sigv4: false },
-    } });
-    try {
-      expect((await stack.app.request('/health')).status).toBe(503);
-      expect(received).toEqual([]);
-      await DynamoDBDocumentClient.from(stack.table.client).send(new PutCommand({
-        TableName: stack.table.name,
-        Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true },
-      }));
-      expect((await stack.app.request('/health')).status).toBe(200);
-    } finally { await stack.stop(); }
-  });
-
   it.each([true, false])('registered HTTP deletion stops the exact direct TLS Runtime before event purge with signing %s', async (sigv4) => {
     const order: string[] = [];
     const sessionId = 'https-registered';

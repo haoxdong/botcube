@@ -1,3 +1,4 @@
+import { defined } from '../test/defined.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './cartridge.js';
@@ -197,8 +198,8 @@ it('logs one chat_turn_timing line for a relayed Turn, timed to its last token',
     requester: async () => { now = 120; return { owner: 'account-1' }; },
     invocationPayload: async (input) => { now = 190; return { ...input, forwardedProps: { ...input.forwardedProps } }; },
   } });
-  const record = target.sessionMetadata.recordTurn.bind(target.sessionMetadata);
-  vi.spyOn(target.sessionMetadata, 'recordTurn').mockImplementation(async (...args) => {
+  const record = target.sessionMetadata.prepareTurn.bind(target.sessionMetadata);
+  vi.spyOn(target.sessionMetadata, 'prepareTurn').mockImplementation(async (...args) => {
     const result = await record(...args);
     now = 160;
     return result;
@@ -261,7 +262,7 @@ async function roundTripsToInvoke(target: InProcessStack, trips: RoundTrip[], th
 // Chat's share of Orchestration Overhead: each call a Turn waits for before its invoke is a round trip to AWS.
 // Count the round trips it waits for one after another, not the wall time, which a busy CI host stretches.
 describe("a Turn's round trips before its invoke", () => {
-  it('are ten, one after another, on a new thread', async () => {
+  it('are five, one after another, on a new thread', async () => {
     const target = await startInProcess();
     try {
       // Once the purge recovery the service starts with is done, only the Turn's calls are timed.
@@ -271,22 +272,17 @@ describe("a Turn's round trips before its invoke", () => {
       const waited = await roundTripsToInvoke(target, trips, '77777777-7777-4777-8777-777777777777');
 
       expect(waited.map((trip) => trip.name)).toEqual([
-        'DynamoDBSessionMetadata.checkRuntimeNamespaceReady',
-        'DynamoDBSessionMetadata.get',
+        'DynamoDBSessionMetadata.admissionIdentity',
         'DynamoDBSessionMetadata.queryPartition',
-        'DynamoDBSessionMetadata.mainIdentity',
-        'DynamoDBSessionMetadata.recordTurn',
-        'DynamoDBSessionMetadata.acceptedFilingUserId',
+        'DynamoDBSessionMetadata.prepareTurn',
         'DynamoDBAgentDocuments.get',
-        'DynamoDBSessionMetadata.claimDestination',
-        'DynamoDBSessionMetadata.get',
-        'DynamoDBSessionMetadata.beginDispatch',
+        'DynamoDBSessionMetadata.dispatchTurn',
       ]);
-      expect(serialDepth(waited)).toBe(10);
+      expect(serialDepth(waited)).toBe(5);
     } finally { await target.stop(); }
   });
 
-  it('are eight, one after another, on a continuing thread', async () => {
+  it('are four, one after another, on a continuing thread', async () => {
     const target = await startInProcess();
     const threadId = '88888888-8888-4888-8888-888888888888';
     try {
@@ -297,16 +293,12 @@ describe("a Turn's round trips before its invoke", () => {
       const waited = await roundTripsToInvoke(target, trips, threadId);
 
       expect(waited.map((trip) => trip.name)).toEqual([
-        'DynamoDBSessionMetadata.checkRuntimeNamespaceReady',
-        'DynamoDBSessionMetadata.get',
-        'DynamoDBSessionMetadata.recordTurn',
-        'DynamoDBSessionMetadata.acceptedFilingUserId',
+        'DynamoDBSessionMetadata.admissionIdentity',
+        'DynamoDBSessionMetadata.prepareTurn',
         'DynamoDBAgentDocuments.get',
-        'DynamoDBSessionMetadata.claimDestination',
-        'DynamoDBSessionMetadata.get',
-        'DynamoDBSessionMetadata.beginDispatch',
+        'DynamoDBSessionMetadata.dispatchTurn',
       ]);
-      expect(serialDepth(waited)).toBe(8);
+      expect(serialDepth(waited)).toBe(4);
     } finally { await target.stop(); }
   });
 });
@@ -322,26 +314,6 @@ const admissionInput = { threadId: '55555555-5555-4555-8555-555555555555', runId
 const admissionPost = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(admissionInput) };
 
 describe('independent Turn admission', () => {
-  it('starts requester and namespace together and reports readiness failure while requester is pending', async () => {
-    const requester = admissionGate<{ owner: string }>();
-    const resolving = vi.fn(() => requester.promise);
-    const target = await startInProcess({ cartridge: { requester: resolving } });
-    const namespace = admissionGate<void>();
-    vi.spyOn(target.sessionMetadata, 'checkRuntimeNamespaceReady').mockImplementation(() => namespace.promise);
-    const record = vi.spyOn(target.sessionMetadata, 'recordTurn');
-    const response = target.app.request('/', admissionPost);
-    try {
-      await vi.waitFor(() => expect(resolving).toHaveBeenCalledTimes(1));
-      expect(record).not.toHaveBeenCalled();
-      let answered = false;
-      void Promise.resolve(response).then(() => { answered = true; });
-      namespace.reject(new Error('namespace offline'));
-      await vi.waitFor(() => expect(answered).toBe(true));
-      expect((await response).status).toBe(503);
-      expect(record).not.toHaveBeenCalled();
-    } finally { requester.resolve({ owner: 'account-1' }); namespace.resolve(); await response; await target.stop(); }
-  });
-
   it('reports a documents failure while payload preparation is pending', async () => {
     const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
     const payload = admissionGate<{ forwardedProps: { token: string } }>();
@@ -350,7 +322,6 @@ describe('independent Turn admission', () => {
     const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockImplementation(() => documents.promise);
     const target = await startInProcess({ cartridge: { invocationPayload: constructing, credentialProps: ['token'] } });
     const ending = vi.spyOn(target.sessionMetadata, 'turnEnded');
-    const dispatch = vi.spyOn(target.sessionMetadata, 'beginDispatch');
     const response = target.app.request('/', admissionPost);
     try {
       await vi.waitFor(() => expect(constructing).toHaveBeenCalledTimes(1));
@@ -362,7 +333,9 @@ describe('independent Turn admission', () => {
       expect((await response).status).toBe(503);
       payload.resolve({ forwardedProps: { token: 'private-issued-token' } });
       expect(ending).toHaveBeenCalledWith('account-1', admissionInput.threadId, expect.anything(), expect.objectContaining({ message: expect.not.stringContaining('private-issued-token') }));
-      expect(dispatch).not.toHaveBeenCalled();
+      const admitted = await target.sessionMetadata.get('account-1', admissionInput.threadId);
+      expect(admitted).not.toBeNull();
+      await expect(target.sessionMetadata.assertNoDispatch(defined(admitted, 'admitted Session'))).resolves.toBeUndefined();
     } finally { payload.resolve({ forwardedProps: { token: 'private-issued-token' } }); documents.reject(new HttpError(503, 'failed')); await response; await target.stop(); }
   });
 });

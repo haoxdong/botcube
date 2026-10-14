@@ -14,7 +14,6 @@ import type { sessionLifecycle } from './session-lifecycle.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
 
 export interface ScheduledRunDeps {
-  runtimeNamespaceRequired: boolean;
   /** Null: the Chat Service has no keys and forwards no Turn identity. */
   turnIdentity: TurnIdentity | null;
   cartridge: ChatServiceCartridge;
@@ -84,7 +83,6 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
   const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous, deliveryContext);
   if (admission === null) return;
   const { executionOwner, task } = admission;
-  if (deps.runtimeNamespaceRequired) await assertRuntimeNamespaceReady(sessionMetadata);
   const filingUserId = previous?.filingUserId ?? cartridge.filingUserId(owner);
   const mainChat = previous?.mainChat ?? await sessionMetadata.mainChat(owner, filingUserId);
   await assertReservedMainIdentity(sessionMetadata, owner, executionOwner, mainChat, previous?.mainFilingUserId);
@@ -181,15 +179,6 @@ async function finishRedelivery(deps: ScheduledRunDeps, store: ScheduledRunStore
   }
 }
 
-async function assertRuntimeNamespaceReady(sessionMetadata: SessionMetadata): Promise<void> {
-  try {
-    await sessionMetadata.checkRuntimeNamespaceReady();
-  } catch (error) {
-    console.error('Session Runtime namespace readiness failed', error);
-    throw new HttpError(503, 'Session Runtime namespace is not ready');
-  }
-}
-
 /** A redelivered run that already finished and posted: its one-off may not have left the account yet. */
 async function retireFinished(deps: ScheduledRunDeps, store: ScheduledRunStore, previous: ScheduledDelivery): Promise<void> {
   const executionOwner = await store.executionOwner(previous);
@@ -249,7 +238,7 @@ async function runInSideChat(
   };
   const initialMessages = structuredClone(input.messages);
   const running = { startedAt: delivery.startedAt, runId: input.runId };
-  const sessionUserId = await sessionMetadata.recordTurn(owner, sideChat, {
+  const prepared = await sessionMetadata.prepareTurn(owner, sideChat, {
     filingUserId,
     title: task.title,
     provider: model.provider,
@@ -260,7 +249,8 @@ async function runInSideChat(
     if (error instanceof SessionBusyError) return null;
     throw error;
   });
-  if (sessionUserId === null) return { status: 'skipped', text: 'the previous run was still going' };
+  if (prepared === null) return { status: 'skipped', text: 'the previous run was still going' };
+  const sessionUserId = prepared.session.filing_user_id;
   reached.sideChat = true;
   let output: RunOutput;
   try {
@@ -280,9 +270,9 @@ async function runInSideChat(
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
     const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
     if (!fired(current) && (current.paused || (boundsChanged && outsideBounds(current)))) return { status: 'skipped', text: 'the task was outside its active time window' };
-    const complete = await sessionMetadata.beginDispatch(owner, sideChat, undefined, running);
+    const complete = await prepared.dispatch();
     output = await readRun(
-      await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session ?? { session_id: sideChat, filing_user_id: sessionUserId }, complete),
+      await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete),
       deps.upstream.label,
       turnCredentials(payload.forwardedProps, cartridge.credentialProps),
       initialMessages,

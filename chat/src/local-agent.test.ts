@@ -3,9 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
-import { DeleteCommand, DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { runScheduledTask } from './scheduled-runs.js';
-import { sessionLifecycle } from './session-lifecycle.js';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from '../../../tests/chat/fakes/stack.js';
@@ -87,7 +85,7 @@ const cartridge: ChatServiceCartridge = {
 };
 
 const sessionMetadata: SessionMetadata = {
-  checkRuntimeNamespaceReady: async () => undefined,
+  prepareTurn: async (_owner, sessionId, { filingUserId }) => ({ session: { session_id: sessionId, filing_user_id: filingUserId, runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001' }, dispatch: async () => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId, runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001' } }) }),
   beginDispatch: async (_owner, sessionId, filingUserId) => Object.assign(async () => undefined, { session: { session_id: sessionId, filing_user_id: filingUserId ?? 'filed-acct_owner', runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001' } }),
   assertNoDispatch: async () => undefined,
   rejectedDispatches: async () => [],
@@ -305,19 +303,6 @@ describe('a Turn against a local Harness', () => {
       expect(agent.received.filter((request) => request.path.includes('/stopruntimesession'))).toHaveLength(1);
       expect(agent.received.at(-1)?.headers['x-amzn-bedrock-agentcore-runtime-session-id']).toBe(admitted.runtime_binding);
       expect(invoke).toHaveBeenCalledWith({ operation: 'purge', sessionId: TURN.threadId, userId: 'filed-acct_owner' }, 900);
-    } finally { errors.mockRestore(); }
-  });
-
-  it('classifies a missing admission prerequisite as unavailable in local mode', async () => {
-    const agent = await localHarness((response) => response.end());
-    const table = `local-unproved-${Math.random().toString(36).slice(2)}`;
-    await createChatTable(inject('dynamodbEndpoint'), table, false);
-    const metadata = new DynamoDBSessionMetadata(table, new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      expect((await sendTurn(await chatService(agent.url, { metadata }))).status).toBe(503);
-      expect(agent.received).toEqual([]);
-      expect(await metadata.get('acct_owner', TURN.threadId)).toBeNull();
     } finally { errors.mockRestore(); }
   });
 
@@ -574,7 +559,7 @@ describe('a Turn against a local Harness', () => {
         response.end('data: {"type":"RUN_FINISHED"}\n\n');
       };
     });
-    const summary = { runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001', session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', title: 'hello', created_at: '', updated_at: '' };
+    const summary = { runtime_generation: 'tracked-v1' as const, runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001', session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', title: 'hello', created_at: '', updated_at: '' };
     const purged: string[] = [];
     let history: AccountHistory | undefined;
     const url = await chatService(agent.url, {
@@ -604,11 +589,11 @@ describe('a Turn against a local Harness', () => {
     const agent = await localHarness((response) => response.end());
     let admitted = false;
     let release: (() => void) | undefined;
-    const summary = { runtime_generation: 'tracked-v1', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001', session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', title: 'hello', created_at: '', updated_at: '' };
+    const summary = { runtime_generation: 'tracked-v1' as const, runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001', session_id: TURN.threadId, filing_user_id: 'filed-acct_owner', title: 'hello', created_at: '', updated_at: '' };
     const url = await chatService(agent.url, {
       metadata: {
         ...sessionMetadata,
-        recordTurn: async () => { admitted = true; await new Promise<void>((resolve) => { release = resolve; }); return summary.filing_user_id; },
+        prepareTurn: async () => { admitted = true; await new Promise<void>((resolve) => { release = resolve; }); return { session: summary, dispatch: async () => Object.assign(async () => undefined, { session: summary }) }; },
         fence: async () => summary,
       },
       invoke: async () => ({}),
@@ -632,9 +617,9 @@ describe('a Turn against a local Harness', () => {
     const client = () => new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
     const deletingMetadata = new DynamoDBSessionMetadata(table, client());
     const dispatchingMetadata = new DynamoDBSessionMetadata(table, client());
-    const recordTurn = dispatchingMetadata.recordTurn.bind(dispatchingMetadata);
-    vi.spyOn(dispatchingMetadata, 'recordTurn').mockImplementation(async (...args) => {
-      const filed = await recordTurn(...args);
+    const prepareTurn = dispatchingMetadata.prepareTurn.bind(dispatchingMetadata);
+    vi.spyOn(dispatchingMetadata, 'prepareTurn').mockImplementation(async (...args) => {
+      const filed = await prepareTurn(...args);
       admitted = true;
       await new Promise<void>((resolve) => { release = resolve; });
       return filed;
@@ -808,10 +793,10 @@ describe('a Turn against a local Harness', () => {
 
   it('warms the same physical Sandbox as a Turn under its persisted filing identity', async () => {
     const agent = await localHarness((response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end('data: {"type":"RUN_FINISHED"}\n\n'); });
-    const claimed = { session_id: TURN.threadId, filing_user_id: 'filed-before-claim', title: 'hello', created_at: '', updated_at: '' };
+    const claimed = { runtime_generation: 'tracked-v1' as const, runtime_binding: 'runtime-00000000-0000-4000-8000-000000000001', session_id: TURN.threadId, filing_user_id: 'filed-before-claim', title: 'hello', created_at: '', updated_at: '' };
     const url = await chatService(agent.url, {
       config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } },
-      metadata: { ...sessionMetadata, get: async () => claimed, recordTurn: async () => claimed.filing_user_id },
+      metadata: { ...sessionMetadata, get: async () => claimed, prepareTurn: async () => ({ session: claimed, dispatch: async () => Object.assign(async () => undefined, { session: claimed }) }) },
     });
     await (await sendTurn(url)).text();
     expect((await fetch(`${url}/warmup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: TURN.threadId }) })).status).toBe(200);
@@ -821,57 +806,7 @@ describe('a Turn against a local Harness', () => {
     expect(JSON.parse(defined(agent.received[1], 'warmup invocation').body)).toMatchObject({ threadId: TURN.threadId, forwardedProps: { warmup: true } });
   });
 
-  it('blocks AWS admission and readiness until the verified namespace rollout marker exists', async () => {
-    const agent = await localHarness((response) => { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end('data: {"type":"RUN_FINISHED"}\n\n'); });
-    const table = `namespace-gate-${Math.random().toString(36).slice(2)}`;
-    await createChatTable(inject('dynamodbEndpoint'), table);
-    const client = new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
-    await DynamoDBDocumentClient.from(client).send(new DeleteCommand({ TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } }));
-    const metadata = new DynamoDBSessionMetadata(table, client);
-    const recordTurn = vi.spyOn(metadata, 'recordTurn');
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const url = await chatService(agent.url, { config: { localHarnessUrl: null, agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agent.url } }, metadata });
-      const blocked = await sendTurn(url);
-      await blocked.text();
-      expect(blocked.status).toBe(503);
-      expect((await fetch(`${url}/warmup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: TURN.threadId }) })).status).toBe(503);
-      expect((await fetch(`${url}/health`)).status).toBe(503);
-      expect(recordTurn).not.toHaveBeenCalled();
-      expect(agent.received).toEqual([]);
-      await DynamoDBDocumentClient.from(client).send(new PutCommand({ TableName: table, Item: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED', old_chat_retired: true } }));
-      const admitted = await sendTurn(url);
-      await admitted.text();
-      expect(admitted.status).toBe(200);
-      expect((await fetch(`${url}/warmup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: TURN.threadId }) })).status).toBe(200);
-      expect((await fetch(`${url}/health`)).status).toBe(200);
-      expect(recordTurn).toHaveBeenCalledOnce();
-      expect(agent.received).toHaveLength(2);
-    } finally { recordTurn.mockRestore(); errors.mockRestore(); }
-  });
-
-  it('blocks scheduled AWS model dispatch and summary writes while the namespace gate is closed', async () => {
-    const table = `scheduled-gate-${Math.random().toString(36).slice(2)}`;
-    await createChatTable(inject('dynamodbEndpoint'), table, false);
-    const metadata = new DynamoDBSessionMetadata(table, new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }));
-    const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
-    const post = vi.fn<SessionApi>(async () => ({}));
-    const recordTurn = vi.spyOn(metadata, 'recordTurn');
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      await expect(runScheduledTask({
-        cartridge, sessionMetadata: metadata, agentDocuments, invokeSessionApi: post,
-        scheduledTasks: { get: async () => ({ id: 'scheduled-gate', proposalId: 'proposal-gate', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, retire: async () => undefined },
-        upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined), runtimeNamespaceRequired: true, turnIdentity: null,
-        summarizeTurn: async () => ({ title: 'Brief', summary: 'Brief summary' }),
-      }, { owner: 'acct_owner', taskId: 'scheduled-gate', deliveryId: 'scheduled-gate-delivery' })).rejects.toMatchObject({ status: 503 });
-      expect(invoke).not.toHaveBeenCalled();
-      expect(post).not.toHaveBeenCalled();
-      expect(recordTurn).not.toHaveBeenCalled();
-    } finally { recordTurn.mockRestore(); errors.mockRestore(); }
-  });
-
-  it('keeps legacy cleanup fenced and pending after the closed retirement prerequisite', async () => {
+  it('keeps legacy cleanup fenced and pending after retiring the namespace gate', async () => {
     const agent = await localHarness((response) => response.end());
     const table = `cleanup-gate-${Math.random().toString(36).slice(2)}`;
     await createChatTable(inject('dynamodbEndpoint'), table);

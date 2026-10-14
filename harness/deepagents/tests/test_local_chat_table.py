@@ -1,4 +1,4 @@
-"""Development-only fresh table admission prerequisite."""
+"""Development-only table initialization."""
 
 import runpy
 from pathlib import Path
@@ -25,28 +25,21 @@ def local_table(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     return client
 
 
-def test_fresh_local_table_admits_tracked_sessions(local_table: MagicMock) -> None:
+def test_fresh_local_table_is_created(local_table: MagicMock) -> None:
     local_table.describe_table.side_effect = MissingTable
     runpy.run_path(str(INITIALIZER))
     local_table.create_table.assert_called_once()
-    local_table.put_item.assert_called_once_with(
-        TableName='development-chat',
-        ConditionExpression='attribute_not_exists(pk)',
-        Item={
-            'pk': {'S': 'RUNTIME_DISPATCHERS'},
-            'sk': {'S': 'CLOSED'},
-            'old_chat_retired': {'BOOL': True},
-        },
-    )
+    local_table.get_waiter.assert_called_once_with('table_exists')
+    local_table.put_item.assert_not_called()
 
 
-def test_existing_local_table_remains_unproved(local_table: MagicMock) -> None:
+def test_existing_local_table_is_reused(local_table: MagicMock) -> None:
     runpy.run_path(str(INITIALIZER))
     local_table.create_table.assert_not_called()
     local_table.put_item.assert_not_called()
 
 
-def test_other_endpoint_cannot_assert_retirement(local_table: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_other_endpoint_cannot_initialize_table(local_table: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AWS_ENDPOINT_URL_DYNAMODB', 'https://dynamodb.us-east-1.amazonaws.com')
     with pytest.raises(ValueError, match='only for the Compose'):
         runpy.run_path(str(INITIALIZER))

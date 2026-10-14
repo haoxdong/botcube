@@ -1,7 +1,7 @@
 import { TurnTiming } from './turn-timing.js';
 import { chatTable, positiveInteger } from './config.js';
 import { TurnIdentity, forwardTurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
-import type { TurnFailure } from './session-metadata.js';
+import type { PreparedTurn, TurnFailure } from './session-metadata.js';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
@@ -30,7 +30,6 @@ import {
   DynamoDBSessionMetadata,
   SessionDeletedError,
   SessionDispatchPendingError,
-  SessionNamespaceNotReadyError,
   trackedRuntime,
   SessionClaimError,
   SessionProviderError,
@@ -266,20 +265,9 @@ export function createChatService(
   const httpsHarness = config.harnessEndpoint && httpsHarnessUpstream(config.harnessEndpoint, options, config.agentCore);
   const upstream = httpsHarness ? sessionLifecycle(httpsHarness, httpsHarness.stop)
     : config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, options)) : agentCore;
-  const runtimeNamespaceRequired = Boolean(httpsHarness) || (!config.localHarnessUrl && agentCore !== null);
-  const requireRuntimeNamespace = async () => {
-    if (!runtimeNamespaceRequired) return;
-    try {
-      await sessionMetadata.checkRuntimeNamespaceReady();
-    } catch (error) {
-      console.error('Session Runtime namespace readiness failed', error);
-      throw new HttpError(503, 'Session Runtime namespace is not ready');
-    }
-  };
   const purge = purgeQueue(invokeSessionApi, (owner) => cartridge.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     if (!trackedRuntime(session)) await sessionMetadata.assertNoDispatch(session);
-    await requireRuntimeNamespace();
     if (config.localHarnessUrl) {
       await upstream.stop(session);
       await sessionMetadata.assertNoDispatch(session);
@@ -330,7 +318,7 @@ export function createChatService(
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, runtimeNamespaceRequired, summarizeTurn, turnIdentity };
+    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, summarizeTurn, turnIdentity };
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
     }, async () => {
@@ -347,7 +335,6 @@ export function createChatService(
       console.error(`${c.req.method} ${c.req.path} failed`, error);
     }
     if (error instanceof SessionDispatchPendingError) return c.json({ detail: error.message, status: 'pending' }, 503);
-    if (error instanceof SessionNamespaceNotReadyError) return c.json({ detail: error.message }, 503);
     if (error instanceof HttpError) return c.json({ detail: error.detail, ...(error.code === undefined ? {} : { code: error.code }) }, error.status as 400);
     return c.text('Internal Server Error', 500);
   });
@@ -386,7 +373,7 @@ export function createChatService(
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
     const timing = new TurnTiming(receipt, parsed.data.runId, parsed.data.threadId, c.req.header('user-agent'));
     try {
-      const [, requester] = await Promise.all([requireRuntimeNamespace(), cartridge.requester(c)]);
+      const requester = await cartridge.requester(c);
       timing.mark('requester');
       // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
       const input = body as RunAgentInput;
@@ -400,9 +387,10 @@ export function createChatService(
       timing.mark('model');
       const running = { startedAt: new Date().toISOString(), runId: input.runId };
       const request = validatedInput.messages.slice().reverse().find((message) => userText(message) !== '');
+      let prepared: PreparedTurn;
       let filingUserId: string;
       try {
-        filingUserId = await sessionMetadata.recordTurn(requester.owner, input.threadId, {
+        prepared = await sessionMetadata.prepareTurn(requester.owner, input.threadId, {
           filingUserId: cartridge.filingUserId(requester.owner),
           title: title(validatedInput.messages),
           provider: model.provider,
@@ -410,6 +398,7 @@ export function createChatService(
           messageId: input.runId,
           opening,
         });
+        filingUserId = prepared.session.filing_user_id;
       } catch (error) {
         if (error instanceof SessionOpeningError) throw new HttpError(409, error.message);
         if (error instanceof SessionProviderError) {
@@ -436,9 +425,9 @@ export function createChatService(
         const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
         timing.mark('liveView');
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
-        const complete = await sessionMetadata.beginDispatch(requester.owner, input.threadId, undefined, running);
+        const complete = await prepared.dispatch();
         timing.mark('dispatch');
-        return await relayTurn({ label: upstream.label, invoke: (body, sessionId, init) => upstream.invokeRegistered(body, complete.session ?? { session_id: sessionId, filing_user_id: filingUserId }, complete, init) }, {
+        return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, init) }, {
           timing,
           body: JSON.stringify(payload),
           sessionId: input.threadId,
@@ -501,7 +490,6 @@ export function createChatService(
       forwardedProps: { stop: true, sessionUserId: metadata.filing_user_id },
     });
     try {
-      await requireRuntimeNamespace();
       const complete = await sessionMetadata.beginDispatch(owner, sessionId);
       await stopTurn({ label: upstream.label, invoke: (body, id, init) => upstream.invokeRegistered(body, complete.session ?? metadata, complete, init) }, stop, sessionId);
     } catch (error) {
@@ -527,7 +515,6 @@ export function createChatService(
         return c.json({ error: 'Invalid warmup JSON', details: 'Expected JSON object.' }, 400);
       }
     }
-    await requireRuntimeNamespace();
     let namedSession: { owner: string; accountActorId: string; session: SessionPurge } | undefined;
     const { threadId, mainChat, model: requestedModel, effort } = request as Record<string, unknown>;
     const input: RunAgentInput = {
@@ -618,7 +605,6 @@ export function createChatService(
     }
     if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
     await scheduledTasks?.checkHealth();
-    await requireRuntimeNamespace();
     if (recoveryError !== undefined) throw new HttpError(503, 'Session purge recovery is unavailable');
     return c.json({ status: 'ok' });
   });
