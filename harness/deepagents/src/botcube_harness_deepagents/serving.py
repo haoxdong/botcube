@@ -928,12 +928,17 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         preparing=bool(warmup),
     )
     if not warmup:
+        timing = turn_timing.current()
+        warmed = session_memory.take_warmup(
+            session, auth.actor_id, timing.receipt if timing is not None else perf_counter(),
+        )
+
         async def prepare() -> tuple[LangGraphAgent, Path]:
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory)
             if AGENTCORE_MEMORY_ID and persistent_memory:
                 # The Memory block needs only the Turn's credentials, so it reads alongside the history.
                 store = agent.graph.store
-                session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id)
+                session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
             with turn_timing.phase('checkpoint_read'):
                 saved = await latest_checkpoint(agent.graph, _session_config(session))
                 if opening:
@@ -948,25 +953,52 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
     reads_history = forwarded.get('preparationScope', 'recorded') != 'startup'
     async with _SESSION_TURNS.preparation(session) as allowed:
         if allowed:
-            agent, backend = await _turn_agent(
-                build, turn_identity if reads_history else None, input_data.run_id, persistent_memory,
+            await _prepare_agent(
+                build, turn_identity, input_data.run_id, persistent_memory, session, auth.actor_id,
+                files, reads_history,
             )
-
-            async def read_history() -> None:
-                reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, _session_config(session))]
-                if AGENTCORE_MEMORY_ID and persistent_memory:
-                    # The opening Memory read, so the Turn's own finds the Memory client's connections open.
-                    reads.append(asyncio.to_thread(agentcore_memory_backend.opening, agent.graph.store, auth.actor_id))
-                with turn_timing.phase('warmup_history'):
-                    await asyncio.gather(*reads)
-
-            # The Turn's first workspace tool then finds its Files current and downloads nothing.
-            pull = asyncio.create_task(
-                TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).aensure()
-            )
-            work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
-            await _finish_preparation(work)
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
+
+
+async def _prepare_agent(
+    build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None,
+    run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
+    files: FilesSync | None, reads_history: bool,
+) -> None:
+    memory_warmup = (
+        session_memory.begin_warmup(session, actor_id)
+        if reads_history and AGENTCORE_MEMORY_ID and persistent_memory else None
+    )
+    memory_read: session_memory.OpeningRead | None = None
+    try:
+        agent, backend = await _turn_agent(
+            build, turn_identity if reads_history else None, run_id, persistent_memory,
+        )
+
+        async def read_history() -> None:
+            nonlocal memory_read
+            reads: list[Awaitable[Any]] = [latest_checkpoint(agent.graph, _session_config(session))]
+            if AGENTCORE_MEMORY_ID and persistent_memory:
+                reads.append(session_memory.read_warmup(
+                    lambda: agentcore_memory_backend.opening(agent.graph.store, actor_id),
+                ))
+            with turn_timing.phase('warmup_history'):
+                results = await asyncio.gather(*reads)
+                if memory_warmup is not None:
+                    memory_read = results[1]
+
+        # The Turn's first workspace tool then finds its Files current and downloads nothing.
+        pull = asyncio.create_task(
+            TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).aensure()
+        )
+        work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
+        await _finish_preparation(work)
+    except BaseException:
+        if memory_warmup is not None:
+            session_memory.finish_warmup(session, memory_warmup, None)
+        raise
+    if memory_warmup is not None:
+        session_memory.finish_warmup(session, memory_warmup, memory_read)
 
 
 async def _finish_preparation(work: list[asyncio.Task[Any]]) -> None:

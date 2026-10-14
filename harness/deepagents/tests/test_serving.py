@@ -63,6 +63,7 @@ from botcube_harness_deepagents import (
     message_times,
     serving,
     session_api,
+    session_memory,
 )
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from checkpoint_fake import ReadCountingSaver, legacy_session
@@ -319,6 +320,7 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
         '_SESSION_TURNS': serving._SessionTurns(),
     }.items():
         monkeypatch.setattr(serving, name, value)
+    monkeypatch.setattr(session_memory, '_warmups', {})
     fresh_warm_sessions(monkeypatch)
 
 

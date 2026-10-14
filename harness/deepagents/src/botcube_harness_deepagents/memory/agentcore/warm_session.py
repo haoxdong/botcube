@@ -13,11 +13,12 @@ confirmation until this process writes the Session again.
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from collections import OrderedDict
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
 from typing import Any
 
@@ -140,12 +141,29 @@ class _WarmSnapshotClient(AgentCoreSnapshotClient):
         self.serializer = serializer
         self.client = BedrockAgentCoreClientWithRetry(client)
         self.kept: tuple[_Snapshot, int] | None = None
+        self._stored_events: ContextVar[list[str] | None] = ContextVar('stored_snapshot_events', default=None)
 
     def store_snapshot(self, events: list[EventType], session_id: str, actor_id: str) -> None:
-        super().store_snapshot(events, session_id, actor_id)
-        [checkpoint] = [event for event in events if isinstance(event, CheckpointEvent)]
-        snapshot = _Snapshot(checkpoint.checkpoint_id, tuple(self.serializer.serialize_event(event) for event in events))
-        self.kept = (snapshot, _SESSIONS.keep((self.memory_id, actor_id, session_id), snapshot))
+        stored: list[str] = []
+        token = self._stored_events.set(stored)
+        try:
+            super().store_snapshot(events, session_id, actor_id)
+            [checkpoint] = [event for event in events if isinstance(event, CheckpointEvent)]
+            snapshot = _Snapshot(checkpoint.checkpoint_id, tuple(stored))
+            self.kept = (snapshot, _SESSIONS.keep((self.memory_id, actor_id, session_id), snapshot))
+        finally:
+            self._stored_events.reset(token)
+
+    def _create_snapshot_event(
+        self, payload: list[str], session_id: str, actor_id: str, checkpoint: CheckpointEvent,
+        kind: str, *, offset_ms: int = 0,
+    ) -> dict[str, Any]:
+        response = super()._create_snapshot_event(
+            payload, session_id, actor_id, checkpoint, kind, offset_ms=offset_ms,
+        )
+        if (stored := self._stored_events.get()) is not None:
+            stored.extend(json.loads(item)['blob'] for item in payload)
+        return response
 
 
 def _checkpoint_key(checkpoint_id: str) -> str:

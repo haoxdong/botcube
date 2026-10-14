@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -17,12 +18,16 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
     Checkpoint,
+    CheckpointMetadata,
+    CheckpointTuple,
     copy_checkpoint,
     empty_checkpoint,
 )
 from langgraph.checkpoint.base.id import uuid6
 from langgraph.graph.state import CompiledStateGraph
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
+from langgraph_checkpoint_aws.checkpoint.agentcore.helpers import EventType
+from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory, fresh_warm_sessions
 from botcube_harness_deepagents import turn_timing
@@ -325,3 +330,171 @@ def test_reading_the_newest_checkpoint_asks_memory_for_small_pages(
 
     assert _said(_turn(memory)[0], tmp_path) == ['Question 1', 'Answer 1']
     assert pages == ([5] if warm else [1, 5])
+
+
+@pytest.mark.parametrize('channels', [1, 101], ids=['single-event', 'chunked'])
+def test_snapshot_storage_serializes_no_more_than_stock_and_persists_stock_bytes(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, channels: int,
+) -> None:
+    checkpoint = empty_checkpoint()
+    checkpoint['channel_values'] = {f'channel-{i}': f'value-{i}' for i in range(channels)}
+    checkpoint['channel_versions'] = dict.fromkeys(checkpoint['channel_values'], '1')
+    metadata: CheckpointMetadata = {'source': 'input', 'step': -1, 'parents': {}}
+    counts: list[Counter[str]] = []
+    requests: list[list[dict[str, Any]]] = []
+    savers = [_another_microvm(), _turn(memory)[0]]
+    tuples: list[CheckpointTuple | None] = []
+    def store(saver: AgentCoreMemorySaver) -> None:
+        calls: Counter[str] = Counter()
+        serialize = saver.serializer.serialize_event
+        captured: list[dict[str, Any]] = []
+        create = memory.create_event
+
+        def counted(event: EventType) -> str:
+            calls[event.event_type] += 1
+            return serialize(event)
+
+        def uploaded(**params: Any) -> Any:
+            captured.append(params)
+            return create(**params)
+
+        monkeypatch.setattr(saver.serializer, 'serialize_event', counted)
+        with monkeypatch.context() as patch:
+            patch.setattr(memory, 'create_event', uploaded)
+            saver.put_with_writes(CONFIG, copy_checkpoint(checkpoint), metadata, checkpoint['channel_versions'],
+                                  [PendingWrite(CONFIG, [('answer', 'Pending answer')], 'task-1', '')])
+        tuples.append(saver.get_tuple(CONFIG))
+        counts.append(calls)
+        requests.append(captured)
+        memory.events.clear()
+        memory.created_by_token.clear()
+        memory.create_event_calls = 0
+
+    for saver in savers:
+        store(saver)
+    assert tuples[0] == tuples[1]
+    assert requests[0] == requests[1]
+    assert counts[1] == counts[0]
+    assert counts[1]['writes'] == 1
+    assert tuples[1] is not None
+    assert tuples[1].pending_writes == [('task-1', 'answer', 'Pending answer')]
+    warm = savers[1]
+    assert isinstance(warm, WarmSessionSaver)
+    assert warm.checkpoint_event_client.kept is not None
+    held = warm.checkpoint_event_client.kept[0]
+    uploaded_blobs = tuple(item['blob'] for request in requests[1] for item in request['payload'])
+    assert held.events == uploaded_blobs
+    assert held.checkpoint_id == checkpoint['id']
+
+
+def test_an_upload_failure_does_not_publish_a_partially_stored_snapshot(
+    memory: FakeAgentCoreMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory.agentcore.warm_session import _SESSIONS
+
+    saver = _turn(memory)[0]
+    _ask(saver, tmp_path, 'Question 1', 'Answer 1')
+    held, _ = _SESSIONS.get((MEMORY_ID, 'user-1', 'session-1'))
+    assert held is not None
+    created = memory.create_event
+
+    def unavailable(**params: Any) -> Any:
+        if params.get('metadata', {}).get('lc_kind') == {'stringValue': 'checkpoint'}:
+            raise ConnectionError('Snapshot upload unavailable')
+        return created(**params)
+
+    checkpoint = empty_checkpoint()
+    checkpoint['channel_values'] = {f'channel-{i}': f'value-{i}' for i in range(101)}
+    checkpoint['channel_versions'] = dict.fromkeys(checkpoint['channel_values'], '1')
+    monkeypatch.setattr(memory, 'create_event', unavailable)
+    with pytest.raises(ConnectionError, match='Snapshot upload unavailable'):
+        saver.put(CONFIG, checkpoint, {'source': 'input', 'step': -1, 'parents': {}}, checkpoint['channel_versions'])
+    assert memory.events[('user-1', 'session-1')][-1]['metadata']['lc_kind'] == {'stringValue': 'checkpoint_data'}
+    assert _SESSIONS.get((MEMORY_ID, 'user-1', 'session-1'))[0] == held
+    assert saver.checkpoint_event_client.kept is None
+    assert saver.checkpoint_event_client._stored_events.get() is None
+    monkeypatch.setattr(memory, 'create_event', created)
+    assert _said(_turn(memory)[0], tmp_path) == ['Question 1', 'Answer 1']
+
+
+def test_overlapping_stores_on_one_client_keep_each_sessions_uploaded_bytes(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from botcube_harness_deepagents.memory.agentcore.warm_session import _SESSIONS
+
+    saver = _turn(memory)[0]
+    barrier = threading.Barrier(2)
+    create = memory.create_event
+
+    def overlapping(**params: Any) -> Any:
+        barrier.wait(timeout=5)
+        return create(**params)
+
+    monkeypatch.setattr(memory, 'create_event', overlapping)
+
+    def store(session: str) -> None:
+        checkpoint = empty_checkpoint()
+        checkpoint['channel_values'] = {'answer': session}
+        checkpoint['channel_versions'] = {'answer': '1'}
+        saver.put({'configurable': {'thread_id': session, 'actor_id': 'user-1'}}, checkpoint,
+                  {'source': 'input', 'step': -1, 'parents': {}}, {'answer': '1'})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(store, session) for session in ['session-a', 'session-b']]
+        for result in results:
+            result.result(timeout=10)
+    for session in ['session-a', 'session-b']:
+        held, _ = _SESSIONS.get((MEMORY_ID, 'user-1', session))
+        assert held is not None
+        blobs = tuple(item['blob'] for event in memory.events[('user-1', session)] for item in event['payload'])
+        assert held.events == blobs
+        config: RunnableConfig = {'configurable': {'thread_id': session, 'actor_id': 'user-1'}}
+        loaded = _turn(memory)[0].get_tuple(config)
+        assert loaded is not None and loaded.checkpoint['channel_values']['answer'] == session
+
+
+def test_an_interrupted_graph_resumes_from_persisted_pending_writes(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typing import TypedDict
+
+    from langgraph.graph import END, START, StateGraph
+    from langgraph.types import Command, interrupt
+
+    class State(TypedDict):
+        answer: str
+        approval: str
+
+    completed: list[str] = []
+
+    def answer(state: State) -> dict[str, str]:
+        completed.append('answer')
+        return {'answer': 'Persisted answer'}
+
+    def approve(state: State) -> dict[str, str]:
+        return {'approval': interrupt('Approve the answer')}
+
+    def graph(saver: BaseCheckpointSaver[str]) -> Any:
+        builder = StateGraph(State)
+        builder.add_node('answer', answer)
+        builder.add_node('approve', approve)
+        builder.add_edge(START, 'answer')
+        builder.add_edge(START, 'approve')
+        builder.add_edge('answer', END)
+        builder.add_edge('approve', END)
+        return builder.compile(checkpointer=saver)
+
+    interrupted = graph(_turn(memory)[0]).invoke({'answer': '', 'approval': ''}, CONFIG)
+    assert interrupted['__interrupt__'][0].value == 'Approve the answer'
+    warm = _turn(memory)[0].get_tuple(CONFIG)
+    stock = _another_microvm().get_tuple(CONFIG)
+    assert warm == stock and warm is not None
+    assert warm.pending_writes is not None
+    assert any(channel == 'answer' and value == 'Persisted answer' for _, channel, value in warm.pending_writes)
+    fresh_warm_sessions(monkeypatch)
+    resumed = graph(_turn(memory)[0]).invoke(Command(resume='Approved'), CONFIG)
+    assert resumed == {'answer': 'Persisted answer', 'approval': 'Approved'}
+    assert completed == ['answer']
+    assert _turn(memory)[0].get_tuple(CONFIG) == _another_microvm().get_tuple(CONFIG)

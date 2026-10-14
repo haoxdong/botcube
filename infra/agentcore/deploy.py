@@ -68,7 +68,7 @@ def review(stack: str, name: str, deployed: DeployedResources) -> tuple[str, boo
     ):
         raise ValueError("Change set is not available")
     changes = change_set["Changes"]
-    if not isinstance(changes, list) or not changes:
+    if not isinstance(changes, list):
         raise ValueError("Missing resource changes")
     for change in changes:
         review_resource(change, deployed)

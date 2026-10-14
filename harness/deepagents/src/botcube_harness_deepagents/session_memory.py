@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
-from time import time
+from time import perf_counter, time
 from typing import Any
 
 from langchain.agents.middleware.types import (
@@ -39,6 +39,64 @@ class _Prefetch:
 _prefetched: ContextVar[_Prefetch | None] = ContextVar('session_memory_prefetched', default=None)
 
 
+@dataclass(frozen=True)
+class OpeningRead:
+    block: str
+    completed_at: float
+
+
+@dataclass
+class _Warmup:
+    actor_id: str
+    result: OpeningRead | None = None
+
+
+WARMUP_LIMIT = 16
+_warmups: dict[tuple[str, str], _Warmup] = {}
+
+
+def begin_warmup(session: tuple[str, str], actor_id: str) -> _Warmup:
+    """Register before preparation awaits, so an arriving Turn can invalidate its pending read."""
+    now = perf_counter()
+    for key, read in list(_warmups.items()):
+        if read.result is not None and now - read.result.completed_at > PROMPT_CACHE_TTL_SECONDS:
+            del _warmups[key]
+    _warmups.pop(session, None)
+    while len(_warmups) >= WARMUP_LIMIT:
+        del _warmups[next(iter(_warmups))]
+    read = _Warmup(actor_id)
+    _warmups[session] = read
+    return read
+
+
+async def read_warmup(load: Callable[[], str]) -> OpeningRead:
+    def read() -> OpeningRead:
+        return OpeningRead(load(), perf_counter())
+
+    return await asyncio.to_thread(read)
+
+
+def finish_warmup(session: tuple[str, str], read: _Warmup, result: OpeningRead | None) -> None:
+    """Publish successful preparation only while its Session still awaits its first Turn."""
+    if _warmups.get(session) is read:
+        if result is None:
+            del _warmups[session]
+        else:
+            read.result = result
+
+
+def take_warmup(session: tuple[str, str], actor_id: str, started_at: float) -> str | None:
+    read = _warmups.pop(session, None)
+    if (
+        read is not None
+        and read.actor_id == actor_id
+        and read.result is not None
+        and 0 <= started_at - read.result.completed_at <= PROMPT_CACHE_TTL_SECONDS
+    ):
+        return read.result.block
+    return None
+
+
 def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
     """The block for up to 50 preferences and 50 facts, as given (newest first); empty when there are none."""
     sections = [
@@ -51,9 +109,12 @@ def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
     return '\n\n'.join(sections)
 
 
-def prefetch(load: Callable[[], str], run_id: str) -> None:
-    """Start reading the Turn's Memory block on a worker thread; the Turn's middleware takes it rather than reading again."""
-    _prefetched.set(_Prefetch(run_id, asyncio.create_task(asyncio.to_thread(load))))
+def prefetch(load: Callable[[], str], run_id: str, warmed: str | None = None) -> None:
+    """Supply the Turn's Memory block from its completed warmup or a read alongside history."""
+    async def read() -> str:
+        return warmed if warmed is not None else await asyncio.to_thread(load)
+
+    _prefetched.set(_Prefetch(run_id, asyncio.create_task(read())))
 
 
 def settle_prefetch() -> None:
