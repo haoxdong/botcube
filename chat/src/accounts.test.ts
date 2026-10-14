@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
@@ -33,6 +33,21 @@ function app(preferred?: (trusted: string | null) => Promise<string | null>) {
 
 const cookie = (response: Response, name: string) =>
   response.headers.getSetCookie().find((header) => header.startsWith(`${name}=`))?.split(';')[0] ?? '';
+
+it.each(['anonymous', 'registered'] as const)('reads the %s owner account once per request', async (status) => {
+  const { store, routes } = app();
+  const { account } = await store.anonymousAccount(undefined);
+  if (status === 'registered') await store.register(account.accountId);
+  const headers = { Cookie: status === 'registered'
+    ? `bot_session=${await store.createSession(account.accountId)}`
+    : `bot_account_id=${account.accountId}` };
+  const load = vi.spyOn(store, 'loadAccount');
+
+  const response = await routes.request('/owner', { headers });
+
+  expect([response.status, await response.json()]).toEqual([200, account.accountId]);
+  expect(load).toHaveBeenCalledExactlyOnceWith(account.accountId);
+});
 
 it("acts for the browser's anonymous account, then the signed-in one, until it signs out", async () => {
   const { store, routes } = app();

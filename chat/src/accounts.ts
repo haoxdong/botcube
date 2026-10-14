@@ -41,16 +41,21 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
    */
   async function owner(
     c: Context,
-    preferred: (trusted: string | null) => Promise<string | null> = async () => null,
+    preferred: (trusted: string | null, account: A | null) => Promise<string | null> = async () => null,
   ): Promise<{ owner: string; account: A | null }> {
-    const trusted = await trustedAccountId(c);
-    const anonymous = async () => {
-      const account = await store().loadAccount(cookies.accountId(c));
-      return account?.status === 'anonymous' ? account.accountId : null;
-    };
-    const id = (await preferred(trusted)) ?? trusted ?? (await anonymous());
-    if (id === null) throw new HttpError(401, `Missing ${naming().key} account cookie`);
-    const account = await store().loadAccount(id);
+    const trustedAccount = await store().sessionAccount(cookies.sessionToken(c));
+    const trusted = trustedAccount?.accountId ?? null;
+    const candidateId = trusted ?? cookies.accountId(c);
+    const candidateAccount = trustedAccount ?? (candidateId ? await store().loadAccount(candidateId) : null);
+    let id = (await preferred(trusted, candidateAccount)) ?? trusted;
+    let account: A | null;
+    if (id !== null) {
+      account = id === candidateId ? candidateAccount : await store().loadAccount(id);
+    } else {
+      account = candidateAccount;
+      if (account?.status !== 'anonymous') throw new HttpError(401, `Missing ${naming().key} account cookie`);
+      id = account.accountId;
+    }
     if (account?.deletionOperationId !== undefined) throw new HttpError(409, 'Account deletion is pending');
     return { owner: id, account };
   }

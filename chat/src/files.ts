@@ -171,6 +171,7 @@ export function accountFiles({
   const s3 = new S3Client({ region, forcePathStyle: pathStyle, requestChecksumCalculation: 'WHEN_REQUIRED' });
   const s3files = new S3FilesClient({ region });
   const sts = new STSClient({ region });
+  const bindings = new Map<string, Promise<FilesSyncBinding>>();
 
   async function createAccessPoint(accountId: string): Promise<string> {
     const directory = directoryOf(accountId);
@@ -333,6 +334,36 @@ export function accountFiles({
       ContentLanguage: original.ContentLanguage, CacheControl: original.CacheControl, Expires: original.Expires, WebsiteRedirectLocation: original.WebsiteRedirectLocation };
   }
 
+  async function assumeBinding(accountId: string) {
+    if (syncRoleArn === undefined) {
+      throw new HttpError(503, 'Files sync is not configured: BOTCUBE_FILES_SYNC_ROLE_ARN is required');
+    }
+    const directory = directoryOf(accountId);
+    const policy = {
+      Version: '2012-10-17',
+      Statement: [
+        { Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'], Resource: `arn:aws:s3:::${bucket}/${directory}/*` },
+        {
+          Effect: 'Allow',
+          Action: 's3:ListBucket',
+          Resource: `arn:aws:s3:::${bucket}`,
+          Condition: { StringLike: { 's3:prefix': `${directory}/*` } },
+        },
+      ],
+    };
+    const { Credentials: credentials } = await sts.send(
+      new AssumeRoleCommand({
+        RoleArn: syncRoleArn,
+        RoleSessionName: `files-${directory.slice('accounts/'.length)}`,
+        DurationSeconds: SYNC_SECONDS,
+        Policy: JSON.stringify(policy),
+      }),
+    );
+    const { AccessKeyId: accessKeyId, SecretAccessKey: secretAccessKey, SessionToken: sessionToken } = credentials ?? {};
+    if (!accessKeyId || !secretAccessKey || !sessionToken) throw new Error('STS AssumeRole answered no credentials for Files');
+    return { bucket, prefix: `${directory}/`, region, accessKeyId, secretAccessKey, sessionToken };
+  }
+
   return {
     async mount(accountId) {
       let accessPointArn = await records().filesAccessPoint(accountId);
@@ -343,6 +374,7 @@ export function accountFiles({
       return { accessPointArn, fileSystemArn, mountPath: FILES_MOUNT_PATH };
     },
     async transfer(sourceAccountId, destinationAccountId) {
+      bindings.delete(sourceAccountId);
       const [source, destination] = [directoryOf(sourceAccountId), directoryOf(destinationAccountId)];
       const named = (objects: _Object[], directory: string) =>
         new Map(objects.flatMap(({ Key, ETag }) => (Key && !Key.endsWith('/') ? [[Key.slice(directory.length + 1), ETag]] : [])));
@@ -380,6 +412,7 @@ export function accountFiles({
       await removeAccessPoint(sourceAccountId);
     },
     async delete(accountId) {
+      bindings.delete(accountId);
       await sweep(await versions(`${directoryOf(accountId)}/`));
       await removeAccessPoint(accountId);
     },
@@ -442,34 +475,13 @@ export function accountFiles({
       await sweep(found);
     },
     async syncBinding(accountId) {
-      if (syncRoleArn === undefined) {
-        throw new HttpError(503, 'Files sync is not configured: BOTCUBE_FILES_SYNC_ROLE_ARN is required');
-      }
-      const directory = directoryOf(accountId);
-      // The session policy narrows the sync role to this account's directory: the agent can reach no other account's Files.
-      const policy = {
-        Version: '2012-10-17',
-        Statement: [
-          { Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'], Resource: `arn:aws:s3:::${bucket}/${directory}/*` },
-          {
-            Effect: 'Allow',
-            Action: 's3:ListBucket',
-            Resource: `arn:aws:s3:::${bucket}`,
-            Condition: { StringLike: { 's3:prefix': `${directory}/*` } },
-          },
-        ],
-      };
-      const { Credentials: credentials } = await sts.send(
-        new AssumeRoleCommand({
-          RoleArn: syncRoleArn,
-          RoleSessionName: `files-${directory.slice('accounts/'.length)}`,
-          DurationSeconds: SYNC_SECONDS,
-          Policy: JSON.stringify(policy),
-        }),
-      );
-      const { AccessKeyId: accessKeyId, SecretAccessKey: secretAccessKey, SessionToken: sessionToken } = credentials ?? {};
-      if (!accessKeyId || !secretAccessKey || !sessionToken) throw new Error('STS AssumeRole answered no credentials for Files');
-      return { bucket, prefix: `${directory}/`, region, accessKeyId, secretAccessKey, sessionToken };
+      const pending = bindings.get(accountId);
+      if (pending !== undefined) return pending;
+      const binding = assumeBinding(accountId).finally(() => {
+        if (bindings.get(accountId) === binding) bindings.delete(accountId);
+      });
+      bindings.set(accountId, binding);
+      return binding;
     },
   };
 }

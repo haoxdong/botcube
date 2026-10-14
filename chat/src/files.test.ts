@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { HttpError } from './index.js';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -66,6 +67,7 @@ beforeEach(() => {
   vi.stubEnv('AWS_SESSION_TOKEN', '');
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(closers.splice(0).map((close) => close()));
 });
@@ -659,6 +661,85 @@ const assumedRole = {
 };
 
 describe("an account's Files sync binding", () => {
+  beforeEach(() => vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-01T12:00:00Z')));
+
+  it('joins simultaneous exchanges but gives sequential Turns fresh credentials without sharing across accounts', async () => {
+    const { requests } = await aws(() => assumedRole);
+    const store = files();
+    const bindings = await Promise.all([store.syncBinding(ACCOUNT), store.syncBinding(ACCOUNT)]);
+    expect(bindings[0]).toEqual(bindings[1]);
+    expect(requests).toHaveLength(1);
+    expect(await store.syncBinding(ACCOUNT)).toEqual(bindings[0]);
+    expect(requests).toHaveLength(2);
+    const other = await store.syncBinding('acct_other');
+    expect(other.prefix).not.toBe(bindings[0].prefix);
+    expect(requests).toHaveLength(3);
+    expect(JSON.parse(new URLSearchParams(requests[2]?.body).get('Policy') ?? '').Statement[0].Resource)
+      .toBe(`arn:aws:s3:::files-bucket/${other.prefix}*`);
+  });
+
+  it('gives a later Turn credentials that survive its end-of-Turn Files upload', async () => {
+    let exchanges = 0;
+    await aws(({ method, headers }) => {
+      if (method === 'POST') {
+        exchanges += 1;
+        return exchanges === 1 ? assumedRole : {
+          ...assumedRole,
+          body: assumedRole.body.replace('scoped-token', 'later-token').replace('13:00:00Z', '13:54:00Z'),
+        };
+      }
+      if (headers['x-amz-security-token'] === 'scoped-token' && Date.now() >= Date.parse('2026-10-01T13:00:00Z')) {
+        return { status: 403, type: 'application/xml', body: '<Error><Code>ExpiredToken</Code><Message>The provided token has expired.</Message></Error>' };
+      }
+      return { body: '' };
+    });
+    const store = files();
+    await store.syncBinding(ACCOUNT);
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-10-01T12:54:00Z'));
+    const binding = await store.syncBinding(ACCOUNT);
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-10-01T13:01:00Z'));
+    const uploader = new S3Client({ region: binding.region, forcePathStyle: true, credentials: binding });
+    try {
+      await expect(uploader.send(new PutObjectCommand({
+        Bucket: binding.bucket,
+        Key: `${binding.prefix}report.csv`,
+        Body: 'completed report',
+      }))).resolves.toBeDefined();
+    } finally {
+      uploader.destroy();
+    }
+  });
+
+  it('propagates a failed exchange to all callers and lets the next call exchange again', async () => {
+    let fail = false;
+    const { requests } = await aws(() => fail
+      ? { type: 'text/xml', body: '<AssumeRoleResponse><AssumeRoleResult /></AssumeRoleResponse>' }
+      : assumedRole);
+    const store = files();
+    await store.syncBinding(ACCOUNT);
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-10-01T12:55:00Z'));
+    fail = true;
+    const results = await Promise.allSettled([store.syncBinding(ACCOUNT), store.syncBinding(ACCOUNT)]);
+    expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    expect(requests).toHaveLength(2);
+    fail = false;
+    await store.syncBinding(ACCOUNT);
+    expect(requests).toHaveLength(3);
+  });
+
+  it.each(['delete', 'transfer'] as const)('drops the account binding on %s', async (operation) => {
+    const { requests } = await aws(({ method, url }) => {
+      if (method === 'POST') return assumedRole;
+      return new URL(url, 'http://s3').searchParams.has('versions') ? versionListing([], []) : listing([]);
+    });
+    const store = files();
+    await store.syncBinding(ACCOUNT);
+    if (operation === 'delete') await store.delete(ACCOUNT);
+    else await store.transfer(ACCOUNT, 'acct_other');
+    await store.syncBinding(ACCOUNT);
+    expect(requests.filter(({ method }) => method === 'POST')).toHaveLength(2);
+  });
+
   it("hands the agent's Turn credentials for the account's directory alone, for an hour", async () => {
     const { requests } = await aws(() => assumedRole);
 
