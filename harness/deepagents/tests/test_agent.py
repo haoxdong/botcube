@@ -247,21 +247,6 @@ def test_model_resolves_ui_alias_and_effort(monkeypatch: pytest.MonkeyPatch, kwa
     ]
 
 
-@pytest.mark.parametrize('model', ['opus-5.5', 'sonnet-4.6', 'opus-4.6'])
-def test_explicit_model_overrides_new_default(monkeypatch: pytest.MonkeyPatch, model: str) -> None:
-    from botcube_harness_deepagents.llm import resolve_model
-
-    expected = {
-        'opus-5.5': 'us.anthropic.claude-opus-5-5',
-        'sonnet-4.6': 'us.anthropic.claude-sonnet-4-6',
-        'opus-4.6': 'us.anthropic.claude-opus-4-6-v1',
-    }
-    monkeypatch.setenv('BOTCUBE_MODEL', 'opus-5.5')
-    assert resolve_model(model) == expected[model]
-    monkeypatch.setenv('BOTCUBE_MODEL', model)
-    assert resolve_model() == expected[model]
-
-
 def test_model_passes_max_effort_through(monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]) -> None:
     """'max' effort reaches the request unchanged on Sonnet and Opus alike."""
     from botcube_harness_deepagents.agent import build_model
@@ -283,7 +268,7 @@ def test_model_passes_max_effort_through(monkeypatch: pytest.MonkeyPatch, kwargs
     assert resolve_effort('low') == 'low'
 
 
-def test_model_defaults_to_opus_55(monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]) -> None:
+def test_model_defaults_to_sonnet(monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]) -> None:
     from botcube_harness_deepagents.agent import build_model
 
     calls = kwargs_recorder.calls
@@ -291,15 +276,13 @@ def test_model_defaults_to_opus_55(monkeypatch: pytest.MonkeyPatch, kwargs_recor
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
     monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
     monkeypatch.delenv('BOTCUBE_EFFORT', raising=False)
-    monkeypatch.delenv('AWS_REGION', raising=False)
-    monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
     result = build_model()
 
     assert isinstance(result, kwargs_recorder)
     assert calls == [
         {
-            'model': 'us.anthropic.claude-opus-5-5',
+            'model': 'us.anthropic.claude-sonnet-4-6',
             'temperature': None,
             'max_tokens': 128,
             'additional_model_request_fields': {
@@ -345,7 +328,7 @@ def test_model_enables_adaptive_thinking_with_effort(monkeypatch: pytest.MonkeyP
 
     assert calls == [
         {
-            'model': 'us.anthropic.claude-opus-5-5',
+            'model': 'us.anthropic.claude-sonnet-4-6',
             'temperature': None,
             'max_tokens': 128,
             'additional_model_request_fields': {

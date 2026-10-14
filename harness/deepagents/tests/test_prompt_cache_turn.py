@@ -39,7 +39,7 @@ def _counters(caplog: pytest.LogCaptureFixture) -> list[list[int]]:
 
 
 @pytest.mark.parametrize('helper', ['general-purpose', 'helper'])
-@pytest.mark.parametrize('model_id', ['us.anthropic.claude-opus-5-5', 'us.anthropic.claude-sonnet-4-6', 'us.anthropic.claude-opus-4-6-v1'])
+@pytest.mark.parametrize('model_id', ['us.anthropic.claude-sonnet-4-6', 'us.anthropic.claude-opus-4-6-v1'])
 def test_graph_turn_includes_helper_usage(tmp_path: Path, caplog: pytest.LogCaptureFixture, helper: str, model_id: str) -> None:
     client = DelegatingBedrockClient(helper=helper)
     graph = _graph(tmp_path, client, model_id)

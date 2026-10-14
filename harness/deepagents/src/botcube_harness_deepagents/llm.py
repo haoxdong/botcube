@@ -17,9 +17,8 @@ from . import turn_timing
 if TYPE_CHECKING:
     from openai import APIError
 
-DEFAULT_MODEL = 'us.anthropic.claude-opus-5-5'
+DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
 AVAILABLE_MODELS: dict[str, str] = {
-    'opus-5.5': DEFAULT_MODEL,
     'sonnet-4.6': os.environ.get('BOTCUBE_SONNET_MODEL_ID', 'us.anthropic.claude-sonnet-4-6'),
     'opus-4.6': os.environ.get('BOTCUBE_OPUS_MODEL_ID', 'us.anthropic.claude-opus-4-6-v1'),
 }
