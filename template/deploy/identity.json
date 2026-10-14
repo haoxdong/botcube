@@ -44,27 +44,11 @@
     "ecs": {
       "privateNamespace": "bot-cube.internal",
       "credentialService": {
-        "rpcPath": "",
-        "environmentKeys": {
-          "url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
-          "invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
-          "port": "PORT",
-          "keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
-          "vaultTable": "BOTCUBE_VAULT_TABLE"
-        }
+        "rpcPath": ""
       },
       "chatService": {
         "planUsageOwnerAccountParameter": "/bot-cube/plan-usage/owner-account-id",
-        "turnIdentityKeysSecretName": "/bot-cube/chat-service/turn-identity-keys",
-        "environmentKeys": {
-          "planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
-          "agentComputerCdpUrl": "BOTCUBE_AGENT_COMPUTER_CDP_URL",
-          "filesBucket": "BOTCUBE_FILES_BUCKET",
-          "filesFileSystemArn": "BOTCUBE_FILES_FILE_SYSTEM_ARN",
-          "agentComputerPolicyBucket": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
-          "agentComputerPolicyKey": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY",
-          "filesSyncRoleArn": "BOTCUBE_FILES_SYNC_ROLE_ARN"
-        }
+        "turnIdentityKeysSecretName": "/bot-cube/chat-service/turn-identity-keys"
       },
       "cluster": "bot-cube",
       "deployRoleName": "bot-cube-ecs-github-deploy",

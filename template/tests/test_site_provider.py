@@ -44,7 +44,7 @@ class LocalKeys:
 def authorization(scope: str | None = None) -> dict[str, str]:
     return {
         'Authorization': 'Bearer ' + sign_credential_service_invocation('local-secret', 'template-user', 'session', scope=scope),
-        'X-Template-Session': 'session',
+        'X-BotCube-Session-Id': 'session',
     }
 
 
@@ -56,7 +56,7 @@ def test_link_relay_and_unlink_keep_durable_credential_in_encrypted_vault() -> N
     table = LocalTable()
     vault = DynamoDbCredentialVault(table, LocalKeys())
     app = create_app(
-        CredentialServiceSettings('template', lambda: 'local-secret', 'X-Template-Account', 'X-Template-Session'),
+        CredentialServiceSettings('template', lambda: 'local-secret'),
         [FakeSiteProvider(lambda: vault, url)],
     )
     try:
@@ -86,7 +86,7 @@ def test_relay_reuses_the_sites_access_until_the_site_ends_it_then_re_mints_once
     url = f'http://127.0.0.1:{site.server_port}'
     vault = DynamoDbCredentialVault(LocalTable(), LocalKeys())
     app = create_app(
-        CredentialServiceSettings('template', lambda: 'local-secret', 'X-Template-Account', 'X-Template-Session'),
+        CredentialServiceSettings('template', lambda: 'local-secret'),
         [FakeSiteProvider(lambda: vault, url)],
     )
     try:
@@ -114,7 +114,7 @@ def test_status_does_not_hide_vault_failure() -> None:
 
     provider = FakeSiteProvider(failed_vault, 'http://127.0.0.1:1')
     app = create_app(
-        CredentialServiceSettings('template', lambda: 'local-secret', 'X-Template-Account', 'X-Template-Session'),
+        CredentialServiceSettings('template', lambda: 'local-secret'),
         [provider],
     )
     with TestClient(app) as client, pytest.raises(RuntimeError, match='vault unavailable'):

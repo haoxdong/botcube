@@ -26,7 +26,7 @@ function synth(corporate = false, invocationTokenLength?: number, overrides: Par
     agentNetwork: ec2.SecurityGroup.fromSecurityGroupId(stack, 'Agent', 'sg-fixture22222222'),
     image: ecs.ContainerImage.fromRegistry('test-image'), tableName: 'test-vault',
     ...(invocationTokenLength === undefined ? {} : { invocationTokenLength }),
-    rpcPath: '/rpc', environmentKeys: { port: 'SERVICE_PORT', invocationToken: 'RPC_TOKEN', keyId: 'KEY', vaultTable: 'VAULT' },
+    rpcPath: '/rpc',
     namespaceName: 'test.internal', alertsTopicName: 'existing-alerts', port: 8081, parked: false,
     authBrowserId: 'test_auth_browser-1234567890', agentComputerBrowserId: 'test_agent_computer-1234567890', ...(typeof overrides === 'function' ? overrides(stack) : overrides),
   });
@@ -92,13 +92,13 @@ test('the service reads its port, vault key, vault table and invocation token fr
   expect(container.PortMappings).toEqual([{ ContainerPort: 8081, Protocol: 'tcp' }]);
   expect(container.Environment).toEqual([
     { Name: 'AWS_REGION', Value: 'us-east-1' },
-    { Name: 'SERVICE_PORT', Value: '8081' },
-    { Name: 'KEY', Value: { 'Fn::GetAtt': [id('AWS::KMS::Key'), 'Arn'] } },
-    { Name: 'VAULT', Value: { Ref: id('AWS::DynamoDB::Table') } },
+    { Name: 'PORT', Value: '8081' },
+    { Name: 'BOTCUBE_VAULT_KMS_KEY_ID', Value: { 'Fn::GetAtt': [id('AWS::KMS::Key'), 'Arn'] } },
+    { Name: 'BOTCUBE_VAULT_TABLE', Value: { Ref: id('AWS::DynamoDB::Table') } },
     { Name: 'AGENTCORE_BROWSER_ID', Value: 'test_auth_browser-1234567890' },
     { Name: 'AGENTCORE_AGENT_COMPUTER_BROWSER_ID', Value: 'test_agent_computer-1234567890' },
   ]);
-  expect(container.Secrets).toEqual([{ Name: 'RPC_TOKEN', ValueFrom: { Ref: id('AWS::SecretsManager::Secret') } }]);
+  expect(container.Secrets).toEqual([{ Name: 'BOTCUBE_CREDENTIAL_INVOCATION_SECRET', ValueFrom: { Ref: id('AWS::SecretsManager::Secret') } }]);
 });
 
 /** The properties of the one resource of a type. */
@@ -221,7 +221,7 @@ test('corporate resources supply the real execution role and vault key without g
   expect(Object.values(synth().findResources('AWS::ECS::TaskDefinition')).map(resource => ({ cpu: resource.Properties.Cpu, memory: resource.Properties.Memory, executionRole: resource.Properties.ExecutionRoleArn }))).toMatchSnapshot();
   template.hasResourceProperties('AWS::ECS::TaskDefinition', {
     Cpu: '1024', Memory: '2048', ExecutionRoleArn: 'arn:aws:iam::123456789012:role/corporate-ecs',
-    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([{ Name: 'KEY', Value: 'arn:aws:kms:us-east-1:123456789012:key/corporate-key' }]) })]),
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([{ Name: 'BOTCUBE_VAULT_KMS_KEY_ID', Value: 'arn:aws:kms:us-east-1:123456789012:key/corporate-key' }]) })]),
   });
   template.hasResourceProperties('AWS::ECS::Service', { ServiceName: 'corporate-credentials' });
   template.hasOutput('CredentialServiceUrl', { Value: 'http://vault.test.internal:8081/rpc' });
@@ -247,7 +247,7 @@ test('adopter invocation secret is reused and retains ownership of its name', ()
   const imported = (stack: Stack) => secretsmanager.Secret.fromSecretCompleteArn(stack, 'OwnedSecret', 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF');
   const template = synth(false, undefined, stack => ({ invocationSecret: imported(stack) }));
   template.resourceCountIs('AWS::SecretsManager::Secret', 0);
-  template.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: [Match.objectLike({ Secrets: [{ Name: 'RPC_TOKEN', ValueFrom: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF' }] })] });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: [Match.objectLike({ Secrets: [{ Name: 'BOTCUBE_CREDENTIAL_INVOCATION_SECRET', ValueFrom: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:owned-vault-secret-ABCDEF' }] })] });
   expect(() => synth(false, undefined, stack => ({ invocationSecret: imported(stack), invocationSecretName: 'replacement' }))).toThrow('imported invocationSecret owns its name');
   expect(() => synth(true, undefined, { executionRoleName: 'replacement' })).toThrow('imported executionRole owns its name');
 });

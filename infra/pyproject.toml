@@ -1,0 +1,36 @@
+[project]
+name = "botcube-infra"
+version = "0.1.0"
+description = "BotCube's deploy scripts and their tests."
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.43.108",
+]
+
+[dependency-groups]
+dev = [
+  "moto[dynamodb]>=5.2.3",
+  "pyright==1.1.414",
+  "pytest>=9.1.1",
+  "types-boto3[acm,bedrock-agentcore,bedrock-agentcore-control,cloudformation,cloudwatch,dynamodb,ec2,ecr,ecs,elbv2,lambda,logs,route53,s3,sns]>=1.43.108",
+]
+
+[tool.uv]
+package = false
+
+[tool.pyright]
+include = ["ecs", "tests"]
+exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
+# Check against the oldest supported Python, which Presubmit runs.
+pythonVersion = "3.11"
+# Every parameter carries a type annotation.
+reportMissingParameterType = "error"
+# Generic types carry their type arguments, and no parameter type is unknown.
+reportMissingTypeArgument = "error"
+reportUnknownParameterType = "error"
+# The deploy scripts import their shared identity module and the origin provider's handler from their own directories.
+extraPaths = ["ecs", "ecs/origin-provider"]
+
+[tool.pytest.ini_options]
+# The deploy scripts import their shared identity module from their own directory.
+pythonpath = ["ecs"]

@@ -19,6 +19,9 @@ _LOG = logging.getLogger(__name__)
 
 CREDENTIAL_CAPTURE_SCOPE = 'credential_capture'
 CREDENTIAL_REVOCATION_SCOPE = 'credential_revocation'
+# The headers callers name the invoking account and Session in.
+ACCOUNT_HEADER = 'X-BotCube-Account-Id'
+SESSION_HEADER = 'X-BotCube-Session-Id'
 
 
 @dataclass(frozen=True)
@@ -28,9 +31,6 @@ class CredentialServiceSettings:
     # The service name /health answers.
     name: str
     invocation_secret: Callable[[], str]
-    # The headers callers name the invoking account and Session in.
-    account_header: str
-    session_header: str
     # Trusted deployment owner for Plan Usage; other providers remain unrestricted.
     plan_usage_owner_account_id: str = ''
 
@@ -116,7 +116,7 @@ def create_app(settings: CredentialServiceSettings, providers: Sequence[Credenti
     async def revoke_account(request: Request) -> dict[str, str]:
         """Account deletion: revoke the account at every provider, so no Durable Credential outlives it."""
         invocation = guard.verify_account(
-            request.headers.get('authorization'), request.headers.get(settings.account_header), CREDENTIAL_REVOCATION_SCOPE,
+            request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), CREDENTIAL_REVOCATION_SCOPE,
         )
         for provider in providers:
             await provider.revoke(invocation.account_id)
@@ -135,7 +135,7 @@ def _mount(
     @app.post(f'{prefix}/auth/link/ingest')
     async def ingest(payload: dict[str, Any], request: Request) -> dict[str, str]:
         invocation = guard.verify_account(
-            request.headers.get('authorization'), request.headers.get(settings.account_header), CREDENTIAL_CAPTURE_SCOPE,
+            request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), CREDENTIAL_CAPTURE_SCOPE,
         )
         _require_plan_usage_owner(settings, provider, invocation)
         return dict(await provider.ingest(invocation, payload))
@@ -143,7 +143,7 @@ def _mount(
     @app.post(f'{prefix}/auth/link/revoke')
     async def revoke(request: Request) -> dict[str, str]:
         invocation = guard.verify_account(
-            request.headers.get('authorization'), request.headers.get(settings.account_header), CREDENTIAL_REVOCATION_SCOPE,
+            request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), CREDENTIAL_REVOCATION_SCOPE,
         )
         _require_plan_usage_owner(settings, provider, invocation)
         await provider.revoke(invocation.account_id)
@@ -155,9 +155,9 @@ def _mount(
     async def relay(path: str, request: Request) -> Response:
         request.state.credential_received_at = time.monotonic()
         invocation = guard.verify_account(
-            request.headers.get('authorization'), request.headers.get(settings.account_header), None,
+            request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), None,
         )
-        session_id = (request.headers.get(settings.session_header) or '').strip()
+        session_id = (request.headers.get(SESSION_HEADER) or '').strip()
         if not session_id or session_id != invocation.session_id:
             raise HTTPException(status_code=401, detail='Invalid Credential Service invocation token')
         method, upstream_path = request.method.upper(), path.lstrip('/')

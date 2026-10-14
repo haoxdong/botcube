@@ -16,7 +16,7 @@ import { ApiHealthStack } from './api-health-stack.js';
 import { ChatStorageStack } from './chat-storage-stack.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
-import { PrivateCredentialService } from './private-credential-service.js';
+import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
 import { PrivateEgressStack } from './private-egress-stack.js';
 import { WebLatencyStack } from './web-latency-stack.js';
 
@@ -25,6 +25,17 @@ const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
 
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
+
+/** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
+export const CHAT_SERVICE_ENV = {
+  planUsageOwnerAccountId: 'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
+  agentComputerCdpUrl: 'BOTCUBE_AGENT_COMPUTER_CDP_URL',
+  filesBucket: 'BOTCUBE_FILES_BUCKET',
+  filesFileSystemArn: 'BOTCUBE_FILES_FILE_SYSTEM_ARN',
+  filesSyncRoleArn: 'BOTCUBE_FILES_SYNC_ROLE_ARN',
+  agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
+  agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
+} as const;
 
 /** Non-secret deploy inputs written by the Cartridge's `deploy/ecs/prepare-origin.py`. */
 interface OriginInput {
@@ -66,18 +77,12 @@ export interface DeployIdentity {
         planUsageOwnerAccountParameter: string;
         /** The private P-256 JWKs that sign per-Turn JWTs (ADR 0067 §8), created out of band. */
         turnIdentityKeysSecretName: string;
-        environmentKeys: {
-          agentComputerCdpUrl: string; filesBucket: string; filesFileSystemArn: string;
-          planUsageOwnerAccountId: string;
-          agentComputerPolicyBucket: string; agentComputerPolicyKey: string; filesSyncRoleArn: string;
-        };
       };
       cluster: string;
       credentialService: {
         tableName: string;
 
         rpcPath: string;
-        environmentKeys: { url: string; invocationToken: string; port: string; keyId: string; vaultTable: string };
       };
       originPullCaCertificate: string;
       originPullClientSecretName: string;
@@ -213,9 +218,8 @@ export function defineProduction(app: App, options: ProductionOptions) {
   chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', `https://${new URL(identity.domains.chatService).hostname}`);
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
-  const chatKeys = identity.aws.ecs.chatService.environmentKeys;
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
-  chat.container.addEnvironment(chatKeys.planUsageOwnerAccountId, planUsageOwner);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.originConfig);
   const credentialConfig = identity.aws.ecs.credentialService;
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
@@ -223,27 +227,27 @@ export function defineProduction(app: App, options: ProductionOptions) {
     ...(options.kmsKey ? { kmsKey: options.kmsKey } : {}),
     ...(options.privateSubnets ? { subnets: options.privateSubnets } : {}),
     cluster: chat.cluster, chatNetwork: chat.network, agentNetwork,
-    tableName: credentialConfig.tableName, rpcPath: credentialConfig.rpcPath, environmentKeys: credentialConfig.environmentKeys, namespaceName: identity.aws.ecs.privateNamespace,
+    tableName: credentialConfig.tableName, rpcPath: credentialConfig.rpcPath, namespaceName: identity.aws.ecs.privateNamespace,
     alertsTopicName: identity.aws.ecs.alertsTopicName, port: identity.aws.credentialService.port,
     image: images.credential, authBrowserId: identity.aws.agentCore.privateNatBrowser.id,
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
     ...options.credentials,
     parked: options.parked,
   });
-  credentials.container.addEnvironment(chatKeys.planUsageOwnerAccountId, planUsageOwner);
+  credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
   for (const task of [chat.task, credentials.task]) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
-  addFiles(origin, chat, storage, agentComputer, chatKeys, options.originConfig);
+  addFiles(origin, chat, storage, agentComputer, options.originConfig);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
-  chat.container.addEnvironment(chatKeys.agentComputerCdpUrl, `ws://task-address:${options.chat?.port ?? 8123}/agent-computer/cdp`);
-  chat.container.addEnvironment(credentialConfig.environmentKeys.url, credentials.url);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerCdpUrl, `ws://task-address:${options.chat?.port ?? 8123}/agent-computer/cdp`);
+  chat.container.addEnvironment(CREDENTIAL_SERVICE_ENV.url, credentials.url);
   // aws-cdk-lib's Secret declares `T | undefined` getters where ISecret declares `prop?: T`,
   // which exactOptionalPropertyTypes rejects; the construct is its interface.
-  chat.container.addSecret(credentialConfig.environmentKeys.invocationToken, Secret.fromSecretsManager(credentials.invocationSecret as ISecret));
+  chat.container.addSecret(CREDENTIAL_SERVICE_ENV.invocationToken, Secret.fromSecretsManager(credentials.invocationSecret as ISecret));
   const browser = identity.aws.agentCore.privateNatBrowser;
   chat.container.addEnvironment('AGENTCORE_BROWSER_ID', browser.id);
   chat.container.addEnvironment('AGENTCORE_BROWSER_EXTENSION_S3_BUCKET', browser.extension.bucket);
@@ -388,7 +392,6 @@ function addFiles(
   chat: PreviewChatService,
   storage: ChatStorageStack,
   browsers: { network: ec2.ISecurityGroup; subnets: Subnet[] },
-  keys: DeployIdentity['aws']['ecs']['chatService']['environmentKeys'],
   names?: ProductionOptions['originConfig'],
 ) {
   const mountTargets = new ec2.SecurityGroup(origin, 'FilesMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false, ...optionalPhysicalName('securityGroupName', names?.filesMountTargetsSecurityGroupName) });
@@ -399,10 +402,10 @@ function addFiles(
   const policy = new Asset(origin, 'AgentComputerChromePolicy', { path: path.join(cubeRoot, 'infra/agent-computer/chrome-policy.json') });
   policy.grantRead(chat.task.taskRole);
   const fileSystemArn = storage.filesFileSystem.attrFileSystemArn;
-  chat.container.addEnvironment(keys.filesBucket, storage.filesBucket.bucketName);
-  chat.container.addEnvironment(keys.filesFileSystemArn, fileSystemArn);
-  chat.container.addEnvironment(keys.agentComputerPolicyBucket, policy.s3BucketName);
-  chat.container.addEnvironment(keys.agentComputerPolicyKey, policy.s3ObjectKey);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesBucket, storage.filesBucket.bucketName);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesFileSystemArn, fileSystemArn);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerPolicyBucket, policy.s3BucketName);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerPolicyKey, policy.s3ObjectKey);
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['s3files:CreateAccessPoint', 's3files:GetAccessPoint', 's3files:DeleteAccessPoint'],
     resources: [fileSystemArn, `${fileSystemArn}/access-point/*`],
@@ -443,7 +446,7 @@ function addFiles(
     actions: ['s3:GetObject', 's3:PutObject'],
     resources: [storage.filesBucket.arnForObjects('accounts/*')],
   }));
-  chat.container.addEnvironment(keys.filesSyncRoleArn, sync.roleArn);
+  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesSyncRoleArn, sync.roleArn);
 }
 
 function createChatStorage(app: App, options: ProductionOptions): ChatStorageStack {

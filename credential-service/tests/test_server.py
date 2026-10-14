@@ -72,8 +72,6 @@ def _client(*providers: FakeProvider, owner: str = '') -> TestClient:
     settings = CredentialServiceSettings(
         name='test-credential-service',
         invocation_secret=lambda: SECRET,
-        account_header='X-Account-Id',
-        session_header='X-Session-Id',
         plan_usage_owner_account_id=owner,
     )
     return TestClient(create_app(settings, providers))
@@ -86,7 +84,7 @@ def _bearer(account_id: str = 'acct-1', session_id: str = 'run-1', scope: str | 
 def test_an_allowed_upstream_call_is_relayed_with_access_minted_for_the_invoking_account() -> None:
     provider = FakeProvider()
 
-    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-Session-Id': 'run-1'})
+    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-BotCube-Session-Id': 'run-1'})
 
     assert response.status_code == 200
     assert response.content == b'relayed'
@@ -102,7 +100,7 @@ def test_an_upstream_call_the_provider_does_not_allow_is_refused_before_any_acce
     provider = FakeProvider()
 
     with caplog.at_level(logging.WARNING, logger='botcube_credential_service.server'):
-        response = _client(provider).post('/site/v1/items?q=secret', headers={**_bearer(), 'X-Session-Id': 'run-1'})
+        response = _client(provider).post('/site/v1/items?q=secret', headers={**_bearer(), 'X-BotCube-Session-Id': 'run-1'})
 
     assert response.status_code == 403
     assert response.json() == {'detail': 'Credential Service only allows site reads'}
@@ -113,7 +111,7 @@ def test_an_upstream_call_the_provider_does_not_allow_is_refused_before_any_acce
 def test_a_relay_needs_the_session_its_invocation_token_names() -> None:
     provider = FakeProvider()
 
-    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-Session-Id': 'run-2'})
+    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-BotCube-Session-Id': 'run-2'})
 
     assert response.status_code == 401
     assert provider.calls == []
@@ -145,7 +143,7 @@ def test_revoking_an_account_revokes_it_at_every_provider() -> None:
     client = _client(site, plan)
 
     refused = client.post('/account/revoke', headers=_bearer(scope='credential_capture'))
-    mismatched = client.post('/account/revoke', headers={**_bearer(scope='credential_revocation'), 'X-Account-Id': 'acct-2'})
+    mismatched = client.post('/account/revoke', headers={**_bearer(scope='credential_revocation'), 'X-BotCube-Account-Id': 'acct-2'})
     revoked = client.post('/account/revoke', headers=_bearer(scope='credential_revocation'))
 
     assert (refused.status_code, mismatched.status_code) == (401, 401)
@@ -161,7 +159,7 @@ def test_provider_authorization_runs_before_any_access_is_minted() -> None:
             raise HTTPException(status_code=403, detail='Invocation cannot perform this upstream request')
 
     provider = RefusingProvider()
-    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-Session-Id': 'run-1'})
+    response = _client(provider).get('/site/v1/items', headers={**_bearer(), 'X-BotCube-Session-Id': 'run-1'})
 
     assert response.status_code == 403
     assert provider.calls == []

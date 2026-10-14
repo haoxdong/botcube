@@ -14,6 +14,15 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
 
+/** The environment names every Cartridge's Credential Service, and the Chat Service that calls it, read. */
+export const CREDENTIAL_SERVICE_ENV = {
+  url: 'BOTCUBE_CREDENTIAL_SERVICE_URL',
+  invocationToken: 'BOTCUBE_CREDENTIAL_INVOCATION_SECRET',
+  port: 'PORT',
+  keyId: 'BOTCUBE_VAULT_KMS_KEY_ID',
+  vaultTable: 'BOTCUBE_VAULT_TABLE',
+} as const;
+
 export interface PrivateCredentialServiceProps {
   /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
@@ -58,7 +67,6 @@ export interface PrivateCredentialServiceProps {
   alertsTopicName: string;
   port: number;
   rpcPath: string;
-  environmentKeys: { port: string; invocationToken: string; keyId: string; vaultTable: string };
   /** Parked production runs no tasks; the vault, key and namespace stay. */
   parked: boolean;
   /** The AgentCore browser whose Auth Browser Sessions the Sign-in Sheet types into (ADR 0075). */
@@ -147,14 +155,14 @@ export class PrivateCredentialService extends Construct {
       image: props.image, portMappings: [{ containerPort: props.port }],
       environment: {
         ...props.environment,
-        AWS_REGION: stack.region, [props.environmentKeys.port]: String(props.port),
-        [props.environmentKeys.keyId]: key.keyArn, [props.environmentKeys.vaultTable]: table.tableName,
+        AWS_REGION: stack.region, [CREDENTIAL_SERVICE_ENV.port]: String(props.port),
+        [CREDENTIAL_SERVICE_ENV.keyId]: key.keyArn, [CREDENTIAL_SERVICE_ENV.vaultTable]: table.tableName,
         AGENTCORE_BROWSER_ID: props.authBrowserId,
         AGENTCORE_AGENT_COMPUTER_BROWSER_ID: props.agentComputerBrowserId,
       },
       // aws-cdk-lib's Secret declares `T | undefined` getters where ISecret declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
-      secrets: { [props.environmentKeys.invocationToken]: ecs.Secret.fromSecretsManager(this.invocationSecret as secretsmanager.ISecret) },
+      secrets: { [CREDENTIAL_SERVICE_ENV.invocationToken]: ecs.Secret.fromSecretsManager(this.invocationSecret as secretsmanager.ISecret) },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.logStreamPrefix ?? 'credential-service', logGroup }),
       healthCheck: {
         command: ['CMD-SHELL', `curl --fail --silent http://127.0.0.1:${props.port}/health || exit 1`],

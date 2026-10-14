@@ -1,10 +1,12 @@
 from dataclasses import replace
+from pathlib import Path
 
 from botcube_cartridge import (
     InvocationAuth,
     ModelRelay,
     environment_cache_key,
     filing_user_id,
+    install_skill,
 )
 
 
@@ -40,3 +42,24 @@ def test_filing_user_id_matches_the_chat_service() -> None:
         'template_sha256_e34fa6ccd28671839789d00d5e97d09261afc9fe39da608bb3991a6eb080d51d'
     )
     assert filing_user_id('template', 'acct/a') != filing_user_id('template', 'acct_a')
+
+
+def test_a_skill_is_installed_under_the_named_skills_directory(tmp_path: Path) -> None:
+    source = tmp_path / 'package' / 'SKILL.md'
+    source.parent.mkdir()
+    source.write_text('# Skill')
+    root = tmp_path / 'root'
+
+    install_skill(root, '/tools/skills/', 'site', source)
+
+    assert (root / 'tools/skills/site/SKILL.md').read_text() == '# Skill'
+
+
+def test_a_root_already_holding_the_skill_keeps_it(tmp_path: Path) -> None:
+    source = tmp_path / 'skills' / 'site' / 'SKILL.md'
+    source.parent.mkdir(parents=True)
+    source.write_text('# Checkout')
+
+    install_skill(tmp_path, 'skills', 'site', source)
+
+    assert source.read_text() == '# Checkout'

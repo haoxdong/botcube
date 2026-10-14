@@ -19,7 +19,7 @@ export function templateCartridgeFactory(
   return (history) => {
     const store = () => accountStore;
     const signIn = siteSignIn({
-      serviceUrl: () => env.TEMPLATE_CREDENTIAL_SERVICE_URL ?? '',
+      serviceUrl: () => env.BOTCUBE_CREDENTIAL_SERVICE_URL ?? '',
       secret: () => env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
       owner: async (c) => (await requester(c)).owner,
       store,
@@ -67,9 +67,9 @@ export function templateCartridgeFactory(
           ...input,
           forwardedProps: {
             ...input.forwardedProps,
-            ...(env.TEMPLATE_CREDENTIAL_SERVICE_URL
+            ...(env.BOTCUBE_CREDENTIAL_SERVICE_URL
               ? turnCredentialBinding(
-                  env.TEMPLATE_CREDENTIAL_SERVICE_URL,
+                  env.BOTCUBE_CREDENTIAL_SERVICE_URL,
                   env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
                   requester.owner,
                   input.threadId,

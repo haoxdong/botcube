@@ -26,7 +26,7 @@ def test_cli_reads_minted_access_and_fails_loud_after_unlink() -> None:
         port = listener.getsockname()[1]
     table = LocalTable()
     vault = DynamoDbCredentialVault(table, LocalKeys())
-    app = create_app(CredentialServiceSettings('template', lambda: 'local-secret', 'X-Template-Account', 'X-Template-Session'), [FakeSiteProvider(lambda: vault, site_url)])
+    app = create_app(CredentialServiceSettings('template', lambda: 'local-secret'), [FakeSiteProvider(lambda: vault, site_url)])
     service = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='error'))
     thread = threading.Thread(target=service.run, daemon=True)
     thread.start()

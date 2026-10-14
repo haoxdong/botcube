@@ -161,8 +161,6 @@ def _app(
     settings = CredentialServiceSettings(
         name='test-credential-service',
         invocation_secret=lambda: SECRET,
-        account_header='X-Account-Id',
-        session_header='X-Session-Id',
         plan_usage_owner_account_id=owner_account_id,
     )
     clock = clock or Clock()
@@ -178,7 +176,7 @@ def _app(
 def _turn(account_id: str = 'acct-1', session_id: str = 'thread-1') -> dict[str, str]:
     """What a Harness's plan model sends: the Turn's invocation token and its Session."""
     token = sign_credential_service_invocation(SECRET, account_id, session_id)
-    return {'Authorization': f'Bearer {token}', 'X-Account-Id': account_id, 'X-Session-Id': session_id}
+    return {'Authorization': f'Bearer {token}', 'X-BotCube-Account-Id': account_id, 'X-BotCube-Session-Id': session_id}
 
 
 def _bound_turn(
@@ -187,7 +185,7 @@ def _bound_turn(
     token = sign_credential_service_invocation(
         SECRET, 'acct-1', session_id, model_provider=provider, model_id=model,
     )
-    return {'Authorization': f'Bearer {token}', 'X-Account-Id': 'acct-1', 'X-Session-Id': session_id}
+    return {'Authorization': f'Bearer {token}', 'X-BotCube-Account-Id': 'acct-1', 'X-BotCube-Session-Id': session_id}
 
 
 @pytest.mark.parametrize('provider,approved_model,requested_model,expected_status', [
@@ -359,8 +357,6 @@ def test_an_unconfigured_vault_reports_the_service_unhealthy() -> None:
     settings = CredentialServiceSettings(
         name='test-credential-service',
         invocation_secret=lambda: SECRET,
-        account_header='X-Account-Id',
-        session_header='X-Session-Id',
     )
 
     response = TestClient(create_app(settings, [OpenAIProvider(unconfigured, audit=CredentialAuditRecorder())])).get('/health')
@@ -1082,7 +1078,7 @@ def test_an_unreachable_token_endpoint_is_the_unavailable_error(vault: DynamoDbC
         lambda: vault, audit=CredentialAuditRecorder(clock=clock), transport=httpx.MockTransport(unreachable), clock=clock,
     )
     settings = CredentialServiceSettings(
-        name='test-credential-service', invocation_secret=lambda: SECRET, account_header='X-Account-Id', session_header='X-Session-Id',
+        name='test-credential-service', invocation_secret=lambda: SECRET,
     )
 
     response = TestClient(create_app(settings, [provider])).get('/openai/v1/models', headers=_turn())
@@ -1292,8 +1288,7 @@ def test_renewal_timeout_after_successful_rotation_is_a_classified_public_failur
         lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream.handle), clock=RealClock(),
     )
     settings = CredentialServiceSettings(
-        name='test-credential-service', invocation_secret=lambda: SECRET,
-        account_header='X-Account-Id', session_header='X-Session-Id', plan_usage_owner_account_id='acct-1',
+        name='test-credential-service', invocation_secret=lambda: SECRET, plan_usage_owner_account_id='acct-1',
     )
     with TestClient(create_app(settings, [provider]), raise_server_exceptions=False) as client, ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(client.get, '/openai/v1/models', headers=_turn())

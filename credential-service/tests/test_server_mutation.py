@@ -65,8 +65,7 @@ def test_request_audit_context_preserves_scope_and_a_trailing_path_slash() -> No
 def test_plan_usage_ingest_refuses_a_non_owner_before_the_provider_sees_the_credential() -> None:
     provider = FakeProvider('openai', owner_only=True)
     settings = CredentialServiceSettings(
-        name='test-credential-service', invocation_secret=lambda: SECRET,
-        account_header='X-Account-Id', session_header='X-Session-Id', plan_usage_owner_account_id='owner',
+        name='test-credential-service', invocation_secret=lambda: SECRET, plan_usage_owner_account_id='owner',
     )
     client = TestClient(create_app(settings, [provider]))
     token = sign_credential_service_invocation(SECRET, 'other-account', 'run-1', scope='credential_capture')

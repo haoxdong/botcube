@@ -43,7 +43,7 @@ def _client(typed: list[tuple[str, str, str]], fails: Exception | None = None) -
 
     app = FastAPI()
     app.include_router(sheet_routes(
-        InvocationGuard(lambda: SECRET), account_header='X-Account', key=lambda: KEY,
+        InvocationGuard(lambda: SECRET), key=lambda: KEY,
         open_page=open_page, type_credentials=type_credentials,
     ))
     return TestClient(app)
@@ -60,7 +60,7 @@ def _sealed(credentials: object, key: SheetKey = KEY) -> str:
 
 def _headers(scope: str | None = CREDENTIAL_CAPTURE_SCOPE) -> dict[str, str]:
     token = sign_credential_service_invocation(SECRET, 'acct-1', 'run-1', scope=scope)
-    return {'Authorization': f'Bearer {token}', 'X-Account': 'acct-1'}
+    return {'Authorization': f'Bearer {token}', 'X-BotCube-Account-Id': 'acct-1'}
 
 
 def test_the_sheet_publishes_its_key_and_types_what_was_sealed_to_it_into_the_named_page() -> None:
@@ -83,7 +83,7 @@ def test_typing_needs_a_capture_scoped_invocation_for_the_named_account() -> Non
 
     unscoped = _client(typed).post('/auth/sheet/type', headers=_headers(None), json=body)
     other_account = _client(typed).post(
-        '/auth/sheet/type', headers={**_headers(), 'X-Account': 'acct-2'}, json=body,
+        '/auth/sheet/type', headers={**_headers(), 'X-BotCube-Account-Id': 'acct-2'}, json=body,
     )
 
     assert (unscoped.status_code, other_account.status_code) == (401, 401)

@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import APIRouter, HTTPException, Request
 
-from .server import CREDENTIAL_CAPTURE_SCOPE, InvocationGuard
+from .server import ACCOUNT_HEADER, CREDENTIAL_CAPTURE_SCOPE, InvocationGuard
 
 _LOG = logging.getLogger(__name__)
 FIELD_WAIT_SECONDS = 15.0
@@ -241,7 +241,6 @@ def required_text(payload: Mapping[str, object], name: str) -> str:
 def sheet_routes(
     guard: InvocationGuard,
     *,
-    account_header: str,
     key: Callable[[], SheetKey],
     open_page: Callable[[str], AbstractAsyncContextManager[CdpPage]],
     type_credentials: Callable[[CdpPage, str, str], Awaitable[None]],
@@ -258,7 +257,7 @@ def sheet_routes(
 
     @router.post('/auth/sheet/type')
     async def type_sign_in_sheet_credentials(payload: dict[str, Any], request: Request) -> dict[str, str]:
-        guard.verify_account(request.headers.get('authorization'), request.headers.get(account_header), CREDENTIAL_CAPTURE_SCOPE)
+        guard.verify_account(request.headers.get('authorization'), request.headers.get(ACCOUNT_HEADER), CREDENTIAL_CAPTURE_SCOPE)
         browser_session_id = required_text(payload, 'browserSessionId')
         sealed = required_text(payload, 'credentials')
         try:

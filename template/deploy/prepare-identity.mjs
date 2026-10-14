@@ -69,19 +69,7 @@ const runtimeFields = {
   "github.oidcSubject": "repo:example/bot:environment:production",
   "verification.userAgent": "BotCube-Preview-Verification/1.0",
   "verification.originUserAgent": "BotCube-Origin-Verification/1.0",
-  "aws.ecs.credentialService.rpcPath": "",
-  "aws.ecs.credentialService.environmentKeys.url": "TEMPLATE_CREDENTIAL_SERVICE_URL",
-  "aws.ecs.credentialService.environmentKeys.invocationToken": "BOTCUBE_CREDENTIAL_INVOCATION_SECRET",
-  "aws.ecs.credentialService.environmentKeys.port": "PORT",
-  "aws.ecs.credentialService.environmentKeys.keyId": "BOTCUBE_VAULT_KMS_KEY_ID",
-  "aws.ecs.credentialService.environmentKeys.vaultTable": "BOTCUBE_VAULT_TABLE",
-  "aws.ecs.chatService.environmentKeys.planUsageOwnerAccountId": "BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID",
-  "aws.ecs.chatService.environmentKeys.agentComputerCdpUrl": "BOTCUBE_AGENT_COMPUTER_CDP_URL",
-  "aws.ecs.chatService.environmentKeys.filesBucket": "BOTCUBE_FILES_BUCKET",
-  "aws.ecs.chatService.environmentKeys.filesFileSystemArn": "BOTCUBE_FILES_FILE_SYSTEM_ARN",
-  "aws.ecs.chatService.environmentKeys.agentComputerPolicyBucket": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET",
-  "aws.ecs.chatService.environmentKeys.agentComputerPolicyKey": "BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY",
-  "aws.ecs.chatService.environmentKeys.filesSyncRoleArn": "BOTCUBE_FILES_SYNC_ROLE_ARN"
+  "aws.ecs.credentialService.rpcPath": ""
 };
 for (const [path, pattern] of Object.entries({ ...nameFields, ...runtimeFields })) {
   const parts = path.split('.');

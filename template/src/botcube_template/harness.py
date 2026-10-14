@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +8,7 @@ from botcube_cartridge import (
     HarnessDefinition,
     InvocationAuth,
     environment_cache_key,
+    install_skill,
     openai_model_relay,
 )
 
@@ -32,20 +32,21 @@ def _prepare_invocation(input_data: Any) -> InvocationAuth:
         environment['TEMPLATE_CREDENTIAL_SESSION'] = session
         url, token = environment.get('TEMPLATE_CREDENTIAL_SERVICE_URL'), environment.get('TEMPLATE_CREDENTIAL_INVOCATION')
         if url and token:
-            relay = openai_model_relay(url, token, session, {'X-Template-Session': session})
+            relay = openai_model_relay(url, token, session)
         elif url or token:
             raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     return InvocationAuth(actor_id=props.get('sessionUserId'), persistent_memory=True, environment=environment, model_relay=relay)
 
 
+_SKILLS = '/skills/'
+
+
 def _prepare_root(root: Path) -> None:
-    destination = root / 'skills' / 'template'
-    destination.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(_PACKAGE_ROOT / 'skills' / 'SKILL.md', destination / 'SKILL.md')
+    install_skill(root, _SKILLS, 'template', _PACKAGE_ROOT / 'skills' / 'SKILL.md')
 
 
 CARTRIDGE = HarnessDefinition(
-    skills=('/skills/',),
+    skills=(_SKILLS,),
     agent_name=_IDENTITY['name'],
     prepare_invocation=_prepare_invocation,
     prepare_root=_prepare_root,

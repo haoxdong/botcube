@@ -17,7 +17,7 @@ def main() -> None:
     session = os.environ.get('TEMPLATE_CREDENTIAL_SESSION')
     if not url or not invocation or not session:
         parser.exit(1, 'Template site sign-in needed. Credential Service invocation is required.\n')
-    request = Request(f'{url.rstrip("/")}/fake-site/data', headers={'Authorization': f'Bearer {invocation}', 'X-Template-Session': session})
+    request = Request(f'{url.rstrip("/")}/fake-site/data', headers={'Authorization': f'Bearer {invocation}', 'X-BotCube-Session-Id': session})
     try:
         with urlopen(request, timeout=10) as response:
             data = json.load(response)

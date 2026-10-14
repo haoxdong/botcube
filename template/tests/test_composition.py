@@ -106,7 +106,7 @@ def test_a_bound_turn_relays_its_model_calls_through_the_credential_service_for_
 
     assert relay is not None
     assert (relay.base_url, relay.token, relay.session_id) == ('http://credentials:8125/openai/v1', 'invocation', 'session-one')
-    assert relay.headers == {'X-Template-Session': 'session-one'}
+    assert relay.headers == {'X-BotCube-Session-Id': 'session-one'}
     assert unbound is None
     with pytest.raises(ValueError, match='needs both its URL and its invocation token'):
         HARNESS_CARTRIDGE.prepare_invocation({'threadId': 'session-one', 'forwardedProps': {'credentialServiceUrl': 'http://x'}})

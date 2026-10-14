@@ -30,7 +30,7 @@ OpenAI. Configure `TEMPLATE_SITE_URL`, `BOTCUBE_VAULT_TABLE`,
 `BOTCUBE_VAULT_KMS_KEY_ID` and `BOTCUBE_CREDENTIAL_INVOCATION_SECRET` on that service.
 Its Vault is the platform's envelope-encrypted DynamoDB Vault.
 
-The Chat Service needs `TEMPLATE_CREDENTIAL_SERVICE_URL` and the same invocation
+The Chat Service needs `BOTCUBE_CREDENTIAL_SERVICE_URL` and the same invocation
 signing secret. Open the agent profile's Sign-ins tab to link or unlink Template
 site. Each browser receives an opaque local Account session cookie. These local
 Account sessions expire after a day and reset when the Chat Service restarts.

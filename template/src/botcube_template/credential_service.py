@@ -22,7 +22,7 @@ def template_credential_service(
     audit = CredentialAuditRecorder(sink=StdoutCredentialAuditSink())
     return credential_service_app(
         CredentialServiceSettings(
-            'template', invocation_secret, 'X-Template-Account', 'X-Template-Session',
+            'template', invocation_secret,
             plan_usage_owner_account_id=os.environ.get('BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID', ''),
         ),
         FakeSiteProvider(vault, site_url, audit),
