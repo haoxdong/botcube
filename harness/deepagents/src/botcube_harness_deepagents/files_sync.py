@@ -3,7 +3,8 @@
 The Chat Service forwards the account's prefix of the Files bucket with credentials scoped to
 that prefix, because the Runtime's own role reaches no Files. Before the Turn the workspace
 refreshes each file unless its local edit is newer; after the run completes, Files take each file the agent
-wrote or changed before the response stream closes. Hidden files, the agent's scratch space `/tmp`, the Harness's own files, and the
+wrote or changed before the response stream closes, along with each file the final answer links that the shell
+wrote outside the workspace. Hidden files, the agent's scratch space `/tmp`, the Harness's own files, and the
 Cartridge's skills stay out.
 
 Each sync records the files it left in Files with their stamped second, so a delete in Files sticks.
@@ -18,6 +19,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from collections.abc import Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -320,6 +322,27 @@ def _synced(name: str, excluded: tuple[str, ...]) -> bool:
     if not parts or any(part.startswith('.') for part in parts):
         return False
     return not any(parts[: len(PurePosixPath(prefix).parts)] == PurePosixPath(prefix).parts for prefix in excluded)
+
+
+# An absolute path a markdown link or image embeds: `[text](/path)`, `![alt](</path> "title")`.
+_LINKED_PATH = re.compile(r'\]\(\s*<?(/[^\s)>]+)')
+
+
+def import_linked_files(root: Path, answer: str, excluded: Iterable[str], filesystem: Path = Path('/')) -> None:
+    """Copy each file the answer links that is missing from the workspace but on the real filesystem to where its link points.
+
+    The file tools see the workspace as `/`; the shell sees the real `/`, so its `/charts/x.png` lands outside Files.
+    """
+    skip = tuple(excluded)
+    for link in dict.fromkeys(_LINKED_PATH.findall(answer)):
+        name = link.lstrip('/')
+        if '..' in PurePosixPath(name).parts or not _synced(name, skip):
+            continue
+        local, real = root / name, filesystem / name
+        if os.path.lexists(local) or real.is_symlink() or not real.is_file():
+            continue
+        local.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(real, local)
 
 
 def excluded_paths(skills: Iterable[str]) -> tuple[str, ...]:

@@ -88,6 +88,7 @@ from .files_sync import (
     FilesSyncRecordError,
     excluded_paths,
     files_prompt,
+    import_linked_files,
     pop_files_sync,
 )
 from .lazy_files import TurnFiles, turn_files
@@ -1002,12 +1003,14 @@ async def _read_turn_checkpoint(
 
 
 async def _publish_finished_files(
-    files: FilesSync | None, root: Path, ready: bool, completion: RunFinishedEvent | None, run_id: str,
+    files: FilesSync | None, root: Path, ready: bool, completion: RunFinishedEvent | None, run_id: str, answer: str,
 ) -> None:
     if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
         return
     started = perf_counter()
-    await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
+    excluded = excluded_paths(_require_cartridge().skills)
+    await asyncio.to_thread(import_linked_files, root, answer, excluded)
+    await asyncio.to_thread(files.push, root, excluded)
     log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
              run_id, (perf_counter() - started) * 1000)
 
@@ -1313,7 +1316,8 @@ class _SessionTurns:
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            await _publish_finished_files(files, root, readiness.ready, completion, turn.run_id)
+                            # The reply's text after its last tool result is the final answer.
+                            await _publish_finished_files(files, root, readiness.ready, completion, turn.run_id, reply.text)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)

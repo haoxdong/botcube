@@ -2561,6 +2561,8 @@ describe('Main Chat', () => {
 
     beforeEach(async () => {
       vi.useFakeTimers();
+      // The Turn clocks outlive a test; one fixed start keeps runner time between tests out of the head's clock.
+      vi.setSystemTime(new Date('2026-10-14T12:00:00Z'));
       copilot.rows = true;
       copilot.running = true;
       const view = await renderPage();

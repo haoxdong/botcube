@@ -827,3 +827,103 @@ def test_files_push_stops_at_worker_window_after_first_upload_failure_issue_4074
     assert sorted(uploaded) == [f'owner/file-{index:03}.txt' for index in range(4)]
     assert sorted(settled) == sorted(uploaded)
     assert record.read_text() == '{}'
+
+
+def test_a_file_the_shell_wrote_outside_the_workspace_follows_its_link_into_files_issue_4141(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import json
+    from collections.abc import Iterator
+    from functools import partial
+    from types import SimpleNamespace
+    from typing import Any
+
+    from ag_ui.core import BaseEvent, EventType, RunAgentInput, UserMessage
+    from deepagents.backends import LocalShellBackend
+    from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+    from langchain_core.outputs import ChatGenerationChunk
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from botcube_harness_deepagents import files_sync, serving
+    from botcube_harness_deepagents.agent import build_agent
+    from conftest import ToolBindableFakeMessagesModel, prepared
+
+    class StreamingModel(ToolBindableFakeMessagesModel):
+        """Streams each scripted message whole, as a provider streams the reply the user reads."""
+
+        def _stream(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+            message = self._generate(messages, *args, **kwargs).generations[0].message
+            yield ChatGenerationChunk(message=AIMessageChunk(content=message.text, id=message.id, tool_call_chunks=[
+                {'name': call['name'], 'args': json.dumps(call['args']), 'id': call['id'], 'index': index}
+                for index, call in enumerate(getattr(message, 'tool_calls', []))
+            ]))
+
+    # The shell sees the real `/` (here `filesystem`): its `/charts/x.png` is outside the workspace the file tools call `/`.
+    workspace, filesystem = tmp_path / 'workspace', tmp_path / 'filesystem'
+    workspace.mkdir()
+    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, 'import_linked_files', partial(files_sync.import_linked_files, filesystem=filesystem))
+    model = StreamingModel(responses=[
+        AIMessage(content='', id='chart', tool_calls=[{
+            'id': 'plot', 'name': 'execute',
+            'args': {'command': f'mkdir -p {filesystem}/charts && printf chart > {filesystem}/charts/x.png'},
+        }]),
+        AIMessage(content='Here is the curve: ![Curve](/charts/x.png)', id='answer'),
+    ])
+    graph = build_agent(
+        model=model, backend=LocalShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=False),
+        skills=[], memory=[], checkpointer=InMemorySaver(),
+    )
+    agent = serving._SessionAgent(name='linked-files', graph=graph)
+    request = RunAgentInput(
+        thread_id='linked-files', run_id='linked-run',
+        messages=[UserMessage(id='question', role='user', content='Chart the curve.')],
+        tools=[], context=[], state={}, forwarded_props={},
+    )
+
+    with mock_aws():
+        s3 = boto3.client('s3', region_name='us-east-1')
+        s3.create_bucket(Bucket='linked-files')
+        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
+        files = FilesSync('linked-files', 'owner/', 'us-east-1', {})
+
+        async def exercise() -> list[BaseEvent]:
+            stream = serving._SessionTurns().stream(
+                ('owner', 'linked-files'), prepared(agent, workspace), request, files, serving._RequestContext(None),
+            )
+            return [event async for event in stream]
+
+        events = asyncio.run(exercise())
+
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert s3.get_object(Bucket='linked-files', Key='owner/charts/x.png')['Body'].read() == b'chart'
+
+
+def test_linked_files_import_only_absolute_links_missing_from_the_workspace_issue_4141(tmp_path: Path) -> None:
+    from botcube_harness_deepagents.files_sync import import_linked_files
+
+    workspace, filesystem = tmp_path / 'workspace', tmp_path / 'filesystem'
+    for root, name, body in [
+        (filesystem, 'charts/x.png', b'shell chart'),
+        (filesystem, 'mnt/data/curve.pdf', b'shell pdf'),
+        (filesystem, 'report.md', b'shell report'),
+        (workspace, 'report.md', b'workspace report'),
+        (filesystem, 'tmp/scratch.png', b'scratch'),
+    ]:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(body)
+    answer = (
+        'The curve ![Curve](/charts/x.png "Curve") and [the PDF](</mnt/data/curve.pdf>), '
+        'summarised in [the report](/report.md); see also [nothing](/missing.png), '
+        '[scratch](/tmp/scratch.png) and [the web](https://example.com/charts/x.png).'
+    )
+
+    import_linked_files(workspace, answer, excluded_paths(()), filesystem=filesystem)
+
+    assert sorted(path.relative_to(workspace).as_posix() for path in workspace.rglob('*') if path.is_file()) == [
+        'charts/x.png', 'mnt/data/curve.pdf', 'report.md',
+    ]
+    assert (workspace / 'charts' / 'x.png').read_bytes() == b'shell chart'
+    assert (workspace / 'mnt' / 'data' / 'curve.pdf').read_bytes() == b'shell pdf'
+    assert (workspace / 'report.md').read_bytes() == b'workspace report'
