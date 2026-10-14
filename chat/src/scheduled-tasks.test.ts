@@ -23,6 +23,9 @@ beforeAll(async () => {
 });
 afterAll(() => stack.stop());
 
+// A delivery's receipt is deleted only after its whole Turn runs, which on CI can outlast vi.waitFor's 1 s default (#4020).
+const TURN_WAIT = { timeout: 10_000 };
+
 const MORNING_BRIEF = {
   title: 'Morning brief',
   prompt: 'Summarize overnight moves in US rates',
@@ -1133,7 +1136,7 @@ describe('ScheduledTasks', () => {
     try {
       await vi.waitFor(() => expect(delivered || errors.mock.calls.some(([message]) => String(message).startsWith('Scheduled runs stopped:'))).toBe(true));
       expect((await service.app.request('/health')).status).toBe(200);
-      await vi.waitFor(() => expect(deleted).toEqual(['healthy-receipt']));
+      await vi.waitFor(() => expect(deleted).toEqual(['healthy-receipt']), TURN_WAIT);
       expect(await normal.get(account, expired.id)).toBeNull();
       expect(await normal.get(account, healthy.id)).toMatchObject({ lastRun: { status: 'done' } });
       expect(await normal.get(account, poison.id)).toMatchObject({ id: poison.id });
@@ -1204,7 +1207,7 @@ describe('ScheduledTasks', () => {
       delete: async (receipt) => { deleted.push(receipt); },
     }, true);
     try {
-      await vi.waitFor(() => expect(deleted).toEqual(['retiring-receipt', 'healthy-receipt']));
+      await vi.waitFor(() => expect(deleted).toEqual(['retiring-receipt', 'healthy-receipt']), TURN_WAIT);
       expect(stack.sessionApi.events().flatMap((event) => event.operation === 'post' && event.sessionId === main ? [event.content] : [])).toEqual([
         'Scheduled task "Morning brief": Healthy task completed.',
       ]);

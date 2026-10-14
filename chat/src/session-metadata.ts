@@ -128,6 +128,10 @@ export class SessionProviderError extends Error {
 /** The source account's history is being transferred by Account Claim. */
 export class SessionClaimError extends Error {}
 
+export class SessionOpeningError extends Error {
+  constructor() { super("This Session already has a Turn"); }
+}
+
 type AcceptedDispatch = RunningTurn | { messageId: string };
 
 export type RegisteredDispatch = (() => Promise<void>) & {
@@ -201,7 +205,7 @@ export interface SessionMetadata {
   recordTurn(
     owner: string,
     sessionId: string,
-    turn: { filingUserId: string; title: string; provider?: string; running?: RunningTurn; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
+    turn: { filingUserId: string; title: string; provider?: string; running?: RunningTurn; messageId?: string | undefined; warmup?: boolean | undefined; opening?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
   ): Promise<string>;
   /** Clear this running Turn's mark, and record why it failed, unless another run replaced it. */
   turnEnded(owner: string, sessionId: string, running: RunningTurn, failure: TurnFailure | undefined): Promise<void>;
@@ -737,9 +741,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       running,
       messageId,
       warmup,
+      opening,
       postAcceptance,
       scheduledTaskId,
-    }: { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
+    }: { filingUserId: string; title: string; provider?: string | undefined; running?: RunningTurn | undefined; messageId?: string | undefined; warmup?: boolean | undefined; opening?: boolean | undefined; postAcceptance?: true | undefined; scheduledTaskId?: string | undefined },
   ): Promise<string> {
     const { creating, binding, filing } = await this.turnIdentity(owner, sessionId, filingUserId);
     filingUserId = filing;
@@ -765,7 +770,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                 UpdateExpression:
                   'SET session_id = :session_id, updated_at = :now, ' +
                   'created_at = if_not_exists(created_at, :now), ' +
-                  (warmup ? '' : 'title = if_not_exists(title, :title), ') +
+                  (warmup || opening ? '' : 'title = if_not_exists(title, :title), ') +
                   'filing_user_id = if_not_exists(filing_user_id, :filing_user_id)' +
                   (binding === undefined ? '' : ', runtime_binding = :binding, runtime_generation = :generation') +
                   (messageId === undefined ? '' : ', latest_message_id = :latest_message_id') +
@@ -773,11 +778,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   runningUpdate.set +
                   providerUpdate.set + turnRemoval(runningUpdate.remove, provider, postAcceptance),
                 ConditionExpression: turnAdmissionCondition(creating, providerUpdate.condition) +
-                  scheduledUpdate.condition,
+                  scheduledUpdate.condition + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
                 ExpressionAttributeValues: {
                   ':session_id': sessionId,
                   ':now': now(),
-                  ...(warmup ? {} : { ':title': title }),
+                  ...(warmup || opening ? {} : { ':title': title }),
                   ...(binding === undefined ? {} : { ':binding': binding, ':generation': 'tracked-v1' }),
                   ':filing_user_id': filingUserId,
                   ...(messageId === undefined ? {} : { ':latest_message_id': messageId }),
@@ -801,8 +806,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       );
     } catch (error) {
       if ((error as Partial<TransactionCanceledException>).CancellationReasons?.[3]?.Code === 'ConditionalCheckFailed') throw new SessionNamespaceNotReadyError();
-      if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, provider), scheduledTaskId)) {
-        return this.recordTurn(owner, sessionId, { filingUserId, title, provider, running, messageId, warmup, postAcceptance, scheduledTaskId });
+      if (retryUnboundTurn(error, sessionId, creating && compatibleAdmission(error, provider), scheduledTaskId, opening)) {
+        return this.recordTurn(owner, sessionId, { filingUserId, title, provider, running, messageId, warmup, opening, postAcceptance, scheduledTaskId });
       }
     }
     return this.acceptedFilingUserId(owner, sessionId);
@@ -1010,7 +1015,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
 
   async list(owner: string): Promise<SessionSummary[]> {
     return (await this.query(owner, SESSION))
-      .filter((item) => !fenced(item) && item.title !== undefined)
+      .filter((item) => !fenced(item) && (item.title !== undefined || item.turn_latest_run_id !== undefined || item.latest_message_id !== undefined))
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
       .map(summaryOf);
   }
@@ -1295,12 +1300,13 @@ function fenceRefusal(error: unknown, sessionId: string): unknown {
   return reasons?.some((reason) => reason.Code === 'ConditionalCheckFailed') ? new SessionDeletedError(sessionId) : error;
 }
 
-function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean, scheduledTaskId?: string): boolean {
+function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean, scheduledTaskId?: string, opening?: boolean): boolean {
   const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
   const [ownerFence, session, claimFence] = reasons ?? [];
   if (ownerFence?.Code === 'ConditionalCheckFailed' || (session?.Code === 'ConditionalCheckFailed' && session.Item?.deleted_at !== undefined)) throw new SessionDeletedError(sessionId);
   if (claimFence?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
   if (session?.Code === 'ConditionalCheckFailed') {
+    if (opening && ['title', 'turn_latest_run_id', 'latest_message_id', 'turn_running_since'].some((field) => session.Item?.[field] !== undefined)) throw new SessionOpeningError();
     if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {
       throw new SessionBusyError('The previous Turn is still going');
     }

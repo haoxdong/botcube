@@ -27,6 +27,7 @@ const copilot = vi.hoisted(() => ({
   rowMounts: 0,
   jumps: 0,
   listeners: new Set<() => void>(),
+  openingTurn: undefined as unknown as ReturnType<typeof vi.fn<(options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) => void>>,
   runAgent: undefined as unknown as ReturnType<typeof vi.fn<(options: { agent: HttpAgent | undefined }) => void>>,
 }));
 
@@ -48,7 +49,8 @@ vi.mock('./kept-chat', async (importOriginal) => {
 
 vi.mock('@copilotkit/react-core/v2', async () => {
   const { Streamdown } = await import('streamdown');
-  const copilotkit = { runAgent: (options: { agent: HttpAgent | undefined }) => copilot.runAgent(options) };
+  const copilotkit = { runAgent: (options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) =>
+    options.forwardedProps?.opening === true ? copilot.openingTurn(options) : copilot.runAgent(options) };
   // Like CopilotChatMessageView: an assistant message slot renders its markdown. It virtualizes a long chat's rows
   // unless a `children` render prop lays out its
   // message elements.
@@ -485,6 +487,7 @@ beforeEach(() => {
   copilot.jumps = 0;
   copilot.chat = undefined;
   copilot.runAgent = vi.fn();
+  copilot.openingTurn = vi.fn();
   copilot.renderTool = undefined;
   copilot.sendCellShown = true;
   copilot.running = false;
@@ -771,7 +774,7 @@ describe('cartridge wiring', () => {
 
     await renderPage();
 
-    expect(screen.getByText('Research Bot', { selector: '.welcome-title' })).toBeInTheDocument();
+    expect(copilot.openingTurn).toHaveBeenCalledOnce();
     expect(screen.getByRole('alert')).toHaveTextContent('Your agent could not be prepared: offline');
 
     fetchMock.mockImplementation(chatService);
@@ -855,16 +858,18 @@ describe('account session gate', () => {
 });
 
 describe('welcome screen', () => {
-  it('greets a signed-in user by first name', async () => {
+  it('lets the agent greet a signed-in user', async () => {
     await renderPage(auth({ user: { name: 'Ada Lovelace' } }));
 
-    expect(welcome()).toHaveTextContent(/^Hi Ada, how can I help you\?$/);
+    expect(welcome()).toBeNull();
+    expect(copilot.openingTurn).toHaveBeenCalledExactlyOnceWith({ agent: agent(), forwardedProps: { opening: true, openingFirstName: 'Ada' } });
   });
 
-  it('invites a user without a name to message, with the cartridge title and subtitle', async () => {
+  it('lets the agent open for a user without a name', async () => {
     await renderPage();
 
-    expect(welcome()).toHaveTextContent(/^Research BotAsk about markets$/);
+    expect(welcome()).toBeNull();
+    expect(copilot.openingTurn).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -874,8 +879,9 @@ describe('welcome screen', () => {
   ] as const)('offers no sign-in to a user %s', async (_, status) => {
     await renderPage(auth({ status, error: status === 'error' ? 'Account locked' : null }));
 
-    expect(welcome()).toHaveTextContent(/^Research BotAsk about markets$/);
-    expect(within(welcome() as HTMLElement).queryByRole('button')).toBeNull();
+    expect(welcome()).toBeNull();
+    expect(copilot.openingTurn).toHaveBeenCalledOnce();
+    expect(within(present(document.querySelector('main.app-shell'), 'the chat shell')).queryByRole('button', { name: 'Sign in' })).toBeNull();
   });
 });
 
@@ -1003,7 +1009,7 @@ describe('sending a message', () => {
 
     fireEvent.keyDown(textarea, { key: 'Enter', ...modifiers });
 
-    expect(welcome()).not.toBeNull();
+    expect(requests()).toEqual(['GET /main-chat', 'GET /threads']);
   });
 
   it('does not count other keys as sending', async () => {
@@ -1013,7 +1019,8 @@ describe('sending a message', () => {
 
     fireEvent.keyDown(textarea, { key: 'a' });
 
-    expect(welcome()).not.toBeNull();
+    expect(copilot.runAgent).not.toHaveBeenCalled();
+    expect(agent().messages).toEqual([]);
   });
 });
 
@@ -2090,10 +2097,10 @@ describe('the history moments', () => {
     expect(measured()).toEqual({ returning: 0, firstVisit: 1 });
   });
 
-  it('times a first visit to an empty Main Chat to its welcome screen', async () => {
+  it('times a first visit to an empty Main Chat before its opening Turn replies', async () => {
     await renderPage();
 
-    expect(welcome()).not.toBeNull();
+    expect(welcome()).toBeNull();
     expect(measured()).toEqual({ returning: 0, firstVisit: 1 });
   });
 
@@ -4437,14 +4444,14 @@ describe('Side Chats', () => {
     expect(welcome()).toBeNull();
   });
 
-  it('keeps the welcome screen while the agent has no messages', async () => {
+  it('does not restore a static welcome while the opening Turn has no messages', async () => {
     await renderPage();
 
     await act(async () => {
       agent().setMessages([]);
     });
 
-    expect(welcome()).not.toBeNull();
+    expect(welcome()).toBeNull();
   });
 
   it('opens a Side Chat with its replayed messages on its own thread', async () => {
@@ -4582,7 +4589,7 @@ describe('Side Chats', () => {
       previous.addMessage({ id: 'late', role: 'user', content: 'Late message' });
     });
 
-    expect(welcome()).not.toBeNull();
+    expect(agent().messages).toEqual([]);
   });
 
   it('starts a new Side Chat', async () => {
@@ -4593,7 +4600,7 @@ describe('Side Chats', () => {
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
-    expect(welcome()).not.toBeNull();
+    expect(welcome()).toBeNull();
     expect(copilot.chat?.threadId).toBe('new-1');
     expect(agent().threadId).toBe('new-1');
     expect(agent().messages).toEqual([]);
@@ -4659,7 +4666,7 @@ describe('Side Chats', () => {
 
     expect(recents()).toEqual([]);
     expect(copilot.chat?.threadId).toBe('new-1');
-    expect(welcome()).not.toBeNull();
+    expect(welcome()).toBeNull();
   });
 
   describe('renaming', () => {
@@ -4780,12 +4787,13 @@ describe("a Side Chat's URL", () => {
     expect(window.location.search).toBe('');
   });
 
-  it('names a new Side Chat once the user sends its first message', async () => {
+  it('names a new Side Chat when its opening Turn starts', async () => {
     await renderPage();
 
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
-    expect(window.location.search).toBe('');
+    expect(window.location.search).toBe('?chat=new-1');
+    expect(agent().messages).toEqual([]);
 
     await sendMessage('What moved rates?');
     expect(window.location.search).toBe('?chat=new-1');
@@ -8161,7 +8169,9 @@ describe('model and effort picker', () => {
     });
 
     it('offering every model before the first Turn', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
       await renderPage();
+      expect(copilot.openingTurn).not.toHaveBeenCalled();
 
       await userEvent.click(pill());
       expect(names()).toEqual(['Deep', 'Fast', 'Plan', 'Effort']);
@@ -8216,6 +8226,7 @@ describe('model and effort picker', () => {
     });
 
     it('again offering every model in a new chat', async () => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
       service.mainChat = { id: 'main-1', provider: 'openai', messages: [{ id: 'm1', role: 'user', content: 'Hi' }] };
       await renderPage();
 
@@ -9368,6 +9379,7 @@ describe('an offline first Turn refused before dispatch', () => {
   const openModels = () => userEvent.click(present(document.querySelector<HTMLElement>('.mep-pill'), 'model pill'));
 
   beforeEach(() => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
     service.models = [
       { key: 'deep', label: 'Deep', provider: 'anthropic' },
       { key: 'astra', label: 'Astra', provider: 'openai' },
@@ -9383,9 +9395,11 @@ describe('an offline first Turn refused before dispatch', () => {
     await openModels();
     expect(modelNames()).toEqual(['Deep', 'Astra', 'Effort']);
     expect(welcome()).not.toBeNull();
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
 
   it('locks the provider after an online first Turn', async () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     await renderPage();
     await sendMessage('Create one reminder');
     expect(copilot.runAgent).toHaveBeenCalledOnce();
@@ -9401,6 +9415,7 @@ describe('an offline first Turn refused before dispatch', () => {
     await openModels();
     expect(modelNames()).toEqual(['Deep', 'Astra', 'Effort']);
     expect(welcome()).not.toBeNull();
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
 
   it('submits Retry with the newly selected Astra provider', async () => {
@@ -9730,5 +9745,152 @@ describe('attaching files', () => {
     expect(chips()).toEqual([]);
     await sendMessage('Hello');
     expect(agent().messages).toEqual([{ id: 'submitted', role: 'user', content: 'Hello' }]);
+  });
+});
+
+
+describe('agent opening Turn', () => {
+  it('passes the first name shown by the welcome screen without needing a provider profile', async () => {
+    await renderPage(auth({ user: { name: 'Ada Lovelace' } }));
+    expect(copilot.openingTurn).toHaveBeenCalledExactlyOnceWith({
+      agent: agent(), forwardedProps: { opening: true, openingFirstName: 'Ada' },
+    });
+  });
+
+  it('runs once on an empty authoritative replay with the selected model and no user message', async () => {
+    await renderPage();
+    expect(copilot.openingTurn).toHaveBeenCalledExactlyOnceWith({ agent: agent(), forwardedProps: { opening: true } });
+    expect(agent().messages).toEqual([]);
+    expect(copilot.kits.at(-1)?.properties).toMatchObject({ model: 'deep' });
+    await act(async () => { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); });
+    await settle();
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not greet a populated replay', async () => {
+    service.mainChat.messages = [{ id: 'old', role: 'assistant', content: 'Already here' }];
+    await renderPage();
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failed opening without automatically dispatching it again', async () => {
+    copilot.openingTurn.mockImplementation(() => Promise.reject(new Error('Opening dispatch failed')));
+    await renderPage();
+    expect(screen.getByRole('alert')).toHaveTextContent('The agent could not answer: Opening dispatch failed');
+    await settle();
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['running', 'failed', 'models unavailable'] as const)('does not open when %s', async (state) => {
+    if (state === 'running') service.mainChat = { id: 'main-1', messages: [], running: true, runId: 'server-1' };
+    if (state === 'failed') service.mainChat = { id: 'main-1', messages: [], failure: { code: 'TURN_FAILED', message: 'Previous failed', runId: 'failed-1' } };
+    if (state === 'models unavailable') service.models = [];
+    await renderPage();
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
+  });
+
+  it('starts while the opening warmup is still pending', async () => {
+    let finish: (() => void) | undefined;
+    fetchMock.mockImplementation((url, init) => url === 'http://chat.test/warmup'
+      ? new Promise<Response>((resolve) => { finish = () => resolve(answer(204)); })
+      : chatService(url, init));
+    await renderPage();
+    expect(copilot.openingTurn).toHaveBeenCalledExactlyOnceWith({ agent: agent(), forwardedProps: { opening: true } });
+    await act(async () => { finish?.(); });
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a synchronous dispatch failure and allows a normal user message afterward', async () => {
+    copilot.openingTurn.mockImplementation(() => { throw new Error('Not registered'); });
+    await renderPage();
+    expect(screen.getByRole('alert')).toHaveTextContent('The agent could not answer: Not registered');
+    await sendMessage('Hello');
+    expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
+  });
+
+
+  it('waits for authoritative replay before replacing an empty browser copy', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', messages: [] }));
+    let replay: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementation((url, init) => url === 'http://chat.test/main-chat'
+      ? new Promise<Response>((resolve) => { replay = resolve; }) : chatService(url, init));
+    await renderPage(auth({ accountId: 'acct-first' }));
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
+    await act(async () => { present(replay, 'the authoritative replay')(answer(200, { id: 'main-1', messages: [], running: true, runId: 'accepted-opening' })); });
+    await settle();
+    expect(copilot.openingTurn).not.toHaveBeenCalled();
+  });
+
+  it('waits for the new account catalog and never uses its previous model', async () => {
+    const view = await renderPage(auth({ accountId: 'acct-first' }));
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+    let release: ((response: Response) => void) | undefined;
+    fetchMock.mockImplementation((url, init) => url === 'http://chat.test/agent/models'
+      ? new Promise<Response>((resolve) => { release = resolve; }) : chatService(url, init));
+    service.mainChat = { id: 'main-second', messages: [] };
+    cartridge.auth = auth({ accountId: 'acct-second' });
+    view.rerender(<Page />);
+    await settle();
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(1);
+    await act(async () => { present(release, 'the account models')(answer(200, { models: [{ key: 'astra', label: 'Astra', provider: 'openai' }] })); });
+    await settle();
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(2);
+    expect(copilot.openingTurn).toHaveBeenLastCalledWith({ agent: agent(), forwardedProps: { opening: true } });
+    expect(kit().properties).toMatchObject({ model: 'astra' });
+  });
+
+});
+
+
+describe('opening admission navigation regressions', () => {
+  it.each(['running', 'failed'] as const)('reloads the Side Chat URL with no message while its opening is %s', async (state) => {
+    let rejectOpening: ((error: Error) => void) | undefined;
+    copilot.openingTurn.mockImplementation(({ agent: openingAgent }) => openingAgent?.threadId === 'new-1'
+      ? new Promise<void>((_resolve, reject) => { rejectOpening = reject; }) : undefined);
+    const view = await renderPage();
+    await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
+    await settle();
+    expect(agent().threadId).toBe('new-1');
+    expect(agent().messages).toEqual([]);
+    expect(window.location.search).toBe('?chat=new-1');
+    if (state === 'failed') {
+      await act(async () => { present(rejectOpening, 'the pending opening')(new Error('Model service unavailable')); });
+      expect(screen.getByRole('alert')).toHaveTextContent('Model service unavailable');
+    }
+    expect(window.location.search).toBe('?chat=new-1');
+    view.unmount();
+    fetchMock.mockImplementation((url, init) => url === 'http://chat.test/threads/new-1'
+      ? Promise.resolve(answer(200, { provider: 'anthropic', messages: [], running: state === 'running',
+        ...(state === 'failed' ? { failure: { runId: 'opening-side', code: 'UPSTREAM_FAILURE', message: 'Model service unavailable' } } : {}) }))
+      : chatService(url, init));
+    await renderPage();
+    expect(agent().threadId).toBe('new-1');
+    expect(window.location.search).toBe('?chat=new-1');
+    if (state === 'failed') expect(screen.getByRole('alert')).toHaveTextContent('Model service unavailable');
+    else expect(screen.queryByRole('alert')).toBeNull();
+    expect(copilot.openingTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the opening provider while a different provider is chosen before the first reply', async () => {
+    service.models.push({ key: 'astra', label: 'Astra', provider: 'openai' });
+    let finishOpening: (() => void) | undefined;
+    copilot.openingTurn.mockImplementation(() => new Promise<void>((resolve) => { finishOpening = resolve; }));
+    await renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
+    const otherProvider = screen.queryByRole('button', { name: 'Astra' });
+    if (otherProvider !== null) await userEvent.click(otherProvider);
+    expect(kit().properties.model).toBe('deep');
+    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
+    await userEvent.keyboard('{Escape}');
+    await act(async () => {
+      agent().addMessage({ id: 'opening-reply', role: 'assistant', content: 'Hi Ada' });
+      present(finishOpening, 'the opening Turn')();
+    });
+    await sendMessage('What do you remember?');
+    expect(kit().properties.model).toBe('deep');
+    expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
+    await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
+    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Fast' })).toBeVisible();
   });
 });

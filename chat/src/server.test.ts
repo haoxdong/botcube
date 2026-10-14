@@ -394,3 +394,200 @@ it('preserves the first classified failure and reports a second preparation fail
     expect(ending).toHaveBeenCalledTimes(1);
   } finally { payload.reject(secondary); documents.reject(primary); await response; await target.stop(); }
 });
+
+const openingPost = (threadId: string, runId: string) => ({ method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ threadId, runId, state: {}, messages: [], tools: [], context: [], forwardedProps: { opening: true, model: 'plan' } }) });
+
+it('titles a Side Chat from the first user question after its opening', async () => {
+  const target = await startInProcess();
+  try {
+    const greeting = await target.app.request('/', openingPost('opening-title', 'opening-title-run'));
+    expect(await greeting.text()).toContain('RUN_FINISHED');
+    const question = turnPost('opening-title', [{ id: 'question', role: 'user', content: 'Explain compound interest' }]);
+    question.body = JSON.stringify({ ...JSON.parse(question.body), forwardedProps: { model: 'plan' } });
+    expect(await (await target.app.request('/', question)).text()).toContain('RUN_FINISHED');
+    const chats = await target.app.request('/threads');
+    expect(await chats.json()).toMatchObject({ threads: [{ id: 'opening-title', title: 'Explain compound interest' }] });
+  } finally { await target.stop(); }
+});
+
+it.each(['main', 'side'])('replays a recorded pre-dispatch opening failure in %s Chat and accepts a follow-up', async (kind) => {
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  let fail = true;
+  const target = await startInProcess({ cartridge: { invocationPayload: async (input) => {
+    if (fail) throw new Error('opening payload failed');
+    return { ...input, forwardedProps: { ...input.forwardedProps } };
+  } } });
+  try {
+    const main = await (await target.app.request('/main-chat')).json() as { id: string };
+    const id = kind === 'main' ? main.id : 'failed-opening-side';
+    target.sessionApi.reply(id, 404, { error: `Session ${id} has no record`, code: 'SESSION_NOT_FOUND' });
+    expect((await target.app.request('/', openingPost(id, 'failed-opening-run'))).status).toBe(500);
+    const replay = await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id, provider: 'openai', messages: [], running: false,
+      failure: { runId: 'failed-opening-run', message: 'opening payload failed' } });
+    expect(target.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: 'filed-account-1' });
+    expect((await target.app.request('/', openingPost(id, 'duplicate'))).status).toBe(409);
+    fail = false;
+    const question = turnPost(id, [{ id: 'question', role: 'user', content: 'Hello again' }]);
+    question.body = JSON.stringify({ ...JSON.parse(question.body), forwardedProps: { model: 'plan' } });
+    expect(await (await target.app.request('/', question)).text()).toContain('RUN_FINISHED');
+    expect((await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`)).status).toBe(404);
+    expect(target.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: 'filed-account-1' });
+  } finally { await target.stop(); }
+});
+
+it.each(['main', 'side'])('replays the successful opening in %s Chat and propagates checkpoint failures', async (kind) => {
+  const target = await startInProcess();
+  try {
+    const main = await (await target.app.request('/main-chat')).json() as { id: string };
+    const id = kind === 'main' ? main.id : 'successful-opening-side';
+    expect(await (await target.app.request('/', openingPost(id, 'successful-opening-run'))).text()).toContain('RUN_FINISHED');
+    const path = kind === 'main' ? '/main-chat' : `/threads/${id}`;
+    target.sessionApi.reply(id, 200, { messages: [{ id: 'greeting', role: 'assistant', content: 'Hello Ada' }] });
+    expect(await (await target.app.request(path)).json()).toMatchObject({ id, provider: 'openai',
+      messages: [{ id: 'greeting', role: 'assistant', content: 'Hello Ada' }], running: false });
+    target.sessionApi.reply(id, 404, { error: 'Missing checkpoint' });
+    expect((await target.app.request(path)).status).toBe(404);
+    target.sessionApi.reply(id, 503, { error: 'Storage unavailable' });
+    expect((await target.app.request(path)).status).toBe(503);
+    expect(target.sessionApi.events().filter((event) => 'sessionId' in event && event.sessionId === id)).toEqual([
+      { operation: 'get', sessionId: id, userId: 'filed-account-1' },
+      { operation: 'get', sessionId: id, userId: 'filed-account-1' },
+      { operation: 'get', sessionId: id, userId: 'filed-account-1' },
+    ]);
+  } finally { await target.stop(); }
+});
+
+it.each([{ kind: 'main', failure: 'http' }, { kind: 'side', failure: 'http' }, { kind: 'main', failure: 'stream' }, { kind: 'side', failure: 'stream' }])('replays an unwritten post-dispatch $failure opening failure in $kind Chat', async ({ kind, failure }) => {
+  const target = await startInProcess();
+  try {
+    const main = await (await target.app.request('/main-chat')).json() as { id: string };
+    const id = kind === 'main' ? main.id : 'rejected-opening-side';
+    target.agentcore.script(id, failure === 'http'
+      ? { kind: 'error', status: 503, body: JSON.stringify({ message: 'Model service unavailable' }) }
+      : { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_ERROR","code":"MODEL_FAILED","message":"Model service unavailable"}'] });
+    target.sessionApi.reply(id, 404, { error: `Session ${id} has no record`, code: 'SESSION_NOT_FOUND' });
+    const response = await target.app.request('/', openingPost(id, 'rejected-opening-run'));
+    await response.text();
+    const replay = await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id, provider: 'openai', messages: [], running: false,
+      failure: { runId: 'rejected-opening-run', message: expect.stringContaining('Model service unavailable') } });
+    target.sessionApi.reply(id, 404, { error: 'The route is missing' });
+    expect((await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`)).status).toBe(404);
+    target.sessionApi.reply(id, 503, { error: 'Checkpoint storage failed' });
+    expect((await target.app.request(kind === 'main' ? '/main-chat' : `/threads/${id}`)).status).toBe(503);
+  } finally { await target.stop(); }
+});
+
+it.each([{ kind: 'main', opening: true }, { kind: 'side', opening: true }, { kind: 'main', opening: false }, { kind: 'side', opening: false }])('classifies an expired unwritten $kind Turn after process exit, opening=$opening', async ({ kind, opening }) => {
+  const target = await startInProcess();
+  try {
+    const main = await (await target.app.request('/main-chat')).json() as { id: string };
+    const id = kind === 'main' ? main.id : 'abandoned-side';
+    const running = { runId: 'abandoned-run', startedAt: new Date(Date.now() - 3_600_001).toISOString() };
+    await target.sessionMetadata.recordTurn('account-1', id, { filingUserId: 'filed-account-1', title: 'Lost question', provider: 'openai',
+      opening, running, messageId: running.runId });
+    target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: `Session ${id} has no record` });
+    const path = kind === 'main' ? '/main-chat' : `/threads/${id}`;
+    const replay = await target.app.request(path);
+    if (!opening) {
+      expect(replay.status).toBe(404);
+      expect(await replay.json()).toEqual({ detail: `Session ${id} has no record` });
+      return;
+    }
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id, provider: 'openai', messages: [], running: false,
+      failure: { runId: 'abandoned-run', code: 'TURN_INTERRUPTED', message: 'The Turn ended without a saved conversation. Send a message to continue.' } });
+    expect(await (await target.app.request(path)).json()).toMatchObject({ running: false,
+      failure: { runId: 'abandoned-run', code: 'TURN_INTERRUPTED' } });
+    expect(await target.sessionMetadata.get('account-1', id)).not.toHaveProperty('turn_running_since');
+    expect((await target.app.request('/', openingPost(id, 'duplicate-abandoned'))).status).toBe(409);
+    target.sessionApi.reply(id, 404, { error: 'Route unavailable' });
+    expect((await target.app.request(path)).status).toBe(404);
+    target.sessionApi.reply(id, 503, { error: 'Storage failed' });
+    expect((await target.app.request(path)).status).toBe(503);
+    const next = turnPost(id, [{ id: 'next-question', role: 'user', content: 'Try again' }]);
+    next.body = JSON.stringify({ ...JSON.parse(next.body), forwardedProps: { model: 'plan' } });
+    expect(await (await target.app.request('/', next)).text()).toContain('RUN_FINISHED');
+    target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: `Session ${id} has no record` });
+    expect((await target.app.request(path)).status).toBe(404);
+  } finally { await target.stop(); }
+});
+
+it('reports fresh unwritten admissions as running and keeps settled missing checkpoints loud', async () => {
+  const target = await startInProcess();
+  try {
+    const id = 'fresh-unwritten';
+    const running = { runId: 'fresh-run', startedAt: new Date().toISOString() };
+    await target.sessionMetadata.recordTurn('account-1', id, { filingUserId: 'filed-account-1', title: '', provider: 'openai', opening: true,
+      running, messageId: running.runId });
+    target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: `Session ${id} has no record` });
+    expect(await (await target.app.request(`/threads/${id}`)).json()).toMatchObject({ messages: [], provider: 'openai', running: true });
+    await target.sessionMetadata.turnEnded('account-1', id, running, undefined);
+    expect((await target.app.request(`/threads/${id}`)).status).toBe(404);
+  } finally { await target.stop(); }
+});
+
+it('refuses stale interrupted replay when a newer Turn wins settlement', async () => {
+  const target = await startInProcess();
+  try {
+    const id = 'settlement-race';
+    const old = { runId: 'old-run', startedAt: new Date(Date.now() - 3_600_001).toISOString() };
+    await target.sessionMetadata.recordTurn('account-1', id, { filingUserId: 'filed-account-1', title: '', provider: 'openai', opening: true,
+      running: old, messageId: old.runId });
+    target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: `Session ${id} has no record` });
+    const end = target.sessionMetadata.turnEnded.bind(target.sessionMetadata);
+    vi.spyOn(target.sessionMetadata, 'turnEnded').mockImplementationOnce(async (owner, sessionId, running, failure) => {
+      await target.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'filed-account-1', title: 'New question', provider: 'openai',
+        running: { runId: 'new-run', startedAt: new Date().toISOString() }, messageId: 'new-run' });
+      await end(owner, sessionId, running, failure);
+    });
+    const replay = await target.app.request(`/threads/${id}`);
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toEqual({ detail: 'The Session changed while its interrupted Turn was being settled. Reload the conversation.' });
+    expect(await target.sessionMetadata.get('account-1', id)).toMatchObject({ title: 'New question', turn_run_id: 'new-run', turn_latest_run_id: 'new-run' });
+    expect(await target.sessionMetadata.get('account-1', id)).not.toHaveProperty('turn_failure');
+  } finally { await target.stop(); }
+});
+
+it.each(['main', 'side'])('reloads an admitted %s opening before its first delta as running without a checkpoint', async (kind) => {
+  const target = await startInProcess();
+  try {
+    const { id: main } = await (await target.app.request('/main-chat')).json() as { id: string };
+    const id = kind === 'main' ? main : 'opening-before-delta';
+    const running = { runId: 'before-delta-run', startedAt: new Date().toISOString() };
+    await target.sessionMetadata.recordTurn('account-1', id, { filingUserId: 'filed-account-1', title: '', provider: 'openai', opening: true,
+      running, messageId: running.runId });
+    target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: `Session ${id} has no record` });
+    const path = kind === 'main' ? '/main-chat' : `/threads/${id}`;
+    const replay = await target.app.request(path);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ id, provider: 'openai', messages: [], running: true });
+    expect(await target.sessionMetadata.get('account-1', id)).toMatchObject({ turn_preparing: true, turn_run_id: 'before-delta-run' });
+    target.sessionApi.reply(id, 404, { error: 'Unknown route' });
+    expect((await target.app.request(path)).status).toBe(404);
+    target.sessionApi.reply(id, 503, { error: 'Storage failed' });
+    expect((await target.app.request(path)).status).toBe(503);
+  } finally { await target.stop(); }
+});
+
+it('lists admitted titleless Side Chats while keeping warmup-only rows hidden and first-question titles writable', async () => {
+  const target = await startInProcess();
+  try {
+    await target.sessionMetadata.recordTurn('account-1', 'warmup-only', { filingUserId: 'filed-account-1', title: '', warmup: true });
+    const running = { runId: 'listed-opening-run', startedAt: new Date().toISOString() };
+    await target.sessionMetadata.recordTurn('account-1', 'listed-opening', { filingUserId: 'filed-account-1', title: '', provider: 'openai', opening: true,
+      running, messageId: running.runId });
+    expect(await (await target.app.request('/threads')).json()).toMatchObject({ threads: [{ id: 'listed-opening', title: 'Untitled conversation' }] });
+    expect(await target.sessionMetadata.get('account-1', 'listed-opening')).not.toHaveProperty('title');
+    await target.sessionMetadata.turnEnded('account-1', 'listed-opening', running, { code: 'PREPARATION_FAILED', message: 'Payload failed' });
+    expect(await (await target.app.request('/threads')).json()).toMatchObject({ threads: [{ id: 'listed-opening', title: 'Untitled conversation' }] });
+    const next = turnPost('listed-opening', [{ id: 'question', role: 'user', content: 'Explain compound interest' }]);
+    next.body = JSON.stringify({ ...JSON.parse(next.body), forwardedProps: { model: 'plan' } });
+    expect(await (await target.app.request('/', next)).text()).toContain('RUN_FINISHED');
+    expect(await (await target.app.request('/threads')).json()).toMatchObject({ threads: [{ id: 'listed-opening', title: 'Explain compound interest' }] });
+  } finally { await target.stop(); }
+});

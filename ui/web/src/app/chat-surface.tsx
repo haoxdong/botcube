@@ -780,10 +780,12 @@ function ChatThread({
   turnRunning,
   turnMayRun,
   onMessageSubmitted,
+  onTurnStarting,
   showWelcome,
   userName,
   composerAccessory,
   models,
+  selectedModel,
   isAccountCurrent,
   stopServerTurn,
   savedFailure,
@@ -801,8 +803,10 @@ function ChatThread({
   /** Has the chat check with the server whether its Turn runs, as one this tab did not start may. */
   turnMayRun: () => void;
   onMessageSubmitted: () => void;
+  onTurnStarting: (provider: string | undefined) => void;
   /** The account's models; until they load, a Turn would run on another account's model or the default. */
   models: ModelList;
+  selectedModel: string | undefined;
   /** False while a sign-in has switched the account and the page has not rendered the new one's models. */
   isAccountCurrent: () => boolean;
   /** Stops the chat's Turn that runs on the server with no stream here, while one does. */
@@ -820,6 +824,8 @@ function ChatThread({
   onOpenRun?: (run: ReachedScheduledRun) => void;
   children?: React.ReactNode;
 }) {
+  const { copilotkit } = useCopilotKit();
+  const openingAttempted = useRef(false);
   const firedRef = useRef(false);
   const refreshTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
@@ -861,8 +867,8 @@ function ChatThread({
     if (savedFailure !== null) setRunError(couldNotAnswer(savedFailure.message));
   }, [savedFailure]);
   // A Retry reads whether the account's models have loaded since the send it repeats.
-  const accountRef = useRef({ models, isAccountCurrent });
-  accountRef.current = { models, isAccountCurrent };
+  const accountRef = useRef({ models, isAccountCurrent, selectedModel });
+  accountRef.current = { models, isAccountCurrent, selectedModel };
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
   // A follow-up sent while a Turn runs is held here, and in this browser across a reload, then sent once the Turn
   // ends (#3920). Follow-ups sent meanwhile go together as one message.
@@ -887,6 +893,26 @@ function ChatThread({
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const runningRef = useRef(running);
   runningRef.current = running;
+  useEffect(() => {
+    const selected = models.loaded ? models.models.find(({ key }) => key === selectedModel) : undefined;
+    if (openingAttempted.current || !showWelcome || running || savedFailure !== null ||
+        agent.messages.length !== 0 || !online || !isAccountCurrent() || !models.loaded ||
+        models.accountId !== accountId || selected === undefined) return;
+    openingAttempted.current = true;
+    onTurnStarting(selected.provider);
+    runningRef.current = true;
+    setAgentRunning(true);
+    const firstName = userName?.split(" ")[0];
+    void (async () => {
+      try {
+        await copilotkit.runAgent({ agent, forwardedProps: { opening: true, ...(firstName ? { openingFirstName: firstName } : {}) } });
+      } catch (error) {
+        setRunError(couldNotAnswer(error instanceof Error ? error.message : String(error)));
+      } finally {
+        setAgentRunning(agent.isRunning);
+      }
+    })();
+  }, [agent, accountId, showWelcome, running, savedFailure, online, models, selectedModel, userName, isAccountCurrent, copilotkit, onTurnStarting]);
   // A follow-up another tab holds may wait on a Turn that tab streams, which this one does not know of.
   const queued = useQueuedFollowUp(accountId, threadId, turnMayRun);
   const composerSubmit = useRef<Submit | null>(null);
@@ -910,6 +936,8 @@ function ChatThread({
       setRunError({ message: `Couldn't reach ${UI_CONFIG.title}. Check your connection.`, retry: retry ?? (() => submitTurn(message, submit)) });
       return false;
     }
+    const { models: accountModels, selectedModel: currentModel } = accountRef.current;
+    onTurnStarting(accountModels.loaded ? accountModels.models.find(({ key }) => key === currentModel)?.provider : undefined);
     setRunError(null);
     startMoment("send-acknowledged");
     submittedQuestion.current = message;
@@ -988,7 +1016,7 @@ function ChatThread({
 
   return (
     <div className="chat-wrapper" ref={wrapperRef} onKeyDownCapture={handleKeyDown}>
-      {showWelcome && <WelcomeScreen userName={userName} />}
+      {showWelcome && !running && !openingAttempted.current && <WelcomeScreen userName={userName} />}
       <ToolCallRenderer agent={agent} />
       <SubmitTurn.Provider value={submitTurn}>
       <ComposerSubmit.Provider value={composerSubmit}>

@@ -8,7 +8,7 @@ import {
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, inject, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
-import { type SessionPurge, DynamoDBSessionMetadata, SessionDeletedError, SessionProviderError, SessionClaimError } from './session-metadata.js';
+import { type SessionPurge, DynamoDBSessionMetadata, SessionDeletedError, SessionProviderError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
 import { purgeQueue } from './purges.js';
 import { sessionLifecycle } from './session-lifecycle.js';
 
@@ -150,6 +150,47 @@ describe('the default client', () => {
 });
 
 describe('recordTurn', () => {
+  it('admits one opening Turn after a warmup and refuses concurrent or reloaded openings', async () => {
+    await metadata.recordTurn('account-1', 'opening', { filingUserId: 'f', title: '', warmup: true });
+    const opening = { filingUserId: 'f', title: 'Opening', provider: 'openai', opening: true,
+      running: { startedAt: T1, runId: 'opening-1' }, messageId: 'opening-1' };
+    const results = await Promise.allSettled([
+      metadata.recordTurn('account-1', 'opening', opening),
+      metadata.recordTurn('account-1', 'opening', { ...opening, running: { startedAt: T1, runId: 'opening-2' }, messageId: 'opening-2' }),
+    ]);
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(({ status }) => status === 'rejected')).toMatchObject({ reason: expect.any(SessionOpeningError) });
+    const admitted = await metadata.get('account-1', 'opening');
+    expect(admitted).toMatchObject({ latest_message_id: expect.any(String), turn_latest_run_id: expect.any(String) });
+    expect(admitted).not.toHaveProperty('title');
+    await expect(metadata.recordTurn('account-1', 'opening', { ...opening, messageId: 'rejected', running: { startedAt: T2, runId: 'rejected' } })).rejects.toBeInstanceOf(SessionOpeningError);
+    expect(await metadata.get('account-1', 'opening')).toEqual(admitted);
+    await metadata.turnEnded('account-1', 'opening', { startedAt: T1, runId: defined(admitted?.turn_run_id, 'opening run') }, undefined);
+    await expect(metadata.recordTurn('account-1', 'opening', opening)).rejects.toBeInstanceOf(SessionOpeningError);
+    await expect(metadata.recordTurn('account-1', 'opening', { filingUserId: 'f', title: 'Hello', provider: 'openai', messageId: 'user-1' })).resolves.toBe('f');
+    expect(await metadata.get('account-1', 'opening')).toMatchObject({ title: 'Hello', latest_message_id: 'user-1' });
+  });
+
+  it.each(['latest_message_id', 'turn_latest_run_id', 'turn_running_since'])('refuses openings after the titleless %s Turn marker', async (marker) => {
+    const documents = DynamoDBDocumentClient.from(client());
+    await documents.send(new PutCommand({ TableName: table, Item: {
+      pk: 'SESSIONS#account-1', sk: `SESSION#${marker}`, session_id: marker, filing_user_id: 'f',
+      created_at: S1, updated_at: S1, [marker]: 'prior-turn',
+    } }));
+    await expect(metadata.recordTurn('account-1', marker, {
+      filingUserId: 'f', title: 'Opening', provider: 'anthropic', opening: true,
+      running: { startedAt: T2, runId: 'opening' }, messageId: 'opening',
+    })).rejects.toBeInstanceOf(SessionOpeningError);
+    expect(await metadata.get('account-1', marker)).toMatchObject({ [marker]: 'prior-turn' });
+  });
+
+  it('refuses an opening on older title-only Session metadata', async () => {
+    await metadata.recordTurn('account-1', 'legacy-opening', { filingUserId: 'f', title: 'Prior conversation' });
+    await expect(metadata.recordTurn('account-1', 'legacy-opening', {
+      filingUserId: 'f', title: 'Opening', provider: 'openai', opening: true,
+    })).rejects.toBeInstanceOf(SessionOpeningError);
+  });
+
   it('replaces the latest message marker and preserves it when no message is added', async () => {
     await metadata.recordTurn('account-1', 'session-1', { filingUserId: 'f', title: 't', messageId: 'request-1' });
     expect(await metadata.get('account-1', 'session-1')).toMatchObject({ latest_message_id: 'request-1' });

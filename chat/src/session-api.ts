@@ -37,6 +37,10 @@ export type SessionApiConfig =
   | { localUrl: string }
   | null;
 
+export class SessionNotFoundError extends HttpError {
+  constructor(detail: string) { super(404, detail); }
+}
+
 /**
  * Invokes the session API; a failure is an HttpError the client sees, a 503 when the session API
  * failed. Not a 502: Cloudflare, in front of the Chat Service, replaces an origin's 502 and 504 with
@@ -64,7 +68,10 @@ export function sessionApi(config: SessionApiConfig): SessionApi {
         'functionArn' in config
           ? await invokeFunction(config, event, timeoutSeconds)
           : await invokeLocal(config.localUrl, event, timeoutSeconds);
-      if (status === 404) throw new HttpError(404, String((body as { error: unknown }).error));
+      if (status === 404) {
+        const { error, code } = body as { error: unknown; code?: unknown };
+        throw code === 'SESSION_NOT_FOUND' ? new SessionNotFoundError(String(error)) : new HttpError(404, String(error));
+      }
       // A Session in the legacy checkpoint format, which the session API reads no further (ADR 0067).
       if (status === 410) {
         const { error, code } = body as { error: unknown; code: unknown };

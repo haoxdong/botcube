@@ -34,6 +34,7 @@ import {
   trackedRuntime,
   SessionClaimError,
   SessionProviderError,
+  SessionOpeningError,
   SessionBusyError,
   type SessionMetadata,
   type TurnActivity,
@@ -390,6 +391,8 @@ export function createChatService(
       // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
       const input = body as RunAgentInput;
       const validatedInput = parsed.data as RunAgentInput;
+      const opening = input.forwardedProps?.opening === true;
+      if (opening && input.messages.length !== 0) throw new HttpError(422, 'An opening Turn cannot contain messages');
       const initialMessages = structuredClone(input.messages);
       const held = takeHeldIds(input.forwardedProps ?? {});
       const model = await requireAllowedModel(input, cartridge, requester);
@@ -405,8 +408,10 @@ export function createChatService(
           provider: model.provider,
           running,
           messageId: input.runId,
+          opening,
         });
       } catch (error) {
+        if (error instanceof SessionOpeningError) throw new HttpError(409, error.message);
         if (error instanceof SessionProviderError) {
           throw new HttpError(
             409,

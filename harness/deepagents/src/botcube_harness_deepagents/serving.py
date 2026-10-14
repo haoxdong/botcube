@@ -134,6 +134,10 @@ Python has pandas, numpy, matplotlib, openpyxl, python-pptx, python-docx, report
 </environment>"""
 
 
+class SessionOpeningError(RuntimeError):
+    code = 'SESSION_OPENING_ALREADY_STARTED'
+
+
 class MissingUserIdError(RuntimeError):
     """The invocation carries no user ID; only the Chat Service resolves identity (ADR 0068)."""
 
@@ -879,12 +883,34 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         yield event
 
 
+def _opening_prompt(input_data: RunAgentInput, invocation_prompt: str) -> str:
+    if (input_data.forwarded_props or {}).get('opening') is not True:
+        return invocation_prompt
+    if input_data.messages:
+        raise SessionOpeningError('An opening Turn cannot contain messages')
+    first_name = (input_data.forwarded_props or {}).get('openingFirstName')
+    if first_name is not None and not isinstance(first_name, str):
+        raise SessionOpeningError('An opening first name must be text')
+    name = f'The user\'s first name is {json.dumps(first_name)}.\n' if first_name else ''
+    return invocation_prompt + (
+        f'\n\n<chat_opened>\n{name}The user opened this empty chat. Apply the opening greeting instruction in <voice>. '
+        'If Memory is empty, skip the Memory pitch; never invent one. '
+        'There is no user message to answer.\n</chat_opened>'
+    )
+
+
+def _require_empty_opening_checkpoint(checkpoint: object | None) -> None:
+    if checkpoint is not None:
+        raise SessionOpeningError('This Session already has a Turn')
+
+
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any,
                         files: FilesSync | None, warmup: Any, turn_identity: str | None):
     session = (session_user_id, input_data.thread_id)
     # Anonymous users get no Memory (ADR 0032 §5).
     persistent_memory = auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID
+    opening = forwarded.get('opening') is True
     build = partial(
         _agent_and_backend,
         actor_id=auth.actor_id,
@@ -893,7 +919,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         model=forwarded.get('model'),
         effort=forwarded.get('effort'),
         thread_id=input_data.thread_id,
-        invocation_prompt=auth.system_prompt,
+        invocation_prompt=_opening_prompt(input_data, auth.system_prompt),
         environment=auth.environment,
         model_relay=auth.model_relay,
         documents=documents,
@@ -909,7 +935,9 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 store = agent.graph.store
                 session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id)
             with turn_timing.phase('checkpoint_read'):
-                await latest_checkpoint(agent.graph, _session_config(session))
+                saved = await latest_checkpoint(agent.graph, _session_config(session))
+                if opening:
+                    _require_empty_opening_checkpoint(saved)
             _apply_session_env(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
 
@@ -1303,6 +1331,7 @@ async def _invocation_frames(
                 FilesSyncRecordError,
                 PlanUsageError,
                 SessionFormatLegacyError,
+                SessionOpeningError,
                 TurnFeedError,
                 TurnIdentityError,
             ) as e:

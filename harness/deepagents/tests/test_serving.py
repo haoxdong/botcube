@@ -107,7 +107,7 @@ class _ScriptedModel(BaseChatModel):
         self.recorder.prompts.append(system.text if isinstance(system, SystemMessage) else '')
         humans = [message for message in messages if isinstance(message, HumanMessage)]
         self.recorder.heard.append([str(message.content) for message in humans])
-        yield self._reply(messages, messages.index(humans[-1]))
+        yield self._reply(messages, messages.index(humans[-1])) if humans else _text('Hi! I can remember what matters to you.')
 
     def _reply(self, messages: list[BaseMessage], turn_start: int) -> ChatGenerationChunk:
         text = str(messages[turn_start].content)
@@ -3354,3 +3354,52 @@ def test_a_recorded_warmup_with_local_memory_prepares(service: _Service) -> None
 
     assert events[-1]['value']['outcome'] == 'prepared'
 
+
+
+def test_opening_turn_streams_without_a_user_message_and_cannot_reopen_saved_history(service: _Service) -> None:
+    run = {
+        'threadId': 'opening-chat', 'runId': 'opening-1', 'messages': [], 'tools': [],
+        'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'opening': True},
+    }
+    events = service.post(run)
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert any(event.get('delta') == 'Hi! I can remember what matters to you.' for event in events)
+    assert service.recorder.heard == [[]]
+    assert _replay('user-1', 'opening-chat') == [('assistant', 'Hi! I can remember what matters to you.')]
+    assert '<chat_opened>' in service.recorder.prompts[0]
+    assert 'opening greeting instruction in <voice>' in service.recorder.prompts[0]
+    reopened = service.post({**run, 'runId': 'opening-2'})
+    assert reopened[-1] == {'type': 'RUN_ERROR', 'message': 'This Session already has a Turn',
+                            'code': 'SESSION_OPENING_ALREADY_STARTED'}
+    assert len(service.recorder.prompts) == 1
+    continuing = service.turn('say: Thank you', thread='opening-chat')
+    assert continuing[-1]['type'] == 'RUN_FINISHED'
+    assert any(event.get('delta') == 'Thank you' for event in continuing)
+    assert '<chat_opened>' not in service.recorder.prompts[-1]
+
+
+def test_opening_turn_rejects_a_synthetic_user_message(service: _Service) -> None:
+    events = service.turn('hello', opening=True)
+    assert events[-1] == {'type': 'RUN_ERROR', 'message': 'An opening Turn cannot contain messages',
+                          'code': 'SESSION_OPENING_ALREADY_STARTED'}
+    assert service.recorder.prompts == []
+
+
+@pytest.mark.parametrize('first_name', ['Ada', None])
+def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _Service, first_name: str | None) -> None:
+    events = service.post({
+        'threadId': 'opening-with-profile', 'runId': 'opening-profile-1', 'messages': [],
+        'tools': [], 'context': [], 'state': {},
+        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'opening': True,
+                           **({'openingFirstName': first_name} if first_name is not None else {})},
+    })
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    prompt = service.recorder.prompts[0]
+    assert '<agent_memory>' not in prompt
+    assert 'If Memory is empty, skip the Memory pitch; never invent one.' in prompt
+    if first_name is not None:
+        assert 'The user\'s first name is "Ada".' in prompt
+    else:
+        assert 'The user\'s first name is' not in prompt

@@ -452,6 +452,7 @@ function App({
     renameSideChat,
     deleteSideChat: handleDeleteConversation,
     messageSubmitted,
+    turnStarting,
   } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening });
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
     ready, accountId, activeProvider, showWelcome, chatServiceUrl: CHAT_SERVICE_URL,
@@ -855,8 +856,10 @@ function App({
                 userName={auth.user?.name}
                 composerAccessory={auth.composerAccessory}
                 models={models}
+                selectedModel={offeredModel}
                 isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
                 onMessageSubmitted={messageSubmitted}
+                onTurnStarting={turnStarting}
                 stopServerTurn={stopServerTurn}
                 savedFailure={turnFailure}
                 openAt={openAt}

@@ -2,12 +2,12 @@ import { positiveInteger } from './config.js';
 import type { AgentDocuments } from './agent-documents.js';
 import { HttpError } from './cartridge.js';
 import type { ScheduledTasks } from './scheduled-tasks.js';
-import type { SessionApi } from './session-api.js';
+import { SessionNotFoundError, type SessionApi } from './session-api.js';
 import { trackedRuntime, type SessionMetadata, type SessionPurge, type SessionSummary } from './session-metadata.js';
 
 const threadSummary = ({ session_id, title, created_at, updated_at, scheduled_task_id }: SessionSummary) => ({
   id: session_id,
-  title,
+  title: title ?? 'Untitled conversation',
   created_at,
   updated_at,
   // A scheduled task's Side Chat, which the drawer marks.
@@ -53,6 +53,31 @@ export function sessionOperations(
       throw new HttpError(409, `The Main Chat cannot be ${action}`);
     }
   };
+  const replayState = async (owner: string, sessionId: string, metadata: SessionSummary) => {
+    let absence: SessionNotFoundError;
+    try {
+      return { messages: (await invokeSessionApi(historyRead(sessionId, metadata))).messages, failure: metadata.turn_failure };
+    } catch (error) {
+      if (!(error instanceof SessionNotFoundError)) throw error;
+      absence = error;
+    }
+    if (metadata.title !== undefined || metadata.turn_latest_run_id === undefined) throw absence;
+    if (metadata.turn_failure?.runId === metadata.turn_latest_run_id && metadata.turn_running_since === undefined) {
+      return { messages: [], failure: metadata.turn_failure };
+    }
+    if (metadata.turn_running_since === undefined || metadata.turn_run_id !== metadata.turn_latest_run_id) throw absence;
+    if (runningTurn(metadata).running) return { messages: [], failure: metadata.turn_failure };
+    if (!(Date.now() - Date.parse(metadata.turn_running_since) >= TURN_BOUND_MS)) throw absence;
+    const failure = { code: 'TURN_INTERRUPTED', message: 'The Turn ended without a saved conversation. Send a message to continue.' };
+    await sessionMetadata.turnEnded(owner, sessionId, { startedAt: metadata.turn_running_since, runId: metadata.turn_latest_run_id }, failure);
+    const settled = await sessionMetadata.get(owner, sessionId);
+    if (settled === null) throw new HttpError(404, 'Session not found');
+    if (settled.turn_latest_run_id !== metadata.turn_latest_run_id || settled.turn_running_since !== undefined ||
+        settled.turn_failure?.runId !== metadata.turn_latest_run_id) {
+      throw new HttpError(409, 'The Session changed while its interrupted Turn was being settled. Reload the conversation.');
+    }
+    return { messages: [], failure: settled.turn_failure };
+  };
   return {
     async sideChats(owner: string) {
       const [sessions, mainChat] = await Promise.all([sessionMetadata.list(owner), sessionMetadata.mainChat(owner, filingUserId(owner))]);
@@ -62,9 +87,9 @@ export function sessionOperations(
     async mainChat(owner: string) {
       const id = await sessionMetadata.mainChat(owner, filingUserId(owner));
       const metadata = await sessionMetadata.get(owner, id);
-      if (metadata === null || metadata.title === undefined) return { id, messages: [], running: false };
-      const { messages } = await invokeSessionApi(historyRead(id, metadata));
-      return { id, provider: metadata.provider, messages, ...runningTurn(metadata), failure: metadata.turn_failure };
+      if (metadata === null || (metadata.title === undefined && metadata.turn_latest_run_id === undefined && metadata.latest_message_id === undefined)) return { id, messages: [], running: false };
+      const state = await replayState(owner, id, metadata);
+      return { id, provider: metadata.provider, ...state, ...runningTurn(metadata) };
     },
     /** The finished Turns of the account's Sessions, from Session Metadata alone, newest first. */
     async activity(owner: string) {
@@ -88,8 +113,8 @@ export function sessionOperations(
     async replay(owner: string, sessionId: string) {
       const metadata = await sessionMetadata.get(owner, sessionId);
       if (metadata === null) throw new HttpError(404, 'Session not found');
-      const { messages } = await invokeSessionApi(historyRead(sessionId, metadata));
-      return { ...threadSummary(metadata), provider: metadata.provider, messages, ...runningTurn(metadata), failure: metadata.turn_failure };
+      const state = await replayState(owner, sessionId, metadata);
+      return { ...threadSummary(metadata), provider: metadata.provider, ...state, ...runningTurn(metadata) };
     },
     async renameSideChat(owner: string, sessionId: string, title: string) {
       await refuseMainChat(owner, sessionId, 'renamed');

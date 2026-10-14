@@ -60,6 +60,15 @@ describe('local mode', () => {
     await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toEqual(httpError(404, 'Session not found'));
   });
 
+  it('classifies defined missing Session records without changing the public 404 detail', async () => {
+    fake = await new FakeSessionApi().listen();
+    fake.reply('session-1', 404, { error: 'Session session-1 has no record', code: 'SESSION_NOT_FOUND' });
+    await expect(sessionApi({ localUrl: fake.url })(EVENT)).rejects.toMatchObject({
+      constructor: expect.objectContaining({ name: 'SessionNotFoundError' }), status: 404, detail: 'Session session-1 has no record',
+    });
+    expect(fake.events()).toEqual([EVENT]);
+  });
+
   it("answers 410 with the session API's error and code for a legacy-format Session", async () => {
     fake = await new FakeSessionApi().listen();
     const error = 'Session session-1 is in the legacy checkpoint format: its latest checkpoint stores no messages';

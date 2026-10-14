@@ -84,9 +84,8 @@ export function useSessionNavigation({
   const deletedChats = useRef(new Set<string>());
   // A browser copy belongs to the account that mounted it, including while its history loads.
   const copiedAccount = useRef<string | undefined>(undefined);
-  const [userSentMessage, setUserSentMessage] = useState(false);
+  const [turnSubmitted, setTurnSubmitted] = useState(false);
   const [activeInitialMessages, setActiveInitialMessages] = useState<Message[]>([]);
-  // The open Session's model provider, as the Chat Service recorded it.
   const [activeProvider, setActiveProvider] = useState<string | undefined>(undefined);
   const [stopError, setStopError] = useState<string | null>(null);
   /** The open Session's latest Turn runs on the server, as its last load said, with its run ID for a Stop. */
@@ -173,7 +172,7 @@ export function useSessionNavigation({
     setActiveProvider(provider);
     setActiveId(id);
     setNewChatOwner(null);
-    setUserSentMessage(false);
+    setTurnSubmitted(false);
     setHasMessages(false);
   };
 
@@ -215,7 +214,7 @@ export function useSessionNavigation({
     setNewChatOwner(null);
     setActiveInitialMessages([]);
     setActiveProvider(undefined);
-    setUserSentMessage(false);
+    setTurnSubmitted(false);
     setHasMessages(false);
   };
 
@@ -330,9 +329,8 @@ export function useSessionNavigation({
   );
 
   const [hasMessages, setHasMessages] = useState(false);
-  const showWelcome = activeInitialMessages.length === 0 && !userSentMessage && !hasMessages;
+  const showWelcome = activeInitialMessages.length === 0 && !turnSubmitted && !hasMessages && activeProvider === undefined;
 
-  // The URL names an open Side Chat once it has a message, so a reload or a link reopens it; the Main Chat is the bare URL.
   useEffect(() => {
     if (activeId === null) return;
     const url = new URL(window.location.href);
@@ -527,8 +525,12 @@ export function useSessionNavigation({
     selectSideChat: handleSelectConversation,
     renameSideChat: handleRenameSideChat,
     deleteSideChat: handleDeleteConversation,
+    turnStarting(provider: string | undefined) {
+      setTurnSubmitted(true);
+      setActiveProvider(provider);
+    },
     messageSubmitted() {
-      setUserSentMessage(true);
+      setTurnSubmitted(true);
       void refreshSideChats();
     },
   };
