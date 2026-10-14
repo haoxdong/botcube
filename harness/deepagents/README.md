@@ -54,3 +54,7 @@ isolation; the worker is not an isolation mechanism. Cleanup is not guaranteed
 if a command terminates or suspends its worker or hosting Harness. Direct local
 servers and local Docker/test workers execute on their host without that Runtime
 microVM boundary.
+
+## Model configuration
+
+`BOTCUBE_MODEL` selects the model, falling back to `DEFAULT_MODEL` in `llm.py`. Bedrock Converse model factories and prompt caching are owned there; agent composition owns caching middleware. Product Cartridges supply the conversation binding and tool environment, including the CLI ref namespace.

@@ -5,12 +5,16 @@ BotCube is the generic agentic-chat platform that bots fork; a Cartridge seated 
 ## Language
 
 **BotCube**:
-The generic agentic-chatbot platform, free of any bot identity, that new bots fork. It holds the Chat Service, the Harnesses, white-label UI templates, per-host infrastructure, and an example Cartridge.
+The generic agentic-chatbot platform, free of any bot identity, that new bots fork. It holds the Chat Service, the Harnesses, white-label UI templates, per-host infrastructure, and Always On.
 _Avoid_: AgentCradle (former name), agentstack, the stack, console
 
 **Cartridge**:
 The pluggable unit seated in BotCube that answers "which bot is this?": skills, tool staging, auth routes, deploy identity, and UI plugins. It holds no harness-library code, so one Cartridge runs on any Harness. A Cartridge's folder is named for its bot, such as `botcube/template/`.
 _Avoid_: Bot Definition, app, bot config, plugin (that is only its UI part)
+
+**Always On**:
+The example Cartridge that new bots fork: a personal agent that keeps its memory, files and scheduled work between conversations.
+_Avoid_: template, BotCube template, example bot, starter
 
 **Harness**:
 A complete agent implementation on one third-party harness library, such as deepagents with LangGraph, together with everything coupled to that library, such as memory backends and LLM provider factories. It is swapped whole, never in place, and lives in `botcube/harness/<library>/`.
