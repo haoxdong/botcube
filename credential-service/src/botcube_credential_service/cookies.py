@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any
 
 from .vault import CredentialServiceError
+
+
+def isolated_cookie_jar() -> CookieJar:
+    return CookieJar(policy=DefaultCookiePolicy(allowed_domains=()))
+
 
 CookieEntry = Mapping[str, Any]
 COOKIE_NAME_SEPARATORS = set('()<>@,;:\\"/[]?={} \t')

@@ -73,7 +73,7 @@ def test_finished_run_does_not_build_the_whole_session_messages_snapshot(monkeyp
     asyncio.run(exercise())
 
 
-def test_run_finished_makes_a_new_chart_readable_without_reloading(
+def test_run_finished_waits_for_publication_and_keeps_the_chart_readable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     entered = threading.Event()
@@ -116,23 +116,26 @@ def test_run_finished_makes_a_new_chart_readable_without_reloading(
                 ('owner', 'session'), prepared(agent, tmp_path), _input(), files, serving._RequestContext(None),
             )
 
-            async def read_chart_on_completion() -> str:
+            finished = asyncio.Event()
+
+            async def consume() -> None:
                 async for event in stream:
                     if event.type == EventType.RUN_FINISHED:
-                        return s3.get_object(Bucket='turn-files', Key='owner/chart.svg')['Body'].read().decode()
-                raise AssertionError('The Turn did not finish')
+                        finished.set()
 
-            read = asyncio.create_task(read_chart_on_completion())
+            read = asyncio.create_task(consume())
             try:
                 assert await asyncio.to_thread(entered.wait, 2)
-                await asyncio.sleep(0)
-                if read.done():
-                    assert await read == chart
+                assert not finished.is_set(), 'RUN_FINISHED reported success before its Files were published'
+                assert not read.done(), 'EOF released the Session before its Files were published'
                 release.set()
                 async with asyncio.timeout(2):
-                    assert await read == chart
+                    await read
+                assert finished.is_set()
+                assert s3.get_object(Bucket='turn-files', Key='owner/chart.svg')['Body'].read().decode() == chart
             finally:
                 release.set()
+                await read
                 await stream.aclose()
 
         asyncio.run(exercise())
@@ -312,6 +315,7 @@ def test_a_stop_during_the_files_upload_keeps_the_sessions_lock_until_it_complet
             assert started == ['run', 'next']
         finally:
             stored.set()
+            await completion
             await stream.aclose()
             await next_stream.aclose()
 

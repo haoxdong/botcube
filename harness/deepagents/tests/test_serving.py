@@ -1804,7 +1804,7 @@ def test_a_file_pulled_by_a_turn_whose_push_failed_still_leaves_once_deleted_in_
     assert failed[-1]['type'] == 'RUN_ERROR'
     assert failed[-1]['code'] == 'INTERNAL_ERROR'
     assert 'PutObject operation: Forbidden' in failed[-1]['message']
-    assert not any(event['type'] == 'RUN_FINISHED' for event in failed)
+    assert [event['type'] for event in failed if event['type'] in ('RUN_FINISHED', 'RUN_ERROR')] == ['RUN_ERROR']
     assert (service.home / 'upload.txt').read_text() == 'from the Files app'
     files_bucket.delete_bucket_policy(Bucket=FILES_BUCKET)
     files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}upload.txt')

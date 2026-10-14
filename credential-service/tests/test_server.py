@@ -32,6 +32,9 @@ class FakeProvider:
         self.owner_only = owner_only
         self.calls: list[tuple[str, object]] = []
 
+    async def aclose(self) -> None:
+        return None
+
     def ready(self) -> None:
         return None
 
@@ -183,3 +186,18 @@ def test_a_provider_that_is_not_owner_only_needs_no_owner_whatever_its_name() ->
     response = _client(provider).post('/openai/auth/link/ingest', json={'durable': 'x'}, headers=_bearer(scope='credential_capture'))
 
     assert response.json() == {'status': 'stored'}
+
+
+def test_shutdown_closes_every_provider_even_after_failure() -> None:
+    closed: list[str] = []
+
+    class ClosingProvider(FakeProvider):
+        async def aclose(self) -> None:
+            closed.append(self.name)
+            if self.name == 'broken':
+                raise RuntimeError('shutdown failed')
+
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [ClosingProvider('first'), ClosingProvider('broken')])
+    with pytest.raises(RuntimeError, match='shutdown failed'), TestClient(app):
+        pass
+    assert closed == ['broken', 'first']

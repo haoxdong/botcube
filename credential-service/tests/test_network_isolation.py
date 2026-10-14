@@ -75,9 +75,15 @@ def test_a_relay_losing_its_mock_transport_fails_before_resolution(
     for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
                  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'):
         monkeypatch.delenv(name, raising=False)
+    client = httpx.AsyncClient
+
+    def dropping_transport(**kwargs: Any) -> httpx.AsyncClient:
+        kwargs.pop('transport')
+        return client(**kwargs)
+
+    monkeypatch.setattr(httpx, 'AsyncClient', dropping_transport)
     provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(),
                               transport=httpx.MockTransport(lambda request: httpx.Response(200)))
-    provider._transport = None
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': b'', 'more_body': False}

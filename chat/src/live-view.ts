@@ -32,28 +32,15 @@ export class LiveViewInjector {
 
   constructor(private readonly eventName: string, private initialSessionId?: string) {}
 
-  /** The CUSTOM event frames that follow this frame (its lines, without the blank line). */
-  after(lines: string[]): string[] {
-    return lines
-      .flatMap((line) => (line.startsWith('data: ') ? [this.liveViewForData(line.slice(6))] : []))
+  /** The CUSTOM events to append after these decoded events. */
+  after(events: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+    return events
+      .map((event) => this.liveViewForEvent(event))
       .filter((view): view is LiveView => view !== null)
-      .map(
-        (value) =>
-          `data: ${JSON.stringify({ type: EventType.CUSTOM, name: this.eventName, value })}\n\n`,
-      );
+      .map((value) => ({ type: EventType.CUSTOM, name: this.eventName, value }));
   }
 
-  private liveViewForData(data: string): LiveView | null {
-    let event: unknown;
-    try {
-      event = JSON.parse(data);
-    } catch {
-      // Non-JSON data carries no live-view text; the frame itself is still forwarded.
-      return null;
-    }
-    // Any other JSON value destructures to no fields.
-    if (event === null) return null;
-    const { type, messageId, delta, content } = event as Record<string, unknown>;
+  private liveViewForEvent({ type, messageId, delta, content }: Record<string, unknown>): LiveView | null {
     if (type === EventType.RUN_STARTED && this.initialSessionId !== undefined) {
       const sessionId = this.initialSessionId;
       this.initialSessionId = undefined;

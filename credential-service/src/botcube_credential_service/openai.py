@@ -10,12 +10,14 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .answer_boundary import CredentialAnswerBoundary
 from .config import OpenAISettings, positive_seconds
+from .cookies import isolated_cookie_jar
 from .provider import UpstreamRefusal
 from .vault import (
     CredentialNotFound,
@@ -192,7 +194,6 @@ class OpenAIProvider:
         # Raises ValueError while the Vault is unconfigured.
         self._vault = vault
         self._audit = audit
-        self._transport = transport
         self._clock = clock
         self._settings = OpenAISettings.from_env()
         self._expiry_margin_seconds = positive_seconds('BOTCUBE_OPENAI_EXPIRY_MARGIN_SECONDS', _EXPIRY_MARGIN_SECONDS)
@@ -201,9 +202,17 @@ class OpenAIProvider:
         self._lease_poll_seconds = positive_seconds('BOTCUBE_OPENAI_LEASE_POLL_SECONDS', _LEASE_POLL_SECONDS)
         self._read_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_READ_TIMEOUT_SECONDS', _READ_TIMEOUT_SECONDS)
         self._connect_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_CONNECT_TIMEOUT_SECONDS', 30)
+        self._client = httpx.AsyncClient(
+            transport=transport,
+            timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds),
+            cookies=isolated_cookie_jar(),
+        )
         # Access tokens, expiry and the Vault revision they came from; memory only.
         self._access: dict[str, tuple[str, float, str]] = {}
         self._refreshing: dict[str, asyncio.Lock] = {}
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     def ready(self) -> None:
         self._vault()
@@ -383,7 +392,8 @@ class OpenAIProvider:
     async def _token_refresh(self, sign_in: Mapping[str, str], active_lease: _RefreshLease) -> dict[str, Any]:
         """Spend the refresh token at OpenAI's token endpoint, within the lease that lets this task spend it."""
         try:
-            async with asyncio.timeout(active_lease.expires_at - self._clock()) as deadline, self._client() as client:
+            async with asyncio.timeout(active_lease.expires_at - self._clock()) as deadline:
+                client = self._client
                 active_lease.request_deadline = deadline
                 response = await client.post(
                     self._settings.token_url,
@@ -438,7 +448,7 @@ class OpenAIProvider:
             # OpenAI keys a conversation's cache affinity on session-id, which Codex sets to its prompt_cache_key
             # (openai/codex client.rs responses_session_id); the Harness's prompt_cache_key is this Session.
             headers['session-id'] = request_context['sessionId']
-        client = self._client()
+        client = self._client
         upstream_request = client.build_request(
             request.method, f'{self._settings.api_origin}/{path}', params=request.url.query or None,
             headers={**headers, 'authorization': f'Bearer {access}'}, content=await request.body(),
@@ -459,7 +469,7 @@ class OpenAIProvider:
             try:
                 content = await upstream.aread()
             finally:
-                await _finish_relay(timing, 'failure', upstream, client)
+                await _finish_relay(timing, 'failure', upstream)
             classified = _classified(_json_error(content_type, content))
             if classified is not None:
                 return JSONResponse(classified, status_code=upstream.status_code)
@@ -470,7 +480,7 @@ class OpenAIProvider:
             chunks = _observed_chunks(chunks, timing)
 
         return StreamingResponse(
-            _relay_body(chunks, upstream, client, timing),
+            _relay_body(chunks, upstream, timing),
             headers={'content-type': content_type} if content_type else None,
         )
 
@@ -485,18 +495,15 @@ class OpenAIProvider:
                 timing.first_phase('headers_returned')
             return upstream
         except httpx.ReadTimeout:
-            await _finish_relay(timing, 'failure', None, client)
+            await _finish_relay(timing, 'failure', None)
             cause = f'no response within {self._read_timeout_seconds:g} s'
             return JSONResponse(_plan_usage_error(_PROVIDER_TIMEOUT, cause), status_code=504)
         except BaseException as failure:
-            await _finish_relay(timing, 'cancelled' if isinstance(failure, asyncio.CancelledError) else 'failure', None, client)
+            await _finish_relay(timing, 'cancelled' if isinstance(failure, asyncio.CancelledError) else 'failure', None)
             raise
 
     def routes(self, guard: InvocationGuard) -> APIRouter:
         return APIRouter()
-
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=self._transport, timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds))
 
 
 def _observed_chunks(chunks: AsyncIterator[bytes], timing: _ProviderTiming | None) -> AsyncIterator[bytes]:
@@ -507,7 +514,7 @@ def _observed_chunks(chunks: AsyncIterator[bytes], timing: _ProviderTiming | Non
 
 
 async def _relay_body(
-    chunks: AsyncIterator[bytes], upstream: httpx.Response, client: httpx.AsyncClient, timing: _ProviderTiming | None,
+    chunks: AsyncIterator[bytes], upstream: httpx.Response, timing: _ProviderTiming | None,
 ) -> AsyncIterator[bytes]:
     result = 'no_answer'
     try:
@@ -519,21 +526,19 @@ async def _relay_body(
         result = 'cancelled' if isinstance(failure, (asyncio.CancelledError, GeneratorExit)) else 'failure'
         raise
     finally:
-        await _finish_relay(timing, result, upstream, client)
+        await _finish_relay(timing, result, upstream)
 
 
 async def _finish_relay(
-    timing: _ProviderTiming | None, result: str, upstream: httpx.Response | None, client: httpx.AsyncClient,
+    timing: _ProviderTiming | None, result: str, upstream: httpx.Response | None,
 ) -> None:
     try:
         if timing is not None:
             timing.finish(result)
     finally:
-        try:
-            if upstream is not None:
+        if upstream is not None:
+            with anyio.CancelScope(shield=True):
                 await upstream.aclose()
-        finally:
-            await client.aclose()
 
 
 def _timing_context(request: Request, request_context: Mapping[str, str]) -> dict[str, str]:

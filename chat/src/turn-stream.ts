@@ -674,18 +674,6 @@ async function tellEnd(turn: RelayedTurn, failure?: TurnFailure): Promise<unknow
 /** The Harness's run error for a Turn the user stopped: the user's choice, no failure. */
 const TURN_STOPPED = 'TURN_STOPPED';
 
-/** The last run error in relayed text, as its client was sent it, leaving out a Stop's. */
-function lastRunError(out: string): TurnFailure | undefined {
-  const runError = out
-    .split('\n\n')
-    .flatMap((frame) => dataEvents(frame.split('\n')))
-    .filter(({ type, code }) => type === EventType.RUN_ERROR && code !== TURN_STOPPED)
-    .at(-1);
-  if (runError === undefined) return undefined;
-  const { code, message } = runError;
-  return { ...(typeof code === 'string' ? { code } : {}), message: String(message) };
-}
-
 async function upstreamError(upstream: Upstream, response: Response, credentials: readonly string[]): Promise<{ response: Response; failure: TurnFailure }> {
   const error = `${upstream.label} returned HTTP ${response.status}`;
   const failed = (error: string, details: string, status: number) => ({
@@ -715,8 +703,15 @@ function snapshotAnswerTexts(messages: unknown): Map<string, string> {
   return texts;
 }
 
-const runErrorFrame = (message: string, code: string) =>
-  `data: ${JSON.stringify({ type: EventType.RUN_ERROR, message, code })}\n\n`;
+interface RelayedFrames {
+  out: string;
+  events: Record<string, unknown>[];
+}
+
+const runErrorFrame = (message: string, code: string): RelayedFrames => {
+  const event = { type: EventType.RUN_ERROR, message, code };
+  return { out: `data: ${JSON.stringify(event)}\n\n`, events: [event] };
+};
 
 /** What the relayed events said: the agent's messages' text, and whether the run finished. */
 function relayedOutcome(): { observe: (events: Record<string, unknown>[]) => void; answer: () => string | null } {
@@ -748,6 +743,7 @@ export async function stopTurn(upstream: Upstream, stop: string, sessionId: stri
 /** One relayable frame: its text (with any live-view events after it) and the agent document edits it carries. */
 interface Frame {
   text: string;
+  emittedEvents: Record<string, unknown>[];
   edits: unknown[];
   events: Record<string, unknown>[];
   readAt: number;
@@ -801,11 +797,16 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   const flush = (): Frame[] => {
     if (frame.length === 0) return [];
     const events = dataEvents(frame);
-    const text = `${frame.join('\n')}\n\n${liveView.after(frame).join('')}`;
+    const dataLines = frame.filter((line) => line.startsWith('data:'));
+    const liveViewEvents = dataLines.length === 1 && dataLines[0]?.startsWith('data: ')
+      ? events
+      : dataLines.filter((line) => line.startsWith('data: ')).map((line) => decoded(line.slice(6)));
+    const injected = liveView.after(liveViewEvents);
+    const text = `${frame.join('\n')}\n\n${injected.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}`;
     const edits = events.flatMap(({ type, name, value }) =>
       type === EventType.CUSTOM && name === AGENT_DOCUMENT_EDITED ? [value] : [],
     );
-    const out = { text, edits, events, readAt, monotonicReadAt };
+    const out = { text, edits, events, emittedEvents: [...events, ...injected], readAt, monotonicReadAt };
     frame = [];
     return [out];
   };
@@ -838,7 +839,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   };
 
   /** Record the Turn as failed; the run error to relay instead when that fails, else null. */
-  const recordFailure = async (message: string): Promise<string | null> => {
+  const recordFailure = async (message: string): Promise<RelayedFrames | null> => {
     try {
       await turn.failed(message);
       return null;
@@ -849,14 +850,14 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   };
 
   /** The run error that ends the Turn, relayed once the Turn is recorded as failed. */
-  const failure = async (message: string, code: string): Promise<string> =>
+  const failure = async (message: string, code: string): Promise<RelayedFrames> =>
     (await recordFailure(message)) ?? runErrorFrame(message, code);
 
   /**
    * Record the outcome a frame's terminal event ends the Turn with: a finished run's completion, started
    * without waiting for it, or a run error's failure. The error frame to relay in its place when that fails, else null.
    */
-  const terminalError = async (events: Frame['events'], frameReadAt: number): Promise<string | null> => {
+  const terminalError = async (events: Frame['events'], frameReadAt: number): Promise<RelayedFrames | null> => {
     if (events.some(({ type }) => type === EventType.RUN_FINISHED)) {
       terminal = true;
       endTiming = { readAt: frameReadAt, summarized: complete(outcome.answer() ?? '') };
@@ -867,7 +868,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
   };
 
   /** Record readiness before its RUN_STARTED frame, or classify why it could not be recorded. */
-  const readinessError = async (events: Frame['events']): Promise<string | null> => {
+  const readinessError = async (events: Frame['events']): Promise<RelayedFrames | null> => {
     if (turn.started === undefined || !events.some(({ type }) => type === EventType.RUN_STARTED)) return null;
     try {
       await turn.started();
@@ -879,9 +880,10 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     }
   };
 
-  const saveFrames = async (frames: Frame[]): Promise<{ out: string; failed: boolean }> => {
+  const saveFrames = async (frames: Frame[]): Promise<RelayedFrames & { failed: boolean }> => {
     let out = '';
-    for (const { text, edits, events, readAt: frameReadAt, monotonicReadAt: frameReadMono } of frames) {
+    const emittedEvents: Record<string, unknown>[] = [];
+    for (const { text, edits, events, emittedEvents: frameEmittedEvents, readAt: frameReadAt, monotonicReadAt: frameReadMono } of frames) {
       turn.timing?.observe(events, frameReadMono);
       // Log only frames already checked for decoded credentials and delta prefixes.
       logRunErrors(events);
@@ -893,22 +895,24 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
           console.error('Saving an agent document edit failed', error);
           const message = `The agent's edit could not be saved: ${error instanceof Error ? error.message : String(error)}`;
           // eslint-disable-next-line no-await-in-loop -- the stream ends with this error
-          return { out: `${out}${await failure(message, 'AGENT_DOCUMENT_SAVE_FAILED')}`, failed: true };
+          const classified = await failure(message, 'AGENT_DOCUMENT_SAVE_FAILED');
+          return { out: out + classified.out, events: [...emittedEvents, ...classified.events], failed: true };
         }
       }
       outcome.observe(events);
       // eslint-disable-next-line no-await-in-loop -- readiness is recorded before this frame is relayed
       const readiness = await readinessError(events);
-      if (readiness !== null) return { out: `${out}${readiness}`, failed: true };
+      if (readiness !== null) return { out: out + readiness.out, events: [...emittedEvents, ...readiness.events], failed: true };
       // eslint-disable-next-line no-await-in-loop -- a failed Turn's outcome is saved before its terminal frame is relayed
       const error = await terminalError(events, frameReadAt);
-      if (error !== null) return { out: `${out}${error}`, failed: true };
+      if (error !== null) return { out: out + error.out, events: [...emittedEvents, ...error.events], failed: true };
       out += text;
+      emittedEvents.push(...frameEmittedEvents);
     }
-    return { out, failed: false };
+    return { out, events: emittedEvents, failed: false };
   };
 
-  const saved = async (frames: Frame[], done: boolean): Promise<{ out: string; failed: boolean }> => {
+  const saved = async (frames: Frame[], done: boolean): Promise<RelayedFrames & { failed: boolean }> => {
     const ready: Frame[] = [];
     let credentialLeak = false;
     for (const next of frames) {
@@ -930,15 +934,15 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
     if (guard.wroteHeld()) {
       console.error(`${upstream.label} streamed into an earlier message the client did not send session_id=${sessionId}; the stream was withheld`);
       const unchecked = await failure("The agent's answer wrote to an earlier message the Chat Service never saw, so it was withheld", 'TURN_EARLIER_MESSAGE_IN_STREAM');
-      return { out: `${prior.out}${unchecked}`, failed: true };
+      return { out: prior.out + unchecked.out, events: [...prior.events, ...unchecked.events], failed: true };
     }
     console.error(`${upstream.label} streamed a Turn credential session_id=${sessionId}; the stream was withheld`);
     const leaked = await failure("The agent's answer carried the Turn's credentials, so it was withheld", 'TURN_CREDENTIALS_IN_STREAM');
-    return { out: `${prior.out}${leaked}`, failed: true };
+    return { out: prior.out + leaked.out, events: [...prior.events, ...leaked.events], failed: true };
   };
 
   /** One upstream read's relayable text, and whether the relayed stream ends with it. */
-  const relayNext = async (): Promise<{ out: string; end: boolean }> => {
+  const relayNext = async (): Promise<RelayedFrames & { end: boolean }> => {
     let frames: Frame[];
     let done = false;
     try {
@@ -958,28 +962,32 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       terminal = true;
       console.error(`${upstream.label} stream failed session_id=${sessionId} code=AGENTCORE_UPSTREAM_STREAM_ERROR`, error);
       const failed = await failure(`${upstream.label} stream failed: ${reason(error)}`, 'AGENTCORE_UPSTREAM_STREAM_ERROR');
-      frames = [...flush(), { text: failed, edits: [], events: [], readAt, monotonicReadAt }];
+      frames = [...flush(), { text: failed.out, edits: [], events: [], emittedEvents: failed.events, readAt, monotonicReadAt }];
       done = true;
     }
-    const { out, failed } = await saved(frames, done);
+    const { out, events, failed } = await saved(frames, done);
     if (failed && !done) await reader.cancel();
     if (done && !failed && !terminal) {
       console.error(`${upstream.label} stream ended before the Turn finished session_id=${sessionId} code=AGENTCORE_UPSTREAM_STREAM_ERROR`);
       const failed = await failure(`${upstream.label} stream ended before the Turn finished`, 'AGENTCORE_UPSTREAM_STREAM_ERROR');
-      return { out: `${out}${failed}`, end: true };
+      return { out: out + failed.out, events: [...events, ...failed.events], end: true };
     }
-    return { out, end: done || failed };
+    return { out, events, end: done || failed };
   };
 
   // A client that goes away cancels the stream while a pull may still be reading: reads take turns, and the end is told once.
   let reading: Promise<unknown> = Promise.resolve();
   let ending: Promise<unknown> | undefined;
   let sentFailure: TurnFailure | undefined;
-  const relayInOrder = (): Promise<{ out: string; end: boolean }> => {
+  const relayInOrder = (): Promise<RelayedFrames & { end: boolean }> => {
     const next = reading.then(async () => {
-      if (ending !== undefined) return { out: '', end: true };
+      if (ending !== undefined) return { out: '', events: [], end: true };
       const relayed = await relayNext();
-      sentFailure = lastRunError(relayed.out) ?? sentFailure;
+      const runError = relayed.events.filter(({ type, code }) => type === EventType.RUN_ERROR && code !== TURN_STOPPED).at(-1);
+      if (runError !== undefined) {
+        const { code, message } = runError;
+        sentFailure = { ...(typeof code === 'string' ? { code } : {}), message: String(message) };
+      }
       if (relayed.end) {
         const endingAt = Date.now();
         ending = tellEnd(turn, sentFailure).finally(() => {
@@ -1006,7 +1014,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       keepAlive();
       // A pull that enqueues nothing is not called again, so read on until a frame
       // completes or the stream ends (a large frame spans several reads).
-      let next: { out: string; end: boolean };
+      let next: RelayedFrames & { end: boolean };
       try {
         do {
           // eslint-disable-next-line no-await-in-loop -- each read depends on the frames before it
@@ -1017,7 +1025,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       }
       if (next.out !== '') {
         controller.enqueue(encoder.encode(next.out));
-        turn.timing?.emitted(next.out.split('\n\n').flatMap((text) => dataEvents(text.split('\n'))));
+        turn.timing?.emitted(next.events);
       }
       if (!next.end) return;
       const endFailure = await ending;
@@ -1036,7 +1044,7 @@ function relayFrames(upstream: Upstream, turn: RelayedTurn, body: ReadableStream
       cancelled = true;
       // Only an explicit Stop stops a Turn: one whose client went away runs on, its edits and summary
       // saved and its failure logged as with a client.
-      let next: { out: string; end: boolean };
+      let next: RelayedFrames & { end: boolean };
       do {
         // eslint-disable-next-line no-await-in-loop -- each read depends on the frames before it
         next = await relayInOrder();

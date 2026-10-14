@@ -2,6 +2,7 @@ import { ActivityDeltaEventSchema, RunStartedEventSchema, ToolCallArgsEventSchem
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { persistedTurnError, relayTurn, stopTurn, turnCredentialGuard, turnCredentials } from './turn-stream.js';
 import { recordTurnSummary } from './turn-summaries.js';
+import { TurnTiming } from './turn-timing.js';
 import type { Upstream } from './upstream.js';
 import { defined } from '../test/defined.js';
 
@@ -70,6 +71,61 @@ const turn = {
 };
 
 const relay = (steps: Step[]) => relayTurn(fakeUpstream(() => sse(streamOf(steps))).upstream, turn);
+
+describe('decoded relay frames', () => {
+  it('shares ordinary frame decoding across live view, completion and timing', async () => {
+    const events = [
+      { type: 'RUN_STARTED' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm1', delta: 'Session: browser-1' },
+      { type: 'TEXT_MESSAGE_END', messageId: 'm1' },
+      { type: 'RUN_FINISHED' },
+    ];
+    const payloads = events.map((event) => JSON.stringify(event));
+    const frames = payloads.map((payload) => `data: ${payload}\n\n`);
+    const browser = { type: 'CUSTOM', name: 'test:live', value: { open: true, sessionId: 'browser-1' } };
+    const timing = new TurnTiming(performance.now(), 'run-1', 'session-1');
+    const emitted = vi.spyOn(timing, 'emitted');
+    const finished = vi.fn();
+    const ended = vi.fn(async () => undefined);
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      const response = await relayTurn(fakeUpstream(() => sse(streamOf(frames))).upstream, {
+        ...turn, credentials: ['private-token'], timing, finished, ended,
+      });
+      expect(await response.text()).toBe(frames.slice(0, 3).join('') + `data: ${JSON.stringify(browser)}\n\n` + frames[3]);
+      expect(finished).toHaveBeenCalledWith('Session: browser-1');
+      expect(ended).toHaveBeenCalledExactlyOnceWith(undefined);
+      expect(emitted.mock.calls.flatMap(([values]) => values)).toEqual([...events.slice(0, 3), browser, events[3]]);
+      for (const payload of payloads) expect(parse.mock.calls.filter(([value]) => value === payload)).toHaveLength(1);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it('retains only the classified emitted failure when a decoded frame carries a credential', async () => {
+    const payload = '{"type":"RUN_ERROR","message":"\\u0070rivate-token","code":"UPSTREAM"}';
+    const timing = new TurnTiming(performance.now(), 'run-1', 'session-1');
+    const emitted = vi.spyOn(timing, 'emitted');
+    const ended = vi.fn(async () => undefined);
+    const parse = vi.spyOn(JSON, 'parse');
+    try {
+      const response = await relayTurn(fakeUpstream(() => sse(streamOf([`data: ${payload}\n\n`]))).upstream, {
+        ...turn, credentials: ['private-token'], timing, ended,
+      });
+      const failure = {
+        type: 'RUN_ERROR', message: "The agent's answer carried the Turn's credentials, so it was withheld",
+        code: 'TURN_CREDENTIALS_IN_STREAM',
+      };
+      expect(await response.text()).toBe(`data: ${JSON.stringify(failure)}\n\n`);
+      expect(ended).toHaveBeenCalledExactlyOnceWith({ code: failure.code, message: failure.message });
+      expect(emitted.mock.calls.flatMap(([values]) => values)).toEqual([failure]);
+      expect(parse.mock.calls.filter(([value]) => value === payload)).toHaveLength(1);
+      expect(parse.mock.calls.filter(([value]) => value === JSON.stringify(failure))).toHaveLength(0);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+});
 
 describe('RUN_STARTED metadata failure', () => {
   it.each([false, true])('preserves its classified frame and original cause when end cleanup failure is %s', async (cleanupFails) => {
@@ -736,6 +792,27 @@ describe('a relayed Turn', () => {
     const euro = encoder.encode('data: €\n\n');
 
     expect(await chunksOf(await relay([euro.slice(0, 7), euro.slice(7)]))).toEqual(['data: €\n\n', incomplete]);
+  });
+
+  it.each([
+    ['non-JSON data', 'data: Session: abc-1 '],
+    ['malformed JSON', 'data: {"delta":"Session: abc-1 "'],
+    ['JSON null', 'data: null'],
+    ['a JSON string', 'data: "Session: abc-1 "'],
+    ['a JSON array', 'data: ["Session: abc-1 "]'],
+    ['a non-data field', 'event:{"type":"X","delta":"Session: abc-1 "}'],
+    ['an unspaced data line', 'data:{"type":"X","delta":"Session: abc-1 "}'],
+    ['a JSON event split over data lines', 'data: {"type":"X",\ndata: "delta":"Session: abc-1 "}'],
+  ])('preserves %s without injecting a live view', async (_, line) => {
+    const frame = `${line}\n\n`;
+    expect((await chunksOf(await relay([frame]))).join('')).toBe(frame + incomplete);
+  });
+
+  it('reads live-view text only from data lines among other SSE fields', async () => {
+    const frame = 'event: message\nid: 7\ndata: {"type":"TOOL_CALL_RESULT","content":"Session: browser-1"}\n\n';
+    expect((await chunksOf(await relay([frame]))).join('')).toBe(
+      frame + 'data: {"type":"CUSTOM","name":"test:live","value":{"open":true,"sessionId":"browser-1"}}\n\n' + incomplete,
+    );
   });
 
   it('follows a frame that opens the browser live view with the live-view event', async () => {

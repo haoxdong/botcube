@@ -231,7 +231,7 @@ def test_relay_does_not_parse_or_change_the_forwarded_request(content: bytes) ->
 
 
 @pytest.mark.parametrize('audit_event', ['provider_response_outcome', 'provider_upstream_phases'])
-def test_audit_failure_propagates_after_both_stream_resources_close(audit_event: str) -> None:
+def test_audit_failure_closes_response_before_pool_shutdown(audit_event: str) -> None:
     closed: list[str] = []
 
     class FailingSink(Sink):
@@ -264,6 +264,8 @@ def test_audit_failure_propagates_after_both_stream_resources_close(audit_event:
         with pytest.raises(RuntimeError, match='audit failed'):
             async for _ in response.body_iterator:
                 pass
+        assert closed == ['upstream']
+        await provider.aclose()
         assert closed == ['upstream', 'client']
 
     asyncio.run(run())
@@ -455,6 +457,9 @@ def test_closing_or_failing_the_body_preserves_absent_eof_and_closes_resources(f
             with pytest.raises(type(failure)) as caught:
                 await anext(body)
             assert caught.value is failure
+        assert closed == ['upstream']
+        await provider.aclose()
+        assert closed == ['upstream', 'client']
 
     asyncio.run(run())
     assert closed == ['upstream', 'client']

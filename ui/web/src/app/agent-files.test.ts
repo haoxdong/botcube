@@ -1,5 +1,4 @@
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
-import { installBrowserLocks } from '../../tests/browser-locks';
 
 vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
 afterAll(() => {
@@ -24,7 +23,6 @@ it("gives a reply's file path the download URL of the file it names in Files", a
 
 // A file the user attaches in the chat goes to the top of Files, which the agent reads as `/name`.
 it('uploads a file the user attached to Files, failing with what the Chat Service answered', async () => {
-  installBrowserLocks();
   const fetchImpl = vi.fn(async () => Response.json({ detail: 'Files are not configured' }, { status: 503 }));
   vi.stubGlobal('fetch', fetchImpl);
 

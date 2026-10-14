@@ -39,6 +39,10 @@ class CredentialProvider(Protocol[Access]):
     # Only the deployment owner's account may ingest or revoke its Durable Credential (ADR 0078 decision 5).
     owner_only: bool
 
+    async def aclose(self) -> None:
+        """Close provider-owned resources when the application shuts down."""
+        ...
+
     def ready(self) -> None:
         """Raise ValueError when the provider's Vault configuration is unusable."""
         ...

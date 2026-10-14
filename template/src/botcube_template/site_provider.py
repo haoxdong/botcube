@@ -51,6 +51,9 @@ class FakeSiteProvider:
             raise HTTPException(502, 'Template site returned malformed access')
         return {'cookies': [{'name': 'access', 'value': access, 'expires': expires}]}
 
+    async def aclose(self) -> None:
+        return None
+
     def ready(self) -> None:
         self._vault()
         if not self._site_url:

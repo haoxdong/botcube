@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from decimal import Decimal
 from pathlib import Path
 from threading import Event, Lock
@@ -1506,3 +1507,143 @@ def test_credential_receipt_precedes_authenticated_access_and_upstream_dispatch(
     assert boundary['offsetsMs'] == pytest.approx({
         'receipt': 0, 'upstreamDispatch': 300, 'answerReceived': 300, 'answerEmitted': 300,
     })
+
+
+def test_shared_pool_reuses_refresh_and_relay_without_account_cookies(vault: DynamoDbCredentialVault) -> None:
+    _stored(vault)
+    vault.store_durable_credential('acct-2', 'openai', json.dumps({**SIGN_IN, 'refreshToken': 'rt_other'}))
+    upstream = FakeOpenAI()
+    closes: list[str] = []
+
+    class Transport(httpx.MockTransport):
+        async def aclose(self) -> None:
+            closes.append('closed')
+            await super().aclose()
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        response = await upstream.handle(request)
+        response.headers['set-cookie'] = 'account=private; Path=/'
+        return response
+
+    provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), transport=Transport(handle), clock=Clock())
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+    with TestClient(app) as client:
+        assert client.get('/openai/v1/models', headers=_turn()).status_code == 200
+        assert client.get('/openai/v1/models', headers=_turn('acct-2')).status_code == 200
+        assert closes == []
+        assert all('cookie' not in request.headers for request in upstream.requests)
+    assert closes == ['closed']
+
+
+def test_cancelled_stream_closes_response_without_closing_pool(vault: DynamoDbCredentialVault) -> None:
+    import anyio
+
+    _stored(vault)
+    upstream = FakeOpenAI()
+    closed: list[str] = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b'data: {"type":"response.created"}\n\n'
+            await anyio.sleep_forever()
+
+        async def aclose(self) -> None:
+            await anyio.sleep(0)
+            closed.append('response')
+
+    upstream.responses = lambda: httpx.Response(200, stream=Stream())
+    provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream.handle), clock=Clock())
+    app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+
+    async def run() -> None:
+        async with app.router.lifespan_context(app):
+            sent = asyncio.Event()
+            body = json.dumps({'model': 'gpt-6-astra', 'stream': True}).encode()
+            headers = [(key.lower().encode(), value.encode()) for key, value in _bound_turn('openai', 'gpt-6-astra').items()]
+            headers.append((b'content-type', b'application/json'))
+            scope: dict[str, Any] = {'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1', 'method': 'POST', 'scheme': 'http', 'path': '/openai/v1/responses', 'raw_path': b'/openai/v1/responses', 'query_string': b'', 'headers': headers, 'server': ('service', 80), 'client': ('client', 1)}
+            first = True
+
+            async def receive() -> dict[str, Any]:
+                nonlocal first
+                if first:
+                    first = False
+                    return {'type': 'http.request', 'body': body, 'more_body': False}
+                await sent.wait()
+                return {'type': 'http.disconnect'}
+
+            async def send(message: Mapping[str, Any]) -> None:
+                if message['type'] == 'http.response.body' and message.get('body'):
+                    sent.set()
+
+            await app(scope, receive, send)
+            assert closed == ['response']
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://service') as client:
+                assert (await client.get('/openai/v1/models', headers=_turn())).status_code == 200
+
+    asyncio.run(run())
+
+
+def test_model_catalog_calls_reuse_a_real_tcp_connection(vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    _stored(vault)
+    for name in ('NO_PROXY', 'no_proxy'):
+        monkeypatch.setenv(name, f'{os.getenv(name, "")},127.0.0.1,localhost')
+
+    async def run() -> None:
+        connections: list[asyncio.StreamWriter] = []
+        ended = asyncio.Event()
+
+        async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            connections.append(writer)
+            try:
+                while True:
+                    headers = await reader.readuntil(b'\r\n\r\n')
+                    length = next((int(line.split(b':', 1)[1]) for line in headers.split(b'\r\n') if line.lower().startswith(b'content-length:')), 0)
+                    await reader.readexactly(length)
+                    body = (RECORDED / ('refresh.json' if b'oauth/token' in headers else 'models.json')).read_bytes()
+                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' + f'Content-Length: {len(body)}\r\n\r\n'.encode() + body)
+                    await writer.drain()
+            except asyncio.IncompleteReadError:
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                ended.set()
+
+        server = await asyncio.start_server(handle, '127.0.0.1', 0)
+        async with server:
+            origin = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
+            provider = OpenAIProvider(lambda: vault, audit=CredentialAuditRecorder(), clock=Clock())
+            provider._settings = replace(provider._settings, issuer=origin, api_origin=origin)
+            app = create_app(CredentialServiceSettings('test', lambda: SECRET), [provider])
+            async with app.router.lifespan_context(app):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://service') as client:
+                    for _ in range(2):
+                        response = await client.get('/openai/v1/models', headers=_turn())
+                        assert response.status_code == 200
+                        assert response.json() == json.loads((RECORDED / 'models.json').read_text())
+                assert len(connections) == 1
+                assert not ended.is_set()
+            await asyncio.wait_for(ended.wait(), 1)
+
+    asyncio.run(run())
+
+
+def test_client_initialization_does_not_spend_the_refresh_lease(
+    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai_module, '_REFRESH_LEASE_SECONDS', 0.5)
+    _stored(vault)
+    client_class = httpx.AsyncClient
+
+    def initialize_client(**kwargs: Any) -> httpx.AsyncClient:
+        time.sleep(0.75)
+        return client_class(**kwargs)
+
+    monkeypatch.setattr(httpx, 'AsyncClient', initialize_client)
+    with _client(vault, clock=RealClock()) as client:
+        response = client.get('/openai/v1/models', headers=_turn())
+        assert response.status_code == 200
+        assert response.json() == json.loads((RECORDED / 'models.json').read_text())

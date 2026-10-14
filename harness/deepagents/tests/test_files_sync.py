@@ -625,3 +625,205 @@ def test_files_pull_cancels_queued_downloads_and_joins_started_workers_issue_370
     assert sorted(started) == sorted(started_at_shutdown)
     assert sorted(finished) == sorted(key for key in started if key != 'owner/file-0.txt')
     assert not (tmp_path / files_sync.RECORD_PATH).exists()
+
+
+def test_files_push_overlaps_uploads_with_one_client_and_four_worker_bound_issue_4074(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import json
+    import threading
+    from datetime import UTC, datetime
+
+    from botcube_harness_deepagents.files_sync import RECORD_PATH
+
+    rendezvous = threading.Barrier(4, timeout=5)
+    lock = threading.Lock()
+    active = 0
+    maximum = 0
+    clients = 0
+    uploaded: dict[str, bytes] = {}
+    stamp = datetime(2026, 10, 1, tzinfo=UTC)
+
+    class FilesClient:
+        def get_paginator(self, operation: str) -> FilesClient:
+            assert operation == 'list_objects_v2'
+            return self
+
+        def paginate(self, **kwargs: object) -> list[dict[str, object]]:
+            return [{}]
+
+        def upload_file(self, source: str, bucket: str, key: str) -> None:
+            nonlocal active, maximum
+            assert bucket == 'turn-files'
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            try:
+                if key in {f'owner/file-{index}.txt' for index in range(4)}:
+                    rendezvous.wait()
+                with lock:
+                    uploaded[key] = Path(source).read_bytes()
+            finally:
+                with lock:
+                    active -= 1
+
+        def head_object(self, **kwargs: object) -> dict[str, object]:
+            assert kwargs['Key'] in uploaded
+            return {'LastModified': stamp}
+
+    def client(self: FilesSync) -> FilesClient:
+        nonlocal clients
+        clients += 1
+        return FilesClient()
+
+    monkeypatch.setattr(FilesSync, '_client', client)
+    for index in range(8):
+        (tmp_path / f'file-{index}.txt').write_bytes(f'contents-{index}'.encode())
+    FilesSync('turn-files', 'owner/', 'us-east-1', {}).push(tmp_path, excluded_paths(()))
+
+    assert clients == 1
+    assert maximum == 4
+    assert uploaded == {f'owner/file-{index}.txt': f'contents-{index}'.encode() for index in range(8)}
+    record = json.loads((tmp_path / RECORD_PATH).read_text())
+    assert len(record) == 8
+    for index in range(8):
+        assert record[f'file-{index}.txt'] == {
+            'stamp': 1790812800,
+            'digest': hashlib.sha256(f'contents-{index}'.encode()).hexdigest(),
+        }
+        assert int((tmp_path / f'file-{index}.txt').stat().st_mtime) == 1790812800
+
+
+@pytest.mark.parametrize('failed_operation', ['upload', 'head'])
+def test_files_push_failure_joins_workers_without_publishing_record_issue_4074(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_operation: str,
+) -> None:
+    import threading
+    from datetime import UTC, datetime
+
+    from botcube_harness_deepagents.files_sync import RECORD_PATH
+
+    started = threading.Event()
+    failed = threading.Event()
+    completed = threading.Event()
+    failure = OSError(f'Files {failed_operation} failed')
+    record = tmp_path / RECORD_PATH
+    record.parent.mkdir()
+    record.write_text('{}')
+    for name in ('failed', 'successful'):
+        (tmp_path / f'{name}.txt').write_text(name)
+
+    class FilesClient:
+        def get_paginator(self, operation: str) -> FilesClient:
+            return self
+
+        def paginate(self, **kwargs: object) -> list[dict[str, object]]:
+            return [{}]
+
+        def upload_file(self, source: str, bucket: str, key: str) -> None:
+            if key == 'owner/failed.txt':
+                assert started.wait(5), 'independent upload never started'
+                if failed_operation == 'upload':
+                    failed.set()
+                    raise failure
+            else:
+                started.set()
+                assert failed.wait(5), 'sibling publication never failed'
+                completed.set()
+
+        def head_object(self, **kwargs: object) -> dict[str, object]:
+            if kwargs['Key'] == 'owner/failed.txt' and failed_operation == 'head':
+                failed.set()
+                raise failure
+            return {'LastModified': datetime(2026, 10, 1, tzinfo=UTC)}
+
+    monkeypatch.setattr(FilesSync, '_client', lambda self: FilesClient())
+    with pytest.raises(OSError) as caught:
+        FilesSync('turn-files', 'owner/', 'us-east-1', {}).push(tmp_path, excluded_paths(()))
+
+    assert caught.value is failure
+    assert completed.is_set()
+    assert record.read_text() == '{}'
+
+
+def test_files_push_stops_at_worker_window_after_first_upload_failure_issue_4074(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    from collections.abc import Callable
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from datetime import UTC, datetime
+    from typing import Any
+
+    from botcube_harness_deepagents import files_sync
+
+    rendezvous = threading.Barrier(4, timeout=5)
+    rejected = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    hashed: list[str] = []
+    uploaded: list[str] = []
+    settled: list[str] = []
+    failure = OSError('first Files upload failed')
+    record = tmp_path / files_sync.RECORD_PATH
+    record.parent.mkdir()
+    record.write_text('{}')
+    for index in range(200):
+        (tmp_path / f'file-{index:03}.txt').write_text(f'changed-{index}')
+
+    class FilesClient:
+        def get_paginator(self, operation: str) -> FilesClient:
+            return self
+
+        def paginate(self, **kwargs: object) -> list[dict[str, object]]:
+            return [{}]
+
+        def upload_file(self, source: str, bucket: str, key: str) -> None:
+            with lock:
+                uploaded.append(key)
+            try:
+                if key in {f'owner/file-{index:03}.txt' for index in range(4)}:
+                    rendezvous.wait()
+                if key == 'owner/file-000.txt':
+                    raise failure
+                assert release.wait(5), 'uploader cleanup did not release active workers'
+            finally:
+                with lock:
+                    settled.append(key)
+
+        def head_object(self, **kwargs: object) -> dict[str, object]:
+            return {'LastModified': datetime(2026, 10, 1, tzinfo=UTC)}
+
+    class GatedExecutor(ThreadPoolExecutor):
+        def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+            future = super().submit(fn, *args, **kwargs)
+            future.add_done_callback(lambda result: rejected.set() if not result.cancelled() and result.exception() is failure else None)
+            return future
+
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            release.set()
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    digest = files_sync._digest
+
+    def counted_digest(local: Path) -> str:
+        if len(hashed) == 4:
+            assert rejected.wait(5), 'first upload did not reject before further hashing'
+        hashed.append(local.name)
+        return digest(local)
+
+    monkeypatch.setattr(FilesSync, '_client', lambda self: FilesClient())
+    monkeypatch.setattr(files_sync, 'ThreadPoolExecutor', GatedExecutor)
+    monkeypatch.setattr(files_sync, '_digest', counted_digest)
+    try:
+        with pytest.raises(OSError) as caught:
+            FilesSync('turn-files', 'owner/', 'us-east-1', {}).push(tmp_path, excluded_paths(()))
+    finally:
+        release.set()
+
+    assert caught.value is failure
+    assert hashed == [f'file-{index:03}.txt' for index in range(4)]
+    assert sorted(uploaded) == [f'owner/file-{index:03}.txt' for index in range(4)]
+    assert sorted(settled) == sorted(uploaded)
+    assert record.read_text() == '{}'

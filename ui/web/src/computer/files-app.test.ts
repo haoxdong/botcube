@@ -3,8 +3,6 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { installBrowserLocks } from '../../tests/browser-locks';
-
 import { deleteFile, fileDownloadUrl, FilesApp, listFiles, renameFile, uploadFile, withUploadsSettled } from './files-app';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -117,7 +115,6 @@ describe('uploading a file the user attached in the chat', () => {
   };
   beforeEach(() => {
     puts.length = 0;
-    installBrowserLocks();
     vi.stubGlobal('XMLHttpRequest', FakeUpload);
   });
   afterEach(() => vi.unstubAllGlobals());

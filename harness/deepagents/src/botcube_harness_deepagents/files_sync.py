@@ -2,8 +2,8 @@
 
 The Chat Service forwards the account's prefix of the Files bucket with credentials scoped to
 that prefix, because the Runtime's own role reaches no Files. Before the Turn the workspace
-refreshes each file unless its local edit is newer; before the Turn finishes, Files take each file the agent
-wrote or changed. Hidden files, the agent's scratch space `/tmp`, the Harness's own files, and the
+refreshes each file unless its local edit is newer; after the run completes, Files take each file the agent
+wrote or changed before the response stream closes. Hidden files, the agent's scratch space `/tmp`, the Harness's own files, and the
 Cartridge's skills stay out.
 
 Each sync records the files it left in Files with their stamped second, so a delete in Files sticks.
@@ -152,24 +152,51 @@ class FilesSync:
         record = _read_record(root)
         remote = self._remote(s3, skip)
         synced = {name: record.get(name, SyncedFile(file.stamp, None)) for name, file in remote.items()}
-        for local in sorted(root.rglob('*')):
-            name = local.relative_to(root).as_posix()
-            if not local.is_file() or local.is_symlink() or not _synced(name, skip):
-                continue
-            baseline = record.get(name)
-            digest = _digest(local)
-            remote_file = remote.get(name)
-            unchanged = _synced_baseline(local, baseline, remote_file.stamp if remote_file is not None else None, digest)
-            if unchanged is not None:
-                synced[name] = unchanged
-                continue
-            key = self.prefix + name
-            s3.upload_file(str(local), self.bucket, key)
-            # Stamp the upload's time in Files, so an unchanged copy is not pushed again.
-            modified = int(s3.head_object(Bucket=self.bucket, Key=key)['LastModified'].timestamp())
-            os.utime(local, (modified, modified))  # pragma: no mutate: stamping the local clock's now differs only on a clock apart from S3's, which one test machine cannot run
-            synced[name] = SyncedFile(modified, digest)
+        with ThreadPoolExecutor(max_workers=4) as uploads:
+            completed: Queue[Future[SyncedFile]] = Queue()
+            pending: dict[Future[SyncedFile], str] = {}
+            try:
+                for local in sorted(root.rglob('*')):
+                    _collect_uploads(completed, pending, synced, wait=len(pending) == 4)
+                    name = local.relative_to(root).as_posix()
+                    if not local.is_file() or local.is_symlink() or not _synced(name, skip):
+                        continue
+                    baseline = record.get(name)
+                    digest = _digest(local)
+                    remote_file = remote.get(name)
+                    unchanged = _synced_baseline(local, baseline, remote_file.stamp if remote_file is not None else None, digest)
+                    if unchanged is not None:
+                        synced[name] = unchanged
+                        continue
+                    _collect_uploads(completed, pending, synced)
+                    upload = uploads.submit(_push_file, s3, self.bucket, self.prefix + name, local, digest)
+                    pending[upload] = name
+                    upload.add_done_callback(completed.put)
+                while pending:
+                    _collect_uploads(completed, pending, synced, wait=True)
+            except BaseException:
+                for upload in pending:
+                    upload.cancel()
+                raise
         _write_record(root, synced)
+
+
+def _collect_uploads(
+    completed: Queue[Future[SyncedFile]], pending: dict[Future[SyncedFile], str],
+    synced: dict[str, SyncedFile], *, wait: bool = False,
+) -> None:
+    while pending and (wait or not completed.empty()):
+        upload = completed.get()
+        synced[pending.pop(upload)] = upload.result()
+        wait = False
+
+
+def _push_file(s3: Any, bucket: str, key: str, local: Path, digest: str) -> SyncedFile:
+    s3.upload_file(str(local), bucket, key)
+    # Stamp the upload's time in Files, so an unchanged copy is not pushed again.
+    modified = int(s3.head_object(Bucket=bucket, Key=key)['LastModified'].timestamp())
+    os.utime(local, (modified, modified))
+    return SyncedFile(modified, digest)
 
 
 def _pull_file(

@@ -5,23 +5,24 @@ const opened = (sessionId: string) =>
   `data: {"type":"CUSTOM","name":"test:browser-live-view","value":{"open":true,"sessionId":"${sessionId}"}}\n\n`;
 const closed = 'data: {"type":"CUSTOM","name":"test:browser-live-view","value":{"open":false}}\n\n';
 
-const data = (event: unknown) => `data: ${JSON.stringify(event)}`;
-const delta = (text: string) => data({ type: 'TOOL_CALL_ARGS', toolCallId: 'call-1', delta: text });
-const content = (text: string) => data({ type: 'TOOL_CALL_RESULT', messageId: 'result-1', content: text });
+const after = (view: LiveViewInjector, events: Record<string, unknown>[]) =>
+  view.after(events).map((event) => `data: ${JSON.stringify(event)}\n\n`);
+
+const delta = (text: string) => ({ type: 'TOOL_CALL_ARGS', toolCallId: 'call-1', delta: text });
+const content = (text: string) => ({ type: 'TOOL_CALL_RESULT', messageId: 'result-1', content: text });
 
 const URL_PATH = 'bedrock-agentcore.us-west-2.amazonaws.com/browser-streams/aws.browser.v1/session';
 
-/** The live-view events that follow each frame, one frame per line given. */
-const eventsAfter = (...frames: string[]) => {
+const eventsAfter = (...frames: Record<string, unknown>[]) => {
   const liveView = new LiveViewInjector('test:browser-live-view');
-  return frames.map((frame) => liveView.after([frame]).join(''));
+  return frames.map((frame) => after(liveView, [frame]).join(''));
 };
 
 it('opens the actual Cartridge browser once after a Turn starts and still recognizes a later close', () => {
   const view = new LiveViewInjector('test:browser-live-view', 'cartridge-browser');
-  expect(view.after([data({ type: 'RUN_STARTED' })])).toEqual([opened('cartridge-browser')]);
-  expect(view.after([data({ type: 'RUN_STARTED' })])).toEqual([]);
-  expect(view.after([content('Browser closed')])).toEqual([closed]);
+  expect(after(view, [{ type: 'RUN_STARTED' }])).toEqual([opened('cartridge-browser')]);
+  expect(after(view, [{ type: 'RUN_STARTED' }])).toEqual([]);
+  expect(after(view, [content('Browser closed')])).toEqual([closed]);
 });
 
 describe('a streamed delta', () => {
@@ -91,7 +92,7 @@ describe('complete text', () => {
 });
 
 describe('a text message', () => {
-  const message = (type: string, extra: Record<string, unknown> = {}) => data({ type, messageId: 'msg-1', ...extra });
+  const message = (type: string, extra: Record<string, unknown> = {}) => ({ type, messageId: 'msg-1', ...extra });
 
   it('is read whole at its end, since an ID can span deltas', () => {
     expect(
@@ -126,7 +127,7 @@ describe('a text message', () => {
   });
 
   it('is scanned as a delta when it has no message ID', () => {
-    expect(eventsAfter(data({ type: 'TEXT_MESSAGE_CONTENT', delta: 'Session: abc-1 ' }))).toEqual([opened('abc-1')]);
+    expect(eventsAfter({ type: 'TEXT_MESSAGE_CONTENT', delta: 'Session: abc-1 ' })).toEqual([opened('abc-1')]);
   });
 
   it('ends with nothing to show when it had no text', () => {
@@ -134,27 +135,19 @@ describe('a text message', () => {
   });
 });
 
-describe('a frame', () => {
-  it('is read only from its data lines', () => {
-    const liveView = new LiveViewInjector('test:browser-live-view');
-
-    expect(liveView.after(['event: message', 'id: 7', delta('Session: abc-1 ')])).toEqual([opened('abc-1')]);
-    expect(liveView.after([`event:${JSON.stringify({ type: 'X', delta: 'Session: abc-1 ' })}`])).toEqual([]);
-  });
-
+describe('decoded events', () => {
   it.each([
-    ['non-JSON data', 'data: Session: abc-1 '],
-    ['JSON null', 'data: null'],
-    ['a JSON string', `data: ${JSON.stringify('Session: abc-1 ')}`],
-    ['a JSON array', `data: ${JSON.stringify(['Session: abc-1 '])}`],
-    ['an event with no text', data({ type: 'RUN_STARTED' })],
-  ])('carries no live-view text in %s', (_, line) => {
-    expect(new LiveViewInjector('test:browser-live-view').after([line])).toEqual([]);
+    ['an empty event', {}],
+    ['a wrapped JSON null', { value: null }],
+    ['a wrapped JSON string', { value: 'Session: abc-1 ' }],
+    ['a wrapped JSON array', { value: ['Session: abc-1 '] }],
+    ['an event with no text', { type: 'RUN_STARTED' }],
+  ])('carries no live-view text in %s', (_, event) => {
+    expect(after(new LiveViewInjector('test:browser-live-view'), [event])).toEqual([]);
   });
 
-  it('answers an event for each data line that opens or closes the live view', () => {
+  it('answers an event for each decoded event that opens or closes the live view', () => {
     const liveView = new LiveViewInjector('test:browser-live-view');
-
-    expect(liveView.after([delta('Session: abc-1 '), delta('browser closed')])).toEqual([opened('abc-1'), closed]);
+    expect(after(liveView, [delta('Session: abc-1 '), delta('browser closed')])).toEqual([opened('abc-1'), closed]);
   });
 });

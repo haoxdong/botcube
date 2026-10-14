@@ -1409,6 +1409,14 @@ describe('Runtime namespace rollout readiness', () => {
     expect(reads).toMatchObject([expect.objectContaining({ ConsistentRead: true, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' } })]);
   });
 
+  it('closes a previously ready instance when rollback removes the marker', async () => {
+    await expect(metadata.checkRuntimeNamespaceReady()).resolves.toBeUndefined();
+    await DynamoDBDocumentClient.from(client()).send(new DeleteCommand({
+      TableName: table, Key: { pk: 'RUNTIME_DISPATCHERS', sk: 'CLOSED' },
+    }));
+    await expect(metadata.checkRuntimeNamespaceReady()).rejects.toThrow('Session Runtime namespace is not ready');
+  });
+
   it('propagates failure to read the readiness marker', async () => {
     const failure = new Error('readiness read denied');
     const denied = metadataWith(async (command) => { if (command === 'GetItemCommand') throw failure; });
