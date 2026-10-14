@@ -1,19 +1,11 @@
 'use client';
 
-import {
-  useEffect,
-  useState,
-  type ComponentProps,
-  type MouseEvent,
-} from 'react';
+import { useState, type ComponentProps, type MouseEvent } from 'react';
 import { defaultComponents } from 'streamdown';
 import { agentFiles } from './agent-files';
 import { replyFilePath } from './reply-file-path';
+import { useReplyFile } from './use-reply-file';
 
-type FileLink =
-  | { status: 'loading' }
-  | { status: 'ready'; url: string }
-  | { status: 'error'; reason: string };
 const CITATION = /^\[(\d+)\]$/;
 const reason = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -22,22 +14,12 @@ export function ReplyFileLink(
   props: ComponentProps<typeof defaultComponents.a>
 ) {
   const path = props.href ? replyFilePath(props.href) : null;
-  const [file, setFile] = useState<FileLink>({ status: 'loading' });
-  useEffect(() => {
-    if (!path) return;
-    let current = true;
-    setFile({ status: 'loading' });
-    agentFiles.url(path).then(
-      (url) => current && setFile({ status: 'ready', url }),
-      (error: unknown) =>
-        current && setFile({ status: 'error', reason: reason(error) })
-    );
-    return () => {
-      current = false;
-    };
-  }, [path]);
+  const { file } = useReplyFile(path);
+  const [downloadError, setDownloadError] = useState<{
+    path: string;
+    reason: string;
+  } | null>(null);
   if (!path) {
-    // A citation `[[1]](url)` keeps its text; it and its brackets are marked so the answer shows it as a pill.
     const cited =
       typeof props.children === 'string'
         ? CITATION.exec(props.children)?.[1]
@@ -51,11 +33,17 @@ export function ReplyFileLink(
       </defaultComponents.a>
     );
   }
-  if (file.status === 'loading') return <span>{props.children} (loading)</span>;
-  if (file.status === 'error')
+  if (file === null) return <span>{props.children} (loading)</span>;
+  const error =
+    downloadError?.path === path
+      ? downloadError.reason
+      : file.status !== 'ready'
+        ? file.reason
+        : null;
+  if (file.status !== 'ready' || error !== null)
     return (
       <span role="alert">
-        {props.children} could not download: {file.reason}
+        {props.children} could not download: {error}
       </span>
     );
   return (
@@ -64,10 +52,11 @@ export function ReplyFileLink(
       href={file.url}
       onClick={(event: MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
-        void agentFiles.url(path)
+        void agentFiles
+          .url(path)
           .then((url) => window.location.assign(url))
           .catch((error: unknown) =>
-            setFile({ status: 'error', reason: reason(error) })
+            setDownloadError({ path, reason: reason(error) })
           );
       }}
     />

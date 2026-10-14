@@ -126,11 +126,60 @@ describe('a Worklog', () => {
     expect(head()).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('stays open, while its Turn runs, as its answer streams in', () => {
+  it('collapses at the first answer token while its Turn still runs', () => {
     render(<Chat messages={turn('answering')} running />);
 
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('2s10s steepened to +45bp.')).toBeVisible();
+  });
+
+  it('resets manual expansion only when work, answer or completion phases change', () => {
+    vi.useFakeTimers({ now: START });
+    const [question, note, result, answer] = unstamped(turn('phases'));
+    assert(question && note && result && answer, 'the Turn');
+    const work = [question, note, result];
+    const view = render(<Chat messages={[...work, { ...answer, content: '' }]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(head());
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+
+    view.rerender(<Chat messages={[...work, { ...answer, content: '2s' }]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('2s')).toBeVisible();
+    fireEvent.click(head());
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    view.rerender(<Chat messages={[...work, answer]} running />);
     expect(head()).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('2s10s steepened to +45bp.')).toBeVisible();
+
+    const toolNote = { ...answer, toolCalls: [call('phases-next-call', 'execute')] };
+    view.rerender(<Chat messages={[...work, toolNote]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText("I'll check the rates skill first.")).toBeVisible();
+    const next = { id: 'phases-next-answer', role: 'assistant', content: 'Swaps rose.' };
+    view.rerender(<Chat messages={[...work, toolNote, next]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('Swaps rose.')).toBeVisible();
+    expect(head()).toHaveTextContent(/^Working · 1s$/);
+    fireEvent.click(head());
+    view.rerender(<Chat messages={[...work, toolNote, next]} running={false} />);
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    expect(head()).toHaveTextContent(/^Worked for 1s$/);
+  });
+
+  it('reopens for reasoning after an answer and keeps work open beside a proposal', () => {
+    const messages = turn('resume');
+    const view = render(<Chat messages={messages} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'false');
+    const reasoning = { id: 'resume-reasoning', role: 'reasoning', content: 'Check the benchmark.' };
+    view.rerender(<Chat messages={[...messages, reasoning]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Check the benchmark.')).toBeVisible();
+    const proposal = { id: 'resume-proposal', role: 'assistant', content: 'Propose a brief.', toolCalls: [call('resume-pc', 'propose_scheduled_task')] };
+    view.rerender(<Chat messages={[...messages, reasoning, proposal]} running />);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Propose a brief.')).toBeVisible();
+    expect(screen.getByText('Check the benchmark.')).toBeVisible();
   });
 
   it('folds an earlier Worklog the user opened once they ask again', () => {

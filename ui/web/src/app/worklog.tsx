@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * A Turn's work (its thoughts, progress notes and tool calls) as one Worklog above its answer: open while
- * the agent works, folded to "Worked for 38s" once the Turn ends or the user asks again.
- */
-
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import {
   BotIcon, BrainIcon, CalendarClockIcon, ChevronRightIcon, CircleXIcon, FilePenLineIcon, FileTextIcon, FolderSearchIcon, GlobeIcon,
@@ -143,6 +138,8 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   const parts = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
+  const latest = messages.at(-1);
+  const answering = latest?.role === "assistant" && parts.get(latest.id) === "shown" && !latest.toolCalls?.length && latest.metadata?.scheduledRun === undefined;
   const out: ReactElement[] = [];
   let work: ReactElement[] = [];
   const fold = () => {
@@ -152,7 +149,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
     const first = messages.findIndex((m) => m.id === messageIdOf(row));
     const next = messages.findIndex((m, i) => i > first && m.role === "user");
     out.push(
-      <Worklog key={id} id={id} took={spanOf(messages.slice(first, next < 0 ? undefined : next))} running={isRunning && first > lastQuestion} asked={asked}>
+      <Worklog key={id} id={id} took={spanOf(messages.slice(first, next < 0 ? undefined : next))} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
         {work}
       </Worklog>,
     );
@@ -170,19 +167,23 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
 }
 
 /**
- * Open while its Turn runs, folded once it ends. A tap overrides either until the run starts or ends or the user asks
- * again (`asked`, their latest message's id). Live, it times the Turn itself, carrying on the clock of the head its
- * Turn showed under `asked` before any row; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
+ * Open while its Turn works, folded while its answer streams or once it ends. A tap overrides the current phase
+ * until work resumes, an answer starts, the run ends or the user asks again (`asked`, their latest message's id).
+ * Live, it times the Turn itself, carrying on the clock of the head its Turn showed under `asked` before any row; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
  */
-export function Worklog({ id, took, running, asked, children }: {
+export function Worklog({ id, took, running, expanding = running, asked, children }: {
   id: string;
   took?: number | undefined;
   running: boolean;
+  expanding?: boolean | undefined;
   asked: string | undefined;
   children?: ReactNode;
 }) {
-  const [chosen, setChosen] = useState<{ open: boolean; running: boolean; asked: string | undefined } | null>(null);
-  const open = chosen?.running === running && chosen.asked === asked ? chosen.open : running;
+  const phase = running ? expanding ? "working" : "answering" : "finished";
+  const [chosen, setChosen] = useState<{ open: boolean; phase: typeof phase; asked: string | undefined } | null>(null);
+  const current = chosen?.phase === phase && chosen.asked === asked;
+  if (chosen && !current) setChosen(null);
+  const open = current ? chosen.open : phase === "working";
   const time = useClock(turnClocks, id, running, running ? asked : undefined) ?? took;
   const title = (
     <span className="worklog-title" data-live={running || undefined}>
@@ -192,7 +193,7 @@ export function Worklog({ id, took, running, asked, children }: {
   if (children === undefined) return <div className="worklog"><div className="worklog-head">{title}</div></div>;
   return (
     <div className="worklog" data-open={open || undefined}>
-      <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, running, asked })}>
+      <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, phase, asked })}>
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
       </button>

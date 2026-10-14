@@ -25,7 +25,7 @@ import { agentFiles } from "./agent-files";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
 import MarkdownRenderer from "./markdown-renderer";
-import { ReplyImageTurnRunning } from "./reply-image-turn";
+import { ReplyTurnRunning } from "./reply-turn";
 import { pageHeld } from "./phone-page-hold";
 import { useComposerBacking } from "./phone-composer-backing";
 import { useComposerResizesOnLayout } from "./composer-layout-height";
@@ -723,9 +723,9 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           const last = messages.at(-1);
           return (
             <div ref={showRowsAtOnce} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
-              <ReplyImageTurnRunning.Provider value={isRunning}>
+              <ReplyTurnRunning.Provider value={isRunning}>
                 <MessageRows rows={worklogRows(messageElements, messages, isRunning)} messages={messages} />
-              </ReplyImageTurnRunning.Provider>
+              </ReplyTurnRunning.Provider>
               {/* Until the Turn shows its work, the cursor says it runs, then from RUN_STARTED its Worklog's head. */}
               {isRunning && started && last?.role === "user" && <Worklog id={last.id} running asked={last.id} />}
               {interruptElement}
