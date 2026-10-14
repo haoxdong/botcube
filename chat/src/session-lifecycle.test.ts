@@ -13,6 +13,38 @@ function deferred<T>() {
 }
 
 describe('Session deletion dispatch barrier', () => {
+  it('keeps a Runtime persistence writer registered after headers until producer EOF', async () => {
+    let producer!: ReadableStreamDefaultController<Uint8Array>;
+    const complete = vi.fn(async () => undefined);
+    const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { producer = controller; },
+    })) }, async () => undefined);
+    const response = await lifecycle.invokeRegistered('{}', SESSION, complete);
+    await Promise.resolve();
+    expect(complete).not.toHaveBeenCalled();
+    const answer = response.text();
+    producer.close();
+    await answer;
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
+  it('drains a disconnected Runtime consumer until producer EOF before releasing its writer', async () => {
+    let producer!: ReadableStreamDefaultController<Uint8Array>;
+    const complete = vi.fn(async () => undefined);
+    const cancelled = vi.fn();
+    const lifecycle = sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { producer = controller; }, cancel: cancelled,
+    })) }, async () => undefined);
+    const response = await lifecycle.invokeRegistered('{}', SESSION, complete);
+    const disconnected = response.body?.cancel();
+    await Promise.resolve();
+    expect(complete).not.toHaveBeenCalled();
+    expect(cancelled).not.toHaveBeenCalled();
+    producer.close();
+    await disconnected;
+    expect(complete).toHaveBeenCalledOnce();
+  });
+
   it('keeps an admission unclassified when its durable rejection write fails', async () => {
     const complete = Object.assign(vi.fn(async () => undefined), { markRejected: async () => { throw new Error('classification unavailable'); } });
     const stop = vi.fn(async () => undefined);
@@ -206,7 +238,7 @@ describe('Session deletion dispatch barrier', () => {
     const acknowledgement = deferred<void>();
     const lifecycle = sessionLifecycle({
       label: 'AgentCore upstream',
-      invoke: async () => new Response(new ReadableStream<Uint8Array>()),
+      invoke: async () => new Response('settled producer'),
     }, async () => 'absent');
     const response = relayTurn({
       label: lifecycle.label,
@@ -226,9 +258,11 @@ describe('Session deletion dispatch barrier', () => {
   it('preserves backpressure while an AWS admission acknowledgement is pending', async () => {
     const acknowledgement = deferred<void>();
     let reads = 0;
+    let producer!: ReadableStreamDefaultController<Uint8Array>;
     const lifecycle = sessionLifecycle({
       label: 'AgentCore upstream',
       invoke: async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { producer = controller; },
         pull(controller) { reads += 1; controller.enqueue(new Uint8Array([reads])); },
       })),
     }, async () => undefined);
@@ -237,6 +271,7 @@ describe('Session deletion dispatch barrier', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(reads).toBeLessThanOrEqual(2);
     acknowledgement.resolve();
+    producer.close();
     await response.body?.cancel();
   });
 
@@ -259,31 +294,17 @@ describe('Session deletion dispatch barrier', () => {
     await expect(lifecycle.stop(SESSION)).resolves.toBe('absent');
   });
 
-  it.each([false, true])('cancels a pending response reader when admission acknowledgement fails (cancel fails: %s)', async (cancelFails) => {
-    const acknowledgement = deferred<void>();
+  it('retains a settled producer registration when its acknowledgement fails', async () => {
     const ackError = new Error('admission acknowledgement failed');
-    const cancelError = new Error('upstream response cancellation failed');
-    const cancel = vi.fn(async () => { if (cancelFails) throw cancelError; });
-    const lifecycle = sessionLifecycle({
-      label: 'AgentCore upstream',
-      invoke: async () => new Response(new ReadableStream<Uint8Array>({ cancel })),
-    }, async () => 'absent');
-    const response = await relayTurn({
-      label: lifecycle.label,
-      invoke: (body, _sessionId, init) => lifecycle.invokeRegistered(body, SESSION, () => acknowledgement.promise, init),
-    }, { body: '{}', sessionId: 'session', browserEventName: 'test:live', saveAgentDocumentEdit: async () => undefined, finished: async () => undefined, failed: async () => undefined, ended: async () => undefined, started: async () => undefined, credentials: [] });
-
-    acknowledgement.reject(ackError);
-    const text = await response.text();
-    expect(cancel).toHaveBeenCalledWith(ackError);
-    expect(text).toContain('AGENTCORE_UPSTREAM_STREAM_ERROR');
-    if (cancelFails) {
-      expect(text).toContain('cancelling the upstream response also failed');
-      await expect(lifecycle.stop(SESSION)).rejects.toMatchObject({ errors: [ackError, cancelError] });
-    } else {
-      expect(text).toContain('admission acknowledgement failed');
-      await expect(lifecycle.stop(SESSION)).rejects.toBe(ackError);
-    }
+    const complete = Object.assign(vi.fn(async () => { throw ackError; }), {
+      session: SESSION, token: 'settled-token', markRejected: vi.fn(async () => undefined),
+    });
+    const lifecycle = sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'configured-runtime',
+      invoke: async () => new Response('settled producer') }, async () => 'absent');
+    const response = await lifecycle.invokeRegistered('{}', SESSION, complete);
+    await expect(response.text()).rejects.toBe(ackError);
+    expect(lifecycle.failedDispatchTokens(SESSION)).toEqual(['settled-token']);
+    await expect(lifecycle.stop(SESSION)).rejects.toBe(ackError);
   });
 
   it('keeps another filing identity with the same client Session ID dispatchable after deletion', async () => {

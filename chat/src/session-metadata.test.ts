@@ -1095,8 +1095,9 @@ describe('durable Session dispatch admission', () => {
   });
 
   it('recovers durable successful stop proof after acknowledgement failure and replacement', async () => {
+    let failCompletion = false;
     const failing = metadataWith(async (command) => {
-      if (command === 'DeleteItemCommand') throw new Error('registration delete unavailable');
+      if (failCompletion && command === 'TransactWriteItemsCommand') throw new Error('registration delete unavailable');
     });
     await turn('account-1', 'session-1', T1);
     const admission = await failing.beginDispatch('account-1', 'session-1');
@@ -1105,6 +1106,7 @@ describe('durable Session dispatch admission', () => {
     const old = sessionLifecycle({ label: 'AgentCore', runtimeTarget: REJECTED_TARGET, invoke: async () => { throw new Error('headers lost'); } }, stop);
     await expect(old.invokeRegistered('{}', session, admission)).rejects.toThrow('headers lost');
     await metadata.fence('account-1', 'session-1');
+    failCompletion = true;
     await expect(old.stop(session)).rejects.toThrow('registration delete unavailable');
     expect(stop).toHaveBeenCalledWith(session.runtime_binding);
     const recovered = await new DynamoDBSessionMetadata(table, client()).rejectedDispatches(session, REJECTED_TARGET);

@@ -1,7 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { decodeJwt } from 'jose';
 import { defined } from '../test/defined.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './cartridge.js';
+import { finishedSnapshotReuseFromEnv } from './server.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { recordRoundTrips, serialDepth, type RoundTrip } from '../test/fakes/round-trips.js';
 
@@ -240,6 +243,25 @@ it('logs one failed chat_turn_timing line for a Turn whose preparation fails', a
     expect(timing).toMatchObject({ status: 'failed', e2eMs: timing.chatMs.end });
     expect(Object.keys(timing.chatMs)).toEqual(['requester', 'model', 'admitted', 'end']);
   } finally { await target.stop(); }
+});
+
+it.each([false, true])('forwards only the registered snapshot epoch when the reuse gate is %s', async (ready) => {
+  const target = await startInProcess({ config: { finishedSnapshotReuse: ready, turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-proof' }] } } });
+  try {
+    const threadId = crypto.randomUUID();
+    const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
+    request.body = JSON.stringify({ ...JSON.parse(request.body), forwardedProps: { sessionSnapshotEpoch: 'spoofed-epoch' } });
+    const response = await target.app.request('/', request);
+    expect(await response.text()).toContain('RUN_FINISHED');
+    const forwarded = target.agentcore.invocationFor(threadId).payload.forwardedProps;
+    if (ready) expect(forwarded.sessionSnapshotEpoch).toEqual({ epoch: expect.stringMatching(/^[0-9a-f-]{36}$/), turnId: decodeJwt(forwarded.turnIdentity as string).jti });
+    else expect(forwarded).not.toHaveProperty('sessionSnapshotEpoch');
+  } finally { await target.stop(); }
+});
+
+it.each([['1', true], ['0', false], [undefined, false]])('reads BOTCUBE_FINISHED_SNAPSHOT_REUSE=%s as %s and refuses any other value', (value, enabled) => {
+  expect(finishedSnapshotReuseFromEnv(value === undefined ? {} : { BOTCUBE_FINISHED_SNAPSHOT_REUSE: value })).toBe(enabled);
+  expect(() => finishedSnapshotReuseFromEnv({ BOTCUBE_FINISHED_SNAPSHOT_REUSE: 'true' })).toThrow('BOTCUBE_FINISHED_SNAPSHOT_REUSE must be 0 or 1');
 });
 
 // Milliseconds each external call is held, so calls made together overlap.

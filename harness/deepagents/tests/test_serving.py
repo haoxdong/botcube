@@ -2043,9 +2043,8 @@ def test_the_agent_is_told_its_files_are_the_workspace_root(service: _Service, f
     service.turn('hello', thread='no-files')
 
     files_line = (
-        "The user's Files are the files in your workspace: `/` to your file tools, the shell's working directory. "
-        'What you write there is saved to their Files, except hidden files and anything under '
-        '`/tmp`, `/botcube-harness-deepagents`, `/skills`.'
+        "The user's Files are your working directory (`/` to your file tools); hidden files and anything under "
+        "`/tmp`, `/botcube-harness-deepagents`, `/skills` aren't saved."
     )
     assert files_line in service.recorder.prompts[0]
     assert files_line not in service.recorder.prompts[1]

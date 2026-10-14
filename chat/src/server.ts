@@ -24,7 +24,7 @@ import { picture, pictureUrl } from './pictures.js';
 import { accountDefaultModel, accountModelList, namedModel, requireAllowedModel } from './models.js';
 import { sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
-import { sessionLifecycle } from './session-lifecycle.js';
+import { forwardSnapshotEpoch, sessionLifecycle } from './session-lifecycle.js';
 import { sessionApi, type SessionApi, type SessionApiConfig } from './session-api.js';
 import {
   DynamoDBSessionMetadata,
@@ -117,6 +117,18 @@ export interface ChatServiceConfig {
   warmupTimeoutMs: number;
   /** The model that summarizes each finished Turn for the Activity. */
   turnSummaryModel: TurnSummaryModel;
+  /**
+   * BOTCUBE_FINISHED_SNAPSHOT_REUSE=1: Runtime writers carry a snapshot epoch, so the Harness may reuse its finished
+   * Session snapshot. Release sets it only after old Chat dispatchers and legacy producers have drained.
+   */
+  finishedSnapshotReuse?: boolean;
+}
+
+export function finishedSnapshotReuseFromEnv(env: NodeJS.ProcessEnv): boolean {
+  const value = env.BOTCUBE_FINISHED_SNAPSHOT_REUSE;
+  if (value === undefined || value === '' || value === '0') return false;
+  if (value === '1') return true;
+  throw new Error(`BOTCUBE_FINISHED_SNAPSHOT_REUSE must be 0 or 1, not ${JSON.stringify(value)}`);
 }
 
 function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
@@ -146,6 +158,7 @@ function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
     // A warmup answers once the requester's agent is built, and a cold Sandbox took up to 22 s to take the invocation.
     warmupTimeoutMs: positiveInteger(env, 'BOTCUBE_WARMUP_TIMEOUT_MS', 60_000),
     turnSummaryModel: turnSummaryModelFromEnv(env, region),
+    finishedSnapshotReuse: finishedSnapshotReuseFromEnv(env),
     ...(turnIdentity ? { turnIdentity } : {}),
   };
 }
@@ -265,6 +278,7 @@ export function createChatService(
   const httpsHarness = config.harnessEndpoint && httpsHarnessUpstream(config.harnessEndpoint, options, config.agentCore);
   const upstream = httpsHarness ? sessionLifecycle(httpsHarness, httpsHarness.stop)
     : config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, options)) : agentCore;
+  const snapshotReuseReady = config.finishedSnapshotReuse === true;
   const purge = purgeQueue(invokeSessionApi, (owner) => cartridge.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     if (!trackedRuntime(session)) await sessionMetadata.assertNoDispatch(session);
@@ -318,7 +332,7 @@ export function createChatService(
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, summarizeTurn, turnIdentity };
+    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, summarizeTurn, turnIdentity, finishedSnapshotReuse: snapshotReuseReady };
     const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
       scheduledRunsUnavailable = true;
     }, async () => {
@@ -425,7 +439,8 @@ export function createChatService(
         const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
         timing.mark('liveView');
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
-        const complete = await prepared.dispatch();
+        const complete = await prepared.dispatch(snapshotReuseReady);
+        forwardSnapshotEpoch(payload.forwardedProps, complete);
         timing.mark('dispatch');
         return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, init) }, {
           timing,
@@ -550,8 +565,8 @@ export function createChatService(
     const warmAgent = async () => {
       try {
         const init = { signal: AbortSignal.timeout(config.warmupTimeoutMs) };
-        const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined })
-          : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
+        const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined, snapshotEpoch: undefined })
+          : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id, undefined, 'runtime', snapshotReuseReady);
         if (complete.session !== undefined) input.forwardedProps.sessionUserId = complete.session.filing_user_id;
         if (namedSession !== undefined) {
           // The warmup reads the Session's history under its own Turn identity.
@@ -563,6 +578,7 @@ export function createChatService(
             throw error;
           });
         }
+        forwardSnapshotEpoch(input.forwardedProps, complete);
         const response = await (namedSession === undefined
           ? upstream.invoke(JSON.stringify(input), input.threadId, init)
           : upstream.invokeRegistered(JSON.stringify(input), complete.session ?? namedSession.session, complete, init));

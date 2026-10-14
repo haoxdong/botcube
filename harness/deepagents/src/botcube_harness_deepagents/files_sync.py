@@ -331,8 +331,7 @@ def files_prompt(excluded: Iterable[str]) -> str:
     """The agent's view of the sync: told nothing, it looked for Files elsewhere and called them empty."""
     folders = ', '.join(f'`/{path}`' for path in excluded)
     return (
-        "The user's Files are the files in your workspace: `/` to your file tools, the shell's working directory. "
-        f'What you write there is saved to their Files, except hidden files and anything under {folders}.'
+        f"The user's Files are your working directory (`/` to your file tools); hidden files and anything under {folders} aren't saved."
     )
 
 

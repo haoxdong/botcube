@@ -10,7 +10,7 @@ import type { ScheduledRunCard, SessionApi } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { sseFrameData, turnCredentialGuard, turnCredentials, turnErrorDetails } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
-import type { sessionLifecycle } from './session-lifecycle.js';
+import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
 
 export interface ScheduledRunDeps {
@@ -23,6 +23,8 @@ export interface ScheduledRunDeps {
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire'>;
   upstream: ReturnType<typeof sessionLifecycle> | null;
   summarizeTurn: TurnSummarizer;
+  /** Chat's BOTCUBE_FINISHED_SNAPSHOT_REUSE gate. */
+  finishedSnapshotReuse?: boolean;
 }
 
 /** What one run's stream said: its agent messages' text in order, its tool results, and any run error. */
@@ -97,11 +99,19 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
       title: task.title, ranAt: delivery.startedAt, ...outcome,
     };
     const messageId = delivery.postMessageId;
-    const complete = await sessionMetadata.beginDispatch(executionOwner, mainChat, undefined, { messageId });
+    const complete = await beginScheduledPost(sessionMetadata, store, delivery, messageId);
     if (complete.session === undefined) throw new HttpError(503, 'Scheduled post filing identity is unavailable');
     const userId = complete.session.filing_user_id;
     if (complete.markSucceeded === undefined) throw new HttpError(503, 'Scheduled post success registration is unavailable');
-    const posting = await store.posting(delivery, complete, failed, lastRunStatus(outcome.status));
+    let posting: ScheduledDelivery;
+    try {
+      posting = await store.posting(delivery, complete, failed, lastRunStatus(outcome.status));
+    } catch (error) {
+      if (complete.abortUnsubmitted === undefined) throw error;
+      try { await complete.abortUnsubmitted(); }
+      catch (abortError) { throw new AggregateError([error, abortError], 'Scheduled post preparation failed and its fence release failed', { cause: abortError }); }
+      throw error;
+    }
     await invokeSessionApi({ operation: 'post', sessionId: mainChat, userId, content: runSummary(scheduledRun), messageId, scheduledRun });
     await complete.markSucceeded('session-post', store.postedTransaction(posting));
     await complete();
@@ -109,7 +119,7 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
     return posting;
   };
   // The task's sheet shows how its latest run ended, once the Main Chat has heard.
-  const recordLastRun = (status: ScheduledTaskRun['status']) => deps.scheduledTasks.recordRun(executionOwner, task.id, { at: delivery.startedAt, status });
+  const recordLastRun = async (status: ScheduledTaskRun['status']) => deps.scheduledTasks.recordRun(await store.executionOwner(delivery), task.id, { at: delivery.startedAt, status });
   // A one-off leaves the account once the Main Chat has heard of its run, however it ended, since Scheduler deleted its
   // schedule when it fired; an Account Claim during the run may have moved it.
   const retire = async () => deps.scheduledTasks.retire(await store.executionOwner(delivery), task);
@@ -176,6 +186,27 @@ async function finishRedelivery(deps: ScheduledRunDeps, store: ScheduledRunStore
   if (previous.failed) {
     await store.retryFailed(previous);
     throw new HttpError(503, 'Scheduled delivery previously failed; its Main Chat notification is complete');
+  }
+}
+
+async function beginScheduledPost(metadata: SessionMetadata, store: ScheduledRunStore, delivery: ScheduledDelivery, messageId: string) {
+  const attempt = async () => {
+    const owner = await store.executionOwner(delivery);
+    await assertReservedMainIdentity(metadata, delivery.owner, owner, delivery.mainChat, delivery.mainFilingUserId);
+    try {
+      return await metadata.beginDispatch(owner, delivery.mainChat, undefined, { messageId }, 'session-post');
+    } catch (error) {
+      if (error instanceof SessionDeletedError && await store.executionOwner(delivery) !== owner) return null;
+      if (error instanceof SessionBusyError) return null;
+      throw error;
+    }
+  };
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop -- retain the completed outcome until the current owner's Main writer settles
+    const complete = await attempt();
+    if (complete !== null) return complete;
+    // eslint-disable-next-line no-await-in-loop -- contention and a proved Claim handoff wait without fencing newer Runtime admissions
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
 
@@ -270,7 +301,8 @@ async function runInSideChat(
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
     const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
     if (!fired(current) && (current.paused || (boundsChanged && outsideBounds(current)))) return { status: 'skipped', text: 'the task was outside its active time window' };
-    const complete = await prepared.dispatch();
+    const complete = await prepared.dispatch(deps.finishedSnapshotReuse === true);
+    forwardSnapshotEpoch(payload.forwardedProps, complete);
     output = await readRun(
       await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete),
       deps.upstream.label,

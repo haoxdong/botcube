@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { ScheduledRunStore } from './scheduled-run-store.js';
 import {
@@ -134,6 +134,8 @@ type AcceptedDispatch = RunningTurn | { messageId: string };
 export type RegisteredDispatch = (() => Promise<void>) & {
   readonly session?: SessionPurge;
   readonly token?: string;
+  readonly snapshotEpoch?: string;
+  abortUnsubmitted?: () => Promise<void>;
   markRejected?: (runtimeTarget: string) => Promise<void>;
   markSucceeded?: (kind: 'session-post', completion?: NonNullable<TransactWriteCommandInput['TransactItems']>[number]) => Promise<void>;
   confirmStopped?: () => Promise<void>;
@@ -142,7 +144,8 @@ export type RegisteredDispatch = (() => Promise<void>) & {
 
 type RegisteredSessionDispatch = RegisteredDispatch & { readonly session: SessionPurge };
 type BoundRuntimeSession = SessionPurge & { runtime_binding: string; runtime_generation: 'tracked-v1' | 'continuation-v1' };
-export interface PreparedTurn { readonly session: Readonly<BoundRuntimeSession>; dispatch(): Promise<RegisteredSessionDispatch> }
+/** `snapshotReuseReady`: Chat's `BOTCUBE_FINISHED_SNAPSHOT_REUSE` gate, so the writer is issued a snapshot epoch. */
+export interface PreparedTurn { readonly session: Readonly<BoundRuntimeSession>; dispatch(snapshotReuseReady?: boolean): Promise<RegisteredSessionDispatch> }
 
 function dispatchRuntimeProof(session?: Readonly<BoundRuntimeSession>) {
   if (session === undefined) return { condition: '', values: {} };
@@ -189,7 +192,7 @@ const runtimeIdentity = (session: Partial<SessionPurge>): Partial<SessionPurge> 
 export interface SessionMetadata {
   readonly scheduledRuns?: ScheduledRunStore;
   /** Register a persistence writer against the deletion fences; release only after confirmed dispatch/completion. */
-  beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<RegisteredDispatch>;
+  beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind?: 'runtime' | 'session-post', snapshotReuseReady?: boolean): Promise<RegisteredDispatch>;
   /** Accept a Turn with immutable filing/Runtime identity; dispatch registers its writer against the latest deletion/Claim fences. */
   prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn>;
   /** Refuse deletion while another process may still dispatch or finish a persistence writer. */
@@ -294,12 +297,13 @@ const turnKey = ({ sessionId, filingUserId, messageId }: { sessionId: string; fi
   sk: `${turnSummaryPrefix(sessionId)}${messageId}`,
 });
 
-type SessionItem = SessionSummary & { pk: string; sk: string; deleted_at?: string; provider_pending?: true; purge_registered?: true };
+type SessionItem = SessionSummary & { pk: string; sk: string; deleted_at?: string; provider_pending?: true; purge_registered?: true; snapshot_epoch?: string };
 const fenced = (item: SessionItem) => item.deleted_at !== undefined;
 
 /** Only this writer's new model-less Sessions are unbound; older rows ran on Anthropic. */
 function summaryOf(item: SessionItem): SessionSummary {
-  const { provider_pending, ...summary } = item;
+  const { provider_pending, snapshot_epoch, ...summary } = item;
+  void snapshot_epoch;
   return provider_pending ? summary : { ...summary, provider: summary.provider ?? 'anthropic' };
 }
 
@@ -383,6 +387,10 @@ const purgeKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: PURGES
 const dispatcherId = `${hostname()}:${process.pid}:${randomUUID()}`;
 const dispatchKey = ({ session_id, filing_user_id }: SessionPurge, token: string) => ({ pk: `DISPATCH#${JSON.stringify([filing_user_id, session_id])}`, sk: token });
 
+const writerControlKey = ({ session_id, filing_user_id }: SessionPurge) => ({ pk: `WRITERS#${JSON.stringify([filing_user_id, session_id])}`, sk: 'CONTROL' });
+type DispatchIdentity = { dispatchOwner: string; session: SessionPurge; claimDestination: string | null; snapshotEpoch: string | undefined };
+type TransactItem = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
+
 export class DynamoDBSessionMetadata implements SessionMetadata {
   readonly scheduledRuns: ScheduledRunStore;
   private readonly client: DynamoDBClient;
@@ -442,12 +450,19 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     // A task can stop after committing the fence but before its synchronous
     // summary cleanup finishes; durable recovery must finish both records.
     await this.deleteTurnSummaries(session.filing_user_id, session.session_id);
-    await this.documents.send(new UpdateCommand({
-      TableName: this.tableName, Key: purgeKey(session),
-      UpdateExpression: 'SET completed_at = if_not_exists(completed_at, :now)',
-      ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
-      ExpressionAttributeValues: { ':now': now(), ':id': session.session_id, ':filing': session.filing_user_id },
-    }));
+    await this.documents.send(new TransactWriteCommand({ TransactItems: [
+      { Update: {
+        TableName: this.tableName, Key: purgeKey(session),
+        UpdateExpression: 'SET completed_at = if_not_exists(completed_at, :now)',
+        ConditionExpression: 'session_id = :id AND filing_user_id = :filing',
+        ExpressionAttributeValues: { ':now': now(), ':id': session.session_id, ':filing': session.filing_user_id },
+      } },
+      { Delete: {
+        TableName: this.tableName, Key: writerControlKey(session),
+        ConditionExpression: 'attribute_not_exists(external_token) AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)',
+        ExpressionAttributeValues: { ':zero': 0 },
+      } },
+    ] }));
   }
 
   private async registerLegacyPurge(item: SessionItem): Promise<void> {
@@ -523,26 +538,26 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     }
   }
 
-  private async dispatchIdentity(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<{ dispatchOwner: string; session: SessionPurge; claimDestination: string | null }> {
+  private async dispatchIdentity(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch): Promise<DispatchIdentity> {
     let claimDestination = acceptedTurn === undefined ? null : await this.claimDestination(owner);
-    let transferred = claimDestination === null ? null : await this.get(claimDestination, sessionId);
-    let existing = transferred ?? await this.get(owner, sessionId);
+    let transferred = claimDestination === null ? null : await this.getSessionItem(claimDestination, sessionId);
+    let existing = transferred ?? await this.getSessionItem(owner, sessionId);
     if (existing === null && acceptedTurn !== undefined) {
       claimDestination ??= await this.claimDestination(owner);
-      transferred = claimDestination === null ? null : await this.get(claimDestination, sessionId);
+      transferred = claimDestination === null ? null : await this.getSessionItem(claimDestination, sessionId);
       existing = transferred;
     }
     const dispatchOwner = transferred === null ? owner : claimDestination ?? owner;
     const materializing = existing === null && warmupFilingUserId !== undefined;
     if (existing === null && warmupFilingUserId !== undefined) {
       await this.recordTurn(owner, sessionId, { filingUserId: warmupFilingUserId, title: '', warmup: true });
-      existing = await this.get(owner, sessionId);
+      existing = await this.getSessionItem(owner, sessionId);
     }
     if (existing === null && warmupFilingUserId === undefined) throw new SessionDeletedError(sessionId);
     if (!materializing && existing !== null && warmupFilingUserId !== undefined && existing.filing_user_id !== warmupFilingUserId) throw new SessionDeletedError(sessionId);
     const filingUserId = existing?.filing_user_id ?? warmupFilingUserId;
     if (filingUserId === undefined) throw new SessionDeletedError(sessionId);
-    return { dispatchOwner, session: { session_id: sessionId, filing_user_id: filingUserId, ...runtimeIdentity(existing ?? {}) }, claimDestination };
+    return { dispatchOwner, session: { session_id: sessionId, filing_user_id: filingUserId, ...runtimeIdentity(existing ?? {}) }, claimDestination, snapshotEpoch: existing?.snapshot_epoch };
   }
 
   private dispatchProof(acceptedTurn?: AcceptedDispatch): { condition: string; values: Record<string, string> } {
@@ -572,39 +587,52 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return transferred !== null && transferred.owner !== owner;
   }
 
-  private dispatchSessionWrite(owner: string, session: SessionPurge, continuation: boolean, condition: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): NonNullable<TransactWriteCommandInput['TransactItems']>[number] {
+  private dispatchSessionWrite(owner: string, session: SessionPurge, continuation: boolean, condition: string, epoch: string, previousEpoch: string | undefined, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): NonNullable<TransactWriteCommandInput['TransactItems']>[number] {
     const runtime = dispatchRuntimeProof(expectedSession);
-    const write = {
-      TableName: this.tableName, Key: key(owner, session.session_id),
-      ConditionExpression: condition + runtime.condition,
-      ExpressionAttributeValues: { ':filing': session.filing_user_id, ...this.dispatchProof(acceptedTurn).values, ...runtime.values },
-    };
-    if (!continuation) return { ConditionCheck: write };
     return { Update: {
-      ...write,
-      UpdateExpression: 'SET runtime_binding = :binding, runtime_generation = :generation, legacy_settlement_unproved = :legacy',
-      ConditionExpression: condition + ' AND attribute_not_exists(runtime_binding) AND attribute_not_exists(runtime_generation)',
-      ExpressionAttributeValues: { ...write.ExpressionAttributeValues, ':binding': session.runtime_binding, ':generation': session.runtime_generation, ':legacy': true },
+      TableName: this.tableName, Key: key(owner, session.session_id),
+      UpdateExpression: 'SET snapshot_epoch = :epoch' + (continuation ? ', runtime_binding = :binding, runtime_generation = :generation, legacy_settlement_unproved = :legacy' : ''),
+      ConditionExpression: condition + runtime.condition + (previousEpoch === undefined ? ' AND attribute_not_exists(snapshot_epoch)' : ' AND snapshot_epoch = :previous_epoch') + (continuation ? ' AND attribute_not_exists(runtime_binding) AND attribute_not_exists(runtime_generation)' : ''),
+      ExpressionAttributeValues: {
+        ':filing': session.filing_user_id, ':epoch': epoch, ...this.dispatchProof(acceptedTurn).values, ...runtime.values,
+        ...(previousEpoch === undefined ? {} : { ':previous_epoch': previousEpoch }),
+        ...(continuation ? { ':binding': session.runtime_binding, ':generation': session.runtime_generation, ':legacy': true } : {}),
+      },
     } };
   }
 
-  private dispatchTransaction(owner: string, identity: { dispatchOwner: string; session: SessionPurge; claimDestination: string | null }, continuation: boolean, token: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): TransactWriteCommandInput {
+  /** The writer's registration and its count on the Session's writer control; a scheduled post holds the control exclusively. */
+  private writerRegistration(session: SessionPurge, token: string, kind: 'runtime' | 'session-post'): [TransactItem, TransactItem] {
+    return [
+      { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, writer_control: kind, dispatcher: dispatcherId, created_at: now() } } },
+      { Update: {
+        TableName: this.tableName, Key: writerControlKey(session),
+        UpdateExpression: kind === 'runtime' ? 'ADD runtime_writers :one' : 'SET external_token = :token',
+        ConditionExpression: 'attribute_not_exists(external_token)' + (kind === 'runtime' ? '' : ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)'),
+        ExpressionAttributeValues: kind === 'runtime' ? { ':one': 1 } : { ':token': token, ':zero': 0 },
+      } },
+    ];
+  }
+
+  private dispatchTransaction(owner: string, identity: DispatchIdentity, continuation: boolean, token: string, epoch: string, kind: 'runtime' | 'session-post', acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): TransactWriteCommandInput {
     const { dispatchOwner, session, claimDestination } = identity;
     const claimedTurn = claimDestination === null ? undefined : acceptedTurn;
     const conditions = this.dispatchConditions(claimedTurn);
     const fencedOwner = claimDestination ?? dispatchOwner;
+    const [registration, control] = this.writerRegistration(session, token, kind);
     return { TransactItems: [
       { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
       { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(dispatchOwner),
         ...this.dispatchClaimCondition(conditions.claim, dispatchOwner === owner ? claimDestination : null),
       } },
-      this.dispatchSessionWrite(dispatchOwner, session, continuation, conditions.session, claimedTurn, expectedSession),
-      { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, dispatcher: dispatcherId, created_at: now() } } },
+      this.dispatchSessionWrite(dispatchOwner, session, continuation, conditions.session, epoch, identity.snapshotEpoch, claimedTurn, expectedSession),
+      registration,
       ...(fencedOwner === owner ? [] : [{ ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(fencedOwner), ConditionExpression: 'attribute_not_exists(pk)' } }]),
+      control,
     ] };
   }
 
-  private async retryDispatch(error: unknown, owner: string, identity: { dispatchOwner: string; session: SessionPurge; claimDestination: string | null }, continuation: boolean, acceptedTurn?: AcceptedDispatch): Promise<boolean> {
+  private async retryDispatch(error: unknown, owner: string, identity: DispatchIdentity, continuation: boolean, acceptedTurn?: AcceptedDispatch): Promise<boolean> {
     const { dispatchOwner, session, claimDestination } = identity;
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     if (continuation && reasons?.[2]?.Code === 'ConditionalCheckFailed') {
@@ -620,7 +648,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     throw error;
   }
 
-  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, expectedSession?: Readonly<BoundRuntimeSession>): Promise<RegisteredSessionDispatch> {
+  async beginDispatch(owner: string, sessionId: string, warmupFilingUserId?: string, acceptedTurn?: AcceptedDispatch, kind: 'runtime' | 'session-post' = 'runtime', snapshotReuseReady = false, expectedSession?: Readonly<BoundRuntimeSession>): Promise<RegisteredSessionDispatch> {
     const identity = await this.dispatchIdentity(owner, sessionId, warmupFilingUserId, acceptedTurn);
     const { session } = identity;
     if (expectedSession !== undefined && (['filing_user_id', 'runtime_binding', 'runtime_generation', 'legacy_settlement_unproved'] as const).some((field) => session[field] !== expectedSession[field])) throw new SessionDeletedError(sessionId);
@@ -628,35 +656,68 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     if (!continuation && !boundRuntime(session)) throw new SessionDispatchPendingError('Session Runtime binding is unproved');
     if (continuation) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
     const token = randomUUID();
+    const epoch = kind === 'session-post' ? randomUUID() : identity.snapshotEpoch ?? randomUUID();
+    const issueEpoch = snapshotReuseReady && trackedRuntime(session) && kind === 'runtime';
+    const transaction = this.dispatchTransaction(owner, identity, continuation, token, epoch, kind, acceptedTurn, expectedSession);
     try {
-      await this.documents.send(new TransactWriteCommand(this.dispatchTransaction(owner, identity, continuation, token, acceptedTurn, expectedSession)));
+      await this.documents.send(new TransactWriteCommand(transaction));
     } catch (error) {
-      if (await this.retryDispatch(error, owner, identity, continuation, acceptedTurn)) return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, expectedSession);
+      if (await this.writerAdmissionChanged(error, identity, transaction) || await this.retryDispatch(error, owner, identity, continuation, acceptedTurn)) {
+        return this.beginDispatch(owner, sessionId, warmupFilingUserId, acceptedTurn, kind, snapshotReuseReady, expectedSession);
+      }
     }
     // No TTL: a paused dispatcher must never resume after an expired registration permits deletion.
-    return this.dispatchAcknowledgement(session, token);
+    return this.dispatchAcknowledgement(session, token, false, false, undefined, kind, issueEpoch ? epoch : undefined);
   }
 
-  private dispatchAcknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string): RegisteredSessionDispatch {
+  /** Busy while a scheduled post holds the writer control; changed when another writer advanced the epoch read. */
+  private async writerAdmissionChanged(error: unknown, identity: DispatchIdentity, transaction: TransactWriteCommandInput): Promise<boolean> {
+    const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+    const writes = transaction.TransactItems ?? [];
+    const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
+    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw new SessionBusyError('Session persistence writer is still active');
+    if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
+    const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
+    return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
+  }
+
+  private dispatchAcknowledgement(session: SessionPurge, token: string, recovered = false, stopped = false, runtimeTarget?: string, writerKind?: 'runtime' | 'session-post', snapshotEpoch?: string): RegisteredSessionDispatch {
     const Key = dispatchKey(session, token);
     const binding = { ':binding': session.runtime_binding, ':generation': session.runtime_generation };
     const complete: RegisteredSessionDispatch = Object.assign(async () => {
-      await this.documents.send(new DeleteCommand({ TableName: this.tableName, Key,
-        ...(recovered ? { ConditionExpression: 'attribute_not_exists(pk) OR (rejected_runtime_binding = :binding AND rejected_runtime_generation = :generation AND rejected_runtime_target = :target AND runtime_stop_confirmed = :binding)', ExpressionAttributeValues: { ...binding, ':target': runtimeTarget } } : {}),
-      }));
-    }, { session, token, stopConfirmed: stopped });
+      const condition = recovered
+        ? 'rejected_runtime_binding = :binding AND rejected_runtime_generation = :generation AND rejected_runtime_target = :target AND runtime_stop_confirmed = :binding'
+        : 'attribute_exists(pk)' + (writerKind === 'session-post' ? ' AND writer_succeeded = :kind' : '');
+      const values = recovered ? { ...binding, ':target': runtimeTarget } : writerKind === 'session-post' ? { ':kind': 'session-post' } : writerKind === 'runtime' ? { ':binding': session.runtime_binding } : undefined;
+      await this.settleRegistration(session, token, condition + (!recovered && writerKind === 'runtime' ? ' AND (attribute_not_exists(rejected_runtime_binding) OR runtime_stop_confirmed = :binding)' : ''), values, writerKind);
+    }, { session, token, stopConfirmed: stopped, ...(snapshotEpoch === undefined ? {} : { snapshotEpoch }) });
+    if (writerKind === 'session-post') complete.abortUnsubmitted = () => this.settleRegistration(session, token,
+      'dispatcher = :dispatcher AND attribute_not_exists(writer_succeeded)', { ':dispatcher': dispatcherId }, writerKind, true);
     complete.markSucceeded = async (kind, completion) => {
+      const completionProof = createHash('sha256').update(JSON.stringify(completion ?? null)).digest('hex');
       const Update = { TableName: this.tableName, Key,
-        UpdateExpression: 'SET writer_succeeded = :kind',
+        UpdateExpression: 'SET writer_succeeded = :kind, writer_completion = :completion',
         ConditionExpression: 'dispatcher = :dispatcher AND session_id = :session AND filing_user_id = :filing AND runtime_binding = :binding AND runtime_generation = :generation',
-        ExpressionAttributeValues: { ...binding, ':dispatcher': dispatcherId, ':session': session.session_id, ':filing': session.filing_user_id, ':kind': kind },
+        ExpressionAttributeValues: { ...binding, ':dispatcher': dispatcherId, ':session': session.session_id, ':filing': session.filing_user_id, ':kind': kind, ':completion': completionProof },
       };
-      if (completion === undefined) {
+      if (completion !== undefined && completion.Update?.TableName !== this.tableName) throw new SessionDispatchPendingError('Successful writer completion transaction is invalid');
+      if (writerKind !== 'session-post' && completion === undefined) {
         await this.documents.send(new UpdateCommand(Update));
         return;
       }
-      if (completion.Update?.TableName !== this.tableName) throw new SessionDispatchPendingError('Successful writer completion transaction is invalid');
-      await this.documents.send(new TransactWriteCommand({ TransactItems: [{ Update }, completion] }));
+      try {
+        await this.documents.send(new TransactWriteCommand({ TransactItems: [
+          { Update }, ...(completion === undefined ? [] : [completion]),
+          ...(writerKind === 'session-post' ? [{ Update: {
+            TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token',
+            ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
+          } }] : []),
+        ] }));
+      } catch (error) {
+        if (writerKind !== 'session-post' || !(error as Partial<TransactionCanceledException>).CancellationReasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw error;
+        const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
+        if (Item?.writer_succeeded !== 'session-post' || Item.writer_completion !== completionProof || Item.session_id !== session.session_id || Item.filing_user_id !== session.filing_user_id || Item.runtime_binding !== session.runtime_binding || Item.runtime_generation !== session.runtime_generation) throw error;
+      }
     };
     complete.markRejected = async (target) => {
       await this.documents.send(new UpdateCommand({ TableName: this.tableName, Key,
@@ -672,6 +733,27 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       complete.stopConfirmed = true;
     };
     return complete;
+  }
+
+  private async settleRegistration(session: SessionPurge, token: string, condition: string, values: Record<string, unknown> | undefined, kind?: 'runtime' | 'session-post', abortUnsubmitted = false): Promise<void> {
+    const Key = dispatchKey(session, token);
+    try {
+      await this.documents.send(new TransactWriteCommand({ TransactItems: [
+        { Delete: { TableName: this.tableName, Key, ConditionExpression: condition + (kind === undefined ? '' : ' AND writer_control = :writer_kind'), ...((values === undefined && kind === undefined) ? {} : { ExpressionAttributeValues: { ...values, ...(kind === undefined ? {} : { ':writer_kind': kind }) } }) } },
+        ...(kind === 'runtime' ? [{ Update: {
+          TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'ADD runtime_writers :minus_one',
+          ConditionExpression: 'runtime_writers > :zero', ExpressionAttributeValues: { ':minus_one': -1, ':zero': 0 },
+        } }] : []),
+        ...(abortUnsubmitted ? [{ Update: {
+          TableName: this.tableName, Key: writerControlKey(session), UpdateExpression: 'REMOVE external_token',
+          ConditionExpression: 'external_token = :token', ExpressionAttributeValues: { ':token': token },
+        } }] : []),
+      ] }));
+    } catch (error) {
+      if (!(error as Partial<TransactionCanceledException>).CancellationReasons?.some((reason) => reason.Code === 'ConditionalCheckFailed')) throw error;
+      const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key, ConsistentRead: true }));
+      if (Item !== undefined) throw new SessionDispatchPendingError('Writer completion is unproved', { cause: error });
+    }
   }
 
   private async confirmDispatchStop(Key: ReturnType<typeof dispatchKey>, binding: { ':binding': string | undefined; ':generation': string | undefined; ':target': string }): Promise<void> {
@@ -691,10 +773,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   async rejectedDispatches(session: SessionPurge, runtimeTarget?: string): Promise<RegisteredDispatch[]> {
     if (!trackedRuntime(session) || runtimeTarget === undefined) return [];
     const rows = await this.queryPartition(dispatchKey(session, '').pk) as unknown as {
-      sk: string; rejected_runtime_binding?: string; rejected_runtime_generation?: string; rejected_runtime_target?: string; runtime_stop_confirmed?: string;
+      sk: string; rejected_runtime_binding?: string; rejected_runtime_generation?: string; rejected_runtime_target?: string; runtime_stop_confirmed?: string; writer_control?: 'runtime' | 'session-post';
     }[];
     return rows.filter((row) => row.rejected_runtime_binding === session.runtime_binding && row.rejected_runtime_generation === session.runtime_generation && row.rejected_runtime_target === runtimeTarget)
-      .map((row) => this.dispatchAcknowledgement(session, row.sk, true, row.runtime_stop_confirmed === session.runtime_binding, runtimeTarget));
+      .map((row) => this.dispatchAcknowledgement(session, row.sk, true, row.runtime_stop_confirmed === session.runtime_binding, runtimeTarget, row.writer_control));
   }
 
   async acknowledgeSuccessfulDispatch(session: SessionPurge, token: string, kind: 'session-post'): Promise<void> {
@@ -706,10 +788,11 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       Item.runtime_binding !== session.runtime_binding || Item.runtime_generation !== session.runtime_generation || Item.writer_succeeded !== kind) {
       throw new SessionDispatchPendingError('Successful writer settlement is unproved');
     }
-    await this.documents.send(new DeleteCommand({ TableName: this.tableName, Key,
-      ConditionExpression: 'attribute_not_exists(pk) OR (session_id = :session AND filing_user_id = :filing AND runtime_binding = :binding AND runtime_generation = :generation AND writer_succeeded = :kind)',
-      ExpressionAttributeValues: { ':session': session.session_id, ':filing': session.filing_user_id, ':binding': session.runtime_binding, ':generation': session.runtime_generation, ':kind': kind },
-    }));
+    await this.settleRegistration(session, token,
+      'session_id = :session AND filing_user_id = :filing AND runtime_binding = :binding AND runtime_generation = :generation AND writer_succeeded = :kind',
+      { ':session': session.session_id, ':filing': session.filing_user_id, ':binding': session.runtime_binding, ':generation': session.runtime_generation, ':kind': kind },
+      Item.writer_control as 'runtime' | 'session-post' | undefined);
+
   }
 
   private async acknowledgeSuccessfulWriters(session: SessionPurge, pk: string): Promise<void> {
@@ -826,7 +909,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     return identity;
   }
 
-  private async admissionIdentity(owner: string, sessionId: string, filingUserId: string): Promise<{ creating: boolean; session: Readonly<BoundRuntimeSession>; continuation: boolean }> {
+  private async admissionIdentity(owner: string, sessionId: string, filingUserId: string): Promise<{ creating: boolean; session: Readonly<BoundRuntimeSession>; continuation: boolean; snapshotEpoch: string | undefined }> {
     const { Responses } = await this.documents.send(new TransactGetCommand({ TransactItems: [
       { Get: { TableName: this.tableName, Key: key(owner, sessionId) } },
       { Get: { TableName: this.tableName, Key: mainChatKey(owner) } },
@@ -843,33 +926,44 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     if (identity === undefined) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'tracked-v1' });
     else if (continuation) Object.assign(session, { runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'continuation-v1', legacy_settlement_unproved: true });
     if (!boundRuntime(session)) throw new SessionDispatchPendingError('Session Runtime binding is unproved');
-    return { creating: existing === undefined, session: Object.freeze(session), continuation };
+    return { creating: existing === undefined, session: Object.freeze(session), continuation, snapshotEpoch: (existing as SessionItem | undefined)?.snapshot_epoch };
   }
 
-  private async dispatchTurn(owner: string, session: Readonly<BoundRuntimeSession>, acceptedTurn?: AcceptedDispatch): Promise<RegisteredSessionDispatch> {
+  private async dispatchTurn(owner: string, session: Readonly<BoundRuntimeSession>, snapshotEpoch: string | undefined, snapshotReuseReady: boolean, acceptedTurn?: AcceptedDispatch): Promise<RegisteredSessionDispatch> {
     const token = randomUUID();
+    const epoch = snapshotEpoch ?? randomUUID();
+    const fallback = () => this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, 'runtime', snapshotReuseReady, session);
     try {
       await this.documents.send(new TransactWriteCommand({ TransactItems: [
         { ConditionCheck: { TableName: this.tableName, Key: ownerFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
         { ConditionCheck: { TableName: this.tableName, Key: claimFenceKey(owner), ConditionExpression: 'attribute_not_exists(pk)' } },
-        this.dispatchSessionWrite(owner, session, false, 'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND filing_user_id = :filing', undefined, session),
-        { Put: { TableName: this.tableName, Item: { ...dispatchKey(session, token), ...session, dispatcher: dispatcherId, created_at: now() } } },
+        this.dispatchSessionWrite(owner, session, false, 'attribute_exists(pk) AND attribute_not_exists(deleted_at) AND filing_user_id = :filing', epoch, snapshotEpoch, undefined, session),
+        ...this.writerRegistration(session, token, 'runtime'),
       ] }));
     } catch (error) {
-      const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[0]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(session.session_id);
-      if (reasons?.[1]?.Code === 'ConditionalCheckFailed') {
-        if (acceptedTurn !== undefined) return this.beginDispatch(owner, session.session_id, undefined, acceptedTurn, session);
-        throw new SessionClaimError(owner);
-      }
-      if (reasons?.[2]?.Code === 'ConditionalCheckFailed') throw new SessionDeletedError(session.session_id);
-      throw error;
+      return this.refusedTurnDispatch(error, owner, session, snapshotEpoch, acceptedTurn !== undefined, fallback);
     }
-    return this.dispatchAcknowledgement(session, token);
+    return this.dispatchAcknowledgement(session, token, false, false, undefined, 'runtime', snapshotReuseReady && trackedRuntime(session) ? epoch : undefined);
+  }
+
+  /** A refused Turn dispatch: a changed epoch, or a Claim with an accepted Turn, re-registers through beginDispatch. */
+  private async refusedTurnDispatch(error: unknown, owner: string, session: Readonly<BoundRuntimeSession>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => Promise<RegisteredSessionDispatch>): Promise<RegisteredSessionDispatch> {
+    const failed = (index: number) => (error as Partial<TransactionCanceledException>).CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
+    if (failed(0)) throw new SessionDeletedError(session.session_id);
+    if (failed(4)) throw new SessionBusyError('Session persistence writer is still active');
+    if (failed(1)) {
+      if (accepted) return fallback();
+      throw new SessionClaimError(owner);
+    }
+    if (!failed(2)) throw error;
+    // Another writer advanced the epoch since admission read it: dispatch against the current one.
+    const current = await this.getSessionItem(owner, session.session_id);
+    if (current !== null && current.snapshot_epoch !== snapshotEpoch) return fallback();
+    throw new SessionDeletedError(session.session_id);
   }
 
   async prepareTurn(owner: string, sessionId: string, turn: TurnAdmission): Promise<PreparedTurn> {
-    const { creating, session, continuation } = await this.admissionIdentity(owner, sessionId, turn.filingUserId);
+    const { creating, session, continuation, snapshotEpoch } = await this.admissionIdentity(owner, sessionId, turn.filingUserId);
     const transaction = this.turnTransaction(owner, sessionId, { ...turn, filingUserId: session.filing_user_id }, creating, undefined,
       { session, continuation });
     try {
@@ -880,7 +974,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       const bindingChanged = continuation && winner?.runtime_binding?.S !== undefined && winner.filing_user_id?.S === session.filing_user_id;
       if (retryUnboundTurn(error, sessionId, (creating || bindingChanged) && compatibleAdmission(error, turn.provider), turn.scheduledTaskId, turn.opening)) return this.prepareTurn(owner, sessionId, turn);
     }
-    return { session, dispatch: () => this.dispatchTurn(owner, session, turn.running ?? (turn.messageId === undefined ? undefined : { messageId: turn.messageId })) };
+    return { session, dispatch: (snapshotReuseReady = false) => this.dispatchTurn(owner, session, snapshotEpoch, snapshotReuseReady, turn.running ?? (turn.messageId === undefined ? undefined : { messageId: turn.messageId })) };
   }
 
   async recordTurn(
@@ -1118,11 +1212,14 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       .map(summaryOf);
   }
 
+  private async getSessionItem(owner: string, sessionId: string): Promise<SessionItem | null> {
+    const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: key(owner, sessionId), ConsistentRead: true }));
+    return Item === undefined || fenced(Item as SessionItem) ? null : Item as SessionItem;
+  }
+
   async get(owner: string, sessionId: string): Promise<SessionSummary | null> {
-    const { Item } = await this.documents.send(
-      new GetCommand({ TableName: this.tableName, Key: key(owner, sessionId), ConsistentRead: true }),
-    );
-    return Item === undefined || fenced(Item as SessionItem) ? null : summaryOf(Item as SessionItem);
+    const item = await this.getSessionItem(owner, sessionId);
+    return item === null ? null : summaryOf(item);
   }
 
   async rename(owner: string, sessionId: string, title: string): Promise<SessionSummary | null> {
@@ -1301,6 +1398,8 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
         values[`:${field}`] = identity[field];
       }
     }
+    conditions.push(item.snapshot_epoch === undefined ? 'attribute_not_exists(snapshot_epoch)' : 'snapshot_epoch = :epoch');
+    if (item.snapshot_epoch !== undefined) values[':epoch'] = item.snapshot_epoch;
     try {
       await this.documents.send(new TransactWriteCommand({ TransactItems: [
         { Put: { TableName: this.tableName, Item: { ...item, ...key(destination, item.session_id) }, ConditionExpression: 'attribute_not_exists(pk)' } },
@@ -1313,7 +1412,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
       if (reasons?.[1]?.Code !== 'ConditionalCheckFailed') throw error;
       const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: key(source, item.session_id), ConsistentRead: true }));
       if (Item === undefined || fenced(Item as SessionItem)) throw error;
-      if (JSON.stringify(runtimeIdentity(Item as SessionItem)) === JSON.stringify(identity)) throw error;
+      if (JSON.stringify(runtimeIdentity(Item as SessionItem)) === JSON.stringify(identity) && Item.snapshot_epoch === item.snapshot_epoch) throw error;
       await this.transferSession(source, destination, Item as SessionItem);
     }
   }

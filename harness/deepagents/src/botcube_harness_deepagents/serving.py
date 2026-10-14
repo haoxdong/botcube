@@ -96,6 +96,7 @@ from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
 from .memory.agentcore import TurnIdentityError
+from .memory.agentcore.warm_session import WarmSessionSaver
 from .memory_tools import (
     AGENTCORE_MEMORY_ID,
     AGENTCORE_REGION,
@@ -962,14 +963,15 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 # The Memory block needs only the Turn's credentials, so it reads alongside the history.
                 store = agent.graph.store
                 session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
-            with turn_timing.phase('checkpoint_read'):
-                saved = await latest_checkpoint(agent.graph, _session_config(session))
-                if opening:
-                    _require_empty_opening_checkpoint(saved)
             _apply_session_env(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
 
-        async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, files, context)) as events:
+        read_locked = partial(
+            _read_turn_checkpoint, session=session, opening=opening, actor_id=auth.actor_id,
+            run_id=input_data.run_id, epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
+        )
+
+        async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, files, context, read_locked)) as events:
             async for event in events:
                 yield event
         return
@@ -981,6 +983,41 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 files, reads_history,
             )
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
+
+
+async def _read_turn_checkpoint(
+    agent: LangGraphAgent, *, session: tuple[str, str | None], opening: bool,
+    actor_id: str, run_id: str, epoch: Any, turn_identity: str | None,
+) -> None:
+    saver = getattr(agent.graph, 'checkpointer', None)
+    if isinstance(saver, WarmSessionSaver):
+        saver.admit_finished_reuse(
+            _session_config(session), actor_id, run_id,
+            agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
+        )
+    with turn_timing.phase('checkpoint_read'):
+        saved = await latest_checkpoint(agent.graph, _session_config(session))
+        if opening:
+            _require_empty_opening_checkpoint(saved)
+
+
+async def _publish_finished_files(
+    files: FilesSync | None, root: Path, ready: bool, completion: RunFinishedEvent | None, run_id: str,
+) -> None:
+    if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
+        return
+    started = perf_counter()
+    await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
+    log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
+             run_id, (perf_counter() - started) * 1000)
+
+
+def _settle_finished_reuse(saver: Any, finished: bool) -> None:
+    if isinstance(saver, WarmSessionSaver):
+        if finished:
+            saver.finish_run()
+        else:
+            saver.abandon_run()
 
 
 async def _prepare_agent(
@@ -1054,6 +1091,18 @@ class _Turn:
     work: asyncio.Task[None] | None = None
     stopped: bool = False
     finished: bool = False
+    interrupted: bool = False
+
+    def observe(self, event: Any) -> None:
+        if event.type == EventType.CUSTOM and getattr(event, 'name', None) == 'on_interrupt':
+            self.interrupted = True
+        if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
+            self.finished = event.type == EventType.RUN_FINISHED
+            self.interrupted |= getattr(getattr(event, 'outcome', None), 'type', None) == 'interrupt'
+
+    def finished_without_interruption(self, agent: LangGraphAgent) -> bool:
+        return (self.finished and not self.stopped and not self.interrupted
+                and not getattr(agent, '_interrupted', False))
 
     def stop(self) -> None:
         if self.stopped:
@@ -1177,6 +1226,7 @@ class _SessionTurns:
         input_data: RunAgentInput,
         files: FilesSync | None,
         context: _RequestContext,
+        read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[Any, None]:
         """Stream a Turn that supersedes the Session's latest from arrival, while `prepare` gets its agent and root."""
         previous = self._turns.get(session)
@@ -1184,7 +1234,7 @@ class _SessionTurns:
             previous.stop()
         self._turns[session] = turn = _Turn(input_data.run_id)
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait))
+        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, read_locked))
         def completed(work: asyncio.Task[None]) -> None:
             if not work.cancelled() and (failure := work.exception()) is not None:
                 log.error(
@@ -1213,6 +1263,7 @@ class _SessionTurns:
         files: FilesSync | None,
         context: _RequestContext,
         put: Callable[[Any], None],
+        read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
     ) -> None:
         """Stop leaves the stopped Turn running here. Were the next Turn to start
         before the stopped one's checkpoints persist, the stopped Turn's would
@@ -1227,6 +1278,7 @@ class _SessionTurns:
         trace_context = baggage.set_baggage('run.id', input_data.run_id, context=trace_context)
         trace_token = otel_context.attach(trace_context)
         lock = self._locks.setdefault(session, asyncio.Lock())
+        saver: Any = None
         try:
             agent, root = await prepare()
             async with lock:
@@ -1235,14 +1287,21 @@ class _SessionTurns:
                     return
                 if (failure := self._flush_failures.pop(session, None)) is not None:
                     raise failure
+                saver = getattr(getattr(agent, 'graph', None), 'checkpointer', None)
+                if read_locked is not None:
+                    await read_locked(agent)
+                if turn.stopped:
+                    _settle_finished_reuse(saver, False)
+                    put(_stopped())
+                    return
                 reply = _OpenReply()
 
                 completion: RunFinishedEvent | None = None
 
                 def publish(event: Any) -> None:
                     nonlocal completion
+                    turn.observe(event)
                     if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
-                        turn.finished = event.type == EventType.RUN_FINISHED
                         completion = event
                         return
                     put(event)
@@ -1254,20 +1313,19 @@ class _SessionTurns:
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            if files is not None and readiness.ready and completion is not None and completion.type == EventType.RUN_FINISHED:
-                                started = perf_counter()
-                                await asyncio.to_thread(files.push, root, excluded_paths(_require_cartridge().skills))
-                                log.info('Harness Files publication timing run_id=%s push_ms=%.3f',
-                                         turn.run_id, (perf_counter() - started) * 1000)
+                            await _publish_finished_files(files, root, readiness.ready, completion, turn.run_id)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
                 if turn.work.cancelled():
+                    _settle_finished_reuse(saver, False)
                     reply.finish_stopped(put)
                 elif completion is not None:
                     put(completion)
                     self._feed(session, turn, feeds)
+                    _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
         except Exception as failure:
+            _settle_finished_reuse(saver, False)
             if turn.finished:
                 self._flush_failures[session] = failure
             raise

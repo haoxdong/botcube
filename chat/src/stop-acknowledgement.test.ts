@@ -1,6 +1,6 @@
 import { defined } from '../test/defined.js';
 import { setImmediate } from 'node:timers/promises';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import { expect, it, vi } from 'vitest';
 import { startInProcess } from '../test/in-process.js';
 import { SessionDispatchPendingError } from './session-metadata.js';
@@ -14,7 +14,8 @@ it.each([false, true])('waits for Stop dispatch acknowledgement and classifies i
   const documents: unknown = Reflect.get(stack.sessionMetadata, 'documents');
   if (!(documents instanceof DynamoDBDocumentClient)) throw new Error('Session Metadata has no DynamoDB document client');
   documents.middlewareStack.add((next, context) => async (args) => {
-    if (['DeleteCommand', 'DeleteItemCommand'].includes(context.commandName ?? '')) {
+    const input = args.input as TransactWriteCommandInput;
+    if (['TransactWriteCommand', 'TransactWriteItemsCommand'].includes(context.commandName ?? '') && input.TransactItems?.some(({ Delete }) => Delete?.TableName === stack.table.name && typeof Delete.Key?.pk === 'string' && Delete.Key.pk.startsWith('DISPATCH#'))) {
       entered();
       await held;
       if (deleteFails) throw new Error('dispatch registration delete failed');

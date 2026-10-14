@@ -1,3 +1,4 @@
+import { decodeJwt } from 'jose';
 import { HttpError } from './cartridge.js';
 import { boundRuntime, type SessionPurge, type RegisteredDispatch } from './session-metadata.js';
 import type { Upstream } from './upstream.js';
@@ -12,6 +13,13 @@ export const runtimeSessionId = (session: SessionPurge): string => {
   return session.runtime_binding;
 };
 
+export function forwardSnapshotEpoch(props: Record<string, unknown>, complete: { readonly snapshotEpoch?: string | undefined }): void {
+  delete props.sessionSnapshotEpoch;
+  if (complete.snapshotEpoch === undefined || typeof props.turnIdentity !== 'string' || props.turnIdentity === '') return;
+  const turnId = decodeJwt(props.turnIdentity).jti;
+  if (typeof turnId === 'string' && turnId !== '') props.sessionSnapshotEpoch = { epoch: complete.snapshotEpoch, turnId };
+}
+
 /** A fenced Session cannot dispatch again, including a Turn admitted just before its metadata fence. */
 export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstream & {
   fence(sessions: readonly SessionPurge[]): void;
@@ -25,7 +33,9 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
   const dispatches = new Map<string, Set<Promise<unknown>>>();
   const producers = new Map<string, Set<() => Promise<void>>>();
   const failures = new Map<string, unknown>();
+  const settledRuntimes = new Set<string>();
   const confirmedStops = new Map<string, string>();
+  const activeAdmissions = new Map<string, Map<RegisteredDispatch, string>>();
   const failedAdmissions = new Map<string, Map<RegisteredDispatch, string>>();
 
   const retainRejected = async (key: string, complete: RegisteredDispatch | undefined, sandboxId: string) => {
@@ -40,7 +50,13 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
   };
 
   const acknowledgeAdmission = async (key: string, complete: RegisteredDispatch | undefined, sandboxId: string) => {
-    try { await complete?.(); }
+    try {
+      await complete?.();
+      if (complete !== undefined) {
+        activeAdmissions.get(key)?.delete(complete);
+        if (activeAdmissions.get(key)?.size === 0) activeAdmissions.delete(key);
+      }
+    }
     catch (error) {
       try { await retainRejected(key, complete, sandboxId); }
       catch (classificationError) {
@@ -57,6 +73,11 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
       if (fenced.has(key)) { await complete?.(); throw new HttpError(410, 'The Session was deleted'); }
       const pending = dispatches.get(key) ?? new Set<Promise<unknown>>();
       dispatches.set(key, pending);
+      if (complete !== undefined) {
+        const admissions = activeAdmissions.get(key) ?? new Map<RegisteredDispatch, string>();
+        admissions.set(complete, sandboxId);
+        activeAdmissions.set(key, admissions);
+      }
       const dispatched = upstream.invoke(body, sandboxId, init);
       pending.add(dispatched);
       let headersReceived = false;
@@ -64,81 +85,49 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
         const response = await dispatched;
         headersReceived = true;
         if (response.body === null) { await acknowledgeAdmission(key, complete, sandboxId); return response; }
-        if (stopRuntime !== undefined) {
-          const reader = response.body.getReader();
-          let controller: ReadableStreamDefaultController<Uint8Array>;
-          let ended = false;
-          // Admission acknowledgement must not delay reading a short-lived response body.
-          const acknowledged = acknowledgeAdmission(key, complete, sandboxId);
-          const bodyStream = new ReadableStream<Uint8Array>({
-            start(value) { controller = value; },
-            async pull() {
-              try {
-                const chunk = await reader.read();
-                if (ended) return;
-                if (chunk.done) {
-                  await acknowledged;
-                  ended = true;
-                  controller.close();
-                } else controller.enqueue(chunk.value);
-              } catch (error) {
-                // Headers confirmed dispatch; a stopped Sandbox can terminate this body later.
-                ended = true;
-                controller.error(error);
-              }
-            },
-            async cancel(reason: unknown) { ended = true; await Promise.all([reader.cancel(reason), acknowledged]); },
-          });
-          void acknowledged.catch(async (error: unknown) => {
-            failures.set(key, error);
-            ended = true;
-            let failure = error;
-            try {
-              await reader.cancel(error);
-            } catch (cancelError) {
-              failure = new AggregateError([error, cancelError],
-                'Admission acknowledgement failed and cancelling the upstream response also failed', { cause: cancelError });
-              failures.set(key, failure);
-            }
-            controller.error(failure);
-          }).catch((error: unknown) => {
-            const prior = failures.get(key);
-            const failure = prior === undefined ? error : new AggregateError([prior, error],
-              'Admission failure notification failed', { cause: error });
-            failures.set(key, failure);
-            console.error('Runtime admission failure notification failed', failure);
-          });
-          return new Response(bodyStream, { status: response.status, statusText: response.statusText, headers: response.headers });
-        }
         const active = producers.get(key) ?? new Set<() => Promise<void>>();
         producers.set(key, active);
         const reader = response.body.getReader();
         let discard = false;
         let ended = false;
+        let producerEnded = false;
         let reading: Promise<void> = Promise.resolve();
         let controller: ReadableStreamDefaultController<Uint8Array>;
         let resolveDone: () => void;
         let rejectDone: (error: unknown) => void;
         const done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
         // A failed producer remains a deletion blocker, even if it fails before deletion starts.
-        void done.catch((error: unknown) => { failures.set(key, error); });
+        void done.catch((error: unknown) => { if (!settledRuntimes.has(key)) failures.set(key, error); });
+        const rejectProducer = async (error: unknown) => {
+        let failure = error;
+        if (!producerEnded && stopRuntime !== undefined && !settledRuntimes.has(key)) {
+          try { await retainRejected(key, complete, sandboxId); }
+          catch (classificationError) {
+            failure = new AggregateError([error, classificationError], 'Producer failed and durable rejection classification failed', { cause: classificationError });
+          }
+        }
+        ended = true;
+        if (!discard) controller.error(failure);
+        active.delete(drain);
+        if (active.size === 0) producers.delete(key);
+        rejectDone(failure);
+        };
         const read = () => {
           reading = reading.then(async () => {
             if (ended) return;
             try {
               const chunk = await reader.read();
               if (chunk.done) {
-                await complete?.();
+                producerEnded = true;
+                await acknowledgeAdmission(key, complete, sandboxId);
                 ended = true;
                 if (!discard) controller.close();
                 active.delete(drain);
+                if (active.size === 0) producers.delete(key);
                 resolveDone();
               } else if (!discard) controller.enqueue(chunk.value);
             } catch (error) {
-              ended = true;
-              if (!discard) controller.error(error);
-              active.delete(drain);
-              rejectDone(error);
+              await rejectProducer(error);
             }
           });
           return reading;
@@ -181,6 +170,8 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
       // eslint-disable-next-line no-await-in-loop -- acknowledge only after persisting the exact confirmed Runtime stop
       await complete();
       admissions?.delete(complete);
+      activeAdmissions.get(key)?.delete(complete);
+      if (activeAdmissions.get(key)?.size === 0) activeAdmissions.delete(key);
     }
     if (admissions?.size === 0) failedAdmissions.delete(key);
   };
@@ -203,11 +194,14 @@ export function sessionLifecycle(upstream: Upstream, stopRuntime?: Stop): Upstre
           failures.delete(key);
           return undefined;
         }
+        await Promise.all([...(activeAdmissions.get(key) ?? [])].map(([complete, binding]) =>
+          retainRejected(key, complete, binding)));
         const stopped = await stopRuntime(runtimeSessionId(session));
         // Lost invocation headers leave an ambiguous submitted request. Absence
         // cannot prove it will not start later; only a successful stop clears it.
         if (stopped === 'absent' && (failures.has(key) || failedAdmissions.has(key))) throw failures.get(key) ?? new HttpError(503, 'Rejected Runtime admission settlement is unproved');
         if (stopped !== 'absent') {
+          settledRuntimes.add(key);
           if (failedAdmissions.has(key)) confirmedStops.set(key, runtimeSessionId(session));
           await acknowledgeStopped(session);
           confirmedStops.delete(key);

@@ -1,13 +1,9 @@
-"""The Session kept warm in the microVM: a Turn's snapshot saver that skips reloading what this process already holds.
+"""Write-through Session snapshots kept in a bounded microVM cache.
 
-AgentCore Memory stays the record: every checkpoint and pending write is written through. The
-process keeps each Session's latest snapshot, serialized as Memory stores it, from the Turn that
-wrote or loaded it. A Turn's first read of a Session's latest checkpoint asks Memory which
-checkpoint is newest (one ListEvents without payloads) while it reads that checkpoint's pending
-writes; when Memory's newest is the one held, the read decodes the held snapshot instead of
-loading it again. Anything else (another microVM wrote since, the Session was deleted, nothing is
-held) loads in full, as the stock saver does. Once confirmed, the Turn's later reads reuse the
-confirmation until this process writes the Session again.
+Generic reads confirm Memory's latest checkpoint and pending writes. A registered
+Chat writer can consume a snapshot written by this process's successful finished
+run under the Session lock, at the same writer epoch and invoking actor. Every
+mutation revokes eligibility before writing; uncertain writes never promote.
 """
 
 from __future__ import annotations
@@ -71,6 +67,16 @@ class _Snapshot:
     events: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _Finished:
+    version: int
+    actor_id: str
+    epoch: str
+    run_id: str
+    snapshot: _Snapshot
+    writes: str | None
+
+
 class _WarmSessions:
     """The held snapshots, and each Session's version: every write, keep or load bumps it."""
 
@@ -80,6 +86,26 @@ class _WarmSessions:
         self._snapshots: OrderedDict[_Key, _Snapshot] = OrderedDict()
         # Never evicted, so a version never repeats: one int per Session this process wrote or loaded.
         self._versions: dict[_Key, int] = {}
+        self._finished: dict[_Key, _Finished] = {}
+
+    def finished(self, key: _Key, actor_id: str, epoch: str) -> _Finished | None:
+        with self._lock:
+            held = self._finished.get(key)
+            if (held is not None and held.actor_id == actor_id and held.epoch == epoch
+                    and held.version == self._versions.get(key) and key in self._snapshots):
+                self._snapshots.move_to_end(key)
+                return held
+            self._finished.pop(key, None)
+            return None
+
+    def promote(self, key: _Key, finished: _Finished) -> None:
+        with self._lock:
+            if finished.version == self._versions.get(key) and self._snapshots.get(key) == finished.snapshot:
+                self._finished[key] = finished
+
+    def revoke(self, key: _Key) -> None:
+        with self._lock:
+            self._finished.pop(key, None)
 
     def get(self, key: _Key) -> tuple[_Snapshot | None, int]:
         with self._lock:
@@ -113,9 +139,11 @@ class _WarmSessions:
         self._snapshots[key] = snapshot
         self._snapshots.move_to_end(key)
         while len(self._snapshots) > self._capacity:
-            self._snapshots.popitem(last=False)
+            evicted, _ = self._snapshots.popitem(last=False)
+            self._finished.pop(evicted, None)
 
     def _bump(self, key: _Key) -> int:
+        self._finished.pop(key, None)
         version = self._versions[key] = self._versions.get(key, 0) + 1
         return version
 
@@ -178,6 +206,39 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         super().__init__(memory_id, checkpoint_format='snapshot', limit=None, region_name=region_name)
         self.checkpoint_event_client = _WarmSnapshotClient(memory_id, self.serializer, client)
         self._confirmed: dict[_Key, _Confirmed] = {}
+        self._admission: tuple[_Key, str, str, str] | None = None
+        self._written: tuple[_Key, _Confirmed] | None = None
+
+    def admit_finished_reuse(self, config: RunnableConfig, actor_id: str, run_id: str, epoch: str | None) -> None:
+        """Called only under the Session lock with Chat's registered writer epoch."""
+        key = self._key(CheckpointerConfig.from_runnable_config(dict(config)))
+        self._admission = None
+        self._written = None
+        self._confirmed.pop(key, None)
+        if not epoch:
+            _SESSIONS.revoke(key)
+            return
+        self._admission = (key, actor_id, run_id, epoch)
+        held = _SESSIONS.finished(key, actor_id, epoch)
+        _SESSIONS.revoke(key)
+        if held is not None:
+            self._confirmed[key] = _Confirmed(held.version, held.snapshot, held.writes)
+
+    def finish_run(self) -> None:
+        """Promote only after graph settlement and successful Files publication under the Session lock."""
+        if self._admission is None or self._written is None:
+            return
+        key, actor_id, run_id, epoch = self._admission
+        written_key, confirmed = self._written
+        if written_key == key and confirmed.snapshot is not None:
+            _SESSIONS.promote(key, _Finished(
+                confirmed.version, actor_id, epoch, run_id, confirmed.snapshot, confirmed.writes,
+            ))
+
+    def abandon_run(self) -> None:
+        if self._admission is not None:
+            _SESSIONS.revoke(self._admission[0])
+        self._written = None
 
     def _key(self, config: CheckpointerConfig) -> _Key:
         return (self.memory_id, config.actor_id, config.session_id)
@@ -283,6 +344,8 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         new_versions: ChannelVersions, pending_writes: Sequence[PendingWrite],
     ) -> RunnableConfig:
         key = self._key(CheckpointerConfig.from_runnable_config(dict(config)))
+        _SESSIONS.touch(key)
+        self._written = None
         self._confirmed.pop(key, None)
         self.checkpoint_event_client.kept = None
         try:
@@ -295,10 +358,13 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         kept = self.checkpoint_event_client.kept
         if kept is not None and _SESSIONS.get(key) == kept:
             # Unchanged since this write: its pending writes are in the snapshot, none filed under it yet.
-            self._confirmed[key] = _Confirmed(kept[1], kept[0], None)
+            self._confirmed[key] = confirmed = _Confirmed(kept[1], kept[0], None)
+            self._written = (key, confirmed)
         return stored
 
     def put_writes(self, config: RunnableConfig, writes: Sequence[tuple[str, Any]], task_id: str, task_path: str = '') -> None:
+        self._written = None
+        _SESSIONS.touch(self._key(CheckpointerConfig.from_runnable_config(dict(config))))
         try:
             with turn_timing.phase('checkpoint_write'):
                 super().put_writes(config, writes, task_id, task_path)

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from uuid import uuid4
 
 import boto3
 import botocore.session
@@ -240,13 +241,17 @@ def _b64(data: bytes) -> str:
 
 
 def turn_identity(actor: str = 'user-1', filing: str | None = None, session: str = 'thread-1', *,
-                  expires_in: int = 3600, key: bytes = _SIGNING_KEY) -> str:
+                  expires_in: int = 3600, key: bytes = _SIGNING_KEY,
+                  nonce: str | None = None, include_jti: bool = True) -> str:
     """A Turn's JWT as the Chat Service signs it: tagged with the actor, the filing actor, the Session and its writes prefix."""
     tags = {'actorId': [actor], 'filingActorId': [filing or actor], 'sessionId': [session],
             'writesPrefix': ['lgw-' + hashlib.sha256(session.encode()).hexdigest()[:32]]}
     header = _b64(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode())
-    claims = _b64(json.dumps({'sub': actor, 'aud': 'sts.amazonaws.com', 'exp': int(time.time()) + expires_in,
-                              _TAGS_CLAIM: {'principal_tags': tags}}).encode())
+    payload: dict[str, Any] = {'sub': actor, 'aud': 'sts.amazonaws.com', 'exp': int(time.time()) + expires_in,
+                               _TAGS_CLAIM: {'principal_tags': tags}}
+    if include_jti:
+        payload['jti'] = nonce if nonce is not None else str(uuid4())
+    claims = _b64(json.dumps(payload).encode())
     signature = _b64(hmac.digest(key, f'{header}.{claims}'.encode(), 'sha256'))
     return f'{header}.{claims}.{signature}'
 

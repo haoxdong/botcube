@@ -332,6 +332,22 @@ def test_reading_the_newest_checkpoint_asks_memory_for_small_pages(
     assert pages == ([5] if warm else [1, 5])
 
 
+def test_a_finished_registered_writer_reuses_the_exact_stock_tuple_without_reads(
+    memory: FakeAgentCoreMemory, tmp_path: Path,
+) -> None:
+    writer, _ = _turn(memory)
+    writer.admit_finished_reuse(CONFIG, 'user-1', 'run-1', 'epoch-1')
+    _ask(writer, tmp_path, 'Question 1', 'Answer 1')
+    writer.finish_run()
+    stock = _another_microvm().get_tuple(CONFIG)
+    reader, client = _turn(memory)
+    reader.admit_finished_reuse(CONFIG, 'user-1', 'run-2', 'epoch-1')
+
+    assert reader.get_tuple(CONFIG) == stock
+    assert _said(reader, tmp_path) == ['Question 1', 'Answer 1']
+    assert client.calls == []
+
+
 @pytest.mark.parametrize('channels', [1, 101], ids=['single-event', 'chunked'])
 def test_snapshot_storage_serializes_no_more_than_stock_and_persists_stock_bytes(
     memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, channels: int,

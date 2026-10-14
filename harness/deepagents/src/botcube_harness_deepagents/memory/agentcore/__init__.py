@@ -40,8 +40,8 @@ from ...turn_memory import TurnMemoryMiddleware
 from .warm_session import WarmSessionSaver
 
 __all__ = [
-    'MemorySandboxError', 'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store', 'is_access_denied', 'opening',
-    'next_turn',
+    'MemorySandboxError', 'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store',
+    'finished_snapshot_epoch', 'is_access_denied', 'next_turn', 'opening',
     'turn_memory',
 ]
 
@@ -191,8 +191,22 @@ def turn_memory(
 
 def _tags(turn_identity: str) -> dict[str, list[str]]:
     """The session tags the Turn's JWT carries, which STS checks on each exchange."""
+    return _claims(turn_identity)[_TAGS_CLAIM]['principal_tags']
+
+
+def _claims(turn_identity: str) -> dict[str, Any]:
     claims = turn_identity.split('.')[1]
-    return json.loads(base64.urlsafe_b64decode(claims + '=' * (-len(claims) % 4)))[_TAGS_CLAIM]['principal_tags']
+    return json.loads(base64.urlsafe_b64decode(claims + '=' * (-len(claims) % 4)))
+
+
+def finished_snapshot_epoch(turn_identity: str | None, marker: Any) -> str | None:
+    """Bind registered writer proof to the JWT Chat issued for this invocation."""
+    if not isinstance(marker, dict) or not turn_identity:
+        return None
+    epoch, turn_id = marker.get('epoch'), marker.get('turnId')
+    if not isinstance(epoch, str) or not epoch or not isinstance(turn_id, str) or not turn_id:
+        return None
+    return epoch if _claims(turn_identity).get('jti') == turn_id else None
 
 
 def _sandbox(tags: dict[str, list[str]]) -> tuple[str, str]:

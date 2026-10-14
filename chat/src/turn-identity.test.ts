@@ -1,9 +1,10 @@
 import { generateKeyPairSync, randomUUID, type JsonWebKey } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SignJWT, createLocalJWKSet, decodeProtectedHeader, jwtVerify, type JSONWebKeySet } from 'jose';
+import { SignJWT, createLocalJWKSet, decodeProtectedHeader, decodeJwt, jwtVerify, type JSONWebKeySet } from 'jose';
 import { defined } from '../test/defined.js';
 import type { InvocationPayload } from '../test/fakes/fake-agentcore.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
+import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { TurnIdentity, turnIdentityConfigFromEnv } from './turn-identity.js';
 
 const ISSUER = 'https://chat.example.com';
@@ -19,7 +20,7 @@ const startedAtSeconds = Date.parse(turn.startedAt) / 1000;
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
+  stack = await startInProcess({ scheduled: true, config: { finishedSnapshotReuse: true, turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
 });
 afterAll(() => stack.stop());
 
@@ -136,6 +137,7 @@ async function forwardedTags(payload: InvocationPayload): Promise<Record<string,
   const token = payload.forwardedProps.turnIdentity;
   if (typeof token !== 'string') throw new Error('The invocation carries no Turn identity');
   const { payload: claims } = await jwtVerify(token, createLocalJWKSet(await publishedKeys()), { issuer: ISSUER, audience: 'sts.amazonaws.com' });
+  expect(payload.forwardedProps.sessionSnapshotEpoch).toEqual({ epoch: expect.any(String), turnId: claims.jti });
   return (claims['https://aws.amazon.com/tags'] as { principal_tags: Record<string, string[]> }).principal_tags;
 }
 
@@ -218,5 +220,40 @@ describe('Turn identity configuration', () => {
   it('fails loud on keys that are not JSON, without quoting them', () => {
     expect(() => turnIdentityConfigFromEnv({ BOTCUBE_PUBLIC_ORIGIN: ISSUER, BOTCUBE_TURN_IDENTITY_KEYS: '{"d":"secret' }))
       .toThrow(/^BOTCUBE_TURN_IDENTITY_KEYS must be a JSON list of private P-256 JWKs, each with a kid$/);
+  });
+});
+
+
+describe('registered snapshot proof', () => {
+  const identity = new TurnIdentity({ issuer: ISSUER, keys: [current] });
+
+  it.each([undefined, null, 12, ''])('removes a spoof when no issued Turn identity is available: %s', (turnIdentity) => {
+    const props: Record<string, unknown> = { turnIdentity, sessionSnapshotEpoch: { epoch: 'spoof', turnId: 'old-turn' } };
+    forwardSnapshotEpoch(props, { snapshotEpoch: 'registered-epoch' });
+    expect(props).not.toHaveProperty('sessionSnapshotEpoch');
+  });
+
+  it('binds the registered epoch to the fresh issuer token rather than a client nonce', async () => {
+    const oldToken = await identity.sign(turn);
+    const token = await identity.sign(turn);
+    const props: Record<string, unknown> = { turnIdentity: token,
+      sessionSnapshotEpoch: { epoch: 'registered-epoch', turnId: decodeJwt(oldToken).jti } };
+    forwardSnapshotEpoch(props, { snapshotEpoch: 'registered-epoch' });
+    expect(props.sessionSnapshotEpoch).toEqual({ epoch: 'registered-epoch', turnId: decodeJwt(token).jti });
+    expect(decodeJwt(token).jti).not.toBe(decodeJwt(oldToken).jti);
+  });
+
+  it('omits the proof when the live registration supplies no epoch', async () => {
+    const props: Record<string, unknown> = { turnIdentity: await identity.sign(turn), sessionSnapshotEpoch: 'spoof' };
+    forwardSnapshotEpoch(props, {});
+    expect(props).not.toHaveProperty('sessionSnapshotEpoch');
+  });
+
+  it.each([undefined, ''])('omits the proof when a token has no nonempty nonce: %s', async (jti) => {
+    const token = await new SignJWT({ ...(jti === undefined ? {} : { jti }) })
+      .setProtectedHeader({ alg: 'ES256' }).sign(generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey);
+    const props: Record<string, unknown> = { turnIdentity: token, sessionSnapshotEpoch: 'spoof' };
+    forwardSnapshotEpoch(props, { snapshotEpoch: 'registered-epoch' });
+    expect(props).not.toHaveProperty('sessionSnapshotEpoch');
   });
 });

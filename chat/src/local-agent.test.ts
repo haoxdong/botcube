@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { serve, type ServerType } from '@hono/node-server';
 import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, RUNTIME_ARN, createChatTable } from '../../../tests/chat/fakes/stack.js';
@@ -201,9 +201,9 @@ describe('a Turn against a local Harness', () => {
     const client = new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
     let failed = false;
     client.middlewareStack.add((next, context) => async (args) => {
-      const input = args.input as { TableName?: string; Key?: { pk?: string }; UpdateExpression?: string };
+      const input = args.input as { TableName?: string; UpdateExpression?: string; TransactItems?: TransactWriteCommandInput['TransactItems'] };
       if (control === 'classification-failed' && context.commandName === 'UpdateItemCommand' && input.TableName === table && input.UpdateExpression?.includes('rejected_runtime_binding')) throw new Error('Durable header failure classification unavailable');
-      if (!failed && context.commandName === 'DeleteItemCommand' && input.TableName === table && input.Key?.pk?.startsWith('DISPATCH#')) {
+      if (!failed && context.commandName === 'TransactWriteItemsCommand' && input.TransactItems?.some(({ Delete }) => Delete?.TableName === table && typeof Delete.Key?.pk === 'string' && Delete.Key.pk.startsWith('DISPATCH#'))) {
         failed = true;
         if (control === 'ack-reply-lost') await next(args);
         throw new Error('Exact registered header acknowledgement delete failed');
@@ -255,12 +255,12 @@ describe('a Turn against a local Harness', () => {
     const client = new DynamoDBClient({ region: 'us-east-1', endpoint: inject('dynamodbEndpoint'), credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
     let failed = false;
     client.middlewareStack.add((next, context) => async (args) => {
-      const input = args.input as { TableName?: string; Key?: { pk?: string }; UpdateExpression?: string };
+      const input = args.input as { TableName?: string; UpdateExpression?: string; TransactItems?: TransactWriteCommandInput['TransactItems'] };
       if (control === 'failed-marker' && context.commandName === 'UpdateItemCommand' && input.TableName === table && input.UpdateExpression?.includes('writer_succeeded')) {
         failed = true;
         throw new Error('Durable writer success marker unavailable');
       }
-      if (!failed && context.commandName === 'DeleteItemCommand' && input.TableName === table && input.Key?.pk?.startsWith('DISPATCH#')) {
+      if (!failed && context.commandName === 'TransactWriteItemsCommand' && input.TransactItems?.some(({ Delete }) => Delete?.TableName === table && typeof Delete.Key?.pk === 'string' && Delete.Key.pk.startsWith('DISPATCH#'))) {
         failed = true;
         throw new Error('Successful writer registration acknowledgement failed');
       }

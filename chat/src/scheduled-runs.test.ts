@@ -13,9 +13,9 @@ import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type
 import { ScheduledTasks, type ScheduledRunMessage } from './scheduled-tasks.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
 import { agentCoreUpstream } from './upstream.js';
-import { sessionApi } from './session-api.js';
+import { sessionApi, type SessionApi } from './session-api.js';
 import { RUNTIME_ARN } from '../../../tests/chat/fakes/stack.js';
-import { DynamoDBSessionMetadata, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
+import { DynamoDBSessionMetadata, SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { Hono } from 'hono';
 import { sessionLifecycle } from './session-lifecycle.js';
 import type { AgentDocuments } from './agent-documents.js';
@@ -2052,6 +2052,69 @@ describe('scheduled persistence dispatch admission', () => {
     expect(await store.get(account, 'same-occurrence', 'task')).toMatchObject(original);
     await expect(store.get(account, 'same-occurrence', 'different-task')).rejects.toThrow('Scheduled delivery identity is invalid');
   });
+
+  it.each([false, true])('holds a completed Side result while Main writers settle without fencing replacements (Claim: %s)', async (claim) => {
+    const account = owner();
+    const destination = owner();
+    const task = { id: 'busy-main-result', proposalId: 'busy-main-result', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
+    const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
+    const cartridge: ChatServiceCartridge = {
+      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined, browserEventName: 'test:browser', routes: new Hono(),
+      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+    };
+    const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
+    const post = vi.fn<SessionApi>(async () => ({}));
+    const deps = {
+      turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
+      cartridge, sessionMetadata: stack.sessionMetadata,
+      agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
+      scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined },
+      upstream: sessionLifecycle({ label: 'AgentCore', invoke }), invokeSessionApi: post,
+    };
+    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
+    const active = await stack.sessionMetadata.beginDispatch(account, main);
+    const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
+    let observeBusy!: () => void;
+    let rejectBusy!: (error: unknown) => void;
+    const busy = new Promise<void>((resolve, reject) => { observeBusy = resolve; rejectBusy = reject; });
+    const dispatch = stack.sessionMetadata.beginDispatch.bind(stack.sessionMetadata);
+    vi.spyOn(stack.sessionMetadata, 'beginDispatch').mockImplementation(async (...args) => {
+      try { return await dispatch(...args); }
+      catch (error) {
+        if (args[4] === 'session-post' && error instanceof SessionBusyError) observeBusy();
+        throw error;
+      }
+    });
+    const run = runScheduledTask(deps, message);
+    void run.catch(rejectBusy);
+    let replacement: Awaited<ReturnType<SessionMetadata['beginDispatch']>> | undefined;
+    try {
+      await busy;
+      const store = defined(stack.sessionMetadata.scheduledRuns, 'delivery store');
+      expect(await store.get(account, message.deliveryId, task.id)).toMatchObject({ phase: 'admitted' });
+      expect(invoke).toHaveBeenCalledOnce();
+      expect(post).not.toHaveBeenCalled();
+      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'New Main question', messageId: 'replacement-main' });
+      replacement = await stack.sessionMetadata.beginDispatch(account, main);
+      if (claim) await stack.history.transfer(account, destination);
+      await active();
+      await replacement();
+      await run;
+      expect(invoke).toHaveBeenCalledOnce();
+      expect(post).toHaveBeenCalledOnce();
+      expect(post.mock.calls[0]?.[0]).toMatchObject({ userId: `filed-${account}`, scheduledRun: { text: 'Saved answer' } });
+      expect(deps.scheduledTasks.recordRun).toHaveBeenCalledWith(claim ? destination : account, task.id, { at: expect.any(String), status: 'done' });
+      expect(await store.get(account, message.deliveryId, task.id)).toMatchObject({ phase: 'completed' });
+    } finally {
+      await Promise.all([active(), replacement?.()]);
+      await run;
+    }
+  });
+
 
   it.each(['ack failure', 'success proof failure', 'uncertain post', 'failed run', 'settled failed retry', 'before preparation', 'running Main', 'paused reservation', 'after admission', 'Claim before admission'] as const)('recovers an accepted scheduled post on replacement without another Side Chat or Main result: %s', async (failure) => {
     const account = owner();
