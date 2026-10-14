@@ -80,6 +80,11 @@ export async function startProcess(options: StartOptions): Promise<RunningProces
     // eslint-disable-next-line no-await-in-loop -- polls until the process answers or the deadline passes
     if (output.includes(options.listening) && (await answers(options.url))) break;
     if (Date.now() > deadline) {
+      // A process that printed nothing still says where it waits: Python under PYTHONFAULTHANDLER prints every
+      // thread's stack on SIGABRT (#4020).
+      process.kill(-required(child.pid, 'process group id'), 'SIGABRT');
+      // eslint-disable-next-line no-await-in-loop -- polls until the process answers or the deadline passes
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5_000))]);
       // eslint-disable-next-line no-await-in-loop -- polls until the process answers or the deadline passes
       await stop();
       throw new Error(`\`${options.command}\` did not print "${options.listening}" and answer ${options.url} within ${readyTimeoutMs}ms:\n${output}`);

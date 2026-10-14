@@ -2277,11 +2277,10 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     session_reads = sorted(read for read in before_model if read[1] in ('lgw-', 'thre'))
     assert session_reads == [('list_events', 'lgw-', True), ('list_events', 'thre', False)]
     # Three reads of the Session, three ListEvents each, took nine round trips. Count the round trips the
-    # model waited for one after another, not the wall time, which a busy CI host stretches: the Turn
-    # identity's exchange for credentials, then every Memory read at once.
+    # model waited for one after another, not the wall time, which a busy CI host stretches: every Memory
+    # read at once, under the Session's credentials, with no exchange for new ones (ADR 0067 §8).
     waited, depth = _waited_for(agentcore_memory, reached[-1])
-    assert (waited[0], sorted(waited[1:]), depth) == (
-        'assume_role_with_web_identity', ['list_events'] * 8 + ['list_memory_records'] * 2, 2)
+    assert (sorted(waited), depth) == (['list_events'] * 8 + ['list_memory_records'] * 2, 1)
 
 
 def test_on_agentcore_a_new_sessions_turn_reaches_its_model_after_two_serial_round_trips_issue_4012(

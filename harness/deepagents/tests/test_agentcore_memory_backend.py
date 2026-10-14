@@ -144,40 +144,56 @@ def microvm(monkeypatch: pytest.MonkeyPatch) -> FakeSts:
     return sts
 
 
-def test_each_turn_signs_the_microvms_one_memory_client_with_its_own_credentials(microvm: FakeSts) -> None:
+def _signed_keys(store: Any) -> list[str]:
+    """The access keys the store's Memory client signs each later request with."""
     signed: list[str] = []
 
     def answer(request: Any, **_: Any) -> Any:
         signed.append(request.headers['Authorization'].decode().split('Credential=')[1].split('/')[0])
         return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"memoryRecordSummaries": []}'))
 
-    clients = []
-    for run in ('run-1', 'run-2'):
+    store.client.meta.events.register('before-send.bedrock-agentcore', answer)
+    return signed
+
+
+def test_a_continuing_turn_reuses_the_sessions_credentials_and_calls_no_sts(microvm: FakeSts) -> None:
+    clients, signed = [], None
+    for run in ('run-1', 'run-2', 'run-3'):
+        # The Chat Service signs a new JWT for each Turn, with the same tags.
         saver, store = agentcore.turn_memory(MEMORY_ID, turn_identity(), region_name='us-west-2', run_id=run, turn=agentcore.next_turn())
-        if not clients:
-            store.client.meta.events.register('before-send.bedrock-agentcore', answer)
+        signed = signed if signed is not None else _signed_keys(store)
         store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actor/user-1/facts')
         clients.append((saver.checkpoint_event_client.client._client, store.client))
 
-    assert signed == list(microvm.issued)
-    assert len(signed) == 2
-    assert all(client is clients[0][1] for client in (*clients[0], *clients[1]))
+    assert len(microvm.calls) == 1
+    assert signed == list(microvm.issued) * 3
+    assert all(client is clients[0][1] for pair in clients for client in pair)
+
+
+def test_a_turn_exchanges_its_jwt_when_the_held_credentials_expire_within_five_minutes(microvm: FakeSts) -> None:
+    # The fake issues credentials that expire with the JWT.
+    agentcore.turn_memory(MEMORY_ID, turn_identity(expires_in=299), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+    _, store = agentcore.turn_memory(MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+    signed = _signed_keys(store)
+    store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actor/user-1/facts')
+    agentcore.turn_memory(MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-3', turn=agentcore.next_turn())
+
+    assert len(microvm.calls) == 2
+    assert signed == [list(microvm.issued)[1]]
 
 
 def test_account_claim_keeps_the_microvms_memory_client_for_the_new_actor(microvm: FakeSts) -> None:
     _, before = agentcore.turn_memory(MEMORY_ID, turn_identity('guest-1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
     _, after = agentcore.turn_memory(MEMORY_ID, turn_identity('user-1', filing='guest-1'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+    signed = _signed_keys(after)
+    after.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/user-1/facts/')
 
     assert after.client is before.client
+    # The new actor's tags differ, so its JWT is exchanged and the client signs with its credentials.
+    assert [microvm.issued[key]['actorId'] for key in signed] == ['user-1']
 
 
 def test_a_turn_whose_sts_exchange_finishes_last_keeps_the_newer_turns_credentials(microvm: FakeSts, monkeypatch: pytest.MonkeyPatch) -> None:
-    signed: list[str] = []
-
-    def answer(request: Any, **_: Any) -> Any:
-        signed.append(request.headers['Authorization'].decode().split('Credential=')[1].split('/')[0])
-        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"memoryRecordSummaries": []}'))
-
     exchanging, exchanged = threading.Event(), threading.Event()
     issue = microvm.assume_role_with_web_identity
 
@@ -197,10 +213,37 @@ def test_a_turn_whose_sts_exchange_finishes_last_keeps_the_newer_turns_credentia
     _, store = agentcore.turn_memory(MEMORY_ID, turn_identity('user-1', filing='guest-1'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
     exchanged.set()
     guest.join(5)
-    store.client.meta.events.register('before-send.bedrock-agentcore', answer)
+    signed = _signed_keys(store)
     store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/user-1/facts/')
 
     assert [microvm.issued[key]['actorId'] for key in signed] == ['user-1']
+
+
+def test_an_older_turns_exchange_finishing_last_keeps_the_credentials_a_newer_turn_reused(microvm: FakeSts, monkeypatch: pytest.MonkeyPatch) -> None:
+    exchanging, exchanged = threading.Event(), threading.Event()
+    issue = microvm.assume_role_with_web_identity
+
+    def exchange(**params: Any) -> dict[str, Any]:
+        if threading.current_thread().name == 'claim-turn':
+            exchanging.set()
+            exchanged.wait(5)
+        return issue(**params)
+
+    agentcore.turn_memory(MEMORY_ID, turn_identity('guest-1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+    monkeypatch.setattr(microvm, 'assume_role_with_web_identity', exchange)
+    claim = threading.Thread(
+        target=agentcore.turn_memory, args=(MEMORY_ID, turn_identity('user-1', filing='guest-1')),
+        kwargs={'region_name': 'us-west-2', 'run_id': 'run-2', 'turn': agentcore.next_turn()}, name='claim-turn')
+    claim.start()
+    assert exchanging.wait(5)
+    # A newer guest Turn reuses the held credentials while the older Turn's exchange is still running.
+    _, store = agentcore.turn_memory(MEMORY_ID, turn_identity('guest-1'), region_name='us-west-2', run_id='run-3', turn=agentcore.next_turn())
+    exchanged.set()
+    claim.join(5)
+    signed = _signed_keys(store)
+    store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/guest-1/facts/')
+
+    assert [microvm.issued[key]['actorId'] for key in signed] == ['guest-1']
 
 
 @pytest.mark.parametrize('identity', [turn_identity(session='thread-2'), turn_identity('user-2')])

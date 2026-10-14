@@ -1,11 +1,12 @@
-"""AgentCore Memory under each Turn's own credentials (ADR 0067 §8).
+"""AgentCore Memory under the Session's credentials (ADR 0067 §8).
 
 The Chat Service signs a per-Turn JWT tagged with the Turn's actor, the Session's filing
 actor and the Session. STS ``AssumeRoleWithWebIdentity`` turns it into credentials of the
-Memory role, whose policy reads those tags. The microVM's one ``bedrock-agentcore`` client
-signs with the newest Turn's credentials and serves its checkpointer, store, ``memory`` tool,
-Pending Memory and turn feed, so Turns reuse its open connections. The Agent Service's own
-role holds no Memory permission.
+Memory role, whose policy reads those tags. A Turn whose JWT carries the tags of credentials
+already held, more than 5 minutes from expiry, reuses them and calls no STS. The microVM's one
+``bedrock-agentcore`` client signs with the newest credentials and serves its checkpointer,
+store, ``memory`` tool, Pending Memory and turn feed, so Turns reuse its open connections. The
+Agent Service's own role holds no Memory permission.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import json
 import os
 import re
 import threading
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import boto3
@@ -50,6 +52,8 @@ _MEMORY_OPERATIONS = frozenset(botocore.session.get_session().get_service_model(
 _TAGS_CLAIM = 'https://aws.amazon.com/tags'
 # Live, a Turn's opening Memory read, history read and turn feed overlapped 12 calls.
 _MEMORY_CONNECTIONS = 16
+# A Turn exchanges its JWT again when the credentials held for its tags expire within this.
+_REUSE_MARGIN = timedelta(minutes=5)
 
 
 class TurnIdentityError(RuntimeError):
@@ -85,13 +89,25 @@ def build_store(memory_id: str, *, region_name: str) -> AgentCoreMemoryStore:
 class _TurnCredentials(Credentials):
     """The newest Turn's credentials, which the signer reads for each request, for one Session sandbox."""
 
-    def __init__(self, sandbox: tuple[str, str], credentials: Credentials, turn: int) -> None:
+    def __init__(self, tags: dict[str, list[str]], issued: tuple[Credentials, datetime], turn: int) -> None:
+        credentials, expiration = issued
         super().__init__(credentials.access_key, credentials.secret_key, credentials.token, method='turn-identity')
-        self.sandbox = sandbox
+        self.sandbox = _sandbox(tags)
         self._turn = turn
         self._frozen = credentials.get_frozen_credentials()
+        self._scope = tags, expiration
 
-    def take(self, sandbox: tuple[str, str], credentials: Credentials, turn: int) -> None:
+    def reuse(self, tags: dict[str, list[str]], turn: int) -> bool:
+        """Whether these credentials carry the JWT's tags and outlive the reuse margin. When they do, the Turn
+        joins the newest-Turn ordering, so an older Turn's exchange finishing later keeps them."""
+        held, expiration = self._scope
+        if held != tags or expiration - datetime.now(UTC) <= _REUSE_MARGIN:
+            return False
+        self._turn = max(self._turn, turn)
+        return True
+
+    def take(self, tags: dict[str, list[str]], issued: tuple[Credentials, datetime], turn: int) -> None:
+        sandbox = _sandbox(tags)
         if sandbox != self.sandbox:
             raise MemorySandboxError(
                 f'The Turn identity names Session {sandbox[1]} filed by {sandbox[0]}, '
@@ -100,9 +116,11 @@ class _TurnCredentials(Credentials):
         # An older Turn whose STS exchange finished last keeps the newer Turn's credentials (ADR 0067 §8).
         if turn < self._turn:
             return
+        credentials, expiration = issued
         self._turn = turn
-        # One assignment, so a request signing meanwhile never mixes two Turns' keys.
+        # One assignment each, so a request signing or a Turn checking reuse meanwhile never mixes two exchanges.
         self._frozen = credentials.get_frozen_credentials()
+        self._scope = tags, expiration
         self.access_key, self.secret_key, self.token = credentials.access_key, credentials.secret_key, credentials.token
 
     def get_frozen_credentials(self) -> ReadOnlyCredentials:
@@ -143,36 +161,46 @@ def next_turn() -> int:
 def turn_memory(
     memory_id: str, turn_identity: str, *, region_name: str, run_id: str, turn: int,
 ) -> tuple[WarmSessionSaver, AgentCoreMemoryStore]:
-    """The Turn's checkpointer and store, on the microVM's Memory client, now signing with the Turn's credentials.
+    """The Turn's checkpointer and store, on the microVM's Memory client, signing with credentials for the Turn's tags.
 
-    A microVM serves one Session sandbox, which Account Claim keeps while the actor changes, so a Turn
-    for another sandbox fails. The checkpointer keeps the Session warm in this process: a continuing
-    Session's latest snapshot loads from Memory only when another process wrote it since.
+    A continuing Turn reuses the credentials held for its JWT's tags; any other Turn exchanges its JWT
+    (ADR 0067 §8). A microVM serves one Session sandbox, which Account Claim keeps while the actor
+    changes, so a Turn for another sandbox fails. The checkpointer keeps the Session warm in this
+    process: a continuing Session's latest snapshot loads from Memory only when another process wrote it since.
     """
     global _MEMORY
-    credentials = _turn_credentials(turn_identity, region_name=region_name, run_id=run_id)
-    sandbox = _sandbox(turn_identity)
+    tags = _tags(turn_identity)
+    # The check and the ordering are one step, or an older exchange could slip in between them.
     with _MEMORY_LOCK:
-        if _MEMORY is None:
-            store = build_store(memory_id, region_name=region_name)
-            signing = _TurnCredentials(sandbox, credentials, turn)
-            # The store's own client keeps its configuration but not its credentials, which are the runtime's.
-            store.client = _memory_client(signing, store.client)
-            _MEMORY = signing, store
-        else:
-            _MEMORY[0].take(sandbox, credentials, turn)
-        store = _MEMORY[1]
+        held = _MEMORY if _MEMORY is not None and _MEMORY[0].reuse(tags, turn) else None
+    if held is None:
+        issued = _turn_credentials(turn_identity, region_name=region_name, run_id=run_id)
+        with _MEMORY_LOCK:
+            if _MEMORY is None:
+                store = build_store(memory_id, region_name=region_name)
+                signing = _TurnCredentials(tags, issued, turn)
+                # The store's own client keeps its configuration but not its credentials, which are the runtime's.
+                store.client = _memory_client(signing, store.client)
+                _MEMORY = signing, store
+            else:
+                _MEMORY[0].take(tags, issued, turn)
+            held = _MEMORY
+    store = held[1]
     return WarmSessionSaver(memory_id, store.client, region_name=region_name), store
 
 
-def _sandbox(turn_identity: str) -> tuple[str, str]:
-    """The filing actor and Session the Turn's JWT tags; STS has already checked its signature."""
+def _tags(turn_identity: str) -> dict[str, list[str]]:
+    """The session tags the Turn's JWT carries, which STS checks on each exchange."""
     claims = turn_identity.split('.')[1]
-    tags = json.loads(base64.urlsafe_b64decode(claims + '=' * (-len(claims) % 4)))[_TAGS_CLAIM]['principal_tags']
+    return json.loads(base64.urlsafe_b64decode(claims + '=' * (-len(claims) % 4)))[_TAGS_CLAIM]['principal_tags']
+
+
+def _sandbox(tags: dict[str, list[str]]) -> tuple[str, str]:
+    """The filing actor and Session the tags name."""
     return tags['filingActorId'][0], tags['sessionId'][0]
 
 
-def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> Credentials:
+def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> tuple[Credentials, datetime]:
     if not USER_MEMORY_ROLE_ARN:
         raise RuntimeError('AgentCore Memory needs BOTCUBE_USER_MEMORY_ROLE_ARN, the role the Turn identity assumes')
     # AssumeRoleWithWebIdentity is an unsigned call: the JWT is the only credential it takes.
@@ -189,7 +217,8 @@ def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> C
         if code in _REFUSED_IDENTITY:
             raise TurnIdentityError(f"STS refused the Turn identity: {code}: {details.get('Message', '')}") from error
         raise
-    return Credentials(credentials['AccessKeyId'], credentials['SecretAccessKey'], credentials['SessionToken'])
+    return (Credentials(credentials['AccessKeyId'], credentials['SecretAccessKey'], credentials['SessionToken']),
+            credentials['Expiration'])
 
 
 def _role_session_name(run_id: str) -> str:
