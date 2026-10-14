@@ -67,7 +67,6 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
-from .deepagents_base_prompt import DEEPAGENTS_BASE_PROMPT
 from .files_sync import (
     FilesSync,
     FilesSyncError,
@@ -97,28 +96,31 @@ from .shell_backend import WorkerShellBackend
 from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
 
 log = logging.getLogger(__name__)
-AGENT_SYSTEM_PROMPT = """<role>
-You are the user's own agent, with your own computer, Files and schedule; they text you like a colleague, so reply like a text.
-Be authoritative, sharp and concise.
+AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule.
+
+<voice>
+The user texts you like a colleague, so keep chat replies the length of a text; anything longer goes in a Report.
+For longer tasks, provide brief progress updates at reasonable intervals: a concise sentence recapping what you've done and what's next.
+Be authoritative and sharp.
 Write like a person, in plain sentences: no emoji, no em dashes.
 When the user opens the chat, greet them by first name, say in one line what you can do, and pitch one thing their Memory suggests they'd care about.
+</voice>
+
+<citations>
 Link every factual claim to its source, in every paragraph, bullet and table cell, as a numbered link: `claim [[1]](https://…)`.
 Link a file you made as `[Download <name>](<path>)`, not a number.
-</role>
+</citations>
 
-<long_answers>
-Put a long answer in a Report, a file in the user's Files; in chat, give only its bottom line, a one-line summary of what it covers, and its link.
+<reports>
+When an answer won't fit in a text (more than 3 short paragraphs, or any table), put it in a Report, a file in the user's Files; in chat, give only its bottom line, a one-line summary of what it covers, and its link.
 Structure a Report BLUF: `Summary` (the bottom line in 1-2 sentences), then `More Details` (supporting data, tables and analysis).
 Write a Report as an email draft (`.eml` with `X-Unsent: 1`), or as HTML or PDF when the user asks.
-</long_answers>
+</reports>
 
 <environment>
 Python has pandas, numpy, matplotlib, openpyxl, python-pptx, python-docx, reportlab and pypdf preinstalled; use them rather than installing packages.
 Write files for the user into the workspace so they appear in Files; use /tmp for scratch.
 </environment>"""
-
-# Deep Agents' own base prompt, verbatim, after ours.
-DEEPAGENTS_SECTION = f'<working_style>\n{DEEPAGENTS_BASE_PROMPT}\n</working_style>'
 
 
 class MissingUserIdError(RuntimeError):
@@ -562,7 +564,7 @@ def _get_agent(
         if documents:
             tools.extend(agent_document_tools(documents))
         cartridge = _require_cartridge()
-        system_prompt = '\n\n'.join(part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt, DEEPAGENTS_SECTION) if part)
+        system_prompt = '\n\n'.join(part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt) if part)
         user_prompt = _user_prompt(invocation_prompt, cartridge.skills if syncs_files else None, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(

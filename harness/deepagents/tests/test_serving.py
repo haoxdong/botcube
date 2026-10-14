@@ -1925,8 +1925,8 @@ def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
     service.turn('hello', files=_files(), **DOCUMENTS)
 
     prompt = service.recorder.prompts[0]
-    assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n' + serving.DEEPAGENTS_SECTION + '\n\n')
-    blocks = ['<role>', '<long_answers>', '<environment>', 'Cartridge instructions.', '<working_style>', '<todos>', '<skills>', '<files>', '<agent_identity>']
+    assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n')
+    blocks = ["You are the user's own agent", '<voice>', '<citations>', '<reports>', '<environment>', 'Cartridge instructions.', '<todos>', '<skills>', '<files>', '<agent_identity>']
     assert [prompt.index(block) for block in blocks] == sorted(prompt.index(block) for block in blocks)
     assert '<agent_identity>\nName: Ada Bot' in prompt
     assert '<soul>\nBe candid. Say what you do not know.' in prompt
@@ -3213,9 +3213,3 @@ def test_a_recorded_warmup_with_local_memory_prepares(service: _Service) -> None
 
     assert events[-1]['value']['outcome'] == 'prepared'
 
-
-def test_deepagents_base_prompt_stays_verbatim() -> None:
-    """Deep Agents' 0.6.12 base prompt, word for word."""
-    import hashlib
-
-    assert hashlib.sha256(serving.DEEPAGENTS_BASE_PROMPT.encode()).hexdigest() == '4d2b8c7783fe99dadca5bf2c15cdd0311acb6f8064303675eecb82591c5b3a32'
