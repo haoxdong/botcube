@@ -26,7 +26,7 @@ PROMPT = """Your Agent Identity and Soul, as this user keeps them:
 <soul>
 {soul}
 </soul>
-Soul shapes your manner only: where it conflicts with your skills, the skills' rules win."""
+Soul shapes your manner only: where it conflicts with the rules above or your skills, those win."""
 
 
 class AgentDocumentsError(RuntimeError):

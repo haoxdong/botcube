@@ -899,7 +899,7 @@ def test_a_soul_cannot_take_away_the_cartridges_skills(service: _Service) -> Non
 
     prompt = service.recorder.prompts[0]
     assert '**grounding**' in prompt
-    assert "</soul>\nSoul shapes your manner only: where it conflicts with your skills, the skills' rules win." in prompt
+    assert "</soul>\nSoul shapes your manner only: where it conflicts with the rules above or your skills, those win." in prompt
 
 
 # -- Rejected and failed invocations ---------------------------------------------
@@ -1926,7 +1926,10 @@ def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
 
     prompt = service.recorder.prompts[0]
     assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n')
-    blocks = ["You are the user's own agent", '<voice>', '<citations>', '<reports>', '<environment>', 'Cartridge instructions.', '<todos>', '<skills>', '<files>', '<agent_identity>']
+    for tag in ('voice', 'citations', 'artifacts', 'environment', 'skills', 'files', 'agent_identity', 'soul'):
+        assert prompt.count(f'<{tag}>') == prompt.count(f'</{tag}>') == 1
+        assert prompt.index(f'<{tag}>') < prompt.index(f'</{tag}>')
+    blocks = ["You are the user's own agent", '<voice>', '<citations>', '<artifacts>', '<environment>', 'Cartridge instructions.', '<skills>', '<files>', '<agent_identity>']
     assert [prompt.index(block) for block in blocks] == sorted(prompt.index(block) for block in blocks)
     assert '<agent_identity>\nName: Ada Bot' in prompt
     assert '<soul>\nBe candid. Say what you do not know.' in prompt

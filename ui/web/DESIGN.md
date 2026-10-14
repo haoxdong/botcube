@@ -120,8 +120,9 @@ from `botcube-ui-web/ui`.
   and saved as written), then the one row it needs: Interval's Every, minutes only, a bare count then "minutes" in
   `text-muted` with no unit control; Time; Day over Time; or Once's date and time. More,
   shut by default, holds Starts, Ends and Model (Model alone for Once). A task's sheet is laid out the same: that card
-  read-only, then More, shut, over Next run, Ends and Last run. Cancel and Save end the form at the right,
-  pills 12px apart and at least 36px tall (44px on a phone).
+  read-only, then a card of Next run and Last run, Last run's status before its time, then More, shut, over Edit's
+  rows; each time carries its zone. Cancel and Save end the form at the right, pills 12px apart and at least 36px tall
+  (44px on a phone).
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The
   disclaimer (`.chat-disclaimer`) sits under it: `meta` in `text-muted` on a desktop, CopilotKit's own small grey line

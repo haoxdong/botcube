@@ -5964,7 +5964,7 @@ describe('agent profile', () => {
     fetchMock.mock.calls
       .filter(([url, init]) => url === `http://chat.test${path}` && init?.method === method)
       .map(([, init]) => JSON.parse((init as RequestInit).body as string) as unknown);
-  /** Opens More, unless it is: the Edit form's, over Starts, Ends and the model, or the sheet's, over Next run, Ends and Last run. */
+  /** Opens More, unless it is: the Edit form's or the sheet's, over Starts, Ends and the model. */
   const more = async (inSheet: ReturnType<typeof within>) => {
     const button = inSheet.getByRole('button', { name: 'More' });
     if (button.getAttribute('aria-expanded') !== 'true') await userEvent.click(button);
@@ -6064,8 +6064,7 @@ describe('agent profile', () => {
     expect(within(present(ended, 'the ended task')).queryByText('Paused')).toBeNull();
     expect(within(present(later, 'the later task')).queryByText('Ended')).toBeNull();
     const sheet = await openTask(present(ended, 'the ended task'));
-    // Its Next run reads Ended, over Paused, and nothing else says so again.
-    await more(within(sheet));
+    // Its Next run, out of More, reads Ended, over Paused, and nothing else says so again.
     expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
     expect(within(sheet).getAllByText(/Ended/)).toHaveLength(1);
     expect(within(sheet).queryByText('Paused')).toBeNull();
@@ -6074,7 +6073,7 @@ describe('agent profile', () => {
     await closeTask(sheet);
 
     const open = await openTask(present(later, 'the later task'));
-    expect(await detail(open, 'Ends')).toBe('Thu, Dec 31, 5:00 PM');
+    expect(await detail(open, 'Ends')).toBe('Thu, Dec 31, 5:00 PM ET');
     expect(within(open).getByRole('button', { name: 'Pause' })).toBeEnabled();
   });
 
@@ -6096,10 +6095,9 @@ describe('agent profile', () => {
 
     expect(within(task).getByText('Ended')).toHaveClass('status-pill');
     const sheet = await openTask(task);
-    await more(within(sheet));
     expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
     // Its stop time reads as a time; Next run alone says Ended.
-    expect(await detail(sheet, 'Ends')).toBe('Thu, Dec 31, 5:00 PM');
+    expect(await detail(sheet, 'Ends')).toBe('Thu, Dec 31, 5:00 PM ET');
     expect(within(sheet).getAllByText(/Ended/)).toHaveLength(1);
     expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
   });
@@ -6122,12 +6120,19 @@ describe('agent profile', () => {
     const sheet = await openTask(await openScheduled());
     const inSheet = within(sheet);
 
-    // It hasn't run yet, so its next run is its first.
+    // It hasn't run yet, so its next run is its first; Next run stays out of More, which holds Edit's rows (#4041).
+    expect(shown(sheet)).toEqual([
+      ['Repeat', 'Interval'],
+      ['Every', '1 minute'],
+      ['Next run', 'Tue, Oct 6, 3:02 PM ET'],
+    ]);
     expect(await details(sheet)).toEqual([
       ['Repeat', 'Interval'],
       ['Every', '1 minute'],
-      ['Next run', 'Tue, Oct 6, 3:02 PM'],
-      ['Ends', 'Tue, Oct 6, 3:04 PM'],
+      ['Next run', 'Tue, Oct 6, 3:02 PM ET'],
+      ['Starts', 'Tue, Oct 6, 3:02 PM ET'],
+      ['Ends', 'Tue, Oct 6, 3:04 PM ET'],
+      ['Model', 'Deep'],
     ]);
     expect(sheet).not.toHaveTextContent(/\bN\b/);
 
@@ -6160,7 +6165,7 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([{ title: `${COUNTED.title} (US)`, prompt: 'Brief me on rates' }]);
     expect(sheet).toHaveAccessibleName(`${COUNTED.title} (US)`);
-    expect(await detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM');
+    expect(await detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM ET');
   });
 
   it("counts a paused task's last run on from its start (#3960)", async () => {
@@ -6170,7 +6175,7 @@ describe('agent profile', () => {
     await renderPage();
     const sheet = await openTask(await openScheduled());
 
-    expect(await detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM');
+    expect(await detail(sheet, 'Ends')).toBe('Tue, Oct 6, 3:04 PM ET');
   });
 
   it('counts the last run on from the runs a task has made, from its next run once Starts has passed (#3960)', async () => {
@@ -6183,8 +6188,10 @@ describe('agent profile', () => {
     expect(await details(sheet)).toEqual([
       ['Repeat', 'Interval'],
       ['Every', '1 minute'],
-      ['Next run', 'Tue, Oct 6, 3:03 PM'],
-      ['Ends', 'Tue, Oct 6, 3:04 PM'],
+      ['Next run', 'Tue, Oct 6, 3:03 PM ET'],
+      ['Starts', 'Tue, Oct 6, 3:02 PM ET'],
+      ['Ends', 'Tue, Oct 6, 3:04 PM ET'],
+      ['Model', 'Deep'],
     ]);
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Edit' }));
@@ -6238,7 +6245,7 @@ describe('agent profile', () => {
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([
       { title: COUNTED.title, prompt: 'Brief me on rates', startDate: '2026-10-07T13:30:00.000Z' },
     ]);
-    expect(await detail(sheet, 'Ends')).toBe('Wed, Oct 7, 9:32 AM');
+    expect(await detail(sheet, 'Ends')).toBe('Wed, Oct 7, 9:32 AM ET');
   });
 
   // A rate counts its ticks from its start, else from its creation: a new schedule starts at the Starts the form showed.
@@ -6295,7 +6302,7 @@ describe('agent profile', () => {
     await userEvent.type(inSheet.getByLabelText('End date'), '2099-06-30T18:00');
     expect(inSheet.getByLabelText('Ends')).toHaveDisplayValue('Tue, Jun 30, 6:00 PM ET');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
-    expect(await detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM');
+    expect(await detail(sheet, 'Ends')).toBe('Tue, Jun 30, 6:00 PM ET');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
@@ -6330,6 +6337,23 @@ describe('agent profile', () => {
     const sheet = await openTask(await openScheduled());
 
     expect(within(sheet).queryAllByRole('button', { name: 'Open chat' })).toHaveLength(sideChat ? 1 : 0);
+    // Its last run, with how it ended, is out of More, in a card of its own under Repeat's (#4041).
+    expect(shown(sheet)).toEqual([
+      ['Repeat', 'Weekdays'],
+      ['Time', '8:00 AM ET'],
+      ['Last run', `${lastRun.status === 'done' ? 'Done' : 'Failed'}Fri, Oct 9, 8:00 AM ET`],
+    ]);
+    expect(sheet.querySelectorAll('dl.settings-group')).toHaveLength(2);
+  });
+
+  it("holds Edit's More rows under the sheet's More: Model alone for a one-off, with no card for a next run it lacks (#4041)", async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, schedule: 'at(2099-10-14T08:30:00)' }];
+    await renderPage();
+    const sheet = await openTask(await openScheduled());
+
+    expect(shown(sheet)).toEqual([['Repeat', 'Once'], ['Time', 'Wed, Oct 14, 8:30 AM ET']]);
+    expect(sheet.querySelectorAll('dl.settings-group')).toHaveLength(1);
+    expect(await details(sheet)).toEqual([['Repeat', 'Once'], ['Time', 'Wed, Oct 14, 8:30 AM ET'], ['Model', 'Deep']]);
   });
 
   it('moves a stop time, or clears it, from the Edit form', async () => {
@@ -6774,7 +6798,10 @@ describe('agent profile', () => {
     service.models = [{ key: 'plan', label: 'GPT', provider: 'openai' }];
     service.scheduled = [{ ...MORNING_BRIEF, model: 'retired' }];
     await renderPage();
-    const inSheet = within(await openTask(await openScheduled()));
+    const sheet = await openTask(await openScheduled());
+    const inSheet = within(sheet);
+    // The sheet reads the model as Edit's Model shows it (#4041).
+    expect(await detail(sheet, 'Model')).toBe('retired (unavailable)');
 
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
@@ -6796,10 +6823,14 @@ describe('agent profile', () => {
     // The open sheet covers the tab, so it says why the models failed itself.
     expect(inSheet.getByText('Failed to load the models: 503')).toBeInTheDocument();
     expect(inSheet.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    // The sheet's Model reads as Edit's does (#4041).
+    const words = `${model ?? 'Account default'} (models unavailable)`;
+    expect(await detail(sheet, 'Model')).toBe(words);
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     await more(inSheet);
     expect(inSheet.getByLabelText('Model')).toBeDisabled();
     expect(inSheet.getByLabelText('Model')).toHaveValue(model ?? '');
+    expect(inSheet.getByLabelText('Model')).toHaveDisplayValue(words);
     await userEvent.clear(inSheet.getByLabelText('Prompt'));
     await userEvent.type(inSheet.getByLabelText('Prompt'), 'Brief me on FX');
     await userEvent.click(inSheet.getByRole('button', { name: 'Save' }));
@@ -6898,6 +6929,18 @@ describe('agent profile', () => {
     await userEvent.click(inSheet.getByRole('button', { name: 'Edit' }));
     expect(inSheet.queryByLabelText('Prompt')).toBeNull();
     expect(sent('PATCH', '/scheduled-tasks/task-1')).toEqual([]);
+  });
+
+  it('reads the sheet\'s Model as loading, not unavailable, until the models load', async () => {
+    service.scheduled = [{ ...MORNING_BRIEF, model: 'sonnet' }];
+    await renderPage();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test/agent/models' ? new Promise<Response>(() => {}) : chatService(url, init),
+    );
+
+    const sheet = await openTask(await openScheduled());
+
+    expect(await detail(sheet, 'Model')).toBe('Loading…');
   });
 
   it('asks before deleting a scheduled task, and keeps it on Cancel', async () => {

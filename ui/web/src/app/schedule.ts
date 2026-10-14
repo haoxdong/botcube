@@ -251,10 +251,12 @@ export function zoneName(timezone: string, at: number): string {
   return generic.length <= 4 ? generic : name("short");
 }
 
-/** An instant as a task's sheet says its runs, in its time zone: Mon, Oct 12, 3:02 PM. */
+/** An instant in its time zone, as a task's sheet and the Edit form's rows say it: Mon, Oct 12, 3:02 PM ET. */
 export function dayTime(instant: string | number, timezone: string): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-    .format(new Date(instant));
+  const at = new Date(instant).getTime();
+  const words = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    .format(at);
+  return `${words} ${zoneName(timezone, at)}`;
 }
 
 /** How a task stops: never, at an instant, or after a count of runs, the last of them at an instant where known. */
@@ -282,8 +284,7 @@ function dateTime(at: number, timezone: string, now: number): string {
  * that isn't one throws, saying so.
  */
 export function wallWords(wall: string, timezone: string): string {
-  const at = Date.parse(stopInstant(wall, timezone));
-  return `${dayTime(at, timezone)} ${zoneName(timezone, at)}`;
+  return dayTime(Date.parse(stopInstant(wall, timezone)), timezone);
 }
 
 /**

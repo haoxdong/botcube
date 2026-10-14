@@ -123,8 +123,8 @@ describe('repeatsWords', () => {
 });
 
 describe('dayTime', () => {
-  it('says an instant as its day, date and time in a time zone', () => {
-    expect(dayTime('2026-10-12T19:02:00Z', NY)).toBe('Mon, Oct 12, 3:02 PM');
+  it('says an instant as its day, date and time in a time zone, with the zone', () => {
+    expect(dayTime('2026-10-12T19:02:00Z', NY)).toBe('Mon, Oct 12, 3:02 PM ET');
   });
 });
 

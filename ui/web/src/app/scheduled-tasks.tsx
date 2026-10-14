@@ -125,18 +125,6 @@ function countedEnding(task: ScheduledTask, count: number, cadence: Cadence | nu
   return afterRuns(count, task.runsMade ?? 0, cadence, first, timezone);
 }
 
-/** How a task ends, in its sheet: Never, or its stop time; a counted task's last run, or its count where its schedule can't say that. */
-function endsWords(task: ScheduledTask, cadence: Cadence | null): string {
-  if (task.maxRuns != null) {
-    const { last } = countedEnding(task, task.maxRuns, cadence, task.startDate === undefined ? undefined : Date.parse(task.startDate), task.timezone);
-    const stop = task.endDate === undefined ? undefined : Date.parse(task.endDate);
-    if (last !== undefined) return dayTime(stop === undefined ? last : Math.min(last, stop), task.timezone);
-    const count = `After ${task.maxRuns} ${unitOf("run", task.maxRuns)}`;
-    return stop === undefined ? count : `${count} or ${dayTime(stop, task.timezone)}, whichever comes first`;
-  }
-  return task.endDate ? dayTime(task.endDate, task.timezone) : "Never";
-}
-
 /**
  * A proposal's schedule in one line, as its task would run if confirmed now: a rate first runs a period from now. A
  * count of runs reads as the last of them, as the task's sheet says it.
@@ -264,8 +252,8 @@ function Detail({ term, title, children }: { term: string; title?: string; child
   );
 }
 
-/** Next run: Ended, Paused, Unknown or its day and time; nothing while it has none yet. */
-function NextRun({ task }: { task: ScheduledTask }) {
+/** Next run: Ended, Paused, Unknown or its day and time; nothing before it has one. */
+function nextRun(task: ScheduledTask): ReactNode {
   if (task.ended) return <Detail term="Next run">Ended</Detail>;
   if (task.paused) return <Detail term="Next run">Paused</Detail>;
   // A schedule the Chat Service cannot read runs at a time it can't say: Unknown, with why on hover.
@@ -274,37 +262,60 @@ function NextRun({ task }: { task: ScheduledTask }) {
 }
 
 /**
- * What a task's sheet says of it, each time in its time zone, laid out as Edit: Repeat and the row it needs in a card,
- * as Edit opens on them; then More, shut, over a second card of its next run (its first, before it has run), when it
- * ends, and how its last run ended (spec story 73).
+ * What a task's sheet says of it, each time in its time zone, laid out as Edit opens on it, read-only: Repeat and the
+ * row it needs in a card; then a second card, which Edit has not, of its next run (its first, before it has run) and
+ * how its last run ended, where it has either; then More, shut, over Edit's More: Starts and Ends but for a one-off,
+ * then the model (spec story 73).
  */
-function TaskDetails({ task }: { task: ScheduledTask }) {
-  const cadence = fromExpression(task.schedule);
-  const once = cadence?.frequency === "once";
+function TaskDetails({ task, models, modelsFailed, runsOn }: {
+  task: ScheduledTask;
+  models: AgentModel[] | null;
+  modelsFailed: boolean;
+  runsOn: string | undefined;
+}) {
+  // The draft Edit opens on, so the sheet and Edit say one thing.
+  const model = runsOn ?? "";
+  const draft = draftOf(task, model);
+  const made = pickedSchedule(draft.repeat, draft.starts, task.timezone);
+  const ending = "why" in made ? undefined : endingOf(draft, task, made.cadence, Date.parse(made.start));
+  const next = nextRun(task);
   const last = task.lastRun;
-  const starts = startsOf(task, cadence, Date.now());
   // Shut each time the sheet opens: the sheet's body mounts anew.
   const [more, setMore] = useState(false);
   return (
     <>
       <dl className="settings-group">
-        {repeatRows(repeatOf(task.schedule, cadence, starts), starts, task.timezone).map(([term, words]) => (
+        {repeatRows(draft.repeat, draft.starts, task.timezone).map(([term, words]) => (
           <Detail key={term} term={term}>
             {words}
           </Detail>
         ))}
       </dl>
-      <More open={more} onToggle={() => setMore(!more)}>
+      {(next || last) && (
         <dl className="settings-group">
-          <NextRun task={task} />
-          {/* A stop time in the past reads as its time: Next run alone says Ended (issues #3860, #3861). */}
-          {!once && <Detail term="Ends">{endsWords(task, cadence)}</Detail>}
+          {next}
           {last && (
             <Detail term="Last run">
-              {dayTime(last.at, task.timezone)}
+              {/* The pill leads, so the time ends flush right under Next run's. */}
               <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
+              {dayTime(last.at, task.timezone)}
             </Detail>
           )}
+        </dl>
+      )}
+      <More open={more} onToggle={() => setMore(!more)}>
+        <dl className="settings-group">
+          {draft.repeat.frequency !== "once" && (
+            <>
+              <Detail term="Starts">{whenWords(draft.starts, task.timezone, false)}</Detail>
+              {/* A stop time in the past reads as its time: Next run alone says Ended (issues #3860, #3861). */}
+              <Detail term="Ends">{endsWords(draft.ends, countedWall(ending, task.timezone), task.timezone)}</Detail>
+            </>
+          )}
+          {/* Edit's select names the model while the catalog loads; the sheet says only that it loads. */}
+          <Detail term="Model">
+            {models === null && !modelsFailed ? "Loading…" : modelChoices(task, models, modelsFailed, runsOn).find(({ value }) => value === model)?.label}
+          </Detail>
         </dl>
       </More>
     </>
@@ -574,13 +585,6 @@ interface Ends {
   count: number | null;
 }
 
-/** The ending Ends picks in a time zone, a counted task's from its count of runs. */
-function pickedEnding(ends: Ends, timezone: string, counted: (count: number) => Ending): Ending {
-  if (ends.choice === "never") return { kind: "never" };
-  if (ends.count !== null) return counted(ends.count);
-  return { kind: "on", at: Date.parse(stopInstant(ends.on, timezone)) };
-}
-
 /**
  * The stop time an ending saves: null for Never, else its instant; none for a count of runs, which the task keeps, as
  * its last tick is a stop time Scheduler may not fire at.
@@ -594,6 +598,21 @@ function stopOf(ending: Ending): string | null | undefined {
     case "after":
       return undefined;
   }
+}
+
+/** The date and time (YYYY-MM-DDTHH:MM) Ends holds: a counted task's last run where its schedule says it; none for Never. */
+function endsOn(value: Ends, counted: string | undefined): string {
+  return value.choice === "on" ? (counted ?? value.on) : "";
+}
+
+/**
+ * Ends in words, as its row and a task's sheet say it: Never, or its date and time; a counted task whose last run
+ * can't be said yet ends after its count.
+ */
+function endsWords(value: Ends, counted: string | undefined, timezone: string): string {
+  const on = endsOn(value, counted);
+  if (on) return wallWords(on, timezone);
+  return value.choice === "on" && value.count !== null ? `After ${value.count} ${unitOf("run", value.count)}` : "Never";
 }
 
 /**
@@ -612,9 +631,7 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
   const picker = useRef<HTMLInputElement>(null);
   // Where the browser can't open a picker when asked (Safari before 16.4), the picker takes the row's taps instead.
   const [direct, setDirect] = useState(false);
-  const on = value.choice === "on" ? (counted ?? value.on) : "";
-  // A counted task whose last run can't be said yet ends after its count, as its sheet says.
-  const words = on ? wallWords(on, timezone) : value.choice === "on" && value.count !== null ? `After ${value.count} ${unitOf("run", value.count)}` : "Never";
+  const on = endsOn(value, counted);
   const never: Ends = { choice: "never", on: "", count: null };
   return (
     <div className={direct ? "settings-row settings-ends settings-ends-direct" : "settings-row settings-ends"}>
@@ -640,7 +657,7 @@ function EndsRow({ value, counted, timezone, disabled, onChange }: {
           }}
         >
           <option value="" hidden>
-            {words}
+            {endsWords(value, counted, timezone)}
           </option>
           <option value="never">Never</option>
           <option value="on">On a date…</option>
@@ -733,6 +750,18 @@ function editedSchedule(draft: Draft, task: ScheduledTask): { changes: TaskChang
 }
 
 /**
+ * The ending Ends picks on the cadence and first run Repeat and Starts make: a counted task's last run, no later than
+ * the date Ends holds; a one-off has nothing to end.
+ */
+function endingOf(draft: Draft, task: ScheduledTask, cadence: Cadence | null, start: number): Ending {
+  const { ends } = draft;
+  if (cadence?.frequency === "once" || ends.choice === "never") return { kind: "never" };
+  if (ends.count === null) return { kind: "on", at: Date.parse(stopInstant(ends.on, task.timezone)) };
+  const counted = countedEnding(task, ends.count, cadence, start, task.timezone);
+  return ends.on && counted.last !== undefined ? { ...counted, last: Math.min(counted.last, Date.parse(stopInstant(ends.on, task.timezone))) } : counted;
+}
+
+/**
  * What Save sends, with the ending it picks, or why it can't yet. It sends the title and prompt, and only what else
  * moved: a task keeps its expression as written, its start, its ending and the account's default model until the
  * controls pick another. A counted task keeps its count until Ends picks Never or a date, which it sends with no count;
@@ -741,11 +770,7 @@ function editedSchedule(draft: Draft, task: ScheduledTask): { changes: TaskChang
 function edited(draft: Draft, task: ScheduledTask, model: string): { changes: TaskChanges; ending: Ending } | { why: string } {
   const schedule = editedSchedule(draft, task);
   if ("why" in schedule) return schedule;
-  const { cadence, start } = schedule;
-  const ending = cadence?.frequency === "once" ? ({ kind: "never" } as const) : pickedEnding(draft.ends, task.timezone, (count) => {
-    const ending = countedEnding(task, count, cadence, start, task.timezone);
-    return draft.ends.on && ending.last !== undefined ? { ...ending, last: Math.min(ending.last, Date.parse(stopInstant(draft.ends.on, task.timezone))) } : ending;
-  });
+  const ending = endingOf(draft, task, schedule.cadence, schedule.start);
 
   const changes: TaskChanges = { title: draft.title, prompt: draft.prompt, ...schedule.changes };
   const endDate = stopOf(ending);
@@ -754,7 +779,27 @@ function edited(draft: Draft, task: ScheduledTask, model: string): { changes: Ta
   return { changes, ending };
 }
 
-/** The model a task's runs use: the account's, with the one it names marked when the account no longer has it. */
+interface ModelChoice {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+/**
+ * The models a task's runs can use, as Model offers them and a task's sheet reads them: the account's, with the one it
+ * names marked when the account no longer has it, and the task's own while the account's are unknown.
+ */
+function modelChoices(task: ScheduledTask, models: AgentModel[] | null, modelsFailed: boolean, runsOn: string | undefined): ModelChoice[] {
+  const choices: ModelChoice[] = [];
+  if (models === null || (modelsFailed && runsOn === undefined)) choices.push({ value: runsOn ?? "", label: `${task.model ?? "Account default"} (models unavailable)` });
+  // A named model the account no longer has: its runs fail, so it shows as unavailable.
+  if (task.model !== undefined && models !== null && !models.some(({ key }) => key === task.model)) {
+    choices.push({ value: task.model, label: `${task.model} (${modelsFailed ? "models unavailable" : "unavailable"})`, disabled: true });
+  }
+  return [...choices, ...(models ?? []).map(({ key, label }) => ({ value: key, label }))];
+}
+
+/** The model a task's runs use, one of its model choices. */
 function ModelRow({ task, models, modelsFailed, runsOn, value, disabled, onChange }: {
   task: ScheduledTask;
   models: AgentModel[] | null;
@@ -764,28 +809,20 @@ function ModelRow({ task, models, modelsFailed, runsOn, value, disabled, onChang
   disabled: boolean;
   onChange: (model: string) => void;
 }) {
-  // A named model the account no longer has: its runs fail, so it shows as unavailable.
-  const unavailable = task.model !== undefined && models !== null && !models.some(({ key }) => key === task.model);
   return (
     <SelectRow label="Model" value={value} disabled={disabled || models === null} onChange={onChange}>
-      {(models === null || (modelsFailed && runsOn === undefined)) && <option value={runsOn ?? ""}>{task.model ?? "Account default"} (models unavailable)</option>}
-      {unavailable && (
-        <option value={task.model} disabled>
-          {task.model} ({modelsFailed ? "models unavailable" : "unavailable"})
-        </option>
-      )}
-      {(models ?? []).map(({ key, label }) => (
-        <option key={key} value={key}>
-          {label}
+      {modelChoices(task, models, modelsFailed, runsOn).map((choice) => (
+        <option key={choice.value} value={choice.value} disabled={choice.disabled}>
+          {choice.label}
         </option>
       ))}
     </SelectRow>
   );
 }
 
-/** A counted task's last run as End date holds it (YYYY-MM-DDTHH:MM), where the draft says it. */
-function countedWall(save: ReturnType<typeof edited>, timezone: string): string | undefined {
-  return "ending" in save && save.ending.kind === "after" && save.ending.last !== undefined ? wallTime(save.ending.last, timezone) : undefined;
+/** A counted task's last run as Ends holds it (YYYY-MM-DDTHH:MM), where the draft says it. */
+function countedWall(ending: Ending | undefined, timezone: string): string | undefined {
+  return ending?.kind === "after" && ending.last !== undefined ? wallTime(ending.last, timezone) : undefined;
 }
 
 /**
@@ -851,7 +888,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
           {frequency !== "once" && (
             <>
               <WhenRow label="Starts" value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} />
-              <EndsRow value={draft.ends} counted={countedWall(save, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
+              <EndsRow value={draft.ends} counted={countedWall("ending" in save ? save.ending : undefined, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
             </>
           )}
           <ModelRow task={task} models={models} modelsFailed={modelsFailed} runsOn={runsOn} value={draft.model} disabled={saving} onChange={(picked) => set({ model: picked })} />
@@ -934,7 +971,7 @@ function ScheduledTaskSheet({
   return (
     <div className="scheduled-sheet-body">
       <p className="scheduled-task-prompt">{task.prompt}</p>
-      <TaskDetails task={task} />
+      <TaskDetails task={task} models={models} modelsFailed={modelsFailed} runsOn={runsOn} />
       {notices}
       {confirmingDelete ? (
         <div className="scheduled-sheet-actions">

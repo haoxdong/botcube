@@ -5,6 +5,7 @@ FROM ${NODE_IMAGE} AS build
 ARG BOTCUBE_ROOT=botcube
 WORKDIR /workspace/botcube
 COPY ${BOTCUBE_ROOT}/package.json ${BOTCUBE_ROOT}/pnpm-lock.yaml ${BOTCUBE_ROOT}/pnpm-workspace.yaml ./
+COPY ${BOTCUBE_ROOT}/patches/ patches/
 COPY ${BOTCUBE_ROOT}/chat/ chat/
 COPY ${BOTCUBE_ROOT}/template/chat/ template/chat/
 COPY ${BOTCUBE_ROOT}/template/identity.ts template/identity.ts

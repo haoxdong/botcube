@@ -31,7 +31,7 @@ from test_session_resume import (
 
 FOLLOWUP = Path(__file__).parent / 'fixtures' / 'issue-3458-subagent-followup.json'
 READ_ID = 'call_iHzme567E1QpdUpW3bK29ZeJ'
-TODO_ID = 'call_VP4nTvgPEfnxe4f0ZZQ4s0fu'
+WRITE_ID = 'call_VP4nTvgPEfnxe4f0ZZQ4s0fu'
 TASK_IDS = [
     'call_pnilxIEkBg6phI17hokGCREL',
     'call_pWBZA0nNMS30rtRKd0IKdprY',
@@ -123,7 +123,7 @@ class _ResponsesFixture:
         if text == 'Start parallel tasks':
             steps = [
                 [('read_file', {'file_path': '/probe.txt'}, READ_ID)],
-                [('write_todos', {'todos': [{'content': 'Research', 'status': 'in_progress'}]}, TODO_ID)],
+                [('write_file', {'file_path': '/plan.md', 'content': 'Research'}, WRITE_ID)],
                 [('task', {'description': f'child-{index}', 'subagent_type': 'worker'}, call_id)
                  for index, call_id in enumerate(TASK_IDS)],
             ]
@@ -209,7 +209,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
                     MEMORY_ID, region_name='us-east-1',
                 ))
                 current = await reader.aget_state(config)
-                assert _tool_call_ids(current.values['messages']) == [READ_ID, TODO_ID, *TASK_IDS]
+                assert _tool_call_ids(current.values['messages']) == [READ_ID, WRITE_ID, *TASK_IDS]
                 stop = RunAgentInput.model_validate({
                     'threadId': followup.thread_id, 'runId': 'run-1', 'messages': [],
                     'tools': [], 'context': [], 'state': {},
@@ -219,11 +219,11 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
                 stopped = await running
                 assert (stopped[-1].type, stopped[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
                 persisted = (await reader.aget_state(config)).values['messages']
-                assert _tool_call_ids(persisted) == [READ_ID, TODO_ID, *TASK_IDS]
+                assert _tool_call_ids(persisted) == [READ_ID, WRITE_ID, *TASK_IDS]
                 results = [message for message in persisted if isinstance(message, ToolMessage)]
                 # The saver answers each cut task with a placeholder result on load.
                 assert [(message.tool_call_id, message.status) for message in results] == [
-                    (READ_ID, 'success'), (TODO_ID, 'success'), *((task_id, 'error') for task_id in TASK_IDS),
+                    (READ_ID, 'success'), (WRITE_ID, 'success'), *((task_id, 'error') for task_id in TASK_IDS),
                 ]
                 for name, value in {'_AGENTS': {}, '_CHECKPOINTER': None, '_STORE': None}.items():
                     monkeypatch.setattr(serving, name, value)
@@ -232,7 +232,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
                         if event.type in {'RUN_ERROR', 'RUN_FINISHED'}] == [('RUN_FINISHED', None)]
                 assert not responses.missing
                 outputs = [item['call_id'] for item in responses.requests[-1]['input'] if item.get('type') == 'function_call_output']
-                assert outputs == [READ_ID, TODO_ID, *TASK_IDS]
+                assert outputs == [READ_ID, WRITE_ID, *TASK_IDS]
             finally:
                 await _cancel_unfinished_readers(running)
 

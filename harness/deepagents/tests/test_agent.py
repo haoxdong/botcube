@@ -437,9 +437,7 @@ def test_upgraded_main_and_subagent_keep_file_tools_without_recursive_delete(
     for tools in bound_tools:
         assert {'read_file', 'write_file', 'execute'} <= tools
         assert 'delete' in tools
-    assert 'write_todos' in bound_tools[0]
-    assert 'write_todos' not in bound_tools[1]
-    assert 'write_todos' in bound_tools[2]
+    assert not any('write_todos' in tools for tools in bound_tools)
 
 
 @pytest.mark.parametrize('files_available', [True, False])
@@ -568,7 +566,7 @@ def test_upgraded_skills_keep_the_complete_schema_and_each_agents_sources(
     assert set(metadata['required']) == {
         'path', 'name', 'description', 'license', 'compatibility', 'metadata', 'allowed_tools',
     }
-    assert set(graph.get_output_jsonschema()['properties']) == {'messages', 'structured_response', 'todos'}
+    assert set(graph.get_output_jsonschema()['properties']) == {'messages', 'structured_response'}
     config = {'configurable': {'thread_id': 'schema-turn'}}
     result = graph.invoke({'messages': 'Check the result.'}, config)
 

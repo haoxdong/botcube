@@ -10,8 +10,6 @@ from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.skills import SKILLS_SYSTEM_PROMPT, SkillsMiddleware
 from deepagents.profiles import HarnessProfile, register_harness_profile
-from langchain.agents.middleware import TodoListMiddleware
-from langchain.agents.middleware.todo import WRITE_TODOS_SYSTEM_PROMPT
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
@@ -89,7 +87,6 @@ def _tagged(tag: str, prompt: str, heading: str) -> str:
     return f'<{tag}>\n{prompt.removeprefix(heading)}\n</{tag}>'
 
 
-TODOS_PROMPT = _tagged('todos', WRITE_TODOS_SYSTEM_PROMPT, '## `write_todos`\n\n')
 SKILLS_PROMPT = _tagged('skills', SKILLS_SYSTEM_PROMPT, '## Skills System\n\n')
 
 
@@ -237,7 +234,6 @@ def build_agent(
     }
     kwargs['middleware'] = [
         _FilesMiddleware(backend=resolved_backend),
-        TodoListMiddleware(system_prompt=TODOS_PROMPT),
         _SchemaSkillsMiddleware(backend=resolved_backend, sources=resolved_skills, user_prompt=user_prompt),
         _UncheckpointedTasksMiddleware(),
         *(list(middleware) if middleware is not None else []),
