@@ -301,6 +301,25 @@ describe('a tool step', () => {
 describe('a thought', () => {
   const words = '**Planning the rates pull**\n\nTreasuries and swaps likely live in different widgets.';
 
+  it('keeps the thinking time when a model supplies no reasoning words, live and replayed', () => {
+    vi.useFakeTimers({ now: START });
+    const message = { id: 'hidden-reasoning', role: 'reasoning', content: '' };
+    const view = render(<ThoughtStep message={message} isRunning isLatest />);
+    expect(view.container).toHaveTextContent(/^Thinking$/);
+    expect(screen.queryByRole('button')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(4000);
+    });
+    view.rerender(<ThoughtStep message={message} isRunning={false} />);
+    expect(view.container).toHaveTextContent(/^Thought for 4s$/);
+    view.unmount();
+
+    render(<ThoughtStep message={{ ...message, id: 'replayed-hidden-reasoning', ...stamp(2, 6) }} isRunning={false} />);
+    expect(screen.getByText('Thought for 4s')).toBeVisible();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
   it('shows nothing once finished with no words and no time', () => {
     const { container } = render(<ThoughtStep message={{ id: 'blank', role: 'reasoning', content: '' }} isRunning={false} />);
 

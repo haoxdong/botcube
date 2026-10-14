@@ -41,12 +41,14 @@ def _replayed(message: BaseMessage) -> list[Message]:
     """The message as AG-UI messages; an AI message's reasoning goes first, as its Turn streamed it."""
     reasoning = reasoning_texts(message)
     times = message.response_metadata.get(MESSAGE_TIMES)
+    if times and times.get('reasoning') and not reasoning:
+        reasoning = ['']
     card = message.additional_kwargs.get(SCHEDULED_RUN)
     metadata = {**(_span(times) if times else {}), **({'scheduledRun': card} if card is not None else {})}
     return [
         *(
             ReasoningMessage(
-                id=f'{message.id}-reasoning-{index}', content=text,
+                id=times['reasoning'][index].get('id', f'{message.id}-reasoning-{index}') if times else f'{message.id}-reasoning-{index}', content=text,
                 metadata=_span(times['reasoning'][index]) if times else None,
             )
             for index, text in enumerate(reasoning)

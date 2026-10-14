@@ -27,13 +27,26 @@ from typing import Any, Literal, NamedTuple, TypeGuard, cast
 from ag_ui.core import (
     CustomEvent,
     EventType,
+    Message,
+    MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
     RunFinishedEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
 )
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
+from ag_ui_langgraph.utils import (
+    resolve_encrypted_reasoning_content,
+    resolve_reasoning_content,
+)
 from botcube_cartridge import (
     HarnessDefinition,
     InvocationAuth,
@@ -52,6 +65,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
+from pydantic import TypeAdapter
 
 from . import message_times, session_memory, turn_timing
 from ._env import positive_float, positive_int
@@ -67,6 +81,7 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
+from .conversation import conversation
 from .files_sync import (
     FilesSync,
     FilesSyncError,
@@ -260,6 +275,13 @@ def _error_code(error: Exception) -> str:
     return 'INTERNAL_ERROR'
 
 
+@dataclass
+class _Thinking:
+    block: int = 0
+    index: int | None = None
+    signature: str | None = None
+
+
 class _SessionAgent(LangGraphAgent):
     """A LangGraphAgent that takes no tool result the Session's record already holds.
 
@@ -282,23 +304,38 @@ class _SessionAgent(LangGraphAgent):
         # building and JSON-converting them for every streamed event.
         super().__init__(**{'emit_raw_events': False, **kwargs})
         self._model_lane: str | None = None
+        self._thinking: dict[str, _Thinking] = {}
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         try:
             async with aclosing(super()._handle_stream_events(input)) as events:
                 async for event in events:
+                    if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
+                        for closed in self._close_thoughts():
+                            yield closed
                     yield event
                     if event.type == EventType.RUN_FINISHED:
                         break
         except Exception as error:
             log.exception('Error during graph streaming')
+            for closed in self._close_thoughts():
+                yield closed
             yield RunErrorEvent(message=str(error), code=_error_code(error))
         finally:
             self._model_lane = None
+            self._thinking.clear()
             self.messages_in_process.clear()
             if self._graph_stream is not None:
                 await self._graph_stream.aclose()
                 self._graph_stream = None
+
+    def _close_thoughts(self) -> list[Any]:
+        events = []
+        for lane, thought in self._thinking.items():
+            self._model_lane = lane
+            events.extend(self._thought_end(lane, thought))
+        self._thinking.clear()
+        return events
 
     async def _handle_single_event(self, event: Any, state: Any) -> AsyncGenerator[Any, None]:
         root = event.get('parent_ids') == []
@@ -323,22 +360,93 @@ class _SessionAgent(LangGraphAgent):
                 raise RuntimeError('Graph ended without a Session ID')
             yield RunFinishedEvent(thread_id=thread_id, run_id=self.active_run['id'])
 
+    def _thought_start(self, lane: str, index: int) -> list[Any]:
+        message_id = f'{lane}-reasoning-{index}'
+        return [self._dispatch_event(ReasoningStartEvent(message_id=message_id)),
+                self._dispatch_event(ReasoningMessageStartEvent(message_id=message_id, role='reasoning'))]
+
+    def _thought_end(self, lane: str, thought: _Thinking) -> list[Any]:
+        message_id = f'{lane}-reasoning-{thought.block}'
+        encrypted = [self._dispatch_event(ReasoningEncryptedValueEvent(
+            subtype='message', entity_id=message_id, encrypted_value=thought.signature))] if thought.signature else []
+        thought.signature = None
+        return [*encrypted, self._dispatch_event(ReasoningMessageEndEvent(message_id=message_id)),
+                self._dispatch_event(ReasoningEndEvent(message_id=message_id))]
+
+    def _reasoning_chunk(self, lane: str, thought: _Thinking, reasoning: Any) -> list[Any]:
+        events = []
+        if reasoning['text']:
+            index = reasoning.get('index', 0)
+            if thought.index is not None and thought.index != index:
+                events.extend(self._thought_end(lane, thought))
+                thought.block += 1
+                events.extend(self._thought_start(lane, thought.block))
+            thought.index = index
+            events.append(self._dispatch_event(ReasoningMessageContentEvent(
+                message_id=f'{lane}-reasoning-{thought.block}', delta=reasoning['text'])))
+        if reasoning.get('signature'):
+            thought.signature = reasoning.get('signature')
+        return events
+
+    def _thought_chunk(self, event: Any, lane: str, thought: _Thinking | None, chunk: Any) -> list[Any] | None:
+        if thought is None or chunk is None:
+            return None
+        reasoning = resolve_reasoning_content(chunk)
+        if reasoning is not None:
+            return self._reasoning_chunk(lane, thought, reasoning)
+        encrypted = resolve_encrypted_reasoning_content(chunk)
+        if encrypted:
+            return [self._dispatch_event(ReasoningEncryptedValueEvent(
+                subtype='message', entity_id=f'{lane}-reasoning-{thought.block}', encrypted_value=encrypted))]
+        if not chunk.text and not chunk.tool_call_chunks:
+            self._record_usage(event, chunk.usage_metadata, streamed=True)
+            return []
+        return None
+
     async def _handle_model_event(self, event: Any, state: Any) -> AsyncGenerator[Any, None]:
-        if event.get('event') not in {'on_chat_model_stream', 'on_chat_model_end'}:
+        kind = event.get('event')
+        if kind not in {'on_chat_model_start', 'on_chat_model_stream', 'on_chat_model_end'}:
             async for emitted in super()._handle_single_event(event, state):
                 yield emitted
             return
-        if event.get('metadata', {}).get('lc_source') == 'summarization':
+        metadata = event.get('metadata', {})
+        if metadata.get('lc_source') == 'summarization':
             return
         if self.active_run is None:
             raise RuntimeError('Model event outside an active run')
-        self._model_lane = event['run_id']
+        lane = event['run_id']
+        self._model_lane = lane
         try:
-            async with aclosing(super()._handle_single_event(event, state)) as events:
+            if kind == 'on_chat_model_start' and metadata.get('botcube_thinking'):
+                self._thinking[lane] = _Thinking()
+                for emitted in self._thought_start(lane, 0):
+                    yield emitted
+            thought = self._thinking.get(lane)
+            chunk = event.get('data', {}).get('chunk')
+            handled = self._thought_chunk(event, lane, thought, chunk)
+            if handled is not None:
+                for emitted in handled:
+                    yield emitted
+                return
+            async with aclosing(self._model_output(event, state, lane, thought)) as events:
                 async for emitted in events:
                     yield emitted
         finally:
             self._model_lane = None
+
+    async def _model_output(self, event: Any, state: Any, lane: str, thought: _Thinking | None) -> AsyncGenerator[Any, None]:
+        async with aclosing(super()._handle_single_event(event, state)) as events:
+            async for emitted in events:
+                if thought is not None and emitted.type in {EventType.TEXT_MESSAGE_START, EventType.TOOL_CALL_START}:
+                    for closed in self._thought_end(lane, thought):
+                        yield closed
+                    self._thinking.pop(lane)
+                    thought = None
+                yield emitted
+        if event.get('event') == 'on_chat_model_end' and thought is not None:
+            for emitted in self._thought_end(lane, thought):
+                yield emitted
+            self._thinking.pop(lane)
 
     def _current_lane(self) -> str:
         return self._model_lane or super()._current_lane()
@@ -346,12 +454,22 @@ class _SessionAgent(LangGraphAgent):
     async def get_state_and_messages_snapshots(self, config: RunnableConfig) -> AsyncGenerator[Any, None]:
         if self._graph_ended_at is not None:
             return
-        async for event in super().get_state_and_messages_snapshots(config):
-            yield event
+        if self.active_run is None:
+            raise RuntimeError('get_state_and_messages_snapshots called outside an active run')
+        state = await self.graph.aget_state(config)
+        if not isinstance(state.values, dict):
+            raise TypeError('Checkpoint snapshot must contain a state mapping')
+        if not (self.emit_subagent_events and self.active_run.get('current_subagent_run_id')):
+            yield self._dispatch_event(StateSnapshotEvent(snapshot=self.get_state_snapshot(state.values)))
+        messages = self._filter_orphan_tool_messages(state.values.get('messages', []))
+        projected = TypeAdapter(list[Message]).validate_python(conversation(messages))
+        yield self._dispatch_event(MessagesSnapshotEvent(messages=self._merge_subagent_messages(
+            self._translate_snapshot_ids(projected))))
 
     async def prepare_stream(self, input: RunAgentInput, agent_state: Any, config: RunnableConfig) -> Any:
         self._graph_ended_at = None
         self._interrupted = False
+        self._thinking.clear()
         self._model_lane = None
         self.messages_in_process.clear()
         # Stop records the visible text before a model finishes its tool call.
@@ -873,10 +991,15 @@ class _OpenReply:
         self.message_id = ''
         self.text = ''
         self.started_at = self.ended_at = 0
+        self.open_thoughts: set[str] = set()
 
     def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
         def watched(event: Any) -> None:
-            if event.type == EventType.TEXT_MESSAGE_START:
+            if event.type == EventType.REASONING_MESSAGE_START:
+                self.open_thoughts.add(event.message_id)
+            elif event.type == EventType.REASONING_MESSAGE_END:
+                self.open_thoughts.discard(event.message_id)
+            elif event.type == EventType.TEXT_MESSAGE_START:
                 self.message_id, self.text = event.message_id, ''
                 # A reply is kept only once it has text, whose content moves its end on.
                 self.started_at = self.ended_at = message_times.now()
@@ -888,6 +1011,13 @@ class _OpenReply:
             put(event)
 
         return watched
+
+    def finish_stopped(self, put: Callable[[Any], None]) -> None:
+        for message_id in self.open_thoughts:
+            put(ReasoningMessageEndEvent(message_id=message_id))
+            put(ReasoningEndEvent(message_id=message_id))
+        self.open_thoughts.clear()
+        put(_stopped())
 
     async def keep(self, agent: LangGraphAgent, session: tuple[str, str | None]) -> None:
         """Record the text the user already read as the agent's answer, under its streamed ID."""
@@ -1050,7 +1180,7 @@ class _SessionTurns:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
                 if turn.work.cancelled():
-                    put(_stopped())
+                    reply.finish_stopped(put)
                 elif completion is not None:
                     put(completion)
                     self._feed(session, turn, feeds)

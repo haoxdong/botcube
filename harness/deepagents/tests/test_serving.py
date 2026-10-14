@@ -24,7 +24,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import EntryPoint, EntryPoints
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, NoReturn, TypedDict
 
 import boto3
@@ -1062,12 +1062,78 @@ class _RecordedBedrockModel(_ScriptedModel):
     """Replays a live Bedrock Turn's model calls, one recorded stream per call."""
 
     answered: int = 0
+    additional_model_request_fields: dict[str, Any] = {'thinking': {'type': 'adaptive'}}
 
     def _stream(self, *_args: Any, **_kwargs: Any) -> Iterator[ChatGenerationChunk]:
         recorded = BEDROCK_STREAM['calls'][self.answered]
         self.answered += 1
         for chunk in recorded:
             yield ChatGenerationChunk(message=AIMessageChunk(**chunk))
+
+
+def test_each_recorded_bedrock_thought_spans_model_start_to_public_output_issue_4084(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _RecordedBedrockModel(recorder=service.recorder))
+    tick = 0
+    def now() -> int:
+        return tick
+    monkeypatch.setattr(message_times, 'now', now)
+    starts = iter([1000, 10000, 20000])
+    boundaries: list[int] = []
+    start = message_times._ModelClock.on_chat_model_start
+    token = message_times._ModelClock.on_llm_new_token
+    seen: set[Any] = set()
+    def started(clock: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal tick
+        tick = next(starts)
+        start(clock, *args, **kwargs)
+    def streamed(clock: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal tick
+        tick += 10
+        token(clock, *args, **kwargs)
+        chunk = kwargs['chunk'].message
+        if (chunk.text or chunk.tool_call_chunks) and not message_times.resolve_reasoning_content(chunk) and clock not in seen:
+            seen.add(clock)
+            boundaries.append(tick)
+    monkeypatch.setattr(message_times._ModelClock, 'on_chat_model_start', started)
+    monkeypatch.setattr(message_times._ModelClock, 'on_llm_new_token', streamed)
+
+    events = service.turn('Use the execute tool to run `echo one`, then `echo two`.')
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    thoughts = [message for message in replay if message['role'] == 'reasoning']
+    assert len(boundaries) == len(thoughts) == 3
+    assert [(message['metadata']['started_at'], message['metadata']['ended_at']) for message in thoughts] == list(zip([1000, 10000, 20000], boundaries, strict=True))
+    assert [message['id'] for message in thoughts] == [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
+    assert thoughts[0]['content'] and [message['content'] for message in thoughts[1:]] == ['', '']
+
+
+def test_stopping_a_model_before_its_public_output_closes_the_thought_issue_4084(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    async def unfinished(self: _RecordedBedrockModel, *_args: Any, **_kwargs: Any):
+        # The recorded first metadata frame carries neither summary nor answer.
+        yield ChatGenerationChunk(message=AIMessageChunk(**BEDROCK_STREAM['calls'][0][0]))
+        entered.set()
+        await asyncio.Future()
+    monkeypatch.setattr(_RecordedBedrockModel, '_astream', unfinished)
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: _RecordedBedrockModel(recorder=service.recorder))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(service.turn, 'hello')
+        assert entered.wait(5), 'The model never reached its held metadata frame'
+        acknowledgement = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': 'run-0', 'messages': [], 'tools': [], 'context': [], 'state': {},
+            'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
+        })
+        assert acknowledgement.status_code == 200
+        events = running.result(timeout=10)
+    assert events[-1]['code'] == 'TURN_STOPPED'
+    types = [event['type'] for event in events]
+    assert types.index('REASONING_MESSAGE_START') < types.index('REASONING_MESSAGE_END') < types.index('REASONING_END') < types.index('RUN_ERROR')
+    assert 'TEXT_MESSAGE_START' not in types and 'REASONING_MESSAGE_CONTENT' not in types
 
 
 def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
@@ -1079,8 +1145,8 @@ def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     times = _times('user-1', 'thread-1')
-    assert [role for role, _, _ in times] == ['reasoning', 'assistant', 'tool', 'assistant', 'tool', 'assistant']
-    [reasoning, call, result, _, _, _] = times
+    assert [role for role, _, _ in times] == ['reasoning', 'assistant', 'tool', 'reasoning', 'assistant', 'tool', 'reasoning', 'assistant']
+    [reasoning, call, result, _, _, _, _, _] = times
     assert reasoning[1] <= reasoning[2] <= call[1] == result[1] <= call[2] <= result[2]
 
 
@@ -1118,6 +1184,8 @@ def test_a_plan_usage_error_ends_the_turn_with_its_classified_error_and_no_other
         events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
 
     assert events[-1] == {'type': 'RUN_ERROR', 'message': REVOKED['error']['message'], 'code': 'PLAN_USAGE_REVOKED'}
+    types = [event['type'] for event in events]
+    assert types.index('REASONING_MESSAGE_START') < types.index('REASONING_MESSAGE_END') < types.index('RUN_ERROR')
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
     assert [build['model'] for build in service.recorder.builds] == ['openai-plan:gpt-6-astra']
     assert service.recorder.prompts == []
@@ -1127,6 +1195,69 @@ def test_a_plan_usage_error_ends_the_turn_with_its_classified_error_and_no_other
 SUMMARY = ['**Checking the request**\n\nThe user wants the single word hello.', '**Answering**\n\nReply with it exactly.']
 
 
+def test_a_summaryless_model_streams_and_replays_one_timed_thought_issue_4084(service: _Service) -> None:
+    before = message_times.now()
+    with serving_relay() as relay:
+        events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
+    after = message_times.now()
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    starts = [event for event in events if event['type'] == 'REASONING_MESSAGE_START']
+    assert len(starts) == 1
+    assert not [event for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT']
+    types = [event['type'] for event in events]
+    assert types.index('REASONING_START') < types.index('REASONING_END') < types.index('TEXT_MESSAGE_START')
+    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    thought = [message for message in replay if message['role'] == 'reasoning']
+    assert len(thought) == 1 and thought[0]['content'] == ''
+    assert thought[0]['id'] == starts[0]['messageId']
+    assert before <= thought[0]['metadata']['started_at'] <= thought[0]['metadata']['ended_at'] <= after
+    assert _said(events) == 'hello'
+
+
+@pytest.mark.parametrize('summary', [False, True], ids=['summaryless', 'summary'])
+def test_checkpoint_snapshot_keeps_streamed_reasoning_ids_issue_4084(service: _Service, summary: bool) -> None:
+    with serving_relay() as relay:
+        if summary:
+            relay.reply = RelayReply(body=REASONING_STREAM)
+        events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
+    starts = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
+    assert len(starts) == (2 if summary else 1)
+    agent = next(iter(serving._AGENTS.values()))
+    assert isinstance(agent, serving._SessionAgent)
+    agent._graph_ended_at = None
+    agent.active_run = {'id': 'snapshot-check', 'thread_id': 'thread-1'}
+
+    async def snapshots() -> list[Any]:
+        return [event async for event in agent.get_state_and_messages_snapshots(
+            {'configurable': {'thread_id': 'thread-1', 'actor_id': 'user-1'}})]
+
+    snapshot_events = asyncio.run(snapshots())
+    assert [event.type.value for event in snapshot_events] == ['STATE_SNAPSHOT', 'MESSAGES_SNAPSHOT']
+    thoughts = [message for message in snapshot_events[1].messages if message.role == 'reasoning']
+    assert [message.id for message in thoughts] == starts
+    assert [message.content for message in thoughts] == (SUMMARY if summary else [''])
+    assert all(message.metadata['started_at'] <= message.metadata['ended_at'] for message in thoughts)
+
+
+def test_invalid_checkpoint_snapshot_fails_loud_issue_4084(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    service.turn('hello')
+    agent = next(iter(serving._AGENTS.values()))
+    assert isinstance(agent, serving._SessionAgent)
+    agent._graph_ended_at = None
+    agent.active_run = {'id': 'invalid-snapshot-check', 'thread_id': 'thread-1'}
+
+    async def invalid_state(config: Any) -> Any:
+        return SimpleNamespace(values=None)
+
+    monkeypatch.setattr(agent.graph, 'aget_state', invalid_state)
+
+    async def snapshots() -> list[Any]:
+        return [event async for event in agent.get_state_and_messages_snapshots({})]
+
+    with pytest.raises(TypeError, match='Checkpoint snapshot must contain a state mapping'):
+        asyncio.run(snapshots())
+
+
 def test_a_plan_turn_streams_its_reasoning_summary_before_its_answer_and_replays_it_issue_3036(
     service: _Service,
 ) -> None:
@@ -1134,6 +1265,14 @@ def test_a_plan_turn_streams_its_reasoning_summary_before_its_answer_and_replays
         relay.reply = RelayReply(body=REASONING_STREAM)
         events = service.turn('Say exactly: hello', model='openai-plan:gpt-6-astra', relay=relay.url)
 
+    starts = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
+    replayed = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    assert len(starts) == 2
+    assert starts == [message['id'] for message in replayed if message['role'] == 'reasoning']
+    for snapshot in [event for event in events if event['type'] == 'MESSAGES_SNAPSHOT']:
+        ids = [message['id'] for message in snapshot['messages'] if message['role'] == 'reasoning']
+        if ids:
+            assert ids == starts
     reasoned = [event['delta'] for event in events if event['type'] == 'REASONING_MESSAGE_CONTENT']
     assert reasoned == SUMMARY
     types = [event['type'] for event in events]

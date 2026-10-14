@@ -1,5 +1,6 @@
 """When each Turn message started and ended, kept in its record so a reopened chat can time it.
 
+A thinking-enabled model starts its initial reasoning at model start, including when it returns no summary.
 A message starts when its first AG-UI event streams and ends with its last: the agent's message from its
 TEXT_MESSAGE_START or first TOOL_CALL_START to its model call's end, its reasoning from REASONING_START to
 REASONING_END, and a tool's result from its call's TOOL_CALL_START to the result landing. The stream adapter
@@ -50,11 +51,18 @@ class _ModelClock(BaseCallbackHandler):
     run_inline = True
     raise_error = True
 
-    def __init__(self) -> None:
+    def __init__(self, thinking: bool = False) -> None:
+        self.thinking = thinking
+        self.model_id: str | None = None
         self.started: int | None = None
         self.reasoning: list[list[int]] = []
         self.reasoning_index: int | None = None
         self.tool_calls: dict[str, int] = {}
+
+    def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: UUID, **kwargs: Any) -> None:
+        self.model_id = str(run_id)
+        if self.thinking:
+            self.reasoning.append([now()])
 
     def on_llm_new_token(
         self,
@@ -71,31 +79,37 @@ class _ModelClock(BaseCallbackHandler):
         message, at = chunk.message, now()
         reasoning = resolve_reasoning_content(message)
         if reasoning:
-            # A text-less reasoning chunk only names the reasoning to come.
             if reasoning['text']:
-                index = reasoning.get('index', 0)
-                if self.reasoning_index != index:
-                    self._close(at)
-                    self.reasoning.append([at])
-                    self.reasoning_index = index
+                self._open_reasoning(reasoning.get('index', 0), at)
             return
         if resolve_encrypted_reasoning_content(message):
             return
+        if not message.text and not message.tool_call_chunks:
+            return
         self._close(at)
-        if self.started is None and (message.text or message.tool_call_chunks):
+        if self.started is None:
             self.started = at
         for call in message.tool_call_chunks:
             if call['id']:
                 self.tool_calls.setdefault(call['id'], at)
 
+    def _open_reasoning(self, index: int, at: int) -> None:
+        if self.reasoning_index == index:
+            return
+        initial = self.reasoning_index is None and self.reasoning and len(self.reasoning[-1]) == 1
+        if not initial:
+            self._close(at)
+            self.reasoning.append([at])
+        self.reasoning_index = index
+
     def _close(self, at: int) -> None:
-        if self.reasoning_index is not None:
+        if self.reasoning and len(self.reasoning[-1]) == 1:
             self.reasoning[-1].append(at)
             self.reasoning_index = None
 
     def stamped(self, message: AIMessage, ended: int) -> AIMessage:
         self._close(ended)
-        if len(self.reasoning) != len(reasoning_texts(message)):
+        if len(self.reasoning) != max(int(self.thinking), len(reasoning_texts(message))):
             raise RuntimeError(
                 f'The model streamed {len(self.reasoning)} reasoning blocks but answered with '
                 f'{len(reasoning_texts(message))}'
@@ -109,7 +123,8 @@ class _ModelClock(BaseCallbackHandler):
         return _with_times(message, {
             'started_at': ended if self.started is None else self.started,
             'ended_at': ended,
-            'reasoning': [{'started_at': start, 'ended_at': end} for start, end in self.reasoning],
+            'reasoning': [{'id': f'{self.model_id}-reasoning-{index}', 'started_at': start, 'ended_at': end}
+                          for index, (start, end) in enumerate(self.reasoning)],
             'tool_calls': {call: self.tool_calls.get(call, ended) for call in calls},
         })
 
@@ -122,7 +137,10 @@ class MessageTimesMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        clock = _ModelClock()
+        thinking = bool(getattr(request.model, 'reasoning', None) or
+                        (getattr(request.model, 'additional_model_request_fields', None) or {}).get('thinking'))
+        request.model.metadata = {**(request.model.metadata or {}), 'botcube_thinking': thinking}
+        clock = _ModelClock(thinking)
         token = _clock.set(clock)
         try:
             response = await handler(request)
