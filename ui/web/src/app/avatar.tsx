@@ -12,21 +12,45 @@ const PERSON = (
 /** Below this size the monocle's chain blurs away, so it is dropped and the ring drawn thicker. */
 const MONOCLE_CHAIN_MIN_SIZE = 40;
 
-/** The agent's own avatar: a light-blue figure in a black homburg with a silver band, and graphite eyes and monocle. */
-function AgentMark({ size }: { size: number }) {
+/** At work the agent draws back to this scale, from his hat's crown, so his laptop fits between his monocle and his name. */
+const WORKING_SCALE = 0.74;
+
+/**
+ * A large open laptop seen from behind, its lid's back to us with a logo, its keyboard's edge at its foot: in front of
+ * the agent's lower body, its lid just under his monocle, its foot above the name's capsule.
+ */
+function Laptop() {
+  return (
+    <g className="avatar-laptop" stroke="#6b7480" strokeWidth="1.6" strokeLinejoin="round">
+      <path d="M17 100l7-4h72l7 4z" fill="#c9d0d9" />
+      <path d="M27 71h66q5 0 4.7 5l-1.3 16q-.4 4-4.4 4H28q-4 0-4.4-4l-1.3-16Q22 71 27 71z" fill="#8e98a6" />
+      <path d="M27.5 73.4h65" stroke="#bfc7d1" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="60" cy="83.5" r="3.6" fill="#d3d9e0" stroke="none" />
+    </g>
+  );
+}
+
+/**
+ * The agent's own avatar: a light-blue figure in a black homburg with a silver band, and graphite eyes and monocle.
+ * At work, he sits a little smaller behind a big laptop.
+ */
+function AgentMark({ size, working }: { size: number; working: boolean }) {
   const chain = size >= MONOCLE_CHAIN_MIN_SIZE;
   return (
     <svg width={size} height={size} viewBox="0 0 120 120" aria-hidden="true">
-      <path d="M60 46c24 0 40 14 40 33 0 19-16 31-40 31S20 98 20 79c0-19 16-33 40-33z" fill="#aec6e3" stroke="#6f93bf" strokeWidth="2.4" />
-      <path d="M27 72c3-11 13-18 24-19-9 4-16 11-19 20z" fill="#c9daee" />
-      <ellipse cx="60" cy="47" rx="30" ry="7" fill="#18191b" stroke="#6b6f77" strokeWidth="2.4" />
-      <path d="M40 47c0-19 8-30 20-30s20 11 20 30c-6 2-13 3-20 3s-14-1-20-3z" fill="#202124" stroke="#6b6f77" strokeWidth="2.4" strokeLinejoin="round" />
-      <path d="M40.4 40.6c5.9 1.9 12.6 2.9 19.6 2.9s13.7-1 19.6-2.9l.4 5.8c-6 2-13 3-20 3s-14-1-20-3z" fill="#d4d6da" />
-      <path d="M52 21q8 5 16 0" stroke="#0e0f10" strokeWidth="2" fill="none" strokeLinecap="round" />
-      <ellipse cx="50" cy="78" rx="3.6" ry="5" fill="#202124" />
-      <ellipse cx="70" cy="78" rx="3.6" ry="5" fill="#202124" />
-      <circle className="avatar-monocle" cx="70" cy="78" r="8.5" fill="none" stroke="#4a4d55" strokeWidth={chain ? 2.2 : 3.4} />
-      {chain && <path className="avatar-monocle-chain" d="M77 83q3 8 0 16" stroke="#4a4d55" strokeWidth="1.2" fill="none" />}
+      <g className="avatar-figure" style={working ? { transform: `scale(${WORKING_SCALE})` } : undefined}>
+        <path d="M60 46c24 0 40 14 40 33 0 19-16 31-40 31S20 98 20 79c0-19 16-33 40-33z" fill="#aec6e3" stroke="#6f93bf" strokeWidth="2.4" />
+        <path d="M27 72c3-11 13-18 24-19-9 4-16 11-19 20z" fill="#c9daee" />
+        <ellipse cx="60" cy="47" rx="30" ry="7" fill="#18191b" stroke="#6b6f77" strokeWidth="2.4" />
+        <path d="M40 47c0-19 8-30 20-30s20 11 20 30c-6 2-13 3-20 3s-14-1-20-3z" fill="#202124" stroke="#6b6f77" strokeWidth="2.4" strokeLinejoin="round" />
+        <path d="M40.4 40.6c5.9 1.9 12.6 2.9 19.6 2.9s13.7-1 19.6-2.9l.4 5.8c-6 2-13 3-20 3s-14-1-20-3z" fill="#d4d6da" />
+        <path d="M52 21q8 5 16 0" stroke="#0e0f10" strokeWidth="2" fill="none" strokeLinecap="round" />
+        <ellipse cx="50" cy="78" rx="3.6" ry="5" fill="#202124" />
+        <ellipse cx="70" cy="78" rx="3.6" ry="5" fill="#202124" />
+        <circle className="avatar-monocle" cx="70" cy="78" r="8.5" fill="none" stroke="#4a4d55" strokeWidth={chain ? 2.2 : 3.4} />
+        {chain && <path className="avatar-monocle-chain" d="M77 83q3 8 0 16" stroke="#4a4d55" strokeWidth="1.2" fill="none" />}
+      </g>
+      {working && <Laptop />}
     </svg>
   );
 }
@@ -40,12 +64,15 @@ export function Avatar({
   emoji,
   name,
   agent = false,
+  working = false,
   size,
 }: {
   picture?: string | undefined;
   emoji?: string | undefined;
   name?: string | undefined;
   agent?: boolean;
+  /** The agent's own avatar at work, at a laptop. */
+  working?: boolean;
   size: number;
 }) {
   const [broken, setBroken] = useState<string>();
@@ -57,7 +84,7 @@ export function Avatar({
       {showPicture ? (
         <img src={picture} alt="" onError={() => setBroken(picture)} />
       ) : showMark ? (
-        <AgentMark size={size} />
+        <AgentMark size={size} working={working} />
       ) : (
         emoji || name?.charAt(0) || PERSON
       )}

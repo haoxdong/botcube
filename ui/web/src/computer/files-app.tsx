@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight, Clock, Folder } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { failureDetail } from './failure-detail';
+import { zoomOf } from '../lib/utils';
 import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount } from 'botcube-ui-web/cartridge';
 
 /** A file in the account's Files, by its path inside them. */
@@ -423,8 +424,10 @@ export function FilesWindow({
   ];
   const openMenu = (row: FilesItem, opener: HTMLButtonElement, x: number, y: number) => {
     const box = view.current?.getBoundingClientRect();
+    // The menu's place is in the window's own pixels, which a zoomed app (the wide desktop's) makes fewer than the screen's.
+    const zoom = zoomOf(view.current);
     setSelected(row.path);
-    setMenu({ row, opener, x: x - (box?.left ?? 0), y: y - (box?.top ?? 0) });
+    setMenu({ row, opener, x: (x - (box?.left ?? 0)) / zoom, y: (y - (box?.top ?? 0)) / zoom });
   };
   useEffect(() => {
     // As in Finder, the name is selected up to its extension.

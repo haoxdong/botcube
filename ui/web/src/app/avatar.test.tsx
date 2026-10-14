@@ -68,6 +68,18 @@ describe('Avatar', () => {
     expect(avatar()?.querySelector('.avatar-monocle-chain')).toBeNull();
   });
 
+  it('draws the agent at work a little smaller, behind a laptop', () => {
+    const { rerender } = render(<Avatar name="Ada Bot" agent size={72} />);
+    expect(avatar()?.querySelector('.avatar-laptop')).toBeNull();
+    expect(avatar()?.querySelector('.avatar-figure')).not.toHaveAttribute('style');
+
+    rerender(<Avatar name="Ada Bot" agent working size={72} />);
+
+    expect(avatar()?.querySelector('.avatar-laptop')).not.toBeNull();
+    expect(avatar()?.querySelector('.avatar-figure')).toHaveStyle({ transform: 'scale(0.74)' });
+    expect(avatar()?.querySelector('.avatar-monocle')).not.toBeNull();
+  });
+
   it("shows the agent's own picture or emoji over its default avatar", () => {
     const { unmount } = render(<Avatar picture="https://example.com/ada.png" name="Ada Bot" agent size={48} />);
     expect(picture()).toHaveAttribute('src', 'https://example.com/ada.png');

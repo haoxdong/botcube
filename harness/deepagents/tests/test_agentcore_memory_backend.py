@@ -133,6 +133,28 @@ def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second_in_the
     assert sleeps == [0.0, pytest.approx(0.2), pytest.approx(0.2)]
 
 
+def test_a_purge_of_an_actor_that_never_wrote_an_event_finds_nothing_to_delete(events_client: tuple[Any, Stubber]) -> None:
+    # AgentCore answers ListSessions for an actor without events as not found (a Session deleted before its first Turn).
+    client, stubber = events_client
+    stubber.add_response('list_events', {'events': []}, {
+        'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': 'session-1', 'maxResults': 100, 'includePayloads': False,
+    })
+    stubber.add_client_error('list_sessions', 'ResourceNotFoundException', 'Actor user-1 not found', 404)
+    saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
+
+    purge_module.purge_session(saver, 'user-1', 'session-1')
+
+
+def test_a_purge_fails_loud_when_its_memory_is_not_found(events_client: tuple[Any, Stubber]) -> None:
+    client, stubber = events_client
+    stubber.add_response('list_events', {'events': []})
+    stubber.add_client_error('list_sessions', 'ResourceNotFoundException', f'Memory {MEMORY_ID} not found', 404)
+    saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
+
+    with pytest.raises(client.exceptions.ResourceNotFoundException):
+        purge_module.purge_session(saver, 'user-1', 'session-1')
+
+
 @pytest.fixture
 def microvm(monkeypatch: pytest.MonkeyPatch) -> FakeSts:
     """A new microVM, whose STS exchange answers from the fake."""

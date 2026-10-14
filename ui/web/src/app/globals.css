@@ -30,6 +30,11 @@ body {
   --color-white: #fff;
   --color-blue: #2563eb;
   --color-blue-soft: #eff6ff;
+  /* The chat's two bubbles, the user's and Marq's. The user's wears a paler tint of Marq's light blue, with
+     dark text; Marq's is white, lifted by a soft card shadow instead of an outline. */
+  --bubble-user-bg: #d6e4f3;
+  --bubble-marq-bg: var(--color-white);
+  --bubble-marq-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.05);
   --color-success: #22c55e;
   --color-danger: #dc2626;
   --color-danger-soft: #fef2f2;
@@ -84,6 +89,9 @@ body {
 
   --transition-fast: 0.1s;
   --transition-layout: 0.2s ease;
+
+  /* The desktop app's zoom (below): 1 up to a 1760px window. */
+  --ui-zoom: 1;
 
   /* Sidebar spacing */
   --sidebar-pad-x: 8px;
@@ -539,15 +547,15 @@ body {
   }
 }
 
-/* ── User message — outer container transparent, inner bubble blackish (the maintainer kept it over blue) ── */
+/* ── User message — outer container transparent, inner bubble in the user's bubble colours ── */
 .copilotKitUserMessage {
   background: transparent !important;
   padding: 0 !important;
 }
 
 .copilotKitUserMessage > div:first-of-type {
-  background-color: var(--color-text) !important;
-  color: var(--color-white) !important;
+  background-color: var(--bubble-user-bg) !important;
+  color: var(--color-text) !important;
   border-radius: var(--radius-2xl) !important;
   padding: 10px 18px !important;
   font-size: var(--font-message);
@@ -664,7 +672,8 @@ body {
 .chat-queued-bubble {
   max-width: 80%;
   padding: 10px 18px;
-  border: 1px dashed var(--color-text);
+  /* The user's pale blue bubble colour, deepened so it still draws a line on white. */
+  border: 1px dashed color-mix(in srgb, var(--bubble-user-bg), var(--color-text) 40%);
   border-radius: var(--radius-2xl);
   color: var(--color-text);
   font-size: var(--font-message);
@@ -720,12 +729,15 @@ body {
   }
 }
 
-/* Each message's prose in a grey bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). A long
-   one reaches the column's right edge, as the user's messages do, and a table shows as much as it can. */
+/* Each message's prose in Marq's bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). A long
+   one reaches the column's right edge, as the user's messages do, and a table shows as much as it can. Its shadow
+   casts outside, so it keeps the bubble's size. */
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
   width: fit-content;
   max-width: 100%;
-  background-color: var(--color-surface-hover);
+  background-color: var(--bubble-marq-bg);
+  color: var(--color-text);
+  box-shadow: var(--bubble-marq-shadow);
   border-radius: var(--radius-2xl);
   padding: 12px 18px;
   margin-block: 4px;
@@ -763,16 +775,16 @@ body {
   margin-top: 14px;
 }
 
-/* ── Input — white box, bordered and shadowed ── */
+/* ── Input — white box, lifted by Marq's bubbles' soft shadow ── */
 /* As wide as the messages' column inside CopilotKit's (720px at most, less its 1.5rem side padding), so its
-   edges meet the grey panel's. */
+   edges meet the grey panel's. Its 1px border stays, clear, so its controls keep their places. */
 .copilotKitInput {
   margin: 0 auto !important;
   width: calc(min(720px, 100%) - 3rem) !important;
   background-color: var(--color-white) !important;
-  border: 1px solid var(--color-border) !important;
+  border: 1px solid transparent !important;
   border-radius: var(--radius-3xl) !important;
-  box-shadow: var(--shadow-subtle) !important;
+  box-shadow: var(--bubble-marq-shadow) !important;
   outline: none !important;
   outline-width: 0 !important;
   outline-style: none !important;
@@ -785,7 +797,6 @@ div.copilotKitInput {
 }
 
 .copilotKitInput:focus-within {
-  border-color: var(--color-control) !important;
   box-shadow: var(--shadow-elevated) !important;
 }
 
@@ -1398,6 +1409,7 @@ button.worklog-head:hover {
   margin: 0;
   padding: 0 0 0 var(--worklog-indent);
   background: transparent;
+  box-shadow: none;
   color: var(--color-text);
   font-weight: var(--weight-regular);
 }
@@ -1552,14 +1564,23 @@ button.worklog-step-head:hover {
   border-top: 1px solid var(--color-border);
 }
 
-/* Live words shimmer: the Turn's clock, the thought or call under way. */
-.worklog-title[data-live],
+/* One live line shimmers, colourless: the thought or call under way while the Worklog is open, else the Turn's clock.
+   The header's "is working" stays still. Muted grey text with a light band sweeping left to right. The gradient is 2.5 times the words' width, the band its middle
+   fifth; sliding the gradient from its right end to its left carries the band from just before the words' start to just
+   past their end, so each loop starts and ends unlit. */
+.worklog:not([data-open]:has(.worklog-step[data-state="live"])) .worklog-title[data-live],
 .worklog-step[data-state="live"] .worklog-step-label {
-  background: linear-gradient(90deg, var(--color-text-muted) 0%, var(--color-text) 50%, var(--color-text-muted) 100%) 0 0 / 200% 100%;
+  background: linear-gradient(
+      90deg,
+      var(--color-text-muted) 40%,
+      color-mix(in srgb, var(--color-text-muted) 30%, var(--color-white)) 50%,
+      var(--color-text-muted) 60%
+    )
+    100% 0 / 250% 100% no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: worklogShimmer 1.8s linear infinite;
+  animation: worklogShimmer 1.6s linear infinite;
 }
 
 .worklog-step[data-state="live"] .worklog-step-label * {
@@ -1568,14 +1589,21 @@ button.worklog-step-head:hover {
 
 @keyframes worklogShimmer {
   to {
-    background-position: -200% 0;
+    background-position: 0 0;
   }
 }
 
+/* Without motion, live words stand still in muted grey. */
 @media (prefers-reduced-motion: reduce) {
-  .worklog-title[data-live],
+  .worklog:not([data-open]:has(.worklog-step[data-state="live"])) .worklog-title[data-live],
   .worklog-step[data-state="live"] .worklog-step-label {
+    background: none;
+    color: var(--color-text-muted);
     animation: none;
+  }
+
+  .worklog-step[data-state="live"] .worklog-step-label * {
+    color: inherit;
   }
 }
 
@@ -1601,6 +1629,35 @@ button.worklog-step-head:hover {
   height: calc(100dvh - var(--app-safe-top) - var(--app-safe-bottom));
   margin: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
   transform: translateZ(0);
+}
+
+/* A wide desktop window shows the app as a 1600px one zoomed to fit, in 0.1 steps from 1.1 at 1760px to 1.4 at 2240px
+   and wider, so its sidebar, chat, profile and type keep their proportions. The zoom is the app's, not the page's:
+   Floating UI 1.8 sets a popup's place in the screen's pixels, which a zoom on the page would scale again, so the +'s
+   menu, which Base UI portals out of the app, zooms only its own popup. A zoomed box's viewport units grow with it,
+   hence the divisions by the zoom (at the file's end, over the rules they replace). */
+@media (min-width: 1760px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.1;
+  }
+}
+
+@media (min-width: 1920px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.2;
+  }
+}
+
+@media (min-width: 2080px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.3;
+  }
+}
+
+@media (min-width: 2240px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.4;
+  }
 }
 
 .app-layout > .sidebar {
@@ -3397,7 +3454,8 @@ button.worklog-step-head:hover {
    ChatGPT's does; shut, only its round
    menu chip shows, over the chat. Marq's hat, 9.5px into his 72px box,
    sits 1.5px under the window's top as dots' avatar does, in front of a crisp name pill tucked about 6px behind his
-   body, as on the phone (#3614); the chat scrolls beneath them with no band. */
+   body, as on the phone (#3614); the chat scrolls beneath them, fading out over the header's height so its words
+   never run into Marq or his name. */
 @media (min-width: 641px) {
   .sidebar {
     background: var(--color-white);
@@ -3448,6 +3506,12 @@ button.worklog-step-head:hover {
     background: var(--color-white);
     backdrop-filter: none;
     box-shadow: none;
+  }
+
+  /* The scroll view, CopilotKit's first child of the chat; the composer, its sibling, stays crisp. */
+  .chat-header + .app-chat .copilotKitChat > :first-child {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 16px, #000 var(--chat-header-height));
+    mask-image: linear-gradient(to bottom, transparent 16px, #000 var(--chat-header-height));
   }
 }
 
@@ -3520,6 +3584,33 @@ button.worklog-step-head:hover {
   font-size: var(--font-pill);
   font-weight: var(--weight-medium);
   transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* While the agent works, the capsule reads two lines: the name, then "is working", smaller and muted, still: the
+   Worklog carries the shimmer. */
+.chat-header-agent[data-working] .chat-header-name {
+  text-align: center;
+  line-height: 1.25;
+  padding-block: 3px 4px;
+}
+
+.chat-header-status {
+  display: block;
+  font-size: var(--font-detail);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-muted);
+}
+
+/* At work, Marq draws back from his hat's crown behind his laptop. */
+.avatar-figure {
+  transform-origin: 60px 16px;
+  transition: transform 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-figure {
+    transition: none;
+  }
 }
 
 /* The phone keeps its semibold name, as on iOS; the desktop takes ChatGPT's `font-medium`. */
@@ -4687,5 +4778,25 @@ textarea.settings-text {
   .agent-profile-tab,
   .mep-pill {
     min-height: 44px;
+  }
+}
+
+/* The wide desktop's zoom (see `--ui-zoom`): its viewport heights divided by it. */
+@media (min-width: 1760px) and (hover: hover) and (pointer: fine) {
+  .app-layout {
+    zoom: var(--ui-zoom);
+    height: calc((100dvh - var(--app-safe-top) - var(--app-safe-bottom)) / var(--ui-zoom));
+  }
+
+  .sidebar-expanded {
+    height: calc(100dvh / var(--ui-zoom));
+  }
+
+  .chat-model-picker .mep-dropdown {
+    max-height: calc(100dvh / var(--ui-zoom) - 100% - var(--chat-header-height) - 4rem);
+  }
+
+  .add-menu {
+    zoom: var(--ui-zoom);
   }
 }

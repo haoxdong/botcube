@@ -204,7 +204,7 @@ export function Worklog({ id, took, running, expanding = running, asked, childre
 
 /**
  * One step of a Turn's work: an icon, then one line that truncates, with a chevron after it when it opens to more.
- * Live, its words shimmer.
+ * Live, its words shimmer, and the Worklog's head stands still.
  */
 function Step({ kind, state, icon: Icon, label, detail }: {
   kind: "thought" | "tool";

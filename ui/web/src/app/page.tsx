@@ -22,6 +22,7 @@ import { endOpeningMoment } from "./latency";
 import { rumConfig, startRum } from "./rum";
 import { EFFORT_LEVELS, useModelSelection, type ModelList } from "./model-selection";
 import { Avatar } from "./avatar";
+import { useAgentRunning } from "./agent-running";
 import { PluginsScreen } from "./plugins";
 import { ProfileEditor } from "./profile-editor";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
@@ -630,13 +631,20 @@ function App({
     return () => subscription.unsubscribe();
   }, [agent, accountId]);
 
+  // While a Turn runs, the header shows the agent at work, as the chat surface knows it (chat-surface.tsx).
+  const [agentRunning] = useAgentRunning(agent);
+  const working = activeId !== null && (turnRunning || agentRunning);
+
   // The agent's avatar and name, on the loading Main Chat too, so the page keeps its layout when the chat loads;
   // the Agent Profile opens on a chat, so its button waits for one.
   const chatHeader = (
     <header className="chat-header">
-      <button ref={agentProfileOpenerRef} className="chat-header-agent" disabled={activeId === null} onClick={() => setAgentProfileOpen(true)} aria-label="Agent profile" title="Agent profile">
-        <Avatar picture={agentProfile?.picture ?? undefined} emoji={agentProfile?.avatar} name={agentName} agent size={72} />
-        <span className="chat-header-name">{agentName}</span>
+      <button ref={agentProfileOpenerRef} className="chat-header-agent" data-working={working || undefined} disabled={activeId === null} onClick={() => setAgentProfileOpen(true)} aria-label="Agent profile" title="Agent profile">
+        <Avatar picture={agentProfile?.picture ?? undefined} emoji={agentProfile?.avatar} name={agentName} agent working={working} size={72} />
+        <span className="chat-header-name">
+          {agentName}
+          {working && <span className="chat-header-status">is working</span>}
+        </span>
       </button>
     </header>
   );

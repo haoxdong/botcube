@@ -48,20 +48,36 @@ it("shows an assistant message's inline code as a chip without backticks", () =>
   expect(styleOf(message, '.pseudo-after').content).toBe('none');
 });
 
-it("shows an assistant message's prose in a grey bubble up to the column's right edge, and a message with only tool rows without one", () => {
+const bubbleShadow = '0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.05)';
+
+it("shows an assistant message's prose in a white bubble lifted by a soft shadow up to the column's right edge, and a message with only tool rows, or a Worklog's note, without one", () => {
   const reply = inAssistantMessage('<div><p>Run <code>echo</code> now.</p></div>');
   const toolOnly = inAssistantMessage('<div></div>');
+  const worklog = document.createElement('div');
+  worklog.className = 'worklog-body';
+  const note = inAssistantMessage('<div><p>Checking the curve.</p></div>');
+  worklog.append(note.message);
+  document.body.append(worklog);
 
-  const bubble = styleOf(reply.prose, ':scope > div');
-  expect(bubble.backgroundColor).toBe('#f4f4f4');
-  expect(bubble.borderRadius).toBe('20px');
-  expect(bubble.padding).toBe('12px 18px');
-  expect(bubble.maxWidth).toBe('100%');
-  expect(styleOf(reply.prose, 'p').marginTop).toBe('0px');
-  expect(styleOf(reply.prose, 'p').marginBottom).toBe('0px');
-  expect(styleOf(reply.prose, 'code').backgroundColor).toBe('#fff');
-  expect(styleOf(reply.prose, 'code').borderWidth).toBe('1px');
-  expect(styleOf(toolOnly.prose, ':scope > div').backgroundColor).not.toBe('#f4f4f4');
+  try {
+    const bubble = styleOf(reply.prose, ':scope > div');
+    expect(bubble.backgroundColor).toBe('#fff');
+    expect(bubble.color).toBe('#0d0d0d');
+    expect(bubble.boxShadow).toBe(bubbleShadow);
+    expect(bubble.borderRadius).toBe('20px');
+    expect(bubble.padding).toBe('12px 18px');
+    expect(bubble.maxWidth).toBe('100%');
+    expect(styleOf(reply.prose, 'p').marginTop).toBe('0px');
+    expect(styleOf(reply.prose, 'p').marginBottom).toBe('0px');
+    expect(styleOf(reply.prose, 'code').backgroundColor).toBe('#fff');
+    expect(styleOf(reply.prose, 'code').borderWidth).toBe('1px');
+    expect(styleOf(toolOnly.prose, ':scope > div').backgroundColor).not.toBe('#fff');
+    expect(styleOf(toolOnly.prose, ':scope > div').boxShadow).not.toContain(bubbleShadow);
+    const noteBox = styleOf(note.prose, ':scope > div');
+    expect([noteBox.backgroundColor, noteBox.boxShadow]).toEqual(['transparent', 'none']);
+  } finally {
+    worklog.remove();
+  }
 });
 
 it("starts a Turn well clear of the last, its Worklog under the question and its answer under the Worklog", () => {
@@ -146,17 +162,18 @@ it("shows Connected as plain text after a white bolt on a green badge (Muse Fig 
   expect(styleOf(status, 'svg').color).toBe('#fff');
 });
 
-it("shows the user's own messages in blackish", () => {
+it("shows the user's own messages in a pale blue bubble with dark text", () => {
   const message = document.createElement('div');
   message.className = 'copilotKitMessage copilotKitUserMessage';
   message.innerHTML = '<div>Hello</div>';
   document.body.append(message);
 
-  expect(styleOf(message, 'div').backgroundColor).toBe('#0d0d0d');
+  const bubble = styleOf(message, 'div');
+  expect([bubble.backgroundColor, bubble.color]).toEqual(['#d6e4f3', '#0d0d0d']);
   message.remove();
 });
 
-it("shows a sent message's files as white cards above its blackish bubble, each on its kind's tile", () => {
+it("shows a sent message's files as white cards above its blue bubble, each on its kind's tile", () => {
   const message = document.createElement('div');
   message.className = 'copilotKitMessage copilotKitUserMessage';
   message.innerHTML = `<ul class="sent-files">
@@ -166,7 +183,7 @@ it("shows a sent message's files as white cards above its blackish bubble, each 
     </ul><div class="bubble">check this</div>`;
   document.body.append(message);
 
-  expect(styleOf(message, '.bubble').backgroundColor).toBe('#0d0d0d');
+  expect(styleOf(message, '.bubble').backgroundColor).toBe('#d6e4f3');
   const card = styleOf(message, '.sent-file');
   expect([card.backgroundColor, card.borderColor, card.borderRadius]).toEqual(['#fff', '#e0e0e0', '16px']);
   const tile = styleOf(message, '.file-tile');
@@ -203,6 +220,28 @@ it('shows the send button grey at rest and while the empty composer has focus, a
     expect(getComputedStyle(send).backgroundColor).toBe('#0d0d0d');
   } finally {
     input.remove();
+  }
+});
+
+it("lifts the desktop composer on a clear border in Marq's bubbles' soft shadow, and keeps the phone's white rim and own shadow", () => {
+  const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
+  // A fresh composer per viewport, as happy-dom keeps an element's computed style. happy-dom matches no
+  // `:focus-within`, so this reads the composer at rest.
+  const composer = (width: number) => {
+    happyDOM.setViewport({ width, height: 844 });
+    const input = document.createElement('div');
+    input.className = 'copilotKitInput';
+    document.body.append(input);
+    const { borderTopColor, boxShadow } = getComputedStyle(input);
+    input.remove();
+    return { border: borderTopColor, shadow: boxShadow };
+  };
+
+  try {
+    expect(composer(1024)).toEqual({ border: 'transparent', shadow: bubbleShadow });
+    expect(composer(440)).toEqual({ border: '#fff', shadow: '0 8px 36px rgba(0,0,0,0.11)' });
+  } finally {
+    happyDOM.setViewport({ width: 1024, height: 768 });
   }
 });
 

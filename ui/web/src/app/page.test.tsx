@@ -2223,17 +2223,19 @@ describe('Main Chat', () => {
     const resized: ResizeObserverCallback[] = [];
     const grow = () => act(async () => { for (const callback of [...resized]) callback([], {} as ResizeObserver); });
     // Each row 100px tall unless `height` says otherwise, laid out from the list's top, in a scroll view 300px tall: the
-    // row being read moves down by the rows joining above it.
-    const layOut = (height: (row: string | null) => number = () => 100) => {
+    // row being read moves down by the rows joining above it. An app zoomed by `zoom` shows them `zoom` times as tall.
+    const layOut = (height: (row: string | null) => number = () => 100, zoom = 1) => {
       const all = () => [...document.querySelectorAll('[data-message-row]')];
       const sum = (laid: Element[]) => laid.reduce((total, row) => total + height(row.getAttribute('data-message-row')), 0);
       Object.defineProperty(scrollView(), 'clientHeight', { configurable: true, value: 300 });
       Object.defineProperty(scrollView(), 'scrollHeight', { configurable: true, get: () => sum(all()) });
+      Object.defineProperty(scrollView(), 'currentCSSZoom', { configurable: true, value: zoom });
       return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-        if (this === scrollView()) return { top: 0, bottom: 300 } as DOMRect;
+        if (this === scrollView()) return { top: 0, bottom: 300 * zoom } as DOMRect;
         const index = all().indexOf(this);
         const top = (index === -1 ? -100 : sum(all().slice(0, index))) - scrollView().scrollTop;
-        return { top, bottom: index === -1 ? top : top + height(this.getAttribute('data-message-row')) } as DOMRect;
+        const bottom = index === -1 ? top : top + height(this.getAttribute('data-message-row'));
+        return { top: top * zoom, bottom: bottom * zoom } as DOMRect;
       });
     };
 
@@ -2350,6 +2352,16 @@ describe('Main Chat', () => {
       await grow();
 
       expect(scrollView().scrollTop).toBe(1120);
+    });
+
+    // The wide desktop zooms the app 1.4×: a row's rect is in the screen's pixels, the scroll in the scroll view's own,
+    // and the rows joining above moved the view 1.4× as far as they pushed the row being read.
+    it('keeps the row being read in place in an app the wide desktop zooms', async () => {
+      await renderPage();
+      layOut(undefined, 1.4);
+      await scrollToTop();
+
+      expect(scrollView().scrollTop).toBeCloseTo(400);
     });
 
     // The user scrolled to the top before the rows that joined last had rendered, and as they grew, the row
@@ -2584,6 +2596,14 @@ describe('Main Chat', () => {
     it('shows the Worklog head in place of the cursor', () => {
       expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
       expect(document.querySelector('.worklog')).toHaveTextContent(/^Working · 1s$/);
+    });
+
+    it("shows the header's agent at his laptop, his name over \"is working\"", () => {
+      const agentButton = screen.getByRole('button', { name: 'Agent profile' });
+      expect(agentButton).toHaveAttribute('data-working');
+      expect(agentButton.querySelector('.chat-header-name')).toHaveTextContent(/^Ada Botis working$/);
+      expect(agentButton.querySelector('.chat-header-status')).toHaveTextContent(/^is working$/);
+      expect(agentButton.querySelector('.avatar-agent .avatar-laptop')).not.toBeNull();
     });
 
     it('gives way to an answer that comes with no rows', async () => {
@@ -5760,6 +5780,9 @@ describe('agent profile', () => {
     await renderPage();
     expect(avatar()).toHaveTextContent(/^Ada Bot$/);
     expect(avatar().querySelector('.avatar-agent .avatar-monocle')).not.toBeNull();
+    // At rest, no laptop.
+    expect(avatar()).not.toHaveAttribute('data-working');
+    expect(avatar().querySelector('.avatar-laptop')).toBeNull();
     expect(avatar().closest('main > header')).not.toBeNull();
     // A tooltip names what the avatar opens.
     expect(avatar()).toHaveAttribute('title', 'Agent profile');

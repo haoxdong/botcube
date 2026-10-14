@@ -755,6 +755,20 @@ describe('FilesApp', () => {
       expect(at()).toEqual(['130px', '50px']);
     });
 
+    it('opens at the pointer in an app the wide desktop zooms', async () => {
+      stored.push({ name: 'report.csv', size: 12, lastModified: '2026-10-01T12:00:00.000Z' });
+      Object.defineProperty(HTMLElement.prototype, 'currentCSSZoom', { configurable: true, get: () => 1.4 });
+      try {
+        const host = await app();
+
+        await menuOn(host, 'report.csv', 56, 84);
+        const shown = menu(host) as HTMLElement;
+        expect([shown.style.left, shown.style.top]).toEqual(['40px', '60px']);
+      } finally {
+        delete (HTMLElement.prototype as { currentCSSZoom?: number }).currentCSSZoom;
+      }
+    });
+
     it('downloads the file as a double-click does', async () => {
       stored.push({ name: 'reports/q3.pdf', size: 12, lastModified: '2026-10-01T12:00:00.000Z' });
       const host = await app();

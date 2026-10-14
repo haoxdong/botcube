@@ -39,7 +39,13 @@ def _writes_sessions(events: Any, actor_id: str, session_id: str) -> list[str]:
     params: dict[str, Any] = {'memoryId': events.memory_id, 'actorId': actor_id, 'maxResults': 100}
     sessions: list[str] = []
     while True:
-        page = events.client.list_sessions(**params)
+        try:
+            page = events.client.list_sessions(**params)
+        except events.client.exceptions.ResourceNotFoundException as error:
+            # AgentCore answers an actor that never wrote an event as not found: it has no sessions.
+            if f'Actor {actor_id} not found' not in str(error):
+                raise
+            return sessions
         sessions.extend(item['sessionId'] for item in page['sessionSummaries'] if item['sessionId'].startswith(prefix))
         if not page.get('nextToken'):
             return sessions

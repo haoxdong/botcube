@@ -34,9 +34,11 @@ import { useIsPhone } from "./phone-query";
 import { webUiPlugin } from "@cartridge-ui";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/ui/button";
+import { zoomOf } from "@/lib/utils";
 import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { ThoughtStep, ToolStep, Worklog, worklogRows } from "./worklog";
 import { useQueuedFollowUp } from "./queued-follow-up";
+import { useAgentRunning } from "./agent-running";
 
 const UI_CONFIG = webUiPlugin.config;
 const AGENT_ID = UI_CONFIG.agentId;
@@ -99,7 +101,7 @@ function AddMenu({ disabled, onAddFile }: { disabled?: boolean | undefined; onAd
         <Plus size={20} aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".copilotKitInput") ?? null} side="top" align="start" sideOffset={8}>
+        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".copilotKitInput") ?? null} side="top" align="start" sideOffset={() => 8 * zoomOf(trigger.current)}>
           <Menu.Popup className="add-menu">
             <Menu.Item className="add-menu-item" onClick={() => onAddFile?.("image/*")}>
               <Paperclip size={20} aria-hidden />
@@ -304,7 +306,7 @@ function holdAtRow(wrapper: Element, id: string): () => void {
     const scroller = row && scrollParent(row);
     if (row && scroller) {
       const header = wrapper.closest(".app-shell")?.querySelector(".chat-header")?.getBoundingClientRect().bottom ?? 0;
-      scroller.scrollTop += row.getBoundingClientRect().top - Math.max(viewTop(scroller), header);
+      scroller.scrollTop += (row.getBoundingClientRect().top - Math.max(viewTop(scroller), header)) / zoomOf(scroller);
     }
     if (now - started < OPENING_MS) frame = requestAnimationFrame(hold);
   };
@@ -577,7 +579,7 @@ function rowRead(list: Element, scroller: Element): ReadRow | null {
     const box = child.getBoundingClientRect();
     return box.bottom > Math.max(box.top, top);
   });
-  return row === undefined ? null : { row, scroller, at: row.getBoundingClientRect().top + scroller.scrollTop };
+  return row === undefined ? null : { row, scroller, at: row.getBoundingClientRect().top / zoomOf(scroller) + scroller.scrollTop };
 }
 
 /**
@@ -587,7 +589,7 @@ function rowRead(list: Element, scroller: Element): ReadRow | null {
 function keepInPlace(read: ReadRow) {
   if (!read.row.isConnected) return;
   const { scroller } = read;
-  const at = read.row.getBoundingClientRect().top + scroller.scrollTop;
+  const at = read.row.getBoundingClientRect().top / zoomOf(scroller) + scroller.scrollTop;
   // Growth below the row, such as a streaming Turn, moves nothing: the scroll view keeps up with it itself.
   if (Math.abs(at - read.at) < 1) return;
   // At its bottom, which CHAT_SCROLL_VIEW's instant resize keeps 1px short of, the view stays there as the content above
@@ -872,16 +874,7 @@ function ChatThread({
   const modelsReady = () => accountRef.current.isAccountCurrent() && accountRef.current.models.loaded;
   // A follow-up sent while a Turn runs is held here, and in this browser across a reload, then sent once the Turn
   // ends (#3920). Follow-ups sent meanwhile go together as one message.
-  const [agentRunning, setAgentRunning] = useState(agent.isRunning);
-  useEffect(() => {
-    // Another agent for the chat, as when its Side Chat is chosen again, runs or not as it does.
-    setAgentRunning(agent.isRunning);
-    const subscription = agent.subscribe({
-      onRunInitialized: () => setAgentRunning(true),
-      onRunFinalized: () => setAgentRunning(false),
-    });
-    return () => subscription.unsubscribe();
-  }, [agent]);
+  const [agentRunning, setAgentRunning] = useAgentRunning(agent);
   const running = turnRunning || agentRunning;
   // Read from the agent, so a chat opened again mid-Turn knows its run has started.
   const subscribeRun = useCallback((listener: () => void) => {

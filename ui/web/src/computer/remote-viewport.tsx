@@ -1,5 +1,6 @@
 import { usePinch } from '@use-gesture/react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { zoomOf } from '../lib/utils';
 
 type Viewport = { scale: number; x: number; y: number };
 const HOME: Viewport = { scale: 1, x: 0, y: 0 };
@@ -42,10 +43,14 @@ export function RemoteViewport({ expanded, interactive, sessionId, completeTouch
     const box = host.current;
     if (!expanded || !interactive || box === null) return;
     const rect = box.getBoundingClientRect();
-    const anchor = first ? { ...current.current, cx: origin[0] - rect.left, cy: origin[1] - rect.top } : memo as Viewport & { cx: number; cy: number };
+    // The pinch and the rect are in the screen's pixels, the translate in the box's own, which a zoomed app has fewer of.
+    const zoom = zoomOf(box);
+    const cx = (origin[0] - rect.left) / zoom;
+    const cy = (origin[1] - rect.top) / zoom;
+    const anchor = first ? { ...current.current, cx, cy } : memo as Viewport & { cx: number; cy: number };
     const ratio = scale / anchor.scale;
-    const x = Math.min(0, Math.max(rect.width * (1 - scale), origin[0] - rect.left - (anchor.cx - anchor.x) * ratio));
-    const y = Math.min(0, Math.max(rect.height * (1 - scale), origin[1] - rect.top - (anchor.cy - anchor.y) * ratio));
+    const x = Math.min(0, Math.max((rect.width / zoom) * (1 - scale), cx - (anchor.cx - anchor.x) * ratio));
+    const y = Math.min(0, Math.max((rect.height / zoom) * (1 - scale), cy - (anchor.cy - anchor.y) * ratio));
     current.current = { scale, x, y };
     setViewport(current.current);
     return anchor;
