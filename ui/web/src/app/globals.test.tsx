@@ -10,14 +10,15 @@ import { ScheduledTaskProposalCard } from './scheduled-tasks';
 
 // The page's own stylesheet. happy-dom skips its imports and layers (CopilotKit's Tailwind Typography
 // quotes inline code in a layer), and every unlayered rule here wins over a layered one, so these
-// tests read what this sheet decides. happy-dom styles no pseudo-elements, so each `::before` and
-// `::after` rule styles a `.pseudo-before` or `.pseudo-after` child instead. It matches no
-// `:placeholder-shown` either, so a test marks an empty text box `.placeholder-shown` instead.
+// tests read what this sheet decides. happy-dom styles no pseudo-elements, so each `::before`,
+// `::after` or `::placeholder` rule styles a `.pseudo-before`, `.pseudo-after` or `.pseudo-placeholder`
+// child instead. It matches no `:placeholder-shown` either, so a test marks an empty text box
+// `.placeholder-shown` instead.
 const sheet = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'globals.css'), 'utf8');
 const style = document.createElement('style');
 
 beforeAll(() => {
-  style.textContent = sheet.replace(/::(before|after)\b/g, ' > .pseudo-$1').replace(/:placeholder-shown\b/g, '.placeholder-shown');
+  style.textContent = sheet.replace(/::(before|after|placeholder)\b/g, ' > .pseudo-$1').replace(/:placeholder-shown\b/g, '.placeholder-shown');
   document.head.append(style);
 });
 afterAll(() => style.remove());
@@ -48,9 +49,7 @@ it("shows an assistant message's inline code as a chip without backticks", () =>
   expect(styleOf(message, '.pseudo-after').content).toBe('none');
 });
 
-const bubbleShadow = '0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.05)';
-
-it("shows an assistant message's prose in a white bubble lifted by a soft shadow up to the column's right edge, and a message with only tool rows, or a Worklog's note, without one", () => {
+it("shows an assistant message's prose in a white bubble in the resting shadow up to the column's right edge, and a message with only tool rows, or a Worklog's note, without one", () => {
   const reply = inAssistantMessage('<div><p>Run <code>echo</code> now.</p></div>');
   const toolOnly = inAssistantMessage('<div></div>');
   const worklog = document.createElement('div');
@@ -62,8 +61,8 @@ it("shows an assistant message's prose in a white bubble lifted by a soft shadow
   try {
     const bubble = styleOf(reply.prose, ':scope > div');
     expect(bubble.backgroundColor).toBe('#fff');
-    expect(bubble.color).toBe('#0d0d0d');
-    expect(bubble.boxShadow).toBe(bubbleShadow);
+    expect(bubble.color).toBe('#0b0d10');
+    expect(bubble.boxShadow).toBe('0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)');
     expect(bubble.borderRadius).toBe('20px');
     expect(bubble.padding).toBe('12px 18px');
     expect(bubble.maxWidth).toBe('100%');
@@ -71,10 +70,11 @@ it("shows an assistant message's prose in a white bubble lifted by a soft shadow
     expect(styleOf(reply.prose, 'p').marginBottom).toBe('0px');
     expect(styleOf(reply.prose, 'code').backgroundColor).toBe('#fff');
     expect(styleOf(reply.prose, 'code').borderWidth).toBe('1px');
-    expect(styleOf(toolOnly.prose, ':scope > div').backgroundColor).not.toBe('#fff');
-    expect(styleOf(toolOnly.prose, ':scope > div').boxShadow).not.toContain(bubbleShadow);
+    const toolBox = styleOf(toolOnly.prose, ':scope > div');
+    expect(toolBox.backgroundColor).not.toBe('#fff');
+    expect(toolBox.boxShadow || 'none').toBe('none');
     const noteBox = styleOf(note.prose, ':scope > div');
-    expect([noteBox.backgroundColor, noteBox.boxShadow]).toEqual(['transparent', 'none']);
+    expect([noteBox.backgroundColor, noteBox.boxShadow || 'none']).toEqual(['transparent', 'none']);
   } finally {
     worklog.remove();
   }
@@ -156,7 +156,7 @@ it("shows Connected as plain text after a white bolt on a green badge (Muse Fig 
   status.innerHTML = '<svg></svg>Connected';
   document.body.append(status);
 
-  expect(getComputedStyle(status).color).toBe('#0d0d0d');
+  expect(getComputedStyle(status).color).toBe('#0b0d10');
   expect(styleOf(status, 'svg').backgroundColor).toBe('#22c55e');
   expect(styleOf(status, 'svg').borderRadius).toBe('50%');
   expect(styleOf(status, 'svg').color).toBe('#fff');
@@ -169,7 +169,7 @@ it("shows the user's own messages in a pale blue bubble with dark text", () => {
   document.body.append(message);
 
   const bubble = styleOf(message, 'div');
-  expect([bubble.backgroundColor, bubble.color]).toEqual(['#d6e4f3', '#0d0d0d']);
+  expect([bubble.backgroundColor, bubble.color]).toEqual(['#d6e4f3', '#0b0d10']);
   message.remove();
 });
 
@@ -185,12 +185,12 @@ it("shows a sent message's files as white cards above its blue bubble, each on i
 
   expect(styleOf(message, '.bubble').backgroundColor).toBe('#d6e4f3');
   const card = styleOf(message, '.sent-file');
-  expect([card.backgroundColor, card.borderColor, card.borderRadius]).toEqual(['#fff', '#e0e0e0', '16px']);
+  expect([card.backgroundColor, card.borderColor, card.borderRadius]).toEqual(['#fff', '#dde0e4', '16px']);
   const tile = styleOf(message, '.file-tile');
   expect([tile.width, tile.height, tile.color]).toEqual(['40px', '40px', '#fff']);
-  expect(['pdf', 'sheet', 'file'].map((kind) => styleOf(message, `[data-kind="${kind}"]`).backgroundColor)).toEqual(['#e5484d', '#10a37f', '#6b6b6b']);
+  expect(['pdf', 'sheet', 'file'].map((kind) => styleOf(message, `[data-kind="${kind}"]`).backgroundColor)).toEqual(['#e5484d', '#10a37f', '#676a6d']);
   expect(styleOf(message, '.sent-file-name').fontWeight).toBe('500');
-  expect(styleOf(message, '.sent-file-kind').color).toBe('#6b6b6b');
+  expect(styleOf(message, '.sent-file-kind').color).toBe('#676a6d');
   message.remove();
 });
 
@@ -211,19 +211,19 @@ it('shows the send button grey at rest and while the empty composer has focus, a
       throw new Error('The test composer is missing an expected element');
     }
 
-    expect(getComputedStyle(send).backgroundColor).toBe('#bfbfbf');
+    expect(getComputedStyle(send).backgroundColor).toBe('#bdbfc3');
     textarea.focus();
-    expect(getComputedStyle(send).backgroundColor).toBe('#bfbfbf');
+    expect(getComputedStyle(send).backgroundColor).toBe('#bdbfc3');
     pill.focus();
-    expect(getComputedStyle(send).backgroundColor).toBe('#bfbfbf');
+    expect(getComputedStyle(send).backgroundColor).toBe('#bdbfc3');
     send.removeAttribute('disabled');
-    expect(getComputedStyle(send).backgroundColor).toBe('#0d0d0d');
+    expect(getComputedStyle(send).backgroundColor).toBe('#0b0d10');
   } finally {
     input.remove();
   }
 });
 
-it("lifts the desktop composer on a clear border in Marq's bubbles' soft shadow, and keeps the phone's white rim and own shadow", () => {
+it("lifts the composer on a clear border in the resting shadow Marq's bubble shares, on a desktop and a phone alike", () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
   // A fresh composer per viewport, as happy-dom keeps an element's computed style. happy-dom matches no
   // `:focus-within`, so this reads the composer at rest.
@@ -232,17 +232,34 @@ it("lifts the desktop composer on a clear border in Marq's bubbles' soft shadow,
     const input = document.createElement('div');
     input.className = 'copilotKitInput';
     document.body.append(input);
-    const { borderTopColor, boxShadow } = getComputedStyle(input);
+    const { backgroundColor, borderTopColor, boxShadow } = getComputedStyle(input);
     input.remove();
-    return { border: borderTopColor, shadow: boxShadow };
+    return { fill: backgroundColor, border: borderTopColor, shadow: boxShadow };
   };
 
   try {
-    expect(composer(1024)).toEqual({ border: 'transparent', shadow: bubbleShadow });
-    expect(composer(440)).toEqual({ border: '#fff', shadow: '0 8px 36px rgba(0,0,0,0.11)' });
+    const resting = { fill: '#fff', border: 'transparent', shadow: '0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)' };
+    expect(composer(1024)).toEqual(resting);
+    expect(composer(440)).toEqual(resting);
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
+});
+
+it("gives the composer's placeholder the muted text, and every scrollbar, CopilotKit's too, the control grey's thumb", () => {
+  const input = document.createElement('div');
+  input.className = 'copilotKitInput';
+  input.innerHTML = '<textarea><span class="pseudo-placeholder"></span></textarea>';
+  document.body.append(input);
+  try {
+    expect(styleOf(input, '.pseudo-placeholder').color).toBe('#676a6d');
+  } finally {
+    input.remove();
+  }
+  // happy-dom computes no scrollbar-color, so this reads the sheet: the root's, and CopilotKit's elements' own.
+  expect(sheet).toMatch(/\n:root,\s*:root \[data-copilotkit\] \* \{\s*scrollbar-color: var\(--color-control\) transparent;\s*\}/);
+  // A pane with its own thin `::-webkit-scrollbar` sets none, or Chrome would drop its thumb.
+  expect(sheet).toMatch(/\n:root \.copilotKitMessages,\s*:root \.sidebar-list \{\s*scrollbar-color: auto;\s*\}/);
 });
 
 // The text is the `message` role and the picker `detail`, whose phone sizes start at 640px.
@@ -386,15 +403,15 @@ it("shows an initial or emoji avatar on a blackish disc, and the agent's own fig
   agent.className = 'avatar avatar-agent';
   document.body.append(avatar, agent);
 
-  expect(getComputedStyle(avatar).backgroundColor).toBe('#0d0d0d');
-  expect(getComputedStyle(agent).backgroundColor).not.toBe('#0d0d0d');
+  expect(getComputedStyle(avatar).backgroundColor).toBe('#0b0d10');
+  expect(getComputedStyle(agent).backgroundColor).not.toBe('#0b0d10');
   avatar.remove();
   agent.remove();
 });
 
 // streamdown 2.7 marks the table data-streamdown="table" in a table-wrapper card; these rules once targeted 1.6's
 // markup, which marked the <table> table-wrapper too, so the card's padding and Typography's table margins showed.
-it("shows a message's markdown table as a white sheet whose one frame is its scroll box, its controls in no row of their own", () => {
+it("shows a message's markdown table flat on the bubble, as wide as its content, its edge cells in line with the text, fading where it scrolls, its controls in no row of their own", () => {
   const { container, unmount } = render(
     <div data-copilotkit="" className="copilotKitMessage copilotKitAssistantMessage">
       <div className="cpk:prose">
@@ -413,22 +430,30 @@ it("shows a message's markdown table as a white sheet whose one frame is its scr
     expect(card.padding).toBe('0px');
     expect(card.borderWidth || '0px').toBe('0px');
     const scroller = styleOf(container, 'div[data-streamdown="table-wrapper"] > div:last-child');
-    expect(scroller.borderWidth).toBe('1px');
-    expect(scroller.backgroundColor).toBe('#fff');
-    expect(scroller.backgroundImage.match(/radial-gradient/g)).toHaveLength(2);
+    expect(scroller.borderWidth || '0px').toBe('0px');
+    expect(scroller.borderRadius || '0px').toBe('0px');
+    // happy-dom reads `background: none` back as a `none` colour.
+    expect(['transparent', 'none']).toContain(scroller.backgroundColor || 'transparent');
+    expect(scroller.backgroundImage || 'none').toBe('none');
     const table = styleOf(container, 'table[data-streamdown="table"]');
     expect(table.marginTop).toBe('0px');
     expect(table.width).toBe('max-content');
-    expect(table.minWidth).toBe('100%');
+    expect(table.minWidth || 'auto').toBe('auto');
     expect(styleOf(container, 'td:nth-child(2)').whiteSpace).toBe('nowrap');
+    expect([styleOf(container, 'th:first-child').paddingLeft, styleOf(container, 'td:last-child').paddingRight]).toEqual(['0px', '0px']);
     const controls = styleOf(container, 'div[data-streamdown="table-wrapper"] > div:first-child:not(:last-child)');
     expect(controls.justifyContent).toBe('flex-end');
     expect(styleOf(container, 'div[data-streamdown="table-wrapper"] > div:first-child button').padding).toBe('4px');
   } finally {
     unmount();
   }
-  // happy-dom drops background attachment lists, so the real-browser check proves their rendering.
-  expect(sheet).toMatch(/\[data-streamdown="table-wrapper"\] > div:last-child \{[^}]*background-attachment: local, local, scroll, scroll;/);
+  // happy-dom loads no streamdown classes and runs no scroll-driven animations, so this reads the sheet: the box drops
+  // streamdown's frame and gates the fade on support. Firefox and Chromium prove the fallback and scrolling.
+  expect(sheet).toMatch(
+    /\[data-streamdown="table-wrapper"\] > div:last-child \{[^}]*overflow: auto;\s*border: 0;\s*border-radius: 0;\s*background: none;/,
+  );
+  expect(sheet).toMatch(/@supports \(animation-timeline: scroll\(self inline\)\) \{[\s\S]*?mask-image: linear-gradient[\s\S]*?animation: tableEdgeFade linear both;\s*animation-timeline: scroll\(self inline\);/);
+  expect(sheet).toMatch(/@keyframes tableEdgeFade \{/);
 });
 
 // a white band ran from the scroll-to-bottom chevron's row down to the composer, hiding the messages behind it.
@@ -438,7 +463,8 @@ it("scrolls the messages behind CopilotKit's scroll-to-bottom chevron down to th
   chat.innerHTML = '<div class="row"><button data-testid="copilot-scroll-to-bottom"></button></div>';
   document.body.append(chat);
 
-  // The chevron keeps CopilotKit's own white disc, border and shadow over the text.
+  // The chevron keeps CopilotKit's own white disc and border over the text, in the resting shadow.
+  expect(styleOf(chat, 'button').boxShadow).toBe('0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)');
   const row = styleOf(chat, '.row');
   expect(row.backgroundImage).toBe('');
   expect(row.backgroundColor).toBe('');
@@ -547,8 +573,8 @@ it("dims a paused scheduled task's icon and name", () => {
     </ul>,
   );
 
-  expect(styleOf(container, '.list-row-icon').color).toBe('#bfbfbf');
-  expect(styleOf(container, '.scheduled-task-title').color).toBe('#6b6b6b');
+  expect(styleOf(container, '.list-row-icon').color).toBe('#bdbfc3');
+  expect(styleOf(container, '.scheduled-task-title').color).toBe('#676a6d');
   unmount();
 });
 
@@ -620,8 +646,8 @@ it("shows a scheduled task's Title and instructions as fields, and its schedule 
   expect(styleOf(form, 'textarea').minHeight).toBe('120px');
   expect([styleOf(form, '.settings-group').borderStyle, styleOf(form, '.settings-group').borderRadius]).toEqual(['solid', '16px']);
   expect([styleOf(form, '.settings-row').minHeight, styleOf(form, '.settings-row').padding]).toEqual(['48px', '8px 20px']);
-  expect(styleOf(form, '.settings-row').color).toBe('#0d0d0d');
-  expect(styleOf(form, 'select').color).toBe('#6b6b6b');
+  expect(styleOf(form, '.settings-row').color).toBe('#0b0d10');
+  expect(styleOf(form, 'select').color).toBe('#676a6d');
   form.remove();
 });
 
@@ -660,7 +686,7 @@ it("shows the agent's name in a capsule over the avatar's bottom edge, which sin
   expect(name.borderRadius).toBe('9999px');
   expect(name.backgroundColor).toBe('#fff');
   expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\)\s*\{\s*transform: scale\(0\.95\);/);
-  expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\) \.chat-header-name \{\s*background: rgba\(235, 235, 235, 0\.85\);/);
+  expect(sheet).toMatch(/\.chat-header-agent:active:not\(:disabled\) \.chat-header-name \{\s*background: color-mix\(in srgb, var\(--color-selected\) 85%, transparent\);/);
 });
 
 it("answers a mouse over the agent's capsule and rings it on keyboard focus", () => {
@@ -674,6 +700,11 @@ it("answers a mouse over the agent's capsule and rings it on keyboard focus", ()
   expect(sheet).toMatch(
     /\.chat-header-agent:focus-visible:not\(:disabled\) \.chat-header-name \{\s*box-shadow: 0 0 0 2px var\(--color-white\), 0 0 0 4px var\(--color-blue\);/,
   );
+});
+
+it('bobs Marq while the agent works', () => {
+  // happy-dom runs no animations, so this reads the sheet.
+  expect(sheet).toMatch(/\.chat-header-agent\[data-working\] \.avatar-agent svg \{\s*animation: chatHeaderBob 1\.6s ease-in-out infinite;/);
 });
 
 it('keeps the avatar keyboard focus ring while the pointer is over it', () => {
@@ -827,7 +858,7 @@ it("shows a Side Chat's rename and delete buttons at rest on a touch screen, so 
 });
 
 // the Main chat pill was filled at rest, so with a Side Chat open both looked selected; and on a phone the
-// drawer was a 260 px panel with 13 px rows where Muse Fig 12 is a list with large rows. Memo 0049 Fig 21 then left a strip
+// drawer was a 260 px panel with 13 px rows where Muse Fig 12 is a list with large rows. Muse Fig 21 then left a strip
 // of the chat in view beside it, and its Side Chat rows step at the nav rows' 44px pitch.
 it('fills the Main chat pill only while it is the open chat, and opens the drawer beside the chat with large rows on a phone', () => {
   const happyDOM = (window as unknown as HappyDomWindow).happyDOM;
@@ -988,7 +1019,7 @@ it('shows only the round menu chip while the desktop sidebar is shut, and docks 
     expect(sidebar.backgroundColor).toBe(styleOf(open.container, '.app-shell').backgroundColor);
     expect(sidebar.boxShadow || 'none').toBe('none');
     expect(sidebar.animation || 'none').toBe('none');
-    expect(sidebar.borderRight).toBe('1px solid #e0e0e0');
+    expect(sidebar.borderRight).toBe('1px solid #dde0e4');
     expect(sidebar.borderRight).toBe(styleOf(open.container, '.agent-profile').borderLeft);
     // Open, the chip shuts it from beside the title
     expect(styleOf(open.container, '.sidebar-logo-btn').display).toBe('flex');
@@ -1320,7 +1351,7 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
       // Fig 1's rows step at 44pt, meeting with no gap (#3555).
       expect(zero(styleOf(container, '.sidebar-main').gap)).toBe('0px');
       // The open row takes the profile controls' hover grey, which shows on the white sidebar
-      expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#e0e0e0');
+      expect(styleOf(container, '.sidebar-nav-item-active').backgroundColor).toBe('#dde0e4');
       expect(styleOf(container, '.sidebar-brand').minHeight).toBe('64px');
       // The account row ends 4px above the window's bottom, as Fig 1's does.
       expect(styleOf(container, '.sidebar-bottom').paddingBottom).toBe('4px');
@@ -1330,9 +1361,9 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
       const label = styleOf(container, '.sidebar-side-chats-toggle');
       // ChatGPT Mac's Recents: the `headline` role in sentence case, grey.
       expect({ size: label.fontSize, weight: label.fontWeight, spacing: label.letterSpacing || 'normal', transform: label.textTransform || 'none', color: label.color })
-        .toEqual({ size: '14px', weight: '500', spacing: 'normal', transform: 'none', color: '#6b6b6b' });
+        .toEqual({ size: '14px', weight: '500', spacing: 'normal', transform: 'none', color: '#676a6d' });
       const plus = styleOf(container, '.sidebar-new-chat');
-      expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#6b6b6b' });
+      expect({ shadow: plus.boxShadow || 'none', color: plus.color }).toEqual({ shadow: 'none', color: '#676a6d' });
       expect(plus.backgroundColor || 'transparent').toMatch(/^(transparent|none|rgba\(0, 0, 0, 0\))$/);
       expect(styleOf(container, '.sidebar-new-chat svg').width).toBe('20px');
       // Every row a 40px fill inset 2px in its 44px slot, so no two fills touch; Side chats across the nav pills' width.
@@ -1340,9 +1371,9 @@ it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side 
         expect({ height: styleOf(container, selector).height, margin: styleOf(container, selector).margin }).toEqual({ height: '40px', margin: '2px 0px' });
       }
       expect(styleOf(container, '.sidebar-list').padding).toBe('0px 8px');
-      expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#e0e0e0');
+      expect(styleOf(container, '.sidebar-item-active').backgroundColor).toBe('#dde0e4');
       expect(styleOf(container, '.sidebar-item').borderRadius).toBe('9999px');
-      // happy-dom matches no :hover, so this reads the sheet: a hovered row takes the lighter #efefef, never the open row.
+      // happy-dom matches no :hover, so this reads the sheet: a hovered row takes the lighter #eceff3, never the open row.
       for (const name of ['sidebar-nav-item', 'sidebar-item']) {
         expect(sheet).toMatch(new RegExp(`\\.${name}:not\\(\\.${name}-active\\):hover \\{\\s*background: var\\(--color-selected\\);`));
       }
@@ -1416,7 +1447,7 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     happyDOM.settings.navigator.maxTouchPoints = 5;
     const open = render(desktopApp('sidebar-expanded'));
     try {
-      expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f7f7f8');
+      expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f5f7fb');
       expect(zero(styleOf(open.container, '.sidebar-main').gap)).toBe('0px');
       expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
       expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');
@@ -1427,7 +1458,7 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
       expect(styleOf(open.container, '.sidebar-side-chats-toggle').textTransform).toBe('uppercase');
       expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 10px');
       expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
-      expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#efefef');
+      expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#eceff3');
       const nav = styleOf(open.container, '.sidebar-nav-item');
       expect({ top: nav.paddingTop, margin: nav.margin }).toEqual({ top: '8px', margin: '2px 0px' });
       const row = styleOf(open.container, '.sidebar-item-btn');

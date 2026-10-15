@@ -17,17 +17,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-import uuid
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 from xml.etree import ElementTree
 
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedStore
 from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
+from . import pending_memory
 from .actor_identity import actor_namespace
-from .pending_memory import pending_memory_session_id
 
 if TYPE_CHECKING:
     from types_boto3_bedrock_agentcore.type_defs import (
@@ -284,23 +282,18 @@ def run_memory_action(
 
 def _handle_record(store: AgentCoreMemoryStore, actor_id: str, content: str) -> MemoryToolResult:
     try:
-        store.put(*_pending_memory_item(actor_id, content))
+        now = pending_memory.utc_now()
+        store.client.create_event(
+            memoryId=store.memory_id,
+            actorId=actor_id,
+            sessionId=pending_memory.pending_memory_session_id(now),
+            eventTimestamp=now,
+            payload=[{'conversational': {'content': {'text': content}, 'role': 'USER'}}],
+        )
     except Exception:
         log.warning('memory record failed', exc_info=True)
         return _err('Failed to save memory.')
     return _ok(RECORD_REPLY)
-
-
-def _pending_memory_item(actor_id: str, content: str) -> tuple[tuple[str, str], str, dict[str, Any]]:
-    """The store item for one saved memory: namespace, key, and value.
-
-    AgentCoreMemoryStore writes the value as a Pending Memory event and never reads the key.
-    """
-    return (
-        (actor_id, pending_memory_session_id()),
-        uuid.uuid4().hex,
-        {'message': HumanMessage(content=content)},
-    )
 
 
 def _handle_retrieve(store: AgentCoreMemoryStore, actor_id: str, query: str) -> MemoryToolResult:

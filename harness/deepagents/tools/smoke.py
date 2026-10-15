@@ -48,7 +48,7 @@ def main(output_dir: Path) -> None:
                pdfplumber, pypdfium2, pdf2image, reportlab, img2pdf, sympy,
                mpmath, tqdm, dateutil, pytz, tzdata, joblib, requests)
     print('Imported ' + ', '.join(module.__name__ for module in modules))
-    for executable in ('unzip', '7z', 'bc', 'rg', 'fd', 'sqlite3', 'pdftoppm', 'pdftotext', 'fc-match'):
+    for executable in ('unzip', '7z', 'bc', 'rg', 'fd', 'sqlite3', 'pdftoppm', 'pdftotext', 'fc-match', 'rsvg-convert'):
         subprocess.run(['bash', '-c', 'command -v "$1"', 'smoke', executable], check=True, capture_output=True)
     font = subprocess.run(['fc-match', '-f', '%{file}', 'Noto Sans'], check=True, capture_output=True, text=True).stdout
     assert 'NotoSans' in font, font
@@ -94,9 +94,15 @@ def main(output_dir: Path) -> None:
     pyplot.close()
     with Image.open(output_dir / 'chart.png') as image:
         assert image.format == 'PNG' and image.width > 0 and image.height > 0
+    (output_dir / 'diagram.svg').write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60">'
+        '<text x="10" y="40" font-family="Noto Sans" font-weight="700">Oil → Ελληνικά</text></svg>')
+    subprocess.run(['rsvg-convert', '-o', str(output_dir / 'diagram.png'), str(output_dir / 'diagram.svg')], check=True)
+    with Image.open(output_dir / 'diagram.png') as image:
+        assert image.format == 'PNG' and image.size == (200, 60)
     for path in output_dir.iterdir():
         assert path.stat().st_size > 0, path
-    print('Roundtripped PPTX, XLSX, DOCX, PDF and PNG; Poppler and Noto fonts verified')
+    print('Roundtripped PPTX, XLSX, DOCX, PDF, PNG and SVG; Poppler, rsvg-convert and Noto fonts verified')
 
 
 if __name__ == '__main__':

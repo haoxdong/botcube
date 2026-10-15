@@ -179,9 +179,9 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history_issue_
         original_build = build_agent
 
         def with_worker(**kwargs: Any) -> Any:
-            return original_build(**kwargs, subagents=[{
+            return original_build(**{**kwargs, 'subagents': [{
                 'name': 'worker', 'description': 'Research', 'system_prompt': '', 'model': model,
-            }])
+            }]})
 
         monkeypatch.setattr(serving, 'build_agent', with_worker)
 

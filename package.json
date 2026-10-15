@@ -11,6 +11,7 @@
     "test:chat:unit": "scripts/heavy.sh vitest run --config chat/vitest.config.ts",
     "build": "scripts/heavy.sh sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-template-chat build'",
     "build:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
+    "test:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
     "screenshots:storybook": "scripts/heavy.sh env CARTRIDGE_STORYBOOK_BUILD_CONFIG=template/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
     "pretest:chat": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet && pnpm --filter botcube-template-chat build && template/deploy/stage-tools.sh'",
     "pretest:chat:unit": "scripts/heavy.sh sh -c 'uv sync --directory template --frozen --quiet'",

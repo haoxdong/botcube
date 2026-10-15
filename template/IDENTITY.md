@@ -46,9 +46,10 @@ the template Storybook:
 corepack pnpm storybook
 ```
 
-Screenshot capture requires Playwright Chromium or `CHROMIUM_PATH` pointing to
-your Chromium executable. Run `corepack pnpm screenshots:storybook -- <out-dir>`
-from the public repository root.
+The stories' checks and screenshot capture require Playwright Chromium or
+`CHROMIUM_PATH` pointing to your Chromium executable. From the public repository
+root, `corepack pnpm test:storybook` runs every story's checks, and
+`corepack pnpm screenshots:storybook -- <out-dir>` also writes each state to `<out-dir>`.
 
 The ECS CDK app also needs the latency event names emitted by your UI.
 The template does not include a latency budget file.

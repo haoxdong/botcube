@@ -7,18 +7,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.stub import Stubber
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import StructuredTool
 from langgraph_checkpoint_aws import AgentCoreMemoryStore
 
 from agentcore_fake import MEMORY_ID as FAKE_MEMORY_ID
 from agentcore_fake import FakeAgentCoreMemory
+from botcube_harness_deepagents import memory_document
 from botcube_harness_deepagents.memory_tools import (
     RECORD_REPLY,
     VALID_ACTIONS,
@@ -210,11 +210,15 @@ class TestRecord:
             result = _invoke('record', store=store, content='User prefers dark mode')
 
         assert result == {'status': 'success', 'content': [{'text': RECORD_REPLY}]}
-        store.put.assert_called_once()
-        call_args = store.put.call_args
-        assert call_args[0][0] == ('botcube_harness_deepagents', 'pending-memory-20260702')
-        assert isinstance(call_args[0][2]['message'], HumanMessage)
-        assert call_args[0][2]['message'].content == 'User prefers dark mode'
+        store.client.create_event.assert_called_once()
+        call_args = store.client.create_event.call_args
+        assert call_args.kwargs == {
+            'memoryId': store.memory_id,
+            'actorId': 'botcube_harness_deepagents',
+            'sessionId': 'pending-memory-20260702',
+            'eventTimestamp': datetime(2026, 7, 2, tzinfo=UTC),
+            'payload': [{'conversational': {'content': {'text': 'User prefers dark mode'}, 'role': 'USER'}}],
+        }
 
     def test_record_writes_to_date_keyed_pending_memory_session(self) -> None:
         store = MagicMock()
@@ -226,13 +230,14 @@ class TestRecord:
                 content='Runbook URL is wiki/runbook-v2',
             )
 
-        assert store.put.call_args[0][0] == ('botcube_harness_deepagents', 'pending-memory-20260702')
-        assert isinstance(store.put.call_args[0][2]['message'], HumanMessage)
-        assert store.put.call_args[0][2]['message'].content == 'Runbook URL is wiki/runbook-v2'
+        assert store.client.create_event.call_args.kwargs['sessionId'] == 'pending-memory-20260702'
+        assert store.client.create_event.call_args.kwargs['payload'] == [
+            {'conversational': {'content': {'text': 'Runbook URL is wiki/runbook-v2'}, 'role': 'USER'}},
+        ]
 
     def test_error(self) -> None:
         store = MagicMock()
-        store.put.side_effect = RuntimeError('network')
+        store.client.create_event.side_effect = RuntimeError('network')
         result = _invoke('record', store=store, content='anything')
 
         assert result == {'status': 'error', 'content': [{'text': 'Failed to save memory.'}]}
@@ -241,7 +246,8 @@ class TestRecord:
         store = MagicMock()
         with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=datetime(2026, 7, 2, tzinfo=UTC)):
             _invoke('record', store=store, content='test', actor_id='custom-actor')
-        assert store.put.call_args[0][0] == ('custom-actor', 'pending-memory-20260702')
+        assert store.client.create_event.call_args.kwargs['actorId'] == 'custom-actor'
+        assert store.client.create_event.call_args.kwargs['sessionId'] == 'pending-memory-20260702'
 
 
 # -- retrieve, list, get and delete against AgentCore ----------------------------
@@ -579,3 +585,21 @@ class TestExtractTextFallbacks:
     def test_episodic_xml_without_a_situation_keeps_the_later_tags(self) -> None:
         raw = '<summary><intent>Recall the runbook.</intent><reflection>Ask less.</reflection></summary>'
         assert extract_text(raw) == 'Intent: Recall the runbook.\nReflection: Ask less.'
+
+
+def test_record_uses_one_clock_across_midnight_and_stays_visible_for_its_full_window(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = datetime(2026, 7, 2, 23, 59, 59, 999999, tzinfo=UTC)
+    sdk_time = captured + timedelta(microseconds=1)
+    with patch('botcube_harness_deepagents.pending_memory.utc_now', return_value=captured), \
+         patch('langgraph_checkpoint_aws.store.agentcore.store.datetime') as sdk_clock:
+        sdk_clock.now.return_value = sdk_time
+        result = _invoke('record', store=_store(memory), content='Keep midnight save', actor_id=ACTOR)
+    assert result['status'] == 'success'
+    [event] = memory.events[(ACTOR, 'pending-memory-20260702')]
+    assert event['eventTimestamp'] == captured
+    monkeypatch.setattr(memory_document, 'utc_now', lambda: event['eventTimestamp'] + timedelta(minutes=15))
+    assert memory_document.opening_memory(cast(Any, memory), memory_id=FAKE_MEMORY_ID, actor_id=ACTOR) == (
+        'semantic facts:\n- Keep midnight save'
+    )

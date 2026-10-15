@@ -292,7 +292,7 @@ describe("the Agent Computer's sheet", () => {
     expect(css).toMatch(/\n\.agent-computer-screen \{[^}]*container-type: inline-size;/);
     expect(css).toMatch(/\n\.agent-computer-terminal-bar \{[^}]*height: 2\.97cqw;[^}]*padding: 0 1\.25cqw;[^}]*font-size: 1\.02cqw;/);
     expect(css).toMatch(/\n\.agent-computer-terminal-bar svg \{[^}]*width: 1\.25cqw;[^}]*height: 1\.25cqw;/);
-    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*padding: 0\.63cqw 1\.09cqw;[^}]*background: #1e1e1e;[^}]*font: 1\.41cqw\/1\.4 'Menlo'/);
+    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*padding: 0\.63cqw 1\.09cqw;[^}]*background: #1c1e21;[^}]*font: 1\.41cqw\/1\.4 'Menlo'/);
   });
 
   it("wraps the Terminal's lines between words, breaking only a word longer than the line", () => {

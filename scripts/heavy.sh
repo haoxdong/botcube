@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs one Node-heavy command under the machine-wide lock, so agents sharing a Mac run one at a time (docs/testing.md).
+# Runs one Node-heavy command under the machine-wide lock, so agents sharing a Mac run one at a time (docs/testing/README.md).
 # Linux (CI, Codex Cloud) has no lockf and runs the command directly; a nested call reuses its parent's lock.
 previous=
 refuse=

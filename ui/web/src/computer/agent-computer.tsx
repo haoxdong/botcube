@@ -73,7 +73,7 @@ const DOCK_ICONS: Record<DockApp, ReactNode> = {
   // A grey tile with a prompt.
   Terminal: (
     <>
-      <rect x="2" y="3" width="28" height="26" rx="6" fill="#71717a" />
+      <rect x="2" y="3" width="28" height="26" rx="6" fill="#707276" />
       <path d="M9 12l5 4-5 4M16.5 21h6.5" fill="none" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
     </>
   ),

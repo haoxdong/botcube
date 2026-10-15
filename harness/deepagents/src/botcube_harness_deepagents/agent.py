@@ -9,6 +9,7 @@ from deepagents.graph import DeepAgentState
 from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.skills import SKILLS_SYSTEM_PROMPT, SkillsMiddleware
+from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from deepagents.profiles import HarnessProfile, register_harness_profile
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -105,10 +106,13 @@ class _SchemaSkillsMiddleware(SkillsMiddleware):
         return 'SkillsMiddleware'
 
     def modify_request(self, request: ModelRequest[Any]) -> ModelRequest[Any]:
-        request = super().modify_request(request)
-        if not self.user_prompt:
-            return request
-        return request.override(system_message=append_to_system_message(request.system_message, self.user_prompt))
+        skills = super().modify_request(request.override(system_message=None)).system_message
+        assert skills is not None, 'Skills middleware must render its configured prompt'
+        # Strip after rendering: upstream adds bold to source and skill labels, too.
+        message = append_to_system_message(request.system_message, skills.text.replace('**', ''))
+        if self.user_prompt:
+            message = append_to_system_message(message, self.user_prompt)
+        return request.override(system_message=message)
 
 
 class _UncheckpointedTasksMiddleware(AgentMiddleware):
@@ -245,6 +249,20 @@ def build_agent(
     if checkpointer is not None:
         kwargs['checkpointer'] = checkpointer
     return create_deep_agent(**kwargs)
+
+
+def general_purpose_subagent(instructions: str, skills: Sequence[str]) -> dict[str, Any]:
+    """deepagents' general-purpose subagent, with the Cartridge's instructions after its stock prompt.
+
+    Like Claude Code's subagents, which load CLAUDE.md but not its system prompt, it gets the bot's
+    instructions but not the Harness's voice: it reports to the main agent, not the user.
+    """
+    assert 'system_prompt' in GENERAL_PURPOSE_SUBAGENT
+    return {
+        **GENERAL_PURPOSE_SUBAGENT,
+        'system_prompt': f"{GENERAL_PURPOSE_SUBAGENT['system_prompt']}\n\n{instructions}",
+        'skills': list(skills),
+    }
 
 
 def _subagent_spec(spec: dict[str, Any], backend: Any, skills: list[str]) -> dict[str, Any]:

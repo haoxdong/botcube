@@ -14,7 +14,7 @@ from smoke import main
 
 def test_writes_every_export_type(tmp_path: Path) -> None:
     main(tmp_path)
-    assert {path.suffix for path in tmp_path.iterdir()} == {'.pptx', '.xlsx', '.docx', '.pdf', '.png'}
+    assert {path.suffix for path in tmp_path.iterdir()} == {'.pptx', '.xlsx', '.docx', '.pdf', '.png', '.svg'}
 
 
 def test_missing_system_program_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

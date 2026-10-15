@@ -5,9 +5,8 @@ import { playwright } from '@vitest/browser-playwright';
 import { viewports } from './.storybook/viewports.js';
 
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
-const compareScreenshots = process.env.STORYBOOK_SCREENSHOTS === 'compare';
 if (screen !== 'phone' && screen !== 'desktop')
-  throw new Error(`Unknown screenshot viewport ${screen}`);
+  throw new Error(`Unknown Storybook viewport ${screen}`);
 
 export default defineConfig({
   server: {
@@ -30,7 +29,6 @@ export default defineConfig({
     provide: {
       screenshotDirectory: process.env.STORYBOOK_SCREENSHOT_DIR ?? '',
       screen,
-      compareScreenshots,
     },
     browser: {
       enabled: true,
@@ -43,15 +41,6 @@ export default defineConfig({
           : {},
       }),
       instances: [{ browser: 'chromium' }],
-      expect: {
-        toMatchScreenshot: {
-          // One baseline per state and viewport beside the stories, rendered in CI's Playwright image.
-          resolveScreenshotPath: ({ root, testFileDirectory, arg, ext }) =>
-            path.join(root, testFileDirectory, '__screenshots__', `${arg}${ext}`),
-          resolveDiffPath: ({ root, attachmentsDir, arg, ext }) =>
-            path.join(root, attachmentsDir, 'screenshots', `${arg}${ext}`),
-        },
-      },
     },
   },
 });

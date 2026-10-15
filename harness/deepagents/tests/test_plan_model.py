@@ -135,6 +135,15 @@ def test_a_plan_model_asks_for_its_reasoning_summaries_at_the_plans_default_effo
     assert call['body']['reasoning'] == {'summary': 'auto'}
 
 
+def test_a_plan_model_asks_for_low_verbosity_issue_4127(relay: FakeRelay) -> None:
+    model = build_model(model='openai-plan:gpt-6-astra', relay=lambda: _relay(relay))
+
+    model.invoke([HumanMessage('Say exactly: hello')])
+
+    [call] = relay.calls
+    assert call['body']['text'] == {'verbosity': 'low'}
+
+
 def test_a_plan_model_without_the_relay_fails_loud() -> None:
     with pytest.raises(RuntimeError) as raised:
         build_model(model='openai-plan:gpt-6-astra')

@@ -19,7 +19,10 @@ tokens. There is no dark theme; when `shadcn add` writes its own palette into `g
 
 ## Style
 
-Native minimal. A screen looks like the platform's own app (iPhone on a phone, ChatGPT's Mac app on a desktop) and keeps only what is essential: the system font, neutral greys, white cards, and colour only where it carries meaning. Drop a row, line or option that is only marginally useful.
+Native minimal. A screen looks like the platform's own app (iPhone on a phone, ChatGPT's Mac app on a desktop) and keeps only what is essential: the system font, blue-grey neutrals, white cards, and colour only where it carries meaning. Drop a row, line or option that is only marginally useful.
+
+The neutrals share Marq's blue hue (OKLCH hue 255, chroma 0.006 at each grey's lightness), so a screen holds two colour
+families, not three. The user's bubble stands apart by fill; Marq's is white, lifted by `shadow-rest`.
 
 ## Typography
 
@@ -81,8 +84,8 @@ from `botcube-ui-web/ui`.
   Marq's hat sits under the window's top, as dots' avatar under its card's (Fig 1), in front of a crisp name capsule
   tucked behind his body, as on the phone.
   On phones, the chat scrolls the page, so messages run undimmed up under the status bar behind iOS Safari's own fade, as in Muse Fig 11 (#3613).
-  While the agent works, the capsule reads the name over "is working" in `detail` `text-muted`, still, and Marq sits
-  a little smaller behind a laptop lid, after Muse's working avatar (the maintainer's screenshot of Muse).
+  While the agent works, the capsule reads the name over "is working" in `detail` `text-muted`, still, and Marq bobs,
+  sitting a little smaller behind a laptop lid, after Muse's working avatar (the maintainer's screenshot of Muse).
   The closed-phone menu's frost has no saturation boost. The phone menu stands at Muse's spot; on phones the default
   figure stands as tall as Muse's avatar disc, hat included, in front of the capsule.
 - **Chat stage** (`.app-shell`): on desktop the chat, or Plugins, fills the window, square with no edge, as it meets no
@@ -108,8 +111,8 @@ from `botcube-ui-web/ui`.
   then More, shut, over Edit's rows; each time carries its zone. Cancel and Save end the form at the right.
 - **Composer** (`.copilotKitInput`, the chat input): `message` text and a `detail` model picker; on a phone both clear
   the 16px under which iOS Safari zooms into a field, and a touch tablet keeps the text at 16px for the same reason. The
-  disclaimer (`.chat-disclaimer`) sits under it. The desktop composer is ChatGPT's one row (#3962). It rests in Marq's
-  bubble shadow (`--bubble-marq-shadow`); focus lifts it to `shadow-elevated`, its only focus mark. Once its text takes
+  disclaimer (`.chat-disclaimer`) sits under it. It is white and rests in `shadow-rest`, on a phone too; focus lifts
+  it to `shadow-elevated`, its only focus mark. The desktop composer is ChatGPT's one row (#3962). Once its text takes
   two lines (CopilotKit's `expanded`), it goes across the top, over a row of the + at the left and the picker and Send
   at the right, scrolling past CopilotKit's five lines. That follows ChatGPT's pattern on the measured controls and
   padding; its multi-line values were not measured. The phone stacks the text over the picker and Send; its controls
@@ -148,7 +151,7 @@ from `botcube-ui-web/ui`.
   side as Muse's (Fig 16). Each card is one button in its tint under a fine grain, white type: the title, under it a
   monospace hint (Values and habits, What it knows), and bottom-left a monospace count (3 lines, Empty; 3 memories, No
   memories yet), both at least 4.5:1 on the tint, measured on the rendered card. A solid heart or speech bubble sits
-  bottom-right. Hover lifts the card, except under reduced motion.
+  bottom-right. Hover lifts the card.
 - **File page** (`.agent-file`; an opened Soul or Memory card, or Identity from the pencil): Back, then the file's
   tinted tile, then the title. Under it a caption on what the file is. The content is a grouped list, as iOS Settings:
   one group, its rows split by hairlines inset to the text. Memory has one row per memory; Soul's text sits in the
@@ -164,7 +167,6 @@ from `botcube-ui-web/ui`.
 | `text-muted`    | `--color-text-muted`    | Secondary lines, placeholders, section labels, muted icons (AA on `surface`), the fallback avatar disc |
 | `surface`       | `--color-surface`       | App and sidebar background, tab bar                                                                    |
 | `surface-hover` | `--color-surface-hover` | Secondary buttons, icon tiles, hover states                                                            |
-| `composer`      | `--color-composer`      | The phone composer's fill (ChatGPT Work's)                                                             |
 | `selected`      | `--color-selected`      | The open row in the phone drawer (Muse Fig 21)                                                         |
 | `border`        | `--color-border`        | Borders, separators, secondary button hover, the desktop sidebar's open row                            |
 | `control`       | `--color-control`       | Scrollbar thumbs, disabled send and primary buttons                                                    |
@@ -182,11 +184,14 @@ The file tints are ours, after ChatGPT's coloured file tiles, not measured from 
 
 **Bubbles**: the chat's two bubbles, both with `text`.
 
-| Token                | CSS var                | Use                                                                   |
-| -------------------- | ---------------------- | --------------------------------------------------------------------- |
-| `bubble-user-bg`     | `--bubble-user-bg`     | The user's bubble, a pale tint of Marq's blue                         |
-| `bubble-marq-bg`     | `--bubble-marq-bg`     | Marq's bubble                                                         |
-| `bubble-marq-shadow` | `--bubble-marq-shadow` | Marq's bubble, a soft card shadow; the resting desktop composer's too |
+| Token            | CSS var            | Use                                                                            |
+| ---------------- | ------------------ | ------------------------------------------------------------------------------ |
+| `bubble-user-bg` | `--bubble-user-bg` | The user's bubble, a pale tint of Marq's blue                                  |
+| `bubble-marq-bg` | `--bubble-marq-bg` | Marq's bubble, white, lifted by the resting shadow it shares with the composer |
+
+A table in Marq's reply is as wide as its content and sits flat in the bubble, with no fill or frame, only row lines;
+its first and last columns line up with the text, and a table wider than the bubble fades out at each edge it can
+still scroll past.
 
 **Agent colours**: the Soul and Memory cards' colours, after Marq's avatar; a cartridge `theme` may bring its own.
 Each card's white captions keep 4.5:1 on its `to`, measured on the rendered card.
@@ -219,13 +224,15 @@ Controls inside a panel, such as the composer and message bubbles, keep their ow
 
 ## Shadows
 
-| Token      | CSS var             | Use                                                            |
-| ---------- | ------------------- | -------------------------------------------------------------- |
-| `subtle`   | `--shadow-subtle`   | The Agent Computer's status pill, desktop and touch tools      |
-| `elevated` | `--shadow-elevated` | Dropdowns, popovers, the Scheduled sheet, the focused composer |
-| `composer` | `--shadow-composer` | The phone composer, focused or not (ChatGPT Work's)            |
-| `popover`  | `--shadow-popover`  | The composer's + menu (ChatGPT's)                              |
-| `soft`     | `--shadow-soft`     | The chat card beside the phone drawer (Muse Fig 21) or profile |
+A white surface resting on the page takes `rest`; what floats over it keeps its own.
+
+| Token      | CSS var             | Use                                                                                                 |
+| ---------- | ------------------- | --------------------------------------------------------------------------------------------------- |
+| `rest`     | `--shadow-rest`     | Marq's bubble, the composer at rest, the scroll-to-bottom chevron, the Agent Computer's status pill |
+| `subtle`   | `--shadow-subtle`   | The Agent Computer's desktop and touch tools                                                        |
+| `elevated` | `--shadow-elevated` | Dropdowns, popovers, the Scheduled sheet, the focused composer                                      |
+| `popover`  | `--shadow-popover`  | The composer's + menu (ChatGPT's)                                                                   |
+| `soft`     | `--shadow-soft`     | The chat card beside the phone drawer (Muse Fig 21) or profile                                      |
 
 ## Transitions
 

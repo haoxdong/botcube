@@ -58,7 +58,7 @@ export async function realSingleClientBrowser() {
       await new Promise<void>((resolve) => pages.close(() => resolve()));
       chrome.kill('SIGTERM');
       await stopped;
-      rmSync(profile, { recursive: true, force: true });
+      rmSync(profile, { recursive: true, force: true, maxRetries: 3 });
     },
   };
 }

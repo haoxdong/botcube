@@ -18,23 +18,21 @@ body {
   --app-safe-right: env(safe-area-inset-right, 0px);
   --app-safe-bottom: env(safe-area-inset-bottom, 0px);
   --app-safe-left: env(safe-area-inset-left, 0px);
-  --color-text: #0d0d0d;
-  --color-text-subtle: #555;
-  --color-text-muted: #6b6b6b;
-  --color-surface: #f7f7f8;
-  --color-surface-hover: #f4f4f4;
-  --color-composer: #fbfbfb;
-  --color-selected: #efefef;
-  --color-border: #e0e0e0;
-  --color-control: #bfbfbf;
+  --color-text: #0b0d10;
+  --color-text-subtle: #535558;
+  --color-text-muted: #676a6d;
+  --color-surface: #f5f7fb;
+  --color-surface-hover: #f1f4f8;
+  --color-selected: #eceff3;
+  --color-border: #dde0e4;
+  --color-control: #bdbfc3;
   --color-white: #fff;
   --color-blue: #2563eb;
   --color-blue-soft: #eff6ff;
   /* The chat's two bubbles, the user's and Marq's. The user's wears a paler tint of Marq's light blue, with
-     dark text; Marq's is white, lifted by a soft card shadow instead of an outline. */
+     dark text; Marq's is white, lifted by the resting shadow instead of an outline. */
   --bubble-user-bg: #d6e4f3;
   --bubble-marq-bg: var(--color-white);
-  --bubble-marq-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.05);
   --color-success: #22c55e;
   --color-danger: #dc2626;
   --color-danger-soft: #fef2f2;
@@ -83,7 +81,8 @@ body {
 
   --shadow-subtle: 0 1px 6px rgba(0,0,0,0.08);
   --shadow-elevated: 0 4px 20px rgba(0,0,0,0.15);
-  --shadow-composer: 0 8px 36px rgba(0,0,0,0.11);
+  /* Every white surface resting on the page, such as Marq's bubble and the composer; what floats keeps its own. */
+  --shadow-rest: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-popover: 0 8px 16px rgba(0,0,0,0.08), 0 0 1px rgba(0,0,0,0.62);
   --shadow-soft: 0 0 40px rgba(0,0,0,0.23);
 
@@ -110,6 +109,53 @@ body {
   --copilot-kit-muted-color: var(--color-text-muted);
   --copilot-kit-response-button-background-color: transparent;
   --copilot-kit-response-button-color: var(--color-text-muted);
+}
+
+/* shadcn's colour names, read from our tokens, for Tailwind's classes (@theme below) and CopilotKit v2's (`cpk:`, its
+   textarea and disclaimer). CopilotKit sets its own neutral greys on [data-copilotkit]; these outrank them there. */
+:root,
+:root [data-copilotkit] {
+  --background: var(--color-white);
+  --foreground: var(--color-text);
+  --card: var(--color-white);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-white);
+  --popover-foreground: var(--color-text);
+  --primary: var(--color-text);
+  --primary-foreground: var(--color-white);
+  --secondary: var(--color-surface-hover);
+  --secondary-foreground: var(--color-text);
+  --muted: var(--color-surface);
+  --muted-foreground: var(--color-text-muted);
+  --accent: var(--color-surface-hover);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-danger);
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-blue);
+}
+
+/* Every scrollbar's thumb is `control`, inherited from the root; CopilotKit's elements, which set their own, are set
+   directly, so a code block or table inside a thin-scrollbar pane keeps it too. Safari has no scrollbar-color, so its
+   thumbs are styled where a pane styles its scrollbar. */
+:root,
+:root [data-copilotkit] * {
+  scrollbar-color: var(--color-control) transparent;
+}
+
+/* A pane with its own thin `::-webkit-scrollbar` keeps it: Chrome drops those once scrollbar-color is set. */
+:root .copilotKitMessages,
+:root .sidebar-list {
+  scrollbar-color: auto;
+}
+
+:root [data-copilotkit] ::-webkit-scrollbar-thumb,
+:root [data-copilotkit] ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-control);
+}
+
+.copilotKitInput textarea::placeholder {
+  color: var(--color-text-muted);
 }
 
 .chat-full-height {
@@ -259,7 +305,7 @@ body {
 }
 
 /* The disclaimer under the composer, the chat surface's and the kept chat's: `meta` on a desktop, as ChatGPT Mac's
-   `text-xs`. A phone keeps CopilotKit's own `text-xs` in its grey. */
+   `text-xs`. A phone keeps CopilotKit's own `text-xs`. */
 .chat-disclaimer {
   font-size: var(--font-meta);
   line-height: 1rem;
@@ -269,7 +315,6 @@ body {
 @media (max-width: 640px) {
   .chat-disclaimer {
     font-size: 0.75rem;
-    color: var(--muted-foreground);
   }
 }
 
@@ -323,7 +368,7 @@ body {
   padding-top: calc(var(--chat-header-height) + 0.5rem);
 }
 
-/* A message's markdown table: a white sheet inset in the bubble, its one 1px frame the scroll box. streamdown 2.7 wraps
+/* A message's markdown table sits flat on the bubble, with no fill or frame, only its row lines. streamdown 2.7 wraps
    `table[data-streamdown="table"]` in a card (`div[data-streamdown="table-wrapper"]`) holding its copy, download and
    fullscreen controls, then the scroll box; the card's padding, border and fill, and the table's own border, are
    dropped. Tailwind compiles only this app's classes, so streamdown's layout classes are spelled out here. */
@@ -340,33 +385,62 @@ body {
   background: none;
 }
 
-/* A table wider than its sheet scrolls (streamdown caps it at 300px tall, so past that both ways), with a shadow at
-   each edge it can still scroll past, so it never looks cut off: the sheet-white covers scroll with the table and hide
-   a shadow once its edge is reached. */
+/* A table wider than the bubble scrolls (streamdown caps it at 300px tall, so past that both ways), its content fading
+   out over 48px at each edge it can still scroll past, so it never looks cut off; an edge stops fading once reached. A
+   table that fits leaves the scroll timeline inactive, so both fades keep their 0px and nothing fades. A browser without
+   scroll-driven animations (Firefox) shows no fade. streamdown's classes give the box a frame, so it drops it here. */
+@property --table-fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --table-fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child {
   margin: 0;
   max-width: 100%;
   overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background-color: var(--color-white);
-  background-image:
-    linear-gradient(to right, var(--color-white) 30%, transparent),
-    linear-gradient(to left, var(--color-white) 30%, transparent),
-    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.16), transparent),
-    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.16), transparent);
-  background-position: left, right, left, right;
-  background-size: 32px 100%, 32px 100%, 16px 100%, 16px 100%;
-  background-repeat: no-repeat;
-  background-attachment: local, local, scroll, scroll;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+@supports (animation-timeline: scroll(self inline)) {
+  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child {
+    mask-image: linear-gradient(to right, transparent, #000 var(--table-fade-start), #000 calc(100% - var(--table-fade-end)), transparent);
+    animation: tableEdgeFade linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+
+@keyframes tableEdgeFade {
+  0% {
+    --table-fade-start: 0px;
+    --table-fade-end: 48px;
+  }
+  8% {
+    --table-fade-start: 48px;
+  }
+  92% {
+    --table-fade-end: 48px;
+  }
+  100% {
+    --table-fade-start: 48px;
+    --table-fade-end: 0px;
+  }
 }
 
 /* Body role, its line 6px over the size: 14/20 on a desktop. Typography's `table { margin: 2em 0 }` would leave
-   empty bands in the sheet. A table too wide for its sheet takes each column's widest line and scrolls: at the sheet's
-   width, a column of prose would wrap a word to a line, its row an empty band beside its other cells. */
+   empty bands in the bubble. A table is as wide as its content, each column its widest line, and one too wide for the
+   bubble scrolls: at the bubble's width, a column of prose would wrap a word to a line, its row an empty band beside
+   its other cells. */
 .copilotKitAssistantMessage [class*="cpk:prose"] table[data-streamdown="table"] {
   width: max-content;
-  min-width: 100%;
   margin: 0;
   border: 0;
   border-collapse: collapse;
@@ -386,6 +460,15 @@ body {
   vertical-align: baseline;
 }
 
+/* The first and last columns line up with the reply's text. Their pseudo-classes outrank the phone's cell padding. */
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):last-child {
+  padding-right: 0;
+}
+
 .copilotKitAssistantMessage [class*="cpk:prose"] th {
   border-bottom: 1px solid var(--color-border);
   font-weight: var(--weight-medium);
@@ -395,7 +478,7 @@ body {
 
 .copilotKitAssistantMessage [class*="cpk:prose"] tr {
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .copilotKitAssistantMessage [class*="cpk:prose"] :is(thead, tbody) > tr:last-child {
@@ -421,8 +504,8 @@ body {
   white-space: nowrap;
 }
 
-/* The table's controls take no row of their own: with a pointer they float over the header's right end, on the
-   sheet's white, while the table is hovered or focused; on touch they sit small under the frame. */
+/* The table's controls take no row of their own: with a pointer they float over the header's right end, on
+   a white chip, while the table is hovered or focused; on touch they sit small under the table. */
 .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
   display: flex;
   align-items: center;
@@ -440,7 +523,7 @@ body {
 
 .copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"]) button:hover {
   color: var(--color-text);
-  background: var(--color-selected);
+  background: var(--color-border);
 }
 
 @media (hover: hover) {
@@ -730,14 +813,13 @@ body {
 }
 
 /* Each message's prose in Marq's bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). A long
-   one reaches the column's right edge, as the user's messages do, and a table shows as much as it can. Its shadow
-   casts outside, so it keeps the bubble's size. */
+   one reaches the column's right edge, as the user's messages do, and a table shows as much as it can. */
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
   width: fit-content;
   max-width: 100%;
   background-color: var(--bubble-marq-bg);
   color: var(--color-text);
-  box-shadow: var(--bubble-marq-shadow);
+  box-shadow: var(--shadow-rest);
   border-radius: var(--radius-2xl);
   padding: 12px 18px;
   margin-block: 4px;
@@ -775,7 +857,7 @@ body {
   margin-top: 14px;
 }
 
-/* ── Input — white box, lifted by Marq's bubbles' soft shadow ── */
+/* ── Input — white box, lifted by the resting shadow it shares with Marq's bubble ── */
 /* As wide as the messages' column inside CopilotKit's (720px at most, less its 1.5rem side padding), so its
    edges meet the grey panel's. Its 1px border stays, clear, so its controls keep their places. */
 .copilotKitInput {
@@ -784,7 +866,7 @@ body {
   background-color: var(--color-white) !important;
   border: 1px solid transparent !important;
   border-radius: var(--radius-3xl) !important;
-  box-shadow: var(--bubble-marq-shadow) !important;
+  box-shadow: var(--shadow-rest) !important;
   outline: none !important;
   outline-width: 0 !important;
   outline-style: none !important;
@@ -798,6 +880,11 @@ div.copilotKitInput {
 
 .copilotKitInput:focus-within {
   box-shadow: var(--shadow-elevated) !important;
+}
+
+/* CopilotKit's scroll-to-bottom chevron, a white disc over the messages, rests in the same shadow. */
+[data-copilotkit] [data-testid="copilot-scroll-to-bottom"] {
+  box-shadow: var(--shadow-rest);
 }
 
 /* The cartridge's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.copilotKitInput`. */
@@ -1090,16 +1177,8 @@ div.copilotKitInput {
   background: var(--color-text) !important;
 }
 
-/* Phones match ChatGPT Work's composer: a grey box with a white rim and a soft shadow, focused or
-   not, and a 32px Send circle drawn inside its 44px target by a clear 6px border. */
+/* A phone's Send is a 32px circle drawn inside its 44px target by a clear 6px border. */
 @media (max-width: 767px) {
-  .copilotKitInput,
-  .copilotKitInput:focus-within {
-    background-color: var(--color-composer) !important;
-    border-color: var(--color-white) !important;
-    box-shadow: var(--shadow-composer) !important;
-  }
-
   .copilotKitInput [data-testid="copilot-send-button"],
   .copilotKitInput [data-testid="copilot-send-button"]:not(:disabled) {
     border: 6px solid transparent !important;
@@ -1235,7 +1314,7 @@ cpk-web-inspector,
 }
 
 /* Citations `[[1]](url)`: ReplyFileLink marks them data-citation and wraps their brackets, which the pill drops. A blue
-   tint that shows on the bubble's grey; the label role, its line 5px over the size, and as wide as tall at the least,
+   tint on the bubble; the label role, its line 5px over the size, and as wide as tall at the least,
    so one digit is a circle. */
 .copilotKitAssistantMessage a[data-citation] {
   display: inline-block;
@@ -1590,20 +1669,6 @@ button.worklog-step-head:hover {
 @keyframes worklogShimmer {
   to {
     background-position: 0 0;
-  }
-}
-
-/* Without motion, live words stand still in muted grey. */
-@media (prefers-reduced-motion: reduce) {
-  .worklog:not([data-open]:has(.worklog-step[data-state="live"])) .worklog-title[data-live],
-  .worklog-step[data-state="live"] .worklog-step-label {
-    background: none;
-    color: var(--color-text-muted);
-    animation: none;
-  }
-
-  .worklog-step[data-state="live"] .worklog-step-label * {
-    color: inherit;
   }
 }
 
@@ -2592,14 +2657,6 @@ button.worklog-step-head:hover {
     transition: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .app-layout[data-sidebar-swiping] > .sidebar,
-    .app-layout[data-sidebar-swiping] .app-shell,
-    .app-layout[data-sidebar-swiping] .sidebar-strip-close-menu {
-      transition: none;
-    }
-  }
-
   /* Fig 21's drawer, from the safe area's top: a 44px title row, rows from 82px (Fig 21's gap from its title to
      its TABS label, which we leave out) at a 44px pitch, a divider 10px below them, then the Side chats header and
      its rows at the same pitch; content 20px from each side. */
@@ -2736,12 +2793,6 @@ button.worklog-step-head:hover {
 @keyframes loadPulse {
   50% {
     opacity: 0.4;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .load-skeleton-line {
-    animation: none;
   }
 }
 
@@ -3129,28 +3180,29 @@ button.worklog-step-head:hover {
   margin: 6px 16px;
 }
 
-/* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names,
-   and the type roles and weights. --color-border names itself: the :root token, unlayered, outranks this layer. */
+/* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names (mapped
+   once, near the top), and the type roles and weights. --color-border is our token too: the :root one, unlayered,
+   outranks this layer. */
 @theme inline {
   --font-sans: var(--font-sans);
-  --color-background: var(--color-white);
-  --color-foreground: var(--color-text);
-  --color-card: var(--color-white);
-  --color-card-foreground: var(--color-text);
-  --color-popover: var(--color-white);
-  --color-popover-foreground: var(--color-text);
-  --color-primary: var(--color-text);
-  --color-primary-foreground: var(--color-white);
-  --color-secondary: var(--color-surface-hover);
-  --color-secondary-foreground: var(--color-text);
-  --color-muted: var(--color-surface);
-  --color-muted-foreground: var(--color-text-muted);
-  --color-accent: var(--color-surface-hover);
-  --color-accent-foreground: var(--color-text);
-  --color-destructive: var(--color-danger);
-  --color-border: var(--color-border);
-  --color-input: var(--color-border);
-  --color-ring: var(--color-blue);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
   --text-title: var(--font-title);
   --text-name: var(--font-name);
   --text-headline: var(--font-headline);
@@ -3546,7 +3598,7 @@ button.worklog-step-head:hover {
 }
 
 .chat-header-agent:active:not(:disabled) .chat-header-name {
-  background: rgba(235, 235, 235, 0.85);
+  background: color-mix(in srgb, var(--color-selected) 85%, transparent);
 }
 
 /* A mouse over it lifts the capsule; phones, which have no hover, keep the press. */
@@ -3587,7 +3639,7 @@ button.worklog-step-head:hover {
 }
 
 /* While the agent works, the capsule reads two lines: the name, then "is working", smaller and muted, still: the
-   Worklog carries the shimmer. */
+   Worklog carries the shimmer. Marq bobs. */
 .chat-header-agent[data-working] .chat-header-name {
   text-align: center;
   line-height: 1.25;
@@ -3601,16 +3653,20 @@ button.worklog-step-head:hover {
   color: var(--color-text-muted);
 }
 
+.chat-header-agent[data-working] .avatar-agent svg {
+  animation: chatHeaderBob 1.6s ease-in-out infinite;
+}
+
+@keyframes chatHeaderBob {
+  50% {
+    translate: 0 -2px;
+  }
+}
+
 /* At work, Marq draws back from his hat's crown behind his laptop. */
 .avatar-figure {
   transform-origin: 60px 16px;
   transition: transform 0.3s ease;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .avatar-figure {
-    transition: none;
-  }
 }
 
 /* The phone keeps its semibold name, as on iOS; the desktop takes ChatGPT's `font-medium`. */
@@ -4695,26 +4751,6 @@ textarea.settings-text {
 
   .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
     margin-top: 16px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-profile,
-  .app-layout[data-profile-swiping] > .agent-profile {
-    animation: none;
-    transition: none;
-  }
-
-  /* A hovered card keeps still. */
-  .agent-file-card,
-  .agent-file-card:hover {
-    transform: none;
-    transition: none;
-  }
-
-  .sheet,
-  .sheet-backdrop {
-    transition: none;
   }
 }
 

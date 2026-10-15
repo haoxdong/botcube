@@ -9,7 +9,7 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
       export CURL_CA_BUNDLE=/run/secrets/build_ca NODE_EXTRA_CA_CERTS=/run/secrets/build_ca APT_CONFIG=/tmp/botcube-build-apt.conf; \
       printf 'Acquire::https::CaInfo "/run/secrets/build_ca";\n' > "$APT_CONFIG"; \
     fi; \
-    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils librsvg2-bin \
     libcairo2 libfreetype6 fontconfig fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji && \
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \

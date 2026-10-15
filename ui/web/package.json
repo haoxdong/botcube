@@ -28,7 +28,8 @@
     "start": "serve .next-standalone --listen ${PORT:-3001}",
     "storybook": "storybook dev --port 6006",
     "build:storybook": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --max-old-space-size=4096\" ../../scripts/heavy.sh storybook build --output-dir storybook-static",
-    "screenshots:storybook": "sh screenshots.sh",
+    "test:storybook": "sh stories.sh",
+    "screenshots:storybook": "sh stories.sh --screenshots",
     "prestorybook": "msw init .storybook/public --save",
     "prebuild:storybook": "msw init .storybook/public --save"
   },

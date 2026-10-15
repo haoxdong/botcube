@@ -218,6 +218,7 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay]) -> Any:
         'use_responses_api': True,
         # The plan's reasoning summaries stream as the Turn's reasoning; its effort stays the plan's default.
         'reasoning': {'summary': 'auto'},
+        'verbosity': 'low',
         'streaming': True,
         'store': False,
         'max_retries': 0,

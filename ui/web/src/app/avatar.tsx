@@ -44,7 +44,7 @@ function AgentMark({ size, working }: { size: number; working: boolean }) {
         <ellipse cx="60" cy="47" rx="30" ry="7" fill="#18191b" stroke="#6b6f77" strokeWidth="2.4" />
         <path d="M40 47c0-19 8-30 20-30s20 11 20 30c-6 2-13 3-20 3s-14-1-20-3z" fill="#202124" stroke="#6b6f77" strokeWidth="2.4" strokeLinejoin="round" />
         <path d="M40.4 40.6c5.9 1.9 12.6 2.9 19.6 2.9s13.7-1 19.6-2.9l.4 5.8c-6 2-13 3-20 3s-14-1-20-3z" fill="#d4d6da" />
-        <path d="M52 21q8 5 16 0" stroke="#0e0f10" strokeWidth="2" fill="none" strokeLinecap="round" />
+        <path d="M52 21q8 5 16 0" stroke="#0d0f12" strokeWidth="2" fill="none" strokeLinecap="round" />
         <ellipse cx="50" cy="78" rx="3.6" ry="5" fill="#202124" />
         <ellipse cx="70" cy="78" rx="3.6" ry="5" fill="#202124" />
         <circle className="avatar-monocle" cx="70" cy="78" r="8.5" fill="none" stroke="#4a4d55" strokeWidth={chain ? 2.2 : 3.4} />

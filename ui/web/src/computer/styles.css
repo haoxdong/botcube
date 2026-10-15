@@ -34,7 +34,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-white);
-  box-shadow: var(--shadow-subtle);
+  box-shadow: var(--shadow-rest);
   font-size: var(--font-detail);
   color: var(--color-text);
 }
@@ -250,9 +250,10 @@
 .agent-computer-terminal {
   overflow: auto;
   padding: 0.63cqw 1.09cqw;
-  background: #1e1e1e;
-  color: #e8e8e8;
+  background: #1c1e21;
+  color: #e5e8ec;
   color-scheme: dark;
+  scrollbar-color: #535559 transparent;
   font: 1.41cqw/1.4 'Menlo', 'Monaco', 'Courier New', monospace;
   white-space: pre-wrap;
   /* Lines wrap between words; only a word longer than the line breaks. */
@@ -596,7 +597,7 @@
     left: 16px;
     width: 44px;
     height: 44px;
-    background: #1f1f1f;
+    background: #1d1f22;
     color: var(--color-white);
   }
 
@@ -610,7 +611,7 @@
     padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 
-  .agent-computer-sheet .agent-computer-touch-tool { background: #1f1f1f; }
+  .agent-computer-sheet .agent-computer-touch-tool { background: #1d1f22; }
   .agent-computer-sheet .agent-computer-touch-tool[aria-pressed='true'] { background: var(--color-blue); }
 
   /* A finger's 44px target at the least (Apple HIG; the regression): the dock apps keep their 30px icons. */

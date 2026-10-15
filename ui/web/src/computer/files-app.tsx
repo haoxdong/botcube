@@ -204,8 +204,8 @@ const FOLDER_FRONT = 'agent-computer-folder-front';
 /** A white page with its corner folded, as Finder draws a document. */
 const PAGE = (
   <>
-    <path d="M4 2h26l12 12v38a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#ffffff" stroke="#c4c4c9" strokeWidth="1.5" />
-    <path d="M30 2v10a2 2 0 0 0 2 2h10" fill="#ececef" stroke="#c4c4c9" strokeWidth="1.5" />
+    <path d="M4 2h26l12 12v38a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#ffffff" stroke="#c2c5c9" strokeWidth="1.5" />
+    <path d="M30 2v10a2 2 0 0 0 2 2h10" fill="#eaedf0" stroke="#c2c5c9" strokeWidth="1.5" />
   </>
 );
 
@@ -234,7 +234,7 @@ const ICONS = {
     shapes: (
       <>
         {PAGE}
-        <path d="M10 24h24M10 30h24M10 36h24M10 42h16" stroke="#9a9aa0" strokeWidth="2" />
+        <path d="M10 24h24M10 30h24M10 36h24M10 42h16" stroke="#989b9e" strokeWidth="2" />
       </>
     ),
   },
