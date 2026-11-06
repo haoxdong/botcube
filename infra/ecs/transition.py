@@ -176,7 +176,7 @@ def provision_alias(functions: Any, function: str, alias: str, minimum: int, pau
     """Lambda refuses provisioned concurrency on an alias that routes by weights. An AgentCore deploy's alias update
     leaves the alias weighted for a moment, and a deploy in the `harness` slot can overlap unpark (as
     on 2026-11-05 at 11:24Z), so wait out the weights and try again rather than fail the unpark."""
-    deadline = time.monotonic() + timeout
+    deadline, healed = time.monotonic() + timeout, False
     while True:
         try:
             functions.put_provisioned_concurrency_config(FunctionName=function, Qualifier=alias, ProvisionedConcurrentExecutions=minimum)
@@ -185,10 +185,26 @@ def provision_alias(functions: Any, function: str, alias: str, minimum: int, pau
             if WEIGHTED_ALIAS not in str(error):
                 raise
             if time.monotonic() > deadline:
-                raise RuntimeError(f'{function}:{alias} still routes by weights after {timeout:.0f} s; '
-                                   're-run unpark once the AgentCore deploy finishes') from error
+                if healed or not orphaned_weights_cleared(functions, function, alias):
+                    raise RuntimeError(f'{function}:{alias} still routes by weights after {timeout:.0f} s; '
+                                       're-run unpark once the AgentCore deploy finishes') from error
+                deadline, healed = time.monotonic() + timeout, True
+                continue
             print(f'{function}:{alias} routes by weights during an AgentCore deploy; waiting to provision it', flush=True)
             pause(10)
+
+
+def orphaned_weights_cleared(functions: Any, function: str, alias: str) -> bool:
+    """Moving a provisioned alias to a new version, Lambda routes to the old one until the new version's environments
+    are ready. A park that deletes the provisioning mid-shift leaves the shift unable to finish (2026-11-06 02:42Z), so
+    with no provisioning left, point the alias at the version the deploy moved it to, with no weights."""
+    configs = functions.list_provisioned_concurrency_configs(FunctionName=function)['ProvisionedConcurrencyConfigs']
+    if any(config['FunctionArn'].endswith(f':{alias}') for config in configs):
+        return False
+    version = functions.get_alias(FunctionName=function, Name=alias)['FunctionVersion']
+    functions.update_alias(FunctionName=function, Name=alias, FunctionVersion=version, RoutingConfig={'AdditionalVersionWeights': {}})
+    print(f'::warning::{function}:{alias} kept weights with no provisioning to finish its shift; pointed it at version {version} alone', flush=True)
+    return True
 
 
 # UpdateAgentRuntime replaces the whole configuration, so a refresh sends back every field it read. A field Get

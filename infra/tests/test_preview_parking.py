@@ -415,6 +415,17 @@ class SessionApiProduction:
         self.provisioned, self.minimum, self.target = provisioned, minimum, target
         self.weighted_for = 0
         self.suspended: dict[str, bool] | None = None
+        self.alias_updates: list[dict[str, Any]] = []
+
+    def get_alias(self, FunctionName: str, Name: str) -> dict[str, Any]:
+        assert (FunctionName, Name) == (self.function, self.alias)
+        weights = {'AdditionalVersionWeights': {'171': 1.0}} if self.weighted_for else {}
+        return {'FunctionVersion': '172', **({'RoutingConfig': weights} if weights else {})}
+
+    def update_alias(self, **kwargs: Any) -> None:
+        self.alias_updates.append(kwargs)
+        if kwargs.get('RoutingConfig') == {'AdditionalVersionWeights': {}}:
+            self.weighted_for = 0
 
     def describe_scalable_targets(self, **kwargs: Any) -> dict[str, Any]:
         assert kwargs == {'ServiceNamespace': 'lambda', 'ResourceIds': [f'function:{self.function}:{self.alias}'], 'ScalableDimension': 'lambda:function:ProvisionedConcurrency'}
@@ -469,12 +480,22 @@ class SessionApiCapacityTests(unittest.TestCase):
         transition['session_api_capacity']('live', api, api, pause=pauses.append)
         self.assertEqual((api.provisioned, api.suspended, len(pauses)), (2, RESUMED, 2))
 
-    def test_alias_weights_that_outlast_the_wait_fail_loud(self):
-        api = SessionApiProduction(provisioned=None)
+    def test_alias_weights_that_outlast_the_wait_with_provisioning_in_place_fail_loud(self):
+        api = SessionApiProduction(provisioned=2)
         api.weighted_for = 99
         with self.assertRaisesRegex(RuntimeError, "still routes by weights after .*re-run unpark once the AgentCore deploy finishes"):
             transition['session_api_capacity']('live', api, api, pause=lambda _: None, timeout=-1)
-        self.assertIsNone(api.provisioned)
+        self.assertEqual(api.alias_updates, [])
+
+    def test_unpark_clears_weights_a_park_orphaned_and_provisions(self):
+        # 2026-11-06 02:42Z: a Harness deploy moved the provisioned alias to version 172, so Lambda routed to 171 until
+        # 172's environments were ready; a park deleted the provisioning a minute later, so the shift could never finish.
+        api = SessionApiProduction(provisioned=None, minimum=2)
+        api.weighted_for = 99
+        transition['session_api_capacity']('live', api, api, pause=lambda _: None, timeout=-1)
+        self.assertEqual(api.alias_updates, [{'FunctionName': api.function, 'Name': api.alias, 'FunctionVersion': '172',
+                                              'RoutingConfig': {'AdditionalVersionWeights': {}}}])
+        self.assertEqual((api.provisioned, api.suspended), (2, RESUMED))
 
     def test_any_other_provisioning_refusal_fails_at_once(self):
         api = SessionApiProduction(provisioned=None)

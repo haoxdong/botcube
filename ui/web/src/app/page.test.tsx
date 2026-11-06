@@ -1901,6 +1901,7 @@ describe('the kept Main Chat over the chat as it opens', () => {
         observe(target: Element) {
           observed.set(target, [...(observed.get(target) ?? []), this.callback]);
         }
+        unobserve() {}
         disconnect() {}
       },
     );
@@ -2293,6 +2294,7 @@ describe('Main Chat', () => {
           observe() {
             resized.push(this.callback);
           }
+          unobserve() {}
           disconnect() {
             resized.splice(0, resized.length, ...resized.filter((callback) => callback !== this.callback));
           }

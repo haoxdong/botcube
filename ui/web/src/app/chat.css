@@ -237,6 +237,16 @@
   overflow-anchor: none;
 }
 
+/* A row off screen skips its style, layout and paint once laid out (row-containment.ts). Containment clips
+   paint at the row's edge; the margin keeps a code block's shadow there. Not on a phone, which scrolls the chat with
+   the page. */
+@media (min-width: 641px) {
+  .copilotKitMessages > [data-contained] {
+    content-visibility: auto;
+    overflow-clip-margin: 4px;
+  }
+}
+
 /* Right under the agent's header, which floats over the chat, the first message starts below it. */
 .chat-header + .app-chat .copilotKitMessages {
   padding-top: calc(var(--chat-header-height) + 0.5rem);

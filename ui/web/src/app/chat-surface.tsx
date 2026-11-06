@@ -45,6 +45,7 @@ import { ThoughtStep, ToolStep, Worklog, worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
+import { containRows } from "./row-containment";
 import { useSteering } from "./steering";
 import { useAgentRunning } from "./agent-running";
 
@@ -452,12 +453,8 @@ function finishEntrances(list: Element) {
 
 const messageList = (list: HTMLDivElement | null) => {
   if (list !== null) finishEntrances(list);
-  const unfit = fitBubbles(list);
-  const unkeep = keepLateBoxes(list);
-  return () => {
-    unfit?.();
-    unkeep?.();
-  };
+  const stops = [fitBubbles(list), keepLateBoxes(list), containRows(list)];
+  return () => stops.forEach((stop) => stop?.());
 };
 
 function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages: readonly { id: string }[]; list: RefObject<HTMLDivElement | null> }) {

@@ -212,7 +212,7 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
-      "Action": ["lambda:PutProvisionedConcurrencyConfig", "lambda:DeleteProvisionedConcurrencyConfig", "lambda:GetProvisionedConcurrencyConfig", "lambda:ListProvisionedConcurrencyConfigs"],
+      "Action": ["lambda:PutProvisionedConcurrencyConfig", "lambda:DeleteProvisionedConcurrencyConfig", "lambda:GetProvisionedConcurrencyConfig", "lambda:ListProvisionedConcurrencyConfigs", "lambda:GetAlias", "lambda:UpdateAlias"],
       "Resource": ["arn:aws:lambda:$AWS_REGION:$AWS_ACCOUNT_ID:function:$SESSION_API", "arn:aws:lambda:$AWS_REGION:$AWS_ACCOUNT_ID:function:$SESSION_API:*"]
     },
     {
