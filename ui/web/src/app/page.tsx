@@ -16,6 +16,7 @@ import { ChatHeader, useHeaderWorking } from "./header-status";
 import { KeptChat } from "./kept-chat";
 import { usePhoneProfileFocus } from "./phone-profile-focus";
 import { useDrawerSwipe } from "./drawer-swipe";
+import { useDrawerPreview } from "./drawer-preview";
 import { usePhoneViewport } from "./phone-viewport";
 import { PHONE_QUERY, useIsPhone } from "./phone-query";
 import { isUnread } from "./conversations";
@@ -81,6 +82,7 @@ function App({
   useEffect(() => {
     if (!window.matchMedia(PHONE_QUERY).matches && withStorage(() => localStorage.getItem(SIDEBAR_EXPANDED_KEY)) === 'true') setSidebarExpanded(true);
   }, []);
+  useDrawerPreview(layoutRef, swipe.visible, isPhone);
   const toggleSidebar = () => {
     swipe.toggle();
     if (!isPhone) withStorage(() => localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(!sidebarExpanded)));

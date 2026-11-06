@@ -83,6 +83,33 @@
     pointer-events: none;
   }
 
+  html:has([data-drawer-preview]) {
+    overflow: hidden;
+  }
+
+  .app-layout[data-drawer-preview] {
+    min-height: var(--drawer-page-height);
+  }
+
+  .app-layout[data-drawer-preview] .app-shell {
+    position: fixed;
+    top: -62px;
+    left: var(--app-safe-left);
+    right: var(--app-safe-right);
+    height: calc(100dvh + 62px + var(--drawer-bottom));
+    min-height: 0;
+    margin-top: 0;
+    padding-bottom: 0;
+    border-top: 62px solid var(--color-canvas);
+    border-bottom: var(--drawer-bottom) solid var(--color-canvas);
+  }
+
+  .app-layout[data-drawer-preview] .app-chat {
+    flex: none;
+    position: relative;
+    top: calc(-1 * var(--drawer-scroll));
+  }
+
   /* Fades the peeking chat, and the chat card a profile swipe slides off the profile */
   .app-layout:has(> .sidebar-expanded) .app-shell::after,
   .app-layout[data-profile-swiping] .app-shell::after {
