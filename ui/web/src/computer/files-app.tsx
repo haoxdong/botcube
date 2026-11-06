@@ -14,6 +14,9 @@ import { FileName } from './file-name';
 import { FileTypeIcon, isImageName } from '../components/file-type-icon';
 import { FilesChart, opensAsChart } from './files-chart';
 import { Thumbnail } from './thumbnail';
+import { HttpStatusError, uploadTo, type UploadOptions } from './files-upload';
+
+export type { UploadOptions } from './files-upload';
 import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount } from 'botcube-ui-web/cartridge';
 import { LoadingSkeleton } from 'botcube-ui-web/load-state';
 
@@ -30,12 +33,6 @@ export interface FileEntry {
 interface ChatServiceOptions {
   chatServiceUrl: string;
   fetchImpl?: typeof fetch;
-}
-
-class HttpStatusError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
 }
 
 async function chatService(
@@ -80,11 +77,6 @@ export async function renameFile(from: string, to: string, options: ChatServiceO
 async function newUploadUrl(name: string, signal: AbortSignal, service: ChatServiceOptions): Promise<string> {
   const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }), signal };
   return (await chatService('/files/upload-url', init, 'Upload failed', service)).url as string;
-}
-
-export interface UploadOptions {
-  onProgress: (fraction: number) => void;
-  signal: AbortSignal;
 }
 
 /** PUTs `file` to a presigned URL as a new object, reporting the fraction sent; XHR, as fetch reports no upload progress. */
@@ -146,7 +138,7 @@ async function uploadAvailableFile(file: File, options: UploadOptions, service: 
   }
   options.signal.throwIfAborted();
   try {
-    await putFile(url, file, options);
+    await uploadTo(url, file, options, putFile);
   } catch (error) {
     if (error instanceof HttpStatusError && error.status === 412) return uploadAvailableFile(file, options, service, copy + 1);
     throw error;

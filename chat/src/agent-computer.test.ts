@@ -1237,6 +1237,15 @@ describe('the AgentCore browser of Agent Computers', () => {
     ]);
   });
 
+  it('mounts Files on EFS as an EFS access point when the account Files live there', async () => {
+    const { requests } = agentCore();
+    const efs = { accessPointArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:access-point/fsap-1', fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-1', mountPath: '/mnt/files' };
+
+    await client().start(null, efs);
+
+    expect(requests[0]?.body).toMatchObject({ filesystemConfigurations: [{ efsConfiguration: efs }] });
+  });
+
   it("creates the account's one browser profile, retry-safe, at the control plane", async () => {
     // The request's retry key: sha256 of `browser-profile:<account>`, named apart from the field so the mirror's secret scan reads no key.
     const PROFILE_REQUEST_DIGEST = '567a7ccb67f2821e91e0b1bb8b898b447cbbf610df6b02e11352ace2c03339a2';

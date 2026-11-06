@@ -22,124 +22,56 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { HttpError } from './cartridge.js';
+import { accountFilesEfs, efsAccessPoints, stsMountCredentials } from './files-efs.js';
+import {
+  FILES_MOUNT_PATH, POSIX_ID, RETIREMENT_GRACE_MS, SYNC_SECONDS, URL_SECONDS, HIDDEN,
+  directoryOf, fileDestination, filePath, freeName,
+  type AccountFiles, type FileEntry, type FilesMountBinding, type FilesRecords, type FilesSyncBinding,
+} from './files-shared.js';
 
-/** Where every Agent Computer browser mounts its account's Files; Chrome's download directory (deploy/agent-computer). */
-const FILES_MOUNT_PATH = '/mnt/files';
-/** How long a Files upload or download URL stays valid. */
-const URL_SECONDS = 300;
-/** The POSIX identity every file operation through an account's access point runs as. */
-const POSIX_ID = 1000;
-/** How long the agent's Files credentials last: role chaining's ceiling, and the Runtime's longest microVM. */
-const SYNC_SECONDS = 3600;
-const RETIREMENT_GRACE_MS = 24 * 60 * 60 * 1000;
+export type { AccountFiles, FileEntry, FilesMount, FilesRecords } from './files-shared.js';
+
 /** How often, and how many times, a new access point is looked at until it is available. */
 const ACCESS_POINT_POLL = { intervalMs: 1000, attempts: 60 };
-
-/** An S3 Files access point a browser Session mounts, as StartBrowserSession takes it. */
-export interface FilesMount {
-  accessPointArn: string;
-  fileSystemArn: string;
-  mountPath: string;
-}
-
-interface FileEntry {
-  name: string;
-  size: number;
-  lastModified: string;
-}
-
-interface FilesSyncBinding {
-  bucket: string;
-  prefix: string;
-  region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  sessionToken: string;
-  expiration: string;
-}
-
-/** Where an account's Files access point is kept once created. */
-export interface FilesRecords {
-  filesRetirement(accountId: string): Promise<{ destinationAccountId: string | null; lastCredentialExpiresAt: number } | null>;
-  retireFiles(accountId: string, destinationAccountId: string | null, notBefore: number): Promise<void>;
-  scheduleFilesCleanup(accountId: string, notBefore: number, lastCredentialExpiresAt: number): Promise<void>;
-  completeFilesCleanup(accountId: string, lastCredentialExpiresAt: number): Promise<void>;
-  filesAccountActive(accountId: string): Promise<boolean>;
-  pendingFilesCleanup(): Promise<string[]>;
-  filesAccessPoint(accountId: string): Promise<string | null>;
-  saveFilesAccessPoint(accountId: string, accessPointArn: string): Promise<void>;
-  deleteFilesAccessPoint(accountId: string): Promise<void>;
-}
-
-/** An account's Files: one directory of the S3 Files file system, reached through its own access point. */
-export interface AccountFiles {
-  /** Periodically clean retired directories, including uploads admitted before credentials expired. */
-  recoverCleanup(): Promise<void>;
-  /** The account's access point, created on first use, mounted at FILES_MOUNT_PATH. */
-  mount(accountId: string): Promise<FilesMount>;
-  list(accountId: string): Promise<FileEntry[]>;
-  uploadUrl(accountId: string, name: string): Promise<string>;
-  downloadUrl(accountId: string, name: string): Promise<string>;
-  /** Delete a file and every earlier version of it, so none can come back; 404 when it is not there. */
-  remove(accountId: string, name: string): Promise<void>;
-  /** Give a file another name: its current version moves, and the old name keeps no version. */
-  rename(accountId: string, from: string, to: string): Promise<void>;
-  syncBinding(accountId: string): Promise<FilesSyncBinding>;
-  /** Move every file into another account's Files, as an Account Claim does (ADR 0077), leaving no version behind, then drop the source's access point. */
-  transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;
-  /** Account deletion: every object version and delete marker in the account's directory, then its access point. */
-  delete(accountId: string): Promise<void>;
-}
-
-/** The account's directory: a hash, so no account ID can name another's or escape the file system's layout. */
-const directoryOf = (accountId: string) =>
-  `accounts/${createHash('sha256').update(accountId).digest('hex').slice(0, 32)}`;
 
 /** A version or delete marker in the Files bucket. */
 type Version = { Key?: string | undefined; VersionId?: string | undefined; IsLatest?: boolean | undefined; marker: boolean };
 
-/** `name`, or the first of `report (1).csv`, `report (2).csv`, ... that is not taken. */
-function freeName(name: string, taken: ReadonlySet<string>): string {
-  if (!taken.has(name)) return name;
-  const base = name.lastIndexOf('/') + 1;
-  const dot = name.lastIndexOf('.');
-  const stem = dot > base ? dot : name.length;
-  let copy = 1;
-  while (taken.has(`${name.slice(0, stem)} (${copy})${name.slice(stem)}`)) copy += 1;
-  return `${name.slice(0, stem)} (${copy})${name.slice(stem)}`;
-}
-
-/** A path inside the account's directory; a segment that is empty, `.` or `..` would leave it. */
-function filePath(name: string): string {
-  const segments = name.split('/');
-  if (!name || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
-    throw new HttpError(400, 'name must be a path inside Files');
-  }
-  return name;
-}
-
-const HIDDEN = /(^|\/)\.(?!\.?\/)[^/]*\//;
-
-function fileDestination(name: string): string {
-  if (name.split('/').some((segment) => Buffer.byteLength(segment, 'utf8') > 255)) {
-    throw new HttpError(400, 'Each file name in Files must be at most 255 UTF-8 bytes');
-  }
-  if (HIDDEN.test(name)) throw new HttpError(400, 'A folder in Files cannot start with a dot');
-  return name;
-}
-
-const FILES_SETTINGS = ['BOTCUBE_FILES_BUCKET', 'BOTCUBE_FILES_FILE_SYSTEM_ARN', 'BOTCUBE_FILES_SYNC_ROLE_ARN'];
+const FILES_SETTINGS = ['BOTCUBE_FILES_BUCKET', 'BOTCUBE_FILES_FILE_SYSTEM_ARN', 'BOTCUBE_FILES_SYNC_ROLE_ARN', 'BOTCUBE_FILES_STORE'];
 
 /** Whether this deploy has Files: once any setting is, a missing one fails loud. */
 export const filesConfigured = (env: NodeJS.ProcessEnv) => FILES_SETTINGS.some((name) => env[name]?.trim());
 
+const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_LINKS_URL', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN'] as const;
+
+/** Files on EFS, behind BOTCUBE_FILES_STORE=efs: every setting is required, and a missing one fails loud. */
+function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords): AccountFiles<FilesMountBinding> {
+  const missing = EFS_SETTINGS.filter((name) => !env[name]?.trim());
+  if (missing.length > 0) throw new HttpError(503, `Files on EFS are not configured: ${missing.join(', ')} required`);
+  const setting = (name: (typeof EFS_SETTINGS)[number]) => env[name]?.trim() ?? '';
+  const fileSystemArn = setting('BOTCUBE_FILES_EFS_ARN');
+  return accountFilesEfs({
+    root: setting('BOTCUBE_FILES_EFS_ROOT'),
+    fileSystemArn,
+    accessPoints: efsAccessPoints(fileSystemArn),
+    mountCredentials: stsMountCredentials(setting('BOTCUBE_FILES_MOUNT_ROLE_ARN'), fileSystemArn),
+    records,
+    links: { url: setting('BOTCUBE_FILES_LINKS_URL'), key: setting('BOTCUBE_FILES_SIGNING_KEY') },
+  });
+}
+
 /**
  * The account Files of BOTCUBE_FILES_FILE_SYSTEM_ARN over BOTCUBE_FILES_BUCKET, synced with the
  * agent through BOTCUBE_FILES_SYNC_ROLE_ARN; 503 until the bucket and file system are both set.
+ * With BOTCUBE_FILES_STORE=efs, Files live on the EFS file system of files-efs.ts instead.
  */
-export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords): () => AccountFiles {
-  let files: AccountFiles | undefined;
+export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords): () => AccountFiles<FilesSyncBinding | FilesMountBinding> {
+  let files: AccountFiles<FilesSyncBinding | FilesMountBinding> | undefined;
   return () => {
+    if (env.BOTCUBE_FILES_STORE?.trim() === 'efs') {
+      files ??= efsFilesFromEnv(env, records);
+      return files;
+    }
     const bucket = env.BOTCUBE_FILES_BUCKET?.trim();
     const fileSystemArn = env.BOTCUBE_FILES_FILE_SYSTEM_ARN?.trim();
     if (!bucket || !fileSystemArn) {
@@ -171,7 +103,7 @@ export function accountFiles({
   /** Path-style S3 URLs, for a local S3 at AWS_ENDPOINT_URL_S3. */
   pathStyle: boolean;
   poll?: { intervalMs: number; attempts: number };
-}): AccountFiles {
+}): AccountFiles<FilesSyncBinding> {
   // arn:aws:s3files:<region>:<account>:file-system/<id>
   const [, , , region = '', , resource = ''] = fileSystemArn.split(':');
   const fileSystemId = resource.split('/')[1] ?? '';

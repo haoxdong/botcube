@@ -141,6 +141,39 @@ describe('uploading a file the user attached in the chat', () => {
     expect(onProgress).toHaveBeenCalledWith(3 / 7);
   });
 
+  it('uploads to a Files link from EFS in 4 MiB chunks, chunk 0 first, then finishes with the size and SHA-256', async () => {
+    const big = new File([new Uint8Array(9 * 1024 * 1024).fill(7)], 'big.bin');
+    const link = 'https://links.test/?t=signed';
+    const fetchImpl = vi.fn(async () => Response.json({ url: link }));
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      sent.push(`${new URL(url).search} ${(init.body as Blob).size}`);
+      return new Response('ok');
+    }));
+    const onProgress = vi.fn();
+
+    expect(await uploadFile(big, { onProgress, signal: new AbortController().signal }, { ...CHAT, fetchImpl })).toBe('/big.bin');
+
+    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await big.arrayBuffer())), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    expect(sent[0]).toBe('?t=signed&offset=0 4194304');
+    expect(sent.slice(1, 3).sort()).toEqual(['?t=signed&offset=4194304 4194304', '?t=signed&offset=8388608 1048576']);
+    expect(sent[3]).toBe(`?t=signed&offset=12582912&done=9437184&sha256=${sha256} 0`);
+    expect(onProgress).toHaveBeenLastCalledWith(1);
+    expect(puts).toHaveLength(0);
+  });
+
+  it('tries the next copy name when a Files link from EFS finds the name taken', async () => {
+    const links = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const { name } = JSON.parse(init?.body as string) as { name: string };
+      return Response.json({ url: `https://links.test/?t=${encodeURIComponent(name)}` });
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (new URL(url).searchParams.get('t') === 'plan.txt' && url.includes('done=')
+      ? new Response('A file with this name is already in Files', { status: 409 })
+      : new Response('ok'))));
+
+    expect(await uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl: links })).toBe('/plan (2).txt');
+  });
+
   it.each([
     ['plan.txt', 'plan (3).txt', ['plan.txt', 'plan (2).txt']],
     ['plan.txt', 'plan (102).txt', ['plan.txt', ...Array.from({ length: 100 }, (_, index) => `plan (${index + 2}).txt`)]],
