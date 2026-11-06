@@ -532,9 +532,9 @@
 
 /* Bubbles in a row from one sender, nothing shown between them, stack 4px apart as one group (Muse): where two meet,
    their corners on the sender's side tighten. Marq's row ends at its bubble when only its hidden toolbar, no tool row,
-   follows it; the user's row starts at its bubble when no file card comes first. */
-.copilotKitMessages > .copilotKitAssistantMessage:has(> .cpk\:prose > .chat-markdown:not(:empty)):has(> .cpk\:prose:last-child, > .cpk\:prose + .cpk\:bg-transparent:last-child)
-  + .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty) {
+   follows it (bubble-ends.ts, as a rule its :has() restyled the list on every streamed word); the user's row starts at
+   its bubble when no file card comes first. */
+.copilotKitMessages > [data-bubble-ends] + .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty) {
   margin-top: 0;
   border-top-left-radius: var(--radius-sm);
 }
