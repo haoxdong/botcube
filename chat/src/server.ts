@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import { Hono, type Context } from 'hono';
 import { DynamoDBAgentDocuments, type AgentDocuments } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
+import { cspReportRoutes } from './csp-reports.js';
 import { HttpError, type AccountHistory, type CartridgeFactory, type ChatServiceCartridge } from './cartridge.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
 import { cors, LOCAL_UI_ORIGINS } from './cors.js';
@@ -191,6 +192,8 @@ export function createChatService(
     if (recoveryError !== undefined) throw new HttpError(503, 'Session purge recovery is unavailable');
     return c.json({ status: 'ok' });
   });
+
+  cspReportRoutes(app);
 
   app.get('/ping', (c) => {
     if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
