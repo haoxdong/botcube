@@ -132,6 +132,10 @@ _Avoid_: system prompt, persona file, skills (those hold the bot's rules)
 The name, character, and look a user gives their agent, starting from the Cartridge's defaults. It is distinct from Soul and from the User.
 _Avoid_: identity (bare), profile, bot name
 
+**Artifact**:
+A file the agent makes for the user to keep, revise or pass on, with its own identity across versions: an HTML page, a PDF, an Office file or an email draft. The reply shows it as a card, not inline.
+_Avoid_: Report, document, long answer, canvas, page (bare)
+
 **Visual**:
-A chart, diagram or drawing the agent embeds in a reply. It is the agent's own work, distinct from content a tool returns.
+A chart, diagram, drawing or picture the agent embeds in a reply. It is the agent's own work, distinct from content a tool returns, and is not an Artifact.
 _Avoid_: chart (bare), artifact, plot
