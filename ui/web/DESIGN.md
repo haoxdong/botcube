@@ -90,6 +90,10 @@ curve, one loop, locked by `design-system.test.ts`:
 **Spacing**: a 4px grid, 2px steps inside a row. Screens pad 20px at the side on a phone, 16–24px on a desktop;
 sections sit 24–28px apart, rows 4–12px.
 
+## Charts
+
+Plotly, from its built-in `simple_white`, with no gridlines. Axis lines and short ticks are `line`; labels are `text-muted` in the system font at 13px. Series take Radix step 9 in the order blue, orange, green, red, violet, teal, amber, pink; red and green keep their plain meaning, as for a stock's move. Long titles wrap; the source sits in the subtitle.
+
 ## Components
 
 All but the File page and Close are React components in `src/components/ui/` over one CSS rule each; a cartridge
