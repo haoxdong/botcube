@@ -51,6 +51,11 @@ it('redraws at the box\u2019s width whenever the box resizes, so a chart never r
   await waitFor(() => expect(observed.at(-1)?.targets).toEqual([chart]));
   observed.at(-1)?.callback();
   expect(plotly.Plots.resize).toHaveBeenCalledWith(chart);
+  // plotly.js rejects a resize of a chart that is not displayed, as WebKit logged when a chart's box was hidden.
+  plotly.Plots.resize.mockClear();
+  (chart as HTMLElement).style.display = 'none';
+  observed.at(-1)?.callback();
+  expect(plotly.Plots.resize).not.toHaveBeenCalled();
   view.unmount();
   expect(observed.at(-1)?.targets).toEqual([]);
   vi.unstubAllGlobals();

@@ -83,9 +83,11 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
     const gone = new AbortController();
     let drawn: Plotly | undefined;
     // plotly's `responsive` follows only the window; the box also changes width as the reply lays out, so the chart
-    // redraws at the box's width whenever it does, and never runs past the bubble.
+    // redraws at the box's width whenever it does, and never runs past the bubble. plotly rejects a resize of a box
+    // that is not displayed (display none, or none at all once detached), so a hidden chart waits for its next resize.
     const resized = new ResizeObserver(() => {
-      if (drawn !== undefined) void drawn.Plots.resize(element);
+      const shown = !['', 'none'].includes(getComputedStyle(element).display);
+      if (drawn !== undefined && shown) void drawn.Plots.resize(element);
     });
     setFailure(null);
     void (async () => {
