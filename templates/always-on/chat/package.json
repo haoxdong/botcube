@@ -1,0 +1,16 @@
+{
+  "name": "botcube-always-on-chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire as __chatCreateRequire}from'node:module';const require=__chatCreateRequire(import.meta.url);\" --outdir=dist"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.3",
+    "botcube-chat": "workspace:*",
+    "hono": "^4.13.14"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

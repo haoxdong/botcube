@@ -1,0 +1,122 @@
+import json
+import threading
+from typing import Any
+
+import httpx
+import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi.testclient import TestClient
+
+from botcube_always_on.fake_site import FakeSiteServer
+from botcube_always_on.site_provider import FakeSiteProvider
+from botcube_credential_service.invocation import sign_credential_service_invocation
+from botcube_credential_service.server import CredentialServiceSettings, create_app
+from botcube_credential_service.vault import DynamoDbCredentialVault
+
+
+class LocalKeys:
+    def __init__(self) -> None:
+        self.key = AESGCM.generate_key(bit_length=256)
+
+    def generate_data_key(self, encryption_context: dict[str, str]) -> tuple[bytes, bytes]:
+        key = AESGCM.generate_key(bit_length=256)
+        return key, AESGCM(self.key).encrypt(bytes(12), key, json.dumps(encryption_context).encode())
+
+    def decrypt_data_key(self, encrypted_data_key: bytes, encryption_context: dict[str, str]) -> bytes:
+        return AESGCM(self.key).decrypt(bytes(12), encrypted_data_key, json.dumps(encryption_context).encode())
+
+
+def authorization(scope: str | None = None) -> dict[str, str]:
+    return {
+        'Authorization': 'Bearer ' + sign_credential_service_invocation('local-secret', 'template-user', 'session', scope=scope),
+        'X-BotCube-Session-Id': 'session',
+    }
+
+
+@pytest.mark.integration
+def test_link_relay_and_unlink_keep_durable_credential_in_encrypted_vault(table: Any) -> None:
+    site = FakeSiteServer(('127.0.0.1', 0))
+    thread = threading.Thread(target=site.serve_forever, daemon=True)
+    thread.start()
+    url = f'http://127.0.0.1:{site.server_port}'
+    vault = DynamoDbCredentialVault(table, LocalKeys())
+    app = create_app(
+        CredentialServiceSettings('template', lambda: 'local-secret'),
+        [FakeSiteProvider(lambda: vault, url)],
+    )
+    try:
+        with TestClient(app) as client:
+            assert client.get('/fake-site/data', headers=authorization()).json()['code'] == 'SIGN_IN_NEEDED'
+            credential = httpx.post(f'{url}/login').json()['credential']
+            linked = client.post('/fake-site/auth/link/ingest', headers=authorization('credential_capture'), json={'credential': credential})
+            assert linked.json() == {'status': 'linked'}
+            assert credential not in repr(table.get_item(Key={'accountId': 'template-user', 'provider': 'fake-site'})['Item'])
+            assert client.get('/fake-site/data', headers=authorization()).json() == {'items': [{'name': 'Sample item', 'value': 42}]}
+            stored = repr(table.get_item(Key={'accountId': 'template-user', 'provider': 'fake-site'})['Item'])
+            assert site.access and all(access not in stored for access in site.access)
+            assert client.get('/fake-site/auth/status', headers=authorization()).json() == {'status': 'linked'}
+            assert client.get('/fake-site/login', headers=authorization()).status_code == 403
+            assert client.get('/fake-site/data?destination=evil', headers=authorization()).status_code == 403
+            assert client.post('/fake-site/auth/link/revoke', headers=authorization('credential_revocation')).json() == {'status': 'revoked'}
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 401
+            assert client.get('/fake-site/auth/status', headers=authorization()).json() == {'status': 'not_linked'}
+    finally:
+        site.shutdown()
+        site.server_close()
+        thread.join()
+
+
+@pytest.mark.integration
+def test_relay_reuses_the_sites_access_until_the_site_ends_it_then_re_mints_once(table: Any) -> None:
+    site = FakeSiteServer(('127.0.0.1', 0))
+    thread = threading.Thread(target=site.serve_forever, daemon=True)
+    thread.start()
+    url = f'http://127.0.0.1:{site.server_port}'
+    vault = DynamoDbCredentialVault(table, LocalKeys())
+    app = create_app(
+        CredentialServiceSettings('template', lambda: 'local-secret'),
+        [FakeSiteProvider(lambda: vault, url)],
+    )
+    try:
+        with TestClient(app) as client:
+            credential = httpx.post(f'{url}/login').json()['credential']
+            client.post('/fake-site/auth/link/ingest', headers=authorization('credential_capture'), json={'credential': credential})
+
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert client.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert len(site.access) == 1
+        cold_app = create_app(
+            CredentialServiceSettings('template', lambda: 'local-secret'),
+            [FakeSiteProvider(lambda: vault, url)],
+        )
+        with TestClient(cold_app) as cold:
+            assert cold.get('/fake-site/data', headers=authorization()).json() == {'items': [{'name': 'Sample item', 'value': 42}]}
+            assert len(site.access) == 1
+            site.access.clear()
+            assert cold.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert len(site.access) == 1
+        later_app = create_app(
+            CredentialServiceSettings('template', lambda: 'local-secret'),
+            [FakeSiteProvider(lambda: vault, url)],
+        )
+        with TestClient(later_app) as later:
+            assert later.get('/fake-site/data', headers=authorization()).status_code == 200
+            assert len(site.access) == 1
+    finally:
+        site.shutdown()
+        site.server_close()
+        thread.join()
+
+
+def test_status_does_not_hide_vault_failure() -> None:
+
+    def failed_vault() -> DynamoDbCredentialVault:
+        raise RuntimeError('vault unavailable')
+
+    provider = FakeSiteProvider(failed_vault, 'http://127.0.0.1:1')
+    app = create_app(
+        CredentialServiceSettings('template', lambda: 'local-secret'),
+        [provider],
+    )
+    with TestClient(app) as client, pytest.raises(RuntimeError, match='vault unavailable'):
+        client.get('/fake-site/auth/status', headers=authorization())

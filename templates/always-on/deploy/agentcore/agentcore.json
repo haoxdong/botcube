@@ -1,0 +1,16 @@
+{
+  "name": "botcube",
+  "tags": {
+    "agentcore:project-name": "bot-cube"
+  },
+  "runtimes": [
+    {
+      "name": "bot_cube"
+    }
+  ],
+  "memories": [
+    {
+      "name": "bot_cube"
+    }
+  ]
+}

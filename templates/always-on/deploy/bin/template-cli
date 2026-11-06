@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from botcube_always_on.fake_cli import main
+
+main()

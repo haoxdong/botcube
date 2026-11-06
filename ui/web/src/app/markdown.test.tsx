@@ -1,0 +1,422 @@
+import { CopilotChatAssistantMessage } from '@copilotkit/react-core/v2';
+import { render, waitFor } from '@testing-library/react';
+import { Streamdown } from 'streamdown';
+import { expect, it } from 'vitest';
+
+import { MARKDOWN_RENDERER } from './markdown';
+import MarkdownRenderer from './markdown-renderer';
+import { REPLY_MARKDOWN } from './reply-markdown';
+import { ReplyTurnRunning } from './reply-turn';
+
+const Renderer = CopilotChatAssistantMessage.MarkdownRenderer;
+
+const tables = [
+  {
+    name: 'Q6 breakevens and real yields',
+    markdown: `| Measure | Latest | 3-month range: low–high | Below 3-month high | Position in range* |
+|---|---:|---:|---:|---:|
+| 5y breakeven | **2.36%** | 2.16%–2.46% | 10 bp | 67% |
+| 10y breakeven | **2.36%** | 2.20%–2.40% | 4 bp | 80% |
+| 5y real yield | **2.65%** | 1.94%–2.73% | 8 bp | 90% |
+| 10y real yield | **2.88%** | 2.24%–2.93% | 5 bp | 93% |`,
+    headers: [
+      'Measure',
+      'Latest',
+      '3-month range: low–high',
+      'Below 3-month high',
+      'Position in range*',
+    ],
+    rows: [
+      ['5y breakeven', '2.36%', '2.16%–2.46%', '10 bp', '67%'],
+      ['10y breakeven', '2.36%', '2.20%–2.40%', '4 bp', '80%'],
+      ['5y real yield', '2.65%', '1.94%–2.73%', '8 bp', '90%'],
+      ['10y real yield', '2.88%', '2.24%–2.93%', '5 bp', '93%'],
+    ],
+  },
+  {
+    name: 'Q15 currency ranks',
+    markdown: `| YTD rank | Currency | YTD move vs USD | 3-month rank | Rank change* |
+|---:|---|---:|---:|---|
+| 1 | Norwegian krone (NOK) | +5.16% | 2 | Up 1 |
+| 2 | Australian dollar (AUD) | +4.47% | 3 | Up 1 |
+| 3 | Japanese yen (JPY) | −0.78% | 1 | Down 2 |
+| 4 | British pound (GBP) | −1.80% | 5 | Up 1 |
+| 5 | New Zealand dollar (NZD) | −2.73% | 6 | Up 1 |
+| 6 | Canadian dollar (CAD) | −3.76% | 4 | Down 2 |
+| 7 | Euro (EUR) | −4.47% | 7 | Unchanged |
+| 8 | Swiss franc (CHF) | −4.55% | 8 | Unchanged |
+| 9 | Swedish krona (SEK) | −8.18% | 9 | Unchanged |`,
+    headers: [
+      'YTD rank',
+      'Currency',
+      'YTD move vs USD',
+      '3-month rank',
+      'Rank change*',
+    ],
+    rows: [
+      ['1', 'Norwegian krone (NOK)', '+5.16%', '2', 'Up 1'],
+      ['2', 'Australian dollar (AUD)', '+4.47%', '3', 'Up 1'],
+      ['3', 'Japanese yen (JPY)', '−0.78%', '1', 'Down 2'],
+      ['4', 'British pound (GBP)', '−1.80%', '5', 'Up 1'],
+      ['5', 'New Zealand dollar (NZD)', '−2.73%', '6', 'Up 1'],
+      ['6', 'Canadian dollar (CAD)', '−3.76%', '4', 'Down 2'],
+      ['7', 'Euro (EUR)', '−4.47%', '7', 'Unchanged'],
+      ['8', 'Swiss franc (CHF)', '−4.55%', '8', 'Unchanged'],
+      ['9', 'Swedish krona (SEK)', '−8.18%', '9', 'Unchanged'],
+    ],
+  },
+];
+
+it.each(tables)(
+  'keeps $name footnote markers out of body cells after streaming',
+  ({ markdown, headers, rows }) => {
+    const view = render(<Streamdown {...MARKDOWN_RENDERER}>{''}</Streamdown>);
+    for (let end = 1; end <= markdown.length; end++) {
+      view.rerender(
+        <Streamdown {...MARKDOWN_RENDERER}>{markdown.slice(0, end)}</Streamdown>
+      );
+    }
+    expect(
+      Array.from(
+        view.container.querySelectorAll('th'),
+        (cell) => cell.textContent
+      )
+    ).toEqual(headers);
+    expect(
+      Array.from(view.container.querySelectorAll('tbody tr'), (row) =>
+        Array.from(row.querySelectorAll('td'), (cell) => cell.textContent)
+      )
+    ).toEqual(rows);
+  }
+);
+
+it.each(tables)(
+  'renders the complete $name table cleanly after reload',
+  ({ markdown, headers, rows }) => {
+    const view = render(
+      <Streamdown {...MARKDOWN_RENDERER}>{markdown}</Streamdown>
+    );
+    expect(
+      Array.from(
+        view.container.querySelectorAll('th'),
+        (cell) => cell.textContent
+      )
+    ).toEqual(headers);
+    expect(
+      Array.from(view.container.querySelectorAll('tbody tr'), (row) =>
+        Array.from(row.querySelectorAll('td'), (cell) => cell.textContent)
+      )
+    ).toEqual(rows);
+  }
+);
+
+it('preserves emphasis, math, code highlighting and table controls after the renderer upgrade', async () => {
+  const view = render(
+    <Streamdown {...MARKDOWN_RENDERER}>{`*italic* and **bold** and **日本語。**
+
+$$x^2$$
+
+\`\`\`javascript
+const answer = 42;
+\`\`\`
+
+| Header |
+|---|
+| Value |`}</Streamdown>
+  );
+  expect(view.container.querySelector('em')?.textContent).toBe('italic');
+  expect(
+    Array.from(
+      view.container.querySelectorAll('[data-streamdown="strong"]'),
+      (node) => node.textContent
+    )
+  ).toEqual(['bold', '日本語。']);
+  expect(view.container.querySelector('.katex annotation')?.textContent).toBe(
+    'x^2'
+  );
+  await waitFor(() =>
+    expect(
+      view.container.querySelector(
+        '[data-streamdown="code-block-body"] span[style]'
+      )?.textContent
+    ).toBe('const')
+  );
+  expect(view.getByRole('button', { name: 'Copy table' })).toBeInTheDocument();
+  expect(
+    view.getByRole('button', { name: 'Download table' })
+  ).toBeInTheDocument();
+});
+
+it.each(tables)(
+  'keeps the actual assistant $name table clean after streaming',
+  ({ markdown, headers, rows }) => {
+    const view = render(<Renderer {...MARKDOWN_RENDERER} content="" />);
+    for (let end = 1; end <= markdown.length; end++) {
+      view.rerender(
+        <Renderer {...MARKDOWN_RENDERER} content={markdown.slice(0, end)} />
+      );
+    }
+    expect(
+      Array.from(
+        view.container.querySelectorAll('th'),
+        (cell) => cell.textContent
+      )
+    ).toEqual(headers);
+    expect(
+      Array.from(view.container.querySelectorAll('tbody tr'), (row) =>
+        Array.from(row.querySelectorAll('td'), (cell) => cell.textContent)
+      )
+    ).toEqual(rows);
+  }
+);
+
+it('renders bracket display math at the actual assistant input boundary', () => {
+  const content = String.raw`\[V = N \times \max(S-K,0)\]
+
+$$V = N \times \max(S-K,0)$$`;
+  const view = render(<Renderer {...MARKDOWN_RENDERER} content={content} />);
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual([
+    String.raw`V = N \times \max(S-K,0)`,
+    String.raw`V = N \times \max(S-K,0)`,
+  ]);
+});
+
+it('renders inline bracket math at the actual assistant input boundary', () => {
+  const view = render(
+    <Renderer
+      {...MARKDOWN_RENDERER}
+      content={String.raw`Value \(V = N \times \max(S-K,0)\).`}
+    />
+  );
+  expect(view.container.querySelector('.katex annotation')?.textContent).toBe(
+    String.raw`V = N \times \max(S-K,0)`
+  );
+});
+
+it('preserves literal code, ordinary escapes, unmatched delimiters and dollar math in the assistant renderer', async () => {
+  const view = render(
+    <Renderer
+      {...MARKDOWN_RENDERER}
+      content={
+        String.raw`\[S-K\] and \(N \times S\) and $$x^2$$ and $5.
+
+` +
+        '`' +
+        String.raw`\[literal\]` +
+        '`' +
+        String.raw`
+
+` +
+        '```text\n' +
+        String.raw`\[fenced\]
+\(fenced\)
+$$fenced$$` +
+        '\n```\n\n' +
+        String.raw`Escapes: \*plain\* \[ordinary] \\[escaped\\] and unmatched \(open.`
+      }
+    />
+  );
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual(['S-K', String.raw`N \times S`, 'x^2']);
+  await waitFor(() =>
+    expect(
+      view.container.querySelector('[data-streamdown="code-block-body"]')
+        ?.textContent
+    ).toBe(String.raw`\[fenced\]\(fenced\)$$fenced$$`)
+  );
+  expect(view.container.querySelector('p code')?.textContent).toContain(
+    String.raw`\[literal\]`
+  );
+  expect(view.container.textContent).toContain(
+    'Escapes: *plain* [ordinary] \\[escaped\\] and unmatched (open.'
+  );
+  expect(view.container.textContent).toContain('$5.');
+});
+
+it('keeps bracket math and source operators after streaming through the actual assistant renderer', () => {
+  const content = String.raw`\[V = N \times \max(S-K,0)\]
+
+Inline \(S-K\), dollars $$N \times S$$.`;
+  const view = render(<Renderer {...MARKDOWN_RENDERER} content="" />);
+  for (let end = 1; end <= content.length; end++) {
+    view.rerender(
+      <Renderer {...MARKDOWN_RENDERER} content={content.slice(0, end)} />
+    );
+  }
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex annotation'),
+      (node) => node.textContent
+    )
+  ).toEqual([
+    String.raw`V = N \times \max(S-K,0)`,
+    'S-K',
+    String.raw`N \times S`,
+  ]);
+  expect(
+    view.container.querySelector('.katex-display math')?.getAttribute('display')
+  ).toBe('block');
+  expect(
+    Array.from(
+      view.container.querySelectorAll('.katex math mo'),
+      (node) => node.textContent
+    )
+  ).toContain('−');
+});
+
+const streamedBracketMath = [
+  { content: "\\[2\\", text: "2" },
+  { content: "\\[\n2\n\\", text: "2" },
+  { content: "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\", text: "Using the sum-of-squares formula:" },
+];
+
+it.each(streamedBracketMath)('renders incomplete bracket math: $content', ({ content, text }) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent(text);
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it.each([
+  { content: "\\[\n2\n\\]", text: "2" },
+  {
+    content: "Using the sum-of-squares formula:\n\n\\[\n\\sum_{n=1}^{20} n^2\n= \\frac{20(20+1)(2\\cdot20+1)}{6}\n= \\frac{20\\cdot21\\cdot41}{6}\n= 70\\cdot41\n= \\boxed{2870}.\n\\]",
+    text: "2870",
+  },
+])('keeps incomplete and complete math visible through every streamed prefix: $text', ({ content, text }) => {
+  const view = render(<MarkdownRenderer content="" />);
+  for (let end = 1; end <= content.length; end++) {
+    view.rerender(<MarkdownRenderer content={content.slice(0, end)} />);
+    expect(view.container.textContent.length).toBeGreaterThan(0);
+    expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+  }
+  expect(view.container).toHaveTextContent(text);
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+  view.unmount();
+  const replay = render(<MarkdownRenderer content={content} />);
+  expect(replay.container).toHaveTextContent(text);
+  expect(replay.container.querySelector('.katex')).not.toBeNull();
+});
+
+it.each(['\n', '\r', '\r\n'])('renders multiline bracket math with line ending %j', (lineEnding) => {
+  const view = render(<MarkdownRenderer content={`\\[${lineEnding}2${lineEnding}\\]`} />);
+  expect(view.container).toHaveTextContent('2');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+});
+
+it.each(['[pending', '[pending\\', 'Before \\[2\\] then [pending'])('keeps ordinary pending link text: %j', (content) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent('pending');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it.each([
+  '`streamdown:incomplete-link`',
+  '```text\n\\[2\\](streamdown:incomplete-link)\n```',
+  '\\[2\\](streamdown:incomplete-link)',
+])('preserves an explicitly written incomplete-link URI: %j', (content) => {
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves escaped bracket text and code while repairing math', () => {
+  const content = "Escapes: \\\\[literal\\\\] and code `\\[2\\](streamdown:incomplete-link)`.";
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent(String.raw`\[literal\]`);
+  expect(view.container.querySelector('code')).toHaveTextContent(String.raw`\[2\](streamdown:incomplete-link)`);
+  expect(view.container.querySelector('.katex')).toBeNull();
+});
+
+it('keeps the escaped opening bracket visible before math content arrives', () => {
+  const view = render(<MarkdownRenderer content={"\\["} />);
+  expect(view.container).toHaveTextContent('[');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves the terminal escape in an ordinary unfinished link', () => {
+  const view = render(<MarkdownRenderer content={"[pending\\"} />);
+  expect(view.container).toHaveTextContent('[pending\\');
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+});
+
+it('preserves entity-decoded literal marker text after completed math', () => {
+  const view = render(<MarkdownRenderer content={String.raw`\[2\](&#115;treamdown:incomplete-link)`} />);
+  expect(view.container).toHaveTextContent('(streamdown:incomplete-link)');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+});
+
+it('keeps an ordinary pending link label without source brackets', () => {
+  const view = render(<MarkdownRenderer content="[pending" />);
+  expect(view.container.textContent).toBe('pending');
+});
+
+it('preserves an unfinished terminal escape after completed math', () => {
+  const content = "Before \\[2\\] then [pending\\";
+  const view = render(<MarkdownRenderer content={content} />);
+  expect(view.container).toHaveTextContent("then [pending\\");
+  expect(view.container).not.toHaveTextContent('streamdown:incomplete-link');
+  expect(view.container.querySelector('.katex')).not.toBeNull();
+});
+
+it('marks a citation link and its brackets, keeping its text, and leaves other links alone', () => {
+  const view = render(<MarkdownRenderer content="Steeper.[[1]](https://example.com/a) See [the note](https://example.com/b)." />);
+  const [citation, link] = view.container.querySelectorAll('a');
+
+  expect(citation).toHaveAttribute('data-citation');
+  expect(citation).toHaveTextContent(/^\[1\]$/);
+  expect(citation?.querySelectorAll('[data-citation-bracket]')).toHaveLength(2);
+  expect(link).not.toHaveAttribute('data-citation');
+  expect(link).toHaveTextContent(/^the note$/);
+});
+
+it('holds each word of inline code together, so it wraps only at a space', () => {
+  const flag = '--include-revisions-since-2020-01-01';
+  const url = 'https://example.com/s/markets/rates/us-treasury-curve-2s10s-steepener-history';
+  const view = render(
+    <Streamdown {...MARKDOWN_RENDERER} {...REPLY_MARKDOWN}>
+      {`Ran \`acme content search "US CPI" --limit 1 ${flag}\`, see \`${url}\`.`}
+    </Streamdown>
+  );
+  const [command, link] = view.container.querySelectorAll('code');
+  const held = (code: Element | undefined, kind: string) =>
+    Array.from(code?.querySelectorAll(kind) ?? [], (word) => word.textContent);
+
+  expect(command?.textContent).toBe(`acme content search "US CPI" --limit 1 ${flag}`);
+  // Only a word a browser could break inside needs holding.
+  expect(held(command, '.code-word')).toEqual(['"US', 'CPI"', '--limit']);
+  // A word too long for a phone's line holds together only off a phone; one too long for that wraps as plain text.
+  expect(held(command, '.code-word-wide')).toEqual([flag]);
+  expect(link?.textContent).toBe(url);
+  expect(held(link, '[class]')).toEqual([]);
+});
+
+it.each(tables)('never shows $name as raw pipes while it streams', ({ markdown }) => {
+  const reply = `Here are the levels.\n\n${markdown}\n\nThat is all.`;
+  const streaming = (content: string) => (
+    <ReplyTurnRunning.Provider value={true}>
+      <MarkdownRenderer content={content} />
+    </ReplyTurnRunning.Provider>
+  );
+  const view = render(streaming(''));
+  const raw: string[] = [];
+  for (let end = 1; end <= reply.length; end++) {
+    view.rerender(streaming(reply.slice(0, end)));
+    const text = [...view.container.querySelectorAll('p')].map((paragraph) => paragraph.textContent).find((line) => line.includes('|'));
+    if (text !== undefined) raw.push(text);
+  }
+  expect(raw).toEqual([]);
+  expect(view.container.querySelectorAll('tbody tr')).toHaveLength(markdown.split('\n').length - 2);
+});
+
+it('shows a finished reply that ends on pipe lines that are no table', () => {
+  const view = render(<MarkdownRenderer content={'Options:\n\n| buy | sell |'} />);
+  expect(view.container).toHaveTextContent('| buy | sell |');
+});

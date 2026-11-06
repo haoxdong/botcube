@@ -1,0 +1,45 @@
+[project]
+name = "botcube-credential-service"
+version = "0.1.0"
+description = "BotCube's Credential Service: the one process that can decrypt Durable Credentials, with provider plug-ins."
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.43.108",
+  "cryptography>=49.0.0",
+  "certifi>=2026.7.22",
+  "websockets>=16.0",
+  "fastapi>=0.142.2",
+  "httpx>=0.28.1",
+  "pyjwt[crypto]>=2.15.1",
+  "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+botcube-openai-plan-usage = "botcube_credential_service.openai_sign_in:main"
+
+[dependency-groups]
+dev = [
+  "moto[dynamodb,kms,secretsmanager]>=5.2.3",
+  "pyright==1.1.414",
+  "pytest>=9.1.1",
+  "types-boto3[dynamodb,kms,secretsmanager]>=1.43.108",
+]
+
+[tool.pyright]
+# Check against the oldest supported Python, which Presubmit runs.
+pythonVersion = "3.11"
+# Every parameter carries a type annotation.
+reportMissingParameterType = "error"
+# Generic types carry their type arguments, and no parameter type is unknown.
+reportMissingTypeArgument = "error"
+reportUnknownParameterType = "error"
+
+[build-system]
+requires = ["hatchling>=1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: runs a real subprocess, server or socket (ADR 0083 decision 1)",
+  "ci_host: needs a system package or kernel feature CI's runners have and cloud agent containers lack; check:pr deselects it",
+]

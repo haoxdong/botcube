@@ -1,0 +1,29 @@
+{
+  "name": "botcube-always-on-ui-web",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^0.577.0"
+  },
+  "peerDependencies": {
+    "@ag-ui/client": "^1.0.1",
+    "@copilotkit/react-core": "^1.77.0",
+    "botcube-ui-web": "*",
+    "next": "^16.3.0-preview.5",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@storybook/nextjs-vite": "^10.6.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "happy-dom": "^21.0.4",
+    "msw": "^2.15.0",
+    "msw-storybook-addon": "^3.0.3",
+    "storybook": "^10.6.4",
+    "supports-color": "^7.2.0"
+  }
+}

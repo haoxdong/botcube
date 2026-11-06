@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
+from typing import Any, ClassVar
+
+os.environ.pop('AWS_REGION', None)
+os.environ.pop('AWS_DEFAULT_REGION', None)
+
+
+import pytest
+from langchain_core.language_models.fake_chat_models import (
+    FakeListChatModel,
+    FakeMessagesListChatModel,
+)
+
+
+class ToolBindableFakeModel(FakeListChatModel):
+    """A scripted text model the Deep Agents graph can bind tools to."""
+
+    def bind_tools(
+        self, tools: Sequence[object], *, tool_choice: str | None = None, **kwargs: object
+    ) -> ToolBindableFakeModel:
+        return self
+
+
+class ToolBindableFakeMessagesModel(FakeMessagesListChatModel):
+    """A scripted message model the Deep Agents graph can bind tools to."""
+
+    def bind_tools(
+        self, tools: Sequence[object], *, tool_choice: str | None = None, **kwargs: object
+    ) -> ToolBindableFakeMessagesModel:
+        return self
+
+
+def prepared(agent: Any, root: Path) -> Callable[[], Awaitable[tuple[Any, Path]]]:
+    """A Turn preparation for `_SessionTurns.stream` that is already done."""
+    async def prepare() -> tuple[Any, Path]:
+        return agent, root
+
+    return prepare
+
+
+class KwargsRecorder:
+    """Stands in for a constructor or factory and records each call's keyword arguments."""
+
+    calls: ClassVar[list[dict[str, Any]]]
+    nodes: ClassVar[dict[str, Any]] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        type(self).calls.append(kwargs)
+
+
+@pytest.fixture
+def kwargs_recorder() -> type[KwargsRecorder]:
+    """A fresh KwargsRecorder class whose `calls` starts empty."""
+    return type('KwargsRecorder', (KwargsRecorder,), {'calls': []})

@@ -1,0 +1,365 @@
+/* The Files component of DESIGN.md: a file's card and type icon in the composer, a sent message and a reply, on globals.css's tokens. */
+
+/* A sent message's files, a white card each above its bubble, as ChatGPT's. */
+.sent-files {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 80%;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.sent-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 8px 16px 8px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+
+/* A file's type icon in its box, the same on a composer chip, a sent card and a reply's card. */
+.file-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+}
+
+.file-icon svg {
+  width: 34px;
+  height: 40px;
+}
+
+/*
+ * A file's type icon, sized by its cell or card. react-file-icon writes each colour as a fill attribute, where `var()`
+ * does not resolve, so each token's attribute is painted with that token.
+ */
+.file-type-icon {
+  display: block;
+}
+
+.file-type-icon svg {
+  display: block;
+}
+
+.file-type-icon [fill="var(--color-white)"] {
+  fill: var(--color-white);
+}
+
+.file-type-icon [fill="var(--color-line)"] {
+  fill: var(--color-line);
+}
+
+.file-type-icon [fill="var(--color-text-muted)"] {
+  fill: var(--color-text-muted);
+}
+
+.file-type-icon [fill="var(--color-red)"] {
+  fill: var(--color-red);
+}
+
+.file-type-icon [fill="var(--color-green)"] {
+  fill: var(--color-green);
+}
+
+.file-type-icon [fill="var(--color-blue)"] {
+  fill: var(--color-blue);
+}
+
+/* The page's edge, which react-file-icon leaves bare, so a white page shows on a white window; its clip keeps the inner half. */
+.file-type-icon [id="file"] > path:first-child {
+  stroke: var(--color-line);
+  stroke-width: 2;
+}
+
+.sent-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sent-file-name {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sent-file-kind {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}
+
+/*
+ * A file a reply links to on a line of its own (ReplyFileCard): a sent file's card, one width for every card so a
+ * stack of them lines up (the bubble's, if narrower), and a finger's target. It takes the place of the line's
+ * paragraph, so it keeps a paragraph's spacing.
+ */
+.copilotKitAssistantMessage a.reply-file {
+  width: 280px;
+  min-height: 44px;
+  margin: 0 0 16px;
+  color: inherit;
+  font-weight: var(--weight-regular);
+  text-decoration: none;
+}
+
+/* An image a reply links to in a card's place: a block with the card's spacing, not a line holding the picture. */
+.reply-file-image {
+  display: block;
+  margin: 0 0 16px;
+}
+
+.reply-file-image > [data-streamdown="image-wrapper"] {
+  display: block;
+  margin: 0;
+}
+
+/* The prose's image margins would double the card's spacing. */
+.reply-file-image img {
+  margin: 0;
+}
+
+/*
+ * A reply's image (ReplyImage): its box sized from the first frame, the image's own size or 16:9 at the bubble's width,
+ * and the picture fading into it. The prose's image margins would move it inside its box.
+ */
+.reply-image {
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.reply-image > img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.reply-image > img[data-loaded] {
+  opacity: 1;
+}
+
+/* A chat's history shows at once as it opens, and its kept view's as soon as the image paints. */
+[data-opened] .reply-image > img {
+  transition: none;
+}
+
+[aria-label="Loading chat controls"] .reply-image > img {
+  opacity: 1;
+  transition: none;
+}
+
+/* Why an image did not show, or a PDF's page did not draw, in its place, so its box keeps its size. */
+.reply-image-error {
+  position: absolute;
+  inset: 0;
+}
+
+.reply-image-error,
+.reply-file-preview-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 16px;
+  overflow-wrap: anywhere;
+  color: var(--color-red);
+  font-size: var(--font-small);
+  text-align: center;
+}
+
+/* A PDF's card has its first page across the top and the icon and name in a row under it. */
+.copilotKitAssistantMessage a.reply-file[data-preview] {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  overflow: hidden;
+}
+
+.reply-file[data-preview] .sent-file-text {
+  flex: 1 1 0;
+}
+
+/* The page's box spans the card inside its border, out past its padding; the card's overflow rounds its top corners. */
+.reply-file-preview {
+  display: block;
+  flex: 0 0 calc(100% + 24px);
+  height: 160px;
+  margin: -8px -16px 0 -8px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-fill);
+}
+
+/* Drawn at the box's width, top-aligned; the box crops the rest of the page. */
+.reply-file-preview canvas {
+  display: block;
+  width: 100%;
+}
+
+/* A sent image that could not load, named with why in its thumbnail's place. */
+.sent-file-error {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-red);
+  font-size: var(--font-small);
+}
+
+/* An image's square thumbnail, in the composer and once sent, as ChatGPT's. */
+.image-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  background: var(--color-fill);
+}
+
+.image-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+/* Files dragged over a chat: one quiet frosted sheet over all of it, header and composer too, naming what a drop does.
+   It takes the pointer, so a drop on the header lands on the chat, and messages changing under it can't strand it. */
+.file-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--frost);
+  color: var(--color-text);
+  font-size: var(--font-body);
+  line-height: var(--leading);
+}
+
+/*
+ * A Plotly chart a reply embeds (ReplyChart): live across the bubble's width at a chart's height, its box there
+ * from the first frame. A phone's is shorter, so the reply around it stays in view.
+ */
+.reply-chart {
+  position: relative;
+  display: block;
+  height: min(420px, 60vh);
+  margin: 16px 0;
+}
+
+.reply-chart[data-loading] {
+  border-radius: var(--radius-lg);
+  background: var(--color-fill);
+}
+
+/* A chart and, under it, the notes the agent put under its plot (its source line) as a caption. */
+.plotly-chart-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.plotly-chart {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.plotly-chart-note {
+  flex: none;
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  white-space: pre-line;
+}
+
+/* A quiet box in the chart's place until plotly.js draws it (plotly marks the element js-plotly-plot). */
+.plotly-chart:not(.js-plotly-plot) {
+  border-radius: var(--radius-lg);
+  background: var(--color-fill);
+}
+
+/* A chart that could not draw: why, in a line, over the file's text as code. */
+.plotly-chart-failed {
+  display: block;
+  height: 100%;
+  overflow: auto;
+  color: var(--color-red);
+  font-size: var(--font-small);
+}
+
+.reply-file-image > .reply-chart {
+  margin: 0;
+}
+
+/* A Plotly chart open live in Files (FilesChart): its name, Download and Close in a bar, the chart under it. */
+.agent-computer-files-chart {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-computer-files-chart-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-bottom: 0.5px solid var(--color-line);
+}
+
+.agent-computer-files-chart-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-computer-files-chart-bar > button {
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.agent-computer-files-chart-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+
+/*
+ * The Swap around a reply's chart fills its box. Its fade lays a span out inline-block, which shrinks to its content,
+ * and plotly first draws at 700px when its box has no width of its own, so the width is set.
+ */
+.reply-chart-body {
+  display: block;
+  width: 100%;
+  height: 100%;
+  vertical-align: top;
+}
+
+@media (max-width: 640px) {
+  .agent-computer-files-chart-bar > button {
+    min-height: 44px;
+  }
+}

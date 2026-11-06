@@ -1,0 +1,736 @@
+/* Agent Computer: a desktop with its dock under the app window, framing the live browser (ADR 0077) */
+.agent-computer {
+  height: 100%;
+  min-height: 420px;
+  /* The desktop sizes itself to the pane's width and height. */
+  container-type: size;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* The Computer tab hangs its preview just under the tabs, as Muse does (Fig 14). */
+  justify-content: flex-start;
+  gap: 12px;
+  --agent-computer-chrome: 124px;
+}
+.agent-computer-sheet { justify-content: center; --agent-computer-chrome: 150px; }
+/* Who drives, centred under the desktop (dots Fig 4, Fig 6). */
+.agent-computer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* With no browser and no Turn there is nothing to say, and no gap under the desktop either. */
+.agent-computer-bar:empty { display: none; }
+.agent-computer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 5px 5px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-white);
+  box-shadow: var(--shadow-rest);
+  font-size: var(--font-small);
+  color: var(--color-text);
+}
+.agent-computer-control,
+.agent-computer-stop {
+  padding: 4px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--color-white);
+  font-size: var(--font-small);
+  cursor: pointer;
+}
+
+.agent-computer-control { background: var(--color-text); color: var(--color-white); border-color: transparent; }
+.agent-computer-control:disabled { opacity: 0.5; cursor: default; }
+.agent-computer-error { margin: 0; font-size: var(--font-small); color: var(--color-red); }
+
+
+/*
+ * The desktop hugs the browser's 16:9 screen (1280x720): as wide as the pane allows, and short enough to leave the
+ * pane's height room for the rest of the computer (--agent-computer-chrome).
+ */
+/* stylelint-disable scale-unlimited/declaration-strict-value -- the simulated desktop scales with its screen (DESIGN.md) */
+.agent-computer-desktop {
+  position: relative;
+  flex: none;
+  width: min(100%, calc((100cqh - var(--agent-computer-chrome)) * 16 / 9 + 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px 24px 10px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--agent-deepest), var(--agent-deep) 55%, var(--agent-outline));
+  box-shadow: var(--shadow-rest);
+}
+
+.agent-computer-window {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--color-text);
+  box-shadow: var(--shadow-float);
+}
+
+@media (min-width: 641px) {
+  .agent-computer-window {
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .agent-computer-window > .agent-computer-screen {
+    flex: none;
+    width: min(100cqw, 100cqh * 16 / 9);
+    height: auto;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background: var(--color-text);
+    box-shadow: var(--shadow-float);
+  }
+}
+
+/* The agent's screen: the browser's live view, covered by its last screen until the live view settles, under the
+   Terminal or Files window while one is open. */
+.agent-computer-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /* Terminal sizes itself by the screen's width, as the live view scales Chrome. */
+  container-type: inline-size;
+}
+
+/* Still covered, the screen shows the desktop through it rather than the live view's black. */
+.agent-computer-window:has(> .agent-computer-screen-covered),
+.agent-computer-window > .agent-computer-screen.agent-computer-screen-covered { background: none; }
+
+.agent-computer-cover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-computer-cover:has(> .agent-computer-screenshot) { background: var(--agent-deepest); }
+
+/* The last screen, dimmed; it fills the 16:9 screen like the live view. */
+.agent-computer-screenshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.55;
+  filter: grayscale(0.5);
+}
+
+/* Why a wake has nothing to start yet: help, not an error. */
+.agent-computer-notice {
+  position: relative;
+  margin: 0;
+  padding: 0 16px;
+  text-align: center;
+  font-size: var(--font-small);
+  color: var(--frost);
+}
+
+.agent-computer-starting,
+.browser-live-watch {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  padding: 8px 20px;
+  border-radius: var(--radius-pill);
+  background: var(--color-white);
+  color: var(--color-text);
+}
+
+.agent-computer-dock {
+  flex: none;
+  align-self: center;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--frost);
+  backdrop-filter: blur(8px);
+}
+
+/* Each app its own drawn icon, as in dots' dock; the open one has a dot beneath it. */
+.agent-computer-dock-app {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.agent-computer-dock-icon { width: 30px; height: 30px; }
+
+.agent-computer-dock-app-active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: var(--radius-pill);
+  background: var(--color-white);
+}
+
+/* An app fills the screen's one window frame, the box Chrome's live view fills. */
+.agent-computer-app {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  background: var(--color-white);
+  color: var(--color-text);
+  font-size: var(--font-small);
+}
+.agent-computer-app > :not(.agent-computer-terminal-bar) { flex: 1; min-height: 0; }
+.agent-computer-app .agent-computer-error { padding: 10px 12px; font-size: inherit; }
+
+/*
+ * Terminal, drawn as the live view draws Chrome: every size a share of the screen's width, as on a 1280px screen, so its
+ * bar and type scale with the screen exactly as Chrome's do. A white title bar over a dark log.
+ */
+.agent-computer-terminal-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.63cqw;
+  height: 2.97cqw;
+  padding: 0 1.25cqw;
+  border-bottom: 0.5px solid var(--color-line);
+  background: var(--color-white);
+  color: var(--color-text-muted);
+  font-size: 1.02cqw;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+.agent-computer-terminal-bar svg { flex: none; width: 1.25cqw; height: 1.25cqw; color: var(--color-blue); }
+.agent-computer-terminal-bar span { overflow: hidden; text-overflow: ellipsis; }
+
+.agent-computer-terminal {
+  overflow: auto;
+  padding: 0.63cqw 1.09cqw;
+  background: var(--color-text);
+  color: var(--color-line);
+  color-scheme: dark;
+  scrollbar-color: var(--color-text-muted) transparent;
+  font-family: var(--font-code);
+  font-size: 1.41cqw;
+  line-height: var(--leading-loose);
+  white-space: pre-wrap;
+  /* Lines wrap between words; only a word longer than the line breaks. */
+  overflow-wrap: anywhere;
+}
+.agent-computer-terminal-empty { color: var(--color-text-muted); }
+
+/* Thunar: a Places sidebar down the window's left edge, beside the open place's toolbar, icon view and status bar. */
+.agent-computer-files {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  background: var(--color-white);
+  color: var(--color-text);
+}
+
+/* Places: a grey column flush to the window's edge, a small label over Recents, workspace and its own folders. */
+.agent-computer-files-sidebar {
+  flex: none;
+  width: 26%;
+  padding: 4px;
+  overflow: auto;
+  border-right: 0.5px solid var(--color-line);
+  background: var(--color-fill);
+  font-size: var(--font-label);
+}
+.agent-computer-files-sidebar p { margin: 2px 6px; font-size: var(--font-label); font-weight: var(--weight-semibold); color: var(--color-text-muted); }
+.agent-computer-files-sidebar button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 32px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  white-space: nowrap;
+  cursor: default;
+}
+.agent-computer-files-sidebar span { overflow: hidden; text-overflow: ellipsis; }
+.agent-computer-files-sidebar svg { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); }
+/* The open place: a `selected` row, its icon blue. */
+.agent-computer-files-sidebar [aria-current='true'] { background: var(--color-line); }
+.agent-computer-files-sidebar [aria-current='true'] svg { color: var(--color-blue); }
+
+.agent-computer-files-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.agent-computer-files-empty { margin: 0; padding: 10px 12px; color: var(--color-text-muted); }
+
+/* A white bar across the pane: Back and Forward, then the location field filling the rest. */
+.agent-computer-files-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 6px 0 4px;
+  border-bottom: 0.5px solid var(--color-line);
+  background: var(--color-white);
+}
+.agent-computer-files-toolbar > button {
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+/* A round 28px hover, inside however big a target the button is. */
+.agent-computer-files-toolbar > button::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: var(--radius-pill);
+}
+.agent-computer-files-toolbar > button:disabled { color: var(--color-line); cursor: default; }
+.agent-computer-files-toolbar > button svg { width: 16px; height: 16px; }
+
+/*
+ * The location field: a rounded grey box, drawn behind its folders, whose buttons stand taller than it so each is a
+ * full target. Past the field's width the leading folders give way and the open one stays.
+ */
+.agent-computer-files-path {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding: 0 4px 0 8px;
+  color: var(--color-text-muted);
+  font-size: var(--font-label);
+  white-space: nowrap;
+}
+.agent-computer-files-path::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 50% 0 auto;
+  height: 26px;
+  transform: translateY(-50%);
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-fill);
+}
+.agent-computer-files-path > svg { flex: none; width: 12px; height: 12px; color: var(--color-text-muted); }
+/* Packed to the end, so an overflow cuts the start; the spacer after them holds a path that fits at the start. */
+.agent-computer-files-crumbs { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; justify-content: flex-end; overflow: hidden; }
+.agent-computer-files-crumbs::after { content: ''; flex: 1 0 0; }
+.agent-computer-files-crumbs > * { flex: none; }
+.agent-computer-files-crumbs button {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .agent-computer-files-toolbar > button:not(:disabled):hover::before { background: var(--color-fill); }
+  .agent-computer-files-crumbs button:hover { color: var(--color-text); }
+}
+.agent-computer-files-crumbs [aria-current='true'] { color: var(--color-text); font-weight: var(--weight-semibold); }
+
+/*
+ * Thunar's icon view: as many columns as the pane holds, 60px at least and sharing its width, so two rows of cells fit
+ * a desktop's and a phone's pane; more scroll.
+ */
+.agent-computer-files-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  align-content: start;
+  gap: 0 4px;
+  padding: 3px 6px;
+}
+.agent-computer-files-grid,
+.agent-computer-files-empty,
+.agent-computer-files-status {
+  transition: opacity var(--motion-quick) var(--ease);
+}
+@starting-style {
+  .agent-computer-files-grid,
+  .agent-computer-files-empty,
+  .agent-computer-files-status {
+    opacity: 0;
+  }
+}
+.agent-computer-file {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-label);
+  line-height: var(--leading);
+  text-align: center;
+  cursor: default;
+  touch-action: manipulation;
+}
+.agent-computer-file:active { background: var(--color-fill); }
+/* Every icon 34px tall: a page, a wider folder, or an image's own picture cropped square on a hairline. */
+.agent-computer-file svg { flex: none; width: 28px; height: 34px; }
+.agent-computer-file[data-kind='folder'] svg { width: 42px; }
+.agent-computer-file img { flex: none; width: 34px; height: 34px; object-fit: cover; border: 0.5px solid var(--color-line); border-radius: var(--radius-sm); }
+/* A picture still loading sits unseen behind its type icon, out of the column, so lazy loading still fetches it. */
+.agent-computer-file img[data-loading] { position: absolute; opacity: 0; pointer-events: none; }
+.agent-computer-file-name {
+  max-width: 100%;
+  max-height: calc(2em * var(--leading));
+  overflow: hidden;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+}
+/* The selected item: a `selected` tile, and its name on blue. */
+.agent-computer-file[aria-selected='true'] { background: var(--color-line); }
+.agent-computer-file[aria-selected='true'] .agent-computer-file-name { background: var(--color-blue); color: var(--color-white); }
+/* A file's name edited under its icon: a field over the name, dark text even on the selected item. */
+.agent-computer-file-rename {
+  width: 100%;
+  padding: 0 2px;
+  border: 1px solid var(--color-blue);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+  color: var(--color-text);
+  font: inherit;
+  text-align: center;
+}
+
+/* Thunar's status bar: what the open place holds, or the selected file's name and size. */
+.agent-computer-files-status {
+  flex: none;
+  height: 20px;
+  margin: 0;
+  padding: 0 8px;
+  overflow: hidden;
+  border-top: 0.5px solid var(--color-line);
+  background: var(--color-fill);
+  color: var(--color-text-muted);
+  font-size: var(--font-label);
+  line-height: var(--leading);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A phone's targets are a finger's: the toolbar's and the sidebar's 44px, around a taller location field. */
+@media (max-width: 640px) {
+  .agent-computer-files-toolbar { height: 44px; }
+  .agent-computer-files-toolbar > button { width: 44px; height: 44px; }
+  .agent-computer-files-path::before { height: 30px; }
+  .agent-computer-files-crumbs button { min-width: 44px; height: 44px; }
+  .agent-computer-files-sidebar button { height: 44px; }
+}
+
+/* The sheet that asks before a Delete: it drops from the toolbar, as a macOS sheet does. */
+/* The delete confirmation lies over the grid's top, under the 36px toolbar, so no file moves as it comes and goes. */
+.agent-computer-files-sheet {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.6em;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-white);
+  box-shadow: var(--shadow-float);
+}
+.agent-computer-files-sheet p { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
+.agent-computer-files-sheet button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.15em 0.7em;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-white);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+.agent-computer-files-sheet .agent-computer-files-delete { border-color: var(--color-red); background: var(--color-red); color: var(--color-white); }
+
+/* Take-over by touch: shown on phones only; desktops use their own keyboard and mouse. */
+.agent-computer-touch { display: none; }
+
+.agent-computer-screen-open { position: absolute; inset: 0; border: 0; background: transparent; cursor: zoom-in; z-index: 5; }
+
+.agent-computer-sheet-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+}
+
+.agent-computer-sheet-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.agent-computer-sheet-title { display: inline-flex; align-items: center; gap: 8px; font-size: var(--font-body); font-weight: var(--weight-semibold); }
+
+@media (min-width: 641px) {
+  .agent-computer-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    height: auto;
+    min-height: 0;
+    padding: 64px 24px 24px;
+    background: var(--color-white);
+  }
+
+  .agent-computer-sheet-head { gap: 8px; min-height: 52px; padding: 8px 16px; border-bottom: 1px solid var(--color-line); }
+  .agent-computer-sheet-close { width: 32px; height: 32px; background: none; color: var(--color-text); }
+  @media (hover: hover) {
+  .agent-computer-sheet-close:hover { background: var(--color-fill); }
+  }
+  .agent-computer-sheet-close svg { width: 18px; height: 18px; }
+  .agent-computer-sheet-title svg { width: 18px; height: 18px; }
+}
+
+.agent-computer-keys {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/*
+ * Phones: the computer sheet runs the desktop edge to edge (dots Fig 8), as Take-over does in the profile, with the touch
+ * toolbar. Watching, the Computer tab keeps its gutters and the desktop stays an inset rounded card (Muse Fig 14),
+ * though one that fills the pane down to who drives.
+ */
+@media (max-width: 640px) {
+  .agent-profile-panel:has(.agent-computer-touch) { padding: 0; }
+  .agent-computer { min-height: 0; gap: 8px; }
+  .agent-computer-desktop { gap: 8px; padding: 12px 12px 8px; }
+  .agent-computer-sheet > .agent-computer-desktop,
+  .agent-computer:has(.agent-computer-touch) > .agent-computer-desktop { border-radius: 0; box-shadow: none; }
+  .agent-computer-window { border-radius: var(--radius-md); }
+  /*
+   * The desktop fills the profile's phone sheet down to who drives, or to the touch tools on Take-over, for a tall,
+   * immersive computer; the computer sheet keeps it a band on black.
+   */
+  .agent-computer:not(.agent-computer-sheet) > .agent-computer-desktop { flex: 1; justify-content: center; }
+
+  /* Who drives centred under the desktop, as on desktops; the touch tools round icon buttons at the bottom right (dots Fig 8). */
+  .agent-computer-touch {
+    align-self: stretch;
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 4px 16px 8px;
+    font-size: var(--font-small);
+  }
+
+  .agent-computer-touch-tools { flex-basis: 100%; display: flex; justify-content: flex-end; gap: 10px; }
+
+  .agent-computer-touch-tool {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-pill);
+    background: var(--color-text);
+    color: var(--color-white);
+    box-shadow: var(--shadow-rest);
+  }
+
+  .agent-computer-touch-tool svg { width: 20px; height: 20px; }
+  .agent-computer-touch-tool[aria-pressed='true'] { background: var(--color-blue); }
+  .agent-computer-touch-tool:disabled { opacity: 0.4; }
+  .agent-computer-touch > .agent-computer-error { flex-basis: 100%; }
+
+  /* The sheet: the computer on black over the whole screen, its title at the top and its tools at the bottom (dots Fig 8). */
+  .agent-computer-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    height: auto;
+    background: var(--color-text);
+    color: var(--color-white);
+  }
+
+  .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+
+  .agent-computer-sheet-close {
+    position: absolute;
+    left: 16px;
+    width: 44px;
+    height: 44px;
+    background: var(--color-text);
+    color: var(--color-white);
+  }
+
+  .agent-computer-sheet-head svg { width: 22px; height: 22px; }
+
+  .agent-computer-sheet .agent-computer-touch {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .agent-computer-sheet .agent-computer-touch-tool { background: var(--color-text); }
+  .agent-computer-sheet .agent-computer-touch-tool[aria-pressed='true'] { background: var(--color-blue); }
+
+  /* A finger's 44px target at the least (Apple HIG; the regression): the dock apps keep their 30px icons. */
+  .agent-computer-dock-app { width: 44px; height: 44px; }
+  .agent-computer-control,
+  .agent-computer-stop { min-height: 44px; }
+
+  .agent-computer:not(.agent-computer-sheet) { --agent-computer-chrome: 136px; }
+}
+
+.browser-live-host {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: var(--color-text);
+  overflow: hidden;
+}
+
+.browser-live-released { background: var(--agent-deepest); }
+.browser-live-watch { min-height: 44px; border: 0; cursor: pointer; }
+
+.browser-live-view { position: absolute; inset: 0; }
+
+.browser-view-status {
+  height: 100%;
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+  background: var(--color-fill);
+  text-align: center;
+}
+
+.browser-view-error { color: var(--color-red); }
+
+.browser-view-page {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  background: var(--color-text);
+}
+
+.remote-viewport { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.remote-viewport-content { position: absolute; top: 0; left: 0; }
+.remote-viewport-shield { position: absolute; inset: 0; }
+
+/* stylelint-enable scale-unlimited/declaration-strict-value */
+
+.agent-computer-live,
+.browser-view-content {
+  width: 100%;
+  height: 100%;
+}
+
+.agent-computer-screen-covered > .agent-computer-live,
+.agent-computer-screen:has(> .agent-computer-app) > .agent-computer-live {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.file-thumbnail {
+  display: grid;
+  flex: none;
+}
+
+.file-thumbnail > * {
+  grid-area: 1 / 1;
+}
+
+.agent-computer-file-trigger > .agent-computer-file {
+  width: 100%;
+  height: 100%;
+}

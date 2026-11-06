@@ -1,0 +1,283 @@
+/* ── Plugins screen: each kind of plugin a placeholder card under its label ── */
+.plugins {
+  flex: 1;
+  overflow: auto;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  /* Clear of the round menu button at the top left */
+  padding: 72px 20px 48px;
+}
+
+.plugins-title {
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+}
+
+.plugins-intro {
+  margin-top: 4px;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
+.plugins-kind {
+  margin-top: 28px;
+}
+
+.plugins-placeholder {
+  align-items: center;
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-lg);
+}
+
+.plugins-soon {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .list-row {
+    --row-icon: 44px;
+  }
+
+  /* Coming soon sits under the title, so the description takes the card's full width */
+  .plugins-placeholder {
+    display: grid;
+    grid-template-columns: var(--row-icon) 1fr;
+    column-gap: 14px;
+    row-gap: 2px;
+  }
+
+  .plugins-placeholder .list-row-icon {
+    grid-row: span 3;
+  }
+
+  .plugins-placeholder .list-row-text {
+    display: contents;
+  }
+
+  .plugins-soon {
+    grid-area: 2 / 2;
+    justify-self: start;
+    margin: 2px 0;
+  }
+}
+
+/* Too narrow for the sidebar, a readable chat and the profile side by side (260 + 440 + 440): the
+   profile slides in over the chat's right edge instead of squeezing it. */
+@media (max-width: 1139px) {
+  .agent-profile {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
+    box-shadow: var(--shadow-float);
+  }
+}
+
+/* Phones: the profile is a full-screen sheet that slides in over the chat from the right, the mirror of the
+   drawer's card. */
+@media (max-width: 640px) {
+  /* Within the safe area, as a phone's layout runs under the status and home bars */
+  /* The drawer's card's shape: all four corners round as the screen's do, casting the card's shadow
+     on the chat beside it. */
+  .agent-profile {
+    position: fixed;
+    inset: var(--app-safe-top) 0 var(--app-safe-bottom);
+    z-index: 100;
+    width: auto;
+    border-left: none;
+    border-radius: var(--radius-screen);
+    box-shadow: var(--shadow-float);
+    animation: none;
+    transition: transform var(--motion-move) var(--ease);
+  }
+
+  /* Opened with a tap, it slides in from the screen's edge as a released swipe settles. */
+  @starting-style {
+    .agent-profile {
+      transform: translateX(100%);
+    }
+  }
+
+  /* A left swipe across the chat slides the profile in under the finger, and a right swipe on it slides it back off;
+     on release, or the profile's ✕, it settles (the mirror of the drawer's swipe). The chat under it stays and fades
+     with the profile's travel, as it does beside the drawer. */
+  .app-layout[data-profile-swiping] > .agent-profile {
+    transform: translateX(calc(100% - var(--profile-drag-offset)));
+    transition: transform var(--motion-move) var(--ease);
+  }
+
+  /* The fade stays inside the chat, under the profile, as the chat's old stacking kept it. */
+  .app-layout[data-profile-swiping] .app-shell {
+    isolation: isolate;
+  }
+
+  .app-layout[data-profile-swiping] .app-shell::after {
+    opacity: var(--profile-drag-progress);
+  }
+
+  .app-layout[data-profile-dragging] > .agent-profile {
+    transition: none;
+  }
+
+  /* An open file takes the whole sheet, as Muse stacks a file over the profile (Figs 17-20); its back
+     chevron returns to the profile. A profile error stays in view over it (ADR 0030). */
+  /* The header and tabs fold away as the file opens and unfold as it closes: the identity's row shrinks to
+     nothing and the tab bar, a 44px tab in its 4px inset, to no height, hidden once folded. */
+  /* Its one column is the sheet's width, not the character's one line, so that line's ellipsis shows. */
+  .agent-profile-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 1fr;
+    justify-items: center;
+    transition: grid-template-rows var(--motion-move) var(--ease);
+  }
+
+  .agent-profile-identity {
+    justify-self: stretch;
+    min-height: 0;
+    overflow: clip;
+    transition: padding var(--motion-move) var(--ease);
+  }
+
+  /* Clipped only while folded or unfolding, so the chosen tab's shadow shows at rest. */
+  .agent-profile-tabs {
+    height: 52px;
+    transition:
+      height var(--motion-move) var(--ease),
+      padding var(--motion-move) var(--ease),
+      overflow 0s var(--motion-move) var(--ease);
+    transition-behavior: allow-discrete;
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-header {
+    grid-template-rows: 0fr;
+  }
+
+  .agent-profile:has(.agent-file) :is(.agent-profile-identity, .agent-profile-tabs) {
+    padding-block: 0;
+    visibility: hidden;
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-identity {
+    transition:
+      padding var(--motion-move) var(--ease),
+      visibility 0s var(--motion-move) var(--ease);
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-tabs {
+    height: 0;
+    overflow: clip;
+    transition:
+      height var(--motion-move) var(--ease),
+      padding var(--motion-move) var(--ease),
+      overflow 0s,
+      visibility 0s var(--motion-move) var(--ease);
+  }
+
+  .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
+    margin-top: 16px;
+  }
+}
+
+/* Phones: CopilotKit's own 1rem side padding is the chat's gutter (dots Fig 7), so the messages'
+   column adds none. Its min-width breakpoint (sm, 40rem) drops that padding at 640px itself. */
+@media (max-width: 639.98px) {
+  .copilotKitMessages {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .chat-run-error,
+  .chat-failed-question {
+    width: 100%;
+  }
+
+  /* The composer reaches 4px into that gutter, 12px from the screen's edges like ChatGPT Work's, and its accessory
+     with it, so the two share a left edge. */
+  .copilotKitInput {
+    width: calc(100% + 8px) !important;
+    margin: 0 -4px !important;
+  }
+
+  .composer-accessory {
+    width: calc(100% + 8px);
+    margin-left: -4px;
+    margin-right: -4px;
+  }
+}
+
+/* Phones: every control is a finger's 44px target at the least (Apple HIG). Icons keep their size. */
+@media (max-width: 640px) {
+  :root {
+    --button-height: 44px;
+  }
+
+  .button {
+    min-height: var(--button-height);
+  }
+
+  .header-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .sidebar-logo-btn svg,
+  .sidebar-strip-close-menu svg {
+    width: calc(var(--spacing) * 6);
+    height: calc(var(--spacing) * 6);
+  }
+
+  /* The badge keeps its drawn 32px circle and white ring inside a clear 6px border, so it doesn't swamp the avatar */
+  .agent-profile-edit {
+    right: -8px;
+    bottom: -8px;
+    width: 44px;
+    height: 44px;
+    border: 6px solid transparent;
+    background-clip: padding-box;
+    box-shadow: inset 0 0 0 2px var(--color-white);
+  }
+
+  .agent-profile-tab,
+  .mep-pill {
+    min-height: 44px;
+  }
+}
+
+/* The wide desktop's zoom (see `--ui-zoom`): its viewport heights divided by it. */
+@media (min-width: 1760px) and (hover: hover) and (pointer: fine) {
+  .app-layout {
+    zoom: var(--ui-zoom);
+    height: calc((100dvh - var(--app-safe-top) - var(--app-safe-bottom)) / var(--ui-zoom));
+  }
+
+  .sidebar-expanded {
+    height: calc(100dvh / var(--ui-zoom));
+  }
+
+  .chat-model-picker .mep-dropdown {
+    max-height: calc(100dvh / var(--ui-zoom) - 100% - var(--chat-header-height) - 4rem);
+  }
+
+  .add-menu {
+    zoom: var(--ui-zoom);
+  }
+}
+
+.chat-unread-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-blue);
+}
+.sidebar-item-btn .chat-unread-dot { margin-left: 8px; }
+.sidebar-logo-btn { position: relative; }
+.drawer-unread-dot { position: absolute; top: 4px; right: 4px; }

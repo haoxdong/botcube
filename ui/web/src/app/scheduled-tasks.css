@@ -1,0 +1,9 @@
+.scheduled-proposal {
+  animation: proposalIn var(--motion-quick) var(--ease);
+}
+
+@keyframes proposalIn {
+  from {
+    opacity: 0;
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "name": "botcube-chat",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.3",
+    "@ag-ui/core": "1.0.3",
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-sdk/client-dynamodb": "3.1161.0",
+    "@aws-sdk/client-ecs": "^3.1157.0",
+    "@aws-sdk/client-s3": "^3.1157.0",
+    "@aws-sdk/client-s3files": "^3.1157.0",
+    "@aws-sdk/client-scheduler": "^3.1157.0",
+    "@aws-sdk/client-sqs": "^3.1157.0",
+    "@aws-sdk/client-ssm": "^3.1161.0",
+    "@aws-sdk/client-sts": "^3.1157.0",
+    "@aws-sdk/credential-provider-node": "^3.972.89",
+    "@aws-sdk/lib-dynamodb": "3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1157.0",
+    "@hono/node-server": "^2.1.6",
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/core": "3.0.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
+    "@opentelemetry/id-generator-aws-xray": "^3.0.0",
+    "@opentelemetry/propagator-aws-xray": "^3.0.0",
+    "@opentelemetry/sdk-node": "0.300.0",
+    "@smithy/signature-v4": "^5.7.5",
+    "croner": "^10.0.1",
+    "eventsource-parser": "3.1.1",
+    "fast-json-patch": "3.1.1",
+    "hono": "^4.13.14",
+    "jose": "6.2.14",
+    "p-limit": "^7.3.3",
+    "rxjs": "7.8.1",
+    "undici": "^8.12.2",
+    "ws": "^8.22.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-trace": "3.0.0",
+    "@types/ws": "^8.18.2",
+    "agent-browser": "0.41.0",
+    "msw": "^2.15.0"
+  }
+}

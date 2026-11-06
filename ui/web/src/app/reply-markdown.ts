@@ -1,0 +1,14 @@
+import { InlineCode } from "./code-words";
+import { ReplyFileLink } from "./reply-file-link";
+import { ReplyVisual } from "./reply-chart";
+
+/**
+ * How a reply shows its links, images and code: a link opens, with no safety prompt; a file the agent wrote downloads; a Plotly figure draws as a live chart;
+ * a citation is a pill; inline code wraps only between its words. The chat surface and the kept chat shown while it
+ * loads both use it, so a reopened chat looks the same from its first frame; it leaves out the chat surface's heavier
+ * plugins, which load with it.
+ */
+export const REPLY_MARKDOWN = {
+  linkSafety: { enabled: false },
+  components: { img: ReplyVisual, a: ReplyFileLink, inlineCode: InlineCode },
+};

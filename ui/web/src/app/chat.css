@@ -1,0 +1,559 @@
+.copilotKitInput:not(.picker-ready) {
+  visibility: hidden;
+}
+
+.copilotKitInput > [data-layout] {
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-rows: auto !important;
+  align-items: end !important;
+  gap: 0 !important;
+}
+
+.copilotKitInput > [data-layout] > :first-child {
+  display: none !important;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(2) {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  min-height: 44px !important;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(3) {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  min-width: 0;
+}
+
+.copilotKitInput > [data-layout] > :nth-child(3) button {
+  min-width: 44px !important;
+  min-height: 44px !important;
+  flex-shrink: 0;
+}
+
+.copilotKitInput textarea {
+  font-size: var(--font-body) !important;
+  line-height: var(--leading);
+}
+
+/* With the cartridge's uploadFile, CopilotKit's + shows in its own cell at the left: + | text | controls. */
+.composer-can-attach .copilotKitInput > [data-layout] {
+  grid-template-columns: auto minmax(0, 1fr) auto !important;
+}
+
+.composer-can-attach .copilotKitInput > [data-layout] > :first-child {
+  display: flex !important;
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+}
+
+.composer-can-attach .copilotKitInput > [data-layout] > :nth-child(2) {
+  grid-column: 2 !important;
+}
+
+.composer-can-attach .copilotKitInput > [data-layout] > :nth-child(3) {
+  grid-column: 3 !important;
+}
+
+/* A plain grey 20px + in a 44px target, with a round hover, like the phone sidebar's plus (AddMenu). */
+.copilotKitInput [data-testid="copilot-add-menu-button"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color var(--motion-quick) var(--ease);
+}
+
+@media (hover: hover) {
+  .copilotKitInput [data-testid="copilot-add-menu-button"]:hover {
+    background: var(--color-fill);
+  }
+}
+
+/* A press shows the hover's fill on touch too: a finger has no hover, so once the fill moved behind
+   `(hover: hover)` a tap showed nothing. On touch the fill holds while the +'s menu is open, as it does under a
+   desktop's pointer resting on it; Base UI marks the open trigger. */
+.copilotKitInput [data-testid="copilot-add-menu-button"]:active {
+  background: var(--color-fill);
+}
+
+@media (hover: none) {
+  .copilotKitInput [data-testid="copilot-add-menu-button"][data-popup-open] {
+    background: var(--color-fill);
+  }
+}
+
+/* The +'s menu, ChatGPT's (DESIGN.md's Composer): a white popover 8px over the composer's left edge,
+   6px around 44px items, each a 20px line icon 6px from its `body` label. */
+.add-menu-positioner {
+  z-index: 50;
+}
+
+.add-menu {
+  min-width: 220px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  box-shadow: var(--shadow-float);
+  outline: none;
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+/* Base UI marks the menu's first and last frames, and waits for the fade before it unmounts. */
+.add-menu[data-starting-style],
+.add-menu[data-ending-style] {
+  opacity: 0;
+}
+
+.add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--font-body);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.add-menu-item[data-highlighted] {
+  background: var(--color-fill);
+}
+
+/* The type system's one exception: a touch tablet keeps the text at 16px, under which iOS Safari zooms into the field
+   it focuses. */
+@media (min-width: 641px) and (hover: none) and (pointer: coarse) {
+  .copilotKitInput textarea {
+    /* stylelint-disable-next-line scale-unlimited/declaration-strict-value -- iOS Safari zooms into a field under 16px (DESIGN.md) */
+    font-size: 16px !important;
+  }
+}
+
+/* The disclaimer under the composer, the chat surface's and the kept chat's, in the label role. */
+.chat-disclaimer {
+  font-size: var(--font-label);
+  line-height: var(--leading);
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 767px) {
+  /* Text sits 16px inside the box's outer edge: 15px here plus its 1px border. */
+  .copilotKitInput > [data-layout] {
+    padding: 0 15px !important;
+    grid-template-rows: minmax(44px, auto) 44px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(2) {
+    grid-column: 1 / -1 !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) {
+    grid-row: 2 !important;
+  }
+
+  /* The + under the text at the left, its 20px glyph lined up with the text's left edge (its 44px target centres it). */
+  .composer-can-attach .copilotKitInput > [data-layout] > :first-child {
+    grid-row: 2 !important;
+    margin-left: -12px;
+  }
+
+  .composer-can-attach .copilotKitInput > [data-layout] > :nth-child(2) {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* Send's 44px target reaches 2px from the box's right edge, so its 32px circle sits 7px inside the border. */
+  .copilotKitInput > [data-layout] > :nth-child(3) > div:has(> [data-testid="copilot-send-button"]) {
+    margin-right: -14px !important;
+  }
+
+  .copilotKitInput textarea {
+    padding: 8px 0 0 !important;
+  }
+
+  /* One row at rest, until its text is tapped (DESIGN.md Composer). */
+  .copilotKitInput:not([data-open]) > [data-layout] {
+    grid-template-rows: minmax(44px, auto) !important;
+  }
+
+  .copilotKitInput:not([data-open]) > [data-layout] > :nth-child(2) {
+    grid-column: 1 !important;
+  }
+
+  .copilotKitInput:not([data-open]) > [data-layout] > :nth-child(3) {
+    grid-row: 1 !important;
+  }
+
+  .composer-can-attach .copilotKitInput:not([data-open]) > [data-layout] > :first-child {
+    grid-row: 1 !important;
+  }
+
+  .composer-can-attach .copilotKitInput:not([data-open]) > [data-layout] > :nth-child(2) {
+    grid-column: 2 !important;
+  }
+
+  .chat-model-picker {
+    transition: opacity var(--motion-quick) var(--ease);
+  }
+
+  .copilotKitInput:not([data-open]) .chat-model-picker {
+    position: absolute;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .copilotKitInput:not([data-open]) textarea {
+    padding: calc((44px - var(--font-body) * var(--leading)) / 2) 0 !important;
+  }
+}
+
+/* use-stick-to-bottom makes its scroller scroll only in its own layout effect, after the rows' (MessageRows) have looked
+   for a view to start an opening chat at its end; CopilotKit passes it no scrollClassName. */
+.chat-scroll-view > :first-child {
+  overflow: auto;
+}
+
+/* CopilotKit paints each of its boxes in `--background`, white; in the chat they let the canvas through, and the
+   white is the bubbles' and the composer's own. */
+.app-chat [data-copilotkit] {
+  background-color: transparent;
+}
+
+/* ── Centered content column ── */
+.copilotKitMessages {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+  /* Earlier messages joining above keep the one being read in place themselves (MessageRows), in every browser. */
+  overflow-anchor: none;
+}
+
+/* Right under the agent's header, which floats over the chat, the first message starts below it. */
+.chat-header + .app-chat .copilotKitMessages {
+  padding-top: calc(var(--chat-header-height) + 0.5rem);
+}
+
+/* A message's markdown table sits flat on the bubble, with no fill or frame, only its row lines. streamdown 2.7 wraps
+   `table[data-streamdown="table"]` in a card (`div[data-streamdown="table-wrapper"]`) holding its copy, download and
+   fullscreen controls, then the scroll box; the card's padding, border and fill, and the table's own border, are
+   dropped. Tailwind compiles only this app's classes, so streamdown's layout classes are spelled out here. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* A table wider than the bubble scrolls (streamdown caps it at 300px tall, so past that both ways), its content fading
+   out over 48px at each edge it can still scroll past, so it never looks cut off; an edge stops fading once reached. A
+   table that fits leaves the scroll timeline inactive, so both fades keep their 0px and nothing fades. A browser without
+   scroll-driven animations (Firefox) shows no fade. streamdown's classes give the box a frame, so it drops it here. */
+@property --table-fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --table-fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child {
+  margin: 0;
+  max-width: 100%;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+@supports (animation-timeline: scroll(self inline)) {
+  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:last-child {
+    mask-image: linear-gradient(to right, transparent, var(--color-white) var(--table-fade-start), var(--color-white) calc(100% - var(--table-fade-end)), transparent);
+    animation: tableEdgeFade linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+
+/* Body role. Typography's `table { margin: 2em 0 }` would leave
+   empty bands in the bubble. A table is as wide as its content, each column its widest line, and one too wide for the
+   bubble scrolls: at the bubble's width, a column of prose would wrap a word to a line, its row an empty band beside
+   its other cells. */
+.copilotKitAssistantMessage [class*="cpk:prose"] table[data-streamdown="table"] {
+  width: max-content;
+  margin: 0;
+  border: 0;
+  border-collapse: collapse;
+  font-size: var(--font-body);
+  line-height: var(--leading);
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-header"], [data-streamdown="table-body"]) {
+  background: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td) {
+  padding: 8px 12px;
+  font-size: inherit;
+  line-height: inherit;
+  font-variant-numeric: tabular-nums;
+  vertical-align: baseline;
+}
+
+/* The first and last columns line up with the reply's text. Their pseudo-classes outrank the phone's cell padding. */
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):first-child {
+  padding-left: 0;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):last-child {
+  padding-right: 0;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] th {
+  border-bottom: 1px solid var(--color-line);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] tr {
+  border: 0;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(thead, tbody) > tr:last-child {
+  border-bottom: 0;
+}
+
+.chat-wrapper :is([data-testid="copilot-message-list"], [data-testid="copilot-scroll-to-bottom"]) {
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.chat-wrapper[data-jumping] :is([data-testid="copilot-message-list"], [data-testid="copilot-scroll-to-bottom"]) {
+  opacity: 0;
+}
+
+.chat-page-jump {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.chat-page-jump:not([data-shown]) {
+  opacity: 0;
+}
+
+/* A phone's body role (17px) pushed a 5-column table past 390px: there the table takes the small role and 6px cells,
+   on the query the type tokens switch on. */
+@media (max-width: 640px) {
+  .copilotKitAssistantMessage [class*="cpk:prose"] table[data-streamdown="table"] {
+    font-size: var(--font-small);
+  }
+
+  .copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td) {
+    padding-inline: 6px;
+  }
+}
+
+/* GFM `---:` reaches the cell as an inline `text-align: right`; such columns are figures, kept on one line. */
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):is([style*="text-align: right"], [style*="text-align:right"], [align="right"]) {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The table's controls take no row of their own: with a pointer they float over the header's right end, on
+   a white chip, while the table is hovered or focused; on touch they sit small under the table. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  margin: 0;
+  padding: 2px;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button {
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  transition-property: color, background-color;
+}
+
+@media (hover: hover) {
+  .copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button:hover {
+    color: var(--color-text);
+    background: var(--color-fill);
+  }
+
+  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    border-radius: var(--radius-md);
+    background: var(--color-white);
+    opacity: 0;
+    transition: opacity var(--motion-quick) var(--ease);
+  }
+
+  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"]:is(:hover, :focus-within) > div:first-child:not(:last-child) {
+    opacity: 1;
+  }
+}
+
+@media (hover: none) {
+  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
+    order: 2;
+    margin-top: 2px;
+  }
+}
+
+/* ── Message entrance animation ── */
+.copilotKitMessage {
+  animation: messageIn var(--motion-move) var(--ease);
+}
+
+/* The kept history the page shows while the chat loads, and the history a chat held as it opened, is no message
+   arriving: it shows at once. */
+[aria-label="Loading chat controls"] .copilotKitMessage,
+.copilotKitMessage[data-opened] {
+  animation: none;
+}
+
+/* ── User message — outer container transparent, inner bubble in the user's bubble colours ── */
+.copilotKitUserMessage {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.copilotKitUserMessage > div:first-of-type {
+  background-color: var(--color-bubble) !important;
+  color: var(--color-text) !important;
+  border-radius: var(--radius-xl) !important;
+  /* One line is twice the corner tall, an exact pill, as Muse's; bubble-width.ts hugs its widest line. */
+  padding: calc(var(--radius-xl) - 0.5lh) 16px !important;
+  font-size: var(--font-body);
+  line-height: var(--leading);
+  max-width: 90%;
+  /* A long URL or token breaks inside the bubble rather than running past it. */
+  overflow-wrap: anywhere;
+}
+
+/* A follow-up held until the running Turn ends: the user's bubble, faded, with when it goes and a Cancel. */
+/* ── Assistant messages ── */
+/* The body role on the page's line, over CopilotKit's `leading-relaxed`; the Worklog's notes take the loose one. */
+.copilotKitAssistantMessage,
+.copilotKitAssistantMessage [class*="cpk:prose"] {
+  font-size: var(--font-body) !important;
+  line-height: var(--leading) !important;
+  color: var(--color-text);
+  max-width: 720px;
+  padding: 0 !important;
+}
+
+/* Each message's prose in Marq's bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). One reply is
+   one bubble; a table, code or diagram scrolls inside past its cap. One line is the user's pill; a wrapped one hugs
+   its widest line (bubble-width.ts). White on the canvas, lifted by the resting shadow it shares with the composer. */
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
+  width: fit-content;
+  max-width: 90%;
+  background-color: var(--color-white);
+  box-shadow: var(--shadow-rest);
+  color: var(--color-text);
+  border-radius: var(--radius-xl);
+  padding: calc(var(--radius-xl) - 0.5lh) 16px;
+  margin-block: 4px;
+}
+
+/* A bubble holding a chart is as wide as its cap from its first frame, so the chart's box is there at the reply's width
+   while plotly.js loads, and nothing jumps when it draws. */
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div:has(.reply-chart) {
+  width: 100%;
+}
+
+/* Rhythm: blocks space by a 12px bottom margin, which collapses into a heading's 20px above and 8px below; a table or
+   code block stands 16px clear. The first and last block meet the bubble's padding. */
+.copilotKitAssistantMessage [class*="cpk:prose"] :is(h1, h2, h3, h4) {
+  margin: 20px 0 8px !important;
+}
+
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :is([data-streamdown="table-wrapper"], [data-streamdown="code-block"], [data-streamdown="mermaid-block"], pre) {
+  margin: 16px 0 !important;
+}
+
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child {
+  margin-top: 0 !important;
+}
+
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child {
+  margin-bottom: 0 !important;
+}
+
+/* A Turn starts well clear of the last; its answer sits under the question, or under the Turn's Worklog. */
+:is(.copilotKitAssistantMessage, .worklog) + .copilotKitUserMessage {
+  margin-top: 32px;
+}
+
+.copilotKitUserMessage + .copilotKitAssistantMessage {
+  margin-top: 14px;
+}
+
+/* Bubbles in a row from one sender, nothing shown between them, stack 4px apart as one group (Muse): where two meet,
+   their corners on the sender's side tighten. Marq's row ends at its bubble when only its hidden toolbar, no tool row,
+   follows it; the user's row starts at its bubble when no file card comes first. */
+.copilotKitMessages > .copilotKitAssistantMessage:has(> .cpk\:prose > .chat-markdown:not(:empty)):has(> .cpk\:prose:last-child, > .cpk\:prose + .cpk\:bg-transparent:last-child)
+  + .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty) {
+  margin-top: 0;
+  border-top-left-radius: var(--radius-sm);
+}
+
+.copilotKitMessages > .copilotKitAssistantMessage:has(> .cpk\:prose:last-child, > .cpk\:prose + .cpk\:bg-transparent:last-child):has(+ .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty))
+  > .cpk\:prose > .chat-markdown:not(:empty) {
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.copilotKitUserMessage:has(> .cpk\:prose) + .copilotKitUserMessage:has(> .cpk\:prose:first-child) {
+  margin-top: 4px;
+}
+
+.copilotKitUserMessage:has(> .cpk\:prose) + .copilotKitUserMessage > .cpk\:prose:first-child {
+  border-top-right-radius: var(--radius-sm) !important;
+}
+
+.copilotKitUserMessage:has(+ .copilotKitUserMessage > .cpk\:prose:first-child) > .cpk\:prose {
+  border-bottom-right-radius: var(--radius-sm) !important;
+}
+
+.app-chat [data-testid='copilot-input-overlay'] > [data-copilotkit] {
+  background: transparent !important;
+}
+
+@media (max-width: 640px) {
+  /* iOS Safari's rubber band and pull-to-refresh move fixed elements with the page, the header and menu among them. */
+  html {
+    overflow-y: auto;
+    overscroll-behavior-y: none;
+  }
+}

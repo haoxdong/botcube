@@ -1,0 +1,24 @@
+{
+  "aws": {
+    "agentCore": {
+      "sessionApiAlias": "live"
+    },
+    "credentialService": {
+      "port": 8081
+    },
+    "ecs": {
+      "credentialService": {
+        "tableName": "credential-vault-by-provider"
+      },
+      "parkedDnsTarget": "parked.invalid"
+    }
+  },
+  "artifacts": {
+    "chatService": {
+      "reaperCommand": ["node", "dist/reap-auth-browsers.js"]
+    }
+  },
+  "verification": {
+    "acceptanceHook": "ecs/acceptance.py"
+  }
+}

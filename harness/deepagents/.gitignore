@@ -1,0 +1,3 @@
+.tool-dist/
+.venv/
+data/

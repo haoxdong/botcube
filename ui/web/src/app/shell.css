@@ -1,0 +1,529 @@
+/* ── App layout ── */
+/* The visible viewport (dvh): iOS Safari's 100vh is the viewport without its toolbars, so the page could
+   scroll by their height, lifting the header under the fixed menu button. */
+.app-layout {
+  display: flex;
+  height: calc(100dvh - var(--app-safe-top) - var(--app-safe-bottom));
+  margin: var(--app-safe-top) var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  transform: translateZ(0);
+}
+
+/* A wide desktop window shows the app as a 1600px one zoomed to fit, in 0.1 steps from 1.1 at 1760px to 1.4 at 2240px
+   and wider, so its sidebar, chat, profile and type keep their proportions. The zoom is the app's, not the page's:
+   Floating UI 1.8 sets a popup's place in the screen's pixels, which a zoom on the page would scale again, so the +'s
+   menu, which Base UI portals out of the app, zooms only its own popup. A zoomed box's viewport units grow with it,
+   hence the divisions by the zoom (at the file's end, over the rules they replace). */
+@media (min-width: 1760px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.1;
+  }
+}
+
+@media (min-width: 1920px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.2;
+  }
+}
+
+@media (min-width: 2080px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.3;
+  }
+}
+
+@media (min-width: 2240px) and (hover: hover) and (pointer: fine) {
+  :root {
+    --ui-zoom: 1.4;
+  }
+}
+
+.app-layout > .sidebar {
+  max-height: 100%;
+}
+
+/* ── App shell (main content area): the chat's white, so the avatar header shares the chat's surface (dots Fig 1) ── */
+.app-shell {
+  /* The desktop agent's header: 2px padding, Marq's box's 62px past its -10px, the 16px of his capsule below it,
+     16px padding, 1px spare. */
+  --chat-header-height: 97px;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-canvas);
+  position: relative;
+}
+
+/* The chat stays mounted under the Plugins screen. */
+.app-shell[hidden] {
+  display: none;
+}
+
+.app-chat {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* The kept Main Chat lies over the chat as it opens, which lays out unseen under it until it opens at its latest
+   message. */
+.app-chat-opening {
+  position: relative;
+}
+
+.app-chat-opening > .chat-wrapper {
+  visibility: hidden;
+}
+
+/* The opening chat's composer stays shown and usable over the kept view, its own standing in until it shows. */
+.app-chat-opening > .chat-wrapper [data-testid='copilot-input-overlay'] {
+  visibility: visible;
+}
+
+.app-chat-opening > .chat-wrapper:has(.copilotKitInput.picker-ready) ~ .kept-chat .kept-chat-composer {
+  opacity: 0;
+}
+
+.kept-chat-composer * {
+  pointer-events: none;
+}
+
+.kept-chat {
+  position: absolute;
+  inset: 0;
+}
+
+
+.chat-model-picker {
+  min-width: 0;
+}
+
+.chat-model-picker .mep {
+  min-width: 0;
+}
+
+.chat-model-picker .mep-pill {
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 6px;
+  gap: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-small);
+  font-weight: var(--weight-regular);
+}
+
+.mep-pill-model {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: inherit;
+}
+
+.mep-pill-effort,
+.mep-pill > svg {
+  flex-shrink: 0;
+}
+
+.mep-pill-model-phone {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .chat-model-picker .mep-pill {
+    padding: 0 8px;
+  }
+
+  .mep-pill-model-desktop {
+    display: none;
+  }
+
+  .mep-pill-model-phone {
+    display: inline;
+  }
+
+  .chat-model-picker .mep-pill > svg {
+    display: none;
+  }
+
+  .chat-model-picker .mep-pill-effort {
+    color: var(--color-text-muted);
+  }
+}
+
+.mep-pill:focus-visible,
+.copilotKitInput > [data-layout] button:focus-visible {
+  outline: 2px solid var(--color-text) !important;
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+    .chat-model-picker .mep-pill:hover {
+      background: var(--color-fill);
+    }
+}
+
+/* The pill's press and open menu on touch, as the +. */
+.chat-model-picker .mep-pill:active {
+  background: var(--color-fill);
+}
+
+@media (hover: none) {
+  .chat-model-picker .mep-pill[data-popup-open] {
+    background: var(--color-fill);
+  }
+}
+
+/* The menu opens above the whole composer, not above the pill inside it, so it never covers the text box: the
+   pill's own box is static, so the composer (`position: relative`) holds the menu. Its right edge meets the
+   composer's outer edge: the box it sits in is the composer less its 1px border, hence -1px. */
+.chat-model-picker .mep {
+  position: static;
+}
+
+.chat-model-picker .mep-dropdown {
+  top: auto;
+  bottom: calc(100% + 8px);
+  max-height: calc(100dvh - 100% - var(--chat-header-height) - 4rem - var(--app-safe-top) - var(--app-safe-bottom));
+  overflow-y: auto;
+  left: auto;
+  right: -1px;
+}
+
+/* ── Header buttons (shared style) ── */
+.header-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--motion-quick) var(--ease), background var(--motion-quick) var(--ease);
+}
+
+@media (hover: hover) {
+    .header-btn:hover {
+      color: var(--color-text);
+      background: var(--color-fill);
+    }
+}
+
+/* ══════════════════════════════════════════
+   Sidebar — ChatGPT-style collapsed/expanded
+   ══════════════════════════════════════════ */
+
+/* Shut to its menu chip over the chat at every width */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 90;
+  height: 100dvh;
+  background: var(--color-fill);
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+.sidebar-expanded {
+  width: 260px;
+}
+
+/* ── Sidebar top section (brand + nav) ── */
+.sidebar-top {
+  flex-shrink: 0;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  padding: 12px 12px 8px;
+  gap: 8px;
+}
+
+.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 12px 8px 8px;
+}
+
+/* The name hangs from the nav icons' 20px edge, as the phone's does (memo 0049 Fig 21) */
+.sidebar-expanded .sidebar-brand {
+  padding-left: 20px;
+}
+
+.sidebar-logo-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text);
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--motion-quick) var(--ease);
+}
+
+@media (hover: hover) {
+    .sidebar-logo-btn:hover {
+      background: var(--color-fill);
+    }
+}
+
+.sidebar-brand-text {
+  font-size: var(--font-title);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  flex: 1;
+}
+
+.sidebar-new-chat {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.sidebar-logo-btn svg,
+.sidebar-new-chat svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sidebar-collapsed .sidebar-brand-text {
+  display: none;
+}
+
+.sidebar-expanded .sidebar-logo-btn {
+  display: none;
+}
+
+/* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
+.sidebar-collapsed .sidebar-logo-btn,
+.sidebar-strip-close-menu {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  color: var(--color-text);
+  background: var(--frost);
+  backdrop-filter: blur(4px);
+  box-shadow: none;
+}
+
+/* ── Sidebar nav ── */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sidebar-pad-y) var(--sidebar-pad-x);
+  gap: 1px;
+}
+
+.sidebar-nav-item {
+  appearance: none;
+  background: none;
+  border: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--sidebar-btn-pad);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-family: inherit;
+  transition: background var(--motion-quick) var(--ease);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-nav-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+/* Hover lighter than the open row, whose fill it leaves alone */
+@media (hover: hover) {
+    .sidebar-nav-item:not(.sidebar-nav-item-active):hover {
+      background: var(--color-fill);
+    }
+}
+
+/* The open row's fill, as light as Muse's (memo 0049 Fig 21) and dots' rail (Fig 1) */
+.sidebar-nav-item-active {
+  background: var(--color-line);
+}
+
+.sidebar-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main chat and Plugins: full-width pills over an inset divider, filled only while open (Muse Fig 12) */
+.sidebar-main {
+  position: relative;
+  --divider-inset: 20px;
+}
+
+.sidebar-expanded .sidebar-main {
+  gap: 2px;
+  padding-bottom: 24px;
+}
+
+.sidebar-main::after {
+  content: "";
+  position: absolute;
+  left: var(--divider-inset);
+  right: var(--divider-inset);
+  bottom: 0;
+  border-bottom: 1px solid var(--color-line);
+}
+
+/* Each fill inset 2px from its 44px slot, so neighbours never touch */
+.sidebar-expanded .sidebar-nav-item {
+  margin: 2px 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-pill);
+}
+
+/* Side Chat rows round like the nav rows */
+.sidebar-expanded .sidebar-item {
+  border-radius: var(--radius-pill);
+}
+
+/* ── Sidebar recents (conversation list) ── */
+.sidebar-recents {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-collapsed .sidebar-recents {
+  flex: none;
+}
+
+.sidebar-collapsed .sidebar-side-chats-toggle,
+.sidebar-collapsed .sidebar-list {
+  display: none;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 12px 16px 20px;
+  flex-shrink: 0;
+}
+
+@media (min-width: 641px) {
+  .sidebar-expanded .sidebar-brand {
+    padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3) calc(var(--spacing) * 2) calc(var(--spacing) * 5);
+  }
+
+  /* The brand row keeps its 64px in both states, so the rows under it never move */
+  .sidebar-brand {
+    min-height: 64px;
+  }
+
+  /* The rows step at a 44px pitch in both states, as dots' rail steps (memo 0049 Fig 1) */
+  .sidebar-expanded .sidebar-main {
+    gap: 0;
+    padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
+  }
+
+  .sidebar-expanded .sidebar-nav-item {
+    height: 40px;
+    padding: 0;
+  }
+
+  .sidebar-expanded .sidebar-nav-icon {
+    margin-left: calc(var(--spacing) * 3);
+  }
+
+  /* The label on the title's and icons' 20px edge, the rows right under it (memo 0049 Fig 21) */
+  .sidebar-expanded .sidebar-section-header {
+    justify-content: space-between;
+    gap: calc(var(--spacing) * 2);
+    padding: var(--sidebar-pad-y) 12px 0 20px;
+  }
+
+  .sidebar-expanded .sidebar-new-chat {
+    flex-shrink: 0;
+  }
+}
+
+/* A section header: a grey semibold `body` on a desktop, a section label on a phone (Muse Fig 21's SIDE CHATS) */
+.sidebar-side-chats-toggle {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  min-height: calc(var(--spacing) * 11);
+  padding: 0;
+  cursor: pointer;
+}
+
+.sidebar-side-chats-toggle svg {
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+}
+
+@media (max-width: 640px) {
+  .sidebar-side-chats-toggle {
+    font-size: var(--font-label);
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+  }
+}
+
+.app-stage {
+  display: grid;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+.app-stage > .app-shell {
+  grid-area: 1 / 1;
+}
+
+.app-stage > .app-plugins {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+
+@media (max-width: 640px) {
+  html:has(.app-plugins) {
+    overflow-y: hidden;
+  }
+
+  .app-stage > .app-plugins {
+    position: fixed;
+  }
+}

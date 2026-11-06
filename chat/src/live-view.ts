@@ -1,0 +1,64 @@
+import { EventType } from '@ag-ui/client';
+
+/** The CUSTOM event a Turn streams when the agent's browser Session opens or closes. */
+export const BROWSER_LIVE_VIEW_EVENT = 'botcube:browser-live-view';
+
+// A streamed delta may still be growing, so it names a browser Session only once
+// whitespace follows the ID; complete text may also end with it.
+const SESSION_PARTIAL = /\bSession:\s*([A-Za-z0-9._:-]+)(?=\s)/;
+const SESSION_COMPLETE = /\bSession:\s*([A-Za-z0-9._:-]+)(?=$|\s)/;
+const SESSION_URL_PARTIAL = /\bhttps?:\/\/[^\s]*bedrock-agentcore[^\s]*\/session\/([A-Za-z0-9._:-]+)(?=[/?#\s])/;
+const SESSION_URL_COMPLETE = /\bhttps?:\/\/[^\s]*bedrock-agentcore[^\s]*\/session\/([A-Za-z0-9._:-]+)(?=$|[/?#\s])/;
+const BROWSER_CLOSED = /\bbrowser\s+(?:session\s+)?closed\b/i;
+
+type LiveView = { open: true; sessionId: string } | { open: false };
+
+function liveViewFor(text: string, complete: boolean): LiveView | null {
+  const match =
+    (complete ? SESSION_COMPLETE : SESSION_PARTIAL).exec(text) ??
+    (complete ? SESSION_URL_COMPLETE : SESSION_URL_PARTIAL).exec(text);
+  const sessionId = match?.[1];
+  if (sessionId !== undefined) return { open: true, sessionId };
+  return BROWSER_CLOSED.test(text) ? { open: false } : null;
+}
+
+/**
+ * Watches one Turn's SSE frames for text that opens or closes the agent's browser
+ * Session, and answers the CUSTOM events to send right after each frame. Text
+ * messages are read whole, at their end, since an ID can span deltas.
+ */
+export class LiveViewInjector {
+  private readonly messages = new Map<unknown, string>();
+
+  constructor(private initialSessionId?: string) {}
+
+  /** The CUSTOM events to append after these decoded events. */
+  after(events: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+    return events
+      .map((event) => this.liveViewForEvent(event))
+      .filter((view): view is LiveView => view !== null)
+      .map((value) => ({ type: EventType.CUSTOM, name: BROWSER_LIVE_VIEW_EVENT, value }));
+  }
+
+  private liveViewForEvent({ type, messageId, delta, content }: Record<string, unknown>): LiveView | null {
+    if (type === EventType.RUN_STARTED && this.initialSessionId !== undefined) {
+      const sessionId = this.initialSessionId;
+      this.initialSessionId = undefined;
+      return { open: true, sessionId };
+    }
+    if (type === EventType.TEXT_MESSAGE_END) {
+      // Stryker disable next-line StringLiteral: a message with no text opens nothing, nor does "Stryker was here!"
+      const text = this.messages.get(messageId) ?? '';
+      this.messages.delete(messageId);
+      return liveViewFor(text, true);
+    }
+    const text = typeof delta === 'string' ? delta : content;
+    if (typeof text !== 'string') return null;
+    if (type === EventType.TEXT_MESSAGE_CONTENT && typeof messageId === 'string') {
+      // Stryker disable next-line StringLiteral: each pattern starts at a word boundary, which "Stryker was here!" ends with, so a prefix before the first delta changes no match
+      this.messages.set(messageId, (this.messages.get(messageId) ?? '') + text);
+      return null;
+    }
+    return liveViewFor(text, typeof delta !== 'string');
+  }
+}

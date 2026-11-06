@@ -1,0 +1,28 @@
+packages:
+  - chat
+  - infra/agentcore/cdk
+  - infra/ecs/cdk
+  - templates/always-on/chat
+  - ui/*
+  - templates/always-on/ui/*
+
+linkWorkspacePackages: true
+
+allowBuilds:
+  '@scarf/scarf': false
+  agent-browser: true
+  protobufjs: false
+  esbuild: true
+  msw: false
+  sharp: true
+  '@parcel/watcher': false
+
+# BrowserLiveView hands out its DCV connection, for Take-over by touch.
+patchedDependencies:
+  bedrock-agentcore@0.4.5: patches/bedrock-agentcore@0.4.5.patch
+
+overrides:
+  next: 16.4.3
+  '@ag-ui/client': 1.0.2
+  '@ag-ui/core': 1.0.2
+  '@copilotkit/react-core>streamdown': ^2.7.0

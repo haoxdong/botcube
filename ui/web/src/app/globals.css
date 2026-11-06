@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@import "shadcn/tailwind.css";
+@import "@radix-ui/colors/gray.css";
+@import "@radix-ui/colors/blue.css";
+@import "@radix-ui/colors/red.css";
+@import "@radix-ui/colors/green.css";
+@import "./tokens.css";
+@import "./chat.css";
+@import "./composer.css";
+@import "./markdown.css";
+@import "./shell.css";
+@import "./components.css";
+@import "./menus.css";
+@import "./header.css";
+@import "./agent-profile.css";
+@import "./list-rows.css";
+@import "./plugins.css";

@@ -1,0 +1,90 @@
+# Template Cartridge
+
+This neutral Cartridge is both the template's hello-world and the permanent
+fixture for BotCube's tests. It provides:
+
+- a DeepAgents Harness definition whose shell runs any command, with deepagents' default timeout and output cap;
+- the `/auth/template` Chat Service router and local Account sessions;
+- a complete default web UI plugin with neutral branding and a local sample artifact;
+- a full placeholder deployment identity and a staged offline CLI;
+- a fake HTTP site with a login page and authenticated data;
+- no external provider, product, or AWS credentials.
+
+Install Node.js 24 or newer, Corepack, npm, uv, and Docker with Compose. From the
+public repository root, use the pinned `pnpm@12.10.1` with
+`corepack pnpm install --frozen-lockfile`. Browser staging
+needs registry access or a populated npm cache. Run the complete stack through
+`infra/local/run.sh`; it stages
+the Harness CLI, Cartridge wheel and browser tools before building. Browser staging
+uses `npm ci` with the shipped release lockfile and needs Node.js 24 or newer,
+`npm`, and access to the npm registry or a populated npm cache. It works from
+a standalone BotCube checkout. Then open
+`http://localhost:3001`. The `echo` model returns the last user message without
+calling an external model provider. Harness checkpoints and the Chat Service's Session Metadata
+are persisted in separate local volumes.
+
+Run `uv run template-site` to start the fake site on port 8124. Its login issues
+a Durable Credential; only the Credential Service captures and decrypts it.
+`python -m botcube_always_on.credential_service` registers the fake site beside
+OpenAI. Configure `TEMPLATE_SITE_URL`, `BOTCUBE_VAULT_TABLE`,
+`BOTCUBE_VAULT_KMS_KEY_ID` and `BOTCUBE_CREDENTIAL_INVOCATION_SECRET` on that service.
+Its Vault is the platform's envelope-encrypted DynamoDB Vault.
+
+The Chat Service needs `BOTCUBE_CREDENTIAL_SERVICE_URL` and the same invocation
+signing secret. Open the agent profile's Sign-ins tab to link or unlink Template
+site. Each browser receives an opaque local Account session cookie. These local
+Account sessions expire after a day and reset when the Chat Service restarts.
+The start, sign-in and complete routes bind Account Linking to that Account.
+The fake site intentionally requires only a button click, with no real password.
+
+A Turn forwards a scoped invocation binding the Account and Session. The Harness
+passes only that invocation and Credential Service URL to `template-cli data`.
+The Credential Service mints short-lived site access and attaches it to the data
+request. Neither the CLI nor the Harness receives a site credential. Unlinking
+deletes the vaulted credential; the next CLI call exits with sign-in needed.
+
+`deploy/stage-tools.sh` stages the CLI executable and Cartridge wheel for the
+Harness image. The packaged skill drives that executable. From the public repository root, `pnpm test:chat --reporter=verbose` runs generic
+Chat Service unit tests and neutral HTTP smoke. `pnpm test:chat:unit` runs only
+the generic unit tests.
+
+The Agent Computer is BotCube's local one: a real Chromium browser with a
+private profile for each Account's Session. The Chat Service container installs
+Chromium and opens the fake site's login page, or `about:blank` without
+`TEMPLATE_SITE_URL`, when a Turn starts. The Harness receives an hour-long
+signed CDP URL bound to that Account and Session. The Chat Service filters
+cookie, storage and network-export commands and removes cookie data from
+network events. Ordinary web navigation and page evaluation remain available.
+Its HTTP live-view endpoint returns an owner-authorized browser image.
+
+A computer sleeps after ten idle minutes. A Turn or permitted CDP command
+refreshes its idle timer. Reading state or polling images does not. Retirement
+closes CDP channels and removes the private profile. State then returns
+`asleep`; the image endpoint returns HTTP 409 until the computer wakes again,
+as the agent's next CDP connection does. Stopping the Chat Service also cancels
+pending startup and puts its computers to sleep.
+
+The browser is on with zero configuration. `docker compose up` runs the
+Chromium the Chat Service image installs. A process run finds `chromium`,
+`chromium-browser`, `google-chrome-stable` or `google-chrome` on `PATH`, or
+Chromium or Google Chrome in `/Applications` on macOS. Set
+`BOTCUBE_CHROMIUM_PATH` to run another. With no Chromium, waking the computer
+fails with HTTP 503: install Chromium, or set `BOTCUBE_CHROMIUM_PATH`. Set
+`TEMPLATE_SITE_URL` to open the fake site, and `BOTCUBE_AGENT_COMPUTER_CDP_URL`
+when the Harness reaches the Chat Service through a hostname other than
+`127.0.0.1`. Compose uses `ws://chat-service:8123/agent-computer/cdp`. The live-view URL uses the platform's
+`signedUrl` response field and still requires the owning Account's cookie.
+The template does not provide local Take-over. This browser adapter establishes
+offline behavior; AWS browser deployment acceptance remains a separate check.
+
+To rename the bot or configure deployment inputs, follow [Customize the template identity](IDENTITY.md).
+
+A confirmed scheduled task uses its owner’s site link. If that link has been
+unlinked, Main Chat reports that the task could not finish and the composer
+shows Sign in needed. Completing sign-in clears the chip. The local failure
+indicator resets when the Chat Service restarts, like local Account sessions.
+
+Run `pnpm test:chat --reporter=verbose` from the public repository root for
+generic Chat Service unit tests and neutral HTTP smoke. The local echo model
+does not propose tool calls. Exercise scheduled tool execution with your
+Cartridge's configured model and providers.

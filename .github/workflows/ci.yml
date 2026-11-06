@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'scratch/**']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.repository == 'haoxdong/botcube'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - name: Install the file tools the Harness tools smoke test exports with
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils librsvg2-bin libcairo2 libfreetype6 fontconfig fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji
+          sudo ln -sf /usr/bin/fdfind /usr/local/bin/fd
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.13.7'
+          python-version: '3.11'
+      - run: bash .github/ci.sh

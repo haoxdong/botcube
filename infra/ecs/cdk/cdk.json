@@ -1,0 +1,1 @@
+{ "app": "pnpm run -s build && node dist/bin/cdk.js" }

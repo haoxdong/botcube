@@ -1,0 +1,97 @@
+.side-chats-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--motion-move) var(--ease),
+    opacity var(--motion-quick) var(--ease);
+}
+
+.side-chats-body[aria-hidden="true"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.side-chats-body > .sidebar-list {
+  min-height: 0;
+}
+
+.sidebar-list .collapsible > div {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (hover: hover) {
+  .sidebar-item-more {
+    transition:
+      color var(--motion-quick) var(--ease),
+      opacity var(--motion-quick) var(--ease),
+      display var(--motion-quick) var(--ease) allow-discrete;
+  }
+
+  .sidebar-item:not(:hover):not(:focus-within):not([data-popup-open]) .sidebar-item-more {
+    opacity: 0;
+  }
+
+  @starting-style {
+    .sidebar-item-more {
+      opacity: 0;
+    }
+  }
+}
+
+/* A long-press opens the row's menu, so iOS shows no callout or selection on the title it holds. */
+.sidebar-item-btn {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* A held row presses in as it fills over the hold, so a long-press shows it is working before its menu opens. */
+.sidebar-item:active {
+  background: var(--color-line);
+  transform: scale(0.97);
+  transition:
+    background var(--motion-move) var(--ease),
+    transform var(--motion-move) var(--ease);
+}
+
+/* Above the phone drawer and its strip; as wide as the account menu */
+.side-chat-menu {
+  position: relative;
+  z-index: 300;
+  width: 260px;
+  padding: 4px 0;
+  background: var(--color-white);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.side-chat-menu[data-starting-style],
+.side-chat-menu[data-ending-style] {
+  opacity: 0;
+}
+
+/* A touch or pointer's open focuses the menu itself, which shows no ring; a key's lands on an item, which shows one. */
+.side-chat-menu:focus,
+.side-chat-menu .user-menu-item:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.side-chat-menu .user-menu-item:focus-visible {
+  background: var(--color-fill);
+}
+
+.side-chat-menu .side-chat-menu-delete,
+.side-chat-menu .side-chat-menu-delete svg {
+  color: var(--color-red);
+}
+
+.sidebar-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}

@@ -1,0 +1,508 @@
+/* ── Input — white box, lifted by the resting shadow it shares with Marq's bubble ── */
+/* As wide as the messages' column inside CopilotKit's (720px at most, less its 1.5rem side padding), so its
+   edges meet the grey panel's. Its 1px border stays, clear, so its controls keep their places. */
+.copilotKitInput {
+  margin: 0 auto !important;
+  width: calc(min(720px, 100%) - 3rem) !important;
+  background-color: var(--color-white) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--shadow-rest) !important;
+  outline: none !important;
+  outline-width: 0 !important;
+  outline-style: none !important;
+  transition: border-color var(--motion-move) var(--ease), box-shadow var(--motion-move) var(--ease);
+  position: relative;
+}
+
+div.copilotKitInput {
+  outline: 0 !important;
+}
+
+.copilotKitInput:focus-within {
+  box-shadow: var(--shadow-float) !important;
+}
+
+/* CopilotKit's scroll-to-bottom chevron, a white disc over the messages, rests in the same shadow. */
+[data-copilotkit] [data-testid="copilot-scroll-to-bottom"] {
+  box-shadow: var(--shadow-rest);
+}
+
+/* A read-only chat's bar stands where its composer would, in the composer's box. */
+.composer-read-only {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: calc(min(720px, 100%) - 3rem);
+  min-height: 52px;
+  margin: 0 auto;
+  padding: 7px 8px 7px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xl);
+  background-color: var(--color-white);
+  box-shadow: var(--shadow-rest);
+}
+
+.composer-read-only p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-body);
+}
+
+.composer-read-only .button {
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+/* The cartridge's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.copilotKitInput`. */
+.composer-accessory {
+  display: flex;
+  width: calc(min(720px, 100%) - 3rem);
+  margin: 0 auto 8px;
+}
+.composer-accessory > * {
+  pointer-events: auto;
+}
+
+/* The files attached with the +: chips inside the composer's box, above its text, wrapping as ChatGPT's do. */
+.copilotKitInput {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.composer-files {
+  order: -1;
+  align-self: stretch;
+  /* One row that scrolls sideways, as ChatGPT's composer keeps its files: more files never push the chat up. */
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  list-style: none;
+}
+
+.composer-file {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  width: min(240px, 75%);
+  padding: 6px 4px 6px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+
+.composer-file-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.composer-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.composer-file-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}
+
+.composer-file-bar {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-line);
+}
+
+.composer-file-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-text);
+  transition: width var(--motion-move) var(--ease);
+}
+
+.composer-file-error {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--color-red);
+  font-size: var(--font-small);
+}
+
+.composer-file-retry {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-size: var(--font-small);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.composer-file-remove {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+    .composer-file-remove:hover {
+      background: var(--color-fill);
+    }
+}
+
+.composer-file-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* An uploading image dims under a ring of its progress; a failed one, under a red-ringed Retry. */
+.composer-image-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--scrim);
+}
+
+.composer-image-overlay > svg {
+  width: 24px;
+  height: 24px;
+}
+
+.composer-image-overlay circle {
+  fill: none;
+  stroke: var(--color-white);
+  stroke-opacity: 0.35;
+  stroke-width: 2.5;
+}
+
+.composer-image-overlay circle + circle {
+  stroke: var(--color-white);
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset var(--motion-move) var(--ease);
+}
+
+.composer-image-retry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 2.5px solid var(--color-red);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-white);
+  cursor: pointer;
+}
+
+.composer-image-retry svg,
+.composer-image-remove svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.composer-image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-text);
+  color: var(--color-white);
+  cursor: pointer;
+}
+
+/* Why each image failed to upload, under the chips, at most two lines each; the image keeps no text on it. */
+.composer-file-failures {
+  order: -1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 6px 10px 0;
+}
+
+.composer-file-failures > p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--color-red);
+  font-size: var(--font-small);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* Phones: Remove and Retry are a finger's 44px target; the chip keeps its look. */
+@media (max-width: 767px) {
+  .composer-file-remove {
+    width: 44px;
+    height: 44px;
+    margin: -8px -4px -8px -8px;
+    align-self: center;
+  }
+
+  .composer-file-retry {
+    min-height: 44px;
+    margin: -12px 0;
+  }
+
+  /* Remove grows only up and right, off the image, so it never covers Retry; painted after Retry, it keeps its own circle. */
+  .composer-image-remove::before,
+  .composer-image-retry::before {
+    position: absolute;
+    inset: -12px;
+    content: "";
+  }
+
+  .composer-image-remove::before {
+    inset: -12px -12px 0 0;
+  }
+
+  .composer-image-retry {
+    position: relative;
+  }
+}
+
+/* ── Hide CopilotKit's built-in message action buttons (copy, etc.) ──
+   The user's toolbar is invisible until hover but still holds ~40px under every question, which put each answer
+   farther from its question than from the next one. CopilotKit gives that toolbar no class, only this test id. */
+.copilotKitAssistantMessage > div.cpk\:bg-transparent,
+[data-testid="copilot-user-toolbar"] {
+  display: none !important;
+}
+
+/* ── Send / stop button: grey while disabled, dark once it can send or stop ── */
+.copilotKitInput [data-testid="copilot-send-button"] {
+  background: var(--color-line) !important;
+  color: var(--color-white) !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: var(--radius-pill) !important;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: background var(--motion-quick) var(--ease) !important;
+}
+
+.copilotKitInput [data-testid="copilot-send-button"] svg.lucide-square {
+  width: 12px !important;
+  height: 12px !important;
+  fill: var(--color-white) !important;
+  stroke: var(--color-white) !important;
+}
+
+/* Keyed on the button, not focus in the input: the picker or an empty textarea has focus with nothing to send. */
+.copilotKitInput [data-testid="copilot-send-button"]:not(:disabled) {
+  background: var(--color-text) !important;
+}
+
+/* A phone's Send is a 32px circle drawn inside its 44px target by a clear 6px border; the +'s and the picker's pressed
+   fill are drawn the same way, 32px tall, so they sit inside the composer's rounded edge with room around them. */
+@media (max-width: 767px) {
+  .copilotKitInput [data-testid="copilot-send-button"],
+  .copilotKitInput [data-testid="copilot-send-button"]:not(:disabled),
+  .copilotKitInput [data-testid="copilot-add-menu-button"] {
+    border: 6px solid transparent !important;
+    background-clip: padding-box !important;
+  }
+
+  .chat-model-picker .mep-pill {
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    background-clip: padding-box !important;
+  }
+
+  /* No disclaimer under a phone's composer; it keeps the 12px it stands from the screen's sides below it too. */
+  .chat-disclaimer {
+    display: none;
+  }
+
+  div.copilotKitInput {
+    margin-bottom: 12px !important;
+  }
+
+  .composer-read-only {
+    min-height: 46px;
+    margin-bottom: 12px;
+    padding: 0 1px 0 15px;
+  }
+
+  .composer-read-only .button {
+    min-height: 44px;
+    padding-block: 0;
+    border: 6px solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+/* As wide as a phone's composer (plugins.css). */
+@media (max-width: 639.98px) {
+  .composer-read-only {
+    width: calc(100% + 8px);
+    margin-right: -4px;
+    margin-left: -4px;
+  }
+}
+
+/* A desktop's composer is ChatGPT's one 52px row: 36px controls inside the grid's 7px padding and the
+   box's 1px border, the + 9px and Send 11px inside its outer edges, the text 12px right of the +. */
+@media (min-width: 768px) {
+  .copilotKitInput > [data-layout] {
+    padding: 7px 10px 7px 8px !important;
+    column-gap: 12px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(2) {
+    min-height: 36px !important;
+  }
+
+  .copilotKitInput textarea {
+    padding: 8px 0 !important;
+  }
+
+  .copilotKitInput [data-testid="copilot-add-menu-button"] {
+    width: 36px;
+    height: 36px;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) button {
+    min-width: 36px !important;
+    min-height: 36px !important;
+  }
+
+  .copilotKitInput [data-testid="copilot-send-button"] {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  .copilotKitInput > [data-layout] > :nth-child(3) > div:has(> [data-testid="copilot-send-button"]) {
+    margin-right: 0 !important;
+  }
+
+  /* Text that takes two lines (CopilotKit's `expanded`) goes across the top, as ChatGPT's does, its left edge on the
+     +'s glyph, over the row of the +, the picker and Send. */
+  .copilotKitInput > [data-layout="expanded"] {
+    grid-template-rows: auto 36px !important;
+  }
+
+  .composer-can-attach .copilotKitInput > [data-layout="expanded"] > :nth-child(2),
+  .copilotKitInput > [data-layout="expanded"] > :nth-child(2) {
+    grid-column: 1 / -1 !important;
+  }
+
+  .composer-can-attach .copilotKitInput > [data-layout="expanded"] > :first-child,
+  .copilotKitInput > [data-layout="expanded"] > :nth-child(3) {
+    grid-row: 2 !important;
+  }
+
+  /* Its 8px above and below as on one line, so CopilotKit's height for it stands when the layout changes. */
+  .copilotKitInput > [data-layout="expanded"] textarea {
+    padding: 8px !important;
+  }
+}
+
+/* ── Scrollbar ── */
+/* A draft past CopilotKit's capped height scrolls with no bar, as ChatGPT's does: a classic, always-visible one
+   (Windows, Linux, a Mac with a mouse) sat inside the white box. */
+.copilotKitInput textarea {
+  scrollbar-width: none;
+}
+
+/* Safari before 18.2 ignores `scrollbar-width`. */
+.copilotKitInput textarea::-webkit-scrollbar {
+  display: none;
+}
+
+.copilotKitMessages::-webkit-scrollbar {
+  width: 5px;
+}
+
+.copilotKitMessages::-webkit-scrollbar-thumb {
+  background-color: var(--color-line);
+  border-radius: var(--radius-pill);
+}
+
+.copilotKitMessages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Hide CopilotKit chrome ── */
+cpk-web-inspector,
+[data-testid="copilot-error-banner"] {
+  display: none !important;
+}
+
+/* A desktop's composer stands 12px past the messages' text at each side, 24px wider than their column, so it frames
+   what it writes into; the text keeps its measure. Below it, from its middle down, the canvas is opaque behind
+   the disclaimer, so a scrolled reply never shows under the composer. A composer that grows with its text grows up,
+   its lower half stays over the band. A phone's composer stays as it is. */
+@media (min-width: 768px) {
+  .copilotKitInput,
+  .composer-accessory {
+    width: calc(min(720px, 100%) - 1.5rem) !important;
+  }
+
+  .composer-read-only {
+    width: calc(min(720px, 100%) - 1.5rem);
+  }
+
+  .app-chat .chat-disclaimer {
+    position: relative;
+    background: var(--color-canvas);
+  }
+
+  .app-chat .chat-disclaimer::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: -26px 0 100%;
+    background: var(--color-canvas);
+    pointer-events: none;
+  }
+}

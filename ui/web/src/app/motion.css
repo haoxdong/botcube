@@ -1,0 +1,166 @@
+/* Motion beyond the tokens in globals.css's :root (DESIGN.md Motion). */
+
+/* What opens and closes in the column (a Worklog, a step's detail, a step arriving) grows from nothing and shrinks
+   away before it unmounts (collapse.tsx, on Motion), so what's below follows it instead of jumping. It clips only
+   vertically, so a step's hover pill still reaches past its sides, and its inner box holds its content's margins. */
+.collapsible {
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
+.collapsible > div {
+  display: flow-root;
+}
+
+/* The composer's content keeps its size while its box glides to a new height (composer-layout-height.ts). */
+.copilotKitInput > * {
+  flex-shrink: 0;
+}
+
+/* Desktop: toggling the docked sidebar is a View Transition (motion.ts's glide). The chat stage glides to its new
+   width, its snapshots unscaled and centred as its column is, so words never stretch; the sidebar slides in from the
+   left edge and back out. Every View Transition runs on --motion-move and --ease. */
+::view-transition-group(*) {
+  animation-duration: var(--motion-move);
+  animation-timing-function: var(--ease);
+}
+
+@media (min-width: 641px) {
+  [data-glide] .app-shell {
+    view-transition-name: chat-stage;
+  }
+
+  [data-glide] .sidebar-expanded {
+    view-transition-name: sidebar;
+  }
+
+  [data-glide] .agent-profile {
+    view-transition-name: profile;
+  }
+}
+
+::view-transition-group(chat-stage) {
+  overflow: clip;
+}
+
+::view-transition-old(chat-stage),
+::view-transition-new(chat-stage) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: 50% 0;
+}
+
+/* The Agent Computer's window glides between its place and its full-screen sheet. The dock's apps fade in over it
+   in CSS, not a View Transition, which would drop a tap made on the next app while it ran. */
+[data-glide] .agent-computer-window {
+  view-transition-name: computer-window;
+}
+
+.agent-computer-app,
+.agent-computer-cover {
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+@starting-style {
+  .agent-computer-app,
+  .agent-computer-cover {
+    opacity: 0;
+  }
+}
+
+/* Until Agent Identity's character line comes, the status keeps its place under the name, so nothing drops as it
+   lands: the line's height and the header's gap. */
+.agent-profile-name + .agent-profile-status {
+  margin-top: calc(var(--font-small) * var(--leading) + 4px);
+}
+
+/* The desktop profile slides in from the right edge and back out as the chat stage glides beside it. */
+::view-transition-new(profile):only-child {
+  animation-name: profileIn;
+}
+
+::view-transition-old(profile):only-child {
+  animation-name: profileOut;
+}
+
+@keyframes profileIn {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes profileOut {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+::view-transition-new(sidebar):only-child {
+  animation-name: sidebarIn;
+}
+
+::view-transition-old(sidebar):only-child {
+  animation-name: sidebarOut;
+}
+
+@keyframes sidebarIn {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes sidebarOut {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes tableEdgeFade {
+  0% {
+    --table-fade-start: 0px;
+    --table-fade-end: 48px;
+  }
+  8% {
+    --table-fade-start: 48px;
+  }
+  92% {
+    --table-fade-end: 48px;
+  }
+  100% {
+    --table-fade-start: 48px;
+    --table-fade-end: 0px;
+  }
+}
+
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes worklogShimmer {
+  to {
+    background-position: 0 0;
+  }
+}
+
+@keyframes loadPulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes chatHeaderBob {
+  50% {
+    translate: 0 -2px;
+  }
+}
+
+.chat-header-name {
+  transform-origin: 50% 0;
+  transition:
+    background var(--motion-quick) var(--ease),
+    box-shadow var(--motion-quick) var(--ease);
+}

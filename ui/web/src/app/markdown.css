@@ -1,0 +1,341 @@
+/* ── Markdown prose ── */
+.copilotKitAssistantMessage [class*="cpk:prose"] pre {
+  background: var(--color-fill);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  overflow-x: auto;
+  font-size: var(--font-small);
+  line-height: var(--leading-loose);
+  border: none;
+  margin: 0.25rem 0;
+}
+
+.copilotKitAssistantMessage code {
+  font-family: var(--font-code);
+  font-size: var(--font-small);
+  color: var(--color-text);
+}
+
+.copilotKitAssistantMessage p {
+  margin: 0 0 16px !important;
+}
+
+/* Hanging indent with markers in the text colour, as Muse does (memo 0049 Fig 11); streamdown sets `list-inside`. */
+.copilotKitAssistantMessage ol,
+.copilotKitAssistantMessage ul {
+  margin: 0 0 12px !important;
+  padding-left: 20px !important;
+  list-style-position: outside !important;
+}
+
+.copilotKitAssistantMessage li::marker {
+  color: var(--color-text);
+}
+
+.copilotKitAssistantMessage li {
+  margin-top: 0 !important;
+  margin-bottom: 12px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.copilotKitAssistantMessage li:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* links */
+.copilotKitAssistantMessage a {
+  color: var(--color-blue);
+  text-decoration: underline;
+}
+
+/* Citations `[[1]](url)`: ReplyFileLink marks them data-citation and wraps their brackets, which the pill drops. A blue
+   tint on the bubble; the label role, and as wide as its line is tall at the least, so one digit is a circle. */
+.copilotKitAssistantMessage a[data-citation] {
+  display: inline-block;
+  min-width: calc(var(--font-label) * var(--leading));
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  vertical-align: 3px;
+  background: var(--color-fill);
+  color: var(--color-blue);
+  text-decoration: none;
+  text-align: center;
+  font-size: var(--font-label);
+  line-height: var(--leading);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (hover: hover) {
+    .copilotKitAssistantMessage a[data-citation]:hover {
+      background: var(--color-line);
+    }
+}
+
+.copilotKitAssistantMessage [data-citation-bracket] {
+  display: none;
+}
+
+/* Inline code: a quiet white pill at 0.9 of the text beside it (see --font-code), never bold (Typography sets 600). */
+.copilotKitAssistantMessage :not(pre) > code {
+  font-size: var(--font-code-size);
+  padding: 1px 4px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+  font-weight: var(--weight-regular) !important;
+}
+
+/* Code as words (code-words.tsx): a word that fits its line never breaks inside, so code wraps only at its spaces. */
+.code-word,
+.code-word-wide {
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .code-word-wide {
+    white-space: inherit;
+  }
+}
+
+/* The chip marks the code, so drop the backticks Tailwind Typography quotes it with. */
+.copilotKitAssistantMessage :not(pre) > code::before,
+.copilotKitAssistantMessage :not(pre) > code::after {
+  content: none;
+}
+
+/*
+ * ── Worklog (worklog.tsx) ──
+ * A Turn's work, folded under one "Worked for 38s" header above its answer. Three levels, each closed until asked for:
+ * the Turn, its steps (one line each, its time in a right-aligned column), a step's sheet (a thought's summary, a
+ * command's input and output). Notes speak in the body role and text colour; steps in the small role, muted. Notes and
+ * step icons start at --worklog-indent from the header's edge. One 8px gap
+ * between every item; a 1px rail 6px in runs down the open body, and it ends 20px above the answer. Live words
+ * shimmer; nothing else moves. Notes read on the loose line, steps on the page's.
+ */
+.worklog {
+  --worklog-indent: 26px;
+}
+
+.copilotKitUserMessage + .worklog {
+  margin-top: 12px;
+}
+
+/* With the body's 12px bottom margin, the answer starts 20px under the last step; under a closed header, 8px. */
+.worklog + .copilotKitAssistantMessage {
+  margin-top: 8px;
+}
+
+.worklog-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 8px 4px 0;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
+button.worklog-head {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+    button.worklog-head:hover {
+      color: var(--color-text);
+    }
+}
+
+.worklog-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklog-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  transition: transform var(--motion-move) var(--ease);
+}
+
+.worklog[data-open] .worklog-chevron {
+  transform: rotate(90deg);
+}
+
+/* A note's message holds its steps, and a step its detail, so each level stacks the same way. */
+.worklog-body,
+.worklog-body .copilotKitAssistantMessage,
+.worklog-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.worklog-body {
+  position: relative;
+  margin: 4px 0 12px;
+}
+
+.worklog-body .copilotKitMessage {
+  animation: none;
+}
+
+/* A row with nothing to show takes no gap: a thought's row in the kept chat, or one with no words and no time. */
+.worklog-body > :empty {
+  display: none;
+}
+
+/* The rail: 1px down the open body, under the start of "Worked"; it takes no room. */
+.worklog-body::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 1px;
+  background: var(--color-line);
+}
+
+/* A tool call's message with no words takes no gap. */
+.worklog-body .copilotKitAssistantMessage > [class*="cpk:prose"]:has(> div:empty) {
+  display: none;
+}
+
+/* A note's words start where step icons do, a role up from the steps and in full text colour over them. Its inline
+   code keeps the note's colour, and line-height 1 keeps the code font from stretching the line. */
+.worklog-body .copilotKitAssistantMessage,
+.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"] {
+  font-size: var(--font-body) !important;
+  line-height: var(--leading-loose) !important;
+}
+
+.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"] code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: var(--weight-regular) var(--font-code-size)/1 var(--font-code);
+  color: inherit;
+}
+
+.worklog-body .copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
+  margin: 0;
+  padding: 0 0 0 var(--worklog-indent);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  font-weight: var(--weight-regular);
+}
+
+/* A step: icon, one truncating line, and a chevron right after it where it opens. The row stands 7px over its size
+   (20px on a desktop, 22px on a phone): the hover pill reaches 2px over and under it and 6px past the icon, and an
+   equal negative margin takes that back out of the layout. Everything in the row inherits the header's muted colour, so the hover darkens it all at once. */
+.worklog-step {
+  font-size: var(--font-small);
+}
+
+.worklog-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - var(--worklog-indent) + 12px);
+  min-height: calc(var(--font-small) + 11px);
+  margin: -2px -6px -2px calc(var(--worklog-indent) - 6px);
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+  text-align: left;
+  color: var(--color-text-muted);
+}
+
+button.worklog-step-head {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+    button.worklog-step-head:hover {
+      background: var(--color-fill);
+      color: var(--color-text-muted);
+    }
+}
+
+.worklog-step-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.worklog-step[data-state="failed"] .worklog-step-icon {
+  color: var(--color-red);
+}
+
+.worklog-step-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Code font is for code only: a search query, a helper's brief or a plan item reads in sans. */
+.worklog-step-object {
+  margin-left: 6px;
+  line-height: 1;
+}
+
+.worklog-step-object:not([data-prose]) {
+  font-family: var(--font-code);
+  font-size: var(--font-code-size);
+}
+
+/* Every step's time sits in one right-aligned column; the label truncates before it. */
+.worklog-step-time {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.worklog-step-title::before {
+  content: "·";
+  margin: 0 6px;
+}
+
+.worklog-step-chevron {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+}
+
+/* One live line shimmers, colourless: the thought or call under way while the Worklog is open, else the Turn's clock.
+   The header's "is working" stays still. Muted grey text with a light band sweeping left to right. The gradient is 2.5 times the words' width, the band its middle
+   fifth; sliding the gradient from its right end to its left carries the band from just before the words' start to just
+   past their end, so each loop starts and ends unlit. */
+.worklog:not([data-open]:has(.worklog-step[data-state="live"])) .worklog-title[data-live],
+.worklog-step[data-state="live"] .worklog-step-label {
+  background: linear-gradient(
+      90deg,
+      var(--color-text-muted) 40%,
+      var(--color-line) 50%,
+      var(--color-text-muted) 60%
+    )
+    100% 0 / 250% 100% no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: worklogShimmer var(--motion-loop) linear infinite;
+}
+
+.worklog-step[data-state="live"] .worklog-step-label * {
+  color: transparent;
+}
+
+/* ── Empty state: center greeting in viewport ── */
+.copilotKitMessages:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}

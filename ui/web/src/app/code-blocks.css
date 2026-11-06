@@ -1,0 +1,177 @@
+/* A message's fenced code or mermaid diagram: a header row of its language and its buttons, then the code or diagram
+   in a framed box across the bubble, on its grey as DESIGN.md has code blocks. streamdown 2.7 lays `div[data-streamdown="code-block"]` out with Tailwind
+   classes this app compiles only some of (`flex-col` not, so the three parts sat in one row, and the same for
+   `mermaid-block`, whose header and diagram box carry no name and so are its first and last child), and puts the
+   buttons in their own floating wrapper between header and body; the grid places that wrapper at the header's right. Its `pointer-events-none` compiles but the buttons'
+   `pointer-events-auto` does not, so the wrapper takes pointer events back. */
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-header"], [data-streamdown="mermaid-block"] > div:first-child) {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding-left: 12px;
+  background: none;
+  font-family: var(--font-code);
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) > div:has(> :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"])) {
+  position: static;
+  pointer-events: auto;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-body"], [data-streamdown="mermaid-block"] > div:last-child) {
+  grid-column: 1 / -1;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-fill);
+}
+
+/* A reply's diagram is a still picture: zoom and pan, with their buttons, stay in the fullscreen view (the header's
+   last button), which renders outside the message, so a scroll over the diagram scrolls the chat. streamdown's pan-zoom
+   frame is `flex-col`, uncompiled here, so it is set as a column; its content box shrinks to the frame, which takes the
+   fitted height, and centres the scaled diagram in it. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div {
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:first-child:not(:last-child) {
+  display: none;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:last-child {
+  min-height: 0;
+  align-items: center;
+}
+
+/* A diagram's fullscreen view: streamdown renders it on the body, outside the message, and its layout classes are
+   uncompiled here, so it is laid out here, over the app's layers (sheets and popups at 500), its buttons over the diagram. */
+[data-streamdown="mermaid-fullscreen"] {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  background: var(--frost);
+}
+
+[data-streamdown="mermaid-fullscreen"] > div:first-child {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1;
+  gap: 0.25rem;
+}
+
+[data-streamdown="mermaid-fullscreen"] > div:last-child {
+  width: 100%;
+  height: 100%;
+  padding: 1rem;
+}
+
+[data-streamdown="mermaid-fullscreen"] :is([data-streamdown="mermaid"], [data-streamdown="mermaid"] > div) {
+  width: 100%;
+  height: 100%;
+}
+
+[data-streamdown="mermaid-fullscreen"] [data-streamdown="mermaid"] > div {
+  flex-direction: column;
+}
+
+[data-streamdown="mermaid-fullscreen"] [data-streamdown="mermaid"] > div > div:last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+[data-streamdown="mermaid-fullscreen"] [data-streamdown="mermaid"] > div > div:first-child:not(:last-child) {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 1;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+/* Streamdown's 200px offscreen estimate shrinks when short code enters view. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"] {
+  content-visibility: visible !important;
+}
+
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"] pre {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+
+/* Shiki's github-light colours, which streamdown sets as `--sdm-c` on each token for a Tailwind class not compiled
+   here. They arrive after the code first paints, so each token fades into its colour. */
+:is(.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"], .step-section-text) code > span > span {
+  color: var(--sdm-c);
+  transition: color var(--motion-quick) var(--ease);
+  animation: codeTokenIn var(--motion-quick) var(--ease);
+}
+
+@keyframes codeTokenIn {
+  from {
+    color: var(--color-text);
+  }
+}
+
+/* A diagram in a row that joined the history above the reader (late-boxes.ts) keeps one box from its row's first frame:
+   the height it last drew at, else streamdown's own placeholder height. streamdown's loading box, its placeholder, its
+   spinner and the drawing all take it, and streamdown fits the drawing to the box's max-height, so nothing above the
+   row read moves as the diagram draws. The box's padding and border add 26px; the block's header 32px more. */
+.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: calc(var(--diagram-height) + 26px);
+  overflow: hidden;
+}
+
+.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] [data-streamdown="mermaid"] {
+  max-height: var(--diagram-height);
+}
+
+.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] > div > .divide-y.rounded-xl {
+  height: calc(var(--diagram-height) + 58px);
+  margin-block: 16px;
+}
+
+/* A diagram in a row that arrived under the history, a reply streaming in (late-boxes.ts), only grows: its box
+   stands at least as tall as it has been, the drawing centred in it, and streamdown's one-frame placeholder, the box's
+   only empty child, takes no 200px of its own, so it neither sets that floor nor drops away under the reader. */
+.copilotKitAssistantMessage[data-arrived] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--diagram-floor);
+}
+
+.copilotKitAssistantMessage[data-arrived] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child > :empty {
+  min-height: 0;
+}

@@ -1,0 +1,71 @@
+[project]
+name = "botcube-harness-deepagents"
+version = "0.1.0"
+description = "Deep Agents implementation of the BotCube Harness contract."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "botcube-cartridge",
+  "aiosqlite>=0.22.1",
+  "aws-opentelemetry-distro>=0.21.0",
+  "opentelemetry-instrumentation-langchain>=0.62.4",
+  "boto3>=1.43.108",
+  "cryptography>=48.0.1",
+  "deepagents==0.7.22",
+  "langchain>=1.4.3",
+  "ag-ui-protocol>=1.0.0",
+  "langchain-aws>=1.8.0",
+  "langchain-core>=1.6.7",
+  "langchain-openai>=1.6.7",
+  "ag-ui-langgraph>=0.0.46",
+  "fastapi>=0.142.2",
+  "httpx>=0.28.1",
+  "websockets>=15.0.1",
+  "langgraph>=1.2.14",
+  "langgraph-checkpoint-sqlite==3.1.1",
+  "uvicorn[standard]>=0.54.0",
+  "langgraph-checkpoint-aws==1.2.6",
+  "zstandard>=0.25.0",
+]
+
+[project.scripts]
+botcube-harness-deepagents = "botcube_harness_deepagents.serving:main"
+botcube-session-api = "botcube_harness_deepagents.session_api:main"
+
+[dependency-groups]
+dev = [
+  "langchain-core>=1.6.7",
+  "moto[s3]>=5.2.3",
+  "pyright==1.1.414",
+  "pytest>=9.1.1",
+  "pytest-xdist==3.8.0",
+  "types-boto3[bedrock-agentcore,bedrock-runtime,dynamodb,ssm]>=1.43.108",
+]
+contract-pins = [
+  "strands-agents-tools==0.8.12",
+]
+
+[tool.uv.sources]
+botcube-cartridge = { path = "../../cartridge", editable = true }
+
+[tool.pyright]
+# Check against the oldest supported Python, which Presubmit runs.
+pythonVersion = "3.11"
+# Every parameter carries a type annotation.
+reportMissingParameterType = "error"
+# Generic types carry their type arguments, and no parameter type is unknown.
+reportMissingTypeArgument = "error"
+reportUnknownParameterType = "error"
+include = [
+  ".",
+  "../../infra/local/init-chat-table.py",
+]
+
+exclude = ["tools"]
+
+[build-system]
+requires = ["hatchling>=1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+markers = ["integration: runs a real subprocess, server or socket (ADR 0083 decision 1)"]

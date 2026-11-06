@@ -1,0 +1,32 @@
+{
+  "name": "botcube",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.10.1",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test:chat": "vitest run --config vitest.chat.config.ts",
+    "test:chat:unit": "vitest run --config chat/vitest.config.ts",
+    "build": "sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-always-on-chat build'",
+    "build:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
+    "test:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
+    "screenshots:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
+    "pretest:chat": "sh -c 'uv sync --directory templates/always-on --frozen --quiet && pnpm --filter botcube-always-on-chat build && templates/always-on/deploy/stage-tools.sh'",
+    "pretest:chat:unit": "sh -c 'uv sync --directory templates/always-on --frozen --quiet'",
+    "storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1161.0",
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/client-secrets-manager": "^3.1161.0",
+    "@aws-sdk/client-ssm": "^3.1161.0",
+    "@aws-sdk/lib-dynamodb": "^3.1161.0",
+    "@types/node": "^24.19.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^4.1.12",
+    "esbuild": "^0.28.2"
+  }
+}

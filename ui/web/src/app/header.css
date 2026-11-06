@@ -1,0 +1,282 @@
+/* ── Avatars, Agent avatar and Agent Profile ── */
+/* The Avatar component sets its own size and font size. */
+.avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-text);
+  color: var(--color-white);
+  font-weight: var(--weight-semibold);
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The agent's default avatar is its own figure, drawn on the page rather than in a disc. */
+.avatar-agent {
+  background: none;
+}
+
+.chat-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  padding: 2px 16px 16px;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --chat-header-safe-top: var(--app-safe-top);
+  }
+
+  .app-shell {
+    --chat-header-height: calc(109px + var(--chat-header-safe-top));
+  }
+
+  .app-shell:has(> .chat-header) {
+    margin-top: calc(-1 * var(--app-safe-top));
+  }
+
+  /* The chat grows with the page that scrolls it; the header and the composer stay on screen. */
+  .app-shell {
+    min-height: 100dvh;
+  }
+
+  .app-chat {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+    /* The chat keeps its own place on the page (PageScrollControls, MessageRows): WebKit's scroll anchoring moved the page
+       up the opening chat, which took it for the user's scroll. */
+    overflow-anchor: none;
+  }
+
+  .app-chat .chat-wrapper,
+  .app-chat .copilotKitChat {
+    flex: 1 0 auto;
+    height: auto;
+  }
+
+  /* The kept Main Chat holds the screen at its latest message, as the opening chat under it grows and scrolls the page
+     to its own. */
+  .app-chat .kept-chat {
+    position: fixed;
+    inset: 0 var(--app-safe-right) var(--app-safe-bottom) var(--app-safe-left);
+  }
+
+  .app-chat .kept-chat :is(.chat-wrapper, .copilotKitChat) {
+    height: 100%;
+  }
+
+  .app-chat .chat-scroll-view,
+  .app-chat .chat-scroll-view > :first-child,
+  .app-chat .chat-scroll-view > :first-child > :first-child {
+    flex: 1 0 auto !important;
+    max-height: none;
+    overflow: visible !important;
+  }
+
+  /* As the page that scrolls the chat, its scroll view keeps no scrollbar gutter. */
+  .app-chat .kept-chat .copilotKitChat > :first-child > div {
+    scrollbar-width: none;
+  }
+
+  /* Clear of the home bar, as the shell's padding kept the composer when its own box held the chat. iOS Safari 26
+     paints a solid band under its toolbar when a fixed element covers the bottom edge's midpoint 4px in (WebKit's
+     LocalFrameView::fixedContainerEdges); 6px clear, the chat runs on under the toolbar in Safari's own blur. */
+  .app-chat [data-testid='copilot-input-overlay'] {
+    position: fixed;
+    bottom: max(calc(var(--app-safe-bottom) + 6px), var(--keyboard-inset, 0px));
+  }
+
+  .app-chat .kept-chat-composer {
+    bottom: 6px;
+  }
+
+  /* Safari's bar or the home indicator already spaces the disclaimer from the screen's bottom. */
+  .app-chat .chat-disclaimer {
+    padding-bottom: 0;
+  }
+
+  /* The open drawer's grey reaches up behind the clock: iOS Safari tints its status bar strip with the page's
+     colour. */
+  html:has(.sidebar-expanded),
+  html:has(.sidebar-expanded) body {
+    background: var(--color-fill);
+  }
+
+  .chat-page-jump {
+    position: fixed;
+    margin-bottom: max(6px, var(--keyboard-inset, 0px));
+  }
+
+  /* CopilotKit leaves the overlay's height under the last message; it stands 6px higher. */
+  .app-chat .copilotKitMessages {
+    padding-bottom: calc(1.25rem + 6px);
+  }
+
+  /* Marq's hat, which rises 1px above his box, and the menu button's top meet the top of the screen below the status
+     bar, where Muse's avatar and menu stand (memo 0049 Fig 11). The header keeps to Marq's width: Safari fills the
+     strip behind the clock with the colour of a fixed element spanning the screen's top edge, and keeps that colour
+     while a `header` stays rendered, held or not (WebKit's LocalFrameView::fixedContainerEdges and
+     Page::updateFixedContainerEdges), which hid the chat and the drawer there. */
+  .chat-header {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    translate: -50% 0;
+    padding-top: calc(1px + var(--chat-header-safe-top));
+  }
+
+  .chat-header,
+  .sidebar-collapsed {
+    top: var(--viewport-top, 0px);
+  }
+
+  /* Muse's 44px menu sits 24px in from the screen's edge, its centre about 12px above the avatar's (memo 0049 Fig 11).
+     It stands 2px below the sidebar's safe area: at the top edge, iOS Safari paints its status bar white over the
+     chat. */
+  .sidebar-collapsed .sidebar-brand {
+    padding: 2px 12px 12px 24px;
+  }
+
+  .chat-header-agent .avatar-agent {
+    overflow: visible;
+  }
+
+  /* Marq stands 68px tall, hat included, as Muse's avatar disc (memo 0049 Fig 11), with his hat where the larger
+     figure had it, and in front of the pill. */
+  .chat-header-agent .avatar-agent svg {
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    width: 88px;
+    height: 88px;
+    transform: translateY(-5.5px);
+  }
+
+  /* The pill tucks about 6px behind the bottom of Marq's body (memo 0049 Fig 11). The chat runs beneath the header
+     undimmed, under iOS Safari's own fade alone, as Muse's does: a band of ours, which must start below the status
+     bar, left a strip of undimmed text between the two fades. So the pill carries its own crisp white
+     backing, as Muse's does, which keeps the name readable over the text. */
+  .chat-header-agent .chat-header-name {
+    margin-top: -12px;
+    background: var(--frost);
+    box-shadow: none;
+  }
+}
+
+/* Desktop: the chat fills the window, square, as only a panel that reaches a rounded screen corner rounds. Open, the
+   sidebar docks beside it in the chat's white, a hairline seam between them, as the profile's on its other side, as
+   ChatGPT's does; shut, only its round
+   menu chip shows, over the chat. Marq's hat, 9.5px into his 72px box,
+   sits 1.5px under the window's top as dots' avatar does, in front of a crisp name pill tucked about 6px behind his
+   body, as on the phone; the chat scrolls beneath them, fading out over the header's height so its words
+   never run into Marq or his name. */
+@media (min-width: 641px) {
+  .sidebar {
+    background: var(--color-white);
+  }
+
+  /* The seam lies outside the 260px, so the rows keep their places */
+  .sidebar-expanded {
+    position: relative;
+    flex-shrink: 0;
+    box-sizing: content-box;
+    border-right: 1px solid var(--color-line);
+  }
+
+  /* Shut, only the menu chip shows, over the chat's top left */
+  .sidebar-collapsed {
+    height: auto;
+    background: none;
+  }
+
+  .sidebar-collapsed :is(.sidebar-nav, .sidebar-recents, .sidebar-bottom) {
+    display: none;
+  }
+
+  /* Open, the menu chip closes the sidebar from beside its title */
+  .sidebar-expanded .sidebar-logo-btn {
+    display: flex;
+    order: 1;
+    margin-left: auto;
+  }
+
+  /* The open row takes the profile controls' hover grey, which shows on the white; a hovered row stays lighter */
+  .sidebar-nav-item-active,
+  .sidebar-item-active {
+    background: var(--color-line);
+  }
+
+  .chat-header-agent .avatar-agent {
+    margin-top: -10px;
+  }
+
+  .chat-header-agent .avatar-agent svg {
+    position: relative;
+    z-index: 1;
+  }
+
+  .chat-header-agent .chat-header-name {
+    margin-top: -11px;
+    background: var(--color-white);
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+
+  /* The scroll view, CopilotKit's first child of the chat; the composer, its sibling, stays crisp. */
+  .chat-header + .app-chat .copilotKitChat > :first-child {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
+    mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
+  }
+}
+
+/* What follows the header in the shell, other than the chat, which scrolls beneath it, starts below it: an
+   alert, then the chat below the alert, or the Main Chat's skeleton or failure. */
+.chat-header + :not(.app-chat) {
+  margin-top: var(--chat-header-height);
+}
+
+.chat-header-agent {
+  pointer-events: auto;
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: transform var(--motion-quick) var(--ease);
+}
+
+.chat-header-agent:disabled {
+  cursor: default;
+}
+
+/* Pressed, the avatar and its name sink a little and the capsule darkens, as a button does. */
+.chat-header-agent:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chat-header-agent:active:not(:disabled) .chat-header-name {
+  background: var(--color-line);
+}
+
+.app-chat [data-testid='copilot-input-overlay'] > [data-copilotkit] {
+  transition: transform var(--motion-move) var(--ease) !important;
+}

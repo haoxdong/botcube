@@ -1,0 +1,471 @@
+/* ── List rows (Muse Fig 13, 15): a round icon tile, then a headline over muted detail lines ── */
+.list-group-heading {
+  margin: 24px 0 6px;
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+}
+
+.list-row {
+  --row-icon: 40px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 10px 0;
+}
+
+.list-row-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--row-icon);
+  height: var(--row-icon);
+  border-radius: var(--radius-pill);
+  background: var(--color-fill);
+  color: var(--color-text-muted);
+}
+
+.list-row-icon-failed {
+  color: var(--color-red);
+}
+
+.list-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--font-small);
+}
+
+.list-row-title {
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.list-row-detail {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.agent-activity > section:first-child .agent-activity-day {
+  margin-top: 0;
+}
+
+.agent-activity-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-activity-failed {
+  color: var(--color-red);
+  overflow-wrap: anywhere;
+}
+
+/* Scheduled: rows under frequency labels styled as Activity's days (Muse Fig 15); a tap opens the task's sheet. */
+.scheduled-tasks > section:first-child .list-group-heading {
+  margin-top: 0;
+}
+
+.scheduled > .agent-profile-error {
+  margin-bottom: 12px;
+}
+
+.scheduled-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scheduled-task {
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scheduled-task-text {
+  flex: 1;
+}
+
+/* One line under the title: the time, then what the task asks, cut short. */
+.scheduled-task-detail {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.scheduled-sheet-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  font-size: var(--font-small);
+}
+
+/* The Edit form, after Codex's Schedule a task: Title and the instructions, the schedule's card, More, why Save can't,
+   then Cancel and Save at the right; 16px between them. */
+.scheduled-edit {
+  align-items: stretch;
+}
+
+.scheduled-edit > p {
+  margin: 0;
+}
+
+.scheduled-sheet-body .scheduled-task-prompt {
+  margin: 0;
+  font-size: var(--font-body);
+  overflow-wrap: anywhere;
+}
+
+/* Settings rows (DESIGN.md), measured from Codex's Schedule a task: a `white` `radius-lg` card with a `border` edge,
+   its rows 48px tall with 20px sides, the label in `text` at the left and the value `text-muted` at the right, split
+   by hairlines inset 16px. */
+.settings-group {
+  align-self: stretch;
+  margin: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-body);
+  background: var(--color-white);
+}
+
+.settings-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 20px;
+  color: var(--color-text);
+}
+
+.settings-row + .settings-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 1px solid var(--color-line);
+}
+
+.settings-row dt {
+  flex: none;
+}
+
+.settings-row dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  text-align: right;
+  color: var(--color-text-muted);
+}
+
+/* A row's value, choice or date at the right, bare and muted; a choice ends in a 16px chevron. */
+.settings-select {
+  position: relative;
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+
+.settings-select select {
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 22px 0 0;
+  border: none;
+  font: inherit;
+  font-size: var(--font-body);
+  text-align: right;
+  text-align-last: right;
+  color: var(--color-text-muted);
+  background: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.settings-select svg {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+
+/* Interval's Every, as Codex's: the count bare and edited in place, then minutes, muted. No box or ring at any
+   state, focus among them: only the caret shows. */
+.settings-every {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--color-text-muted);
+}
+
+.settings-every input {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font: inherit;
+  font-size: var(--font-body);
+  text-align: right;
+  color: var(--color-text);
+  background: none;
+  box-shadow: none;
+  outline: none;
+  appearance: none;
+}
+
+/* More, as Codex's, in Edit and a task's sheet: muted words and a chevron under the card, which turns up while open. */
+.settings-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 16px;
+  border: none;
+  font: inherit;
+  font-size: var(--font-body);
+  color: var(--color-text-muted);
+  background: none;
+  cursor: pointer;
+}
+
+.settings-more svg {
+  transition: rotate var(--motion-move) var(--ease);
+}
+
+.settings-more[aria-expanded="true"] svg {
+  rotate: 180deg;
+}
+
+/* More's section spans the sheet as the card above it does, and takes its 16px gap inside its collapse, so the gap
+   grows with it rather than ahead of it. */
+.scheduled-sheet-body > .collapsible {
+  align-self: stretch;
+  margin-top: -16px;
+}
+
+.scheduled-sheet-body > .collapsible > div {
+  padding-top: 16px;
+}
+
+/* A date and time in words, as Codex's Time reads; the native picker lies unseen over the whole row to take the tap. */
+.settings-when .settings-select > span {
+  padding-right: 22px;
+  text-align: right;
+}
+
+.settings-when input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: var(--font-body);
+  opacity: 0;
+  appearance: none;
+  cursor: pointer;
+}
+
+.settings-when input:disabled {
+  cursor: default;
+}
+
+.settings-when:has(input:focus-visible) {
+  outline: auto;
+  outline-offset: -2px;
+}
+
+/* Ends' picker lies unseen under the row, where On a date… opens it; the menu takes the tap. */
+.settings-ends input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Where On a date… can't open the picker, the picker takes the row's taps, so the next tap opens it. */
+.settings-ends-direct input {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Title and the instructions: Codex's box, `radius-lg` with a `border` edge; the instructions 120px tall. */
+.settings-text {
+  padding: 14px 18px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  font: inherit;
+  font-size: var(--font-body);
+  color: var(--color-text);
+  background: var(--color-white);
+}
+
+textarea.settings-text {
+  min-height: 120px;
+  padding: 18px;
+  resize: vertical;
+}
+
+.settings-text::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Cancel then Save, pills at the right 12px apart, at least Codex's 36px tall. */
+.scheduled-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.scheduled-edit-actions .button {
+  min-height: max(36px, var(--button-height));
+  padding: 0 16px;
+}
+
+/* Open chat, Pause or Resume, Edit and Delete, one under another across the sheet. */
+.scheduled-sheet-actions {
+  display: grid;
+  gap: 8px;
+  align-self: stretch;
+}
+
+/* A proposal card, and a scheduled run's card in the Main Chat. */
+.scheduled-proposal,
+.scheduled-run {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 480px;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  font-size: var(--font-small);
+}
+
+/* The assistant message gives its paragraphs prose margins; the card spaces its lines by its gap. */
+.copilotKitAssistantMessage .scheduled-proposal p {
+  margin: 0 !important;
+}
+
+.scheduled-proposal-confirm {
+  margin-top: 6px;
+}
+
+/* A run card's lines: the task and its status, when it ran, two lines of its answer or error, and Open. */
+.scheduled-run-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+}
+
+.scheduled-run-icon {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.scheduled-run-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+}
+
+.scheduled-run-heading .status-pill {
+  flex: none;
+}
+
+.scheduled-run-time {
+  color: var(--color-text-muted);
+}
+
+.scheduled-run-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Headings, lists and paragraphs flow inline as one run of text, a space apart, in the card's own type. */
+.scheduled-run-text :where(*) {
+  display: inline !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  list-style: none;
+}
+
+.scheduled-run-text :where(h1, h2, h3, h4, h5, h6, p, li, tr)::after {
+  content: " ";
+}
+
+.scheduled-run-open {
+  margin-top: 6px;
+}
+
+/* The status takes Confirm's place at its height, as a card checking its task shows Confirm until it learns the task is
+   scheduled, so the card and the rows around it never move. Padding, as the card's paragraphs have no margins. */
+.scheduled-proposal-done {
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--button-height) + 6px);
+  padding-top: 6px;
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-title {
+  font-weight: var(--weight-semibold);
+}
+
+.scheduled-task-schedule {
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scheduled-task-heading .status-pill {
+  flex: none;
+}
+
+/* A paused task's icon and name dim beside its Paused pill; its detail lines are already muted. Colours, not
+   opacity, keep the name at AA contrast. */
+.scheduled-task-paused .list-row-icon,
+.scheduled-task-paused .scheduled-task-title {
+  color: var(--color-text-muted);
+}
+
+.scheduled-task-hint {
+  color: var(--color-text-muted);
+}

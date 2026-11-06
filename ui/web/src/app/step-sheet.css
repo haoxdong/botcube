@@ -1,0 +1,121 @@
+/* Base UI hands a touch to a scrollable area under the finger, so the body scrolls only at the top snap point and a
+   drag anywhere below it moves the sheet. */
+.step-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-size: var(--font-small);
+}
+
+.step-sheet .step-sheet-body {
+  flex: 1;
+}
+
+.step-sheet:not([data-expanded]) .step-sheet-body {
+  overflow: hidden;
+}
+
+.step-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--scrim);
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.step-popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: calc(100% - 48px);
+  max-width: 640px;
+  max-height: 80vh;
+  padding: 6px 16px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--color-white);
+  box-shadow: var(--shadow-float);
+  outline: 0;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity var(--motion-quick) var(--ease),
+    transform var(--motion-move) var(--ease);
+}
+
+.step-popup-backdrop[data-starting-style],
+.step-popup-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.step-popup[data-starting-style],
+.step-popup[data-ending-style] {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.step-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.step-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-section-label {
+  margin: 0;
+  font-size: var(--font-small);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-muted);
+}
+
+.step-section-copy {
+  margin-left: auto;
+  padding: 4px;
+  border-radius: var(--radius-md);
+}
+
+.step-copy-error {
+  flex-basis: 100%;
+  font-size: var(--font-small);
+  color: var(--color-red);
+  overflow-wrap: anywhere;
+}
+
+.step-section-exit {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  font-size: var(--font-label);
+  line-height: var(--leading);
+  color: var(--color-red);
+  background: var(--color-fill);
+}
+
+.step-section-text {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-fill);
+  font-family: inherit;
+  line-height: var(--leading-loose);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.step-section-text:not([data-prose]) {
+  font-family: var(--font-code);
+  font-size: var(--font-code-size);
+}
