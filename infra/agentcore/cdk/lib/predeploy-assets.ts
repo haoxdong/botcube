@@ -37,6 +37,13 @@ function requiresToolStaging(spec: AgentCoreDockerPrerequisiteSpec, projectRoot:
   });
 }
 
+export function toolStagingRoot(deployRoot: string, hook: string): string {
+  for (let root = path.resolve(deployRoot); ; root = path.dirname(root)) {
+    if (fs.existsSync(path.resolve(root, hook))) return root;
+    if (path.dirname(root) === root) throw new Error(`Cartridge tool-staging hook is missing: ${hook}`);
+  }
+}
+
 export function stageAgentCoreDockerPrerequisites(
   spec: AgentCoreDockerPrerequisiteSpec,
   projectRoot: string,

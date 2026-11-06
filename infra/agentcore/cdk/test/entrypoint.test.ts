@@ -118,6 +118,29 @@ test('stages tools from the repository root, then synthesizes the stacks with th
   expect(deployedCommit(process.env.CDK_OUTDIR)).toBe(git(repo, 'rev-parse', 'HEAD'));
 });
 
+test('stages a nested template Cartridge from the root that owns its hook', async () => {
+  const repo = repository();
+  const oldDeploy = path.join(repo, 'bot/deploy');
+  const deployRoot = path.join(repo, 'templates/always-on/deploy');
+  fs.mkdirSync(path.dirname(deployRoot), { recursive: true });
+  fs.renameSync(oldDeploy, deployRoot);
+  const identity = JSON.parse(fs.readFileSync(path.join(deployRoot, 'identity.json'), 'utf8'));
+  identity.artifacts.toolStaging.hook = 'templates/always-on/deploy/stage-tools.sh';
+  fs.writeFileSync(path.join(deployRoot, 'identity.json'), JSON.stringify(identity));
+  const specPath = path.join(deployRoot, 'agentcore/agentcore.json');
+  const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+  spec.runtimes[0].codeLocation = '../../../harness/';
+  fs.writeFileSync(specPath, JSON.stringify(spec));
+  process.env.CARTRIDGE_DEPLOY_ROOT = deployRoot;
+  process.env.CDK_OUTDIR = tempDir();
+
+  const { app, errors, exitCode } = await runEntrypoint();
+
+  expect({ errors, exitCode }).toEqual({ errors: [], exitCode: undefined });
+  assert(app, 'the template entrypoint synthesized its app');
+  expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
+});
+
 test('marks the deployed commit dirty when tracked files differ from it', async () => {
   const repo = repository();
   fs.appendFileSync(path.join(repo, 'harness/session-api.Dockerfile'), '# local edit\n');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { addAgentCoreStacks } from '../lib/agentcore-app';
 import { loadDeployConfig } from '../lib/deploy-config';
-import { stageAgentCoreDockerPrerequisites } from '../lib/predeploy-assets';
+import { stageAgentCoreDockerPrerequisites, toolStagingRoot } from '../lib/predeploy-assets';
 import { readCdkContext } from '../lib/cdk-context';
 import { App } from 'aws-cdk-lib';
 import { execFileSync } from 'child_process';
@@ -16,7 +16,7 @@ function checkoutCommit(repositoryRoot: string): string {
 async function main() {
   const config = await loadDeployConfig(process.env.CARTRIDGE_DEPLOY_ROOT, process.cwd());
 
-  const repositoryRoot = path.resolve(config.deployRoot, '../..');
+  const repositoryRoot = toolStagingRoot(config.deployRoot, config.identity.artifacts.toolStaging.hook);
   const commit = checkoutCommit(repositoryRoot);
   stageAgentCoreDockerPrerequisites(
     config.spec,
