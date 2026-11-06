@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { useDrawerSwipe as SwipeHook } from './drawer-swipe';
 
 let useDrawerSwipe: typeof SwipeHook;
@@ -26,6 +26,7 @@ function Fixture({ enabled = true, side = 'left', sheet }: { enabled?: boolean; 
     <aside ref={drawerRef} data-testid="drawer" data-visible={swipe.visible} role={side === 'right' ? 'dialog' : undefined}><svg data-testid="icon" /></aside>
     {sheet && <div role="dialog" aria-label="Sheet" hidden={sheet === 'hidden'} />}
     <button onClick={() => setExpanded(!expanded)}>Menu</button>
+    <button onClick={swipe.toggle}>Toggle</button>
     <button onClick={() => setExpanded(false)}>Chat</button>
     <button onClick={swipe.close}>Close</button>
     <input aria-label="Input" />
@@ -55,6 +56,34 @@ function swipe(from: number, to: number, y = 100) {
 }
 
 describe('phone sidebar swipes', () => {
+  it('keeps a tap at its starting offset until the first frame, then settles for the full duration', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback));
+    onTestFinished(() => { raf.mockRestore(); vi.useRealTimers(); });
+    render(<Fixture />);
+    const layout = screen.getByTestId('layout');
+    fireEvent.click(screen.getByText('Toggle'));
+    void act(() => vi.advanceTimersByTime(1000));
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('0px');
+    void act(() => { for (const frame of frames.splice(0)) frame(1000); });
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('300px');
+    void act(() => vi.advanceTimersByTime(319));
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('300px');
+    void act(() => vi.advanceTimersByTime(1));
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('');
+
+    fireEvent.click(screen.getByText('Close'));
+    void act(() => vi.advanceTimersByTime(1000));
+    expect(screen.getByTestId('drawer')).toHaveAttribute('data-visible', 'true');
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('300px');
+    void act(() => { for (const frame of frames.splice(0)) frame(2320); });
+    expect(layout.style.getPropertyValue('--sidebar-drag-offset')).toBe('0px');
+    void act(() => vi.advanceTimersByTime(319));
+    expect(screen.getByTestId('drawer')).toHaveAttribute('data-visible', 'true');
+    void act(() => vi.advanceTimersByTime(1));
+    expect(screen.getByTestId('drawer')).toHaveAttribute('data-visible', 'false');
+  });
   it('registers a non-passive move listener before touchstart so WebKit can cancel drawer drags', () => {
     const listeners = vi.spyOn(HTMLElement.prototype, 'addEventListener');
     render(<Fixture />);

@@ -135,15 +135,15 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, expa
   }, [enabled, expanded]);
   useEffect(() => {
     if (session.phase !== 'settling') return;
+    let timer: number | undefined;
     const frame = requestAnimationFrame(() => {
       const current = sessionRef.current;
       if (current.phase !== 'settling') return;
       // A tap's open starts with no width: the panel has it now it is shown.
       const width = current.width || (drawerRef.current?.getBoundingClientRect().width ?? 0);
       changeSession({ ...current, width, offset: current.targetExpanded ? width : 0 });
+      timer = window.setTimeout(() => changeSession(IDLE), moveMs() + 20);
     });
-    // The settle ends with its transition (--motion-move).
-    const timer = window.setTimeout(() => changeSession(IDLE), moveMs() + 20);
     return () => { cancelAnimationFrame(frame); window.clearTimeout(timer); };
   }, [session.phase]);
   useEffect(() => {
