@@ -150,7 +150,7 @@ Write it for IM, to be read at a glance. Build it from these modules, in the ord
 <modules>
 takeaway  1, under 25 words
 bullets   0–3, under the takeaway, each under 15 words, no closing period
-table     0–1, under 10 rows and 5 columns, every row its source fills
+table     0–1, under 10 rows and 5 columns
 visual    0–2, each one of:
           plotly: fig.write_json('<name>.plotly.json'), embedded as ![<caption>](<published link>)
           mermaid: a ```mermaid block
