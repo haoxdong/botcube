@@ -36,6 +36,7 @@ services:
     build: *production-harness
     environment:
       BOTCUBE_CARTRIDGE_MODULE: botcube_always_on.harness
+      OTEL_TRACES_EXPORTER: console
   session-api:
     image: botcube-production-session-api
     build:

@@ -124,14 +124,21 @@ type FadeProps = {
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 };
 
-type FadingProps = Omit<FadeProps, "open"> & { as?: Tag; title?: string | undefined; "data-status"?: string | undefined };
+type FadingProps = Omit<FadeProps, "open" | "ref" | "onKeyDown"> & {
+  title?: string | undefined;
+  "data-status"?: string | undefined;
+} & (
+  | { as?: "div"; ref?: Ref<HTMLDivElement>; onKeyDown?: KeyboardEventHandler<HTMLDivElement> }
+  | { as: "li" | "span"; ref?: never; onKeyDown?: never }
+);
 
 function Fading({ as = "div", children, ref, onKeyDown, ...box }: FadingProps) {
   const present = useIsPresent();
   const { quick } = motionTokens();
   const fade = { inert: present ? undefined : true, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { opacity: quick } };
-  const Box = as === "li" ? m.li : as === "span" ? m.span : m.div;
-  return <Box {...box} ref={ref} onKeyDown={onKeyDown} style={as === "span" ? { display: "inline-block" } : undefined} {...fade}>{children}</Box>;
+  if (as === "li") return <m.li {...box} {...fade}>{children}</m.li>;
+  if (as === "span") return <m.span {...box} style={{ display: "inline-block" }} {...fade}>{children}</m.span>;
+  return <m.div {...box} ref={ref} onKeyDown={onKeyDown} {...fade}>{children}</m.div>;
 }
 
 export function Fade({ open, ...box }: FadeProps) {

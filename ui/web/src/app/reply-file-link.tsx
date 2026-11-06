@@ -8,9 +8,13 @@ import { ReplyFileCard } from './reply-file-card';
 import { replyFilePath } from './reply-file-path';
 import { useReplyFile } from './use-reply-file';
 
-const MotiondefaultComponentsa = motionElement.create(defaultComponents.a);
-
 type LinkProps = ComponentProps<typeof defaultComponents.a>;
+
+const MotionFileAnchor = motionElement.create(function FileAnchor({ link, style, ...props }: {
+  link: LinkProps;
+} & ComponentProps<"a">) {
+  return <defaultComponents.a {...link} {...props} style={{ ...link.style, ...style }}>{link.children}</defaultComponents.a>;
+});
 
 const CITATION = /^\[(\d+)\]$/;
 
@@ -40,8 +44,10 @@ function FileLink({ path, ...props }: LinkProps & { path: string }) {
   return (
     <>
       <Presence>{file.status === 'ready' && (
-        <MotiondefaultComponentsa {...presenceMotion}
-          {...props}
+        <MotionFileAnchor {...presenceMotion}
+          link={props}
+          ref={props.ref}
+          inert={props.inert}
           href={file.url}
           onClick={download}
         />

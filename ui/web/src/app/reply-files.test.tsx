@@ -244,3 +244,21 @@ it('asks again, without the last state, for a file link after the account change
   expect(again.container).toHaveTextContent('(loading)');
   expect(again.queryByRole('link', { name: 'chart' })).toBeNull();
 });
+
+it('preserves ordinary anchor styles, refs and animation events on a file download', async () => {
+  const { createRef } = await import('react');
+  const { ReplyFileLink } = await import('./reply-file-link');
+  const { StreamdownContext } = await import('streamdown');
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ url: 'https://files.test/anchor-props' })));
+  const ref = createRef<HTMLAnchorElement>();
+  const onAnimationStart = vi.fn();
+  const view = render(<StreamdownContext.Provider value={{
+    codeBlockMaxHeight: 400, controls: true, isAnimating: false, lineNumbers: true,
+    mode: 'static', tableMaxHeight: 300, shikiTheme: ['github-light', 'github-dark'], linkSafety: { enabled: false },
+  }}><ReplyFileLink href="/anchor-props.txt" ref={ref} style={{ fontWeight: 700 }} onAnimationStart={onAnimationStart}>Download</ReplyFileLink></StreamdownContext.Provider>);
+  const link = await view.findByRole('link', { name: 'Download' });
+  expect(ref.current).toBe(link);
+  expect(link).toHaveStyle({ fontWeight: '700' });
+  fireEvent.animationStart(link);
+  expect(onAnimationStart).toHaveBeenCalledOnce();
+});
