@@ -1,6 +1,7 @@
 import { optionalPhysicalName } from './physical-name.js';
 import { CfnOutput, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, StreamViewType, Table, type ITable } from 'aws-cdk-lib/aws-dynamodb';
+import * as efs from 'aws-cdk-lib/aws-efs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { CfnFileSystem } from 'aws-cdk-lib/aws-s3files';
@@ -22,6 +23,8 @@ export class ChatStorageStack extends Stack {
   /** The bucket behind the Files file system; each account's files live under `accounts/<hash>/`. */
   readonly filesBucket: s3.Bucket | s3.IBucket;
   readonly filesFileSystem: CfnFileSystem;
+  /** The EFS file system that replaces S3 Files for every account's Files; each account is `/accounts/<hash>`. */
+  readonly filesEfs: efs.CfnFileSystem;
 
   constructor(scope: Construct, id: string, props: ChatStorageProps) {
     super(scope, id, props);
@@ -82,5 +85,26 @@ export class ChatStorageStack extends Stack {
     this.filesFileSystem.node.addDependency(sync);
     this.filesFileSystem.applyRemovalPolicy(RemovalPolicy.RETAIN);
     new CfnOutput(this, 'FilesFileSystemArn', { value: this.filesFileSystem.attrFileSystemArn });
+
+    // Files on EFS. Only IAM principals of this account mount it, over TLS, each through
+    // an access point their policy names: nothing mounts it anonymously, and nothing gets root.
+    this.filesEfs = new efs.CfnFileSystem(this, 'FilesEfs', {
+      encrypted: true,
+      performanceMode: 'generalPurpose',
+      throughputMode: 'elastic',
+      // Files are the user's own data: AWS Backup keeps daily recovery points for 35 days.
+      backupPolicy: { status: 'ENABLED' },
+      fileSystemPolicy: {
+        Version: '2012-10-17',
+        Statement: [{
+          Effect: 'Allow',
+          Principal: { AWS: `arn:${this.partition}:iam::${this.account}:root` },
+          Action: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+          Condition: { Bool: { 'aws:SecureTransport': 'true', 'elasticfilesystem:AccessedViaMountTarget': 'true' } },
+        }],
+      },
+    });
+    this.filesEfs.applyRemovalPolicy(RemovalPolicy.RETAIN);
+    new CfnOutput(this, 'FilesEfsArn', { value: this.filesEfs.attrArn });
   }
 }

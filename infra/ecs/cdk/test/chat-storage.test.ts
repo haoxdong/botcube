@@ -63,6 +63,27 @@ test("every account's Files live in one retained S3 Files file system over a ver
   ]) } });
 });
 
+test("every account's Files can live on one retained, encrypted, backed-up EFS file system that only IAM over TLS mounts", () => {
+  const template = storage();
+  template.hasResource('AWS::EFS::FileSystem', {
+    DeletionPolicy: 'Retain',
+    UpdateReplacePolicy: 'Retain',
+    Properties: {
+      Encrypted: true,
+      PerformanceMode: 'generalPurpose',
+      ThroughputMode: 'elastic',
+      BackupPolicy: { Status: 'ENABLED' },
+      FileSystemPolicy: { Statement: [{
+        Effect: 'Allow',
+        Principal: { AWS: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':iam::', { Ref: 'AWS::AccountId' }, ':root']] } },
+        // No ClientRootAccess: every mount goes through an account's access point as uid 1000.
+        Action: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+        Condition: { Bool: { 'aws:SecureTransport': 'true', 'elasticfilesystem:AccessedViaMountTarget': 'true' } },
+      }] },
+    },
+  });
+});
+
 test('adopter names reach durable storage and its sync role', () => {
   const template = Template.fromStack(new ChatStorageStack(new App(), 'Named', {
     corsOrigins: [], tableName: 'adopter-chat', filesBucketName: 'adopter-files', filesSyncRoleName: 'adopter-files-sync',
