@@ -27,7 +27,11 @@ COPY tools/pyproject.toml tools/uv.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
     uv sync --frozen --no-dev --no-cache
-COPY tools/smoke.py ./
+COPY tools/smoke.py tools/botcube_plotly.py ./
+# Every figure the agent saves carries BotCube's chart look as plotly.py's default template (DESIGN.md, Charts).
+RUN SITE=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))') && \
+    mv botcube_plotly.py "$SITE"/ && echo 'import botcube_plotly' > "$SITE"/botcube_plotly.pth && \
+    .venv/bin/python -c "from plotly import io; assert io.templates.default == 'botcube', io.templates.default"
 # Build matplotlib's font cache now, or each cold microVM's first chart builds it.
 # Matplotlib ignores a config dir it cannot write, so it stays writable for any user.
 ENV MPLCONFIGDIR=/var/cache/matplotlib

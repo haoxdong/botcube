@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { notesUnder, parseFigure, themedLayout, type ChartPalette, type Figure } from './plotly-figure';
+import { fittedLayout, headingOf, notesUnder, parseFigure, type Figure } from './plotly-figure';
 
 /** The slice of plotly.js a chart uses, from its prebuilt bundle of every trace type. */
 interface Plotly {
@@ -30,24 +30,8 @@ const CONFIG = {
   scrollZoom: false,
 };
 
-function palette(): ChartPalette {
-  const root = getComputedStyle(document.documentElement);
-  const read = (name: string) => {
-    const value = root.getPropertyValue(`--color-${name}`).trim();
-    if (value === '') throw new Error(`tokens.css defines no --color-${name} for charts`);
-    return value;
-  };
-  return {
-    text: read('text'),
-    muted: read('text-muted'),
-    line: read('line'),
-    white: read('white'),
-    font: getComputedStyle(document.body).fontFamily,
-  };
-}
-
 /**
- * Draws `figure` into `element` with plotly.js in the app's look. A trace type plotly.js lacks fails loud, by name,
+ * Draws `figure` into `element` with plotly.js, fitted to it. A trace type plotly.js lacks fails loud, by name,
  * rather than leaving a blank plot.
  */
 async function draw(element: HTMLElement, figure: Figure): Promise<Plotly> {
@@ -57,23 +41,25 @@ async function draw(element: HTMLElement, figure: Figure): Promise<Plotly> {
     .map((trace) => (typeof trace.type === 'string' ? trace.type : 'scatter'))
     .filter((type) => !Object.hasOwn(known, type));
   if (missing.length > 0) throw new Error(`plotly.js has no ${[...new Set(missing)].map((type) => `"${type}"`).join(', ')} chart type`);
-  await library.react(element, figure.data, themedLayout(figure.layout, palette(), element.clientWidth), CONFIG);
+  await library.react(element, figure.data, fittedLayout(figure.layout, element.clientWidth), CONFIG);
   return library;
 }
 
 /**
  * A live Plotly chart from a `.plotly.json` file's text: it hovers, zooms and pans in place, across its box's
- * width, with the notes the agent put under the plot as a caption under it. The text is parsed and checked as data
+ * width, under its title and subtitle as the page's own text, with the notes the agent put under the plot as a
+ * caption under it. The text is parsed and checked as data
  * (`parseFigure`); nothing the agent wrote runs. A chart that cannot draw shows the one-line reason and the file's
  * text as code in its place.
  */
 export function PlotlyChart({ text, title }: { text: string; title: string }) {
   const box = useRef<HTMLDivElement>(null);
-  const notes = useMemo(() => {
+  const { heading, notes } = useMemo(() => {
     try {
-      return notesUnder(parseFigure(text).layout);
+      const { layout } = parseFigure(text);
+      return { heading: headingOf(layout), notes: notesUnder(layout) };
     } catch {
-      return [];
+      return { heading: { title: '', subtitle: '' }, notes: [] };
     }
   }, [text]);
   const [failure, setFailure] = useState<string | null>(null);
@@ -112,6 +98,8 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
     );
   return (
     <div className="plotly-chart-frame" role="figure" aria-label={title}>
+      <p className="plotly-chart-title">{heading.title}</p>
+      <p className="plotly-chart-subtitle">{heading.subtitle}</p>
       <div ref={box} className="plotly-chart" />
       {notes.map((note, index) => <p key={index} className="plotly-chart-note">{note}</p>)}
     </div>

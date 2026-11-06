@@ -42,7 +42,7 @@ pythonVersion = "3.11"
 reportMissingParameterType = "error"
 reportMissingTypeArgument = "error"
 reportUnknownParameterType = "error"
-include = ["smoke.py", "tests"]
+include = ["smoke.py", "botcube_plotly.py", "tests"]
 
 [tool.pytest.ini_options]
 markers = [

@@ -1,5 +1,5 @@
 import { render, waitFor } from '@testing-library/react';
-import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { PlotlyChart } from './plotly-chart';
 
 // plotly.js's prebuilt bundle, which happy-dom cannot draw with: some of its trace types, drawing as `react` settles.
@@ -11,11 +11,6 @@ const plotly = vi.hoisted(() => ({
 }));
 vi.mock('./plotly-bundle', () => ({ default: async () => plotly }));
 
-beforeAll(() => {
-  // tokens.css's colours, which the chart reads as they resolve.
-  for (const name of ['text', 'text-muted', 'line', 'white', 'blue', 'green', 'red'])
-    document.documentElement.style.setProperty(`--color-${name}`, '#123456');
-});
 beforeEach(() => plotly.react.mockClear());
 
 it.each([
@@ -68,4 +63,14 @@ it('shows the notes under the plot as a caption under the chart, not in it', asy
   expect(figure.querySelector('.plotly-chart-note')).toHaveTextContent('Source: user-provided values');
   await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
   expect((plotly.react.mock.calls[0] as unknown[])[2]).toMatchObject({ annotations: [] });
+});
+
+it('sets the title and its source above the chart as text, and leaves plotly no title to draw', async () => {
+  plotly.react.mockClear();
+  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}],"layout":{"title":{"text":"US 10-year Treasury yield since 2020, daily close","subtitle":{"text":"Source: FRED"}}}}' title="Yield" />);
+  const figure = await view.findByRole('figure', { name: 'Yield' });
+  expect(figure.querySelector('.plotly-chart-title')).toHaveTextContent('US 10-year Treasury yield since 2020, daily close');
+  expect(figure.querySelector('.plotly-chart-subtitle')).toHaveTextContent('Source: FRED');
+  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
+  expect((plotly.react.mock.calls[0] as unknown[])[2]).not.toHaveProperty('title');
 });

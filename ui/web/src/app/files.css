@@ -270,7 +270,8 @@
   background: var(--color-fill);
 }
 
-/* A chart and, under it, the notes the agent put under its plot (its source line) as a caption. */
+/* A chart under its title and subtitle (the agent's source line), which wrap in the page's type, and over the notes
+   the agent put under its plot as a caption. */
 .plotly-chart-frame {
   display: flex;
   flex-direction: column;
@@ -281,6 +282,29 @@
   flex: 1;
   min-height: 0;
   width: 100%;
+}
+
+.plotly-chart-title {
+  flex: none;
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+  white-space: pre-line;
+}
+
+.plotly-chart-subtitle {
+  flex: none;
+  margin: 2px 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  white-space: pre-line;
+}
+
+/* A figure with no title or no source keeps no line for it. */
+.plotly-chart-title:empty,
+.plotly-chart-subtitle:empty {
+  display: none;
 }
 
 .plotly-chart-note {
