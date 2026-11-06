@@ -143,7 +143,7 @@ export async function startLocalChromium(
     const endpoint = await new Promise<string>((resolve, reject) => {
       let waitingFor = 'the DevTools endpoint';
       const timer = setTimeout(
-        () => reject(new Error(`Agent Computer Chromium startup timed out while waiting for ${waitingFor}`)),
+        () => reject(new Error(`Agent Computer Chromium startup timed out while waiting for ${waitingFor} from ${chromiumPath}`)),
         10_000
       );
       let output = '';

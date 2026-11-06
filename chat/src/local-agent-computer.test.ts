@@ -611,9 +611,10 @@ it('classifies a Chromium startup that never creates a page', { timeout: 15_000 
   executableDirectory = await mkdtemp(resolve(tmpdir(), 'agent-browser-retry-'));
   const executable = resolve(executableDirectory, 'chromium');
   await writeFile(executable, `#!/usr/bin/env python3\nimport os, sys\nchromium = ${JSON.stringify(testChromiumPath())}\nos.execv(chromium, [chromium, *[arg for arg in sys.argv[1:] if not arg.startswith('http')], '--no-startup-window'])\n`, { mode: 0o755 });
-  await expect(startLocalChromium(executable, await fakeSite(), new AbortController().signal)).rejects.toThrow(
-    'Agent Computer Chromium startup timed out while waiting for a page target'
-  );
+  const started = startLocalChromium(executable, await fakeSite(), new AbortController().signal);
+  await expect(started).rejects.toThrow('Agent Computer Chromium startup timed out while waiting for a page target');
+  // The mirror's CI once timed out here without naming the browser it had launched.
+  await expect(started).rejects.toThrow(`from ${executable}`);
 });
 
 it.each(['exit', 'timeout'])('records Chromium startup diagnostics on %s', async (failure) => {
