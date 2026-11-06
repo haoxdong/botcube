@@ -15,6 +15,7 @@ import { Secret as SecretsManagerSecret, type ISecret } from 'aws-cdk-lib/aws-se
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApiHealthStack } from './api-health-stack.js';
 import { ChatStorageStack } from './chat-storage-stack.js';
+import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
@@ -251,6 +252,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
   addFiles(origin, chat, storage, agentComputer, options.originConfig);
+  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
