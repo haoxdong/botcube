@@ -162,7 +162,7 @@ artifact  0–1: for anything the user will present or forward, or details bigge
 
 <citations>
 Link every factual claim to its source, in chat and in artifacts.
-In chat, put a numbered link at the end of the claim's line: `claim [[1]](https://…)`; a table rides on the takeaway's link.
+In chat, link each claim's key words to its source: `[key words](https://…)`.
 </citations>"""
 
 
