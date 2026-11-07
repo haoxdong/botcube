@@ -89,6 +89,7 @@ def test_prompt_cache_usage_middleware_emits_structured_turn_counters(caplog: py
         'cache_read_to_creation_ratio': 2.714286,
     }
     for message in state['messages']:
+        assert isinstance(message.content, str)
         assert message.content not in line
 
 

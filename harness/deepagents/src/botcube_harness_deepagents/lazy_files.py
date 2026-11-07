@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Generator, Iterable
 from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -122,7 +122,7 @@ def current_turn_files() -> TurnFiles | None:
 
 
 @contextmanager
-def turn_files(files: FilesSync | None, root: Path, excluded: Iterable[str]) -> Iterator[TurnFiles]:
+def turn_files(files: FilesSync | None, root: Path, excluded: Iterable[str]) -> Generator[TurnFiles, None, None]:
     readiness = TurnFiles(files, root, excluded)
     token = _turn_files.set(readiness)
     try:

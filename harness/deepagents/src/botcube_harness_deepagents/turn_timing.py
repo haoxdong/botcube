@@ -12,7 +12,7 @@ import json
 import logging
 import sys
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -309,7 +309,7 @@ class TurnTiming(BaseCallbackHandler):
 
 
 @contextmanager
-def use(timing: TurnTiming) -> Iterator[TurnTiming]:
+def use(timing: TurnTiming) -> Generator[TurnTiming, None, None]:
     token = _current.set(timing)
     loop = asyncio._get_running_loop()  # None outside a loop, where there is no lag to watch
     watcher = None if loop is None else loop.create_task(timing._watch_loop())
@@ -333,7 +333,7 @@ def model_run() -> str | None:
 
 
 @contextmanager
-def phase(name: str) -> Iterator[None]:
+def phase(name: str) -> Generator[None, None, None]:
     """Add the block's wall time to the current Turn's `name` phase."""
     if name not in _PHASES:
         raise ValueError(f'Unknown Turn timing phase {name!r}')

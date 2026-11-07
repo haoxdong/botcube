@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import pytest
 from langchain.agents.middleware.types import ModelResponse
@@ -45,7 +45,7 @@ def _fed(memory: FakeAgentCoreMemory, messages: list[BaseMessage]) -> list[list[
 
 def test_a_turn_feeds_one_event_per_message_with_text_in_order() -> None:
     call = {'id': 'call-1', 'name': 'execute', 'args': {'command': 'echo copper'}}
-    messages = [
+    messages: list[BaseMessage] = [
         HumanMessage(content='Remember that I prefer copper.'),
         AIMessage(content='', tool_calls=[call]),
         ToolMessage(content='Copper futures curve output', tool_call_id='call-1'),
@@ -84,7 +84,7 @@ def test_a_message_over_agentcores_limit_fails_the_feed_before_any_write() -> No
 def test_a_failed_write_fails_the_feed_with_its_cause() -> None:
     memory = FakeAgentCoreMemory()
 
-    def unavailable(**_params: object) -> None:
+    def unavailable(**_params: object) -> NoReturn:
         raise RuntimeError('Memory unavailable')
 
     memory.create_event = unavailable  # type: ignore[method-assign]

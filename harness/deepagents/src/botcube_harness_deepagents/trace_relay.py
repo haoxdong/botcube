@@ -3,7 +3,7 @@ from __future__ import annotations
 import gzip
 import logging
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import cache
@@ -49,7 +49,7 @@ _calls_by_tool_span: WeakValueDictionary[bytes, FailedCalls] = WeakValueDictiona
 
 
 @contextmanager
-def counting_failed_calls(calls: FailedCalls) -> Iterator[None]:
+def counting_failed_calls(calls: FailedCalls) -> Generator[None, None, None]:
     token = _turn_calls.set(calls)
     try:
         yield

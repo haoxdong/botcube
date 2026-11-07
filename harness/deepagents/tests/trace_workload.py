@@ -4,18 +4,20 @@ import asyncio
 import json
 import os
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
-from types import SimpleNamespace
 from typing import Any, cast
 
 import httpx
 import langsmith.utils
+import pytest
 from ag_ui.core import RunAgentInput, UserMessage
+from ag_ui_langgraph import LangGraphAgent
 from botcube_cartridge import HarnessDefinition
+from deepagents.backends import LocalShellBackend
 from langchain.agents import AgentState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import (
@@ -56,10 +58,13 @@ async def exercise(session_id: str, mode: str) -> None:
         result = await lookup.ainvoke({'value': mode})
         return {'messages': [AIMessage(result)]}
 
-    serving._require_cartridge = lambda: SimpleNamespace(
-        skills=(), prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
+    patch = pytest.MonkeyPatch()
+    patch.setattr(serving, '_require_cartridge', lambda: serving.HarnessCartridge(
+        skills=(), agent_name='test', system_prompt='',
+        build_backend=lambda _: LocalShellBackend(root_dir='.', virtual_mode=True, inherit_env=False),
+        environment_cache_key=lambda _: (), prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
         apply_session_id=lambda *_: None,
-    )
+    ))
     graph = StateGraph(AgentState)
     graph.add_node('model', reply)
     graph.add_edge(START, 'model')
@@ -73,15 +78,18 @@ async def exercise(session_id: str, mode: str) -> None:
                 await stream.aclose()
                 break
     else:
-        def backend() -> SimpleNamespace:
+        def backend() -> LocalShellBackend:
             with turn_timing.phase('workspace'):
-                return SimpleNamespace(cwd='.')
+                return LocalShellBackend(root_dir='.', virtual_mode=True, inherit_env=False)
 
-        async def turn_agent(*_args: Any) -> tuple[Any, Any]:
+        async def turn_agent(
+            build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]],
+            turn_identity: str | None, run_id: str, persistent_memory: bool,
+        ) -> tuple[LangGraphAgent, LocalShellBackend]:
             return agent, await asyncio.to_thread(backend)
 
         serving._SESSION_TURNS = turns
-        serving._turn_agent = turn_agent
+        pytest.MonkeyPatch().setattr(serving, '_turn_agent', turn_agent)
         inputs.forwarded_props = {'sessionUserId': 'owner'}
         trace_id = {'success': '1', 'tool-error': '2', 'model-error': '3'}[mode] * 32
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=serving.app), base_url='http://harness') as client:
@@ -192,7 +200,7 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT': f'http://127.0.0.1:{collector.server_port}/v1/traces',
         'AWS_REGION': 'us-east-1', 'AWS_ACCESS_KEY_ID': 'fake-key', 'AWS_SECRET_ACCESS_KEY': 'fake-secret',
     })
-    serving.harness_trace_relay = trace_relay.start_trace_relay
+    pytest.MonkeyPatch().setattr(serving, 'harness_trace_relay', trace_relay.start_trace_relay)
     with TemporaryDirectory() as root:
         executable = Path(root) / 'appcli'
         executable.write_text(_EXPORTING_CLI.format(python=sys.executable))
@@ -208,11 +216,14 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         model = _CommandModel(command=command, answer_fails=answer_fails)
         agent = serving._SessionAgent(name='test', graph=build_agent(backend=backend, skills=[], model=model, checkpointer=MemorySaver()))
 
-        async def turn_agent(*_args: Any) -> tuple[Any, Any]:
+        async def turn_agent(
+            build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]],
+            turn_identity: str | None, run_id: str, persistent_memory: bool,
+        ) -> tuple[LangGraphAgent, LocalShellBackend]:
             return agent, backend
 
         serving._SESSION_TURNS = serving._SessionTurns()
-        serving._turn_agent = turn_agent
+        pytest.MonkeyPatch().setattr(serving, '_turn_agent', turn_agent)
         inputs = RunAgentInput(
             thread_id=session_id, run_id=session_id, messages=[UserMessage(id='question', role='user', content='question')],
             tools=[], context=[], state={}, forwarded_props={'sessionUserId': 'owner'},

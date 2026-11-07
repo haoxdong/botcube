@@ -9,13 +9,16 @@ from deepagents.backends import CompositeBackend, StateBackend
 from deepagents.graph import DeepAgentState
 from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware, FilesystemPermission
-from deepagents.middleware.skills import SKILLS_SYSTEM_PROMPT, SkillsMiddleware
+from deepagents.middleware.skills import (
+    SKILLS_SYSTEM_PROMPT,
+    SkillsMiddleware,
+    SkillsState,
+)
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from deepagents.middleware.summarization import SummarizationMiddleware
 from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
 from langchain.agents.middleware.types import (
     AgentMiddleware,
-    AgentState,
     ModelRequest,
     OmitFromOutput,
     PrivateStateAttr,
@@ -60,7 +63,7 @@ class PlainState(DeepAgentState):
     last_model_call_at: NotRequired[Annotated[float, PrivateStateAttr]]
 
 
-class _SkillsState(AgentState):
+class _SkillsState(SkillsState):
     skills_metadata: NotRequired[Annotated[list[_SkillMetadata] | None, OmitFromOutput]]
     skills_load_errors: NotRequired[Annotated[list[str], PrivateStateAttr]]
     _skill_tools_disclosed: NotRequired[Annotated[dict[str, str], PrivateStateAttr]]

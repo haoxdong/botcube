@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import zoneinfo
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -50,7 +50,7 @@ async def answer_once(model: Any, text: str) -> None:
 
 
 @contextmanager
-def workspace_at(root: str) -> Iterator[None]:
+def workspace_at(root: str) -> Generator[None, None, None]:
     previous = os.environ.get('BOTCUBE_WORKSPACE')
     os.environ['BOTCUBE_WORKSPACE'] = root
     try:

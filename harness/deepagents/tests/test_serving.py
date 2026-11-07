@@ -85,6 +85,21 @@ from relay_fake import (
 SESSION_HEADER = 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id'
 
 
+class _Member(TypedDict):
+    actor: str
+    user: str
+    memory: bool
+
+
+class _ThreadMember(_Member):
+    thread: str
+
+
+class _Documents(TypedDict):
+    agentIdentity: dict[str, str]
+    soul: str
+
+
 class _Recorder:
     def __init__(self) -> None:
         self.builds: list[dict[str, Any]] = []
@@ -869,7 +884,7 @@ def test_a_sessions_memory_block_survives_a_restarted_harness(service: _Service,
 
 IDENTITY = {'name': 'Ada Bot', 'character': 'A markets analyst', 'vibe': 'Calm and exact', 'avatar': ''}
 SOUL = 'Be candid. Say what you do not know.'
-DOCUMENTS = {'agentIdentity': IDENTITY, 'soul': SOUL}
+DOCUMENTS: _Documents = {'agentIdentity': IDENTITY, 'soul': SOUL}
 
 
 def _custom(events: list[dict[str, Any]]) -> list[tuple[str, Any]]:
@@ -2545,7 +2560,7 @@ def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
         return turn_memory(*args, **kwargs)
 
     monkeypatch.setattr(agentcore, 'turn_memory', exchange)
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     with ThreadPoolExecutor(max_workers=1) as pool:
         first = pool.submit(service.turn, 'first', **member)
         try:
@@ -2620,7 +2635,7 @@ def test_on_agentcore_a_failed_credential_exchange_fails_the_turn_after_the_buil
 
 
 def test_on_agentcore_an_edited_question_regenerates_its_answer(service: _Service, agentcore_memory: _ScopedMemory) -> None:
-    member = {'thread': 'thread-a', 'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _ThreadMember = {'thread': 'thread-a', 'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     service.turn('first question', message='question-1', **member)
 
     # Resent under the same ID with new text, the library rewinds the Session through its checkpoint history.
@@ -2692,7 +2707,7 @@ def test_on_agentcore_a_continuing_sessions_turn_reaches_its_model_after_one_mem
     # A Memory block the Session keeps, so the second Turn loads no Memory records.
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     # The member's own Session, so the Turn feed files its messages there too, as on Main Chat.
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     assert service.turn('first question', **member)[-1]['type'] == 'RUN_FINISHED'
     service.fed()
     agentcore_memory.latency = MEMORY_ROUND_TRIP
@@ -2822,7 +2837,7 @@ def test_on_agentcore_a_members_memory_opens_their_next_conversation(service: _S
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'),
     ]
     # A claimed Session: filed under its original user, its Memory is the current account's.
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
 
     saved = service.turn('remember: prefers copper', thread='thread-a', **member)
     another_microvm()
@@ -2870,7 +2885,7 @@ def test_on_agentcore_the_memory_tool_lists_retrieves_gets_and_deletes_only_the_
         _memory_record('Summary: copper desk review', 'Summaries-1', 'actor-1', DARK_MODE),
     ]
     agentcore_memory.records[-1]['namespaces'] = ['/actors/actor-1/summaries/thread-0/']
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
 
     def run(**args: str) -> Any:
         return json.loads(_tool_output(service.turn(f'memory: {json.dumps(args)}', **member)))
@@ -2910,7 +2925,7 @@ def test_on_agentcore_a_memory_page_edit_reaches_the_next_session_and_leaves_the
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
         _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
     ]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     service.turn('hello', thread='thread-a', **member)
     opened = service.recorder.prompts[-1]
 
@@ -2955,7 +2970,7 @@ def test_on_agentcore_a_scheduled_runs_summary_leaves_the_sessions_memory_block_
 ) -> None:
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     agentcore_memory.records += [_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER)]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     service.turn('hello', thread='thread-a', **member)
     opened = service.recorder.prompts[-1]
 
@@ -2980,7 +2995,7 @@ def test_on_agentcore_a_memory_page_edit_reaches_a_new_session_while_agentcore_l
         _memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1', COPPER),
         _memory_record('Lives in Paris', 'SemanticFacts-1', 'actor-1', PARIS),
     ]
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     service.turn('hello', thread='thread-a', **member)
     agentcore_memory.lag_listing()
 
@@ -3122,7 +3137,7 @@ def test_on_agentcore_a_failed_memory_load_fails_the_sessions_first_turn_and_the
         return list_events(**params)
 
     monkeypatch.setattr(agentcore_memory, 'list_events', throttled)
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
 
     [run_error] = [event for event in service.turn('hello', thread='thread-a', **member) if event['type'] == 'RUN_ERROR']
     monkeypatch.setattr(agentcore_memory, 'list_events', list_events)

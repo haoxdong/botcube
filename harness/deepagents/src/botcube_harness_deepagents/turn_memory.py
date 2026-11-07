@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import partial
@@ -32,7 +32,7 @@ class TurnFeedError(RuntimeError):
 
 
 @contextmanager
-def collecting_turn_feeds() -> Iterator[list[TurnFeed]]:
+def collecting_turn_feeds() -> Generator[list[TurnFeed], None, None]:
     """Collect the feeds of the graph runs started inside, for the caller to run after the response."""
     feeds: list[TurnFeed] = []
     token = _FEEDS.set(feeds)

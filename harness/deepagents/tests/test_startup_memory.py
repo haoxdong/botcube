@@ -5,7 +5,7 @@ import json
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 
@@ -13,6 +13,7 @@ from agentcore_fake import fresh_warm_sessions, turn_identity
 from botcube_harness_deepagents import serving, session_memory
 from botcube_harness_deepagents.memory import agentcore as agentcore_memory_backend
 from test_serving import (
+    _Member,
     _memory_block,
     _memory_record,
     _ScopedMemory,
@@ -27,10 +28,14 @@ from test_serving import (
 )
 
 
+class _Preparation(TypedDict, total=False):
+    preparationScope: str
+
+
 def test_empty_startup_memory_retries_on_the_next_session_turn(
     service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     assert '<agent_memory>' not in service.recorder.prompts[-1]
 
@@ -48,7 +53,7 @@ def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl
 ) -> None:
     now = 1000.0
     monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
 
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
@@ -71,7 +76,7 @@ def test_populated_startup_memory_refreshes_after_the_last_model_calls_cache_ttl
 def test_the_turn_reads_its_memory_block_alongside_its_history(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
     opening, latest_checkpoint = agentcore_memory_backend.opening, serving.latest_checkpoint
     started, reads = threading.Event(), []
@@ -98,9 +103,9 @@ def test_authorized_warmup_prepares_without_model_execution_or_writes(
     service: _Service, agentcore_memory: _ScopedMemory, scope: str | None,
 ) -> None:
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
 
-    props = {'preparationScope': scope} if scope is not None else {}
+    props: _Preparation = {'preparationScope': scope} if scope is not None else {}
     assert service.turn('', warmup=True, **props, **member) == [_ack('run-0', 'prepared')]
     assert agentcore_memory.listed.get('thread-1', 0) == (0 if scope == 'startup' else 1)
     assert agentcore_memory.create_event_calls == 0
@@ -115,7 +120,7 @@ def test_authorized_warmup_prepares_without_model_execution_or_writes(
 def test_authorized_warmup_restores_an_existing_conversation_before_the_next_turn(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'actor-1', 'memory': True}
     assert service.turn('first message', **member)[-1]['type'] == 'RUN_FINISHED'
     service.fed()
     for name in ('_AGENTS', '_BACKENDS', '_BACKEND_BY_AGENT'):
@@ -178,7 +183,7 @@ def test_failed_cold_memory_refresh_fails_the_turn_and_retries(
 ) -> None:
     now = 1000.0
     monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     now = 1301.0
@@ -206,7 +211,7 @@ def test_a_failed_memory_read_the_turn_never_used_is_logged_not_raised(
 ) -> None:
     now = 1000.0
     monkeypatch.setattr(session_memory, 'time', lambda: now, raising=False)
-    member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'filing-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Trades copper futures', 'SemanticFacts-1', 'actor-1'))
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
     now = 1200.0

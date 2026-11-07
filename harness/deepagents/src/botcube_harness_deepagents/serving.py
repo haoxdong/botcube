@@ -12,7 +12,6 @@ import tempfile
 import threading
 from collections.abc import (
     AsyncGenerator,
-    AsyncIterator,
     Awaitable,
     Callable,
     Mapping,
@@ -329,7 +328,8 @@ class _SessionAgent(LangGraphAgent):
     def __init__(self, **kwargs: Any) -> None:
         # The graph's raw events carry the Session's history, which no client reads; skip
         # building and JSON-converting them for every streamed event.
-        super().__init__(**{'emit_raw_events': False, **kwargs})
+        kwargs.setdefault('emit_raw_events', False)
+        super().__init__(**kwargs)
         self._model_lane: str | None = None
         self._thinking: dict[str, _Thinking] = {}
 
@@ -582,7 +582,7 @@ def _user_prompt(profile: str, synced_skills: Sequence[str] | None, documents: A
         for part in (
             profile and f'<user_profile>\n{profile}\n</user_profile>',
             synced_skills is not None and f'<files>\n{files_prompt(excluded_paths(synced_skills))}\n</files>',
-            documents and documents.prompt(),
+            documents.prompt() if documents else '',
         )
         if part
     )
@@ -1070,7 +1070,7 @@ class _SessionTurns:
         self._end = object()
 
     @asynccontextmanager
-    async def preparation(self, session: tuple[str | None, str | None]) -> AsyncIterator[bool]:
+    async def preparation(self, session: tuple[str | None, str | None]) -> AsyncGenerator[bool, None]:
         lock = self._locks.setdefault(session, asyncio.Lock())
         turn = self._turns.get(session)
         if lock.locked() or (turn is not None and not turn.finished):

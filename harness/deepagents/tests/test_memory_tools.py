@@ -685,7 +685,7 @@ class TestAgentCoreMemoryRequests:
         assert result == {'status': 'error', 'content': [{'text': text}]}
         [record] = [r for r in caplog.records if r.name == 'botcube_harness_deepagents.memory_tools']
         assert (record.levelname, record.getMessage()) == ('WARNING', message)
-        assert record.exc_info is not None
+        assert record.exc_info
         assert 'Rate exceeded' in str(record.exc_info[1])
 
 

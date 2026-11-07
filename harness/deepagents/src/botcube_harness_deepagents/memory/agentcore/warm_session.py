@@ -208,6 +208,8 @@ def _checkpoint_key(checkpoint_id: str) -> str:
 class WarmSessionSaver(AgentCoreMemorySaver):
     """One Turn's snapshot saver (ADR 0067 decision 9), on the Turn's Memory client. Build one per Turn."""
 
+    checkpoint_event_client: _WarmSnapshotClient
+
     def __init__(self, memory_id: str, client: Any) -> None:
         BaseCheckpointSaver.__init__(self, serde=CompressedSerializer(
             compress=os.getenv('BOTCUBE_COMPRESS_CHECKPOINTS') == '1',
@@ -287,11 +289,12 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         """
         pool = ThreadPoolExecutor(max_workers=2)
         try:
-            head = pool.submit(copy_context().run, self._head, config)
-            writes = pool.submit(
-                copy_context().run, self.checkpoint_event_client.get_pending_writes,
+            head_context, writes_context = copy_context(), copy_context()
+            head = pool.submit(lambda: head_context.run(self._head, config))
+            writes = pool.submit(lambda: writes_context.run(
+                self.checkpoint_event_client.get_pending_writes,
                 config.thread_id, config.actor_id, checkpoint_id, self.max_results, checkpoint_ns=config.checkpoint_ns,
-            )
+            ))
             for read in as_completed((head, writes)):
                 read.result()
             return head.result(), writes.result()

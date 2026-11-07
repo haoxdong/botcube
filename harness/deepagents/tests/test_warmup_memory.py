@@ -13,7 +13,7 @@ from agentcore_fake import another_microvm
 from botcube_harness_deepagents import serving, session_memory
 from botcube_harness_deepagents.lazy_files import TurnFiles
 from botcube_harness_deepagents.memory import agentcore as memory_backend
-from test_serving import _memory_block, _memory_record, _ScopedMemory, _Service
+from test_serving import _Member, _memory_block, _memory_record, _ScopedMemory, _Service
 from test_serving import agentcore_memory as agentcore_memory
 from test_serving import service as service
 
@@ -22,7 +22,7 @@ def test_completed_warmup_supplies_first_turn_memory_without_repeated_read(
     service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     prepared = service.turn('', warmup=True, **member)
     assert prepared[-1]['value']['outcome'] == 'prepared'
     agentcore_memory.sts.memory_calls.clear()
@@ -39,7 +39,7 @@ def test_completed_warmup_supplies_first_turn_memory_without_repeated_read(
 def test_ineligible_warmup_keeps_first_turn_fresh_memory_read(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, reason: str,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     if reason != 'missing':
         opening = memory_backend.opening
@@ -80,7 +80,7 @@ def test_ineligible_warmup_keeps_first_turn_fresh_memory_read(
 def test_empty_warmup_is_consumed_once_and_later_empty_turn_refreshes(
     service: _Service, agentcore_memory: _ScopedMemory,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', **member)[-1]['type'] == 'RUN_FINISHED'
@@ -125,7 +125,7 @@ def test_turn_arriving_during_warmup_reads_fresh_and_invalidates_handoff(
             assert await asyncio.to_thread(release.wait, 5), 'The warmup build was never released'
         return await building(*args)
     monkeypatch.setattr(serving, '_turn_agent', build)
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     with ThreadPoolExecutor(max_workers=2) as pool:
         warmup = pool.submit(service.turn, '', warmup=True, **member)
         try:
@@ -224,7 +224,7 @@ def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
         monkeypatch.setattr(serving, 'latest_checkpoint', history)
     else:
         monkeypatch.setattr(TurnFiles, 'aensure', files)
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     agentcore_memory.sts.memory_calls.clear()
@@ -270,7 +270,7 @@ def test_warmup_valid_at_turn_receipt_survives_slow_turn_preparation(
     clock = [1000.0]
     monkeypatch.setattr(session_memory, 'perf_counter', lambda: clock[0])
     monkeypatch.setattr(serving, 'perf_counter', lambda: clock[0])
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     agentcore_memory.records.append(_memory_record('Prefers tea', 'UserPreferences-1', 'actor-1'))
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     clock[0] = 1300.0
@@ -288,7 +288,7 @@ def test_warmup_valid_at_turn_receipt_survives_slow_turn_preparation(
 def test_cancelled_first_turn_consumes_handoff_and_next_turn_loads_fresh(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
+    member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     build = serving._turn_agent
     async def cancelled(*args: Any) -> Any:

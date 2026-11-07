@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -184,10 +184,12 @@ class BackgroundCompaction(SummarizationMiddleware):
     @contextmanager
     def _engine(
         self, request: ModelRequest[Any], *, emergency: bool = False,
-    ) -> Iterator[tuple[SummarizationMiddleware, ModelRequest[Any], Path]]:
+    ) -> Generator[tuple[SummarizationMiddleware, ModelRequest[Any], Path], None, None]:
         with TemporaryDirectory(prefix='botcube-compaction-') as directory:
             root = Path(directory)
-            settings = {**self._settings, **({'trigger': ('tokens', 1)} if emergency else {})}
+            settings = self._settings.copy()
+            if emergency:
+                settings['trigger'] = ('tokens', 1)
             native = SummarizationMiddleware(
                 model=request.model,
                 backend=LocalShellBackend(root_dir=root, virtual_mode=True, inherit_env=False),

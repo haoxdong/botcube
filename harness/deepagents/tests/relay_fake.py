@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -63,7 +63,7 @@ class FakeRelay:
 
 
 @contextmanager
-def serving_relay() -> Iterator[FakeRelay]:
+def serving_relay() -> Generator[FakeRelay, None, None]:
     fake = FakeRelay()
     thread = threading.Thread(target=fake.server.serve_forever, daemon=True)
     thread.start()

@@ -36,7 +36,7 @@ botcube-session-api = "botcube_harness_deepagents.session_api:main"
 dev = [
   "langchain-core>=1.6.7",
   "moto[s3]>=5.2.3",
-  "pyright==1.1.414",
+  "ty==0.0.99",
   "pytest>=9.1.1",
   "pytest-xdist==3.8.0",
   "types-boto3[bedrock-agentcore,bedrock-runtime,dynamodb,ssm]>=1.43.108",
@@ -48,20 +48,30 @@ contract-pins = [
 [tool.uv.sources]
 botcube-cartridge = { path = "../../cartridge", editable = true }
 
-[tool.pyright]
-# Check against the oldest supported Python, which Presubmit runs.
-pythonVersion = "3.11"
-# Every parameter carries a type annotation.
-reportMissingParameterType = "error"
-# Generic types carry their type arguments, and no parameter type is unknown.
-reportMissingTypeArgument = "error"
-reportUnknownParameterType = "error"
-include = [
-  ".",
-  "../../infra/local/init-chat-table.py",
-]
+[tool.ty.environment]
+python-version = "3.11"
 
+[tool.ty.src]
+include = ["**/*.py"]
 exclude = ["tools"]
+
+[[tool.ty.overrides]]
+include = ["src/botcube_harness_deepagents/snapshot_build.py"]
+[tool.ty.overrides.rules]
+# Python documents None in sys.modules as an import block; bundled typeshed omits it: https://github.com/python/cpython/blob/3.11/Doc/reference/import.rst
+invalid-assignment = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_mutation_serving.py", "tests/test_turn_completion.py", "tests/test_warm_session.py", "tests/trace_workload.py", "/**/benchmark_turn_completion.py"]
+[tool.ty.overrides.rules]
+# ty rejects real TypedDict schemas against LangGraph's TypedDictLike bound: https://github.com/astral-sh/ty/issues/2826
+invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+include = ["tests/test_session_resume.py", "tests/test_warm_session.py"]
+[tool.ty.overrides.rules]
+# ty rejects real TypedDict state parameters against LangGraph's TypedDictLike bound: https://github.com/astral-sh/ty/issues/2826
+invalid-type-arguments = "ignore"
 
 [build-system]
 requires = ["hatchling>=1.32.4"]

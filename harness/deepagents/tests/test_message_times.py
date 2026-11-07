@@ -7,17 +7,22 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langgraph.prebuilt.tool_node import ToolCallRequest
+from langchain_core.messages.tool import ToolCall
+from langgraph.prebuilt.tool_node import ToolCallRequest, ToolRuntime
 from langgraph.types import Command
 
 from botcube_harness_deepagents.conversation import MESSAGE_TIMES
 from botcube_harness_deepagents.message_times import MessageTimesMiddleware
 
-CALL = {'name': 'ls', 'args': {'path': '/'}, 'id': 'call-1', 'type': 'tool_call'}
+CALL: ToolCall = {'name': 'ls', 'args': {'path': '/'}, 'id': 'call-1', 'type': 'tool_call'}
 
 
 def _answered(messages: list[BaseMessage], result: ToolMessage | Command[Any]) -> ToolMessage | Command[Any]:
-    request = ToolCallRequest(tool_call=CALL, tool=None, state={'messages': messages}, runtime=None)  # type: ignore[arg-type]
+    request = ToolCallRequest(
+        tool_call=CALL, tool=None, state={'messages': messages},
+        runtime=ToolRuntime(state={'messages': messages}, context=None, config={},
+                            stream_writer=lambda _: None, tool_call_id=CALL['id'], store=None),
+    )
 
     async def handler(_request: ToolCallRequest) -> ToolMessage | Command[Any]:
         return result

@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import uuid
-from collections.abc import Awaitable, Iterator, Mapping
+from collections.abc import Awaitable, Generator, Mapping
 from contextlib import contextmanager
 from time import perf_counter
 from typing import Any
@@ -164,7 +164,7 @@ def _scheduled_run(event: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 @contextmanager
-def _phase(phases: dict[str, float], name: str) -> Iterator[None]:
+def _phase(phases: dict[str, float], name: str) -> Generator[None, None, None]:
     start = perf_counter()
     try:
         yield
