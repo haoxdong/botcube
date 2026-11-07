@@ -9,7 +9,7 @@ import logging
 import os
 import ssl
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -232,7 +232,7 @@ class _AutomationStreamPage:
 
 
 @asynccontextmanager
-async def open_browser_page(variable: str, missing: str, browser_session_id: str) -> AsyncIterator[CdpPage]:
+async def open_browser_page(variable: str, missing: str, browser_session_id: str) -> AsyncGenerator[CdpPage, None]:
     """Attach to a browser Session's page, in the browser `variable` names, over its SigV4-signed automation stream."""
     import boto3
     import certifi

@@ -25,6 +25,9 @@ dev = [
   "types-boto3[dynamodb,kms,secretsmanager]>=1.43.108",
 ]
 
+[tool.ty.environment]
+python-version = "3.11"
+
 [tool.pyright]
 # Check against the oldest supported Python, which Presubmit runs.
 pythonVersion = "3.11"

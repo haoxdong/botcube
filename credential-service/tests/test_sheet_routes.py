@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import pytest
@@ -32,7 +32,7 @@ class Page:
 
 def _client(typed: list[tuple[str, str, str]], fails: Exception | None = None) -> TestClient:
     @asynccontextmanager
-    async def open_page(browser_session_id: str) -> AsyncIterator[CdpPage]:
+    async def open_page(browser_session_id: str) -> AsyncGenerator[CdpPage, None]:
         typed.append(('open', browser_session_id, ''))
         yield Page()
 

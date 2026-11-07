@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -20,7 +20,7 @@ from test_openai import vault as vault
 
 
 @contextmanager
-def fail_before_network_effects() -> Iterator[None]:
+def fail_before_network_effects() -> Generator[None, None, None]:
     # Audit events execute before their native socket operation. This sentinel keeps
     # even the regression's RED run offline if the real test guard is missing.
     active = True

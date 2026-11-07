@@ -117,7 +117,7 @@ def _sign_payload(secret: str, payload: str) -> str:
     return base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')
 
 
-def _encode_json(payload: dict[str, object]) -> str:
+def _encode_json(payload: dict[str, str | int]) -> str:
     raw = json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8')
     return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
 

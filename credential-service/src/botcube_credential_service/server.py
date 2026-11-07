@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -90,7 +90,7 @@ def request_context(invocation: CredentialServiceInvocation, method: str, path: 
 
 def create_app(settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]]) -> FastAPI:
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         async with AsyncExitStack() as cleanup:
             for provider in providers:
                 cleanup.push_async_callback(provider.aclose)
