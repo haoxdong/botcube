@@ -12,8 +12,21 @@ jobs:
     if: github.repository == 'haoxdong/botcube'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: node
+          - suite: cdk
+          - suite: cartridge
+          - suite: credential-service
+          - suite: harness/deepagents
+          - suite: harness/deepagents/tools
+          - suite: templates/always-on
+          - suite: infra
     # The hosted runner's Chrome, which the Agent Computer tests launch, as private CI's Integration jobs name it.
     env:
+      CI_SUITE: ${{ matrix.suite }}
       TEMPLATE_TEST_CHROMIUM_PATH: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
