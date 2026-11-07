@@ -1,6 +1,6 @@
 import json
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -65,7 +65,7 @@ def test_missing_safaridriver_is_safari_unavailable() -> None:
 
 
 @contextmanager
-def _webdriver(status: int, error: str) -> Iterator[str]:
+def _webdriver(status: int, error: str) -> Generator[str, None, None]:
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             body = json.dumps({'value': {'error': error}}).encode()

@@ -7,6 +7,9 @@ requires-python = ">=3.11"
 [dependency-groups]
 dev = ["pyright==1.1.414", "pytest>=9.1.1"]
 
+[tool.ty.environment]
+python-version = "3.11"
+
 [tool.pyright]
 pythonVersion = "3.11"
 reportMissingParameterType = "error"
