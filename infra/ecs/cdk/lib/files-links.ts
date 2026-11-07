@@ -2,10 +2,11 @@ import * as path from 'node:path';
 import { CfnOutput, Duration } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as efs from 'aws-cdk-lib/aws-efs';
+import { Secret as ContainerSecret } from 'aws-cdk-lib/aws-ecs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
+import { Secret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import type { ChatStorageStack } from './chat-storage-stack.js';
 import type { PreviewChatService } from './preview-chat-service.js';
 import type { PreviewOriginStack } from './preview-origin-stack.js';
@@ -21,6 +22,7 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
   const links = new ec2.SecurityGroup(origin, 'FilesLinksNetwork', { vpc, allowAllOutbound: false });
   const mountTargets = new ec2.SecurityGroup(origin, 'FilesEfsMountTargets', { vpc, allowAllOutbound: false });
   mountTargets.addIngressRule(links, ec2.Port.tcp(2049), 'The Files Lambda serves links');
+  mountTargets.addIngressRule(chat.network, ec2.Port.tcp(2049), 'Chat Service mounts Files');
   links.addEgressRule(mountTargets, ec2.Port.tcp(2049), 'NFS only: links work without the NAT');
   const targets = browsers.subnets.map((subnet, index) => new efs.CfnMountTarget(origin, `FilesEfsMountTarget${index}`, {
     fileSystemId: storage.filesEfs.ref, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
@@ -61,6 +63,48 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
     // The web UI uploads in chunks and reads a reply's PDF from the link, as it did from the bucket.
     cors: { allowedOrigins: corsOrigins, allowedMethods: [lambda.HttpMethod.GET, lambda.HttpMethod.PUT], allowedHeaders: ['content-type', 'range'], exposedHeaders: ['content-range', 'content-length'] },
   });
+  chat.task.addVolume({
+    name: 'files-efs',
+    efsVolumeConfiguration: {
+      fileSystemId: storage.filesEfs.ref,
+      transitEncryption: 'ENABLED',
+      authorizationConfig: { accessPointId: accounts.ref, iam: 'ENABLED' },
+    },
+  });
+  chat.container.addMountPoints({ sourceVolume: 'files-efs', containerPath: '/mnt/files-efs', readOnly: false });
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+    resources: [storage.filesEfs.attrArn],
+    conditions: { StringEquals: { 'elasticfilesystem:AccessPointArn': accounts.attrArn } },
+  }));
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ['elasticfilesystem:CreateAccessPoint'],
+    resources: [storage.filesEfs.attrArn],
+  }));
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ['elasticfilesystem:DeleteAccessPoint'],
+    resources: [origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' })],
+  }));
+  // EFS DescribeAccessPoints does not support resource-level permissions.
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['elasticfilesystem:DescribeAccessPoints'], resources: ['*'] }));
+  const mount = new iam.Role(origin, 'FilesMountRole', {
+    assumedBy: chat.task.taskRole,
+    maxSessionDuration: Duration.hours(1),
+  });
+  mount.addToPrincipalPolicy(new iam.PolicyStatement({
+    actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+    resources: [storage.filesEfs.attrArn],
+    conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
+  }));
+  mount.grantAssumeRole(chat.task.taskRole);
+  chat.container.addEnvironment('BOTCUBE_FILES_EFS_ARN', storage.filesEfs.attrArn);
+  chat.container.addEnvironment('BOTCUBE_FILES_EFS_ROOT', '/mnt/files-efs');
+  chat.container.addEnvironment('BOTCUBE_FILES_LINKS_URL', url.url);
+  chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_ROLE_ARN', mount.roleArn);
+  // CDK Secret's `T | undefined` getters conflict with ISecret's optional properties under exactOptionalPropertyTypes.
+  chat.container.addSecret('BOTCUBE_FILES_SIGNING_KEY', ContainerSecret.fromSecretsManager(key as ISecret));
+  targets.forEach(target => chat.service.node.addDependency(target));
+  chat.service.node.addDependency(accounts, chat.task.taskRole);
   new CfnOutput(origin, 'FilesLinksUrl', { value: url.url });
   new CfnOutput(origin, 'FilesSigningKeyArn', { value: key.secretArn });
 }
