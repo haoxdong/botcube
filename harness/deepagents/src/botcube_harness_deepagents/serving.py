@@ -148,13 +148,13 @@ Write it for IM, to be read at a glance. Build it from these modules, in the ord
 
 <modules>
 takeaway  1, under 25 words
-bullets   0–3, under the takeaway, each under 15 words, no closing period
+bullets   0–3, directly under the takeaway, each under 15 words, no final period
 table     0–1, under 10 rows and 5 columns
 visual    0–2, each one of:
           plotly: fig.write_json('<name>.plotly.json'), embedded as ![<caption>](<published link>)
           mermaid: a ```mermaid block
           svg: embedded as ![<caption>](<published link>)
-note      0–1, under 15 words
+closing   0–1, under 15 words: conviction, caveat, risk or catalyst
 artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<published link>), never a numbered link
 </modules>
 </final_response>
