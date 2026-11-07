@@ -30,6 +30,9 @@ botcube-cartridge = { path = "../../cartridge", editable = true }
 botcube-harness-deepagents = { path = "../../harness/deepagents", editable = true }
 botcube-credential-service = { path = "../../credential-service", editable = true }
 
+[tool.ty.environment]
+python-version = "3.11"
+
 [tool.pyright]
 # Check against the oldest supported Python, which Presubmit runs.
 pythonVersion = "3.11"

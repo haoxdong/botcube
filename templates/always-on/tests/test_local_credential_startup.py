@@ -5,7 +5,7 @@ import socket
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Thread
@@ -24,7 +24,7 @@ pytestmark = pytest.mark.integration
 
 
 @contextmanager
-def credential_process(environment: dict[str, str], log: Path) -> Iterator[str]:
+def credential_process(environment: dict[str, str], log: Path) -> Generator[str, None, None]:
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
