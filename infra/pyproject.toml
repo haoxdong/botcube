@@ -18,6 +18,14 @@ dev = [
 [tool.uv]
 package = false
 
+[tool.ty.environment]
+python-version = "3.11"
+extra-paths = ["ecs", "ecs/origin-provider", "ecs/credential-audit-copy"]
+
+[tool.ty.src]
+include = ["ecs", "tests"]
+exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
+
 [tool.pyright]
 include = ["ecs", "tests"]
 exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]

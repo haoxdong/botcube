@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from email.message import Message
 from io import BytesIO
-from typing import Any
+from typing import Any, TypedDict
 from unittest.mock import MagicMock, Mock, patch
 
 from deploy_script_support import DEPLOY_ECS
@@ -509,12 +509,35 @@ class SessionApiCapacityTests(unittest.TestCase):
             transition['session_api_capacity']('parked', api, api)
 
 
+class NetworkModeFixture(TypedDict):
+    subnets: list[str]
+    securityGroups: list[str]
+
+
+class NetworkFixture(TypedDict):
+    networkMode: str
+    networkModeConfig: NetworkModeFixture
+
+
+class RuntimeConfigurationFixture(TypedDict):
+    agentRuntimeArtifact: dict[str, dict[str, str]]
+    roleArn: str
+    networkConfiguration: NetworkFixture
+    description: str
+    protocolConfiguration: dict[str, str]
+    lifecycleConfiguration: dict[str, int]
+    metadataConfiguration: dict[str, bool]
+    environmentVariables: dict[str, str]
+    filesystemConfigurations: list[dict[str, dict[str, str]]]
+    platformVersion: str
+
+
 class AgentCoreProduction:
     """The AgentCore control plane as the refresh sees it, in memory: one runtime whose update makes a new version."""
 
     def __init__(self, extra: dict[str, Any] | None = None, status: str = 'READY', fail: str | None = None):
         self.name = transition['IDENTITY']['aws']['agentCore']['runtime']
-        self.configuration = {
+        self.configuration: RuntimeConfigurationFixture = {
             'agentRuntimeArtifact': {'containerConfiguration': {'containerUri': 'example.dkr.ecr/runtime@sha256:1'}},
             'roleArn': 'arn:aws:iam::123456789012:role/runtime',
             'networkConfiguration': {'networkMode': 'VPC', 'networkModeConfig': {'subnets': ['private-a'], 'securityGroups': ['runtime']}},

@@ -4,6 +4,7 @@ import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 import pytest
 
@@ -14,8 +15,24 @@ recovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(recovery)
 
 
+class ResourceFixture(TypedDict):
+    Type: str
+    Properties: NotRequired[dict[str, str]]
+    DeletionPolicy: NotRequired[str]
+
+
+class OutputFixture(TypedDict):
+    Value: str | dict[str, list[str]]
+    Export: NotRequired[dict[str, str]]
+
+
+class TemplateFixture(TypedDict):
+    Resources: dict[str, ResourceFixture]
+    Outputs: dict[str, OutputFixture]
+
+
 def test_detaches_only_runtime_and_restores_original_template() -> None:
-    template = {
+    template: TemplateFixture = {
         "Resources": {
             "Runtime": {
                 "Type": "AWS::BedrockAgentCore::Runtime",

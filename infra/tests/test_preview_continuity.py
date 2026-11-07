@@ -4,15 +4,36 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from typing import NotRequired, TypedDict
 
 from deploy_script_support import DEPLOY_ECS
 
 v = runpy.run_path(str(DEPLOY_ECS / 'verify-continuity.py'))
 
 
+class ObservationFixture(TypedDict):
+    oldTargetState: str
+    targetReadMonotonicSeconds: float
+    observedMonotonicSeconds: float
+
+
+class ContinuityFixture(TypedDict):
+    progressDuringDrainingMonotonicSeconds: list[float]
+    requestToStreamCloseSeconds: float
+
+
+class ReportFixture(TypedDict):
+    completed: bool
+    requestedMonotonicSeconds: float
+    deregistrationDelaySeconds: float
+    idleTimeoutSeconds: float
+    observations: list[ObservationFixture]
+    continuity: NotRequired[ContinuityFixture]
+
+
 class ContinuityTests(unittest.TestCase):
     def setUp(self):
-        self.report = {'completed': True, 'requestedMonotonicSeconds': 110,
+        self.report: ReportFixture = {'completed': True, 'requestedMonotonicSeconds': 110,
             'deregistrationDelaySeconds': 3600, 'idleTimeoutSeconds': 3600,
             'observations': [
                 {'oldTargetState': 'healthy', 'targetReadMonotonicSeconds': 119, 'observedMonotonicSeconds': 120},
@@ -23,6 +44,7 @@ class ContinuityTests(unittest.TestCase):
 
     def test_success_requires_actual_progress_inside_bracketed_draining(self):
         v['verify_overlap'](self.report, self.timing)
+        assert 'continuity' in self.report
         self.assertEqual(self.report['continuity']['progressDuringDrainingMonotonicSeconds'], [135])
         self.assertEqual(self.report['continuity']['requestToStreamCloseSeconds'], 182)
 

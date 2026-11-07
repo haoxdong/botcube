@@ -22,13 +22,14 @@ from boto3.dynamodb.conditions import Attr
 
 if TYPE_CHECKING:
     from types_boto3_dynamodb.service_resource import Table
+    from types_boto3_dynamodb.type_defs import ScanInputTableScanTypeDef
 
 PREFIXES = ('OWNER#', 'THREAD#')
 
 
 def journal_keys(table: Table) -> Iterator[tuple[str, str]]:
     condition = Attr('pk').begins_with(PREFIXES[0]) | Attr('pk').begins_with(PREFIXES[1])
-    kwargs = {'FilterExpression': condition, 'ProjectionExpression': 'pk, sk'}
+    kwargs: ScanInputTableScanTypeDef = {'FilterExpression': condition, 'ProjectionExpression': 'pk, sk'}
     while True:
         page = table.scan(**kwargs)
         for item in page['Items']:

@@ -6,7 +6,7 @@ import unittest
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 from unittest.mock import Mock, patch
 
 import boto3
@@ -15,7 +15,35 @@ from deploy_script_support import load_deploy_script
 
 r = load_deploy_script('rollback', 'verify-rollback.py')
 
-HISTORY = {'targetServiceRevision': {'arn': 'diagnostic-service-revision'},
+class CircuitBreakerEvidenceFixture(TypedDict, total=False):
+    status: str
+    failureCount: int | None
+    threshold: int | None
+
+
+class HistoryFixture(TypedDict):
+    targetServiceRevision: dict[str, str]
+    status: str
+    deploymentCircuitBreaker: CircuitBreakerEvidenceFixture
+    rollback: dict[str, str]
+
+
+class DiagnosticTaskFixture(TypedDict):
+    stoppedReason: str
+    containers: list[object]
+
+
+class ReportFixture(TypedDict):
+    baseline: dict[str, str]
+    baselineServiceRevision: str
+    family: str
+    owner: str
+    manualRestore: bool
+    recoveredTask: NotRequired[dict[str, str]]
+    diagnosticTasks: NotRequired[list[DiagnosticTaskFixture]]
+
+
+HISTORY: HistoryFixture = {'targetServiceRevision': {'arn': 'diagnostic-service-revision'},
            'status': 'ROLLBACK_SUCCESSFUL',
            'deploymentCircuitBreaker': {'status': 'TRIGGERED', 'failureCount': 3, 'threshold': 3},
            'rollback': {'serviceRevisionArn': 'baseline-service-revision', 'reason': 'Circuit breaker triggered'}}
@@ -138,7 +166,7 @@ class RollbackTest(unittest.TestCase):
             exercise.histories()
 
     def exercise(self, provider: Provider, directory: str):
-        report = {'baseline': deepcopy(BASELINE), 'baselineServiceRevision': 'baseline-service-revision',
+        report: ReportFixture = {'baseline': deepcopy(BASELINE), 'baselineServiceRevision': 'baseline-service-revision',
                   'family': 'bot-cube-preview-rollback-test', 'owner': 'test', 'manualRestore': False}
         exercise = r.Exercise({'ClusterName': r.normal['IDENTITY']['aws']['ecs']['cluster'],
                                'ServiceName': 'chat-service-preview'}, provider, None, report, Path(directory) / 'evidence.json')

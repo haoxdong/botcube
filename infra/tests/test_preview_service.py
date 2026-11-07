@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import Mock, patch
 
+from deploy_fixtures import ServiceFixture
 from deploy_script_support import DEPLOY_ECS
 
 verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-service.py'))
@@ -18,7 +19,7 @@ verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-service.py'))
 class ServiceVerificationTests(unittest.TestCase):
     def test_only_requested_completed_revision_can_pass(self):
         ready = verifier['deployment_ready']
-        service = {'taskDefinition': 'expected:2', 'desiredCount': 1, 'runningCount': 1, 'pendingCount': 0,
+        service: ServiceFixture = {'taskDefinition': 'expected:2', 'desiredCount': 1, 'runningCount': 1, 'pendingCount': 0,
                    'deployments': [{'rolloutState': 'COMPLETED'}]}
         self.assertTrue(ready({'services': [service]}, 'expected:2'))
         pending = copy.deepcopy(service)

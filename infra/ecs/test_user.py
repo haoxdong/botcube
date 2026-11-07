@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def test_user(table: Table, origin: str, *, operator_token: str | None = None) -> Iterator[tuple[urllib.request.OpenerDirector, str]]:
+def test_user(table: Table, origin: str, *, operator_token: str | None = None) -> Generator[tuple[urllib.request.OpenerDirector, str], None, None]:
     account_id = 'acct_' + secrets.token_urlsafe(24)
     bearer = 'test_' + secrets.token_urlsafe(32)
     now = int(time.time())

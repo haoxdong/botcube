@@ -4,11 +4,12 @@ import unittest
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import Mock, patch
 
 from botocore.exceptions import EndpointConnectionError
 
+from deploy_fixtures import DeploymentFixture, ReplacementServiceFixture
 from deploy_script_support import load_deploy_script
 
 r = load_deploy_script('replacement', 'verify-replacement.py')
@@ -22,8 +23,8 @@ def task(arn: str, deployment: str, ip: str) -> dict[str, Any]:
 
 OLD = task('old-task', 'old-deployment', '192.0.2.1')
 NEW = task('new-task', 'new-deployment', '192.0.2.2')
-DEPLOYMENT = {'id': 'new-deployment', 'taskDefinition': 'revision:1', 'status': 'PRIMARY', 'rolloutState': 'IN_PROGRESS'}
-SERVICE = {'taskDefinition': 'revision:1', 'desiredCount': 1, 'runningCount': 2, 'pendingCount': 0,
+DEPLOYMENT: DeploymentFixture = {'id': 'new-deployment', 'taskDefinition': 'revision:1', 'status': 'PRIMARY', 'rolloutState': 'IN_PROGRESS'}
+SERVICE: ReplacementServiceFixture = {'taskDefinition': 'revision:1', 'desiredCount': 1, 'runningCount': 2, 'pendingCount': 0,
            'deploymentConfiguration': {'minimumHealthyPercent': 100, 'maximumPercent': 200,
                                        'deploymentCircuitBreaker': {'enable': True, 'rollback': True}},
            'deployments': [DEPLOYMENT]}
@@ -123,7 +124,9 @@ class ReplacementTest(unittest.TestCase):
                 self.tasks['new-task'][field] = value
                 with self.assertRaises(RuntimeError):
                     self.observe()
-        for field, value in [('id', 'old-deployment'), ('rolloutState', 'FAILED'), ('taskDefinition', 'revision:2')]:
+        deployment_changes: list[tuple[Literal['id', 'rolloutState', 'taskDefinition'], str]] = [
+            ('id', 'old-deployment'), ('rolloutState', 'FAILED'), ('taskDefinition', 'revision:2')]
+        for field, value in deployment_changes:
             with self.subTest(field=field):
                 self.setUp()
                 self.service['deployments'][0][field] = value

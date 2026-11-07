@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -63,8 +63,8 @@ def target_state(target: TargetHealthDescriptionTypeDef) -> str:
 
 
 @contextmanager
-def probe_deadline(seconds: float) -> Iterator[None]:
-    # The acceptance CLI runs on the main thread on Linux/macOS. A socket's
+def probe_deadline(seconds: float) -> Generator[None, None, None]:
+    # On Linux/macOS SIGALRM requires the main thread. A socket's
     # read timeout alone does not bound a peer that keeps sending partial lines.
     def expired(_signum: int, _frame: FrameType | None) -> None:
         raise RuntimeError('Agent stream exceeded the probe deadline')
