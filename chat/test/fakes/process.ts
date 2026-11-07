@@ -5,6 +5,7 @@ import { required } from './required.js';
 export interface RunningProcess {
   readonly url: string;
   output(): string;
+  waitForOutput(expected: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -63,7 +64,28 @@ export async function startProcess(options: StartOptions): Promise<RunningProces
   child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
   child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
   // A shell can exit before its service child finishes SIGTERM cleanup; inherited pipes close only once that child ends.
-  const exited = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  let closed = false;
+  const exited = new Promise<void>((resolve) => child.once('close', () => { closed = true; resolve(); }));
+  const waitForOutput = (expected: string) => new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      child.stdout.off('data', check);
+      child.stderr.off('data', check);
+      child.off('close', check);
+    };
+    const check = () => {
+      if (output.includes(expected)) {
+        cleanup();
+        resolve();
+      } else if (closed) {
+        cleanup();
+        reject(new Error(`\`${options.command}\` exited before printing "${expected}":\n${output}`));
+      }
+    };
+    child.stdout.on('data', check);
+    child.stderr.on('data', check);
+    child.on('close', check);
+    check();
+  });
   const stop = async () => {
     if (child.exitCode === null && child.signalCode === null) {
       process.kill(-required(child.pid, 'process group id'), 'SIGTERM');
@@ -92,7 +114,7 @@ export async function startProcess(options: StartOptions): Promise<RunningProces
     // eslint-disable-next-line no-await-in-loop -- polls until the process answers or the deadline passes
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return { url: options.url, output: () => output, stop };
+  return { url: options.url, output: () => output, waitForOutput, stop };
 }
 
 /**
