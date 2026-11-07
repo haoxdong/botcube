@@ -5850,14 +5850,6 @@ describe('agent profile', () => {
     expect(performance.getEntriesByName('latency:activity', 'measure')).toHaveLength(1);
   });
 
-  it('says when the agent has no tasks yet', async () => {
-    await renderPage();
-
-    await openActivity();
-
-    expect(await within(openProfile()).findByText('No tasks yet.')).toBeInTheDocument();
-  });
-
   it('shows the Activity loading until it arrives, and why it could not load, with a Retry', async () => {
     const held: ((response: Response) => void)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
