@@ -42,7 +42,7 @@ export default defineConfig({
           ...node,
           name: 'chat',
           restoreMocks: true,
-          include: ['chat/src/**/*.test.ts', 'infra/ecs/parking/**/*.test.ts'],
+          include: ['chat/src/**/*.test.ts', 'infra/ecs/parking/**/*.test.ts', 'infra/ecs/files/**/*.test.ts'],
           globalSetup: ['chat/test/fakes/global-setup.ts'],
           env: { ...node.env, ...TEST_AWS_ENV },
         },
