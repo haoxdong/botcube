@@ -1,8 +1,0 @@
-{
-  "deploymentState": "COMPLETED",
-  "runningCount": 1,
-  "pendingCount": 0,
-  "oldTaskStatus": "DEACTIVATING",
-  "oldTargetState": "draining",
-  "newTargetState": "healthy"
-}

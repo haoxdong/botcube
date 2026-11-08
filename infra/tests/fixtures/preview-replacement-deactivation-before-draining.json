@@ -1,6 +1,0 @@
-{
-  "oldTaskStatus": "DEACTIVATING",
-  "oldDesiredStatus": "STOPPED",
-  "oldTargetStates": ["healthy", "draining"],
-  "newTargetState": "healthy"
-}
