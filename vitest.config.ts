@@ -38,12 +38,12 @@ export default defineConfig({
     projects: [
       { extends: './chat/test/parity/vitest.config.ts', test: { name: 'parity', sequence: { groupOrder: 1 } } },
       {
-        resolve: { alias: { 'botcube-chat': at('chat/src/index.ts') } },
+        resolve: { alias: [{ find: /^botcube-chat$/, replacement: at('chat/src/index.ts') }] },
         test: {
           ...node,
           name: 'chat',
           restoreMocks: true,
-          include: ['chat/src/**/*.test.ts', 'infra/ecs/parking/**/*.test.ts', 'infra/ecs/files/**/*.test.ts'],
+          include: ['chat/src/**/*.test.ts', 'chat/test/local-smoke.test.ts', 'infra/ecs/parking/**/*.test.ts', 'infra/ecs/files/**/*.test.ts'],
           globalSetup: ['chat/test/fakes/global-setup.ts'],
           env: { ...node.env, ...TEST_AWS_ENV },
         },

@@ -49,21 +49,29 @@ it('serves the neutral template over HTTP with persisted thread metadata and cla
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   expect((await fetch(`${url}/health`)).status).toBe(200);
   expect(await (await fetch(`${url}/auth/template`)).json()).toEqual({ status: 'ready', actorId: 'template-user' });
-  const account = await fetch(`${url}/threads`);
+  const account = await fetch(`${url}/account/session`);
   const cookie = account.headers.get('set-cookie')?.split(';')[0];
   if (!cookie) throw new Error('Template account cookie missing');
   const request = (threadId: string) => fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json', cookie },
     body: JSON.stringify({ threadId, runId: 'smoke-run', state: {}, messages: [{ id: 'message-1', role: 'user', content: 'Hello' }], tools: [], context: [], forwardedProps: {} }),
   });
-  const response = await request('smoke-thread');
+  // The UI allocates each chat before its first Turn.
+  const allocate = async () => {
+    const created = await fetch(`${url}/threads`, { method: 'POST', headers: { cookie } });
+    expect(created.status).toBe(201);
+    return ((await created.json()) as { id: string }).id;
+  };
+  const threadId = await allocate();
+  const response = await request(threadId);
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('RUN_FINISHED');
   expect(agent.invocations()).toHaveLength(1);
   const threads = await (await fetch(`${url}/threads`, { headers: { cookie } })).json();
-  expect(threads.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'smoke-thread' })]));
-  agent.script('failed-thread', { kind: 'error', status: 503, body: '{"message":"Runtime unavailable"}' });
-  const failed = await request('failed-thread');
+  expect(threads.threads).toEqual(expect.arrayContaining([expect.objectContaining({ id: threadId })]));
+  const failedId = await allocate();
+  agent.script(failedId, { kind: 'error', status: 503, body: '{"message":"Runtime unavailable"}' });
+  const failed = await request(failedId);
   expect(failed.status).toBe(503);
   expect(await failed.text()).toContain('Runtime unavailable');
 });
