@@ -14,6 +14,7 @@ pnpm install --frozen-lockfile
 
 if [[ "$suite" == all || "$suite" == node ]]; then
   uv sync --frozen --quiet --directory templates/always-on
+  pnpm run pretest:chat
   pnpm exec vitest run --maxWorkers=4
 fi
 
