@@ -317,6 +317,9 @@ importers:
       agent-browser:
         specifier: 0.41.0
         version: 0.41.0
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       msw:
         specifier: ^2.15.0
         version: 2.15.0(@types/node@24.19.2)(typescript@6.0.3)

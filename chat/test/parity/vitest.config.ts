@@ -6,7 +6,7 @@ export default defineConfig({
   root: fileURLToPath(new URL('../../..', import.meta.url)),
   test: {
     include: ['chat/test/parity/*.test.ts'],
-    globalSetup: ['chat/test/fakes/global-setup.ts'],
+    globalSetup: ['chat/test/parity/global-setup.ts'],
     pool: 'forks',
     env: { TZ: 'UTC', ...TEST_AWS_ENV },
     maxWorkers: 2,

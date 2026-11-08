@@ -45,6 +45,7 @@
     "@opentelemetry/sdk-trace": "3.0.0",
     "@types/ws": "^8.18.2",
     "agent-browser": "0.41.0",
+    "esbuild": "^0.28.2",
     "msw": "^2.15.0"
   }
 }

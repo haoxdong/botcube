@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { FakeBedrock } from '../fakes/fake-backends.js';
@@ -13,14 +14,14 @@ import { motoEndpoint } from '../fakes/moto.js';
  * The services start from their console scripts' entry points, as the Harness image does, so
  * each module runs under its own name rather than as `__main__`.
  */
-const BIN = resolve('templates/always-on/.venv/bin');
+const BIN = fileURLToPath(new URL('../../../templates/always-on/.venv/bin', import.meta.url));
 
 const HARNESS_COMMAND =
   `${BIN}/python -c "from botcube_harness_deepagents import llm, serving; ` +
   `llm.AVAILABLE_MODELS.update(dict.fromkeys(llm.AVAILABLE_MODELS, 'echo')); serving.main()"`;
 
 const CHAT_SERVICE_COMMAND =
-  `node ${resolve('templates/always-on/chat/dist/main.js')}`;
+  `node ${fileURLToPath(new URL('../../../templates/always-on/chat/dist/main.js', import.meta.url))}`;
 
 export interface LocalStack {
   readonly url: string;
