@@ -333,7 +333,7 @@ export class PreviewChatService extends Construct {
     alarm('task-deficit', new cloudwatch.Metric({
       namespace: 'AWS/ECS', metricName: 'CPUUtilization', statistic: 'SampleCount', period,
       dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
-    }), cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
+    }), props.parked ? cloudwatch.TreatMissingData.NOT_BREACHING : cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
     // Each counts logged failures, so it cannot breach at zero tasks and keeps its actions while Parked.
     const failures = (id: string, filter: keyof NonNullable<PreviewChatServiceProps['metricFilterNames']>, suffix: Parameters<typeof alarm>[0], line: string) => {
       const metric = new logs.MetricFilter(this, id, {

@@ -232,6 +232,16 @@ test('availability alarms use free metrics and publish only to the existing aler
   }
 });
 
+test('parked task deficit accepts missing CPU samples without starting a task', () => {
+  const template = synth(undefined, true);
+  template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0 });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    AlarmName: 'test-preview-task-deficit', Namespace: 'AWS/ECS', MetricName: 'CPUUtilization', Statistic: 'SampleCount',
+    Threshold: 1, ComparisonOperator: 'LessThanThreshold', EvaluationPeriods: 3, DatapointsToAlarm: 3,
+    TreatMissingData: 'notBreaching', ActionsEnabled: false,
+  });
+});
+
 test('reaper schedule uses the service image in private subnets and targets the canonical auth browser', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Events::Rule', {
