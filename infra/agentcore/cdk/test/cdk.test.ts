@@ -7,6 +7,7 @@ import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { resolve } from 'path';
+import { readFileSync } from 'node:fs';
 import {
   AgentCoreStack,
   applyRuntimeLifecycleCap,
@@ -466,7 +467,7 @@ test("the runtime's log group, which AgentCore creates, expires after 30 days, f
   });
 });
 
-test("the agent's shell works in the runtime's session storage (ADR 0077)", () => {
+test('the shell workspace leaves the session-storage mount available for an EFS child mount', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'SessionStorageStack', {
     spec: readProjectSpec(DEPLOY_ROOT),
     physicalIdentity: PHYSICAL_IDENTITY,
@@ -474,8 +475,10 @@ test("the agent's shell works in the runtime's session storage (ADR 0077)", () =
 
   Template.fromStack(stack).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
     FilesystemConfigurations: [{ SessionStorage: { MountPath: '/mnt/workspace' } }],
-    EnvironmentVariables: Match.objectLike({ BOTCUBE_WORKSPACE: '/mnt/workspace' }),
+    EnvironmentVariables: Match.objectLike({ BOTCUBE_WORKSPACE: '/mnt/workspace/files' }),
   });
+  const dockerfile = readFileSync(resolve(__dirname, '../../../../harness/deepagents/Dockerfile'), 'utf8');
+  expect(dockerfile).toContain('ENV BOTCUBE_WORKSPACE=/mnt/workspace/files');
 });
 
 test("the runtime role reaches no account's Files: no S3 or S3 Files action (ADR 0077)", () => {
@@ -566,6 +569,7 @@ test('existing resources replace runtime role and network without creating or mu
     },
     LifecycleConfiguration: { MaxLifetime: 1800, IdleRuntimeSessionTimeout: 240 },
     FilesystemConfigurations: [{ SessionStorage: { MountPath: '/mnt/corporate' } }],
+    EnvironmentVariables: Match.objectLike({ BOTCUBE_WORKSPACE: '/mnt/corporate/files' }),
   });
   template.resourceCountIs('AWS::EC2::SecurityGroup', 0);
   template.hasResourceProperties('AWS::BedrockAgentCore::Memory', { EncryptionKeyArn: keyArn });

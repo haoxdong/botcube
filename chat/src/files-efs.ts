@@ -24,7 +24,7 @@ export interface AccessPoints {
 }
 
 /** Credentials that may mount exactly one access point. */
-export type MountCredentials = (accessPointArn: string, sessionName: string) => Promise<Omit<FilesMountBinding, 'fileSystemId' | 'accessPointId' | 'region'>>;
+export type MountCredentials = (accessPointArn: string, sessionName: string) => Promise<Omit<FilesMountBinding, 'fileSystemId' | 'accessPointId' | 'mountTargetIp' | 'region'>>;
 
 /** EFS access points for account directories, as uid 1000, polled until available. */
 export function efsAccessPoints(fileSystemArn: string, poll = { intervalMs: 1000, attempts: 60 }): AccessPoints {
@@ -111,10 +111,11 @@ function missing(error: unknown): boolean {
  * is one file operation, and a Claim moves files within the file system.
  */
 export function accountFilesEfs({
-  root, fileSystemArn, accessPoints, mountCredentials, records, links,
+  root, fileSystemArn, mountTargetIp, accessPoints, mountCredentials, records, links,
 }: {
   root: string;
   fileSystemArn: string;
+  mountTargetIp: string;
   accessPoints: AccessPoints;
   mountCredentials: MountCredentials;
   records: () => FilesRecords;
@@ -180,19 +181,19 @@ export function accountFilesEfs({
   }
 
   async function removeAccessPoint(accountId: string): Promise<void> {
-    const accessPointArn = await records().filesAccessPoint(accountId);
+    const accessPointArn = await records().filesAccessPoint(accountId, 'efs');
     if (accessPointArn === null) return;
     const deleted = await accessPoints.delete(accessPointArn);
-    await records().deleteFilesAccessPoint(accountId);
+    await records().deleteFilesAccessPoint(accountId, 'efs');
     if (!deleted) throw new HttpError(404, 'Files access point not found');
   }
 
   async function accessPoint(accountId: string): Promise<string> {
-    const saved = await records().filesAccessPoint(accountId);
+    const saved = await records().filesAccessPoint(accountId, 'efs');
     if (saved !== null) return saved;
     const token = createHash('sha256').update(`files:${accountId}`).digest('hex').slice(0, 64);
     const created = await accessPoints.create(`/${directoryOf(accountId)}`, token);
-    await records().saveFilesAccessPoint(accountId, created);
+    await records().saveFilesAccessPoint(accountId, created, 'efs');
     return created;
   }
 
@@ -301,7 +302,7 @@ export function accountFilesEfs({
       const accessPointArn = await accessPoint(accountId);
       const credentials = await mountCredentials(accessPointArn, `files-${accountOf(accountId)}`);
       await requireActive(accountId);
-      return { fileSystemId, accessPointId: accessPointArn.split('/').pop() ?? '', region, ...credentials };
+      return { fileSystemId, mountTargetIp, accessPointId: accessPointArn.split('/').pop() ?? '', region, ...credentials };
     },
   };
 }

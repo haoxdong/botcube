@@ -42,7 +42,7 @@ const FILES_SETTINGS = ['BOTCUBE_FILES_BUCKET', 'BOTCUBE_FILES_FILE_SYSTEM_ARN',
 /** Whether this deploy has Files: once any setting is, a missing one fails loud. */
 export const filesConfigured = (env: NodeJS.ProcessEnv) => FILES_SETTINGS.some((name) => env[name]?.trim());
 
-const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_LINKS_URL', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN'] as const;
+const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_LINKS_URL', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN', 'BOTCUBE_FILES_MOUNT_TARGET_IP'] as const;
 
 /** Files on EFS, behind BOTCUBE_FILES_STORE=efs: every setting is required, and a missing one fails loud. */
 function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords): AccountFiles<FilesMountBinding> {
@@ -52,6 +52,7 @@ function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords): A
   const fileSystemArn = setting('BOTCUBE_FILES_EFS_ARN');
   return accountFilesEfs({
     root: setting('BOTCUBE_FILES_EFS_ROOT'),
+    mountTargetIp: setting('BOTCUBE_FILES_MOUNT_TARGET_IP'),
     fileSystemArn,
     accessPoints: efsAccessPoints(fileSystemArn),
     mountCredentials: stsMountCredentials(setting('BOTCUBE_FILES_MOUNT_ROLE_ARN'), fileSystemArn),

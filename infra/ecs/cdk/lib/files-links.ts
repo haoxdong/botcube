@@ -17,12 +17,13 @@ import type { PreviewOriginStack } from './preview-origin-stack.js';
  * neither the NAT nor a Chat Service task and keep working while production is parked. The Chat
  * Service, Browsers and Runtime start using it behind FILES_STORE=efs.
  */
-export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string; availabilityZone: string }> }, cubeRoot: string, corsOrigins: string[]) {
+export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string; availabilityZone: string }> }, cubeRoot: string, corsOrigins: string[], clients: ec2.ISecurityGroup[] = []) {
   const { vpc } = chat.cluster;
   const links = new ec2.SecurityGroup(origin, 'FilesLinksNetwork', { vpc, allowAllOutbound: false });
   const mountTargets = new ec2.SecurityGroup(origin, 'FilesEfsMountTargets', { vpc, allowAllOutbound: false });
   mountTargets.addIngressRule(links, ec2.Port.tcp(2049), 'The Files Lambda serves links');
   mountTargets.addIngressRule(chat.network, ec2.Port.tcp(2049), 'Chat Service mounts Files');
+  clients.forEach(client => mountTargets.addIngressRule(client, ec2.Port.tcp(2049), 'Account sessions mount Files'));
   links.addEgressRule(mountTargets, ec2.Port.tcp(2049), 'NFS only: links work without the NAT');
   const targets = browsers.subnets.map((subnet, index) => new efs.CfnMountTarget(origin, `FilesEfsMountTarget${index}`, {
     fileSystemId: storage.filesEfs.ref, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
@@ -97,6 +98,9 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
     conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
   }));
   mount.grantAssumeRole(chat.task.taskRole);
+  const target = targets[0];
+  if (!target) throw new Error('Files EFS requires a mount target');
+  chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_TARGET_IP', target.attrIpAddress);
   chat.container.addEnvironment('BOTCUBE_FILES_EFS_ARN', storage.filesEfs.attrArn);
   chat.container.addEnvironment('BOTCUBE_FILES_EFS_ROOT', '/mnt/files-efs');
   chat.container.addEnvironment('BOTCUBE_FILES_LINKS_URL', url.url);

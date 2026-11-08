@@ -43,7 +43,7 @@ function setup() {
   const access = fakeAccessPoints();
   const minted: string[] = [];
   const files = accountFilesEfs({
-    root, fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, links: LINKS,
+    root, mountTargetIp: '192.0.2.12', fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, links: LINKS,
     mountCredentials: async (accessPointArn) => {
       minted.push(accessPointArn);
       return { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date(Date.now() + 3_600_000).toISOString() };
@@ -124,7 +124,20 @@ describe('EFS account Files', () => {
     expect(access.created).toEqual([`/accounts/${HASH}`]);
     const binding = await files.syncBinding(ACCOUNT);
     expect(minted).toEqual([mount.accessPointArn]);
-    expect(binding).toMatchObject({ fileSystemId: 'fs-0abc', region: 'us-east-1', accessPointId: mount.accessPointArn.split('/').pop(), accessKeyId: 'AKIA' });
+    expect(binding).toMatchObject({ fileSystemId: 'fs-0abc', mountTargetIp: '192.0.2.12', region: 'us-east-1', accessPointId: mount.accessPointArn.split('/').pop(), accessKeyId: 'AKIA' });
+  });
+
+  it('keeps the active S3 access point while creating and deleting the EFS access point', async () => {
+    const { files, records } = setup();
+    const s3 = 'arn:aws:s3files:us-east-1:123456789012:access-point/s3ap-existing';
+    await records.saveFilesAccessPoint(ACCOUNT, s3);
+    const mounted = await files.mount(ACCOUNT);
+    expect(mounted.accessPointArn).toContain(':elasticfilesystem:');
+    expect(await records.filesAccessPoint(ACCOUNT)).toBe(s3);
+    expect(await records.filesAccessPoint(ACCOUNT, 'efs')).toBe(mounted.accessPointArn);
+    await files.delete(ACCOUNT);
+    expect(await records.filesAccessPoint(ACCOUNT, 'efs')).toBeNull();
+    expect(await records.filesAccessPoint(ACCOUNT)).toBe(s3);
   });
 
   it('a Claim moves every file into the claiming account, a taken name getting the next free one, and retires the source', async () => {

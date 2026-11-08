@@ -1023,11 +1023,11 @@ describe('Files from the environment', () => {
   it('keeps Files on EFS behind BOTCUBE_FILES_STORE=efs, naming every missing setting', () => {
     expect(filesConfigured({ BOTCUBE_FILES_STORE: 'efs' })).toBe(true);
     expect(() => accountFilesFromEnv({ BOTCUBE_FILES_STORE: 'efs', BOTCUBE_FILES_EFS_ROOT: '/mnt/files-efs' }, memoryRecords)()).toThrow(
-      new HttpError(503, 'Files on EFS are not configured: BOTCUBE_FILES_EFS_ARN, BOTCUBE_FILES_LINKS_URL, BOTCUBE_FILES_SIGNING_KEY, BOTCUBE_FILES_MOUNT_ROLE_ARN required'),
+      new HttpError(503, 'Files on EFS are not configured: BOTCUBE_FILES_EFS_ARN, BOTCUBE_FILES_LINKS_URL, BOTCUBE_FILES_SIGNING_KEY, BOTCUBE_FILES_MOUNT_ROLE_ARN, BOTCUBE_FILES_MOUNT_TARGET_IP required'),
     );
     const efs = accountFilesFromEnv({
       BOTCUBE_FILES_STORE: 'efs', BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-1', BOTCUBE_FILES_EFS_ROOT: '/mnt/files-efs',
-      BOTCUBE_FILES_LINKS_URL: 'https://links.test/', BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64), BOTCUBE_FILES_MOUNT_ROLE_ARN: SYNC_ROLE_ARN,
+      BOTCUBE_FILES_LINKS_URL: 'https://links.test/', BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64), BOTCUBE_FILES_MOUNT_ROLE_ARN: SYNC_ROLE_ARN, BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
       // S3 Files settings left from before the switch are not used.
       BOTCUBE_FILES_BUCKET: 'files-bucket', BOTCUBE_FILES_FILE_SYSTEM_ARN: FILE_SYSTEM_ARN,
     }, memoryRecords);

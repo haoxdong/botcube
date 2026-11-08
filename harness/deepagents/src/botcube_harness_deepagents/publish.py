@@ -11,7 +11,7 @@ from urllib.parse import quote
 from ag_ui.core import EventType, RunFinishedEvent
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .files_sync import FilesSync, excluded_paths, import_linked_files, is_files_path
+from .files_sync import Files, excluded_paths, import_linked_files, is_files_path
 from .lazy_files import current_turn_files, finish_in_thread
 
 
@@ -64,7 +64,7 @@ def _publish_file(root: Path, excluded: tuple[str, ...], path: str) -> str:
 
 
 async def publish_finished_files(
-    files: FilesSync | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
+    files: Files | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
 ) -> None:
     if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
         return

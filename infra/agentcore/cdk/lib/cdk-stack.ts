@@ -28,12 +28,7 @@ export const RUNTIME_IDLE_TIMEOUT_SECONDS = 300;
  * to about 4,500 events; the Chat Service waits as long.
  */
 export const SESSION_API_TIMEOUT_SECONDS = 900;
-/**
- * Where the agent's shell works: the runtime's per-session storage, which survives a
- * microVM stop (ADR 0077). The Harness syncs it with the account's Files on each Turn,
- * because session storage resets on every runtime version update.
- */
-export const RUNTIME_WORKSPACE = '/mnt/workspace';
+const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
 /** The audience of the Chat Service's per-Turn JWT: `TURN_IDENTITY_AUDIENCE` in botcube/chat's `turn-identity.ts`. */
 const TURN_IDENTITY_AUDIENCE = 'sts.amazonaws.com';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
@@ -126,6 +121,7 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
   runtimeIdleTimeoutSeconds?: number;
+  /** The session-storage mount; the shell works in its files child. */
   workspace?: string;
   sessionApiTimeoutSeconds?: number;
   sessionApiMemoryMiB?: number;
@@ -261,8 +257,9 @@ export class AgentCoreStack extends Stack {
         maxLifetime: props.runtimeMaxLifetimeSeconds ?? RUNTIME_MAX_LIFETIME_SECONDS,
         idleRuntimeSessionTimeout: props.runtimeIdleTimeoutSeconds ?? RUNTIME_IDLE_TIMEOUT_SECONDS,
       };
-      cfnRuntime.filesystemConfigurations = [{ sessionStorage: { mountPath: props.workspace ?? RUNTIME_WORKSPACE } }];
-      env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', props.workspace ?? RUNTIME_WORKSPACE);
+      const storage = props.workspace ?? RUNTIME_SESSION_STORAGE;
+      cfnRuntime.filesystemConfigurations = [{ sessionStorage: { mountPath: storage } }];
+      env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
       configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
       env.runtime.addEnvironmentVariable('BOTCUBE_COMPRESS_CHECKPOINTS', checkpointCompression.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);

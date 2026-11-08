@@ -84,7 +84,7 @@ from .agent_documents import (
 )
 from .conversation import conversation
 from .files_sync import (
-    FilesSync,
+    Files,
     FilesSyncError,
     FilesSyncRecordError,
     excluded_paths,
@@ -572,8 +572,9 @@ def _build_checkpointer() -> Any:
 
 
 def _workspace() -> Path:
-    workspace = os.getenv('BOTCUBE_WORKSPACE', '').strip()
-    return Path(workspace) if workspace else Path.home()
+    root = Path(os.getenv('BOTCUBE_WORKSPACE', '').strip() or Path.home())
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _user_prompt(profile: str, synced_skills: Sequence[str] | None, documents: AgentDocuments | None) -> str:
@@ -915,7 +916,7 @@ def _require_empty_opening_checkpoint(checkpoint: object | None) -> None:
 
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any,
-                        files: FilesSync | None, warmup: Any, turn_identity: str | None):
+                        files: Files | None, warmup: Any, turn_identity: str | None):
     session = (session_user_id, input_data.thread_id)
     persistent_memory = auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
     opening = forwarded.get('opening') is True
@@ -1000,7 +1001,7 @@ def _settle_finished_reuse(saver: Any, finished: bool) -> None:
 async def _prepare_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
-    files: FilesSync | None, reads_history: bool,
+    files: Files | None, reads_history: bool,
 ) -> None:
     memory_warmup = (
         session_memory.begin_warmup(session, actor_id)
@@ -1121,7 +1122,7 @@ class _SessionTurns:
         session: tuple[str | None, str | None],
         prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
         input_data: RunAgentInput,
-        files: FilesSync | None,
+        files: Files | None,
         context: _RequestContext,
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[Any, None]:
@@ -1156,7 +1157,7 @@ class _SessionTurns:
         turn: _Turn,
         prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
         input_data: RunAgentInput,
-        files: FilesSync | None,
+        files: Files | None,
         context: _RequestContext,
         put: Callable[[Any], None],
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,

@@ -1,7 +1,20 @@
 # syntax=docker/dockerfile:1
 # Build context: botcube/harness/deepagents/
 # The active Cartridge stages its tool bundle before this generic image builds.
+FROM public.ecr.aws/docker/library/rust:1.88-slim-bookworm AS efs-utils
+RUN --mount=type=secret,id=build_ca,mode=0444 \
+    if [ -f /run/secrets/build_ca ]; then \
+      export CURL_CA_BUNDLE=/run/secrets/build_ca APT_CONFIG=/tmp/efs-build-apt.conf CARGO_HTTP_CAINFO=/run/secrets/build_ca; \
+      printf 'Acquire::https::CaInfo "/run/secrets/build_ca";\n' > "$APT_CONFIG"; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates pkg-config libssl-dev build-essential cmake golang-go gettext-base && \
+    curl -fsSL https://github.com/aws/efs-utils/archive/2341e82db7e1dec6060ede910d16a8a446f3597f.tar.gz -o /tmp/efs.tar.gz && \
+    echo '705b25f84905504e254312949c0a2e1d3d8d0dce37afee3841846d6c844aeda9  /tmp/efs.tar.gz' | sha256sum -c - && \
+    mkdir /efs-utils && tar -xzf /tmp/efs.tar.gz -C /efs-utils --strip-components=1 && \
+    cd /efs-utils && ./build-deb.sh
+
 FROM public.ecr.aws/docker/library/python:3.13-slim AS base
+COPY --from=efs-utils /efs-utils/build/amazon-efs-utils*.deb /tmp/
 
 # Node.js for a Cartridge CLI + AWS CLI for agent-browser credential resolution
 RUN --mount=type=secret,id=build_ca,mode=0444 \
@@ -9,7 +22,7 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
       export CURL_CA_BUNDLE=/run/secrets/build_ca NODE_EXTRA_CA_CERTS=/run/secrets/build_ca APT_CONFIG=/tmp/botcube-build-apt.conf; \
       printf 'Acquire::https::CaInfo "/run/secrets/build_ca";\n' > "$APT_CONFIG"; \
     fi; \
-    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils librsvg2-bin \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/amazon-efs-utils*.deb nfs-common openssl curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils librsvg2-bin \
     libcairo2 libfreetype6 fontconfig fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji && \
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
@@ -73,6 +86,8 @@ RUN --mount=type=secret,id=build_ca \
 
 ENV PATH="/opt/python-tools/.venv/bin:/opt/harness/.venv/bin:$PATH"
 ENV PORT=8080
+ENV BOTCUBE_WORKSPACE=/mnt/workspace/files
+RUN mkdir -p /mnt/workspace/files && rm -f /tmp/amazon-efs-utils*.deb
 EXPOSE 8080
 # AgentCore runtime — serves /invocations via a hand-written FastAPI app (ADR 0029)
 # with AG-UI SSE streaming; main() runs uvicorn on :8080.

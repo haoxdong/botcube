@@ -35,6 +35,8 @@ from boto3.s3.transfer import TransferConfig, create_transfer_manager
 from s3transfer.exceptions import RetriesExceededError as TransferRetriesExceededError
 from s3transfer.manager import TransferManager
 
+from .files_mount import FilesMount
+
 FILES_PROP = 'files'
 # The Harness's own directory in the workspace: the rendered long-term memory.
 HARNESS_DIRECTORY = 'botcube-harness-deepagents'
@@ -370,18 +372,27 @@ def files_prompt(excluded: Iterable[str]) -> str:
     )
 
 
-def pop_files_sync(forwarded: dict[str, Any]) -> FilesSync | None:
+Files = FilesSync | FilesMount
+
+
+def pop_files_sync(forwarded: dict[str, Any]) -> Files | None:
     """Take the account's Files binding out of the forwarded props; None when the Turn carries none."""
     files = forwarded.pop(FILES_PROP, None)
     if files is None:
         return None
     if not isinstance(files, dict):
         raise FilesSyncError('Files must be an object')
-    fields = ('bucket', 'prefix', 'region', *_CREDENTIAL_FIELDS)
+    efs = 'fileSystemId' in files
+    fields = (('fileSystemId', 'accessPointId', 'mountTargetIp', 'expiration') if efs else ('bucket', 'prefix')) + ('region', *_CREDENTIAL_FIELDS)
     for field in fields:
         value = files.get(field)
         if not isinstance(value, str) or not value:
             raise FilesSyncError(f'Files {field} must be a non-empty string')
+    if efs:
+        try:
+            return FilesMount.from_binding(files)
+        except (ValueError, TypeError) as error:
+            raise FilesSyncError('Files EFS binding is invalid or expired') from error
     if not files['prefix'].endswith('/'):
         raise FilesSyncError('Files prefix must end with /')
     return FilesSync(

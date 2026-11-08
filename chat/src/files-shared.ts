@@ -36,6 +36,7 @@ export interface FilesSyncBinding {
 /** What a Runtime session needs to mount its account's access point itself, and nothing more. */
 export interface FilesMountBinding {
   fileSystemId: string;
+  mountTargetIp: string;
   accessPointId: string;
   region: string;
   accessKeyId: string;
@@ -52,9 +53,9 @@ export interface FilesRecords {
   completeFilesCleanup(accountId: string, lastCredentialExpiresAt: number): Promise<void>;
   filesAccountActive(accountId: string): Promise<boolean>;
   pendingFilesCleanup(): Promise<string[]>;
-  filesAccessPoint(accountId: string): Promise<string | null>;
-  saveFilesAccessPoint(accountId: string, accessPointArn: string): Promise<void>;
-  deleteFilesAccessPoint(accountId: string): Promise<void>;
+  filesAccessPoint(accountId: string, store?: 'efs'): Promise<string | null>;
+  saveFilesAccessPoint(accountId: string, accessPointArn: string, store?: 'efs'): Promise<void>;
+  deleteFilesAccessPoint(accountId: string, store?: 'efs'): Promise<void>;
 }
 
 /** An account's Files: one directory of the S3 Files file system, reached through its own access point. */

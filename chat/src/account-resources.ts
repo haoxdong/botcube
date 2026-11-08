@@ -320,22 +320,21 @@ export class AccountResources {
     return items.filter((item) => (item.notBefore as number) <= Date.now()).map((item) => item.sk as string);
   }
 
-  /** The S3 Files access point of the account's Files, once created. */
-  async filesAccessPoint(accountId: string): Promise<string | null> {
-    const item = await this.get(`FILES#${accountId}`);
+  async filesAccessPoint(accountId: string, store?: 'efs'): Promise<string | null> {
+    const item = await this.get(`${store === 'efs' ? 'FILES_EFS' : 'FILES'}#${accountId}`);
     return typeof item?.accessPointArn === 'string' ? item.accessPointArn : null;
   }
 
   /** Forget the account's Files access point once it is deleted. */
-  async deleteFilesAccessPoint(accountId: string): Promise<void> {
-    await this.call('DeleteItem', new DeleteCommand({ TableName: this.tableName, Key: key(`FILES#${accountId}`) }));
+  async deleteFilesAccessPoint(accountId: string, store?: 'efs'): Promise<void> {
+    await this.call('DeleteItem', new DeleteCommand({ TableName: this.tableName, Key: key(`${store === 'efs' ? 'FILES_EFS' : 'FILES'}#${accountId}`) }));
   }
 
   /** Concurrent creations made the same access point, so the last writer stores what the first did. */
-  async saveFilesAccessPoint(accountId: string, accessPointArn: string): Promise<void> {
+  async saveFilesAccessPoint(accountId: string, accessPointArn: string, store?: 'efs'): Promise<void> {
     await this.call(
       'PutItem',
-      new PutCommand({ TableName: this.tableName, Item: { ...key(`FILES#${accountId}`), accessPointArn } }),
+      new PutCommand({ TableName: this.tableName, Item: { ...key(`${store === 'efs' ? 'FILES_EFS' : 'FILES'}#${accountId}`), accessPointArn } }),
     );
   }
 

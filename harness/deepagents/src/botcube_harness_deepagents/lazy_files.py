@@ -16,14 +16,15 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 from . import turn_timing
-from .files_sync import FilesSync, install_staged_files
+from .files_mount import FilesMount
+from .files_sync import Files, install_staged_files
 
 _WORKSPACE_TOOLS = frozenset(get_args(FsToolName))
 _T = TypeVar('_T')
 
 
 class TurnFiles:
-    def __init__(self, files: FilesSync | None, root: Path, excluded: Iterable[str]) -> None:
+    def __init__(self, files: Files | None, root: Path, excluded: Iterable[str]) -> None:
         self._files = files
         self._root = root
         self._excluded = tuple(excluded)
@@ -65,6 +66,8 @@ class TurnFiles:
                 self._files.push(self._root, self._excluded)
 
     def publish_staged(self, root: Path) -> None:
+        if isinstance(self._files, FilesMount):
+            self.ensure()
         if self._files is not None:
             self._files.push(root, self._excluded)
         install_staged_files(root, self._root, self._excluded)
@@ -122,7 +125,7 @@ def current_turn_files() -> TurnFiles | None:
 
 
 @contextmanager
-def turn_files(files: FilesSync | None, root: Path, excluded: Iterable[str]) -> Generator[TurnFiles, None, None]:
+def turn_files(files: Files | None, root: Path, excluded: Iterable[str]) -> Generator[TurnFiles, None, None]:
     readiness = TurnFiles(files, root, excluded)
     token = _turn_files.set(readiness)
     try:

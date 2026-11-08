@@ -3,6 +3,7 @@ import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
+import { SecurityGroup } from 'aws-cdk-lib/aws-ec2';
 import { ChatStorageStack } from '../lib/chat-storage-stack.js';
 import { addFilesLinks } from '../lib/files-links.js';
 import { PreviewChatService } from '../lib/preview-chat-service.js';
@@ -27,7 +28,9 @@ function synth(parked: boolean) {
     sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'reap.js'], authBrowserId: 'test-browser',
     chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), parked,
   });
-  addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), ['https://web.example.com']);
+  const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });
+  const browser = new SecurityGroup(origin, 'BrowserNetwork', { vpc: chat.cluster.vpc });
+  addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), ['https://web.example.com'], [runtime, browser]);
   return Template.fromStack(origin);
 }
 
@@ -43,6 +46,7 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
     ContainerDefinitions: Match.arrayWith([Match.objectLike({
       MountPoints: [{ SourceVolume: 'files-efs', ContainerPath: '/mnt/files-efs', ReadOnly: false }],
       Environment: Match.arrayWith([
+        { Name: 'BOTCUBE_FILES_MOUNT_TARGET_IP', Value: { 'Fn::GetAtt': ['FilesEfsMountTarget0', 'IpAddress'] } },
         { Name: 'BOTCUBE_FILES_EFS_ARN', Value: Match.anyValue() },
         { Name: 'BOTCUBE_FILES_EFS_ROOT', Value: '/mnt/files-efs' },
         { Name: 'BOTCUBE_FILES_LINKS_URL', Value: Match.anyValue() },
@@ -60,6 +64,13 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
     SourceSecurityGroupId: { 'Fn::GetAtt': [Match.stringLikeRegexp('^ChatServiceIngress'), 'GroupId'] },
     GroupId: { 'Fn::GetAtt': [Match.stringLikeRegexp('^FilesEfsMountTargets'), 'GroupId'] },
   });
+  for (const client of ['RuntimeNetwork', 'BrowserNetwork']) {
+    template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+      IpProtocol: 'tcp', FromPort: 2049, ToPort: 2049,
+      SourceSecurityGroupId: { 'Fn::GetAtt': [Match.stringLikeRegexp(`^${client}`), 'GroupId'] },
+      GroupId: { 'Fn::GetAtt': [Match.stringLikeRegexp('^FilesEfsMountTargets'), 'GroupId'] },
+    });
+  }
   template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
     Action: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'], Effect: 'Allow', Resource: Match.anyValue(),
     Condition: { StringEquals: { 'elasticfilesystem:AccessPointArn': accessPointArn } },

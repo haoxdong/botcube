@@ -175,7 +175,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   });
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
     env, stackName: identity.aws.ecs.webLatency.stackName, appMonitorName: identity.aws.ecs.webLatency.appMonitorName,
-    // The web and its Dev environment: every https origin the Chat Service serves.
     domains: identity.domains.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
     readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
     turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
@@ -252,7 +251,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
   addFiles(origin, chat, storage, agentComputer, options.originConfig);
-  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins);
+  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork, agentComputer.network]);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
