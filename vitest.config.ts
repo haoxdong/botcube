@@ -36,7 +36,7 @@ export default defineConfig({
     maxWorkers: '100%',
     globalSetup: ['./vitest.global-setup.ts'],
     projects: [
-      { extends: './chat/test/parity/vitest.config.ts', test: { name: 'parity', include: ['chat/test/parity/*.test.ts'] } },
+      { extends: './chat/test/parity/vitest.config.ts', test: { name: 'parity', sequence: { groupOrder: 1 } } },
       {
         resolve: { alias: { 'botcube-chat': at('chat/src/index.ts') } },
         test: {
