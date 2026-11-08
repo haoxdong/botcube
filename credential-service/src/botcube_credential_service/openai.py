@@ -190,7 +190,6 @@ class OpenAIProvider:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        # Raises ValueError while the Vault is unconfigured.
         self._vault = vault
         self._audit = audit
         self._clock = clock
@@ -201,17 +200,25 @@ class OpenAIProvider:
         self._lease_poll_seconds = positive_seconds('BOTCUBE_OPENAI_LEASE_POLL_SECONDS', _LEASE_POLL_SECONDS)
         self._read_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_READ_TIMEOUT_SECONDS', _READ_TIMEOUT_SECONDS)
         self._connect_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_CONNECT_TIMEOUT_SECONDS', 30)
-        self._client = httpx.AsyncClient(
-            transport=transport,
-            timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds),
-            cookies=isolated_cookie_jar(),
-        )
-        # Access tokens, expiry and the Vault revision they came from; memory only.
+        self._transport = transport
+        self._client: httpx.AsyncClient | None = None
         self._access: dict[str, tuple[str, float, str]] = {}
         self._refreshing: dict[str, asyncio.Lock] = {}
 
+    def _relay_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                transport=self._transport,
+                timeout=httpx.Timeout(self._read_timeout_seconds, connect=self._connect_timeout_seconds),
+                cookies=isolated_cookie_jar(),
+            )
+        return self._client
+
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._client is not None:
+            await self._client.aclose()
+        elif self._transport is not None:
+            await self._transport.aclose()
 
     def ready(self) -> None:
         self._vault()
@@ -232,8 +239,6 @@ class OpenAIProvider:
         return (method, path) in _RELAYED
 
     async def mint_access(self, account_id: str, request_context: Mapping[str, str]) -> str:
-        # One refresh per account at a time: a second would spend the refresh token the first just rotated.
-        # A call that waited finds the first one's access token cached.
         async with self._refreshing.setdefault(account_id, asyncio.Lock()):
             cached = self._access.get(account_id)
             if cached is not None and self._clock() < cached[1]:
@@ -250,6 +255,7 @@ class OpenAIProvider:
             return await self._refresh(account_id, request_context)
 
     async def _refresh(self, account_id: str, request_context: Mapping[str, str]) -> str:
+        self._relay_client()
         vault = self._vault()
         lease = secrets.token_urlsafe()
         try:
@@ -390,11 +396,10 @@ class OpenAIProvider:
             raise _no_credential() from None
 
     async def _token_refresh(self, sign_in: Mapping[str, str], active_lease: _RefreshLease) -> dict[str, Any]:
-        """Spend the refresh token at OpenAI's token endpoint, within the lease that lets this task spend it."""
         try:
             async with asyncio.timeout(active_lease.expires_at - self._clock()) as deadline:
                 active_lease.request_deadline = deadline
-                response = await self._client.post(
+                response = await self._relay_client().post(
                     self._settings.token_url,
                     headers={'accept': 'application/json'},
                     data={
@@ -445,7 +450,7 @@ class OpenAIProvider:
         headers = {name: request.headers[name] for name in _FORWARDED_HEADERS if name in request.headers}
         if context is not None:
             headers['session-id'] = account_id
-        upstream_request = self._client.build_request(
+        upstream_request = self._relay_client().build_request(
             request.method, f'{self._settings.api_origin}/{path}', params=request.url.query or None,
             headers={**headers, 'authorization': f'Bearer {access}'}, content=await request.body(),
         )
@@ -483,7 +488,7 @@ class OpenAIProvider:
 
     async def _send(self, upstream_request: httpx.Request, timing: _ProviderTiming | None) -> httpx.Response | Response:
         try:
-            upstream = await self._client.send(upstream_request, stream=True)
+            upstream = await self._relay_client().send(upstream_request, stream=True)
             if timing is not None:
                 encoding = upstream.headers.get('content-encoding')
                 timing.upstream_content_encoding = 'absent' if encoding is None else _UPSTREAM_CONTENT_ENCODINGS.get(encoding.strip().lower(), 'other')

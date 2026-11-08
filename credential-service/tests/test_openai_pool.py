@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
+from pathlib import Path
 from typing import NoReturn
 
 import httpx
@@ -68,7 +69,7 @@ def test_responses_close_without_closing_shared_client(outcome: str) -> None:
                                   headers={'set-cookie': 'account=first; Path=/'})
 
         owner = OpenAIProvider(unused_vault, audit=CredentialAuditRecorder(), transport=httpx.MockTransport(upstream))
-        shared = owner._client
+        shared = owner._relay_client()
         for account, access in [('first', 'token-first'), ('second', 'token-second')]:
             response = await owner.relay(request(), 'v1/models', access, account_id=account, request_context={})
             await consume_response(response, outcome)
@@ -84,7 +85,8 @@ def test_responses_close_without_closing_shared_client(outcome: str) -> None:
     asyncio.run(run())
 
 
-def test_application_shutdown_closes_provider_pool() -> None:
+@pytest.mark.parametrize('used', [False, True])
+def test_application_shutdown_closes_provider_pool(used: bool) -> None:
     class Transport(httpx.MockTransport):
         closed = False
 
@@ -94,9 +96,27 @@ def test_application_shutdown_closes_provider_pool() -> None:
     transport = Transport(lambda _: httpx.Response(200))
     owner = OpenAIProvider(unused_vault, audit=CredentialAuditRecorder(), transport=transport)
     settings = CredentialServiceSettings(name='pool-test', invocation_secret=lambda: 'secret')
-    shared = owner._client
+    shared = owner._relay_client() if used else None
     with TestClient(create_app(settings, [owner])) as client:
         assert client.get('/missing').status_code == 404
-        assert not shared.is_closed
-    assert shared.is_closed
+        if shared is not None:
+            assert not shared.is_closed
+    if shared is not None:
+        assert shared.is_closed
     assert transport.closed
+
+
+def test_unused_provider_does_not_load_tls_but_relay_requires_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv('SSL_CERT_FILE', str(tmp_path / 'missing-ca.pem'))
+    owner = OpenAIProvider(unused_vault, audit=CredentialAuditRecorder())
+    settings = CredentialServiceSettings(name='pool-test', invocation_secret=lambda: 'secret')
+
+    async def run() -> None:
+        with pytest.raises(FileNotFoundError):
+            await owner.relay(request(), 'v1/models', 'token', account_id='first', request_context={})
+
+    with TestClient(create_app(settings, [owner])) as client:
+        assert client.get('/missing').status_code == 404
+        asyncio.run(run())
