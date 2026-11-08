@@ -1,0 +1,11 @@
+{
+  "deploymentCircuitBreaker": {
+    "enable": true,
+    "rollback": true,
+    "resetOnHealthyTask": true,
+    "thresholdConfiguration": {
+      "type": "BOUNDED_PERCENT",
+      "value": 50
+    }
+  }
+}

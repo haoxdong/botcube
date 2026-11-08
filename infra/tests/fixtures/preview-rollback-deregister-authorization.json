@@ -1,0 +1,9 @@
+{
+  "observedAt": "2026-09-24T18:22:32Z",
+  "operation": "ecs:DeregisterTaskDefinition",
+  "error": "AccessDeniedException",
+  "evaluatedResource": "*",
+  "rejectedGrantResource": "arn:aws:ecs:us-east-1:123456789012:task-definition/example-preview-rollback-*:*",
+  "requiredResource": "*",
+  "sourceOfRequirement": "https://docs.aws.amazon.com/de_de/service-authorization/latest/reference/list_amazonelasticcontainerservice.html"
+}

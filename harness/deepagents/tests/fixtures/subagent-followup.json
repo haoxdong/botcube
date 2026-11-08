@@ -1,0 +1,52 @@
+{
+  "threadId": "358c236c-e945-4235-9aed-43e2b3574a29",
+  "runId": "d30f4875-45a9-41ca-abe9-6a9fb84f869a",
+  "protocolVersion": "1.0",
+  "state": {},
+  "messages": [
+    {
+      "id": "ad072d00-c895-4528-93e6-2de2ae2cad9c",
+      "role": "user",
+      "content": "Reply with just OK."
+    }
+  ],
+  "tools": [],
+  "context": [],
+  "forwardedProps": {
+    "model": "openai-plan:gpt-6-astra",
+    "effort": "medium",
+    "sandbox": true,
+    "heldMessageIds": [
+      "91cdc820-5380-41d5-a456-dd5324ba01e0",
+      "rs_080c0c1c030c5c9d016ac4a0ad71a087d182ecee30c7371de4",
+      "resp_080c0c1c030c5c9d016ac4a0a67a3c87d19161d24e06974f37",
+      "ec5951f1-e756-431a-8362-c8cd323e0277",
+      "resp_080c0c1c030c5c9d016ac4a0abf3dc87d1ba240485a586c794",
+      "f771c080-15b8-4f6a-9b3e-3b1f42046934",
+      "rs_080c0c1c030c5c9d016ac4a0b306e487d197ca15b7d354a224",
+      "resp_080c0c1c030c5c9d016ac4a0b0fec487d199818918595a4286",
+      "lc_run--01a11013-ec90-7801-a2f5-c3f97f342ba0",
+      "call_kvxGTCOLyvpf3I6UV2SWl9Qf",
+      "lc_run--01a11013-ec75-7041-8546-5f07bc99bdd9",
+      "call_NCvPNkOPIDo2yE69yyAPWITl",
+      "lc_run--01a11013-ed5d-7370-a560-7d330b16d5d0",
+      "call_fZOe99613qi8ybQkvdkwzTuH",
+      "lc_run--01a11013-f955-79e2-a7c1-4836f9393b41",
+      "lc_run--01a11013-f82f-7681-8a17-a102a317af13",
+      "lc_run--01a11013-fbad-7ea0-a241-304803b4dffa"
+    ],
+    "heldToolCallIds": [
+      "call_iHzme567E1QpdUpW3bK29ZeJ",
+      "call_VP4nTvgPEfnxe4f0ZZQ4s0fu",
+      "call_pnilxIEkBg6phI17hokGCREL",
+      "call_pWBZA0nNMS30rtRKd0IKdprY",
+      "call_uNoUxGldELmisgRKfuwO8otS",
+      "call_kvxGTCOLyvpf3I6UV2SWl9Qf",
+      "call_NCvPNkOPIDo2yE69yyAPWITl",
+      "call_fZOe99613qi8ybQkvdkwzTuH",
+      "call_4GJOK9Z45g8ntW9DE5klEojw",
+      "call_ZU3mOYLq6kXUwNSwoYiZXM5D",
+      "call_akZkjxzd5npldVb2ISChE2Mi"
+    ]
+  }
+}
