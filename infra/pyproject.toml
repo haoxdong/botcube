@@ -10,7 +10,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   "moto[dynamodb]>=5.2.3",
-  "pyright==1.1.414",
+  "ty==0.0.99",
   "pytest>=9.1.1",
   "types-boto3[acm,bedrock-agentcore,bedrock-agentcore-control,cloudformation,cloudwatch,dynamodb,ec2,ecr,ecs,elbv2,lambda,logs,route53,s3,sns]>=1.43.108",
 ]
@@ -25,19 +25,6 @@ extra-paths = ["ecs", "ecs/origin-provider", "ecs/credential-audit-copy"]
 [tool.ty.src]
 include = ["ecs", "tests"]
 exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
-
-[tool.pyright]
-include = ["ecs", "tests"]
-exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
-# Check against the oldest supported Python, which Presubmit runs.
-pythonVersion = "3.11"
-# Every parameter carries a type annotation.
-reportMissingParameterType = "error"
-# Generic types carry their type arguments, and no parameter type is unknown.
-reportMissingTypeArgument = "error"
-reportUnknownParameterType = "error"
-# The deploy scripts import their shared identity module and the origin provider's handler from their own directories.
-extraPaths = ["ecs", "ecs/origin-provider", "ecs/credential-audit-copy"]
 
 [tool.pytest.ini_options]
 markers = ["integration: runs a real subprocess, server or socket (ADR 0083 decision 1)"]

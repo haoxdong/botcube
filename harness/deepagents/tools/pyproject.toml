@@ -35,17 +35,16 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pyright==1.1.414", "pytest==9.2.0"]
-
-[tool.pyright]
-pythonVersion = "3.11"
-reportMissingParameterType = "error"
-reportMissingTypeArgument = "error"
-reportUnknownParameterType = "error"
-include = ["smoke.py", "botcube_plotly.py", "tests"]
+dev = ["ty==0.0.99", "pytest==9.2.0"]
 
 [tool.pytest.ini_options]
 markers = [
   "integration: runs a real subprocess, server or socket (ADR 0083 decision 1)",
   "ci_host: needs a system package or kernel feature CI's runners have and cloud agent containers lack; check:pr deselects it",
 ]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+include = ["smoke.py", "botcube_plotly.py", "tests"]

@@ -21,7 +21,7 @@ dev = [
   "botcube-harness-deepagents",
   "moto[dynamodb,kms,scheduler,sqs,server]>=5",
   "mutmut==3.8.1",
-  "pyright==1.1.414",
+  "ty==0.0.99",
   "pytest>=9.1.1",
 ]
 
@@ -32,15 +32,6 @@ botcube-credential-service = { path = "../../credential-service", editable = tru
 
 [tool.ty.environment]
 python-version = "3.11"
-
-[tool.pyright]
-# Check against the oldest supported Python, which Presubmit runs.
-pythonVersion = "3.11"
-# Every parameter carries a type annotation.
-reportMissingParameterType = "error"
-# Generic types carry their type arguments, and no parameter type is unknown.
-reportMissingTypeArgument = "error"
-reportUnknownParameterType = "error"
 
 [build-system]
 requires = ["hatchling>=1.32.4"]
