@@ -20,6 +20,8 @@ export class HttpFake {
   readonly server: Server;
   url = '';
   private closing = false;
+  /** Rechecks of pending waitForRequests conditions, run as each request is recorded. */
+  private readonly waiters = new Set<() => void>();
 
   constructor(handle: Handler) {
     this.server = createServer((incoming, response) => {
@@ -39,7 +41,21 @@ export class HttpFake {
       body: Buffer.concat(chunks).toString(),
     };
     this.requests.push(request);
+    for (const recheck of [...this.waiters]) recheck();
     await handle(request, response);
+  }
+
+  /** Resolve once `condition` holds over the recorded requests: now, or after a later request is recorded. */
+  async waitForRequests(condition: () => boolean): Promise<void> {
+    if (condition()) return;
+    await new Promise<void>((resolve) => {
+      const recheck = () => {
+        if (!condition()) return;
+        this.waiters.delete(recheck);
+        resolve();
+      };
+      this.waiters.add(recheck);
+    });
   }
 
   async listen(): Promise<this> {
