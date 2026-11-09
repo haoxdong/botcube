@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { frameData, sseFrames } from '../test/parity/browser.js';
 import { HttpError } from './cartridge.js';
 import { accountDefaultModel } from './models.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
@@ -127,6 +128,21 @@ describe("an account's allowed models", () => {
 });
 
 describe('a Turn naming a model', () => {
+  it.each(['quick', 'thorough', 'plan'])('run a Turn naming %s', async (model) => {
+    const threadId = `session-named-${model}`;
+    await stack.allocate('account-1', threadId);
+
+    const response = await postTurn(turn(threadId, { model, effort: 'high' }));
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps).toMatchObject({
+      model,
+      effort: 'high',
+    });
+  });
+
+
   it('reaches the Harness with a listed model', async () => {
     await stack.allocate('account-1', 'session-listed-model');
     const response = await postTurn(turn('session-listed-model', { model: 'thorough' }));
@@ -257,5 +273,52 @@ describe("an account's default model", () => {
 
   it('fails loud when the account has no models', () => {
     expect(() => accountDefaultModel([])).toThrow(new Error('The account has no models'));
+  });
+});
+
+describe('platform model parity', () => {
+  it.each(['us.anthropic.claude-opus-4-6-v1', 'opus-unlisted', 'sonnet-5.5', 'opus-5.5'])('refuse unavailable picker model %s before the Harness hears of it', async (model) => {
+    const threadId = `session-picker-refused-${model}`;
+    await stack.allocate('account-1', threadId);
+
+    const response = await postTurn(turn(threadId, { model }));
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      detail: `Model "${model}" is not available to this account`,
+    });
+    expect(stack.agentcore.invocations().filter(({ body }) => body.includes(threadId))).toEqual([]);
+  });  it("end a plan Turn with the Harness's classified Plan Usage error, as it named it", async () => {
+    const threadId = 'session-classified-plan-error';
+    await stack.allocate('account-1', threadId);
+    const runError = {
+      type: 'RUN_ERROR',
+      message:
+        "Your ChatGPT plan's usage limit is reached; wait, or check ChatGPT Settings > Usage " +
+        '(OpenAI subscription_sharing_usage_limit_exceeded).',
+      code: 'PLAN_USAGE_LIMIT_REACHED',
+    };
+    stack.agentcore.script(threadId, { kind: 'stream', frames: [`data: ${JSON.stringify(runError)}`] });
+
+    const response = await postTurn(turn(threadId, { model: 'plan' }));
+
+    expect(response.status).toBe(200);
+    expect(sseFrames(await response.text()).map(frameData)).toEqual([runError]);
+  });
+
+  it('run an Anthropic Turn naming a Cartridge model while the plan can no longer refresh, without asking for the catalog', async () => {
+    const accountModels = vi.fn(async () => { throw new HttpError(503, 'Plan catalog revoked'); });
+    const failing = await startInProcess({ cartridge: { accountModels } });
+    const threadId = 'session-cartridge-with-revoked-plan';
+    await failing.allocate('account-1', threadId);
+    try {
+      const response = await failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, { model: 'quick' }) });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(failing.agentcore.invocationFor(threadId).payload.forwardedProps).toMatchObject({ model: 'quick' });
+      expect(accountModels.mock.calls).toEqual([]);
+    } finally {
+      await failing.stop();
+    }
   });
 });

@@ -17,6 +17,7 @@ export interface InvocationPayload {
 }
 
 export class FakeAgentCore extends HttpFake {
+  private nextBrowser = 0;
   private readonly browserControls = new Map<string, string[]>();
   private readonly promptScripts = new Map<string, UpstreamScript>();
   private readonly scripts = new Map<string, UpstreamScript>();
@@ -71,9 +72,12 @@ export class FakeAgentCore extends HttpFake {
     });
   }
   startBrowser(): string {
-    const sessionId = `fake-browser-${this.browserControls.size + 1}`;
+    const sessionId = `fake-browser-${++this.nextBrowser}`;
     this.browserControls.set(sessionId, []);
     return sessionId;
+  }
+  expireBrowser(sessionId: string): void {
+    this.browserControls.delete(sessionId);
   }
   controlChanges(sessionId: string): string[] {
     const controls = this.browserControls.get(sessionId);
