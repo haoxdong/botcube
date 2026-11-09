@@ -320,16 +320,15 @@ function ScrollButton({ stick, inputHeight, resizing }: { stick: StickToBottomIn
 /** Within this of the bottom, CopilotKit's StickToBottom counts the chat at its end (`STICK_TO_BOTTOM_OFFSET_PX`). */
 const AT_BOTTOM_PX = 70;
 
-const JumpPlace = createContext<{ inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null> }>({ inputContainerHeight: 0, isResizing: false, contentRef: { current: null } });
+type ScrollControlProps = { inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null> };
 
 /** CopilotKit unmounts its jump control at the bottom in one frame. */
-function DesktopJump() {
-  const { inputContainerHeight, isResizing } = useContext(JumpPlace);
+function DesktopJump({ inputContainerHeight, isResizing }: ScrollControlProps) {
   const place = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   useLayoutEffect(() => {
     // CopilotKit renders its feather slot right after its StickToBottom content, the chat's scroller.
-    const scroller = place.current?.previousElementSibling;
+    const scroller = place.current?.parentElement?.previousElementSibling;
     if (!scroller) throw new Error("The desktop jump control needs the chat's scroller before it");
     const measure = () => setAtBottom(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= AT_BOTTOM_PX);
     measure();
@@ -351,8 +350,7 @@ function DesktopJump() {
 
 const NO_BUTTON = () => null;
 
-function DocumentStick() {
-  const { inputContainerHeight, isResizing, contentRef } = useContext(JumpPlace);
+function DocumentStick({ inputContainerHeight, isResizing, contentRef }: ScrollControlProps) {
   const opensAt = useContext(OpensAt);
   const stick = useStickToBottom({ ...STICK_INSTANTLY, initial: opensAt === null ? "instant" : false });
   const { scrollRef, scrollToBottom, contentRef: stickContent } = stick;
@@ -392,12 +390,17 @@ function ChatScrollView(props: ScrollViewProps) {
   const content = useRef<HTMLDivElement>(null);
   const phone = useIsPhone();
   const stick = phone ? PAGE_SCROLLS : opensAt === null ? STICK_INSTANTLY : { ...STICK_INSTANTLY, initial: false };
+  const controlProps = { inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content };
   return (
-    <JumpPlace.Provider value={{ inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content }}>
-      <CopilotChatView.ScrollView {...props} {...stick} className="chat-scroll-view" scrollToBottomButton={NO_BUTTON} feather={phone ? DocumentStick : DesktopJump}>
-        <div ref={content}>{props.children}</div>
-      </CopilotChatView.ScrollView>
-    </JumpPlace.Provider>
+    <CopilotChatView.ScrollView
+      {...props}
+      {...stick}
+      className="chat-scroll-view"
+      scrollToBottomButton={NO_BUTTON}
+      feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <DesktopJump {...controlProps} /> }}
+    >
+      <div ref={content}>{props.children}</div>
+    </CopilotChatView.ScrollView>
   );
 }
 

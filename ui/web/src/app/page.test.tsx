@@ -3,7 +3,7 @@ import type { HttpAgent, Message } from '@ag-ui/client';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Window as HappyDomWindow } from 'happy-dom';
-import type { ButtonHTMLAttributes, ComponentType, ReactElement, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ComponentType, HTMLAttributes, ReactElement, ReactNode } from 'react';
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -153,13 +153,13 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     initial?: unknown;
     resize?: unknown;
     scrollToBottomButton?: ComponentType<ButtonHTMLAttributes<HTMLButtonElement>>;
-    feather?: ComponentType;
+    feather?: ComponentType | HTMLAttributes<HTMLDivElement>;
   }) => (
     <>
       <div data-testid="copilot-scroll-view" data-initial={String(initial)} data-resize={String(resize)} style={{ overflowY: 'auto' }}>
         {children}
       </div>
-      <Feather />
+      {typeof Feather === 'function' ? <Feather /> : <div {...Feather} />}
       <JumpButton onClick={() => { copilot.jumps += 1; }} />
     </>
   );
