@@ -48,4 +48,6 @@ jobs:
       # Read Chrome's files once in the background, so its first cold start fits the tests' 10 s DevTools wait.
       - name: Warm the test Chromium
         run: find "$(dirname "$(readlink -f "$TEMPLATE_TEST_CHROMIUM_PATH")")" -type f -exec cat {} + > /dev/null &
+      - name: Allow unprivileged user namespaces for the mount contract
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bash .github/ci.sh
