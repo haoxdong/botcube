@@ -7,7 +7,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-_SPEC = importlib.util.spec_from_file_location('migrate', Path(__file__).parents[1] / 'ecs/files/migrate.py')
+_SPEC = importlib.util.spec_from_file_location('migrate', Path(__file__).parents[1] / 'ecs/migrate_files.py')
 assert _SPEC and _SPEC.loader
 _MIGRATION = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MIGRATION)
@@ -57,3 +57,53 @@ def test_bucket_root_and_empty_account_markers_are_preserved(tmp_path: Path) -> 
     assert receipt['files'] == 0 and receipt['directories'] == 3
     assert receipt['accounts'][0]['count'] == 2
     assert (tmp_path / account / 'empty').is_dir()
+
+
+def test_cli_refuses_an_unmounted_destination_before_copying(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, 'argv', ['migrate', '--bucket', 'source', '--accounts-root', str(tmp_path)])
+    monkeypatch.setattr(_MIGRATION.boto3, 'client', lambda *_args: object())
+    monkeypatch.setattr(_MIGRATION, 'migrate', lambda *_args: {})
+    with pytest.raises(ValueError, match='accounts access point'):
+        _MIGRATION.main()
+
+
+@pytest.mark.parametrize('owner', [0, 65534])
+def test_cli_refuses_root_or_root_squashed_mounts_before_copying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner: int,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    original_stat = Path.stat
+    monkeypatch.setattr(sys, 'argv', ['migrate', '--bucket', 'source', '--accounts-root', str(tmp_path)])
+    monkeypatch.setattr(_MIGRATION.boto3, 'client', lambda *_args: object())
+    monkeypatch.setattr(_MIGRATION, 'migrate', lambda *_args: {})
+    monkeypatch.setattr(Path, 'is_mount', lambda self: self == tmp_path)
+    monkeypatch.setattr(Path, 'stat', lambda self, **kwargs: SimpleNamespace(st_uid=owner, st_gid=owner) if self == tmp_path else original_stat(self, **kwargs))
+    with pytest.raises(ValueError, match='1000'):
+        _MIGRATION.main()
+
+
+def test_cli_accepts_the_uid_1000_accounts_mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    original_stat = Path.stat
+    copied = []
+    monkeypatch.setattr(sys, 'argv', ['migrate', '--bucket', 'source', '--accounts-root', str(tmp_path)])
+    monkeypatch.setattr(Path, 'is_mount', lambda self: self == tmp_path)
+    monkeypatch.setattr(Path, 'stat', lambda self, **kwargs: SimpleNamespace(st_uid=1000, st_gid=1000) if self == tmp_path else original_stat(self, **kwargs))
+    client = object()
+    monkeypatch.setattr(_MIGRATION.boto3, 'client', lambda *_args: client)
+
+    def copy(actual: object, bucket: str, root: Path) -> dict[str, int]:
+        assert actual is client and bucket == 'source' and root == tmp_path
+        copied.append(root)
+        return {'sourceCount': 1, 'destinationCount': 1}
+
+    monkeypatch.setattr(_MIGRATION, 'migrate', copy)
+    _MIGRATION.main()
+    assert copied == [tmp_path]
+    assert 'destinationCount' in capsys.readouterr().out

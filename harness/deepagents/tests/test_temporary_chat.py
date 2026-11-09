@@ -90,3 +90,23 @@ class _CompactingModel(_ScriptedModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content='Earlier copper questions.'))
         else:
             yield from super()._stream(messages, *args, run_manager=run_manager, **kwargs)
+
+
+def test_temporary_workspace_preparation_never_runs_filesystem_io_on_the_event_loop(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    workspace = serving._workspace
+
+    def guarded_workspace():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return workspace()
+        raise RuntimeError('Workspace I/O ran on the event loop')
+
+    monkeypatch.setattr(serving, '_workspace', guarded_workspace)
+    events = _turn(service, [{'id': 'question', 'role': 'user', 'content': 'hello'}])
+    assert [event for event in events if event['type'] == 'RUN_ERROR'] == []
+    assert _said(events) == 'Echo: hello'

@@ -125,11 +125,20 @@ def migrate(client: Any, bucket: str, destination: Path) -> dict[str, Any]:
             'directories': sum(key.endswith('/') for key in actual), 'accounts': account_receipts(actual)}
 
 
+def verify_accounts_mount(root: Path) -> None:
+    if not root.is_mount():
+        raise ValueError('Migration requires the mounted EFS accounts access point, not a local directory')
+    owner = root.stat()
+    if owner.st_uid != 1000 or owner.st_gid != 1000:
+        raise ValueError('Migration requires the uid-1000 accounts access point owned by 1000:1000; root or root-squashed mounts are unsafe')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Copy S3 account prefixes to a mounted EFS accounts directory and verify count and sha256, including explicit directory markers. Source data and account records stay unchanged.')
     parser.add_argument('--bucket', required=True)
     parser.add_argument('--accounts-root', type=Path, required=True)
     args = parser.parse_args()
+    verify_accounts_mount(args.accounts_root)
     print(json.dumps(migrate(boto3.client('s3'), args.bucket, args.accounts_root), sort_keys=True))
 
 

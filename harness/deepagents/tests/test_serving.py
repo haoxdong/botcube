@@ -3919,3 +3919,33 @@ def test_retained_final_answer_strips_the_consumed_credential_binding(
     rows = [json.loads(record.getMessage()) for record in caplog.records
             if record.name == 'botcube_harness_deepagents.turn_output']
     assert [row['output'] for row in rows] == ['The value is [redacted].']
+
+
+def test_unreachable_efs_finishes_plain_answers_and_bounds_file_tool_errors(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents import lazy_files
+    from botcube_harness_deepagents.files_mount import FilesMount
+
+    release = threading.Event()
+
+    def unavailable(self: FilesMount, root: Path, excluded: object = ()) -> None:
+        assert release.wait(2)
+
+    monkeypatch.setattr(FilesMount, 'pull', unavailable)
+    monkeypatch.setattr(lazy_files, 'EFS_READY_TIMEOUT', 0.02)
+    files = {
+        'fileSystemId': 'fs-00000000000000001', 'accessPointId': 'fsap-00000000000000001',
+        'mountTargetIp': '192.0.2.12', 'region': 'us-east-1', 'accessKeyId': 'key',
+        'secretAccessKey': 'secret', 'sessionToken': 'token', 'expiration': '2099-01-01T00:00:00Z',
+    }
+    try:
+        plain = service.turn('hello', files=files)
+        assert plain[-1]['type'] == 'RUN_FINISHED'
+        assert _said(plain) == 'Echo: hello'
+        failed = service.turn('ls: /', files=files)
+        assert failed[-1]['type'] == 'RUN_ERROR'
+        assert failed[-1]['code'] == 'FILES_MOUNT'
+        assert 'deadline' in failed[-1]['message']
+    finally:
+        release.set()

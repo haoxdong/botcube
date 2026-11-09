@@ -62,6 +62,16 @@ def main() -> None:
     (root / 'published.txt').write_text('published')
     assert (durable / 'published.txt').read_text() == 'published'
     files.pull(root, excluded)
+    previous = mounts._WATCHDOG
+    assert previous is not None
+    previous.kill()
+    previous.wait(timeout=2)
+    files.pull(root, excluded)
+    assert mounts._WATCHDOG is not None and mounts._WATCHDOG.pid != previous.pid
+    assert (root / 'published.txt').read_text() == 'published'
+    assert (storage / 'session.txt').read_text() == 'session cache'
+    for name in excluded:
+        assert (root / name / 'local.txt').read_text() == name
     other = mounts.FilesMount('fs-0123', 'fsap-0999', '192.0.2.12', 'us-east-1', files.credentials)
     try:
         other.pull(root)
@@ -69,7 +79,7 @@ def main() -> None:
         assert 'cannot change' in str(error)
     else:
         raise AssertionError('changed account binding accepted')
-    print('PASS nested workspace mount, local exclusions, denied mount rollback and account isolation')
+    print('PASS nested workspace mount, local exclusions, denied mount rollback, watchdog recovery and account isolation')
 
 
 if __name__ == '__main__':

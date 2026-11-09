@@ -19,6 +19,11 @@ from time import perf_counter
 _MOUNT_LOCK = Lock()
 _LOCAL = Path('/run/botcube-files')
 _WATCHDOG: subprocess.Popen[bytes] | None = None
+MOUNT_TIMEOUT = 30.0
+
+
+class FilesMountError(RuntimeError):
+    code = 'FILES_MOUNT'
 
 
 @dataclass(frozen=True)
@@ -41,8 +46,14 @@ class FilesMount:
                    {field: files[field] for field in ('accessKeyId', 'secretAccessKey', 'sessionToken')})
 
     def pull(self, root: Path, excluded: Iterable[str] = ()) -> None:
-        with _MOUNT_LOCK:
+        if not _MOUNT_LOCK.acquire(timeout=MOUNT_TIMEOUT):
+            raise FilesMountError('Files mount deadline exceeded waiting for preparation')
+        try:
             self._prepare(root, tuple(excluded))
+        except subprocess.TimeoutExpired as error:
+            raise FilesMountError('Files mount deadline exceeded') from error
+        finally:
+            _MOUNT_LOCK.release()
 
     def _prepare(self, root: Path, excluded: tuple[str, ...]) -> None:
         _LOCAL.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -52,9 +63,9 @@ class FilesMount:
             raise RuntimeError('A Runtime session cannot change its Files access point')
         self._refresh_credentials()
         if state.exists():
-            if not workspace_mounted(root) or _WATCHDOG is None or _WATCHDOG.poll() is not None:
-                raise RuntimeError('Files mount or its watchdog stopped')
-            return
+            if workspace_mounted(root) and _WATCHDOG is not None and _WATCHDOG.poll() is None:
+                return
+            detach_workspace(root)
         if workspace_mounted(root):
             raise RuntimeError('Files workspace has an unrecognized mount')
         root.mkdir(parents=True, exist_ok=True)
@@ -66,32 +77,23 @@ class FilesMount:
 
     def _mount(self, root: Path, local: Path, kept: list[str]) -> None:
         global _WATCHDOG
-        bound: list[Path] = []
         started = perf_counter()
         try:
             _WATCHDOG = subprocess.Popen(['amazon-efs-mount-watchdog'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run([
                 'mount', '-t', 'efs', f'{self.file_system_id}:/', str(root), '-o',
                 f'tls,iam,accesspoint={self.access_point_id},mounttargetip={self.mount_target_ip},region={self.region},awsprofile=botcube-files',
-            ], check=True, capture_output=True)
+            ], check=True, capture_output=True, timeout=MOUNT_TIMEOUT)
             for name in kept:
                 target = root / name
                 target.mkdir(parents=True, exist_ok=True)
-                subprocess.run(['mount', '--bind', str(local / name), str(target)], check=True, capture_output=True)
-                bound.append(target)
+                subprocess.run(['mount', '--bind', str(local / name), str(target)], check=True, capture_output=True, timeout=MOUNT_TIMEOUT)
             if _WATCHDOG.poll() is not None:
-                raise RuntimeError('Files mount watchdog stopped during initialization')
+                raise FilesMountError('Files mount watchdog stopped during initialization')
         except BaseException:
-            for target in reversed(bound):
-                subprocess.run(['umount', str(target)], check=True, capture_output=True)
-            if workspace_mounted(root):
-                subprocess.run(['umount', str(root)], check=True, capture_output=True)
+            detach_workspace(root)
             for name in kept:
                 shutil.move(str(local / name), root / name)
-            if _WATCHDOG is not None:
-                _WATCHDOG.terminate()
-                _WATCHDOG.wait()
-            _WATCHDOG = None
             raise
         logging.getLogger(__name__).info('Harness Files EFS mount_ms=%.3f', (perf_counter() - started) * 1000)
 
@@ -113,6 +115,22 @@ class FilesMount:
 
     def push(self, root: Path, excluded: Iterable[str] = ()) -> None:
         """NFS writes are already visible to the Files service when the file closes."""
+
+
+def detach_workspace(root: Path) -> None:
+    global _WATCHDOG
+    mounts = [Path(line.split()[4]) for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+    for mount in sorted((path for path in mounts if path.is_relative_to(root)), key=lambda path: len(path.parts), reverse=True):
+        subprocess.run(['umount', '-l', str(mount)], check=True, capture_output=True, timeout=MOUNT_TIMEOUT)
+    if _WATCHDOG is not None and _WATCHDOG.poll() is None:
+        _WATCHDOG.terminate()
+        try:
+            _WATCHDOG.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            logging.getLogger(__name__).warning('Files watchdog did not terminate within its deadline; killing it')
+            _WATCHDOG.kill()
+            _WATCHDOG.wait(timeout=2)
+    _WATCHDOG = None
 
 
 def workspace_mounted(root: Path) -> bool:

@@ -83,6 +83,7 @@ from .agent_documents import (
     pop_agent_documents,
 )
 from .conversation import conversation
+from .files_mount import FilesMountError
 from .files_sync import (
     Files,
     FilesSyncError,
@@ -292,7 +293,7 @@ class _AgentKey(NamedTuple):
 
 
 def _error_code(error: Exception) -> str:
-    if isinstance(error, PlanUsageError):
+    if isinstance(error, (PlanUsageError, FilesMountError)):
         return error.code
     if agentcore_memory_backend.is_access_denied(error):
         return 'MEMORY_ACCESS_DENIED'
@@ -697,10 +698,7 @@ def _get_agent(
             'recursion_limit': graph.config['recursion_limit'],
             'configurable': {'actor_id': session_user_id},
         }
-        # LangGraphAgent requires a name but reads it only in clone() and ag_ui's
-        # add_langgraph_fastapi_endpoint, neither of which the Harness calls; no event,
-        # checkpoint or log carries it. The _SessionAgent call below stays mutated, and dropping
-        # the name there fails the required argument.
+        # The base adapter requires a name; its clone and naming endpoint are unused here.
         identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
         with turn_timing.phase('stream_adapter'):
             agent = _SessionAgent(**identity, graph=graph, config=config)
@@ -888,7 +886,7 @@ async def _invoke_temporary(input_data: RunAgentInput, context: _RequestContext,
         return _SessionAgent(name=cartridge.agent_name, graph=graph, config={'recursion_limit': graph.config['recursion_limit']})
 
     async def prepare() -> tuple[LangGraphAgent, Path]:
-        return await asyncio.to_thread(build), _workspace()
+        return await asyncio.to_thread(lambda: (build(), _workspace()))
 
     async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, None, context)) as events:
         async for event in events:
@@ -1342,6 +1340,7 @@ async def _invocation_frames(
                 MissingUserIdError,
                 InvalidTemporaryChatError,
                 AgentDocumentsError,
+                FilesMountError,
                 FilesSyncError,
                 FilesSyncRecordError,
                 PlanUsageError,
