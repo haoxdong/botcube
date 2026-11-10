@@ -447,9 +447,14 @@ export function FilesWindow({
   );
 }
 
-export function FilesApp({ chatServiceUrl }: { chatServiceUrl: string }) {
+export function FilesApp({ chatServiceUrl, onLoad }: { chatServiceUrl: string; onLoad?: (outcome: 'ready' | 'failed') => void }) {
   const [files, setFiles] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (error !== null) onLoad?.('failed');
+    else if (files !== null) onLoad?.('ready');
+  }, [files, error, onLoad]);
 
   const latestListing = useRef(0);
   const settle = useCallback(

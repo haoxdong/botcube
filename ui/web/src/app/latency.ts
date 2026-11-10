@@ -1,7 +1,6 @@
 "use client";
 
-/** The moments the page times, each named as in the product's latency budgets. */
-export type Moment = "history-returning" | "history-first-visit" | "computer-return" | "computer-cold" | "send-acknowledged" | "activity";
+export type Moment = "history-returning" | "history-first-visit" | "computer-return" | "computer-cold" | "files-menu" | "send-acknowledged" | "activity";
 
 const PREFIX = "latency:";
 

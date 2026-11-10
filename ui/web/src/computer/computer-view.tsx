@@ -129,6 +129,15 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
     retry();
   }
   const [app, setApp] = useState<DockApp>('Chrome');
+  const filesOpening = useRef<{ start: number; showing: string } | null>(null);
+  const opening = filesOpening.current;
+  const filesLoaded = (outcome: 'ready' | 'failed') => {
+    if (opening === null || filesOpening.current !== opening) return;
+    filesOpening.current = null;
+    if (outcome === 'ready' && active.current && opening.showing === currentShowing.current) {
+      measureMoment('files-menu', opening.start);
+    }
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -268,7 +277,7 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
           active={shown && !checking}
           chatId={conversation.id}
           app={app}
-          files={<FilesApp chatServiceUrl={chatServiceUrl} />}
+          files={<FilesApp chatServiceUrl={chatServiceUrl} onLoad={filesLoaded} />}
           computer={computer}
           commands={commands}
           terminalError={terminalError?.message ?? null}
@@ -284,7 +293,11 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
           onTakeOver={takeOver}
           onHandBack={handBack}
           onStop={activity.stop}
-          onOpenApp={setApp}
+          onOpenApp={(next) => {
+            if (next === app) return;
+            filesOpening.current = next === 'Files' ? { start: performance.now(), showing } : null;
+            setApp(next);
+          }}
           onLive={live}
           onConnectionChange={onConnectionChange}
           onLiveEnded={() => {
