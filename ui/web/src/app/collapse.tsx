@@ -43,12 +43,13 @@ export function Layout({ children, ...props }: HTMLMotionProps<"div">) {
 
 export function Swap({ state, children, className, as = "div" }: { state: Key; children: ReactNode; className?: string; as?: Tag }) {
   const instant = useInstant();
+  const { quick, move } = motionTokens();
   const Box = as;
   if (instant) return <Box key={state} className={className}>{children}</Box>;
   return (
-    <LazyMotion features={ready ?? loadFeatures} strict><AnimatePresence mode="popLayout" initial={false}>
+    <LazyMotion features={ready ?? loadFeatures} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence mode="popLayout" initial={false}>
       <Fading key={state} as={as} className={className ?? ""}>{children}</Fading>
-    </AnimatePresence></LazyMotion>
+    </AnimatePresence></MotionConfig></LazyMotion>
   );
 }
 
