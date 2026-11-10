@@ -87,6 +87,7 @@ export default async function createConfig(phase: string): Promise<NextConfig> {
       // webpackMemoryOptimizations applies to the `next build --webpack` path.
       preloadEntriesOnStart: false,
       webpackMemoryOptimizations: true,
+      webpackBuildWorker: true,
     },
     webpack: (webpackConfig) => {
       webpackConfig.resolve ??= {};

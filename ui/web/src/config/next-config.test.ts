@@ -15,3 +15,13 @@ it('keeps an alias into the app relative to the app', async () => {
 
   expect(config.turbopack?.resolveAlias?.dcv).toBe('./node_modules/bedrock-agentcore/dcv.js');
 });
+
+it('uses isolated production compilers with a custom webpack config', async () => {
+  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+
+  const config = await createConfig('phase-production-build');
+
+  expect(config.webpack).toBeTypeOf('function');
+  expect(config.experimental?.webpackBuildWorker).toBe(true);
+  expect(config.experimental?.webpackMemoryOptimizations).toBe(true);
+});
