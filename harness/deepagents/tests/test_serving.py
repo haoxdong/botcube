@@ -2643,6 +2643,7 @@ def test_a_configured_service_starts_with_its_cartridge(start: Callable[[], list
 
 def test_the_service_logs_at_info_with_bare_prompt_cache_lines(start: Callable[[], list[tuple[Any, dict[str, Any]]]], capsys: pytest.CaptureFixture[str]) -> None:
     start()
+    capsys.readouterr()
     service_log = logging.getLogger('botcube_harness_deepagents.serving')
     service_log.debug('hidden')
     service_log.info('ready')
@@ -2657,6 +2658,7 @@ def test_prompt_cache_lines_are_logged_under_a_quieter_package_logger(start: Cal
     package_log.setLevel(logging.WARNING)
     try:
         start()
+        capsys.readouterr()
         logging.getLogger('botcube_harness_deepagents.serving').info('ready')
         logging.getLogger('botcube_harness_deepagents.prompt_cache').info('{"cache_read": 1}')
     finally:

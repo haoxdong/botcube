@@ -46,7 +46,8 @@ test('production hostname gets certificate, AOP, and DNS on this origin', () => 
   template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ HOSTNAMES: 'preview.example.com,api.example.com' }) } });
   const [dnsId, dns] = find('Dns', 'api.example.com');
   const [aopId, aop] = find('Aop', 'api.example.com');
-  expect(Object.keys(dns.Properties).sort()).toEqual(['Hostname', 'Kind', 'ServiceToken', 'Target']);
+  expect(Object.keys(dns.Properties).sort()).toEqual(['AlwaysUseHttps', 'Hostname', 'Kind', 'ServiceToken', 'Target']);
+  expect(dns.Properties.AlwaysUseHttps).toBe('on');
   expect(template.toJSON().Resources[dnsId].DependsOn).toContain(aopId);
   expect(aop.Properties.CertId).toEqual({ Ref: find('Aop', 'preview.example.com')[0] });
 });
