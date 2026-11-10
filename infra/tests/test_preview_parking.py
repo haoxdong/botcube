@@ -326,6 +326,60 @@ class CredentialStartTests(unittest.TestCase):
             self.assertEqual(watch.stop(), {'task': 'new', 'started': False})
 
 
+class ServiceCapacityTests(unittest.TestCase):
+    def test_unpark_restores_both_services_from_desired_zero_and_waits_before_live_verification(self):
+        import tempfile
+        desired = dict.fromkeys(verifier['SERVICES'], 0)
+        ecs = Mock()
+        def update_service(*, cluster, service, desiredCount):
+            desired[service] = desiredCount
+        ecs.update_service.side_effect = update_service
+        def command(*args, **kwargs):
+            if 'live' in args and str(DEPLOY_ECS / 'verify-park.py') in args:
+                facts = live()
+                for name, count in desired.items():
+                    facts['services'][name]['desired'] = count
+                failures = verifier['live_failures'](facts, EXPECTED)
+                if failures:
+                    raise RuntimeError('; '.join(failures))
+                ecs.get_waiter.return_value.wait.assert_called_once()
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.dict(transition['transition'].__globals__, {
+                    'run': command, 'CredentialWatch': Mock(return_value=Mock(stop=Mock(return_value=None))), 'session_api_capacity': Mock(),
+                    'refresh_runtime_spares': Mock(return_value={}), 'await_spare_handoff': Mock(), 'remove_legacy_files_imports': Mock()}), \
+                patch.dict('os.environ', {'RUNNER_TEMP': temp}), patch('boto3.client', return_value=ecs):
+            transition['transition']('unpark')
+        self.assertEqual(desired, dict.fromkeys(verifier['SERVICES'], 1))
+        ecs.get_waiter.return_value.wait.assert_called_once_with(
+            cluster=transition['IDENTITY']['aws']['ecs']['cluster'], services=list(verifier['SERVICES']),
+            WaiterConfig={'Delay': 15, 'MaxAttempts': 40})
+
+    def test_capacity_restore_failure_stops_the_transition(self):
+        for failure in ('update', 'stability'):
+            with self.subTest(failure=failure):
+                ecs = Mock()
+                if failure == 'update':
+                    ecs.update_service.side_effect = RuntimeError('service missing')
+                else:
+                    ecs.get_waiter.return_value.wait.side_effect = RuntimeError('service unstable')
+                with self.assertRaisesRegex(RuntimeError, 'service'):
+                    transition['restore_service_capacity'](ecs)
+                if failure == 'update':
+                    ecs.get_waiter.assert_not_called()
+
+    def test_park_keeps_service_capacity_at_zero(self):
+        import tempfile
+        ecs = Mock()
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.dict(transition['transition'].__globals__, {
+                    'run': Mock(), 'CredentialWatch': Mock(return_value=Mock(stop=Mock(return_value=None))),
+                    'session_api_capacity': Mock(), 'remove_legacy_files_imports': Mock()}), \
+                patch.dict('os.environ', {'RUNNER_TEMP': temp}), patch('boto3.client', return_value=ecs):
+            transition['transition']('park')
+        ecs.update_service.assert_not_called()
+        ecs.get_waiter.assert_not_called()
+
+
 class TransitionTests(unittest.TestCase):
     def test_states_map_to_the_cdk_flag(self):
         self.assertEqual(transition['TARGETS'], {'park': 'parked', 'unpark': 'live'})
@@ -601,7 +655,7 @@ class RuntimeSparesTests(unittest.TestCase):
     def test_unpark_refreshes_the_runtime_once_egress_is_back_before_the_deploy_that_opens_the_front_door(self):
         # Spares take minutes to start; refreshed before the front door opens, they start during the main deploy,
         # so the first users after a wake land on spares, not 30 s fresh microVMs.
-        for action, expected in (('unpark', ['deploy egress', 'refresh runtime spares', 'remove legacy Files imports', 'deploy', 'measure credential service start']), ('park', ['verify parked', 'release session API capacity'])):
+        for action, expected in (('unpark', ['deploy egress', 'refresh runtime spares', 'remove legacy Files imports', 'deploy', 'restore service capacity', 'measure credential service start']), ('park', ['verify parked', 'release session API capacity'])):
             with self.subTest(action=action):
                 run = Mock(report=dict)
                 with patch.dict(transition['transition'].__globals__, {'Run': Mock(return_value=run), 'CredentialWatch': MagicMock()}), \

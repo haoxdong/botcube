@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.exceptions import ClientError
-from deploy_identity import load_identity, required
+from deploy_identity import SERVICES, load_identity, required
 
 if TYPE_CHECKING:
     from types_boto3_cloudformation import CloudFormationClient
@@ -49,7 +49,6 @@ API_HEALTH = ECS['apiHealth']
 # no ALB, so the ALB alarms do not exist; Live has all of them on.
 SILENCED_ALARMS = (API_HEALTH['alarmName'], f"{ECS['cluster']}-preview-task-deficit")
 ALB_ALARMS = tuple(f"{ECS['cluster']}-preview-{suffix}" for suffix in ('alb-5xx', 'target-5xx', 'unhealthy-hosts'))
-SERVICES = ('chat-service-preview', 'credential-service')
 HOSTS = [IDENTITY['domains'][key].removeprefix('https://') for key in ('chatService', 'chatServicePreview')]
 PARKED_DNS_TARGET = ECS['parkedDnsTarget']
 WEB = IDENTITY['domains']['web']

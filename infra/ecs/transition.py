@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from deploy_identity import load_identity, required
+from deploy_identity import SERVICES, load_identity, required
 
 ROOT = Path(os.environ['CARTRIDGE_REPOSITORY_ROOT']).resolve()
 DEPLOY = Path(__file__).resolve().parent
@@ -294,6 +294,16 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
         pause(10)
 
 
+def restore_service_capacity(ecs: Any = None):
+    import boto3
+    ecs = ecs or boto3.client('ecs')
+    cluster = IDENTITY['aws']['ecs']['cluster']
+    for service in SERVICES:
+        ecs.update_service(cluster=cluster, service=service, desiredCount=1)
+    ecs.get_waiter('services_stable').wait(
+        cluster=cluster, services=list(SERVICES), WaiterConfig={'Delay': 15, 'MaxAttempts': 40})
+
+
 def remove_legacy_files_imports(target: str):
     import boto3
     exports = boto3.client('cloudformation').get_paginator('list_exports').paginate()
@@ -331,6 +341,8 @@ def transition(action: str):
         './node_modules/.bin/cdk', 'deploy', 'ChatStorage', 'ProductionParking', 'PrivateEgress', 'PreviewOrigin', 'ApiHealth',
         '-c', 'previewOrigin=true', '-c', f"parked={'true' if target == 'parked' else 'false'}",
         '--require-approval', 'never', '--outputs-file', str(outputs), cwd=CDK))
+    if target == 'live':
+        steps.step('restore service capacity', restore_service_capacity)
     steps.step('measure credential service start', lambda: setattr(steps, 'credential_start', watch.stop()))
     steps.step(f'verify {target}', lambda: run(python, str(DEPLOY / 'verify-park.py'), target, str(outputs)))
     if target == 'parked':

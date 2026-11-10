@@ -184,7 +184,10 @@ cat > "$ROLE_POLICY" <<EOF
     {
       "Effect": "Allow",
       "Action": "ecs:UpdateService",
-      "Resource": "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/chat-service-preview"
+      "Resource": [
+        "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/chat-service-preview",
+        "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/credential-service"
+      ]
     },
     {
       "Effect": "Allow",

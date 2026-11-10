@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, TypeVar
 
+SERVICES = ('chat-service-preview', 'credential-service')
+
 T = TypeVar('T')
 _DEFAULTS = Path(__file__).resolve().parents[1] / 'identity-defaults.json'
 
