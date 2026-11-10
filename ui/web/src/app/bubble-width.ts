@@ -223,9 +223,7 @@ function fit(bubbles: HTMLElement[]) {
 
 /**
  * A message list's ref: fits its bubbles to their lines once its fonts have loaded, and again as a reply streams in, a
- * row joins, the column's width changes or a font loads. New content fits as React commits it, before it paints; a
- * width or font change marks rows to fit on the next frame, so a burst of them lays the page out once a frame rather
- * than once each. Returns its cleanup, as a React ref may.
+ * row joins, the column's width changes or a font loads. Returns its cleanup, as a React ref may.
  */
 export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
   if (list === null) return undefined;
@@ -256,7 +254,9 @@ export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
   const resized = new ResizeObserver(([entry]) => {
     if (entry === undefined || entry.contentRect.width === width) return;
     width = entry.contentRect.width;
-    mark();
+    everyRow = true;
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    fitMarked();
   });
   const changed = new MutationObserver((records) => {
     for (const { target, addedNodes } of records) {

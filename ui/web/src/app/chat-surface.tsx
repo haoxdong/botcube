@@ -33,6 +33,7 @@ import { useComposerOpen } from "./composer-open";
 import { holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
 import { messagesScroller, OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
+import { AT_BOTTOM_PX, useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
 import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
 import { webUiPlugin } from "@cartridge-ui";
@@ -275,7 +276,7 @@ function holdAtRow(wrapper: Element, id: string): () => void {
 const USER_SCROLLS = ["wheel", "touchstart", "pointerdown", "keydown"];
 
 /** CopilotKit's spring mistakes momentum for a new user scroll and cancels the jump. */
-function JumpToBottom({ onClick, jump, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { jump?: () => ReturnType<StickToBottomInstance["scrollToBottom"]> }) {
+function JumpToBottom({ onClick, follow, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { follow: () => void }) {
   return (
     <CopilotChatView.ScrollToBottomButton
       {...props}
@@ -291,12 +292,10 @@ function JumpToBottom({ onClick, jump, ...props }: ButtonHTMLAttributes<HTMLButt
         const duration = getComputedStyle(wrapper).getPropertyValue("--motion-quick").trim();
         const milliseconds = parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000) || 0;
         window.setTimeout(() => {
+          follow();
           const reveal = () => requestAnimationFrame(() => delete wrapper.dataset.jumping);
-          if (jump) void Promise.resolve(jump()).then(reveal);
-          else {
-            holdAtBottom(scroller);
-            reveal();
-          }
+          holdAtBottom(scroller);
+          reveal();
           onClick?.(event);
         }, milliseconds);
       }}
@@ -304,26 +303,21 @@ function JumpToBottom({ onClick, jump, ...props }: ButtonHTMLAttributes<HTMLButt
   );
 }
 
-type ScrollViewProps = ComponentProps<typeof CopilotChatView.ScrollView>;
+const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
 
-const STICK_INSTANTLY: { initial: "instant" | false; resize: "instant" } = { initial: "instant", resize: "instant" };
-
-function ScrollButton({ stick, inputHeight, resizing }: { stick: StickToBottomInstance; inputHeight: number; resizing: boolean }) {
+function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickToBottomInstance; inputHeight: number; resizing: boolean; follow: () => void }) {
   const hidden = stick.isAtBottom || resizing;
   return (
     <div className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: inputHeight + 16 }}>
-      <JumpToBottom jump={() => stick.scrollToBottom({ animation: "instant" })} />
+      <JumpToBottom follow={follow} />
     </div>
   );
 }
 
-/** Within this of the bottom, CopilotKit's StickToBottom counts the chat at its end (`STICK_TO_BOTTOM_OFFSET_PX`). */
-const AT_BOTTOM_PX = 70;
-
-type ScrollControlProps = { inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null> };
+type ScrollControlProps = { inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null>; opened: RefObject<boolean>; followsLatest: () => boolean; follow: () => void };
 
 /** CopilotKit unmounts its jump control at the bottom in one frame. */
-function DesktopJump({ inputContainerHeight, isResizing }: ScrollControlProps) {
+function DesktopJump({ inputContainerHeight, isResizing, follow }: ScrollControlProps) {
   const place = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   useLayoutEffect(() => {
@@ -343,16 +337,17 @@ function DesktopJump({ inputContainerHeight, isResizing }: ScrollControlProps) {
   const hidden = atBottom || isResizing;
   return (
     <div ref={place} className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: `${inputContainerHeight + 16}px` }}>
-      <JumpToBottom />
+      <JumpToBottom follow={follow} />
     </div>
   );
 }
 
 const NO_BUTTON = () => null;
 
-function DocumentStick({ inputContainerHeight, isResizing, contentRef }: ScrollControlProps) {
+function DocumentStick({ inputContainerHeight, isResizing, contentRef, opened, followsLatest, follow }: ScrollControlProps) {
   const opensAt = useContext(OpensAt);
-  const stick = useStickToBottom({ ...STICK_INSTANTLY, initial: opensAt === null ? "instant" : false });
+  const initial = useInitialStick(opened, followsLatest);
+  const stick = useStickToBottom({ ...STICK_INSTANTLY, initial: initial && opensAt === null ? "instant" : false });
   const { scrollRef, scrollToBottom, contentRef: stickContent } = stick;
   useScrollUpClosesKeyboard();
   useLayoutEffect(() => {
@@ -380,26 +375,24 @@ function DocumentStick({ inputContainerHeight, isResizing, contentRef }: ScrollC
       window.visualViewport?.removeEventListener("resize", resized);
     };
   }, [scrollToBottom]);
-  return <ScrollButton stick={stick} inputHeight={inputContainerHeight + 16} resizing={isResizing} />;
+  return <ScrollButton stick={stick} inputHeight={inputContainerHeight + 16} resizing={isResizing} follow={follow} />;
 }
 
-const PAGE_SCROLLS = { initial: false, resize: false } as const;
-
-function ChatScrollView(props: ScrollViewProps) {
+function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>) {
   const opensAt = useContext(OpensAt);
-  const content = useRef<HTMLDivElement>(null);
   const phone = useIsPhone();
-  const stick = phone ? PAGE_SCROLLS : opensAt === null ? STICK_INSTANTLY : { ...STICK_INSTANTLY, initial: false };
-  const controlProps = { inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content };
+  const { attach, content, opened, followsLatest, follow, instance, options } = useRotationReading(phone, opensAt === null);
+  const controlProps = { inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content, opened, followsLatest, follow };
   return (
     <CopilotChatView.ScrollView
       {...props}
-      {...stick}
+      {...options}
+      instance={instance}
       className="chat-scroll-view"
       scrollToBottomButton={NO_BUTTON}
       feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <DesktopJump {...controlProps} /> }}
     >
-      <div ref={content}>{props.children}</div>
+      <div ref={attach}>{props.children}</div>
     </CopilotChatView.ScrollView>
   );
 }
