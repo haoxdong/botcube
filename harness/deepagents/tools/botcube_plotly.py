@@ -6,6 +6,7 @@ import importlib.abc
 import importlib.machinery
 import sys
 from collections.abc import Sequence
+from functools import wraps
 from types import ModuleType
 
 FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
@@ -16,7 +17,8 @@ WHITE = '#ffffff'
 COLORWAY = ['#0090ff', '#f76b15', '#30a46c', '#e5484d', '#6e56cf', '#12a594', '#ffc53d', '#d6409f']
 
 
-def register(pio: ModuleType) -> None:
+def register() -> None:
+    from plotly import io as pio
     from plotly.graph_objs.layout import Template
 
     axis = {'showgrid': False, 'linecolor': LINE, 'tickcolor': LINE, 'ticklen': 4, 'zerolinecolor': LINE}
@@ -28,6 +30,28 @@ def register(pio: ModuleType) -> None:
         'hoverlabel': {'bgcolor': WHITE, 'bordercolor': LINE, 'font': {'family': FONT, 'size': 13, 'color': TEXT}},
     })
     pio.templates.default = 'botcube'
+    original_write_json = pio.write_json
+
+    @wraps(original_write_json)
+    def write_json(fig: object, *args: object, **kwargs: object) -> None:
+        from plotly.graph_objs import Figure
+
+        figure = Figure(fig)
+        theme = pio.templates['botcube'].layout
+        figure.update_layout(template='botcube', font=theme.font)
+        figure.for_each_xaxis(lambda axis: axis.update(theme.xaxis))
+        figure.for_each_yaxis(lambda axis: axis.update(theme.yaxis))
+        for index, trace in enumerate(figure.data):
+            colour = COLORWAY[index % len(COLORWAY)]
+            if trace.type in ('scatter', 'scattergl'):
+                trace.line.color = colour
+            if trace.type in ('scatter', 'scattergl', 'bar') and (
+                trace.marker.color is None or isinstance(trace.marker.color, str)
+            ):
+                trace.marker.color = colour
+        original_write_json(figure, *args, **kwargs)
+
+    vars(pio)['write_json'] = write_json
 
 
 class _RegisterOnImport(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -54,7 +78,7 @@ class _RegisterOnImport(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def exec_module(self, module: ModuleType) -> None:
         assert self.loader is not None
         self.loader.exec_module(module)
-        register(module)
+        register()
 
 
 sys.meta_path.insert(0, _RegisterOnImport())
