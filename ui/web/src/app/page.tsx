@@ -13,6 +13,8 @@ import { rumConfig, startRum } from "./rum";
 import { keepFileDropsInPage } from "./composer-attach";
 import { KeptChat } from "./kept-chat";
 import { SessionGate } from "./session-gate";
+import { Swap } from "./collapse";
+import { LoadingSkeleton } from "./load-state";
 
 const App = lazy(() => import("./chat-app"));
 const UI_CONFIG = webUiPlugin.config;
@@ -25,9 +27,9 @@ function OpeningChat({ opening, latestShown }: { opening: StoredMainChatCopy | n
     return () => cancelAnimationFrame(frame);
   }, [opening]);
   return <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status="loading" loadFailure={undefined} chatServiceUrl={CHAT_SERVICE_URL}>
-    {opening === null ? null : <div className="app-chat app-chat-opening"><div className="kept-chat" role="status" aria-label="Loading chat controls">
+    <Swap state={opening?.accountId ?? "empty"} className="app-chat app-chat-opening">{opening === null ? <LoadingSkeleton label="Main Chat" /> : <div className="kept-chat" role="status" aria-label="Loading chat controls">
       <KeptChat messages={opening.copy.messages} running={opening.copy.running === true} disclaimer={UI_CONFIG.disclaimer} latestShown={latestShown} />
-    </div></div>}
+    </div>}</Swap>
   </SessionGate>;
 }
 
@@ -72,6 +74,6 @@ function Session({ auth }: { auth: AuthUiState }) {
   }, [loading, auth.sessionStatus, auth.accountId, opening]);
   const matchingOpening = loading || (auth.sessionStatus === "ready" && auth.accountId === opening?.accountId && auth.isAccountCurrent?.(auth.accountId) !== false) ? opening : null;
   return auth.sessionStatus === "ready" || (loading && opening !== null)
-    ? <Suspense fallback={<OpeningChat opening={matchingOpening} latestShown={latestShown} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
+    ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>
     : <SessionGate title={UI_CONFIG.title} agentName={UI_CONFIG.agentName} status={auth.sessionStatus} loadFailure={auth.loadFailure} chatServiceUrl={CHAT_SERVICE_URL} />;
 }

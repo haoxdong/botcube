@@ -35,6 +35,7 @@ it('shows saved history while the live chat module is still loading', async () =
   const { default: Page } = await import('./page');
   render(<Page />);
   expect(await screen.findByText('The saved answer.')).toBeVisible();
+  expect(screen.getByText('The saved answer.').closest('.app-chat')).not.toHaveStyle({ opacity: '0' });
   expect(screen.queryByRole('status', { name: 'Live chat' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Main Chat' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Agent profile' })).toBeDisabled();
