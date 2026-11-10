@@ -2,6 +2,8 @@
 
 export type Moment = "history-returning" | "history-first-visit" | "computer-return" | "computer-cold" | "files-menu" | "send-acknowledged" | "activity";
 
+export type HistoryMoment = Extract<Moment, "history-returning" | "history-first-visit">;
+
 const PREFIX = "latency:";
 
 /** Where a moment's measures go: CloudWatch RUM in production. */

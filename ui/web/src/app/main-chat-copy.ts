@@ -1,5 +1,6 @@
 "use client";
 
+import type { HistoryMoment } from "./latency";
 import type { ReplayedSession } from "./conversations";
 
 const KEY = "botcube.main-chat";
@@ -28,7 +29,7 @@ export type MainChatCopy = ReplayedSession & { id: string };
 export type StoredMainChatCopy = { accountId: string; copy: MainChatCopy };
 
 /** The copy kept in this browser, whichever account's it is, shown as the page opens until the account session answers. */
-export function storedMainChatCopy(): StoredMainChatCopy | null {
+function storedMainChatCopy(): StoredMainChatCopy | null {
   const stored = withStorage(() => JSON.parse(localStorage.getItem(KEY) ?? "null") as (MainChatCopy & { accountId: string }) | null);
   if (stored === null) return null;
   const { accountId, ...copy } = stored;
@@ -64,4 +65,16 @@ export function keepMainChatCopy(accountId: string, { id, provider, messages }: 
 /** A sign-out takes the account's copy out of this browser at once, whether or not the sign-out then succeeds. */
 export function forgetMainChatCopy() {
   localStorage.removeItem(KEY);
+}
+
+/**
+ * The copy the page opens with while the account session loads, and the moment its Main Chat's history ends: neither
+ * for a link to a Side Chat. A device that opened the page before is one that kept a Main Chat copy: every load of the
+ * Main Chat keeps one, and it is what lets a returning opening show history without the network. A device whose copy
+ * a sign-out forgot, or whose storage is blocked, opens as on a first visit, as slow as one.
+ */
+export function openingMainChat(): { copy: StoredMainChatCopy | null; historyMoment: HistoryMoment | null } {
+  if (new URLSearchParams(window.location.search).get("chat") !== null) return { copy: null, historyMoment: null };
+  const copy = storedMainChatCopy();
+  return { copy, historyMoment: copy === null ? "history-first-visit" : "history-returning" };
 }

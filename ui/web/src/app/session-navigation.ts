@@ -19,26 +19,11 @@ import {
   type ReplayedSession,
   type SavedTurnFailure,
 } from "./conversations";
-import { keepMainChatCopy, mainChatCopy, storedMainChatCopy, withStorage, type MainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
-import type { Moment } from "./latency";
+import { keepMainChatCopy, mainChatCopy, withStorage, type MainChatCopy, type StoredMainChatCopy } from "./main-chat-copy";
 
 /** The URL's `?chat=<id>` names the open Side Chat. */
 const CHAT_PARAMETER = "chat";
 
-/** The moment that ends as the Main Chat's history first shows after the page opens. */
-export type HistoryMoment = Extract<Moment, "history-returning" | "history-first-visit">;
-
-/**
- * The copy the page opens with while the account session loads, and the moment its Main Chat's history ends: neither
- * for a link to a Side Chat. A device that opened the page before is one that kept a Main Chat copy: every load of the
- * Main Chat keeps one, and it is what lets a returning opening show history without the network. A device whose copy
- * a sign-out forgot, or whose storage is blocked, opens as on a first visit, as slow as one.
- */
-export function openingMainChat(): { copy: StoredMainChatCopy | null; historyMoment: HistoryMoment | null } {
-  if (new URLSearchParams(window.location.search).get(CHAT_PARAMETER) !== null) return { copy: null, historyMoment: null };
-  const copy = storedMainChatCopy();
-  return { copy, historyMoment: copy === null ? "history-first-visit" : "history-returning" };
-}
 /** How often a visible page with no Turn streaming reloads the Side Chats and the open Main Chat. */
 const REFRESH_INTERVAL_MS = 30_000;
 /** How often the open chat reloads while its Turn runs on the server with no stream here, as after a reload mid-Turn. */

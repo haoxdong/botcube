@@ -6,6 +6,7 @@
     "./cartridge": "./src/cartridge/index.ts",
     "./cartridge-default": "./src/cartridge/default.tsx",
     "./chat-service-url": "./src/cartridge/chat-service-url.ts",
+    "./interrupted-call": "./src/app/interrupted-call.ts",
     "./latency": "./src/app/latency.ts",
     "./load-state": "./src/app/load-state.tsx",
     "./ui": "./src/components/ui/index.ts",

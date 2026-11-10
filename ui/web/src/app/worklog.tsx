@@ -10,7 +10,7 @@ import {
   GlobeIcon, ListChecksIcon, SearchIcon, SquareTerminalIcon, TimerIcon, WrenchIcon, type LucideIcon,
 } from "lucide-react";
 
-import { UNANSWERED_CALL } from "./conversations";
+import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { CLOCKS_KEPT, spanOf, startOf, thoughtClocks, turnClocks, useClock, useToolClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
 

@@ -487,6 +487,7 @@ const warmups = () => fetchMock.mock.calls
   });
 
 async function renderPage(state: AuthUiState = auth()) {
+  await import("./chat-app");
   await import("./chat-surface");
   cartridge.auth = state;
   const view = render(<Page />);
@@ -5604,6 +5605,7 @@ describe('agent profile', () => {
         return { ...actual, AgentProfile: LateAgentProfile };
       });
       try {
+        await import('./chat-app');
         const { default: FreshPage } = await import('./page');
         cartridge.auth = auth();
         render(<FreshPage />);
@@ -5676,6 +5678,7 @@ describe('agent profile', () => {
       return importOriginal();
     });
     try {
+      await import('./chat-app');
       const { default: LoadingPage } = await import('./page');
       cartridge.auth = auth();
       render(<LoadingPage />);
@@ -9589,6 +9592,7 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
   vi.resetModules();
   vi.doMock('./chat-surface', () => new Promise(() => {}));
   try {
+    await import('./chat-app');
     const { default: LoadingPage } = await import('./page');
     const reply = '## Rates recap\n\nThe **10y** closed at **4.12%**.\n\n| Tenor | Close |\n| --- | --- |\n| 10y | 4.12% |';
     localStorage.setItem(KEY, JSON.stringify({

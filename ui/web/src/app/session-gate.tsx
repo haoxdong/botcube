@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Swap } from "./collapse";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
@@ -18,7 +19,9 @@ export function SessionGate({
   status,
   loadFailure,
   chatServiceUrl,
+  children,
 }: {
+  children?: ReactNode;
   chatServiceUrl: string;
   title: string;
   agentName: string;
@@ -43,7 +46,7 @@ export function SessionGate({
               <HeaderName name={agentName} working={false} />
             </button>
           </header>
-          <LoadingSkeleton label="Main Chat" />
+          {children ?? <LoadingSkeleton label="Main Chat" />}
         </main>
       </div>
     );

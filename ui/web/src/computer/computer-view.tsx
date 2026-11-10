@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from
 
 import type { ComputerViewProps } from 'botcube-ui-web/cartridge';
 import { measureMoment } from 'botcube-ui-web/latency';
-import { UNANSWERED_CALL } from '../app/conversations';
+import { UNANSWERED_CALL } from 'botcube-ui-web/interrupted-call';
 import { Loaded, useLoad } from 'botcube-ui-web/load-state';
 import {
   AgentComputer,
