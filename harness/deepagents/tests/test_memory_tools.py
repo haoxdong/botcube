@@ -1,6 +1,4 @@
 """Tests for memory_tools — the `memory` tool's parity with Strands AgentCoreMemoryToolProvider.
-
-Contract: contract/parity/agent-core-memory-tool.md
 """
 
 from __future__ import annotations
