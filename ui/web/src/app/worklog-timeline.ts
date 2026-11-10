@@ -4,7 +4,7 @@ import { stampsOf, startOf, thoughtClocks, toolClocks, turnClocks, type Stamped 
 type TimelineMessage = Stamped & { id: string; role: string; content?: unknown; toolCalls?: readonly { id: string }[] | undefined };
 
 /** A step of a Turn's work on its timeline: when it began here (live) and when it ended, or neither while unknown. */
-export type TimedStep = { id: string; kind: "start" | "thought" | "tool" | "answer"; began?: number | undefined; ended: number | undefined };
+export type TimedStep = { id: string; kind: "start" | "thought" | "tool" | "answer"; began?: number | undefined; ended: number | undefined; finished?: boolean };
 
 /** "9s", "1m 12s". */
 export const seconds = (whole: number) => (whole < 60 ? `${whole}s` : `${Math.floor(whole / 60)}m ${whole % 60}s`);
@@ -29,14 +29,14 @@ function apportioned(spans: readonly { id: string; span: number }[], total: numb
 function stepSeconds(start: number, steps: readonly TimedStep[], now: number): { total: number; each: Map<string, number> } {
   let reached = start;
   const byEnd = [...steps].sort((a, b) => (a.ended ?? Infinity) - (b.ended ?? Infinity));
-  const finished = byEnd.filter((step) => step.ended !== undefined).map(({ id, ended = start }) => {
+  const finished = byEnd.filter((step) => step.ended !== undefined || step.finished).map(({ id, ended = reached }) => {
     const span = Math.max(ended - reached, 0) / 1000;
     reached = Math.max(ended, reached);
     return { id, span };
   });
   const done = Math.round((reached - start) / 1000);
   const each = apportioned(finished, done);
-  const running = byEnd.filter((step) => step.ended === undefined);
+  const running = byEnd.filter((step) => step.ended === undefined && !step.finished);
   const total = running.length ? Math.max(Math.round((now - start) / 1000), done) : done;
   for (const [index, { id }] of running.entries()) each.set(id, index === 0 ? total - done : 0);
   return { total, each };
@@ -48,23 +48,23 @@ const hasText = (message: TimelineMessage) => typeof message.content === "string
  * A Turn's steps, in order: starting up until its first step began, each thought, each tool call (writing its input,
  * running it), and the answer. A step ends at its replayed stamp, else where its live clock stopped here.
  */
-function stepsOf(turn: readonly TimelineMessage[], startId: string): TimedStep[] {
+function stepsOf(turn: readonly TimelineMessage[], startId: string, running: boolean): TimedStep[] {
   const lastCall = turn.findLastIndex((message) => message.toolCalls?.length);
   const texts = turn.filter((message, index) => message.role === "assistant" && !message.toolCalls?.length && hasText(message) && index > lastCall);
   const answer = texts.at(-1) ?? turn.findLast((message) => message.role === "assistant" && !message.toolCalls?.length && hasText(message));
   const work = turn.flatMap((message): TimedStep[] => {
     if (message.role === "reasoning") {
       const clock = thoughtClocks.get(message.id);
-      return [{ id: message.id, kind: "thought", began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? clock?.ended }];
+      return [{ id: message.id, kind: "thought", finished: clock === undefined && message !== turn.at(-1), began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? clock?.ended }];
     }
     return (message.toolCalls ?? []).map((call) => {
       const result = turn.find((other) => other.role === "tool" && other.toolCallId === call.id);
       const clock = toolClocks.get(call.id);
-      return { id: call.id, kind: "tool", began: stampsOf(message)?.[0] ?? clock?.started, ended: (result && stampsOf(result)?.[1]) ?? clock?.ended };
+      return { id: call.id, kind: "tool", finished: clock === undefined && result !== undefined, began: stampsOf(message)?.[0] ?? clock?.started, ended: running && !result ? undefined : (result && stampsOf(result)?.[1]) ?? clock?.ended };
     });
   });
   const answered: TimedStep[] = answer ? [{ id: answer.id, kind: "answer", began: stampsOf(answer)?.[0], ended: stampsOf(answer)?.[1] }] : [];
-  const [first] = [...work, ...answered];
+  const first = [...work, ...answered].find((step) => step.began !== undefined);
   return [{ id: startId, kind: "start", ended: first?.began }, ...work, ...answered];
 }
 
@@ -79,7 +79,7 @@ export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefi
   const start = sent ?? startOf(turn);
   if (start === undefined) return undefined;
   const startId = `${id}-started-up`;
-  const steps = stepsOf(turn, startId).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: turnClocks.get(id)?.ended } : step));
+  const steps = stepsOf(turn, startId, running).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: turnClocks.get(id)?.ended } : step));
   if (!running && steps.some((step) => step.ended === undefined)) return undefined;
   const now = Date.now();
   const shown = sent !== undefined && stepSeconds(start, steps, now).each.get(startId) ? steps : steps.filter((step) => step.id !== startId);

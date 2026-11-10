@@ -578,6 +578,68 @@ describe("a Worklog's step times", () => {
     }
   });
 
+  it('ends startup at the first observed step when an earlier completed call never mounted', () => {
+    vi.useFakeTimers({ now: START });
+    const messages: TurnMessage[] = [
+      { id: 'startup-u', role: 'user', content: 'Search' },
+      { id: 'startup-a', role: 'assistant', content: '', toolCalls: [call('startup-hidden', 'write_todos')] },
+      { id: 'startup-result', role: 'tool', toolCallId: 'startup-hidden', content: 'Updated todo list' },
+      { id: 'startup-search-a', role: 'assistant', content: '', toolCalls: [call('startup-search', 'web_search', { query: 'Fed minutes' })] },
+    ];
+    render(<TurnStart.Provider value={new Date(START).toISOString()}>
+      <Worklog id="startup-turn" turn={messages.slice(1)} question={messages[0]} running asked="startup-u">
+        <ToolStep id="startup-search" name="web_search" params={{ query: 'Fed minutes' }} status="running" output={undefined} />
+      </Worklog>
+    </TurnStart.Provider>);
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(head()).toHaveTextContent(/^Working · 2s$/);
+    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+  });
+
+  it('keeps the live tool time when only its row remounts after a paused clock', () => {
+    vi.useFakeTimers({ now: START });
+    const messages: TurnMessage[] = [
+      { id: 'pause-u', role: 'user', content: 'Search' },
+      { id: 'pause-a', role: 'assistant', content: '', toolCalls: [call('pause-search', 'web_search', { query: 'Fed minutes' })], ...stamp(0, 0) },
+    ];
+    const chat = (shown: boolean) => <TurnStart.Provider value={new Date(START).toISOString()}>
+      <Worklog id="pause-turn" turn={messages.slice(1)} question={messages[0]} running asked="pause-u">
+        {shown && <ToolStep id="pause-search" name="web_search" params={{ query: 'Fed minutes' }} status="running" output={undefined} />}
+      </Worklog>
+    </TurnStart.Provider>;
+    const view = render(chat(true));
+    view.rerender(chat(false));
+    act(() => { vi.setSystemTime(START + 2000); });
+    view.rerender(chat(true));
+    expect(head()).toHaveTextContent(/^Working · 2s$/);
+    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+  });
+
+  it.each(['tool', 'thought'] as const)('gives elapsed time to the live tool after a completed %s without a visible clock', (kind) => {
+    vi.useFakeTimers({ now: START });
+    const messages: TurnMessage[] = [
+      { id: 'hidden-u', role: 'user', content: 'Search' },
+      { id: 'observed-a', role: 'assistant', content: '', toolCalls: [call('observed-call', 'read_file')], ...stamp(0, 0) },
+      { id: 'observed-result', role: 'tool', toolCallId: 'observed-call', content: 'Read', ...stamp(0, 0) },
+      ...(kind === 'tool' ? [
+        { id: 'hidden-a', role: 'assistant', content: '', toolCalls: [call('hidden-todos', 'write_todos')] },
+        { id: 'hidden-result', role: 'tool', toolCallId: 'hidden-todos', content: 'Updated todo list' },
+      ] : [{ id: 'hidden-thought', role: 'reasoning', content: 'Plan the search' }]),
+      { id: 'visible-a', role: 'assistant', content: '', toolCalls: [call('visible-search', 'web_search', { query: 'Fed minutes' })] },
+    ];
+    render(<TurnStart.Provider value={new Date(START).toISOString()}>
+      <Worklog id="hidden-turn" turn={messages.slice(1)} question={messages[0]} running asked="hidden-u">
+        <ToolStep id="visible-search" name="web_search" params={{ query: 'Fed minutes' }} status="running" output={undefined} />
+      </Worklog>
+    </TurnStart.Provider>);
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(head()).toHaveTextContent(/^Working · 2s$/);
+    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(head()).toHaveTextContent(/^Working · 3s$/);
+    expect(stepRows()).toEqual([['Searching the webFed minutes', '3s']]);
+  });
+
   it('counts the running step up live, its steps summing to "Working" all along, from the Chat Service\'s start', () => {
     vi.useFakeTimers({ now: START });
     const live = timed('live').map(({ metadata: _metadata, ...message }) => message);
