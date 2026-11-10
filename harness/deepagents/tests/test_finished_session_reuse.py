@@ -205,13 +205,13 @@ def test_failed_files_publication_does_not_promote_finished_snapshot(
     assert sum(memory.listed.values()) > 0
 
 
-def test_recorded_warmup_load_does_not_promote_finished_snapshot(
+def test_unregistered_warmup_load_does_not_promote_finished_snapshot(
     service: _Service, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _turn(service, 'first')
     service.fed()
     fresh_warm_sessions(monkeypatch)
-    assert _turn(service, '', warmup=True, preparationScope='recorded')[-1]['type'] == 'CUSTOM'
+    assert service.turn('', warmup=True, preparationScope='recorded')[-1]['type'] == 'CUSTOM'
     memory.listed.clear()
     assert _turn(service, 'second')[-1]['type'] == 'RUN_FINISHED'
     assert sum(memory.listed.values()) > 0
@@ -331,3 +331,63 @@ def test_fresh_invocation_nonces_reuse_snapshot_and_session_credentials(
         ('user', 'first'), ('assistant', 'Echo: first'),
         ('user', 'second'), ('assistant', 'Echo: second'),
     ]
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_completed_recorded_warmup_moves_checkpoint_reads_before_send(
+    service: _Service, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, existing: bool,
+) -> None:
+    if existing:
+        _turn(service, 'first')
+        service.fed()
+        fresh_warm_sessions(monkeypatch)
+    assert _turn(service, '', warmup=True)[-1]['value']['outcome'] == 'prepared'
+    memory.listed.clear()
+    reads_at_dispatch: list[int] = []
+    read = serving._read_turn_checkpoint
+
+    async def reading(*args: Any, **kwargs: Any) -> None:
+        await read(*args, **kwargs)
+        reads_at_dispatch.append(sum(memory.listed.values()))
+
+    monkeypatch.setattr(serving, '_read_turn_checkpoint', reading)
+    assert _turn(service, 'second')[-1]['type'] == 'RUN_FINISHED'
+    assert reads_at_dispatch == [0]
+    assert service.recorder.heard[-1] == (['first', 'second'] if existing else ['second'])
+
+
+@pytest.mark.parametrize('reason', ['epoch', 'actor', 'write', 'failed', 'startup'])
+def test_ineligible_preparation_reads_current_checkpoint(
+    service: _Service, memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, reason: str,
+) -> None:
+    _turn(service, 'first')
+    service.fed()
+    fresh_warm_sessions(monkeypatch)
+    finish = serving._finish_preparation
+
+    async def failing(work: Any) -> None:
+        await finish(work)
+        raise RuntimeError('preparation failed')
+
+    if reason == 'failed':
+        monkeypatch.setattr(serving, '_finish_preparation', failing)
+    prepared = _turn(service, '', warmup=True, preparationScope='startup' if reason == 'startup' else 'recorded')
+    assert prepared[-1]['value']['outcome'] == ('failed' if reason == 'failed' else 'prepared')
+    monkeypatch.setattr(serving, '_finish_preparation', finish)
+    if reason == 'write':
+        asyncio.run(session_api.post_message('user-1', 'thread-1', 'New result', 'post-after-warmup'))
+    memory.listed.clear()
+    reads_at_dispatch: list[int] = []
+    read = serving._read_turn_checkpoint
+
+    async def reading(*args: Any, **kwargs: Any) -> None:
+        await read(*args, **kwargs)
+        reads_at_dispatch.append(sum(memory.listed.values()))
+
+    monkeypatch.setattr(serving, '_read_turn_checkpoint', reading)
+    props = {'actor': 'new-owner'} if reason == 'actor' else {}
+    assert _turn(service, 'second', 'epoch-2' if reason in {'epoch', 'write'} else 'epoch-1', **props)[-1]['type'] == 'RUN_FINISHED'
+    assert reads_at_dispatch[0] > 0
+    assert _replay('user-1', 'thread-1')[-2:] == [('user', 'second'), ('assistant', 'Echo: second')]
+    if reason == 'write':
+        assert ('assistant', 'New result') in _replay('user-1', 'thread-1')

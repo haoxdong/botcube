@@ -1,9 +1,8 @@
-"""Write-through Session snapshots kept in a bounded microVM cache.
+"""Bounded write-through Session snapshots.
 
-Generic reads confirm Memory's latest checkpoint and pending writes. A registered
-Chat writer can consume a snapshot written by this process's successful finished
-run under the Session lock, at the same writer epoch and invoking actor. Every
-mutation revokes eligibility before writing; uncertain writes never promote.
+Registered Chat writers may reuse completed local writes or successful warmup
+reads under the Session lock with the same actor and writer epoch. Mutations
+revoke reuse before writing; uncertain writes never promote.
 """
 
 from __future__ import annotations
@@ -83,6 +82,13 @@ class _Finished:
     writes: str | None
 
 
+@dataclass(frozen=True)
+class _Prepared:
+    actor_id: str
+    epoch: str
+    confirmed: _Confirmed
+
+
 class _WarmSessions:
     """The held snapshots, and each Session's version: every write, keep or load bumps it."""
 
@@ -93,6 +99,28 @@ class _WarmSessions:
         # Never evicted, so a version never repeats: one int per Session this process wrote or loaded.
         self._versions: dict[_Key, int] = {}
         self._finished: dict[_Key, _Finished] = {}
+        self._prepared: OrderedDict[_Key, _Prepared] = OrderedDict()
+
+    def prepare(self, key: _Key, prepared: _Prepared) -> None:
+        with self._lock:
+            if prepared.confirmed.version != self._versions.get(key):
+                return
+            self._prepared.pop(key, None)
+            self._prepared[key] = prepared
+            while len(self._prepared) > self._capacity:
+                self._prepared.popitem(last=False)
+
+    def take_prepared(self, key: _Key, actor_id: str, epoch: str) -> _Confirmed | None:
+        with self._lock:
+            held = self._prepared.pop(key, None)
+            if (held is not None and held.actor_id == actor_id and held.epoch == epoch
+                    and held.confirmed.version == self._versions.get(key)):
+                return held.confirmed
+            return None
+
+    def discard_prepared(self, key: _Key) -> None:
+        with self._lock:
+            self._prepared.pop(key, None)
 
     def finished(self, key: _Key, actor_id: str, epoch: str) -> _Finished | None:
         with self._lock:
@@ -112,6 +140,7 @@ class _WarmSessions:
     def revoke(self, key: _Key) -> None:
         with self._lock:
             self._finished.pop(key, None)
+            self._prepared.pop(key, None)
 
     def get(self, key: _Key) -> tuple[_Snapshot | None, int]:
         with self._lock:
@@ -147,9 +176,11 @@ class _WarmSessions:
         while len(self._snapshots) > self._capacity:
             evicted, _ = self._snapshots.popitem(last=False)
             self._finished.pop(evicted, None)
+            self._prepared.pop(evicted, None)
 
     def _bump(self, key: _Key) -> int:
         self._finished.pop(key, None)
+        self._prepared.pop(key, None)
         version = self._versions[key] = self._versions.get(key, 0) + 1
         return version
 
@@ -226,7 +257,9 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._written: tuple[_Key, _Confirmed] | None = None
         self._write_lock = asyncio.Lock()
 
-    def admit_finished_reuse(self, config: RunnableConfig, actor_id: str, run_id: str, epoch: str | None) -> None:
+    def admit_snapshot_reuse(
+        self, config: RunnableConfig, actor_id: str, run_id: str, epoch: str | None,
+    ) -> None:
         """Called only under the Session lock with Chat's registered writer epoch."""
         key = self._key(CheckpointerConfig.from_runnable_config(dict(config)))
         self._admission = None
@@ -237,9 +270,21 @@ class WarmSessionSaver(AgentCoreMemorySaver):
             return
         self._admission = (key, actor_id, run_id, epoch)
         held = _SESSIONS.finished(key, actor_id, epoch)
+        prepared = _SESSIONS.take_prepared(key, actor_id, epoch)
         _SESSIONS.revoke(key)
         if held is not None:
             self._confirmed[key] = _Confirmed(held.version, held.snapshot, held.writes)
+        elif prepared is not None:
+            self._confirmed[key] = prepared
+
+    def discard_preparation(self, config: RunnableConfig) -> None:
+        _SESSIONS.discard_prepared(self._key(CheckpointerConfig.from_runnable_config(dict(config))))
+
+    def finish_preparation(self, config: RunnableConfig, actor_id: str, epoch: str | None) -> None:
+        key = self._key(CheckpointerConfig.from_runnable_config(dict(config)))
+        confirmed = self._confirmed.get(key)
+        if epoch and confirmed is not None:
+            _SESSIONS.prepare(key, _Prepared(actor_id, epoch, confirmed))
 
     def finish_run(self) -> None:
         """Promote only after graph settlement and successful Files publication under the Session lock."""

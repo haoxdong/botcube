@@ -364,7 +364,7 @@ def test_a_finished_registered_writer_reads_the_exact_stock_tuple_with_bounded_m
     memory: FakeAgentCoreMemory, tmp_path: Path, late_pending: bool,
 ) -> None:
     writer, _ = _turn(memory)
-    writer.admit_finished_reuse(CONFIG, 'user-1', 'run-1', 'epoch-1')
+    writer.admit_snapshot_reuse(CONFIG, 'user-1', 'run-1', 'epoch-1')
     _ask(writer, tmp_path, 'Question 1', 'Answer 1')
     stock = _another_microvm().get_tuple(CONFIG)
     if late_pending:
@@ -372,7 +372,7 @@ def test_a_finished_registered_writer_reads_the_exact_stock_tuple_with_bounded_m
         writer.put_writes(stock.parent_config, [('messages', [HumanMessage('Older pending question')])], 'late-task')
     writer.finish_run()
     reader, client = _turn(memory)
-    reader.admit_finished_reuse(CONFIG, 'user-1', 'run-2', 'epoch-1')
+    reader.admit_snapshot_reuse(CONFIG, 'user-1', 'run-2', 'epoch-1')
 
     assert reader.get_tuple(CONFIG) == stock
     assert _said(reader, tmp_path) == ['Question 1', 'Answer 1']
@@ -545,3 +545,63 @@ def test_an_interrupted_graph_resumes_from_persisted_pending_writes(
     assert resumed == {'answer': 'Persisted answer', 'approval': 'Approved'}
     assert completed == ['answer']
     assert _turn(memory)[0].get_tuple(CONFIG) == _another_microvm().get_tuple(CONFIG)
+
+
+@pytest.mark.parametrize('late_pending', [False, True])
+def test_prepared_snapshot_hands_off_exact_stock_tuple_once(
+    memory: FakeAgentCoreMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, late_pending: bool,
+) -> None:
+    writer, _ = _turn(memory)
+    _ask(writer, tmp_path, 'Question', 'Answer')
+    stock = _another_microvm().get_tuple(CONFIG)
+    assert stock is not None
+    if late_pending:
+        writer.put_writes(stock.config, [('messages', [HumanMessage('Pending')])], 'pending-task')
+    fresh_warm_sessions(monkeypatch)
+    prepared, _ = _turn(memory)
+    expected = _another_microvm().get_tuple(CONFIG)
+    assert prepared.get_tuple(CONFIG) == expected
+    prepared.finish_preparation(CONFIG, 'user-1', 'epoch-1')
+    reader, client = _turn(memory)
+    reader.admit_snapshot_reuse(CONFIG, 'user-1', 'run-1', 'epoch-1')
+    assert reader.get_tuple(CONFIG) == expected
+    assert client.calls == []
+    next_reader, next_client = _turn(memory)
+    next_reader.admit_snapshot_reuse(CONFIG, 'user-1', 'run-2', 'epoch-1')
+    assert next_reader.get_tuple(CONFIG) == expected
+    assert next_client.calls
+
+
+def test_local_pending_write_revokes_prepared_snapshot_at_same_epoch(
+    memory: FakeAgentCoreMemory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writer, _ = _turn(memory)
+    _ask(writer, tmp_path, 'Question', 'Answer')
+    saved = writer.get_tuple(CONFIG)
+    assert saved is not None
+    writer.finish_preparation(CONFIG, 'user-1', 'epoch-1')
+    writer.put_writes(saved.config, [('messages', [HumanMessage('Pending')])], 'pending-task')
+    reader, client = _turn(memory)
+    reader.admit_snapshot_reuse(CONFIG, 'user-1', 'run-2', 'epoch-1')
+    assert reader.get_tuple(CONFIG) == _another_microvm().get_tuple(CONFIG)
+    assert client.calls
+
+
+def test_prepared_empty_sessions_obey_cache_capacity(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botcube_harness_deepagents.memory.agentcore import warm_session
+
+    monkeypatch.setattr(warm_session, '_SESSIONS', warm_session._WarmSessions(1))
+    configs: list[RunnableConfig] = [
+        {'configurable': {'thread_id': thread, 'actor_id': 'user-1'}} for thread in ('one', 'two')
+    ]
+    for config in configs:
+        prepared, _ = _turn(memory)
+        assert prepared.get_tuple(config) is None
+        prepared.finish_preparation(config, 'user-1', 'epoch-1')
+    for config, evicted in zip(configs, (True, False), strict=True):
+        reader, client = _turn(memory)
+        reader.admit_snapshot_reuse(config, 'user-1', 'run', 'epoch-1')
+        assert reader.get_tuple(config) is None
+        assert bool(client.calls) is evicted

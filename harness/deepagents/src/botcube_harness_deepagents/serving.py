@@ -965,7 +965,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         if allowed:
             await _prepare_agent(
                 build, turn_identity, input_data.run_id, persistent_memory, session, auth.actor_id,
-                files, reads_history,
+                files, reads_history, forwarded.get('sessionSnapshotEpoch'),
             )
     yield _preparation_event(input_data, 'prepared' if allowed else 'skipped-busy')
 
@@ -976,7 +976,7 @@ async def _read_turn_checkpoint(
 ) -> None:
     saver = getattr(agent.graph, 'checkpointer', None)
     if isinstance(saver, WarmSessionSaver):
-        saver.admit_finished_reuse(
+        saver.admit_snapshot_reuse(
             _session_config(session), actor_id, run_id,
             agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
         )
@@ -997,7 +997,7 @@ def _settle_finished_reuse(saver: Any, finished: bool) -> None:
 async def _prepare_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
-    files: FilesMount | None, reads_history: bool,
+    files: FilesMount | None, reads_history: bool, epoch: Any = None,
 ) -> None:
     memory_warmup = (
         session_memory.begin_warmup(session, actor_id)
@@ -1008,6 +1008,10 @@ async def _prepare_agent(
         agent, backend = await _turn_agent(
             build, turn_identity if reads_history else None, run_id, persistent_memory,
         )
+
+        saver = getattr(agent.graph, 'checkpointer', None)
+        if isinstance(saver, WarmSessionSaver):
+            saver.discard_preparation(_session_config(session))
 
         async def read_history() -> None:
             nonlocal memory_read
@@ -1026,6 +1030,11 @@ async def _prepare_agent(
         )
         work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
         await _finish_preparation(work)
+        if reads_history and isinstance(saver, WarmSessionSaver):
+            saver.finish_preparation(
+                _session_config(session), actor_id,
+                agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
+            )
     except BaseException:
         if memory_warmup is not None:
             session_memory.finish_warmup(session, memory_warmup, None)
@@ -1158,12 +1167,7 @@ class _SessionTurns:
         put: Callable[[Any], None],
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
     ) -> None:
-        """Stop leaves the stopped Turn running here. Were the next Turn to start
-        before the stopped one's checkpoints persist, the stopped Turn's would
-        become the Session's latest, and replay would lose the next Turn.
-        LangGraph waits for a cancelled run's checkpoint writes, and nothing cancels this task.
-        The Turn prepares while the Session's previous Turn settles.
-        """
+        """Hold the lock until cancelled checkpoints persist, preventing writes over the next Turn."""
         trace_context = (
             baggage.set_baggage('session.id', context.session_id)
             if context.session_id else otel_context.get_current()
