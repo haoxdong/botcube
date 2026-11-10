@@ -52,7 +52,7 @@ export default defineConfig({
         test: {
           ...node,
           name: 'node',
-          include: ['templates/always-on/chat/src/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts'],
+          include: ['tests/**/*.test.ts', 'templates/always-on/chat/src/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts'],
         },
       },
       uiWeb('ui-web', ['ui/web/src/**/*.test.{ts,tsx}', 'ui/web/.storybook/*.test.ts', 'templates/always-on/ui/web/src/**/*.test.tsx'], uiWebMarkdown, 0),
