@@ -70,6 +70,32 @@ cat > "$ROLE_POLICY" <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
+{
+  "Effect": "Allow",
+  "Action": [
+    "ecs:ListClusters",
+    "ecs:ListServices",
+    "ecs:ListTasks",
+    "ecs:ListTaskDefinitionFamilies",
+    "ecs:DescribeTaskDefinition",
+    "ecs:DescribeServices",
+    "ecs:DescribeTasks",
+    "lambda:ListFunctions",
+    "lambda:ListAliases",
+    "lambda:GetFunction",
+    "bedrock-agentcore:ListAgentRuntimes",
+    "bedrock-agentcore:ListAgentRuntimeEndpoints",
+    "bedrock-agentcore:GetAgentRuntime",
+    "ecr:DescribeRepositories",
+    "ecr:DescribeImages",
+    "ecr:BatchGetImage",
+    "ecr:PutImage",
+    "ecr:BatchDeleteImage",
+    "ecr:PutLifecyclePolicy",
+    "ecr:GetLifecyclePolicy"
+  ],
+  "Resource": "*"
+},
     {
       "Effect": "Allow",
       "Action": "s3:GetObject",

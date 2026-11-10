@@ -29,8 +29,8 @@ export class ApiHealthStack extends Stack {
     super(scope, id, props);
     const check = new route53.CfnHealthCheck(this, 'ApiHealthCheck', {
       healthCheckConfig: {
-        type: 'HTTPS', fullyQualifiedDomainName: props.hostname, port: 443, resourcePath: '/health',
-        requestInterval: props.requestIntervalSeconds ?? 30, failureThreshold: props.failureThreshold ?? 3, measureLatency: true, enableSni: true,
+        type: 'HTTP', fullyQualifiedDomainName: props.hostname, port: 80, resourcePath: '/health',
+        requestInterval: props.requestIntervalSeconds ?? 30, failureThreshold: props.failureThreshold ?? 3, measureLatency: false,
       },
       healthCheckTags: [{ key: 'Name', value: props.alarmName }],
     });
