@@ -17,8 +17,8 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 from . import turn_timing
+from .files import install_staged_files
 from .files_mount import FilesMount, FilesMountError
-from .files_sync import Files, install_staged_files
 
 _WORKSPACE_TOOLS = frozenset(get_args(FsToolName))
 _T = TypeVar('_T')
@@ -26,7 +26,7 @@ EFS_READY_TIMEOUT = 35.0
 
 
 class TurnFiles:
-    def __init__(self, files: Files | None, root: Path, excluded: Iterable[str]) -> None:
+    def __init__(self, files: FilesMount | None, root: Path, excluded: Iterable[str]) -> None:
         self._files = files
         self._root = root
         self._excluded = tuple(excluded)
@@ -39,22 +39,11 @@ class TurnFiles:
     def prefetch(self) -> None:
         if self._files is not None and self._prefetch is None:
             self._prefetch = asyncio.create_task(asyncio.to_thread(self._ensure))
-            if isinstance(self._files, FilesMount):
-                self._prefetch.add_done_callback(observe_efs_prefetch)
+            self._prefetch.add_done_callback(observe_efs_prefetch)
 
     async def settle_prefetch(self) -> None:
-        if isinstance(self._files, FilesMount):
-            if self.used:
-                await self.aensure()
-            return
-        if self._prefetch is not None:
-            settled = asyncio.gather(self._prefetch, return_exceptions=True)
-            try:
-                await asyncio.shield(settled)
-            except asyncio.CancelledError:
-                await settled
-                raise
-            self.raise_if_failed()
+        if self.used:
+            await self.aensure()
 
     @property
     def ready(self) -> bool:
@@ -70,17 +59,8 @@ class TurnFiles:
         if self.used and pull is not None and pull.done():
             pull.result()
 
-    def publish(self) -> None:
-        self.ensure()
-        with self._claim:
-            if self._files is not None:
-                self._files.push(self._root, self._excluded)
-
     def publish_staged(self, root: Path) -> None:
-        if isinstance(self._files, FilesMount):
-            self.ensure()
-        if self._files is not None:
-            self._files.push(root, self._excluded)
+        self.ensure()
         install_staged_files(root, self._root, self._excluded)
 
     def ensure(self) -> None:
@@ -97,15 +77,10 @@ class TurnFiles:
                 self._pull = Future()
             pull = self._pull
         if owner:
-            if isinstance(self._files, FilesMount):
-                Thread(target=copy_context().run, args=(self._pull_files, pull), daemon=True).start()
-            else:
-                self._pull_files(pull)
+            Thread(target=copy_context().run, args=(self._pull_files, pull), daemon=True).start()
         try:
-            pull.result(timeout=EFS_READY_TIMEOUT if isinstance(self._files, FilesMount) else None)
+            pull.result(timeout=EFS_READY_TIMEOUT)
         except TimeoutError as error:
-            if not isinstance(self._files, FilesMount):
-                raise
             self._failure = FilesMountError('Files mount readiness deadline exceeded')
             raise self._failure from error
 
@@ -154,7 +129,7 @@ def current_turn_files() -> TurnFiles | None:
 
 
 @contextmanager
-def turn_files(files: Files | None, root: Path, excluded: Iterable[str]) -> Generator[TurnFiles, None, None]:
+def turn_files(files: FilesMount | None, root: Path, excluded: Iterable[str]) -> Generator[TurnFiles, None, None]:
     readiness = TurnFiles(files, root, excluded)
     token = _turn_files.set(readiness)
     try:

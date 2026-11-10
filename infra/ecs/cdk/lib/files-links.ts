@@ -14,8 +14,7 @@ import type { PreviewOriginStack } from './preview-origin-stack.js';
 /**
  * Files on EFS: mount targets in the browser subnets, and the Lambda that serves each
  * signed upload or download link straight from the file system. Its only egress is NFS, so links need
- * neither the NAT nor a Chat Service task and keep working while production is parked. The Chat
- * Service, Browsers and Runtime start using it behind FILES_STORE=efs.
+ * neither the NAT nor a Chat Service task and keep working while production is parked.
  */
 export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string; availabilityZone: string }> }, cubeRoot: string, corsOrigins: string[], clients: ec2.ISecurityGroup[] = []) {
   const { vpc } = chat.cluster;

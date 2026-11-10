@@ -7,6 +7,7 @@ export interface RecordedRequest {
   path: string;
   headers: IncomingMessage['headers'];
   body: string;
+  bodyBytes: Buffer;
 }
 
 export type Handler = (
@@ -34,11 +35,13 @@ export class HttpFake {
   private async serve(incoming: IncomingMessage, response: ServerResponse, handle: Handler): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of incoming) chunks.push(chunk as Buffer);
+    const bodyBytes = Buffer.concat(chunks);
     const request: RecordedRequest = {
       method: incoming.method ?? '',
       path: incoming.url ?? '',
       headers: incoming.headers,
-      body: Buffer.concat(chunks).toString(),
+      body: bodyBytes.toString(),
+      bodyBytes,
     };
     this.requests.push(request);
     for (const recheck of [...this.waiters]) recheck();

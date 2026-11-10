@@ -197,7 +197,7 @@ function computersFor(browser: AgentComputerBrowser, idleSeconds = 600) {
     remove: unusedFilesOperation,
     rename: unusedFilesOperation,
     recoverCleanup: unusedFilesOperation,
-    syncBinding: unusedFilesOperation,
+    mountBinding: unusedFilesOperation,
     transfer: unusedFilesOperation,
     delete: unusedFilesOperation,
   };

@@ -113,7 +113,7 @@ function agentCoreAgentComputerBrowser(
         sessionTimeoutSeconds: SESSION_TIMEOUT_SECONDS,
         viewPort: VIEWPORT,
         ...(profileId === null ? {} : { profileConfiguration: { profileIdentifier: profileId } }),
-        filesystemConfigurations: [files.fileSystemArn.includes(':elasticfilesystem:') ? { efsConfiguration: files } : { s3FilesConfiguration: files }],
+        filesystemConfigurations: [{ efsConfiguration: files }],
         enterprisePolicies: [{ type: 'RECOMMENDED', location: { s3: policy } }],
       }).then(({ sessionId }) => sessionId),
     screenshot: (sessionId) =>

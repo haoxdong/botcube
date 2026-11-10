@@ -9,8 +9,7 @@ import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable, RUNTIME_ARN 
 import { motoEndpoint } from '../fakes/moto.js';
 import { BIND_ADDRESS, startOnFreePort } from '../fakes/process.js';
 import { Browser } from './browser.js';
-import { FakeS3Files, FILE_SYSTEM_ARN } from './fake-s3files.js';
-import { MotoS3 } from './moto-s3.js';
+import { FakeEfs } from './fake-efs.js';
 
 export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 
@@ -30,11 +29,7 @@ export async function startStack(options: StackOptions = {}) {
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
-  const s3 = new MotoS3(endpoint);
-  const bucket = `files-${Math.random().toString(36).slice(2)}`;
-  await s3.createBucket(bucket);
-  await s3.enableVersioning(bucket);
-  const s3files = await new FakeS3Files(s3, bucket).listen();
+  const files = await new FakeEfs(join(home, 'files')).listen();
   const unreachable = createServer((socket) => socket.destroy());
   if (options.agentcore === 'unreachable') {
     await new Promise<void>((done) => unreachable.listen(0, BIND_ADDRESS, done));
@@ -48,9 +43,8 @@ export async function startStack(options: StackOptions = {}) {
     AWS_ENDPOINT_URL_DYNAMODB: endpoint, BOTCUBE_CHAT_TABLE: name,
     BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
-    AWS_ENDPOINT_URL_S3: endpoint, AWS_ENDPOINT_URL_S3FILES: s3files.url, AWS_ENDPOINT_URL_STS: endpoint,
-    BOTCUBE_FILES_BUCKET: bucket, BOTCUBE_FILES_FILE_SYSTEM_ARN: FILE_SYSTEM_ARN,
-    BOTCUBE_FILES_SYNC_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-sync',
+    AWS_ENDPOINT_URL_STS: endpoint,
+    ...files.environment,
     ...(options.agentcore === 'unconfigured' ? {} : {
       AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agentcoreUrl,
@@ -61,7 +55,7 @@ export async function startStack(options: StackOptions = {}) {
     ...(options.corsOrigins === undefined ? {} : { BOTCUBE_CORS_ORIGINS: options.corsOrigins }),
   };
   const closeFakes = async () => {
-    await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), s3files.close()]);
+    await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), files.close()]);
     if (unreachable.listening) await new Promise<void>((done) => unreachable.close(() => done()));
     await rm(home, { recursive: true, force: true });
   };
@@ -76,7 +70,7 @@ export async function startStack(options: StackOptions = {}) {
   const url = new URL(service.url).origin;
   return {
     get url() { return url; },
-    agentcore, sessionApi, bedrock, s3files, s3,
+    agentcore, sessionApi, bedrock, files,
     browser: () => new Browser(url),
     logs: () => service.output(),
     async stop() {

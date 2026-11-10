@@ -122,6 +122,11 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
+      "Action": "cloudformation:ListExports",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
       "Action": [
         "cloudformation:DescribeChangeSet",
         "cloudformation:DescribeStackEvents",

@@ -83,15 +83,13 @@ from .agent_documents import (
     pop_agent_documents,
 )
 from .conversation import conversation
-from .files_mount import FilesMountError
-from .files_sync import (
-    Files,
-    FilesSyncError,
-    FilesSyncRecordError,
+from .files import (
+    FilesBindingError,
     excluded_paths,
     files_prompt,
-    pop_files_sync,
+    pop_files_mount,
 )
+from .files_mount import FilesMount, FilesMountError
 from .lazy_files import TurnFiles, current_turn_files, turn_files
 from .llm import (
     PLAN_MODEL_PREFIX,
@@ -839,7 +837,7 @@ async def _invoke_user(input_data: RunAgentInput, context: _RequestContext, forw
     documents = pop_agent_documents(forwarded)
     if 'agentSystemPrompt' in forwarded:
         documents = None
-    files = pop_files_sync(forwarded)
+    files = pop_files_mount(forwarded)
     with turn_timing.phase('invocation_auth'):
         auth = _require_cartridge().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
@@ -914,7 +912,7 @@ def _require_empty_opening_checkpoint(checkpoint: object | None) -> None:
 
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any,
-                        files: Files | None, warmup: Any, turn_identity: str | None):
+                        files: FilesMount | None, warmup: Any, turn_identity: str | None):
     session = (session_user_id, input_data.thread_id)
     persistent_memory = auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
     opening = forwarded.get('opening') is True
@@ -999,7 +997,7 @@ def _settle_finished_reuse(saver: Any, finished: bool) -> None:
 async def _prepare_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
-    files: Files | None, reads_history: bool,
+    files: FilesMount | None, reads_history: bool,
 ) -> None:
     memory_warmup = (
         session_memory.begin_warmup(session, actor_id)
@@ -1120,7 +1118,7 @@ class _SessionTurns:
         session: tuple[str | None, str | None],
         prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
         input_data: RunAgentInput,
-        files: Files | None,
+        files: FilesMount | None,
         context: _RequestContext,
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
     ) -> AsyncGenerator[Any, None]:
@@ -1155,7 +1153,7 @@ class _SessionTurns:
         turn: _Turn,
         prepare: Callable[[], Awaitable[tuple[LangGraphAgent, Path]]],
         input_data: RunAgentInput,
-        files: Files | None,
+        files: FilesMount | None,
         context: _RequestContext,
         put: Callable[[Any], None],
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
@@ -1341,8 +1339,7 @@ async def _invocation_frames(
                 InvalidTemporaryChatError,
                 AgentDocumentsError,
                 FilesMountError,
-                FilesSyncError,
-                FilesSyncRecordError,
+                FilesBindingError,
                 PlanUsageError,
                 SessionFormatLegacyError,
                 SessionOpeningError,

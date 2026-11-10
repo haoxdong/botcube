@@ -139,8 +139,8 @@ test('the provider creates each certificate, AOP and DNS record through one hand
     ProductionCertificate: { ServiceToken: provider, Kind: 'Certificate', Hostname: 'api.example.com' },
     PreviewAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'preview.example.com', ClientVersion: 'version', DependsOn: listener },
     ProductionAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'api.example.com', ClientVersion: 'version', CertId: { Ref: 'PreviewAop' }, DependsOn: listener },
-    PreviewDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'preview.example.com', Target: target, DependsOn: ['PreviewAop'] },
-    ProductionDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'api.example.com', Target: target, DependsOn: ['ProductionAop'] },
+    PreviewDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'preview.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['PreviewAop'] },
+    ProductionDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'api.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['ProductionAop'] },
   });
 });
 

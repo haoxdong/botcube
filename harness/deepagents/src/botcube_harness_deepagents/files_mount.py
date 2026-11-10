@@ -113,8 +113,6 @@ class FilesMount:
             temporary = Path(file.name)
         os.replace(temporary, path)
 
-    def push(self, root: Path, excluded: Iterable[str] = ()) -> None:
-        """NFS writes are already visible to the Files service when the file closes."""
 
 
 def detach_workspace(root: Path) -> None:

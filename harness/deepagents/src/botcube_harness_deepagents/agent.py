@@ -34,7 +34,7 @@ from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
 from .compaction import BackgroundCompaction
-from .files_sync import HARNESS_DIRECTORY
+from .files import HARNESS_DIRECTORY
 from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
 

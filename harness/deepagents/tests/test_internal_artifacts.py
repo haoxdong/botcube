@@ -3,15 +3,13 @@ import shlex
 import sys
 from pathlib import Path
 
-import boto3
 import pytest
 from deepagents.backends import LocalShellBackend
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
-from moto import mock_aws
 
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.files_sync import FilesSync, excluded_paths
+from botcube_harness_deepagents.files import excluded_paths, is_files_path
 from conftest import ToolBindableFakeMessagesModel
 
 
@@ -44,14 +42,10 @@ def test_large_tool_results_stay_readable_but_out_of_files(
     result = asyncio.run(graph.ainvoke(inputs)) if asynchronous else graph.invoke(inputs)
     messages = [message for message in result['messages'] if isinstance(message, ToolMessage)]
 
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='internal-artifacts')
-        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
-        FilesSync('internal-artifacts', 'owner/', 'us-east-1', {}).push(tmp_path, excluded_paths(()))
-        keys = sorted(item['Key'] for item in s3.list_objects_v2(Bucket='internal-artifacts')['Contents'])
-        assert keys == ['owner/calculation.py', 'owner/report.txt']
-        assert s3.get_object(Bucket='internal-artifacts', Key='owner/report.txt')['Body'].read() == b'user report'
+    keys = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob('*')
+                  if path.is_file() and is_files_path(path.relative_to(tmp_path).as_posix(), excluded_paths(())))
+    assert keys == ['calculation.py', 'report.txt']
+    assert (tmp_path / 'report.txt').read_bytes() == b'user report'
 
     assert '/botcube-harness-deepagents/large_tool_results/call_large' in messages[1].content
     assert 'result data' in messages[2].content

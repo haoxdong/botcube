@@ -1,5 +1,3 @@
-// Moving an attached file's bytes into Files: the error and options both upload paths share, and the chunked one.
-
 export class HttpStatusError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -20,9 +18,9 @@ const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => 
 /**
  * PUTs `file` to a Files link served straight from EFS: chunk 0 first, the rest four at a time, then
  * one request naming the size and SHA-256, which the link checks before the file appears. A name taken
- * meanwhile answers as S3's If-None-Match did, so the caller tries the next copy name.
+ * meanwhile makes the caller try the next copy name.
  */
-async function putChunks(url: string, file: File, { onProgress, signal }: UploadOptions): Promise<void> {
+export async function uploadTo(url: string, file: File, { onProgress, signal }: UploadOptions): Promise<void> {
   const sha256 = hex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
   let sent = 0;
   const send = async (offset: number, body: Blob, finish = '') => {
@@ -46,7 +44,3 @@ async function putChunks(url: string, file: File, { onProgress, signal }: Upload
   }));
   await send(offsets.length * UPLOAD_CHUNK_BYTES, new Blob([]), `&done=${file.size}&sha256=${sha256}`);
 }
-
-/** A Files link from EFS (`?t=`) takes chunks; a presigned S3 URL takes `single`'s one PUT. */
-export const uploadTo = (url: string, file: File, options: UploadOptions, single: (url: string, file: File, options: UploadOptions) => Promise<void>) =>
-  (new URL(url).searchParams.has('t') ? putChunks : single)(url, file, options);

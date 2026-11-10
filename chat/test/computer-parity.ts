@@ -44,7 +44,7 @@ export async function computerParity() {
   const files: AccountFiles = {
     mount: async (owner) => ({ accessPointArn: `access-${owner}`, fileSystemArn: 'files', mountPath: '/mnt/files' }),
     list: unused, uploadUrl: unused, downloadUrl: unused, remove: unused, rename: unused,
-    recoverCleanup: unused, syncBinding: unused, transfer: unused, delete: unused,
+    recoverCleanup: unused, mountBinding: unused, transfer: unused, delete: unused,
   };
   const makeComputers = () => agentComputers({ browser: () => browser, records: () => store, seed: async () => {}, files: () => files, idleSeconds: 1 });
   const computers = makeComputers();

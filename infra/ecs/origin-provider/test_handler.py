@@ -41,6 +41,30 @@ class OriginTests(unittest.TestCase):
                 'ResourceProperties': {'Kind': kind, 'Hostname': 'api-next.example.com', 'ClientVersion': 'v1'},
                 'OldResourceProperties': {'Hostname': 'api-next.example.com', 'ClientVersion': 'v1'}}
 
+    def test_dns_creation_and_update_enable_native_edge_https_before_serving_http_checks(self):
+        for request in ('Create', 'Update'):
+            with self.subTest(request=request):
+                event = self.event('Dns', request)
+                event['ResourceProperties'].update({'Target': 'origin.example.com', 'AlwaysUseHttps': 'on'})
+                cf = Mock()
+                cf.put_record.return_value = 'owned'
+                self.assertEqual(handler.dns_event(cf, 'zone', event, event['ResourceProperties']), 'owned')
+                cf.call.assert_called_once_with('zone/settings/always_use_https', 'PATCH', {'value': 'on'})
+
+    def test_dns_deletion_preserves_shared_edge_https_setting(self):
+        event = self.event('Dns', 'Delete')
+        cf = Mock()
+        handler.dns_event(cf, 'zone', event, event['ResourceProperties'])
+        cf.call.assert_not_called()
+
+    def test_edge_https_permission_failure_fails_the_deploy(self):
+        event = self.event('Dns')
+        event['ResourceProperties'].update({'Target': 'origin.example.com', 'AlwaysUseHttps': 'on'})
+        cf = Mock()
+        cf.call.side_effect = handler.ProviderError('settings denied')
+        with self.assertRaisesRegex(handler.ProviderError, 'settings denied'):
+            handler.dns_event(cf, 'zone', event, event['ResourceProperties'])
+
     def test_restoration_waits_for_data_plane_after_control_plane_is_active(self):
         verifier = runpy.run_path(str(ECS / 'verify-origin.py'))
         wait = verifier['expect_ready']

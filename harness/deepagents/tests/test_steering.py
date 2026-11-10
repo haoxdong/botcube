@@ -68,13 +68,12 @@ def test_steering_reaches_next_model_after_inflight_tool_result() -> None:
 def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refresh_fails: bool,
 ) -> None:
-    import boto3
-    from moto import mock_aws
 
-    from botcube_harness_deepagents.files_sync import FilesSync
+    from botcube_harness_deepagents.files_mount import FilesMount
     from botcube_harness_deepagents.lazy_files import current_turn_files, turn_files
+    from mounted_files import MountedFiles, binding
 
-    async def run(files: FilesSync, s3: Any) -> None:
+    async def run(mount: FilesMount, mounted: MountedFiles) -> None:
         entered, release = asyncio.Event(), asyncio.Event()
 
         @tool
@@ -107,15 +106,15 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
 
         token = active_steering.set((pending, published))
         try:
-            with turn_files(files, tmp_path, ()):
+            with turn_files(mount, tmp_path, ()):
                 work = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('start work')]}))
                 await asyncio.wait_for(entered.wait(), 5)
-                s3.put_object(Bucket='steering-files', Key='owner/report.csv', Body=b'date,close\n2026-10-31,42')
+                mounted.write('report.csv', b'date,close\n2026-10-31,42')
                 pending.add('attached', 'Read this\n\nAttached files:\n- /report.csv')
                 if refresh_fails:
                     def fail_pull(*args: Any, **kwargs: Any) -> None:
                         raise RuntimeError('Files refresh failed')
-                    monkeypatch.setattr(FilesSync, 'pull', fail_pull)
+                    monkeypatch.setattr(FilesMount, 'pull', fail_pull)
                 release.set()
                 if refresh_fails:
                     with pytest.raises(RuntimeError, match='Files refresh failed'):
@@ -130,9 +129,7 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
         assert model.inputs[1][-1].id == 'attached'
         assert model.inputs[2][-1].content == 'date,close\n2026-10-31,42'
 
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='steering-files')
-        s3.put_object(Bucket='steering-files', Key='owner/notes.txt', Body=b'old notes')
-        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
-        asyncio.run(run(FilesSync('steering-files', 'owner/', 'us-east-1', {}), s3))
+    mounted = MountedFiles(tmp_path)
+    mounted.write('notes.txt', b'old notes')
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
+    asyncio.run(run(FilesMount.from_binding(binding()), mounted))

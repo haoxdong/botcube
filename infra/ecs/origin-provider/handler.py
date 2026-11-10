@@ -151,7 +151,9 @@ def dns_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], props: Mappin
     if event['RequestType'] == 'Delete':
         cf.remove_record(zone, props['Hostname'], physical)
         return physical
-    return cf.put_record(zone, props['Hostname'], props['Target'], True, physical)
+    record = cf.put_record(zone, props['Hostname'], props['Target'], True, physical)
+    cf.call(zone + '/settings/always_use_https', 'PATCH', {'value': props['AlwaysUseHttps']})
+    return record
 
 
 def aop_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], props: Mapping[str, Any]):

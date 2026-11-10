@@ -1,12 +1,4 @@
-"""Park or unpark production, or print its stored park state (docs/runbooks/production-parking.md).
-
-usage: transition.py state | park | unpark
-
-park and unpark store the target state, deploy the ECS CDK app with that
-`parked` flag, then verify it. Re-running either finishes a half-done
-transition. Every deploy of the app reads the stored state, so only these two
-commands change it.
-"""
+"""Park/unpark production per docs/runbooks/production-parking.md."""
 import json
 import os
 import subprocess
@@ -302,6 +294,15 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
         pause(10)
 
 
+def remove_legacy_files_imports(target: str):
+    import boto3
+    exports = boto3.client('cloudformation').get_paginator('list_exports').paginate()
+    if any(export['Name'].startswith('ChatStorage:') and 'FilesFileSystem' in export['Name']
+           for page in exports for export in page['Exports']):
+        run('./node_modules/.bin/cdk', 'deploy', 'PreviewOrigin', '--exclusively', '-c', 'previewOrigin=true',
+            '-c', f"parked={'true' if target == 'parked' else 'false'}", '--require-approval', 'never', cwd=CDK)
+
+
 def transition(action: str):
     import boto3
     target = TARGETS[action]
@@ -319,13 +320,11 @@ def transition(action: str):
         steps.step('restore session API capacity', lambda: session_api_capacity(target))
     refreshed: dict[str, Any] = {}
     if target == 'live':
-        # Spares need the NAT Gateway and take minutes to start. Restoring egress alone and refreshing them before the
-        # deploy that opens the front door lets them start during that deploy, so the first users after a wake land on
-        # spares instead of 30 s fresh microVMs (2026-11-05: version READY 16:08:49Z, first spare 16:12:48Z).
         steps.step('deploy egress', lambda: run(
             './node_modules/.bin/cdk', 'deploy', 'PrivateEgress', '--exclusively', '-c', 'previewOrigin=true', '-c', 'parked=false',
             '--require-approval', 'never', cwd=CDK))
         steps.step('refresh runtime spares', lambda: refreshed.update(refresh_runtime_spares()))
+    steps.step('remove legacy Files imports', lambda: remove_legacy_files_imports(target))
     watch = CredentialWatch(datetime.now(UTC))
     watch.start()
     steps.step('deploy', lambda: run(

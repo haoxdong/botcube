@@ -40,7 +40,7 @@ const factory: CartridgeFactory = (history) => ({
         ...input.forwardedProps,
         ...turnCredentialBinding(env.BOTCUBE_CREDENTIAL_SERVICE_URL ?? '', env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', requester.owner, input.threadId, model),
         agentComputerCdpUrl: await cdp.issue(requester.owner, input.threadId),
-        files: await files().syncBinding(requester.owner),
+        files: await files().mountBinding(requester.owner),
       },
     };
   },

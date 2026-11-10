@@ -601,7 +601,7 @@ class RuntimeSparesTests(unittest.TestCase):
     def test_unpark_refreshes_the_runtime_once_egress_is_back_before_the_deploy_that_opens_the_front_door(self):
         # Spares take minutes to start; refreshed before the front door opens, they start during the main deploy,
         # so the first users after a wake land on spares, not 30 s fresh microVMs.
-        for action, expected in (('unpark', ['deploy egress', 'refresh runtime spares', 'deploy', 'measure credential service start']), ('park', ['verify parked', 'release session API capacity'])):
+        for action, expected in (('unpark', ['deploy egress', 'refresh runtime spares', 'remove legacy Files imports', 'deploy', 'measure credential service start']), ('park', ['verify parked', 'release session API capacity'])):
             with self.subTest(action=action):
                 run = Mock(report=dict)
                 with patch.dict(transition['transition'].__globals__, {'Run': Mock(return_value=run), 'CredentialWatch': MagicMock()}), \
@@ -698,3 +698,29 @@ class SpareHandoffTests(unittest.TestCase):
                 steps = [call.args[0] for call in run.step.call_args_list]
                 self.assertEqual(steps[-1] == 'await first spare handoff', action == 'unpark')
                 self.assertEqual('await first spare handoff' in steps, action == 'unpark')
+
+
+class LegacyFilesExportTests(unittest.TestCase):
+    def test_origin_removes_legacy_imports_before_storage_exports_can_be_deleted(self):
+        for names, expected in ((['ChatStorage:ExportsOutputFnGetAttFilesFileSystemFileSystemId'], 1),
+                                (['ChatStorage:FilesEfsArn'], 0)):
+            with self.subTest(names=names):
+                cloudformation = Mock()
+                cloudformation.get_paginator.return_value.paginate.return_value = [
+                    {'Exports': [{'Name': name} for name in names]}]
+                command = Mock()
+                with patch.dict(transition['remove_legacy_files_imports'].__globals__, {'run': command}), \
+                        patch.dict('sys.modules', {'boto3': Mock(client=Mock(return_value=cloudformation))}):
+                    transition['remove_legacy_files_imports']('live')
+                self.assertEqual(command.call_count, expected)
+                if expected:
+                    self.assertEqual(command.call_args.args, (
+                        './node_modules/.bin/cdk', 'deploy', 'PreviewOrigin', '--exclusively', '-c',
+                        'previewOrigin=true', '-c', 'parked=false', '--require-approval', 'never'))
+
+    def test_export_discovery_failure_stops_the_transition(self):
+        cloudformation = Mock()
+        cloudformation.get_paginator.return_value.paginate.side_effect = RuntimeError('export discovery denied')
+        with patch.dict('sys.modules', {'boto3': Mock(client=Mock(return_value=cloudformation))}), \
+                self.assertRaisesRegex(RuntimeError, 'export discovery denied'):
+            transition['remove_legacy_files_imports']('live')

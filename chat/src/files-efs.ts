@@ -8,7 +8,7 @@ import {
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { HttpError } from './cartridge.js';
 import {
-  FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, SYNC_SECONDS, URL_SECONDS,
+  FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS,
   directoryOf, fileDestination, filePath, freeName,
   type AccountFiles, type FileEntry, type FilesMount, type FilesMountBinding, type FilesRecords,
 } from './files-shared.js';
@@ -74,7 +74,7 @@ export function stsMountCredentials(roleArn: string, fileSystemArn: string): Mou
     const { Credentials: credentials } = await sts.send(new AssumeRoleCommand({
       RoleArn: roleArn,
       RoleSessionName: sessionName,
-      DurationSeconds: SYNC_SECONDS,
+      DurationSeconds: MOUNT_SECONDS,
       Policy: JSON.stringify({
         Version: '2012-10-17',
         Statement: [{
@@ -120,7 +120,7 @@ export function accountFilesEfs({
   mountCredentials: MountCredentials;
   records: () => FilesRecords;
   links: { url: string; key: string };
-}): AccountFiles<FilesMountBinding> {
+}): AccountFiles {
   // arn:aws:elasticfilesystem:<region>:<account>:file-system/<id>
   const [, , , region = '', , resource = ''] = fileSystemArn.split(':');
   const fileSystemId = resource.split('/')[1] ?? '';
@@ -181,19 +181,19 @@ export function accountFilesEfs({
   }
 
   async function removeAccessPoint(accountId: string): Promise<void> {
-    const accessPointArn = await records().filesAccessPoint(accountId, 'efs');
+    const accessPointArn = await records().filesAccessPoint(accountId);
     if (accessPointArn === null) return;
     const deleted = await accessPoints.delete(accessPointArn);
-    await records().deleteFilesAccessPoint(accountId, 'efs');
+    await records().deleteFilesAccessPoint(accountId);
     if (!deleted) throw new HttpError(404, 'Files access point not found');
   }
 
   async function accessPoint(accountId: string): Promise<string> {
-    const saved = await records().filesAccessPoint(accountId, 'efs');
+    const saved = await records().filesAccessPoint(accountId);
     if (saved !== null) return saved;
     const token = createHash('sha256').update(`files:${accountId}`).digest('hex').slice(0, 64);
     const created = await accessPoints.create(`/${directoryOf(accountId)}`, token);
-    await records().saveFilesAccessPoint(accountId, created, 'efs');
+    await records().saveFilesAccessPoint(accountId, created);
     return created;
   }
 
@@ -237,7 +237,7 @@ export function accountFilesEfs({
       await records().completeFilesCleanup(accountId, retirement.lastCredentialExpiresAt);
       return;
     }
-    await records().scheduleFilesCleanup(accountId, Date.now() + SYNC_SECONDS * 1000, retirement.lastCredentialExpiresAt);
+    await records().scheduleFilesCleanup(accountId, Date.now() + MOUNT_SECONDS * 1000, retirement.lastCredentialExpiresAt);
   }
 
   const link_ = (op: 'get' | 'put', accountId: string, name: string) =>
@@ -263,11 +263,11 @@ export function accountFilesEfs({
       return { accessPointArn, fileSystemArn, mountPath: FILES_MOUNT_PATH };
     },
     async transfer(sourceAccountId, destinationAccountId) {
-      await records().retireFiles(sourceAccountId, destinationAccountId, Date.now() + SYNC_SECONDS * 1000);
+      await records().retireFiles(sourceAccountId, destinationAccountId, Date.now() + MOUNT_SECONDS * 1000);
       await transferFiles(sourceAccountId, destinationAccountId);
     },
     async delete(accountId) {
-      await records().retireFiles(accountId, null, Date.now() + SYNC_SECONDS * 1000);
+      await records().retireFiles(accountId, null, Date.now() + MOUNT_SECONDS * 1000);
       await rm(directory(accountId), { recursive: true, force: true });
       await removeAccessPoint(accountId);
     },
@@ -297,7 +297,7 @@ export function accountFilesEfs({
       if (!await exists(source)) throw new HttpError(404, `No file ${from} in Files`);
       if (!await moveNoClobber(source, target)) throw new HttpError(409, `A file named ${to} is already in Files`);
     },
-    async syncBinding(accountId) {
+    async mountBinding(accountId) {
       await requireActive(accountId);
       const accessPointArn = await accessPoint(accountId);
       const credentials = await mountCredentials(accessPointArn, `files-${accountOf(accountId)}`);

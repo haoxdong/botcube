@@ -79,23 +79,6 @@ async function newUploadUrl(name: string, signal: AbortSignal, service: ChatServ
   return (await chatService('/files/upload-url', init, 'Upload failed', service)).url as string;
 }
 
-/** PUTs `file` to a presigned URL as a new object, reporting the fraction sent; XHR, as fetch reports no upload progress. */
-function putFile(url: string, file: File, { onProgress, signal }: UploadOptions): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('PUT', url);
-    request.setRequestHeader('If-None-Match', '*');
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(event.loaded / event.total);
-    };
-    request.onload = () => (request.status >= 200 && request.status < 300 ? resolve() : reject(new HttpStatusError(request.status, `Upload failed: ${request.status}`)));
-    request.onerror = () => reject(new Error('Upload failed: network error'));
-    request.onabort = () => reject(new DOMException('Upload aborted', 'AbortError'));
-    signal.addEventListener('abort', () => request.abort(), { once: true });
-    request.send(file);
-  });
-}
-
 const pendingUploads = new Set<Promise<string>>();
 let changingAccount = false;
 
@@ -138,7 +121,7 @@ async function uploadAvailableFile(file: File, options: UploadOptions, service: 
   }
   options.signal.throwIfAborted();
   try {
-    await uploadTo(url, file, options, putFile);
+    await uploadTo(url, file, options);
   } catch (error) {
     if (error instanceof HttpStatusError && error.status === 412) return uploadAvailableFile(file, options, service, copy + 1);
     throw error;

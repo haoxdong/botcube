@@ -14,7 +14,7 @@ function synth(parked: boolean) {
   const app = new App();
   const env = { account: '123456789012', region: 'us-east-1' };
   const subnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
-  const storage = new ChatStorageStack(app, 'Storage', { env, corsOrigins: [] });
+  const storage = new ChatStorageStack(app, 'Storage', { env });
   const origin = new PreviewOriginStack(app, 'Origin', {
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath: path.resolve(__dirname, '../../origin-provider'),
     vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],

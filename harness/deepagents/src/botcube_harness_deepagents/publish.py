@@ -11,12 +11,12 @@ from urllib.parse import quote
 from ag_ui.core import EventType, RunFinishedEvent
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .files_sync import Files, excluded_paths, import_linked_files, is_files_path
+from .files import excluded_paths, import_linked_files, is_files_path
+from .files_mount import FilesMount
 from .lazy_files import current_turn_files, finish_in_thread
 
 
 def publish_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
-    root = root.resolve()
     excluded = excluded_paths(skills)
 
     def publish(path: str) -> tuple[str, dict[str, str]]:
@@ -27,9 +27,7 @@ def publish_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
         """
         if (readiness := current_turn_files()) is not None:
             readiness.ensure()
-        published = _publish_file(root, excluded, path)
-        if readiness is not None:
-            readiness.publish()
+        published = _publish_file(root.resolve(), excluded, path)
         return quote(published, safe='/'), {'path': published}
 
     async def apublish(path: str) -> tuple[str, dict[str, str]]:
@@ -64,13 +62,12 @@ def _publish_file(root: Path, excluded: tuple[str, ...], path: str) -> str:
 
 
 async def publish_finished_files(
-    files: Files | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
+    files: FilesMount | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
 ) -> None:
     if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
         return
     started = perf_counter()
     excluded = excluded_paths(skills)
     await asyncio.to_thread(import_linked_files, root, answer, excluded)
-    await asyncio.to_thread(files.push, root, excluded)
-    logging.getLogger(__name__).info('Harness Files publication timing run_id=%s push_ms=%.3f',
+    logging.getLogger(__name__).info('Harness Files publication timing run_id=%s import_ms=%.3f',
                                    completion.run_id, (perf_counter() - started) * 1000)

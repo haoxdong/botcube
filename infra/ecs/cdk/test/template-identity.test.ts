@@ -103,14 +103,12 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
     repositoryRoot: root, deployRoot, identity, parked, webLatency,
-    storage: { tableName: 'adopter-chat', filesBucketName: 'adopter-files', filesSyncRoleName: 'adopter-files-service' },
+    storage: { tableName: 'adopter-chat' },
     originConfig: {
       securityGroupName: 'adopter-origin-ingress',
       agentNetworkSecurityGroupName: 'adopter-agent-network',
       agentComputerSecurityGroupName: 'adopter-browser-network',
-      filesMountTargetsSecurityGroupName: 'adopter-files-network',
       agentComputerBrowserRoleName: 'adopter-browser-role',
-      filesSyncRoleName: 'adopter-chat-files-sync',
     },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
@@ -124,13 +122,10 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   const origin = Template.fromStack(app.node.findChild('PreviewOrigin') as Stack);
   const storage = Template.fromStack(app.node.findChild('ChatStorage') as Stack);
   storage.hasResourceProperties('AWS::DynamoDB::Table', { TableName: 'adopter-chat' });
-  storage.hasResourceProperties('AWS::S3::Bucket', { BucketName: 'adopter-files' });
-  storage.hasResourceProperties('AWS::IAM::Role', { RoleName: 'adopter-files-service' });
-  for (const name of ['adopter-origin-ingress', 'adopter-agent-network', 'adopter-browser-network', 'adopter-files-network']) {
+  for (const name of ['adopter-origin-ingress', 'adopter-agent-network', 'adopter-browser-network']) {
     origin.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: name });
   }
   origin.hasResourceProperties('AWS::IAM::Role', { RoleName: 'adopter-browser-role' });
-  origin.hasResourceProperties('AWS::IAM::Role', { RoleName: 'adopter-chat-files-sync' });
   origin.resourceCountIs('AWS::ECS::Service', 2);
   origin.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', parked ? 0 : 1);
   Template.fromStack(app.node.findChild('PrivateEgress') as Stack).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);

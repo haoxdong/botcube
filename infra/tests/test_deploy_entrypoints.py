@@ -53,7 +53,7 @@ def test_origin_deploy_dispatches_resource_creation(kind: str, physical: str, da
     cloudflare.put_record.return_value = 'dns-record'
     acm.request_certificate.return_value = {'CertificateArn': 'certificate-arn'}
     event = {'RequestType': 'Create', 'RequestId': 'request',
-             'ResourceProperties': {'Kind': kind, 'Hostname': 'api.example.com', 'Target': 'origin.example'}}
+             'ResourceProperties': {'Kind': kind, 'Hostname': 'api.example.com', 'Target': 'origin.example', 'AlwaysUseHttps': 'on'}}
     with patch.dict(handler.os.environ, {'HOSTNAMES': 'api.example.com'}), \
             patch.object(handler, 'Cloudflare', return_value=cloudflare), \
             patch.object(handler.boto3, 'client', return_value=acm):

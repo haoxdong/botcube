@@ -1,55 +1,14 @@
 // The Files Lambda: an EFS access point at /mnt/files, behind a streaming Function URL.
 /* global awslambda */
-import { createHash } from 'node:crypto';
-import { constants, createReadStream } from 'node:fs';
-import { link, mkdir, open, stat, unlink } from 'node:fs/promises';
-import path from 'node:path';
+import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { answer } from './files.mjs';
+import { disk } from './disk.mjs';
 
 const ROOT = '/mnt/files';
 const KEY = process.env.FILES_SIGNING_KEY ?? '';
 if (KEY.length < 32) throw new Error('FILES_SIGNING_KEY must hold the Files link signing key');
 
-/** @type {import('./files.mjs').Disk} */
-const disk = {
-  async stat(file) {
-    try {
-      const found = await stat(file);
-      return found.isFile() ? { size: found.size } : null;
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return null;
-      throw error;
-    }
-  },
-  async write(file, offset, body) {
-    await mkdir(path.dirname(file), { recursive: true });
-    // Chunk 0 starts the upload afresh; later chunks may arrive in any order, so they create without truncating.
-    const handle = await open(file, offset === 0 ? 'w' : constants.O_WRONLY | constants.O_CREAT);
-    try {
-      await handle.write(body, 0, body.length, offset);
-    } finally {
-      await handle.close();
-    }
-  },
-  async finish(part, file, size, sha256) {
-    const found = await disk.stat(part);
-    if (found?.size !== size) return 'incomplete';
-    const hash = createHash('sha256');
-    await pipeline(createReadStream(part, { highWaterMark: 1 << 20 }), hash);
-    if (hash.digest('hex') !== sha256) return 'incomplete';
-    await mkdir(path.dirname(file), { recursive: true });
-    try {
-      // link, unlike rename, refuses a name that is taken.
-      await link(part, file);
-    } catch (error) {
-      if (/** @type {NodeJS.ErrnoException} */ (error).code === 'EEXIST') return 'exists';
-      throw error;
-    }
-    await unlink(part);
-    return 'created';
-  },
-};
 
 export const handler = awslambda.streamifyResponse(async (event, stream) => {
   const result = await answer({ key: KEY, root: ROOT, disk, now: Date.now() }, {

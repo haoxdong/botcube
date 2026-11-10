@@ -1,7 +1,7 @@
 import { optionalPhysicalName } from './physical-name.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { App, CfnOutput, Duration, Tags } from 'aws-cdk-lib';
+import { App, CfnOutput, Tags } from 'aws-cdk-lib';
 import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
@@ -10,7 +10,6 @@ import { ContainerImage, Secret } from 'aws-cdk-lib/aws-ecs';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
-import { CfnMountTarget } from 'aws-cdk-lib/aws-s3files';
 import { Secret as SecretsManagerSecret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApiHealthStack } from './api-health-stack.js';
@@ -32,9 +31,6 @@ const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 export const CHAT_SERVICE_ENV = {
   planUsageOwnerAccountId: 'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
   agentComputerCdpUrl: 'BOTCUBE_AGENT_COMPUTER_CDP_URL',
-  filesBucket: 'BOTCUBE_FILES_BUCKET',
-  filesFileSystemArn: 'BOTCUBE_FILES_FILE_SYSTEM_ARN',
-  filesSyncRoleArn: 'BOTCUBE_FILES_SYNC_ROLE_ARN',
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
@@ -114,9 +110,7 @@ export interface ProductionOptions {
     'securityGroupName' | 'connectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
       agentNetworkSecurityGroupName?: string;
       agentComputerSecurityGroupName?: string;
-      filesMountTargetsSecurityGroupName?: string;
       agentComputerBrowserRoleName?: string;
-      filesSyncRoleName?: string;
     };
   storage?: Omit<import('./chat-storage-stack.js').ChatStorageProps, keyof import('aws-cdk-lib').StackProps | 'corsOrigins'>;
   apiHealth?: Pick<import('./api-health-stack.js').ApiHealthStackProps, 'requestIntervalSeconds' | 'failureThreshold' | 'evaluationPeriods'>;
@@ -250,8 +244,8 @@ export function defineProduction(app: App, options: ProductionOptions) {
   for (const task of [chat.task, credentials.task]) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
-  addFiles(origin, chat, storage, agentComputer, options.originConfig);
-  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork]);
+  addFilesPolicy(origin, chat);
+  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork, agentComputer.network]);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
@@ -368,11 +362,11 @@ function addAgentComputerBrowser(
     ...optionalPhysicalName('roleName', names?.agentComputerBrowserRoleName),
     assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', { conditions: { StringEquals: { 'aws:SourceAccount': origin.account } } }),
   });
-  const fileSystemArn = storage.filesFileSystem.attrFileSystemArn;
+  const fileSystemArn = storage.filesEfs.attrArn;
   role.addToPrincipalPolicy(new iam.PolicyStatement({
-    actions: ['s3files:ClientMount', 's3files:ClientWrite', 's3files:GetAccessPoint'],
+    actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
     resources: [fileSystemArn],
-    conditions: { ArnLike: { 's3files:AccessPointArn': `${fileSystemArn}/access-point/*` } },
+    conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
   }));
   const { subnets } = agentCore.privateNatBrowser;
   const managedPolicy = new Asset(origin, 'AgentComputerChromeManagedPolicy', {
@@ -393,75 +387,16 @@ function addAgentComputerBrowser(
   return { browser, network, subnets };
 }
 
-/**
- * Every account's Files (ADR 0077 decision 2): the file system's mount targets
- * in the browser subnets, the Chrome policy that downloads into the mount, and
- * the Chat Service's access to create each account's access point and to
- * presign transfers inside `accounts/`.
- */
-function addFiles(
-  origin: PreviewOriginStack,
-  chat: PreviewChatService,
-  storage: ChatStorageStack,
-  browsers: { network: ec2.ISecurityGroup; subnets: Subnet[] },
-  names?: ProductionOptions['originConfig'],
-) {
-  const mountTargets = new ec2.SecurityGroup(origin, 'FilesMountTargets', { vpc: chat.cluster.vpc, allowAllOutbound: false, ...optionalPhysicalName('securityGroupName', names?.filesMountTargetsSecurityGroupName) });
-  mountTargets.addIngressRule(browsers.network, ec2.Port.tcp(2049), 'Agent Computer browsers mount Files');
-  browsers.subnets.forEach((subnet, index) => new CfnMountTarget(origin, `FilesMountTarget${index}`, {
-    fileSystemId: storage.filesFileSystem.attrFileSystemId, subnetId: subnet.id, securityGroups: [mountTargets.securityGroupId],
-  }));
+function addFilesPolicy(origin: PreviewOriginStack, chat: PreviewChatService) {
   const policy = new Asset(origin, 'AgentComputerChromePolicy', { path: path.join(cubeRoot, 'infra/agent-computer/chrome-policy.json') });
   policy.grantRead(chat.task.taskRole);
-  const fileSystemArn = storage.filesFileSystem.attrFileSystemArn;
-  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesBucket, storage.filesBucket.bucketName);
-  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesFileSystemArn, fileSystemArn);
   chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerPolicyBucket, policy.s3BucketName);
   chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerPolicyKey, policy.s3ObjectKey);
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3files:CreateAccessPoint', 's3files:GetAccessPoint', 's3files:DeleteAccessPoint'],
-    resources: [fileSystemArn, `${fileSystemArn}/access-point/*`],
-  }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:ListBucket'],
-    resources: [storage.filesBucket.bucketArn],
-    conditions: { StringLike: { 's3:prefix': 'accounts/*' } },
-  }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:GetObject', 's3:GetObjectVersion', 's3:PutObject'],
-    resources: [storage.filesBucket.arnForObjects('accounts/*')],
-  }));
-  // An Account Claim moves the anonymous account's files out of its directory.
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:DeleteObject'],
-    resources: [storage.filesBucket.arnForObjects('accounts/*')],
-  }));
-  // Account deletion removes every version of the account's files from the versioned bucket.
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:ListBucketVersions'],
-    resources: [storage.filesBucket.bucketArn],
-    conditions: { StringLike: { 's3:prefix': 'accounts/*' } },
-  }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:DeleteObjectVersion'],
-    resources: [storage.filesBucket.arnForObjects('accounts/*')],
-  }));
-  const sync = new iam.Role(origin, 'FilesSyncRole', { ...optionalPhysicalName('roleName', names?.filesSyncRoleName), assumedBy: chat.task.taskRole, maxSessionDuration: Duration.hours(1) });
-  sync.addToPrincipalPolicy(new iam.PolicyStatement({
-    actions: ['s3:ListBucket'],
-    resources: [storage.filesBucket.bucketArn],
-    conditions: { StringLike: { 's3:prefix': 'accounts/*' } },
-  }));
-  sync.addToPrincipalPolicy(new iam.PolicyStatement({
-    actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:AbortMultipartUpload'],
-    resources: [storage.filesBucket.arnForObjects('accounts/*')],
-  }));
-  chat.container.addEnvironment(CHAT_SERVICE_ENV.filesSyncRoleArn, sync.roleArn);
 }
 
 function createChatStorage(app: App, options: ProductionOptions): ChatStorageStack {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   if (options.chatTableName !== undefined && options.storage?.tableName !== undefined) throw new Error('Choose chatTableName or storage.tableName, not both');
-  return new ChatStorageStack(app, 'ChatStorage', { env, corsOrigins: identity.domains.corsOrigins, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
+  return new ChatStorageStack(app, 'ChatStorage', { env, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
 }

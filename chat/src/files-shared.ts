@@ -8,9 +8,9 @@ export const URL_SECONDS = 300;
 /** The POSIX identity every file operation through an account's access point runs as. */
 export const POSIX_ID = 1000;
 /** How long the agent's Files credentials last: role chaining's ceiling, and the Runtime's longest microVM. */
-export const SYNC_SECONDS = 3600;
+export const MOUNT_SECONDS = 3600;
 export const RETIREMENT_GRACE_MS = 24 * 60 * 60 * 1000;
-/** An S3 Files access point a browser Session mounts, as StartBrowserSession takes it. */
+/** An EFS access point a browser Session mounts, as StartBrowserSession takes it. */
 export interface FilesMount {
   accessPointArn: string;
   fileSystemArn: string;
@@ -21,16 +21,6 @@ export interface FileEntry {
   name: string;
   size: number;
   lastModified: string;
-}
-
-export interface FilesSyncBinding {
-  bucket: string;
-  prefix: string;
-  region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  sessionToken: string;
-  expiration: string;
 }
 
 /** What a Runtime session needs to mount its account's access point itself, and nothing more. */
@@ -53,13 +43,13 @@ export interface FilesRecords {
   completeFilesCleanup(accountId: string, lastCredentialExpiresAt: number): Promise<void>;
   filesAccountActive(accountId: string): Promise<boolean>;
   pendingFilesCleanup(): Promise<string[]>;
-  filesAccessPoint(accountId: string, store?: 'efs'): Promise<string | null>;
-  saveFilesAccessPoint(accountId: string, accessPointArn: string, store?: 'efs'): Promise<void>;
-  deleteFilesAccessPoint(accountId: string, store?: 'efs'): Promise<void>;
+  filesAccessPoint(accountId: string): Promise<string | null>;
+  saveFilesAccessPoint(accountId: string, accessPointArn: string): Promise<void>;
+  deleteFilesAccessPoint(accountId: string): Promise<void>;
 }
 
-/** An account's Files: one directory of the S3 Files file system, reached through its own access point. */
-export interface AccountFiles<Binding = FilesSyncBinding | FilesMountBinding> {
+/** An account's Files: one directory of the EFS file system, reached through its own access point. */
+export interface AccountFiles {
   /** Periodically clean retired directories, including uploads admitted before credentials expired. */
   recoverCleanup(): Promise<void>;
   /** The account's access point, created on first use, mounted at FILES_MOUNT_PATH. */
@@ -67,14 +57,14 @@ export interface AccountFiles<Binding = FilesSyncBinding | FilesMountBinding> {
   list(accountId: string): Promise<FileEntry[]>;
   uploadUrl(accountId: string, name: string): Promise<string>;
   downloadUrl(accountId: string, name: string): Promise<string>;
-  /** Delete a file and every earlier version of it, so none can come back; 404 when it is not there. */
+  /** Delete a file; 404 when it is not there. */
   remove(accountId: string, name: string): Promise<void>;
-  /** Give a file another name: its current version moves, and the old name keeps no version. */
+  /** Rename a file without replacing another file. */
   rename(accountId: string, from: string, to: string): Promise<void>;
-  syncBinding(accountId: string): Promise<Binding>;
-  /** Move every file into another account's Files, as an Account Claim does (ADR 0077), leaving no version behind, then drop the source's access point. */
+  mountBinding(accountId: string): Promise<FilesMountBinding>;
+  /** Move every file into another account's Files for Account Claim, then retire the source access point. */
   transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;
-  /** Account deletion: every object version and delete marker in the account's directory, then its access point. */
+  /** Delete the account's directory and retire its access point. */
   delete(accountId: string): Promise<void>;
 }
 

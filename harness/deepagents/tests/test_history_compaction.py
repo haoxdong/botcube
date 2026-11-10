@@ -172,24 +172,24 @@ def test_summary_failure_is_deferred_and_preserves_the_session(tmp_path: Path) -
 
 @pytest.mark.parametrize('publication_fails', [False, True])
 def test_history_files_are_published_in_isolation_before_a_candidate_is_exposed(
-    tmp_path: Path, publication_fails: bool,
+    tmp_path: Path, publication_fails: bool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from botcube_harness_deepagents.files_sync import RECORD_PATH, FilesSync
-    from botcube_harness_deepagents.lazy_files import turn_files
+    from botcube_harness_deepagents.files import install_staged_files
+    from botcube_harness_deepagents.lazy_files import TurnFiles, turn_files
 
     published: list[list[str]] = []
 
-    class Files(FilesSync):
-        def push(self, root: Path, excluded: Any) -> None:
+    class Files(TurnFiles):
+        def publish_staged(self, root: Path) -> None:
             assert root != tmp_path
             names = [p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()]
             assert names and all(name.startswith('conversation_history/') for name in names)
             published.append(names)
             if publication_fails:
                 raise RuntimeError('Files publication unavailable')
-            record = root / RECORD_PATH
-            record.parent.mkdir(parents=True)
-            record.write_text('The staging sync record must not replace the active workspace record')
+            install_staged_files(root, tmp_path, ())
+
+    monkeypatch.setattr(TurnFiles, 'publish_staged', Files.publish_staged)
 
     async def exercise() -> None:
         (tmp_path / 'interactive.txt').write_text('An active tool owns this file')
@@ -201,7 +201,7 @@ def test_history_files_are_published_in_isolation_before_a_candidate_is_exposed(
         )
         config = {'configurable': {'thread_id': 'published-history'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
-        with turn_files(Files('test', 'test/', 'us-east-1', {}), tmp_path, ()), collecting_turn_feeds() as feeds:
+        with turn_files(None, tmp_path, ()), collecting_turn_feeds() as feeds:
             result = await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
         assert result['messages'][-1].content == 'OK'
         if publication_fails:
@@ -214,7 +214,6 @@ def test_history_files_are_published_in_isolation_before_a_candidate_is_exposed(
         state = (await graph.aget_state(config)).values
         assert bool(state.get('_summarization_event')) is not publication_fails
         assert (tmp_path / 'interactive.txt').read_text() == 'An active tool owns this file'
-        assert not (tmp_path / RECORD_PATH).exists()
         assert len(published) == 1
         if not publication_fails:
             assert (tmp_path / state['_summarization_event']['file_path'].lstrip('/')).is_file()
@@ -477,14 +476,15 @@ def test_synchronous_oversized_history_uses_native_recovery(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize('failure', ['summary', 'publication'])
-def test_emergency_recovery_failure_preserves_raw_history(tmp_path: Path, failure: str) -> None:
-    from botcube_harness_deepagents.files_sync import FilesSync
-    from botcube_harness_deepagents.lazy_files import turn_files
+def test_emergency_recovery_failure_preserves_raw_history(tmp_path: Path, failure: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from botcube_harness_deepagents.lazy_files import TurnFiles, turn_files
 
-    class Files(FilesSync):
-        def push(self, root: Path, excluded: Any) -> None:
+    class Files(TurnFiles):
+        def publish_staged(self, root: Path) -> None:
             assert root != tmp_path
             raise RuntimeError('Files publication unavailable')
+
+    monkeypatch.setattr(TurnFiles, 'publish_staged', Files.publish_staged)
 
     async def exercise() -> None:
         model = CompactionModel(
@@ -500,7 +500,7 @@ def test_emergency_recovery_failure_preserves_raw_history(tmp_path: Path, failur
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
         error = 'Summary model unavailable' if failure == 'summary' else 'Files publication unavailable'
         with (
-            turn_files(Files('test', 'test/', 'us-east-1', {}), tmp_path, ()),
+            turn_files(None, tmp_path, ()),
             collecting_turn_feeds(),
             pytest.raises(RuntimeError, match=error),
         ):
@@ -553,23 +553,23 @@ def test_emergency_recovery_after_prior_compaction_keeps_the_latest_request(
     asyncio.run(exercise())
 
 
-def test_cancelled_emergency_waits_for_archive_publication_to_settle(tmp_path: Path) -> None:
+def test_cancelled_emergency_waits_for_archive_publication_to_settle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
 
-    from botcube_harness_deepagents.files_sync import FilesSync
-    from botcube_harness_deepagents.lazy_files import turn_files
+    from botcube_harness_deepagents.lazy_files import TurnFiles, turn_files
 
     async def exercise() -> None:
         publishing = asyncio.Event()
         release = threading.Event()
         loop = asyncio.get_running_loop()
 
-        class Files(FilesSync):
-            def push(self, root: Path, excluded: Any) -> None:
+        class Files(TurnFiles):
+            def publish_staged(self, root: Path) -> None:
                 loop.call_soon_threadsafe(publishing.set)
                 assert release.wait(5), 'Publication was not released'
                 assert list(root.rglob('*.md')), 'Cancellation deleted the in-flight archive'
 
+        monkeypatch.setattr(TurnFiles, 'publish_staged', Files.publish_staged)
         model = CompactionModel(
             responses=[], profile={'max_input_tokens': 60000},
             summary_started=asyncio.Event(), release_summary=asyncio.Event(),
@@ -581,7 +581,7 @@ def test_cancelled_emergency_waits_for_archive_publication_to_settle(tmp_path: P
         )
         config = {'configurable': {'thread_id': 'cancelled-emergency'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
-        with turn_files(Files('test', 'test/', 'us-east-1', {}), tmp_path, ()), collecting_turn_feeds():
+        with turn_files(None, tmp_path, ()), collecting_turn_feeds():
             turn = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config))
             try:
                 await asyncio.wait_for(publishing.wait(), timeout=3)

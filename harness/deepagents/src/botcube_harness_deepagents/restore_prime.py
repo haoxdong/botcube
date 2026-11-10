@@ -3,7 +3,7 @@
 A restored microVM keeps the snapshot's process memory but reads its root disk slowly the first time, and the page
 cache does not survive: a 222 KB CA bundle took 1.5-3 s, and OpenSSL's CA directory lookups added ~1.2 s to the first
 TLS handshake. /dev/shm is a tmpfs, memory, so the snapshot keeps what the prime copies there. The runtime role's credentials and
-the STS and S3 request paths are prepared too, and the Memory client is built before any Turn names its sandbox.
+the STS request path are prepared too, and the Memory client is built before any Turn names its sandbox.
 Nothing per user is fetched: the Turn's identity, Memory credentials and Files binding arrive with the Turn.
 """
 from __future__ import annotations
@@ -36,11 +36,6 @@ _STS_ANSWER = (
     b'<AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>A</AccessKeyId><SecretAccessKey>S</SecretAccessKey>'
     b'<SessionToken>T</SessionToken><Expiration>2030-01-01T00:00:00Z</Expiration></Credentials>'
     b'</AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>'
-)
-_S3_ANSWER = (
-    b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>b</Name><Prefix>p/</Prefix>'
-    b'<KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>p/a.txt</Key>'
-    b'<LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>"e"</ETag><Size>1</Size></Contents></ListBucketResult>'
 )
 
 
@@ -120,8 +115,7 @@ def _answering(client: Any, event: str, body: bytes) -> Callable[..., AWSRespons
 
 
 def answer_sdk_calls(region: str) -> None:
-    """One STS exchange and one S3 listing through the clients a Turn uses, answered before they leave the process,
-    so their request and XML response handling is loaded."""
+    """An STS exchange answered in process loads the request and XML response handling."""
     sts = agentcore_memory_backend.sts_client(region)
     event = 'before-send.sts.AssumeRoleWithWebIdentity'
     answer = _answering(sts, event, _STS_ANSWER)
@@ -130,7 +124,3 @@ def answer_sdk_calls(region: str) -> None:
             RoleArn='arn:aws:iam::000000000000:role/snapshot', RoleSessionName='snapshot', WebIdentityToken='snapshot' * 3)
     finally:
         sts.meta.events.unregister(event, answer)
-    s3 = boto3.client('s3', region_name=region, aws_access_key_id='snapshot', aws_secret_access_key='snapshot')
-    _answering(s3, 'before-send.s3.ListObjectsV2', _S3_ANSWER)
-    for _page in s3.get_paginator('list_objects_v2').paginate(Bucket='snapshot', Prefix='p/'):
-        pass

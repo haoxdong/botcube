@@ -398,17 +398,15 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
     import asyncio
     from types import SimpleNamespace
 
-    import boto3
     from ag_ui.core import EventType, RunAgentInput, UserMessage
-    from botocore.exceptions import ClientError
     from langchain_core.messages import ToolMessage
     from langchain_core.outputs import ChatResult
     from langgraph.checkpoint.memory import InMemorySaver
-    from moto import mock_aws
 
     from botcube_harness_deepagents import serving
-    from botcube_harness_deepagents.files_sync import FilesSync
+    from botcube_harness_deepagents.files_mount import FilesMount
     from conftest import ToolBindableFakeMessagesModel
+    from mounted_files import MountedFiles, binding
 
     tool_results: list[str] = []
 
@@ -444,31 +442,33 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
         tools=[], context=[], state={}, forwarded_props={},
     )
 
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='delegated-files')
-        if files_available:
-            s3.put_object(Bucket='delegated-files', Key='owner/source.txt', Body=b'Original from Files')
-        else:
-            s3.delete_bucket(Bucket='delegated-files')
-        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
-        files = FilesSync('delegated-files', 'owner/', 'us-east-1', {})
+    mounted = MountedFiles(tmp_path)
+    if files_available:
+        mounted.write('source.txt', b'Original from Files')
 
-        async def exercise() -> None:
-            stream = serving._SessionTurns().stream(
-                ('owner', 'delegated-files'), prepared(agent, tmp_path), request, files, serving._RequestContext(None),
-            )
-            if not files_available:
-                with pytest.raises(ClientError, match='NoSuchBucket'):
-                    _ = [event async for event in stream]
-                assert not (tmp_path / 'answer.txt').exists()
-                return
-            events = [event async for event in stream]
-            assert events[-1].type == EventType.RUN_FINISHED
-            assert any('Original from Files' in result for result in tool_results), tool_results
-            assert s3.get_object(Bucket='delegated-files', Key='owner/answer.txt')['Body'].read() == b'Copied from Files'
+    def mount(self: FilesMount, root: Path, excluded: Any = ()) -> None:
+        if not files_available:
+            raise RuntimeError('EFS unavailable')
+        mounted.mount(self, root, excluded)
 
-        asyncio.run(exercise())
+    monkeypatch.setattr(FilesMount, 'pull', mount)
+    files = FilesMount.from_binding(binding())
+
+    async def exercise() -> None:
+        stream = serving._SessionTurns().stream(
+            ('owner', 'delegated-files'), prepared(agent, tmp_path), request, files, serving._RequestContext(None),
+        )
+        if not files_available:
+            with pytest.raises(RuntimeError, match='EFS unavailable'):
+                _ = [event async for event in stream]
+            assert not (tmp_path / 'answer.txt').exists()
+            return
+        events = [event async for event in stream]
+        assert events[-1].type == EventType.RUN_FINISHED
+        assert any('Original from Files' in result for result in tool_results), tool_results
+        assert mounted.read('answer.txt') == b'Copied from Files'
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize('helper', [

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import boto3
 import pytest
 from langchain_core.messages import ToolMessage
-from moto import mock_aws
 
-from botcube_harness_deepagents.files_sync import FilesSync, excluded_paths
+from botcube_harness_deepagents.files import excluded_paths
+from botcube_harness_deepagents.files_mount import FilesMount
 from botcube_harness_deepagents.lazy_files import turn_files
 from botcube_harness_deepagents.publish import publish_tool
+from mounted_files import MountedFiles, binding
 
 
 @pytest.mark.parametrize(('filename', 'link'), [('chart.svg', '/artifacts/chart.svg'), ('monthly chart.svg', '/artifacts/monthly%20chart.svg')])
@@ -18,39 +18,31 @@ def test_publish_moves_scratch_into_files_and_returns_the_link(tmp_path: Path, m
     root.mkdir()
     scratch.parent.mkdir()
     scratch.write_bytes(b'<svg>chart</svg>')
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='published-files')
-        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
-        files = FilesSync('published-files', 'owner/', 'us-east-1', {})
-        with turn_files(files, root, excluded_paths(())) as readiness:
-            result = publish_tool(root).invoke({'name': 'publish', 'type': 'tool_call', 'id': 'chart', 'args': {'path': str(scratch)}})
-            assert readiness.ready
-        assert isinstance(result, ToolMessage)
-        assert result.content == link
-        assert result.artifact == {'path': f'/artifacts/{filename}'}
-        assert not scratch.exists()
-        assert s3.get_object(Bucket='published-files', Key=f'owner/artifacts/{filename}')['Body'].read() == b'<svg>chart</svg>'
-        restored = tmp_path / 'restored'
-        restored.mkdir()
-        files.pull(restored, excluded_paths(()))
-        assert (restored / 'artifacts' / filename).read_bytes() == b'<svg>chart</svg>'
+    mounted = MountedFiles(root)
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
+    files = FilesMount.from_binding(binding())
+    with turn_files(files, root, excluded_paths(())) as readiness:
+        result = publish_tool(root).invoke({'name': 'publish', 'type': 'tool_call', 'id': 'chart', 'args': {'path': str(scratch)}})
+        assert readiness.ready
+    assert isinstance(result, ToolMessage)
+    assert result.content == link
+    assert result.artifact == {'path': f'/artifacts/{filename}'}
+    assert not scratch.exists()
+    assert mounted.read(f'artifacts/{filename}') == b'<svg>chart</svg>'
 
 
 def test_publish_leaves_an_existing_file_in_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket='published-files')
-        s3.put_object(Bucket='published-files', Key='owner/reports/report.csv', Body=b'date,close')
-        monkeypatch.setattr(FilesSync, '_client', lambda self: s3)
-        files = FilesSync('published-files', 'owner/', 'us-east-1', {})
-        with turn_files(files, tmp_path, excluded_paths(())):
-            result = publish_tool(tmp_path).invoke({'name': 'publish', 'type': 'tool_call', 'id': 'report', 'args': {'path': '/reports/report.csv'}})
-        assert isinstance(result, ToolMessage)
-        assert result.content == '/reports/report.csv'
-        assert result.artifact == {'path': '/reports/report.csv'}
-        assert (tmp_path / 'reports' / 'report.csv').read_bytes() == b'date,close'
-        assert not (tmp_path / 'artifacts').exists()
+    mounted = MountedFiles(tmp_path)
+    mounted.write('reports/report.csv', b'date,close')
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
+    files = FilesMount.from_binding(binding())
+    with turn_files(files, tmp_path, excluded_paths(())):
+        result = publish_tool(tmp_path).invoke({'name': 'publish', 'type': 'tool_call', 'id': 'report', 'args': {'path': '/reports/report.csv'}})
+    assert isinstance(result, ToolMessage)
+    assert result.content == '/reports/report.csv'
+    assert result.artifact == {'path': '/reports/report.csv'}
+    assert (tmp_path / 'reports' / 'report.csv').read_bytes() == b'date,close'
+    assert not (tmp_path / 'artifacts').exists()
 
 
 @pytest.mark.parametrize('kind', ['missing', 'directory'])

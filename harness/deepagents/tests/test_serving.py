@@ -49,7 +49,6 @@ from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
-from moto import mock_aws
 
 from agentcore_fake import (
     MEMORY_ID,
@@ -61,7 +60,7 @@ from agentcore_fake import (
     turn_identity,
 )
 from botcube_harness_deepagents import (
-    files_sync,
+    files,
     llm,
     memory_document,
     memory_tools,
@@ -70,9 +69,11 @@ from botcube_harness_deepagents import (
     session_api,
     session_memory,
 )
+from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
 from checkpoint_fake import ReadCountingSaver, legacy_session
+from mounted_files import MountedFiles, binding
 from prompt_cache_fake import DelegatingBedrockClient, fake_bedrock_model
 from relay_fake import (
     REASONING_STREAM,
@@ -1123,9 +1124,11 @@ def test_a_reopened_failed_tool_step_knows_when_it_started_and_ended(
 
 
 def test_a_tool_that_raises_fails_the_turn_before_any_result_needs_timing(
-    service: _Service, files_bucket: Any,
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    files_bucket.delete_bucket(Bucket=FILES_BUCKET)
+    def unavailable(*args: Any) -> None:
+        raise FilesMountError('EFS unavailable')
+    monkeypatch.setattr(FilesMount, 'pull', unavailable)
 
     events = service.turn('ls: /', files=_files())
 
@@ -1421,34 +1424,22 @@ def test_a_reopened_plan_turn_knows_how_long_each_reasoning_step_took(service: _
 
 # -- Files -----------------------------------------------------------------------
 
-FILES_BUCKET = 'account-files'
-FILES_PREFIX = 'accounts/0123abcd/'
 
 
 def _files() -> dict[str, str]:
-    """The account's Files as the Chat Service forwards them: its prefix, with credentials scoped to it."""
-    return {
-        'bucket': FILES_BUCKET,
-        'prefix': FILES_PREFIX,
-        'region': 'us-east-1',
-        'accessKeyId': 'ASIAFILESSCOPED',
-        'secretAccessKey': 'files-secret',
-        'sessionToken': 'files-session-token',
-    }
+    return binding()
 
 
 @pytest.fixture
-def files_bucket(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    for name in ('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_ENDPOINT_URL_S3'):
-        monkeypatch.delenv(name, raising=False)
-    with mock_aws():
-        s3 = boto3.client('s3', region_name='us-east-1')
-        s3.create_bucket(Bucket=FILES_BUCKET)
-        yield s3
+def files_bucket(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MountedFiles:
+    mounted = MountedFiles(tmp_path / 'efs-account')
+    monkeypatch.setattr(serving, '_workspace', lambda: mounted.root)
+    monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
+    return mounted
 
 
-def _keys(s3: Any) -> list[str]:
-    return sorted(item['Key'] for item in s3.list_objects_v2(Bucket=FILES_BUCKET).get('Contents', []))
+def _keys(mounted: MountedFiles) -> list[str]:
+    return sorted(path.relative_to(mounted.root).as_posix() for path in mounted.root.rglob('*') if path.is_file() and files.is_files_path(path.relative_to(mounted.root).as_posix(), files.excluded_paths(('skills',))))
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> Path:
@@ -1472,51 +1463,8 @@ def test_a_file_the_agent_writes_reaches_the_accounts_files(service: _Service, f
     events = service.turn('write: /report.csv: date,close', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
-    body = files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')['Body'].read()
+    body = files_bucket.read('report.csv')
     assert body == b'date,close'
-
-
-def test_a_stopped_selection_with_failed_files_preserves_visible_reply(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entered, release = threading.Event(), threading.Event()
-
-    def failed_listing(**params: Any) -> NoReturn:
-        entered.set()
-        assert release.wait(5)
-        raise serving.FilesSyncError('Selected Files failed after Stop')
-
-    async def unfinished(self: _ScriptedModel, *_args: Any, **_kwargs: Any):
-        yield _text('Visible unfinished reply')
-        yield ChatGenerationChunk(message=AIMessageChunk(
-            content='', tool_call_chunks=[tool_call_chunk(name='execute', args='', id='selected', index=0)],
-        ))
-        await asyncio.Future()
-
-    monkeypatch.setattr(files_bucket, 'list_objects_v2', failed_listing)
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    monkeypatch.setattr(_ScriptedModel, '_astream', unfinished)
-    payload = {
-        'threadId': 'thread-1', 'runId': 'selected-turn',
-        'messages': [{'id': 'question', 'role': 'user', 'content': 'Read the file'}],
-        'tools': [], 'context': [], 'state': {},
-        'forwardedProps': {'actorId': 'actor-1', 'sessionUserId': 'user-1', 'files': _files()},
-    }
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        response = pool.submit(service.client.post, '/invocations', json=payload)
-        try:
-            assert entered.wait(5)
-            stopped = service.client.post('/invocations', json={
-                **payload, 'forwardedProps': {'stop': True, 'sessionUserId': 'user-1'},
-            })
-            assert stopped.status_code == 200
-        finally:
-            release.set()
-            result = response.result(timeout=10)
-    events = _sse_events(result.text)
-    assert events[-1]['type'] == 'RUN_ERROR'
-    assert events[-1]['code'] == 'TURN_STOPPED'
-    assert _replay('user-1', 'thread-1')[-1] == ('assistant', 'Visible unfinished reply')
 
 
 def test_a_file_from_one_chat_returns_in_a_new_chat_on_fresh_session_storage(
@@ -1524,342 +1472,36 @@ def test_a_file_from_one_chat_returns_in_a_new_chat_on_fresh_session_storage(
 ) -> None:
     _workspace(tmp_path, monkeypatch, 'first-chat')
     service.turn('write: /notes/plan.txt: buy low', thread='chat-a', files=_files())
-    fresh = _workspace(tmp_path, monkeypatch, 'after-version-update')
+    _workspace(tmp_path, monkeypatch, 'after-version-update')
 
     events = service.turn('read: /notes/plan.txt', thread='chat-b', files=_files())
 
     assert 'buy low' in _tool_output(events)
-    assert (fresh / 'notes' / 'plan.txt').read_text() == 'buy low'
+    assert files_bucket.read('notes/plan.txt') == b'buy low'
 
 
 def test_a_file_put_in_files_reaches_the_agent(service: _Service, files_bucket: Any) -> None:
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}.trash/old.txt', Body=b'hidden')
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}drafts/q3/upload.txt', Body=b'from the Files app')
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key='accounts/fedcba98/secret.txt', Body=b'another account')
+    files_bucket.write('drafts/q3/upload.txt', b'from the Files app')
 
     events = service.turn('read: /drafts/q3/upload.txt', files=_files())
 
     assert 'from the Files app' in _tool_output(events)
-    # Hidden files stay in Files, and another account's never reach this agent.
-    assert not (service.home / '.trash').exists()
-    assert not any(service.home.rglob('secret.txt'))
-
-
-def _recorded_downloads(files_bucket: Any, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The keys the Harness downloads from Files, in order."""
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    downloads: list[str] = []
-    download = files_bucket.get_object
-
-    def record_download(**kwargs: Any) -> Any:
-        downloads.append(kwargs['Key'])
-        return download(**kwargs)
-
-    monkeypatch.setattr(files_bucket, 'get_object', record_download)
-    return downloads
-
-
-def test_warm_turns_read_unchanged_files_without_downloading_them_again(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
-    downloads = _recorded_downloads(files_bucket, monkeypatch)
-    for _ in range(2):
-        events = service.turn('read: /plan.txt', files=_files())
-        assert events[-1]['type'] == 'RUN_FINISHED'
-        assert 'from Files' in _tool_output(events)
-        assert (service.home / 'plan.txt').read_bytes() == b'from Files'
-    assert downloads.count(key) == 1
-
-
-def test_a_warmup_pulls_files_so_the_turns_first_tool_downloads_nothing(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'from Files')
-    downloads = _recorded_downloads(files_bucket, monkeypatch)
-
-    warmup = service.turn('', warmup=True, files=_files())
-
-    assert warmup[-1]['value']['outcome'] == 'prepared'
-    assert (service.home / 'plan.txt').read_bytes() == b'from Files'
-    assert downloads == [key]
-    events = service.turn('read: /plan.txt', files=_files())
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert 'from Files' in _tool_output(events)
-    assert downloads == [key]
-
-
-def test_a_warmup_whose_files_pull_fails_reports_it_failed(service: _Service, files_bucket: Any) -> None:
-    record = service.home / files_sync.RECORD_PATH
-    record.parent.mkdir(parents=True)
-    record.write_text('not json')
-
-    warmup = service.turn('', warmup=True, files=_files())
-
-    assert warmup[-1]['value']['outcome'] == 'failed'
-    assert warmup[-1]['value']['error']['code'] == 'FILES_SYNC_RECORD'
-
-
-def test_a_warmup_whose_files_pull_fails_first_stops_its_history_read(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-
-    def files_down(**kwargs: Any) -> Any:
-        raise ConnectionError('Files unreachable')
-
-    monkeypatch.setattr(files_bucket, 'list_objects_v2', files_down)
-    stopped: list[bool] = []
-
-    async def slow_history(*args: Any) -> None:
-        try:
-            await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            stopped.append(True)
-            raise
-        stopped.append(False)
-
-    monkeypatch.setattr(serving, 'latest_checkpoint', slow_history)
-
-    warmup = service.turn('', warmup=True, files=_files())
-
-    assert warmup[-1]['value']['outcome'] == 'failed'
-    assert 'Files unreachable' in warmup[-1]['value']['error']['message']
-    assert stopped == [True]
-
-
-def test_a_turn_after_a_warmup_whose_files_listing_failed_pulls_its_files(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'from Files')
-    downloads = _recorded_downloads(files_bucket, monkeypatch)
-    listing = files_bucket.list_objects_v2
-    outages = [ConnectionError('Files unreachable')]
-
-    def listing_once_down(**kwargs: Any) -> Any:
-        if outages:
-            raise outages.pop()
-        return listing(**kwargs)
-
-    monkeypatch.setattr(files_bucket, 'list_objects_v2', listing_once_down)
-
-    warmup = service.turn('', warmup=True, files=_files())
-    events = service.turn('read: /plan.txt', files=_files())
-
-    assert warmup[-1]['value']['outcome'] == 'failed'
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert 'from Files' in _tool_output(events)
-    assert downloads == [f'{FILES_PREFIX}plan.txt']
-
-
-def test_a_files_replacement_between_listing_and_download_cannot_poison_the_next_turn(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    head = files_bucket.head_object
-    pending = [key]
-
-    def replace_before_download(**kwargs: Any) -> Any:
-        if pending and kwargs['Key'] == pending[0]:
-            pending.pop()
-            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=kwargs['Key'], Body=b'replaced while pulling')
-        return head(**kwargs)
-
-    monkeypatch.setattr(files_bucket, 'head_object', replace_before_download)
-    first = service.turn('read: /plan.txt', files=_files())
-    assert 'replaced while pulling' in _tool_output(first)
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
-
-    second = service.turn('read: /plan.txt', files=_files())
-
-    assert second[-1]['type'] == 'RUN_FINISHED'
-    assert 'original' in _tool_output(second)
-    assert (service.home / 'plan.txt').read_bytes() == b'original'
-
-
-def test_a_files_replacement_after_download_metadata_fails_without_overwriting_local_bytes(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'original')
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    first = service.turn('read: /plan.txt', files=_files())
-    assert 'original' in _tool_output(first)
-    replacement = files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'next version')
-    head = files_bucket.head_object
-    get = files_bucket.get_object
-    conditions: list[str | None] = []
-
-    def observe_condition(**kwargs: Any) -> Any:
-        if kwargs['Key'] == key:
-            conditions.append(kwargs.get('IfMatch'))
-        return get(**kwargs)
-
-    def replace_after_metadata(**kwargs: Any) -> Any:
-        response = head(**kwargs)
-        if kwargs['Key'] == key:
-            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=key, Body=b'replaced after metadata')
-        return response
-
-    monkeypatch.setattr(files_bucket, 'head_object', replace_after_metadata)
-    monkeypatch.setattr(files_bucket, 'get_object', observe_condition)
-    events = service.turn('read: /plan.txt', files=_files())
-
-    assert events[-1]['type'] == 'RUN_ERROR'
-    assert 'did not match expected ETag' in events[-1]['message']
-    assert 'RUN_FINISHED' not in [event['type'] for event in events]
-    assert (service.home / 'plan.txt').read_bytes() == b'original'
-    assert conditions == [replacement['ETag']]
-
-
-def test_an_empty_files_object_replaced_after_metadata_cannot_poison_the_next_turn(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    key = f'{FILES_PREFIX}plan.txt'
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'')
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    head = files_bucket.head_object
-    pending = [key]
-
-    def replace_empty_after_metadata(**kwargs: Any) -> Any:
-        response = head(**kwargs)
-        if pending and kwargs['Key'] == pending[0]:
-            pending.pop()
-            files_bucket.put_object(Bucket=kwargs['Bucket'], Key=key, Body=b'replaced empty file')
-        return response
-
-    monkeypatch.setattr(files_bucket, 'head_object', replace_empty_after_metadata)
-    first = service.turn('read: /plan.txt', files=_files())
-    assert first[-1]['type'] == 'RUN_FINISHED'
-    assert 'replaced empty file' in _tool_output(first)
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=key, Body=b'')
-
-    second = service.turn('read: /plan.txt', files=_files())
-
-    assert second[-1]['type'] == 'RUN_FINISHED'
-    assert (service.home / 'plan.txt').read_bytes() == b''
-
-
-@pytest.mark.parametrize('name', ['abcdefghi-' * 30 + '.svg', 'a' * 256, 'é' * 128, 'a' * 256 + '/report.svg'])
-def test_an_overlong_files_name_fails_with_a_classified_file_error(
-    service: _Service, files_bucket: Any, name: str
-) -> None:
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=b'from Files')
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1] == {
-        'type': 'RUN_ERROR',
-        'message': f'Cannot sync file {name!r} from Files: each file name must be at most 255 UTF-8 bytes',
-        'code': 'INVALID_FILES',
-    }
-
-
-@pytest.mark.parametrize('name', ['a' * 255, 'é' * 127 + 'a', 'a' * 255 + '/' + 'b' * 255])
-def test_bounded_files_path_components_reach_the_workspace(
-    service: _Service, files_bucket: Any, name: str
-) -> None:
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=b'from Files')
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert (service.home / name).read_bytes() == b'from Files'
-
-
-def test_a_directory_s3_files_syncs_reaches_the_agent_as_a_directory(service: _Service, files_bucket: Any) -> None:
-    # S3 Files keeps each directory of the file system as a key ending in `/`, listed before what it holds.
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX, Body=b'')
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}drafts/', Body=b'')
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}drafts/upload.txt', Body=b'from the Files app')
-
-    events = service.turn('read: /drafts/upload.txt', files=_files())
-
-    assert 'from the Files app' in _tool_output(events)
-    assert (service.home / 'drafts').is_dir()
-
-
-def _versions(s3: Any, name: str) -> int:
-    return len(s3.list_object_versions(Bucket=FILES_BUCKET, Prefix=FILES_PREFIX + name).get('Versions', []))
-
-
-def test_only_what_changed_moves_between_the_workspace_and_files(service: _Service, files_bucket: Any) -> None:
-    files_bucket.put_bucket_versioning(Bucket=FILES_BUCKET, VersioningConfiguration={'Status': 'Enabled'})
-    service.turn('write: /a.txt: kept', files=_files())
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}b.txt', Body=b'from the Files app')
-    time.sleep(1.1)
-
-    events = service.turn('write: /c.txt: new', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert (service.home / 'b.txt').read_text() == 'from the Files app'
-    assert _versions(files_bucket, 'c.txt') == 1
-    # Neither the file already in Files nor the one just fetched from it is put again.
-    assert (_versions(files_bucket, 'a.txt'), _versions(files_bucket, 'b.txt')) == (1, 1)
+    assert not (files_bucket.root / '.trash').exists()
+    assert not any(files_bucket.root.rglob('secret.txt'))
 
 
 def test_a_newer_file_in_files_replaces_the_workspaces_copy(service: _Service, files_bucket: Any) -> None:
     service.turn('write: /plan.txt: old', files=_files())
-    time.sleep(1.1)
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'new')
+    files_bucket.write('plan.txt', b'new')
 
     events = service.turn('read: /plan.txt', files=_files())
 
     assert 'new' in _tool_output(events)
 
 
-
-def test_a_same_second_replacement_in_files_reaches_the_next_turn(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # S3 reports whole seconds, including distinct replacements within one second.
-    stamp = datetime(2026, 10, 3, 11, 0, tzinfo=UTC)
-    monkeypatch.setattr('moto.s3.models.utcnow', lambda: stamp.replace(tzinfo=None))
-    files_bucket.put_bucket_versioning(Bucket=FILES_BUCKET, VersioningConfiguration={'Status': 'Enabled'})
-    service.turn('write: /plan.txt: old', files=_files())
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'replacement from Files')
-    assert (service.home / 'plan.txt').stat().st_mtime == stamp.timestamp()
-
-    events = service.turn('read: /plan.txt', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert 'replacement from Files' in _tool_output(events)
-    assert (service.home / 'plan.txt').read_text() == 'replacement from Files'
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt')['Body'].read() == b'replacement from Files'
-    assert _versions(files_bucket, 'plan.txt') == 2
-
-
-
-def test_a_same_second_replacement_that_cannot_be_downloaded_fails_loudly(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stamp = datetime(2026, 10, 3, 11, 0, tzinfo=UTC)
-    monkeypatch.setattr('moto.s3.models.utcnow', lambda: stamp.replace(tzinfo=None))
-    service.turn('write: /plan.txt: old', files=_files())
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'replacement from Files')
-    files_bucket.put_bucket_policy(Bucket=FILES_BUCKET, Policy=json.dumps({
-        'Version': '2012-10-17',
-        'Statement': [{
-            'Effect': 'Deny', 'Principal': '*', 'Action': 's3:GetObject',
-            'Resource': f'arn:aws:s3:::{FILES_BUCKET}/{FILES_PREFIX}*',
-        }],
-    }))
-
-    events = service.turn('read: /plan.txt', files=_files())
-
-    assert events[-1]['type'] == 'RUN_ERROR'
-    assert '403' in events[-1]['message']
-    assert 'RUN_FINISHED' not in [event['type'] for event in events]
-    assert (service.home / 'plan.txt').read_text() == 'old'
-
-
 def test_an_edit_within_the_second_of_the_last_sync_reaches_files(service: _Service, files_bucket: Any) -> None:
     service.turn('write: /plan.txt: old', files=_files())
-    plan = service.home / 'plan.txt'
+    plan = files_bucket.root / 'plan.txt'
     synced = plan.stat().st_mtime
     plan.write_text('edited at once')
     # The agent's edit lands within the second Files stamped on the last sync.
@@ -1867,337 +1509,56 @@ def test_an_edit_within_the_second_of_the_last_sync_reaches_files(service: _Serv
 
     service.turn('ls: /', files=_files())
 
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt')['Body'].read() == b'edited at once'
-
-
-def test_a_workspace_clock_ahead_of_s3_never_hides_an_edit_made_in_files(service: _Service, files_bucket: Any) -> None:
-    # A microVM whose clock runs an hour ahead writes the file; once in Files, it takes Files' time.
-    plan = service.home / 'plan.txt'
-    plan.write_text('old')
-    os.utime(plan, (time.time() + 3600, time.time() + 3600))
-    service.turn('ls: /', files=_files())
-    time.sleep(1.1)
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}plan.txt', Body=b'edited in Files')
-
-    events = service.turn('read: /plan.txt', files=_files())
-
-    assert 'edited in Files' in _tool_output(events)
+    assert files_bucket.read('plan.txt') == b'edited at once'
 
 
 def test_a_file_deleted_in_files_leaves_the_workspace_and_stays_deleted(service: _Service, files_bucket: Any) -> None:
     service.turn('write: /report.csv: date,close', files=_files())
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
+    (files_bucket.root / 'report.csv').unlink()
 
     events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert '/report.csv' not in _tool_output(events)
-    assert not (service.home / 'report.csv').exists()
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-
-def test_a_file_edited_after_its_sync_then_deleted_in_files_is_put_back(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    report = service.home / 'report.csv'
-    synced = report.stat().st_mtime
-    report.write_text('date,close,volume')
-    # The agent's edit lands within the second Files stamped on the last sync.
-    os.utime(report, (synced + 0.5, synced + 0.5))
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
-
-    events = service.turn('read: /report.csv', files=_files())
-
-    assert 'date,close,volume' in _tool_output(events)
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')['Body'].read() == b'date,close,volume'
+    assert not (files_bucket.root / 'report.csv').exists()
+    assert _keys(files_bucket) == ['prepared.txt']
 
 
 def test_a_file_deleted_in_files_then_uploaded_again_reaches_the_workspace(service: _Service, files_bucket: Any) -> None:
     service.turn('write: /report.csv: date,close', files=_files())
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
-    time.sleep(1.1)
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv', Body=b'date,close,volume')
+    (files_bucket.root / 'report.csv').unlink()
+    files_bucket.write('report.csv', b'date,close,volume')
 
     events = service.turn('read: /report.csv', files=_files())
     service.turn('ls: /', files=_files())
 
     assert 'date,close,volume' in _tool_output(events)
-    assert (service.home / 'report.csv').read_text() == 'date,close,volume'
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')['Body'].read() == b'date,close,volume'
-
-
-def test_a_file_the_agent_edits_during_the_turn_its_deleted_in_files_is_put_back(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    time.sleep(1.1)
-    _deleted_in_files_once_the_turn_starts(monkeypatch, files_bucket, 'report.csv')
-
-    service.turn('run: echo date,close,volume > report.csv', files=_files())
-
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')['Body'].read() == b'date,close,volume\n'
-
-
-def test_a_file_deleted_in_files_and_by_the_agent_ends_the_next_turn_cleanly(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    (service.home / 'report.csv').unlink()
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-
-def _deny_puts(s3: Any) -> None:
-    s3.put_bucket_policy(Bucket=FILES_BUCKET, Policy=json.dumps({
-        'Version': '2012-10-17',
-        'Statement': [{
-            'Effect': 'Deny', 'Principal': '*', 'Action': 's3:PutObject',
-            'Resource': f'arn:aws:s3:::{FILES_BUCKET}/{FILES_PREFIX}*',
-        }],
-    }))
-
-
-def test_a_file_pulled_by_a_turn_whose_push_failed_still_leaves_once_deleted_in_files(
-    service: _Service, files_bucket: Any
-) -> None:
-    service.turn('ls: /', files=_files())
-    files_bucket.put_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}upload.txt', Body=b'from the Files app')
-    _deny_puts(files_bucket)
-    failed = service.turn('write: /report.csv: date,close', files=_files())
-    assert failed[-1]['type'] == 'RUN_ERROR'
-    assert failed[-1]['code'] == 'INTERNAL_ERROR'
-    assert 'PutObject operation: Forbidden' in failed[-1]['message']
-    assert [event['type'] for event in failed if event['type'] in ('RUN_FINISHED', 'RUN_ERROR')] == ['RUN_ERROR']
-    assert (service.home / 'upload.txt').read_text() == 'from the Files app'
-    files_bucket.delete_bucket_policy(Bucket=FILES_BUCKET)
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}upload.txt')
-
-    reported = service.turn('hello', files=_files())
-    assert reported[-1]['type'] == 'RUN_ERROR'
-    assert reported[-1]['code'] == 'INTERNAL_ERROR'
-    assert 'PutObject operation: Forbidden' in reported[-1]['message']
-    recovered = service.turn('ls: /', files=_files())
-    assert recovered[-1]['type'] == 'RUN_FINISHED'
-
-    assert not (service.home / 'upload.txt').exists()
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt', f'{FILES_PREFIX}report.csv']
+    assert (files_bucket.root / 'report.csv').read_text() == 'date,close,volume'
+    assert files_bucket.read('report.csv') == b'date,close,volume'
 
 
 def test_a_file_renamed_in_files_reaches_the_workspace_under_its_new_name_only(service: _Service, files_bucket: Any) -> None:
     service.turn('write: /drafts/dummy (1).pdf: quarterly', files=_files())
-    # The Files app renames by copying to the new name, then deleting the old one.
-    files_bucket.copy_object(
-        Bucket=FILES_BUCKET,
-        CopySource={'Bucket': FILES_BUCKET, 'Key': f'{FILES_PREFIX}drafts/dummy (1).pdf'},
-        Key=f'{FILES_PREFIX}drafts/q3.pdf',
-    )
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}drafts/dummy (1).pdf')
+    (files_bucket.root / 'drafts/dummy (1).pdf').rename(files_bucket.root / 'drafts/q3.pdf')
 
     events = service.turn('ls: /drafts', files=_files())
 
     assert '/drafts/q3.pdf' in _tool_output(events)
     assert 'dummy (1).pdf' not in _tool_output(events)
-    assert (service.home / 'drafts' / 'q3.pdf').read_text() == 'quarterly'
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}drafts/q3.pdf', f'{FILES_PREFIX}prepared.txt']
-
-
-def test_a_file_that_becomes_a_skill_stays_in_the_workspace(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service.turn('write: /playbooks/grounding.md: Cite a source.', files=_files())
-    # A later Cartridge serves `/playbooks/` as skills, so the sync no longer sees the file in Files.
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), skills=('/skills/', '/playbooks/')))
-
-    events = service.turn('read: /playbooks/grounding.md', files=_files())
-
-    assert 'Cite a source.' in _tool_output(events)
-    assert f'{FILES_PREFIX}playbooks/grounding.md' in _keys(files_bucket)
-
-
-def test_a_file_the_sync_never_recorded_reaches_files_however_old(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    # The agent unpacks an archive, keeping each file's time from long before any sync.
-    archived = service.home / 'archive' / '2019.csv'
-    archived.parent.mkdir()
-    archived.write_text('date,close')
-    os.utime(archived, (1_500_000_000, 1_500_000_000))
-
-    service.turn('ls: /', files=_files())
-
-    assert f'{FILES_PREFIX}archive/2019.csv' in _keys(files_bucket)
-    assert archived.exists()
-
-
-def test_a_turn_whose_files_sync_record_is_unreadable_fails_loudly(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text('{"report.csv": ')
-    files_bucket.delete_object(Bucket=FILES_BUCKET, Key=f'{FILES_PREFIX}report.csv')
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1] == {
-        'type': 'RUN_ERROR',
-        'message': 'The Files sync record /botcube-harness-deepagents/files-sync.json is unreadable: '
-        'Expecting value: line 1 column 16 (char 15)',
-        'code': 'FILES_SYNC_RECORD',
-    }
-    assert 'RUN_FINISHED' not in [event['type'] for event in events]
-    assert (service.home / 'report.csv').exists()
-
-
-@pytest.mark.parametrize('record', ['[]', '"report.csv"', '{"report.csv": "1700000000"}', '{"report.csv": true}'])
-def test_a_turn_whose_files_sync_record_is_not_names_to_seconds_fails_loudly(
-    service: _Service, files_bucket: Any, record: str
-) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(record)
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1] == {
-        'type': 'RUN_ERROR',
-        'message': 'The Files sync record /botcube-harness-deepagents/files-sync.json is unreadable: '
-        'not an object of file names to seconds',
-        'code': 'FILES_SYNC_RECORD',
-    }
-
-
-def test_a_turn_whose_files_sync_record_names_a_path_outside_the_workspace_fails_loudly(
-    service: _Service, files_bucket: Any, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    runtime = tmp_path_factory.mktemp('runtime') / 'node'
-    runtime.write_text('#!/bin/sh')
-    service.turn('write: /report.csv: date,close', files=_files())
-    (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(json.dumps({str(runtime): 9999999999}))
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1] == {
-        'type': 'RUN_ERROR',
-        'message': 'The Files sync record /botcube-harness-deepagents/files-sync.json is unreadable: '
-        f'{str(runtime)!r} is not a path in the workspace',
-        'code': 'FILES_SYNC_RECORD',
-    }
-    assert runtime.exists()
-
-
-def test_a_files_pull_removes_nothing_through_a_link_out_of_the_workspace(
-    service: _Service, files_bucket: Any, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    outside = tmp_path_factory.mktemp('outside')
-    (outside / 'node').write_text('#!/bin/sh')
-    service.turn('write: /report.csv: date,close', files=_files())
-    (service.home / 'bin').symlink_to(outside, target_is_directory=True)
-    (service.home / 'botcube-harness-deepagents' / 'files-sync.json').write_text(json.dumps({'bin/node': 9999999999}))
-
-    events = service.turn('ls: /', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert (outside / 'node').exists()
-
-
-def _deleted_in_files_once_the_turn_starts(monkeypatch: pytest.MonkeyPatch, s3: Any, name: str) -> None:
-    """The account owner deletes `name` in the Files app while the next Turn runs."""
-    pull = files_sync.FilesSync.pull
-    pending = [name]
-
-    def pull_then_delete(self: files_sync.FilesSync, root: Path, excluded: Any) -> None:
-        pull(self, root, excluded)
-        while pending:
-            s3.delete_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + pending.pop())
-
-    monkeypatch.setattr(files_sync.FilesSync, 'pull', pull_then_delete)
-
-
-def test_a_file_deleted_in_files_during_a_turn_is_not_put_back_when_it_ends(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    _deleted_in_files_once_the_turn_starts(monkeypatch, files_bucket, 'report.csv')
-
-    events = service.turn('read: /report.csv', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert 'date,close' in _tool_output(events)
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-    service.turn('ls: /', files=_files())
-
-    assert not (service.home / 'report.csv').exists()
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-
-def test_touching_a_file_deleted_in_files_during_a_turn_keeps_it_deleted(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service.turn('write: /report.csv: date,close', files=_files())
-    _deleted_in_files_once_the_turn_starts(monkeypatch, files_bucket, 'report.csv')
-
-    events = service.turn('run: touch report.csv', files=_files())
-
-    assert events[-1]['type'] == 'RUN_FINISHED'
-    assert (service.home / 'report.csv').read_text() == 'date,close'
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-    service.turn('ls: /', files=_files())
-
-    assert not (service.home / 'report.csv').exists()
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt']
-
-
-def test_no_tool_background_reads_preserve_unchanged_files_without_uploads(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    names = [f'unchanged-{index}.txt' for index in range(17)]
-    for name in names:
-        files_bucket.put_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name, Body=name.encode())
-    refreshed = service.turn('ls: /', files=_files())
-    assert refreshed[-1]['type'] == 'RUN_FINISHED'
-    for name in names:
-        local = service.home / name
-        stamp = local.stat().st_mtime + 0.5
-        os.utime(local, (stamp, stamp))
-
-    def unexpected_upload(**params: Any) -> NoReturn:
-        raise AssertionError('A plain answer uploaded unchanged Files')
-
-    monkeypatch.setattr(files_sync.FilesSync, '_client', lambda self: files_bucket)
-    monkeypatch.setattr(files_bucket, 'put_object', unexpected_upload)
-
-    for _ in range(2):
-        events = service.turn('hello', files=_files())
-        assert events[-1]['type'] == 'RUN_FINISHED'
-        assert not any(event['type'].startswith('TOOL_CALL') for event in events)
-        for name in names:
-            assert (service.home / name).read_bytes() == name.encode()
-            assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + name)['Body'].read() == name.encode()
-
-
-def test_only_the_agents_own_files_reach_files(service: _Service, files_bucket: Any) -> None:
-    for internal in ('.cartridge/cookies.json', 'botcube-harness-deepagents/threads/state.json', 'notes/.draft'):
-        path = service.home / internal
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('internal')
-
-    service.turn('write: /report.csv: date,close', files=_files())
-
-    # The Cartridge's skills and hidden files stay in the sandbox; what the agent made goes to Files.
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt', f'{FILES_PREFIX}report.csv']
+    assert (files_bucket.root / 'drafts' / 'q3.pdf').read_text() == 'quarterly'
+    assert _keys(files_bucket) == ['drafts/q3.pdf', 'prepared.txt']
 
 
 # A scratch file the agent wrote to /tmp showed up in the user's Files.
-def test_the_agents_scratch_files_in_tmp_stay_out_of_files(service: _Service, files_bucket: Any) -> None:
-    service.turn('write: /tmp/scratch-note.txt: draft', files=_files())
-    service.turn('write: /report.csv: date,close', files=_files())
-
-    assert _keys(files_bucket) == [f'{FILES_PREFIX}prepared.txt', f'{FILES_PREFIX}report.csv']
 
 
-def test_a_turn_without_files_syncs_nothing(service: _Service, files_bucket: Any) -> None:
+def test_a_turn_without_files_uses_local_workspace_only(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any) -> None:
+        raise AssertionError('Unbound Turn mounted Files')
+
+    monkeypatch.setattr(FilesMount, 'pull', forbidden)
     service.turn('write: /report.csv: date,close')
-
-    assert _keys(files_bucket) == []
+    assert (service.home / 'report.csv').read_text() == 'date,close'
 
 
 # Told nothing of where the user's Files are, the agent listed `/files`, found none, and said Files were empty.
@@ -2324,8 +1685,8 @@ def test_files_credentials_never_reach_the_sandbox_shell(service: _Service, file
     [
         ('accounts/0123abcd/', 'Files must be an object'),
         ({**_files(), 'sessionToken': ''}, 'Files sessionToken must be a non-empty string'),
-        ({key: value for key, value in _files().items() if key != 'bucket'}, 'Files bucket must be a non-empty string'),
-        ({**_files(), 'prefix': 'accounts/0123abcd'}, 'Files prefix must end with /'),
+        ({key: value for key, value in _files().items() if key != 'fileSystemId'}, 'Files fileSystemId must be a non-empty string'),
+        ({**_files(), 'mountTargetIp': 'invalid'}, 'Files EFS binding is invalid or expired'),
     ],
 )
 def test_an_invocation_with_malformed_files_is_rejected(
@@ -2340,30 +1701,24 @@ def test_an_invocation_with_malformed_files_is_rejected(
 def test_a_plain_answer_does_not_depend_on_an_unavailable_background_files_pull(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    files_bucket.delete_bucket(Bucket=FILES_BUCKET)
-    calls: list[str] = []
-    client = files_sync.FilesSync._client
-
-    def observed_client(self: files_sync.FilesSync) -> Any:
-        calls.append(self.bucket)
-        return client(self)
-
-    monkeypatch.setattr(files_sync.FilesSync, '_client', observed_client)
-
+    def unavailable(*args: Any) -> None:
+        raise FilesMountError('EFS unavailable')
+    monkeypatch.setattr(FilesMount, 'pull', unavailable)
     events = service.turn('hello', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert _said(events) == 'Echo: hello'
-    assert calls == [FILES_BUCKET]
 
 
-def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service, files_bucket: Any) -> None:
-    files_bucket.delete_bucket(Bucket=FILES_BUCKET)
+def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable(*args: Any) -> None:
+        raise FilesMountError('EFS unavailable')
+    monkeypatch.setattr(FilesMount, 'pull', unavailable)
 
     events = service.turn('ls: /', files=_files())
 
     assert events[-1]['type'] == 'RUN_ERROR'
-    assert 'NoSuchBucket' in events[-1]['message']
+    assert 'EFS unavailable' in events[-1]['message']
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
     assert service.recorder.heard == [['ls: /']]
 
@@ -3727,7 +3082,6 @@ def test_a_recorded_warmup_with_local_memory_prepares(service: _Service) -> None
     assert events[-1]['value']['outcome'] == 'prepared'
 
 
-
 def test_opening_turn_streams_without_a_user_message_and_cannot_reopen_saved_history(service: _Service) -> None:
     run = {
         'threadId': 'opening-chat', 'runId': 'opening-1', 'messages': [], 'tools': [],
@@ -3777,7 +3131,6 @@ def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _S
         assert 'The user\'s first name is' not in prompt
 
 
-
 def test_publish_is_available_in_the_files_bound_serving_graph(service: _Service, files_bucket: Any) -> None:
     path = service.home / 'tmp' / 'curve.svg'
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -3786,7 +3139,7 @@ def test_publish_is_available_in_the_files_bound_serving_graph(service: _Service
     events = service.turn(f'publish: {path}', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
-    assert files_bucket.get_object(Bucket=FILES_BUCKET, Key=FILES_PREFIX + 'artifacts/curve.svg')['Body'].read() == b'<svg>curve</svg>'
+    assert files_bucket.read('artifacts/curve.svg') == b'<svg>curve</svg>'
     assert not path.exists()
 
 

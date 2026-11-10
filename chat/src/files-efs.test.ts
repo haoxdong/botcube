@@ -122,22 +122,21 @@ describe('EFS account Files', () => {
     expect(mount).toEqual({ accessPointArn: expect.stringContaining('access-point/fsap-'), fileSystemArn: FILE_SYSTEM_ARN, mountPath: '/mnt/files' });
     await files.mount(ACCOUNT);
     expect(access.created).toEqual([`/accounts/${HASH}`]);
-    const binding = await files.syncBinding(ACCOUNT);
+    const binding = await files.mountBinding(ACCOUNT);
     expect(minted).toEqual([mount.accessPointArn]);
     expect(binding).toMatchObject({ fileSystemId: 'fs-0abc', mountTargetIp: '192.0.2.12', region: 'us-east-1', accessPointId: mount.accessPointArn.split('/').pop(), accessKeyId: 'AKIA' });
   });
 
-  it('keeps the active S3 access point while creating and deleting the EFS access point', async () => {
+  it('ignores retired S3 records and keeps the existing EFS record namespace', async () => {
     const { files, records } = setup();
-    const s3 = 'arn:aws:s3files:us-east-1:123456789012:access-point/s3ap-existing';
-    await records.saveFilesAccessPoint(ACCOUNT, s3);
+    await records.call('PutItem', new PutCommand({ TableName: 'chat', Item: {
+      pk: `FILES#${ACCOUNT}`, sk: 'META', accessPointArn: 'arn:aws:s3files:us-east-1:123456789012:access-point/s3ap-retired',
+    } }));
     const mounted = await files.mount(ACCOUNT);
     expect(mounted.accessPointArn).toContain(':elasticfilesystem:');
-    expect(await records.filesAccessPoint(ACCOUNT)).toBe(s3);
-    expect(await records.filesAccessPoint(ACCOUNT, 'efs')).toBe(mounted.accessPointArn);
+    expect(await records.filesAccessPoint(ACCOUNT)).toBe(mounted.accessPointArn);
     await files.delete(ACCOUNT);
-    expect(await records.filesAccessPoint(ACCOUNT, 'efs')).toBeNull();
-    expect(await records.filesAccessPoint(ACCOUNT)).toBe(s3);
+    expect(await records.filesAccessPoint(ACCOUNT)).toBeNull();
   });
 
   it('a Claim moves every file into the claiming account, a taken name getting the next free one, and retires the source', async () => {
@@ -157,7 +156,7 @@ describe('EFS account Files', () => {
     expect([...access.live.keys()]).toEqual([destination]);
     await expect(files.uploadUrl(ACCOUNT, 'x')).rejects.toMatchObject({ status: 409 });
     await expect(files.mount(ACCOUNT)).rejects.toMatchObject({ status: 409 });
-    await expect(files.syncBinding(ACCOUNT)).rejects.toMatchObject({ status: 409 });
+    await expect(files.mountBinding(ACCOUNT)).rejects.toMatchObject({ status: 409 });
   });
 
   it('account deletion removes the directory and the access point; a late write is swept until a day past the last credential', async () => {

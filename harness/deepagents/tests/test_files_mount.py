@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from botcube_harness_deepagents.files import FilesBindingError, pop_files_mount
 from botcube_harness_deepagents.files_mount import FilesMount
-from botcube_harness_deepagents.files_sync import FilesSyncError, pop_files_sync
 
 
 def binding() -> dict[str, str]:
@@ -18,7 +18,7 @@ def binding() -> dict[str, str]:
 
 def test_efs_binding_is_consumed_without_requiring_an_s3_bucket() -> None:
     props = {'files': binding()}
-    files = pop_files_sync(props)
+    files = pop_files_mount(props)
     assert isinstance(files, FilesMount)
     assert files.file_system_id == 'fs-00000000000000001'
     assert files.mount_target_ip == '192.0.2.12'
@@ -29,8 +29,8 @@ def test_efs_binding_is_consumed_without_requiring_an_s3_bucket() -> None:
 def test_invalid_mount_binding_is_rejected(field: str, value: str) -> None:
     files = binding()
     files[field] = value
-    with pytest.raises(FilesSyncError):
-        pop_files_sync({'files': files})
+    with pytest.raises(FilesBindingError):
+        pop_files_mount({'files': files})
 
 
 def test_staged_publication_mounts_before_installing_an_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -43,7 +43,7 @@ def test_staged_publication_mounts_before_installing_an_archive(tmp_path: Path, 
     staging = tmp_path / 'staging'
     staging.mkdir()
     (staging / 'history.md').write_text('archived history')
-    files = pop_files_sync({'files': binding()})
+    files = pop_files_mount({'files': binding()})
     assert isinstance(files, FilesMount)
 
     def mount(self: FilesMount, destination: Path, excluded: Iterable[str]) -> None:

@@ -1,3 +1,4 @@
+import { uploadFileLink } from './file-links.js';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser } from './browser.js';
@@ -28,10 +29,10 @@ async function upload(user: Browser, name: string, body: string): Promise<void> 
   const response = await user.post('/files/upload-url', { name });
   expect(response.status).toBe(200);
   const { url } = (await response.json()) as { url: string };
-  expect((await fetch(url, { method: 'PUT', headers: { 'if-none-match': '*' }, body })).status).toBe(200);
+  await uploadFileLink(url, body);
 }
 
-/** The account's directory in the Files bucket: the first 32 hex digits of its ID's SHA-256. */
+/** The account's directory in EFS: the first 32 hex digits of its ID's SHA-256. */
 const prefixOf = (accountId: string) => `accounts/${createHash('sha256').update(accountId).digest('hex').slice(0, 32)}/`;
 
 let stack: Stack;
@@ -67,11 +68,8 @@ describe('Files', () => {
     expect(second.status).toBe(200);
     const { url: firstUrl } = (await first.json()) as { url: string };
     const { url: secondUrl } = (await second.json()) as { url: string };
-    expect(new URL(firstUrl).searchParams.get('X-Amz-SignedHeaders')).toBe('host;if-none-match');
-    const headers = { 'if-none-match': '*' };
-
-    expect((await fetch(firstUrl, { method: 'PUT', headers, body: 'original' })).status).toBe(200);
-    expect((await fetch(secondUrl, { method: 'PUT', headers, body: 'replacement' })).status).toBe(412);
+    await uploadFileLink(firstUrl, 'original');
+    await expect(uploadFileLink(secondUrl, 'replacement')).rejects.toMatchObject({ status: 412 });
     expect(await download(user, 'race.txt')).toBe('original');
   });
 
@@ -87,19 +85,19 @@ describe('Files', () => {
 });
 
 describe('deleting a file', () => {
-  it('answers 204 and leaves no version or delete marker of it, and keeps the files beside it', async () => {
+  it('answers 204 and leaves no file, and keeps the files beside it', async () => {
     const user = stack.browser();
     const { accountId } = await user.openAccountSession();
     await upload(user, 'notes/plan.txt', 'buy low');
-    await stack.s3.putObject(stack.s3files.bucket, `${prefixOf(accountId)}notes/plan.txt`, 'sell high');
+    await stack.files.put(`${prefixOf(accountId)}notes/plan.txt`, 'sell high');
     await upload(user, 'notes/plan.txt.old', 'hold');
 
     const response = await user.delete(`/files?name=${encodeURIComponent('notes/plan.txt')}`);
 
     expect(response.status).toBe(204);
     expect(await files(user)).toEqual(['notes/plan.txt.old']);
-    expect(await stack.s3.versions(stack.s3files.bucket, prefixOf(accountId))).toEqual([
-      `Version ${prefixOf(accountId)}notes/plan.txt.old`,
+    expect(await stack.files.keys(prefixOf(accountId))).toEqual([
+      `${prefixOf(accountId)}notes/plan.txt.old`,
     ]);
   });
 
@@ -134,11 +132,11 @@ describe('deleting a file', () => {
 });
 
 describe('renaming a file', () => {
-  it('answers 200 with the new name, moves the bytes, and frees the old name of every version', async () => {
+  it('answers 200 with the new name, moves the bytes, and frees the old name', async () => {
     const user = stack.browser();
     const { accountId } = await user.openAccountSession();
     await upload(user, 'dummy (1).pdf', 'draft');
-    await stack.s3.putObject(stack.s3files.bucket, `${prefixOf(accountId)}dummy (1).pdf`, '%PDF-1.4\n');
+    await stack.files.put(`${prefixOf(accountId)}dummy (1).pdf`, '%PDF-1.4\n');
 
     const response = await user.post('/files/rename', { from: 'dummy (1).pdf', to: 'statement.pdf' });
 
@@ -146,7 +144,7 @@ describe('renaming a file', () => {
     expect(await response.json()).toEqual({ name: 'statement.pdf' });
     expect(await files(user)).toEqual(['statement.pdf']);
     expect(await download(user, 'statement.pdf')).toBe('%PDF-1.4\n');
-    expect(await stack.s3.versions(stack.s3files.bucket, prefixOf(accountId))).toEqual([`Version ${prefixOf(accountId)}statement.pdf`]);
+    expect(await stack.files.keys(prefixOf(accountId))).toEqual([`${prefixOf(accountId)}statement.pdf`]);
   });
 
   it('answers 404 for a file that is not there', async () => {
@@ -236,7 +234,7 @@ describe('renaming a file', () => {
 });
 
 describe("the agent's Files on each Turn", () => {
-  it("hands each Turn the account's Files prefix with credentials for it, so files the agent puts there show in Files", async () => {
+  it("hands each Turn the account's EFS access point with credentials for it, so files the agent puts there show in Files", async () => {
     const user = stack.browser();
     const { accountId } = await user.openAccountSession();
 
@@ -245,15 +243,16 @@ describe("the agent's Files on each Turn", () => {
 
     const { files: binding } = stack.agentcore.invocationFor(threadId).payload.forwardedProps as { files: unknown };
     expect(binding).toEqual({
-      bucket: stack.s3files.bucket,
-      prefix: prefixOf(accountId),
+      fileSystemId: stack.files.fileSystemId,
+      accessPointId: expect.stringMatching(/^fsap-/),
+      mountTargetIp: '192.0.2.12',
       region: 'us-east-1',
       accessKeyId: expect.stringMatching(/^ASIA/),
       secretAccessKey: expect.stringMatching(/.{20,}/),
       sessionToken: expect.stringMatching(/.{20,}/),
       expiration: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
     });
-    await stack.s3.putObject(stack.s3files.bucket, `${prefixOf(accountId)}analysis/report.csv`, 'date,close');
+    await stack.files.put(`${prefixOf(accountId)}analysis/report.csv`, 'date,close');
     expect(await files(user)).toEqual(['analysis/report.csv']);
   });
 
@@ -269,8 +268,9 @@ describe("the agent's Files on each Turn", () => {
     ).text();
 
     const { files: binding } = stack.agentcore.invocationFor(threadId).payload.forwardedProps as {
-      files: { bucket: string; prefix: string };
+      files: { fileSystemId: string; accessPointId: string };
     };
-    expect([binding.bucket, binding.prefix]).toEqual([stack.s3files.bucket, prefixOf(accountId)]);
+    expect(binding.fileSystemId).toBe(stack.files.fileSystemId);
+    expect(stack.files.rootDirectory(binding.accessPointId)).toBe('/'+prefixOf(accountId).slice(0, -1));
   });
 });

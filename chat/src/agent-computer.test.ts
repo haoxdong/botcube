@@ -1220,7 +1220,7 @@ describe('the AgentCore browser of Agent Computers', () => {
     ]);
     const filesAsDownloads = {
       viewPort: { width: 1280, height: 720 },
-      filesystemConfigurations: [{ s3FilesConfiguration: FILES }],
+      filesystemConfigurations: [{ efsConfiguration: FILES }],
       enterprisePolicies: [
         { type: 'RECOMMENDED', location: { s3: { bucket: 'policy-bucket', prefix: 'agent-computer/chrome-policy.json' } } },
       ],

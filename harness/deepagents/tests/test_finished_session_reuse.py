@@ -17,7 +17,7 @@ from agentcore_fake import (
     install_tagged_memory,
     turn_identity,
 )
-from botcube_harness_deepagents import files_sync, serving, session_api
+from botcube_harness_deepagents import serving, session_api
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import warm_session
 from test_serving import _files, _replay, _Service
@@ -190,14 +190,14 @@ def test_changed_invoking_actor_does_not_reuse_same_filing_snapshot(
 def test_failed_files_publication_does_not_promote_finished_snapshot(
     service: _Service, memory: FakeAgentCoreMemory, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    push = files_sync.FilesSync.push
+    publish = serving.publish_finished_files
 
-    def fail_push(*args: Any, **kwargs: Any) -> None:
+    async def fail_publish(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError('Files publication failed')
 
-    monkeypatch.setattr(files_sync.FilesSync, 'push', fail_push)
+    monkeypatch.setattr(serving, 'publish_finished_files', fail_publish)
     assert _turn(service, 'write: /proof.txt: result', files=_files())[-1]['type'] == 'RUN_ERROR'
-    monkeypatch.setattr(files_sync.FilesSync, 'push', push)
+    monkeypatch.setattr(serving, 'publish_finished_files', publish)
     memory.listed.clear()
     assert _turn(service, 'failure-acknowledged')[-1]['type'] == 'RUN_ERROR'
     memory.listed.clear()

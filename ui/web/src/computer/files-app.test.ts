@@ -21,9 +21,9 @@ describe('the Files client', () => {
   });
 
   it('asks for a download URL by the file path', async () => {
-    const fetchImpl = vi.fn(async () => Response.json({ url: 'https://s3.test/report' }));
+    const fetchImpl = vi.fn(async () => Response.json({ url: 'https://links.test/report' }));
 
-    expect(await fileDownloadUrl('notes/plan v2.txt', { ...CHAT, fetchImpl })).toBe('https://s3.test/report');
+    expect(await fileDownloadUrl('notes/plan v2.txt', { ...CHAT, fetchImpl })).toBe('https://links.test/report');
     expect(fetchImpl).toHaveBeenCalledWith('https://chat.test/files/download-url?name=notes%2Fplan+v2.txt', {
       method: 'GET',
       credentials: 'include',
@@ -68,38 +68,26 @@ describe('the Files client', () => {
   });
 });
 
-/** The browser's PUTs to presigned URLs, each answered as a test says: its progress, then its status or a network error. */
 const puts: FakeUpload[] = [];
 class FakeUpload {
-  method = '';
-  url = '';
-  headers: Record<string, string> = {};
-  body: unknown;
-  status = 0;
+  readonly method = 'PUT';
+  readonly headers = { 'content-type': 'application/octet-stream' };
+  readonly body: Blob;
   aborted = false;
-  upload: { onprogress: ((event: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = { onprogress: null };
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-  open(method: string, url: string) {
-    this.method = method;
-    this.url = url;
-  }
-  setRequestHeader(name: string, value: string) {
-    this.headers[name] = value;
-  }
-  send(body: unknown) {
-    this.body = body;
+  private resolve!: (response: Response) => void;
+  private reject!: (error: Error) => void;
+  readonly response: Promise<Response>;
+  constructor(readonly url: string, init: RequestInit) {
+    this.body = init.body as Blob;
+    this.response = new Promise<Response>((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
+    init.signal?.addEventListener('abort', () => {
+      this.aborted = true;
+      this.reject(new DOMException('Aborted', 'AbortError'));
+    });
     puts.push(this);
   }
-  abort() {
-    this.aborted = true;
-    this.onabort?.();
-  }
-  respond(status: number) {
-    this.status = status;
-    this.onload?.();
-  }
+  onerror = () => { this.reject(new Error('Upload failed: network error')); };
+  respond(status: number) { this.resolve(new Response(null, { status })); }
 }
 
 describe('uploading a file the user attached in the chat', () => {
@@ -108,7 +96,7 @@ describe('uploading a file the user attached in the chat', () => {
   const service = (taken: string[] = []) => vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     const { name } = JSON.parse(init?.body as string) as { name: string };
     if (taken.includes(name)) return Response.json({ detail: `A file named ${name} is already in Files` }, { status: 409 });
-    return Response.json({ url: `https://s3.test/upload/${encodeURIComponent(name)}` });
+    return Response.json({ url: `https://links.test/?t=${encodeURIComponent(name)}` });
   });
   /** The request's PUT, once the Chat Service has handed over its URL. */
   const put = async () => {
@@ -117,7 +105,8 @@ describe('uploading a file the user attached in the chat', () => {
   };
   beforeEach(() => {
     puts.length = 0;
-    vi.stubGlobal('XMLHttpRequest', FakeUpload);
+    vi.stubGlobal('fetch', (url: string, init: RequestInit) => url.includes('done=')
+      ? Promise.resolve(new Response('ok')) : new FakeUpload(url, init).response);
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -126,7 +115,6 @@ describe('uploading a file the user attached in the chat', () => {
     const onProgress = vi.fn();
     const uploading = uploadFile(file, { onProgress, signal: new AbortController().signal }, { ...CHAT, fetchImpl });
     const request = await put();
-    request.upload.onprogress?.({ lengthComputable: true, loaded: 3, total: 7 });
     request.respond(200);
 
     expect(await uploading).toBe('/plan.txt');
@@ -137,8 +125,9 @@ describe('uploading a file the user attached in the chat', () => {
       credentials: 'include',
       signal: expect.any(AbortSignal),
     });
-    expect(request).toMatchObject({ method: 'PUT', url: 'https://s3.test/upload/plan.txt', headers: { 'If-None-Match': '*' }, body: file });
-    expect(onProgress).toHaveBeenCalledWith(3 / 7);
+    expect(request).toMatchObject({ method: 'PUT', url: 'https://links.test/?t=plan.txt&offset=0', headers: { 'content-type': 'application/octet-stream' } });
+    expect(await request.body.text()).toBe(await file.text());
+    expect(onProgress).toHaveBeenLastCalledWith(1);
   });
 
   it('uploads to a Files link from EFS in 4 MiB chunks, chunk 0 first, then finishes with the size and SHA-256', async () => {
@@ -189,7 +178,8 @@ describe('uploading a file the user attached in the chat', () => {
     const request = await put();
     request.respond(200);
     expect(await uploading).toBe(`/${stored}`);
-    expect(request).toMatchObject({ url: `https://s3.test/upload/${encodeURIComponent(stored)}`, body });
+    expect(request.url).toBe(`https://links.test/?t=${encodeURIComponent(stored)}&offset=0`);
+    expect(await request.body.text()).toBe(await body.text());
   });
 
   it('keeps both composer attachments when Files already holds the name', async () => {
@@ -220,7 +210,7 @@ describe('uploading a file the user attached in the chat', () => {
 
     puts.length = 0;
     const offline = uploadFile(file, options, { ...CHAT, fetchImpl: service() });
-    (await put()).onerror?.();
+    (await put()).onerror();
     await expect(offline).rejects.toThrow('Upload failed: network error');
   });
 
@@ -230,8 +220,8 @@ describe('uploading a file the user attached in the chat', () => {
     const uploading = uploadFile(file, options, { ...CHAT, fetchImpl });
     (await put()).respond(412);
     await vi.waitFor(() => expect(puts).toHaveLength(2));
-    expect(puts[1]?.url).toBe('https://s3.test/upload/plan%20(2).txt');
-    expect(puts[1]?.headers).toEqual({ 'If-None-Match': '*' });
+    expect(puts[1]?.url).toBe('https://links.test/?t=plan%20(2).txt&offset=0');
+    expect(puts[1]?.headers).toEqual({ 'content-type': 'application/octet-stream' });
     puts[1]?.respond(412);
     await vi.waitFor(() => expect(puts).toHaveLength(3));
     puts[2]?.respond(200);
@@ -374,7 +364,7 @@ beforeEach(() => {
       return Response.json({ name: to });
     }
     if (url.pathname === '/files') return Response.json({ files: stored });
-    if (url.pathname === '/files/download-url') return Response.json({ url: `https://s3.test/${url.searchParams.get('name')}` });
+    if (url.pathname === '/files/download-url') return Response.json({ url: `https://links.test/${url.searchParams.get('name')}` });
     throw new Error(`Unexpected request: ${input}`);
   });
 });
@@ -554,7 +544,7 @@ describe('FilesApp', () => {
 
     await click(host, 'report.csv');
 
-    expect(assign).toHaveBeenCalledWith('https://s3.test/report.csv');
+    expect(assign).toHaveBeenCalledWith('https://links.test/report.csv');
   });
 
   it('clears a refused download after an explicit successful retry', async () => {
@@ -572,7 +562,7 @@ describe('FilesApp', () => {
     failing = null;
     await click(host, 'report.csv');
     expect(assign).toHaveBeenCalledTimes(1);
-    expect(assign).toHaveBeenCalledWith('https://s3.test/report.csv');
+    expect(assign).toHaveBeenCalledWith('https://links.test/report.csv');
     expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(calls.filter((call) => call === 'GET https://chat.test/files')).toHaveLength(1);
   });
@@ -662,7 +652,7 @@ describe('FilesApp', () => {
 
     await press(host, 'report.csv', 2);
     expect(assign).toHaveBeenCalledTimes(1);
-    expect(assign).toHaveBeenCalledWith('https://s3.test/report.csv');
+    expect(assign).toHaveBeenCalledWith('https://links.test/report.csv');
     await press(host, 'reports', 2);
     expect(items(host)).toEqual(['q3.pdf (document)']);
     expect(folderName(host)).toBe('reports');
@@ -693,7 +683,7 @@ describe('FilesApp', () => {
     expect(host.querySelector('.agent-computer-files-path')?.textContent).toBe('workspace›reports›2026›drafts');
 
     await grid.open(host, 'q4.pdf');
-    expect(assign).toHaveBeenCalledWith('https://s3.test/reports/2026/drafts/q4.pdf');
+    expect(assign).toHaveBeenCalledWith('https://links.test/reports/2026/drafts/q4.pdf');
 
     await pathBar.open(host, '2026');
     expect(names(host)).toEqual(['drafts', 'q2.pdf', 'q3.pdf']);
@@ -782,7 +772,7 @@ describe('FilesApp', () => {
 
     // A recent file opens, and renames in, its own folder.
     await grid.open(host, 'q3.pdf');
-    expect(assign).toHaveBeenCalledWith('https://s3.test/reports/2026/q3.pdf');
+    expect(assign).toHaveBeenCalledWith('https://links.test/reports/2026/q3.pdf');
     const file = [...host.querySelectorAll('.agent-computer-file')].find((candidate) => fileName(candidate) === 'plan.md');
     await act(async () => file?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
     await click(host, 'Rename');
@@ -918,7 +908,7 @@ describe('FilesApp', () => {
       );
       const host = await app();
 
-      await vi.waitFor(() => expect(pictures(host)).toEqual(['https://s3.test/curve.png', 'https://s3.test/logo.svg', 'icon', 'https://s3.test/spread.JPEG']));
+      await vi.waitFor(() => expect(pictures(host)).toEqual(['https://links.test/curve.png', 'https://links.test/logo.svg', 'icon', 'https://links.test/spread.JPEG']));
       const image = host.querySelector('img');
       expect([image?.getAttribute('alt'), image?.getAttribute('loading'), image?.getAttribute('draggable')]).toEqual(['', 'lazy', 'false']);
       // A place opened again draws the pictures it already has.
@@ -947,7 +937,7 @@ describe('FilesApp', () => {
     const alerts = (host: HTMLElement) => [...host.querySelectorAll('[role="alert"]')].map((alert) => alert.textContent);
 
     it('keeps its type icon until its picture has loaded, then shows the picture alone', async () => {
-      const { host } = await windowWith(async () => 'https://s3.test/curve.png');
+      const { host } = await windowWith(async () => 'https://links.test/curve.png');
       const cell = host.querySelector<HTMLElement>('.agent-computer-file[data-kind="image"]');
       const shows = () => [cell?.querySelector('.file-type-icon') ? 'icon' : null, cell?.querySelector('img:not([data-loading])') ? 'picture' : null].filter(Boolean);
       expect(shows()).toEqual(['icon']);
@@ -971,8 +961,8 @@ describe('FilesApp', () => {
     });
 
     it('goes back to its type icon, and says why, when the picture fails to load', async () => {
-      const { host } = await windowWith(async () => 'https://s3.test/curve.png');
-      expect(pictures(host)).toEqual(['https://s3.test/curve.png', 'icon']);
+      const { host } = await windowWith(async () => 'https://links.test/curve.png');
+      expect(pictures(host)).toEqual(['https://links.test/curve.png', 'icon']);
 
       await act(async () => host.querySelector('img')?.dispatchEvent(new Event('error')));
 
@@ -992,14 +982,14 @@ describe('FilesApp', () => {
     });
 
     it('asks for a picture once as its cell draws again', async () => {
-      const thumbnailUrl = vi.fn(async () => 'https://s3.test/curve.png');
+      const thumbnailUrl = vi.fn(async () => 'https://links.test/curve.png');
       const { host, render } = await windowWith(thumbnailUrl);
 
       await render('refused');
       await act(async () => (host.querySelector('.agent-computer-file') as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })));
 
       expect(thumbnailUrl).toHaveBeenCalledOnce();
-      expect(pictures(host)).toEqual(['https://s3.test/curve.png', 'icon']);
+      expect(pictures(host)).toEqual(['https://links.test/curve.png', 'icon']);
     });
   });
 
@@ -1057,7 +1047,7 @@ describe('FilesApp', () => {
       await click(host, 'Download');
       expect(menu(host)).toBeNull();
       expect(calls.at(-1)).toBe('GET https://chat.test/files/download-url?name=reports%2Fq3.pdf');
-      expect(assign).toHaveBeenCalledWith('https://s3.test/reports/q3.pdf');
+      expect(assign).toHaveBeenCalledWith('https://links.test/reports/q3.pdf');
     });
 
     it('deletes the file once its sheet confirms, then lists Files again; Cancel deletes nothing', async () => {

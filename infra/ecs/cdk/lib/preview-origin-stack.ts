@@ -136,7 +136,7 @@ export class PreviewOriginStack extends Stack {
     new CfnOutput(this, 'ProductionClientCertificateId', { value: productionAop.ref });
     // Records stay proxied while Parked, so a Cloudflare Worker route can still answer.
     const dns = (id: string, hostname: string, dependency: Construct, target: string) => {
-      const record = resource(id, { Kind: 'Dns', Hostname: hostname, Target: target });
+      const record = resource(id, { Kind: 'Dns', Hostname: hostname, Target: target, AlwaysUseHttps: 'on' });
       record.node.addDependency(dependency);
       return record;
     };
