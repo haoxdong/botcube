@@ -43,7 +43,7 @@ export async function computerParity() {
   const unused = async () => { throw new Error('Only the Files mount is used'); };
   const files: AccountFiles = {
     mount: async (owner) => ({ accessPointArn: `access-${owner}`, fileSystemArn: 'files', mountPath: '/mnt/files' }),
-    list: unused, uploadUrl: unused, downloadUrl: unused, remove: unused, rename: unused,
+    list: unused, uploadUrl: unused, downloadUrl: unused, remove: unused, rename: unused, saveArtifact: unused,
     recoverCleanup: unused, mountBinding: unused, transfer: unused, delete: unused,
   };
   const makeComputers = () => agentComputers({ browser: () => browser, records: () => store, seed: async () => {}, files: () => files, idleSeconds: 1 });

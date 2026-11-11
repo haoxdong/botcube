@@ -1,28 +1,23 @@
 """Slides, the Artifact Type whose Source is a deck: `project/deck.json` and one `project/slides/<id>.html` per slide.
 
-A publish copies the deck's own files, and only those, into a staging folder in the version store, runs the checker
-(the `artifact-check` Node package beside this harness) over that copy, and renames it into place as the next version
-only when it passes; each error names the file, the element and the nearest allowed form. What is saved is exactly
-what was checked, and a refused or failed publish leaves no version behind.
-A version is at `/artifacts/<deck folder>.versions/<n>/project/`; the `artifact` tool records its author beside it.
+Its entry in `artifact_types`: `store` copies the deck's own files, and only those, into the version being built in
+the version store; `refuse` runs the checker (the `artifact-check` Node package beside this harness) over that copy,
+which the `artifact` tool renames into place as the next version only when it passes. Each error names the file, the
+element and the nearest allowed form. What is saved is exactly what was checked, and a refused or failed publish
+leaves no version behind. A version is at `/artifacts/<deck folder>.versions/<n>/project/`.
 """
 
 from __future__ import annotations
 
-import errno
 import json
 import os
-import shutil
 import stat
-import subprocess
-import uuid
 from pathlib import Path
+from typing import Any
 
-# In the image the Dockerfile sets BOTCUBE_ARTIFACT_CHECK; from a checkout the package sits beside the harness source.
-CHECKER = Path(os.environ.get('BOTCUBE_ARTIFACT_CHECK') or Path(__file__).resolve().parents[2] / 'artifact-check/src/cli.mjs')
+from . import artifact_check
+
 INDEX = 'project/deck.json'
-# The checker CLI's exit code for a deck with errors; any code but this and 0 is the checker itself failing.
-FOUND_ERRORS = 3
 
 
 def deck_folder(source: Path) -> Path | None:
@@ -34,32 +29,30 @@ def deck_folder(source: Path) -> Path | None:
     return None
 
 
-def check(folder: Path) -> list[str]:
-    """Every error in the deck at `folder`, as the agent reads it; an empty list when it may be published."""
-    run = subprocess.run(
-        ['node', str(CHECKER), 'slides', str(folder)], capture_output=True, text=True, timeout=60, check=False,
-    )
-    if run.returncode not in (0, FOUND_ERRORS):
-        raise RuntimeError(f'The slide checker failed (exit {run.returncode}): {run.stderr.strip()}')
-    return [error['text'] for error in json.loads(run.stdout)['errors']]
+def refuse(folder: Path, _name: str) -> None:
+    """Refuses the deck at `folder` when it breaks the slide format, naming every error as the agent reads it."""
+    if errors := artifact_check.errors('slides', folder):
+        raise ValueError(
+            'The deck breaks the slide format, so nothing was published. Fix every error, then publish again:\n'
+            + '\n'.join(f'- {error}' for error in errors),
+        )
 
 
-def publish_deck(versions: Path, folder: Path) -> tuple[int, str | None]:
-    """Checks the deck at `folder` and saves it in `versions` as its next version: the number and the deck's title."""
-    versions.mkdir(parents=True, exist_ok=True)
-    staging = versions / f'.staging-{uuid.uuid4().hex}'
-    try:
-        _stage(folder / 'project', staging / 'project')
-        if errors := check(staging):
-            raise ValueError(
-                'The deck breaks the slide format, so nothing was published. Fix every error, then publish again:\n'
-                + '\n'.join(f'- {error}' for error in errors),
-            )
-        deck = json.loads((staging / INDEX).read_text(encoding='utf-8'))
-        version = _store(staging, versions)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    return version, deck.get('title')
+def store(folder: Path, version: Path) -> None:
+    """Copies the deck at `folder` to `version`, which does not exist yet: its `deck.json` and slides, nothing else."""
+    _stage(folder / 'project', version / 'project')
+
+
+def title(folder: Path) -> str | None:
+    return json.loads((folder / INDEX).read_text(encoding='utf-8')).get('title')
+
+
+def read(version: Path) -> dict[str, Any]:
+    """A deck version's `files`, by their path in the deck folder (`project/slides/cover.html`)."""
+    return {'files': {
+        path.relative_to(version).as_posix(): path.read_text(encoding='utf-8', errors='replace')
+        for path in sorted(version.glob('project/**/*')) if path.is_file()
+    }}
 
 
 def _stage(project: Path, staged: Path) -> None:
@@ -106,19 +99,3 @@ def _copy(folder_fd: int, entry: str, to: Path, shown: str) -> None:
                 f'{shown} is not a regular file, so nothing was published. Write the file itself in the deck folder.',
             )
         to.write_bytes(source.read())
-
-
-def _store(staging: Path, versions: Path) -> int:
-    """Renames the checked `staging` folder into place as the next version, skipping a number another publish took."""
-    version = 1 + max((int(path.name) for path in versions.iterdir() if path.name.isdigit()), default=0)
-    while True:
-        stored = versions / str(version)
-        try:
-            # A rename onto a published version, which is never an empty folder, fails instead of replacing it.
-            os.rename(staging, stored)
-        except OSError as taken:
-            if taken.errno not in (errno.EEXIST, errno.ENOTEMPTY):
-                raise
-            version += 1
-        else:
-            return version

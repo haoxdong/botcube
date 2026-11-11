@@ -2,23 +2,42 @@
   "name": "botcube-artifact-check",
   "version": "0.1.0",
   "private": true,
-  "description": "Checks an Artifact's Source against its type's format on publish: Slides for now.",
+  "description": "Checks an Artifact's Source against its type's format, on the agent's publish and the User's save.",
   "type": "module",
   "bin": {
     "artifact-check": "src/cli.mjs"
   },
   "exports": {
     ".": {
-      "types": "./src/slides.d.ts",
-      "default": "./src/slides.mjs"
+      "types": "./src/check.d.ts",
+      "default": "./src/check.mjs"
+    },
+    "./email-html": {
+      "types": "./src/email-html.d.ts",
+      "default": "./src/email-html.mjs"
+    },
+    "./email-schema": {
+      "types": "./src/email-schema.d.ts",
+      "default": "./src/email-schema.mjs"
+    },
+    "./record": {
+      "types": "./src/record.d.ts",
+      "default": "./src/record.mjs"
     },
     "./subset": {
       "types": "./src/subset.d.ts",
       "default": "./src/subset.mjs"
+    },
+    "./sheet": {
+      "types": "./src/sheet.d.ts",
+      "default": "./src/sheet.mjs"
     }
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "css-tree": "3.2.1",
-    "html-validate": "11.18.0"
+    "html-validate": "11.18.0",
+    "marked": "17.0.6",
+    "zod": "4.6.7"
   }
 }

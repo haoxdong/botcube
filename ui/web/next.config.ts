@@ -40,7 +40,15 @@ function turbopackTarget(target: string): string {
   return relative.startsWith('..') ? relative : `./${relative}`;
 }
 
-export default async function createConfig(phase: string): Promise<NextConfig> {
+type NextWebpack = NonNullable<NextConfig['webpack']>;
+/** The app's webpack hook, which reads only these two of the context Next hands it. */
+type AppWebpack = (
+  webpackConfig: Parameters<NextWebpack>[0],
+  context: Pick<Parameters<NextWebpack>[1], 'isServer' | 'webpack'>,
+) => ReturnType<NextWebpack>;
+type AppConfig = Omit<NextConfig, 'webpack'> & { webpack: AppWebpack };
+
+export default async function createConfig(phase: string): Promise<AppConfig> {
   const cartridgeBuildConfig: CartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG
     ? await import(path.resolve(repoRoot, process.env.CARTRIDGE_UI_BUILD_CONFIG))
       .then((module) => (module.default ?? module)({ appRoot, repoRoot }) as CartridgeBuildConfig)
@@ -51,7 +59,7 @@ export default async function createConfig(phase: string): Promise<NextConfig> {
 
   const cartridgeUi = cartridgeBuildConfig.cartridgeUiEntry ?? cartridgeUiPackage;
 
-  const config: NextConfig = {
+  const config: AppConfig = {
     output: 'export',
     distDir: phase === PHASE_DEVELOPMENT_SERVER
       ? '.next'
@@ -89,7 +97,7 @@ export default async function createConfig(phase: string): Promise<NextConfig> {
       webpackMemoryOptimizations: true,
       webpackBuildWorker: true,
     },
-    webpack: (webpackConfig) => {
+    webpack: (webpackConfig, { isServer, webpack }) => {
       webpackConfig.resolve ??= {};
       webpackConfig.resolve.alias = {
         ...(webpackConfig.resolve.alias ?? {}),
@@ -103,6 +111,16 @@ export default async function createConfig(phase: string): Promise<NextConfig> {
         ...(webpackConfig.resolve.extensionAlias ?? {}),
         '.js': ['.ts', '.tsx', '.js', '.jsx'],
       };
+      // Every PptxGenJS 4.0.1 build, its browser bundles too, holds `import('node:fs')` and `import('node:https')`,
+      // which it runs only in Node. Webpack refuses the `node:` scheme before an alias or the `browser` field can
+      // apply, so in the browser bundle, and in PptxGenJS alone, the two lose the scheme; its package.json's `browser`
+      // field then maps `fs` and `https` to nothing.
+      if (!isServer) {
+        webpackConfig.plugins ??= [];
+        webpackConfig.plugins.push(new webpack.NormalModuleReplacementPlugin(/^node:(fs|https)$/, (resource: { context: string; request: string }) => {
+          if (/[\\/]pptxgenjs[\\/]dist$/.test(resource.context)) resource.request = resource.request.slice('node:'.length);
+        }));
+      }
       return webpackConfig;
     },
   };

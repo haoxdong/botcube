@@ -302,7 +302,8 @@ describe('while the agent writes', () => {
   const pages = (sent: Sent[]) => sent.filter(({ message }) => message.type === 'artifact-page');
 
   beforeEach(() => {
-    vi.useFakeTimers({ now: 0 });
+    // The clock the stream and the panel run on, and no more: a faked setImmediate stalls Node's streams under the turn.
+    vi.useFakeTimers({ now: 0, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -439,4 +440,18 @@ it("keeps the version a card opened when a saved chat's finished write shows", a
 
   expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toBeInTheDocument();
   expect(posted).toHaveBeenLastCalledWith({ type: 'artifact-page', html: PAGE }, '*');
+});
+
+it("keeps the chat's version open and says why when Files can't say whether a newer one is stored", async () => {
+  phone(false);
+  const stored = fetch;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => new URL(input).searchParams.get('name') === 'artifacts/reports/q3.html.versions/3.html'
+    ? Response.json({ detail: 'Files is unavailable' }, { status: 503 })
+    : stored(input)));
+  render(<Chat />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+
+  const panel = screen.getByRole('region', { name: 'Q3 revenue by month' });
+  expect(await within(panel).findByRole('alert')).toHaveTextContent("Couldn't look for a newer version in Files: Files is unavailable");
+  expect(within(panel).getByText('Page · version 2')).toBeVisible();
 });

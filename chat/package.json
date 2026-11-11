@@ -27,6 +27,7 @@
     "@opentelemetry/propagator-aws-xray": "^3.0.0",
     "@opentelemetry/sdk-node": "0.300.0",
     "@smithy/signature-v4": "^5.7.5",
+    "botcube-artifact-check": "workspace:*",
     "croner": "^10.0.1",
     "eventsource-parser": "3.1.1",
     "fast-json-patch": "3.1.1",

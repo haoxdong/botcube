@@ -1,6 +1,6 @@
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK } from "../cartridge/file-account";
-import { deleteFile, fileDownloadUrl, uploadFile, type UploadOptions } from "../computer/files-service";
+import { deleteFile, fileDownloadUrl, saveArtifact, uploadFile, type ArtifactSave, type UploadOptions } from "../computer/files-service";
 
 const CHAT_SERVICE_URL = chatServiceUrl();
 
@@ -10,6 +10,8 @@ export const agentFiles = {
   url: (path: string) => fileDownloadUrl(decodeURIComponent(path.slice(1)), { chatServiceUrl: CHAT_SERVICE_URL }),
   /** Uploads a file the user attached to the top of Files; resolves to the path the agent reads it by, such as `/report.csv`. */
   upload: (file: File, options: UploadOptions) => uploadFile(file, options, { chatServiceUrl: CHAT_SERVICE_URL }),
+  /** Saves the User's edit of an Artifact as its next version; resolves to that version, as the `Artifact` tool answers. */
+  saveArtifact: (save: ArtifactSave) => saveArtifact(save, { chatServiceUrl: CHAT_SERVICE_URL }),
   /** Deletes a file an upload stored, by the path `upload` resolved to, while the account that attached it is signed in. */
   discard: (path: string, epoch: string | null) =>
     navigator.locks.request(FILE_ACCOUNT_LOCK, { mode: "shared" }, async () => {

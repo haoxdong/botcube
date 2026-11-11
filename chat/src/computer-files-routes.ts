@@ -1,5 +1,7 @@
 import { Hono, type Context } from 'hono';
+import { ArtifactSave } from './artifact-save.js';
 import { HttpError, type AccountHistory, type Requester } from './cartridge.js';
+import { artifactsEnabled } from './config.js';
 import type { AccountFiles } from './files.js';
 import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
@@ -9,7 +11,7 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;
   computers: { state(owner: string, threadId: string): Promise<AgentComputerState>; wake(owner: string, threadId: string): Promise<AgentComputerState> };
-  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'remove' | 'rename' | 'uploadUrl'>;
+  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact'>;
 }): Hono {
   const routes = new Hono();
   const threadIdOf = (c: Context) => { const value = c.req.query('thread_id')?.trim(); if (!value) throw new HttpError(422, 'thread_id must not be blank'); return value; };
@@ -46,5 +48,13 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
     const { owner } = await requester(c);
     return c.json({ url: await files(c).uploadUrl(owner, fileName((await jsonPayload(c))?.name)) });
   });
+  if (artifactsEnabled(process.env)) {
+    routes.post('/files/artifact-save', async (c) => {
+      const { owner } = await requester(c);
+      const save = ArtifactSave.safeParse(await jsonPayload(c));
+      if (!save.success) throw new HttpError(422, 'id, version and files (each a path to its text) are required');
+      return c.json(await files(c).saveArtifact(owner, save.data));
+    });
+  }
   return routes;
 }

@@ -53,6 +53,23 @@ export async function renameFile(from: string, to: string, options: ChatServiceO
   );
 }
 
+/** A User's save of an Artifact edited in place: the edited files of the version they edited, by their path in the Source. */
+export interface ArtifactSave {
+  id: string;
+  version: number;
+  files: Record<string, string>;
+}
+
+/** Saves the User's edit as the Artifact's next version; the Chat Service refuses one over a newer version. */
+export async function saveArtifact(save: ArtifactSave, options: ChatServiceOptions): Promise<Record<string, unknown>> {
+  return chatService(
+    '/files/artifact-save',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(save) },
+    'Save failed',
+    options,
+  );
+}
+
 /** A presigned URL that uploads `name` as a new file; the Chat Service refuses a name Files already holds. */
 async function newUploadUrl(name: string, signal: AbortSignal, service: ChatServiceOptions): Promise<string> {
   const init = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }), signal };

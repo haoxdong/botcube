@@ -7,6 +7,8 @@ WORKDIR /workspace/botcube
 COPY ${BOTCUBE_ROOT}/package.json ${BOTCUBE_ROOT}/pnpm-lock.yaml ${BOTCUBE_ROOT}/pnpm-workspace.yaml ./
 COPY ${BOTCUBE_ROOT}/patches/ patches/
 COPY ${BOTCUBE_ROOT}/chat/ chat/
+COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
+COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
 COPY ${BOTCUBE_ROOT}/templates/always-on/chat/ templates/always-on/chat/
 COPY ${BOTCUBE_ROOT}/templates/always-on/identity.ts templates/always-on/identity.ts
 RUN --mount=type=secret,id=build_ca \

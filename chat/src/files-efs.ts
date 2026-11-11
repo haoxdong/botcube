@@ -6,6 +6,7 @@ import {
   AccessPointNotFound, CreateAccessPointCommand, DeleteAccessPointCommand, DescribeAccessPointsCommand, EFSClient,
 } from '@aws-sdk/client-efs';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
+import { saveArtifact } from './artifact-save.js';
 import { HttpError } from './cartridge.js';
 import {
   FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS,
@@ -296,6 +297,10 @@ export function accountFilesEfs({
       const [source, target] = [fileOf(accountId, from), fileOf(accountId, fileDestination(to))];
       if (!await exists(source)) throw new HttpError(404, `No file ${from} in Files`);
       if (!await moveNoClobber(source, target)) throw new HttpError(409, `A file named ${to} is already in Files`);
+    },
+    async saveArtifact(accountId, save) {
+      await requireActive(accountId);
+      return saveArtifact(directory(accountId), save);
     },
     async mountBinding(accountId) {
       await requireActive(accountId);

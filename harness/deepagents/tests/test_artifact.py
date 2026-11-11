@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.artifact import artifact_tool, publishing_tools
+from botcube_harness_deepagents.artifact_types import TYPES
 from botcube_harness_deepagents.files import excluded_paths
 from botcube_harness_deepagents.files_mount import FilesMount
 from botcube_harness_deepagents.lazy_files import turn_files
@@ -80,7 +81,10 @@ def test_publishing_a_missing_file_fails_with_a_clear_message(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(('name', 'message'), [
-    ('notes.md', r'An Artifact is an \.html file for now: notes\.md'),
+    ('notes.txt', (
+        r"An Artifact is a deck's project/deck\.json, a \.md Doc, a \.sheet\.json Sheet, an \.email\.json Email draft "
+        r'or an \.html page: notes\.txt'
+    )),
     ('tmp/q3.html', r'Save the page in Files to publish it: /tmp/q3\.html'),
 ])
 def test_publishing_what_cannot_be_an_artifact_fails_and_saves_nothing(tmp_path: Path, name: str, message: str) -> None:
@@ -89,6 +93,14 @@ def test_publishing_what_cannot_be_an_artifact_fails_and_saves_nothing(tmp_path:
     with pytest.raises(ValueError, match=message):
         call(tmp_path, file_path=f'/{name}')
     assert not (tmp_path / 'artifacts').exists()
+
+
+def test_the_tool_tells_the_agent_how_to_publish_every_artifact_type(tmp_path: Path) -> None:
+    description = artifact_tool(tmp_path).description
+
+    assert all(kind.publishes in description for kind in TYPES)
+    assert '`<name>.sheet.json`' in description
+    assert '`<name>.email.json`' in description
 
 
 def test_list_and_read_find_an_artifact_published_in_another_chat_of_the_account(tmp_path: Path) -> None:
@@ -229,3 +241,27 @@ def test_the_agents_file_tools_cannot_change_the_version_store_but_the_artifact_
     versions = tmp_path / 'artifacts/q3.html.versions'
     assert (versions / '1.html').read_bytes() == PAGE
     assert json.loads((versions / '2.json').read_text())['author'] == 'agent'
+
+
+@pytest.mark.parametrize('kind', ['page', 'deck'])
+def test_a_version_becomes_visible_only_once_its_record_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    if kind == 'page':
+        (tmp_path / 'q3.html').write_bytes(PAGE)
+    else:
+        (tmp_path / 'decks/q3/project/slides').mkdir(parents=True)
+        (tmp_path / 'decks/q3/project/deck.json').write_text('{"title": "Q3", "order": ["cover"]}')
+        (tmp_path / 'decks/q3/project/slides/cover.html').write_text('<section id="cover"><h1>Q3</h1></section>')
+    shown: list[tuple[str, bool]] = []
+    rename = Path.rename
+
+    def showing(self: Path, target: Path) -> Path:
+        version = Path(target)
+        shown.append((version.name, (version.parent / f"{version.name.removesuffix('.html')}.json").is_file()))
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, 'rename', showing)
+    call(tmp_path, file_path='/q3.html' if kind == 'page' else '/decks/q3')
+
+    assert shown == [('1.html' if kind == 'page' else '1', True)]

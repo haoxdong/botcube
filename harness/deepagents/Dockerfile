@@ -63,7 +63,8 @@ RUN --mount=type=secret,id=build_ca \
     rm -rf /opt/browser/node_modules
 
 # The checker the Artifact tool runs on publish (artifact-check), and the `artifacts` skill beside it that the agent
-# reads through the Harness (artifact.SKILLS).
+# reads through the Harness (artifact.SKILLS). package-lock.json is held to the workspace's botcube/pnpm-lock.yaml, which
+# this build context cannot see (scripts/checks/artifact-check-lock.mjs), so the image runs the versions the tests do.
 WORKDIR /opt/artifact-check
 COPY artifact-check/package.json artifact-check/package-lock.json ./
 RUN --mount=type=secret,id=build_ca \

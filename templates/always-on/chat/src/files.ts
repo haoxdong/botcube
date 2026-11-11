@@ -9,7 +9,7 @@ const records = (owner: string) => { let files = accounts.get(owner); if (!files
 const requireName = (name: string) => { if (!name || name.split('/').some((part) => !part || part === '.' || part === '..')) throw new HttpError(400, 'name must be a path inside Files'); return name; };
 
 /** Offline storage behind the same Files routes the cloud implementation uses. */
-export function templateFiles(requestUrl: string): Pick<AccountFiles, 'list' | 'downloadUrl' | 'remove' | 'rename' | 'uploadUrl'> {
+export function templateFiles(requestUrl: string): Pick<AccountFiles, 'list' | 'downloadUrl' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact'> {
   const url = (name: string) => { const endpoint = new URL('/files/content', requestUrl); endpoint.searchParams.set('name', requireName(name)); return endpoint.href; };
   const requireFile = (owner: string, name: string) => { const value = records(owner).get(requireName(name)); if (!value) throw new HttpError(404, 'File not found'); return value; };
   return {
@@ -26,6 +26,7 @@ export function templateFiles(requestUrl: string): Pick<AccountFiles, 'list' | '
       return endpoint.href;
     },
     async remove(owner, name) { requireFile(owner, name); records(owner).delete(name); },
+    async saveArtifact(_owner, { id }) { throw new HttpError(404, `No Artifact ${id} in Files`); },
     async rename(owner, from, to) { const bytes = requireFile(owner, from); requireName(to); if (records(owner).has(to)) throw new HttpError(409, 'File already exists'); records(owner).set(to, bytes); records(owner).delete(from); },
   };
 }

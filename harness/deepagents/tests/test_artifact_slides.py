@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 from langchain_core.messages import ToolMessage
 
-from botcube_harness_deepagents import slides
+from botcube_harness_deepagents import artifact_check, slides
 from botcube_harness_deepagents.artifact import artifact_tool
-from botcube_harness_deepagents.slides import CHECKER, check
+from botcube_harness_deepagents.artifact_check import CHECKER, errors
 
 SKILL_PAGE = CHECKER.parent.parent / 'skills' / 'artifacts' / 'SKILL.md'
 
@@ -206,18 +206,20 @@ def test_a_publish_that_lands_while_this_one_is_checked_keeps_its_number(
     write_deck(tmp_path, DECK, {'cover': COVER, 'agenda': AGENDA})
     other = tmp_path / VERSIONS / '1/project'
 
-    def check_while_another_publishes(folder: Path) -> list[str]:
+    def check_while_another_publishes(type_name: str, folder: Path, name: str | None = None) -> list[str]:
+        # As every publish does: its record claims the number, then its version lands.
+        (other.parent.parent / '1.json').write_text(json.dumps({'author': 'agent', 'title': 'Q3', 'description': ''}))
         other.mkdir(parents=True)
         (other / 'deck.json').write_text('{"title": "the other publish"}', encoding='utf-8')
-        return check(folder)
+        return errors(type_name, folder, name)
 
-    monkeypatch.setattr(slides, 'check', check_while_another_publishes)
+    monkeypatch.setattr(artifact_check, 'errors', check_while_another_publishes)
     published = json.loads(str(call(tmp_path, file_path='/decks/q3').content))
 
     assert (published['version'], published['path']) == (2, '/artifacts/decks/q3.versions/2')
     assert (other / 'deck.json').read_text() == '{"title": "the other publish"}'
     assert stored(tmp_path) == [
-        '1/project/deck.json', '2.json', '2/project/deck.json', '2/project/slides/agenda.html',
+        '1.json', '1/project/deck.json', '2.json', '2/project/deck.json', '2/project/slides/agenda.html',
         '2/project/slides/cover.html', 'read.json',
     ]
 
@@ -241,8 +243,8 @@ def test_a_copy_that_fails_midway_leaves_no_version(tmp_path: Path, monkeypatch:
 
 
 def test_a_checker_that_crashes_fails_loud_with_its_stderr(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match=r'(?s)The slide checker failed \(exit 1\): .*ENOENT'):
-        check(tmp_path / 'no-such-deck')
+    with pytest.raises(RuntimeError, match=r'(?s)The slides checker failed \(exit 1\): .*ENOENT'):
+        errors('slides', tmp_path / 'no-such-deck')
 
 
 def test_an_image_is_held_in_the_slide_as_a_data_uri_since_a_slide_loads_nothing(tmp_path: Path) -> None:

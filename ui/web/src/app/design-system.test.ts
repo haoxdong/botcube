@@ -80,9 +80,11 @@ it("colours text from the tokens, or a code block's tokens with Shiki's colours"
 });
 
 it('keeps raw colours out of components', () => {
-  // Marq's avatar is an illustration; Chrome's dock icon is Google's own logo.
+  // Marq's avatar is an illustration; Chrome's dock icon is Google's own logo; a Sheet's standard colors are its
+  // cells' own, as the Sheet format names them, not the app's.
   const exempt = {
     'app/avatar.tsx': /#[0-9a-f]{6}/i,
+    'app/sheet-model.ts': /#[0-9a-f]{6}/i,
     'computer/agent-computer.tsx': /#(1a73e8|4285f4|8ab4f8|ffffff)\b/i,
   };
   expect(rawColoursIn(path.join(cube, 'ui/web/src'), exempt)).toEqual([]);

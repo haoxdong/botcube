@@ -3,10 +3,10 @@
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { m as motionElement } from "framer-motion";
-import { AppWindowIcon, Maximize2Icon, Minimize2Icon, PrinterIcon, XIcon } from "lucide-react";
+import { AppWindowIcon, Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react";
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject,
-  type SetStateAction,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
+  type ReactNode, type SetStateAction,
 } from "react";
 import { Allow, parse as parsePartial } from "partial-json";
 import { usePanelRef } from "react-resizable-panels";
@@ -15,7 +15,12 @@ import { z } from "zod";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Sheet } from "../components/ui/sheet";
 import { agentFiles } from "./agent-files";
-import { deckFiles, deckOf, DeckFrame, sourceOf, VersionDeck } from "./artifact-slides";
+import { Refusal, useExports } from "./artifact-exports";
+import { readBytes, readFile } from "./artifact-files";
+import { newestInFiles, useNewestInFiles } from "./artifact-newest";
+import { deckFiles, deckOf, DeckFrame, sourceOf } from "./artifact-slides";
+import { TYPES, writtenType } from "./artifact-types";
+import type { ArtifactEdit, ArtifactType, ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { useIsPhone } from "./phone-query";
@@ -31,11 +36,12 @@ const ArtifactCall = z.object({
 
 const Published = z.object({
   id: z.string(),
-  type: z.enum(["slides"]).nullable(),
+  type: z.enum(["slides", "doc", "sheet", "email"]).nullable(),
   title: z.string(),
   description: z.string(),
   version: z.number(),
   path: z.string(),
+  author: z.enum(["agent", "user"]).optional(),
 });
 type Published = z.infer<typeof Published>;
 
@@ -46,17 +52,9 @@ const FileCall = z.object({ file_path: z.string().optional(), content: z.string(
 const WRITTEN = /^Updated file /;
 const EDITED = /^Successfully replaced /;
 
-// Any HTML write previews, and so does any file of a deck: a Source becomes an Artifact only on the publish that
-// follows its write, and a preview runs no scripts. Markdown joins once the panel has a viewer for it.
-const previewed = (path: string) => /\.html?$/i.test(path) || deckOf(path) !== null;
-
 /** A Source as the agent last wrote it, `complete` once its file is; or why the panel couldn't read it after an edit. */
-type Source = { path: string } & ({ html: string; complete: boolean } | { error: string });
+type Source = { path: string } & ({ text: string; complete: boolean } | { error: string });
 
-const PREVIEW_MS = 250;
-
-const SANDBOX_PAGE = "/artifact-sandbox/";
-const SANDBOX = "allow-scripts allow-modals";
 const OPEN_SIZE = "50%";
 
 /**
@@ -73,6 +71,8 @@ const Panel = createContext<{
   /** A published version, from a card or the agent's publish, so the panel and every card of its Artifact open the newest. */
   seen: (artifact: Published) => void;
   sources: ReadonlyMap<string, Source>;
+  /** Why Files couldn't give an opened Artifact's newest version, by its id. */
+  failures: Readonly<Record<string, string | undefined>>;
 } | null>(null);
 
 function usePanel() {
@@ -105,7 +105,17 @@ function isJson(result: string) {
 /** A call without an action publishes. */
 const publishes = (args: string) => (ArtifactCall.parse(JSON.parse(args)).action ?? "publish") === "publish";
 
-const kindOf = (artifact: Published) => `${artifact.type === "slides" ? "Slides" : "Page"} · version ${artifact.version}`;
+const typeOf = (type: Published["type"]) => TYPES[type ?? "page"];
+
+// A Source becomes an Artifact only on the publish that follows its write, and a preview runs no scripts.
+const previewed = (path: string) => deckOf(path) !== null || writtenType(path) !== undefined;
+
+/** A Source being written: a deck's by its files, a one-file Source by its path. */
+const sourceType = (path: string, sources: ReadonlyMap<string, Source>): ArtifactType =>
+  deckFiles(path, sources.values()) !== null ? TYPES.slides : writtenType(path) ?? TYPES.page;
+
+const kindOf = (artifact: Published) =>
+  `${typeOf(artifact.type).label} · version ${artifact.version}${artifact.author === "user" ? " · saved by you" : ""}`;
 
 const titleOf = (shown: Shown) => "artifact" in shown ? shown.artifact.title : shown.source.slice(shown.source.lastIndexOf("/") + 1);
 
@@ -122,11 +132,8 @@ function shownOf(opened: Opened | null, newest: Published | undefined): Shown | 
   return newest === undefined ? null : { artifact: newest, full };
 }
 
-async function readFile(path: string): Promise<string> {
-  const response = await fetch(await agentFiles.url(path));
-  if (!response.ok) throw new Error(`Files answered ${response.status}`);
-  return response.text();
-}
+/** An Artifact's newest version in Files. */
+const newestOf = (known: Published) => newestInFiles(known, typeOf(known.type).stored, readFile);
 
 function useKept(shown: Shown | null) {
   const [kept, keep] = useState(shown);
@@ -144,6 +151,7 @@ export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; chil
   const kept = useKept(shown);
   const phone = useIsPhone();
   const sources = useAgentSources(agent, { shown, newest, open, seen, phone });
+  const failures = useNewestInFiles(opened?.id, artifact, newestOf, seen);
   useRenderTool({
     name: "Artifact",
     parameters: ArtifactCall,
@@ -160,7 +168,7 @@ export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; chil
       );
     },
   }, []);
-  const panel = { shown, open, seen, sources };
+  const panel = { shown, open, seen, sources, failures };
   // A phone and a desktop lay the chat out differently, so turning across the breakpoint with an Artifact open
   // remounts the chat: rare, and the chat reloads its messages as it would on opening.
   if (phone) {
@@ -169,7 +177,7 @@ export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; chil
         {children}
         {kept && (
           <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
-            <ArtifactView shown={kept} />
+            <ArtifactView key={pathOf(kept)} shown={kept} heading={<span className="sent-file-kind"><Kind shown={kept} /></span>} />
           </Sheet>
         )}
       </Panel.Provider>
@@ -221,7 +229,7 @@ function useAgentSources(agent: AbstractAgent, following: Following) {
         const { content } = FileCall.parse(parsePartial(args));
         Object.assign(call, { path, content });
         if (call.name !== "write_file" || path === undefined || content === undefined || !previewed(path)) return;
-        keep({ path, html: content, complete: false });
+        keep({ path, text: content, complete: false });
         const { phone, newest } = latest.current;
         if (call.streamed === undefined && !phone) {
           const id = sourceOf(path);
@@ -243,11 +251,11 @@ function useAgentSources(agent: AbstractAgent, following: Following) {
         }
         const { name, path, content } = call;
         if (path === undefined || !previewed(path)) return;
-        if (name === "write_file" && content !== undefined && WRITTEN.test(result)) keep({ path, html: content, complete: true });
+        if (name === "write_file" && content !== undefined && WRITTEN.test(result)) keep({ path, text: content, complete: true });
         const shownNow = latest.current.shown;
         if (name === "edit_file" && EDITED.test(result) && shownNow !== null && "source" in shownNow && shownNow.source === sourceOf(path)) {
           readFile(path).then(
-            (html) => keep({ path, html, complete: true }),
+            (text) => keep({ path, text, complete: true }),
             (error: unknown) => keep({ path, error: `Couldn't show the edit to ${path}: ${reason(error)}` }),
           );
         }
@@ -307,40 +315,48 @@ function ArtifactCard({ artifact }: { artifact: Published }) {
 }
 
 function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: ReactNode; controls?: ReactNode }) {
-  const { sources } = usePanel();
+  const { sources, failures } = usePanel();
+  const failure = "artifact" in shown ? failures[shown.artifact.id] : undefined;
   const { full } = shown;
   const frame = useRef<HTMLIFrameElement>(null);
   const source = sourceIn(shown, sources);
   const title = titleOf(shown);
-  // The frame prints its own page: the app cannot reach into a frame of another origin.
-  const print = () => frame.current?.contentWindow?.postMessage({ type: "artifact-print" }, "*");
+  const type = "artifact" in shown ? typeOf(shown.artifact.type) : sourceType(shown.source, sources);
+  const exports = useExports(type.exports, { title, frame, read: readFile, readBytes, newest: "artifact" in shown ? shown.artifact : null });
   return (
     <section aria-label={title} className="artifact-panel" data-full={full || undefined}>
       <header className="artifact-panel-head">
         {heading}
         <span className="artifact-panel-actions">
-          <button type="button" className="header-btn" aria-label="Download as PDF" title="Download as PDF" onClick={print}><PrinterIcon aria-hidden /></button>
+          {exports.buttons}
           {controls}
         </span>
       </header>
-      <ShownFrame shown={shown} source={source} title={title} frame={frame} />
+      <Refusal message={failure ?? null} />
+      {exports.failure}
+      <ShownFrame shown={shown} source={source} title={title} frame={frame} shows={exports.shows} />
     </section>
   );
 }
 
 function DesktopHeading({ shown }: { shown: Shown }) {
-  const { sources } = usePanel();
-  const source = sourceIn(shown, sources);
-  const deck = "source" in shown ? deckFiles(shown.source, sources.values()) : null;
-  const kind = "artifact" in shown ? kindOf(shown.artifact)
-    : deck !== null ? (deck.writing ? "Slides · writing…" : "Slides")
-    : source !== undefined && "html" in source && !source.complete ? "Page · writing…" : "Page";
   return (
     <span className="sent-file-text">
       <span className="sent-file-name">{titleOf(shown)}</span>
-      <span className="sent-file-kind">{kind}</span>
+      <span className="sent-file-kind"><Kind shown={shown} /></span>
     </span>
   );
+}
+
+/** What the panel shows: a version by its type, or a Source by its type and whether the agent is still writing it. */
+function Kind({ shown }: { shown: Shown }) {
+  const { sources } = usePanel();
+  const source = sourceIn(shown, sources);
+  if ("artifact" in shown) return kindOf(shown.artifact);
+  const deck = deckFiles(shown.source, sources.values());
+  const { label } = sourceType(shown.source, sources);
+  const writing = deck !== null ? deck.writing : source !== undefined && "text" in source && !source.complete;
+  return writing ? `${label} · writing…` : label;
 }
 
 function DesktopControls({ shown }: { shown: Shown }) {
@@ -358,78 +374,25 @@ function DesktopControls({ shown }: { shown: Shown }) {
   );
 }
 
-function ShownFrame({ shown, source, title, frame }: { shown: Shown; source: Source | undefined; title: string; frame: RefObject<HTMLIFrameElement | null> }) {
-  const { sources } = usePanel();
+function ShownFrame({ shown, source, title, frame, shows }: { shown: Shown; source: Source | undefined; title: string } & Pick<ViewerProps, "frame" | "shows">) {
+  const { sources, seen } = usePanel();
+  const save = useCallback(async (edit: ArtifactEdit) => seen(Published.parse(await agentFiles.saveArtifact(edit))), [seen]);
   const deck = useMemo(() => "source" in shown ? deckFiles(shown.source, sources.values()) : null, [shown, sources]);
-  if ("artifact" in shown && shown.artifact.type === "slides") {
-    return <VersionDeck key={shown.artifact.path} title={title} path={shown.artifact.path} read={readFile} frame={frame} />;
+  if ("artifact" in shown) {
+    // Keyed by the Artifact, so a Viewer editing a version stays mounted when a newer one arrives.
+    const { Viewer } = typeOf(shown.artifact.type);
+    return <Viewer key={shown.artifact.id} artifact={shown.artifact} read={readFile} readBytes={readBytes} save={save} frame={frame} shows={shows} />;
   }
-  if ("artifact" in shown) return <VersionFrame key={shown.artifact.path} artifact={shown.artifact} frame={frame} />;
   if (deck !== null) {
     return <DeckFrame key={shown.source} title={title} folder={shown.source} files={deck.files} errors={deck.errors} runs={false} frame={frame} />;
   }
   const failure = source !== undefined && "error" in source ? source.error : null;
+  const { text, complete } = source !== undefined && "text" in source ? source : { text: null, complete: false };
+  const { Preview } = writtenType(shown.source)?.writes ?? TYPES.page.writes;
   return (
     <>
-      <Presence>{failure !== null && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">{failure}</motionElement.p>
-      )}</Presence>
-      <SandboxFrame key={shown.source} title={title} html={source !== undefined && "html" in source ? source.html : null} runs={false} frame={frame} />
+      <Refusal message={failure} />
+      <Preview key={shown.source} title={title} text={text} complete={complete} frame={frame} />
     </>
   );
-}
-
-function VersionFrame({ artifact, frame }: { artifact: Published; frame: RefObject<HTMLIFrameElement | null> }) {
-  const [page, setPage] = useState<{ html: string } | { error: string } | null>(null);
-  useEffect(() => {
-    let current = true;
-    readFile(artifact.path).then(
-      (html) => current && setPage({ html }),
-      (error: unknown) => current && setPage({ error: reason(error) }),
-    );
-    return () => {
-      current = false;
-    };
-  }, [artifact.path]);
-  const failure = page !== null && "error" in page ? page.error : null;
-  return (
-    <>
-      <Presence>{failure !== null && (
-        <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {artifact.title}: {failure}</motionElement.p>
-      )}</Presence>
-      <SandboxFrame title={artifact.title} html={page !== null && "html" in page ? page.html : null} runs frame={frame} />
-    </>
-  );
-}
-
-/**
- * The sandbox page, sent `html` once it says it is ready. A published version `runs` with its scripts. A Source only
- * previews, without them (the sandbox draws it in a frame of its own that allows no scripts), at most four times a
- * second: only a Source that passed its publish runs.
- */
-function SandboxFrame({ title, html, runs, frame }: { title: string; html: string | null; runs: boolean; frame: RefObject<HTMLIFrameElement | null> }) {
-  const [ready, setReady] = useState(false);
-  const rendered = useRef(Number.NEGATIVE_INFINITY);
-  useEffect(() => {
-    const receive = (event: MessageEvent) => {
-      if (event.source === frame.current?.contentWindow && event.data?.type === "artifact-sandbox-ready") setReady(true);
-    };
-    window.addEventListener("message", receive);
-    return () => window.removeEventListener("message", receive);
-  }, [frame]);
-  useEffect(() => {
-    if (!ready || html === null) return;
-    const render = () => {
-      rendered.current = Date.now();
-      frame.current?.contentWindow?.postMessage({ type: runs ? "artifact-page" : "artifact-preview", html }, "*");
-    };
-    const wait = runs ? 0 : rendered.current + PREVIEW_MS - Date.now();
-    if (wait <= 0) {
-      render();
-      return;
-    }
-    const timer = setTimeout(render, wait);
-    return () => clearTimeout(timer);
-  }, [ready, html, runs, frame]);
-  return <iframe ref={frame} title={title} sandbox={SANDBOX} src={SANDBOX_PAGE} className="artifact-frame" />;
 }

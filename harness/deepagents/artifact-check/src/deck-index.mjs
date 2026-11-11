@@ -3,7 +3,7 @@
 import { LIMITS, SLIDE_ID } from './subset.mjs';
 
 const FILE = 'project/deck.json';
-/** @returns {import('./slides.mjs').SlideError} */
+/** @returns {import('./check.mjs').CheckError} */
 const error = (element, message, nearest) => ({ file: FILE, element, message, nearest });
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -11,7 +11,7 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
  * Every error in `project/deck.json`, given its text and the ids of the slide files written.
  * @param {string} text
  * @param {Set<string>} written
- * @returns {import('./slides.mjs').SlideError[]}
+ * @returns {import('./check.mjs').CheckError[]}
  */
 export function checkIndex(text, written) {
   let deck;

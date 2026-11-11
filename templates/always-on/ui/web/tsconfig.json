@@ -8,6 +8,7 @@
     "src/**/*.tsx",
     "../../../../ui/web/src/cartridge/alias.d.ts",
     "../../../../ui/web/src/styles.d.ts",
+    "../../../../ui/web/src/html-to-docx.d.ts",
     "storybook/**/*.ts",
     "storybook/**/*.tsx"
   ]

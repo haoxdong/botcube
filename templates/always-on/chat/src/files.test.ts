@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { HttpError } from 'botcube-chat';
 import { computerFilesRoutes } from 'botcube-chat/computer-files-routes';
 import { accountRoutes } from 'botcube-chat/accounts';
@@ -7,7 +7,9 @@ import { memoryDocuments } from '../../../../chat/test/memory-documents.js';
 import { templateAccountStore, templateCookies } from './account.js';
 import { templateFiles, templateFileContent } from './files.js';
 
-it('runs the shared Files routes through account-scoped offline uploads, downloads, rename and removal', async () => {
+afterEach(() => vi.unstubAllEnvs());
+
+function filesApp() {
   const store = templateAccountStore({}, memoryDocuments());
   const accounts = accountRoutes({ store: () => store, cookies: templateCookies, signIns: async () => [] });
   const requester = async (c: Context) => ({ owner: (await accounts.owner(c)).owner });
@@ -23,10 +25,19 @@ it('runs the shared Files routes through account-scoped offline uploads, downloa
     },
     files: (c) => templateFiles(c.req.url),
   })).route('/', templateFileContent(requester)).route('/', accounts.routes);
-  expect((await app.request('http://fixture/files')).status).toBe(401);
+  return app;
+}
+
+async function signedIn(app: Hono) {
   const cookie = (await app.request('http://fixture/account/session')).headers.get('set-cookie')?.split(';')[0];
   if (!cookie) throw new Error('Files fixture did not establish its account');
-  const headers = { cookie, 'content-type': 'application/json' };
+  return { cookie, 'content-type': 'application/json' };
+}
+
+it('runs the shared Files routes through account-scoped offline uploads, downloads, rename and removal', async () => {
+  const app = filesApp();
+  expect((await app.request('http://fixture/files')).status).toBe(401);
+  const headers = await signedIn(app);
   const first = await app.request('http://fixture/files', { headers });
   expect(await first.json()).toMatchObject({ files: [{ name: 'sample.txt' }] });
   const upload = await app.request('http://fixture/files/upload-url', { method: 'POST', headers, body: JSON.stringify({ name: 'report.txt' }) });
@@ -48,4 +59,17 @@ it('runs the shared Files routes through account-scoped offline uploads, downloa
   expect((await app.request('http://fixture/files?name=saved.txt', { method: 'DELETE', headers })).status).toBe(204);
   expect((await app.request('http://fixture/files/download-url?name=saved.txt', { headers })).status).toBe(404);
   expect((await app.request('http://fixture/files/upload-url', { method: 'POST', headers, body: JSON.stringify({ name: '../escape' }) })).status).toBe(400);
+});
+
+it('saves an edited Artifact only behind the Artifacts flag, and refuses a save that is not one', async () => {
+  const edit = { id: '/decks/q3', version: 1, files: { 'project/slides/cover.html': '<section id="cover"></section>' } };
+  const save = async (app: Hono, body: unknown) => app.request('http://fixture/files/artifact-save', { method: 'POST', headers: await signedIn(app), body: JSON.stringify(body) });
+  expect((await save(filesApp(), edit)).status).toBe(404);
+
+  vi.stubEnv('BOTCUBE_ARTIFACTS', '1');
+  const app = filesApp();
+  const refused = await Promise.all([{ ...edit, files: { 'project/slides/cover.html': 3 } }, { ...edit, version: 1.5 }, { files: edit.files }].map(async (body) => (await save(app, body)).status));
+  expect(refused).toEqual([422, 422, 422]);
+  const offline = await save(app, edit);
+  expect([offline.status, await offline.json()]).toEqual([404, { detail: 'No Artifact /decks/q3 in Files' }]);
 });

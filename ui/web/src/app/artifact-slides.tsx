@@ -19,13 +19,13 @@ export const sourceOf = (path: string) => deckOf(path) ?? path;
 /** A deck's file as the agent last wrote it, partly while its write streams. */
 export type DeckFile = { path: string; text: string; complete: boolean };
 /** A file as the agent last wrote it, `complete` once it is; or why the panel couldn't read it after an edit. */
-type Written = { path: string } & ({ html: string; complete: boolean } | { error: string });
+type Written = { path: string } & ({ text: string; complete: boolean } | { error: string });
 
 /** The deck's files the agent wrote in this chat, `writing` until each is whole; null when `folder` is no deck's. */
 export function deckFiles(folder: string, sources: Iterable<Written>): { files: DeckFile[]; errors: string[]; writing: boolean } | null {
   const written = [...sources].filter(({ path }) => deckOf(path) === folder);
   if (written.length === 0) return null;
-  const files = written.flatMap((source) => "html" in source ? [{ path: source.path, text: source.html, complete: source.complete }] : []);
+  const files = written.flatMap((source) => "text" in source ? [{ path: source.path, text: source.text, complete: source.complete }] : []);
   return {
     files,
     errors: written.flatMap((source) => "error" in source ? [source.error] : []),
@@ -41,7 +41,7 @@ const SLIDES_PAGE = "/artifact-sandbox/slides/";
 const RENDER_MS = 250;
 
 /** deck.json's slide order, or null while it is half-written. */
-function orderOf(text: string): string[] | null {
+export function orderOf(text: string): string[] | null {
   try {
     const index: unknown = JSON.parse(text);
     const order = typeof index === "object" && index !== null && "order" in index ? index.order : null;
@@ -126,28 +126,37 @@ export function DeckFrame({ title, folder, files, errors = [], runs, frame }: { 
   );
 }
 
-/** A published deck's Artifact Version from Files: its deck.json, then each slide it lists. */
-export function VersionDeck({ title, path, read, frame }: { title: string; path: string; read: (path: string) => Promise<string>; frame: RefObject<HTMLIFrameElement | null> }) {
+/** A published deck's Artifact Version's files: its deck.json, then each slide it lists. */
+export async function readDeck(path: string, read: (path: string) => Promise<string>): Promise<DeckFile[]> {
+  const index = `${path}/project/deck.json`;
+  const text = await read(index);
+  const order = orderOf(text);
+  if (order === null) throw new Error("its deck.json does not parse as a deck");
+  const slides = await Promise.all(order.map(async (id) => {
+    const slide = `${path}/project/slides/${id}.html`;
+    return { path: slide, text: await read(slide), complete: true };
+  }));
+  return [{ path: index, text, complete: true }, ...slides];
+}
+
+/** A published deck's Artifact Version from Files: its deck.json, then each slide it lists; empty while it loads. */
+export function useVersionFiles(path: string, read: (path: string) => Promise<string>): DeckFile[] | { error: string } {
   const [files, setFiles] = useState<DeckFile[] | { error: string }>([]);
   useEffect(() => {
     let current = true;
-    const index = `${path}/project/deck.json`;
-    read(index)
-      .then(async (text) => {
-        // A published deck.json passed the checker, so one that does not parse is a fault to show, not an empty deck.
-        const order = orderOf(text);
-        if (order === null) throw new Error("its deck.json does not parse as a deck");
-        const slides = await Promise.all(order.map(async (id) => {
-          const slide = `${path}/project/slides/${id}.html`;
-          return { path: slide, text: await read(slide), complete: true };
-        }));
-        if (current) setFiles([{ path: index, text, complete: true }, ...slides]);
-      })
-      .catch((error: unknown) => current && setFiles({ error: reason(error) }));
+    readDeck(path, read).then(
+      (files) => current && setFiles(files),
+      (error: unknown) => current && setFiles({ error: reason(error) }),
+    );
     return () => {
       current = false;
     };
   }, [path, read]);
+  return files;
+}
+
+/** A published deck's version, as `useVersionFiles` loaded it (a Viewer may lay its drafts over the files): it runs. */
+export function VersionDeck({ title, path, files, frame }: { title: string; path: string; files: readonly DeckFile[] | { error: string }; frame: RefObject<HTMLIFrameElement | null> }) {
   return (
     <>
       <Presence>{"error" in files && (

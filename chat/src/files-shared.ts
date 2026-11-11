@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { ArtifactSave, SavedArtifact } from './artifact-save.js';
 import { HttpError } from './cartridge.js';
 
 /** Where every Agent Computer browser mounts its account's Files; Chrome's download directory (deploy/agent-computer). */
@@ -61,6 +62,8 @@ export interface AccountFiles {
   remove(accountId: string, name: string): Promise<void>;
   /** Rename a file without replacing another file. */
   rename(accountId: string, from: string, to: string): Promise<void>;
+  /** A User's save of an Artifact edited in place: its Source and its next Artifact Version, authored by the User. */
+  saveArtifact(accountId: string, save: ArtifactSave): Promise<SavedArtifact>;
   mountBinding(accountId: string): Promise<FilesMountBinding>;
   /** Move every file into another account's Files for Account Claim, then retire the source access point. */
   transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;

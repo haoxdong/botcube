@@ -1,7 +1,7 @@
-// Checks a Slides Source, `project/deck.json` and `project/slides/<id>.html`, against the slide format's closed subset
-// (subset.mjs). html-validate parses each slide and walks its elements; css-tree matches each inline style against the
-// subset's grammar. Every error names the file, the element and the nearest allowed form (the Artifacts spec, Checker).
-import { fork, generate, parse as parseCss, walk } from 'css-tree';
+// Checks a Slides Source (`project/deck.json`, `project/slides/<id>.html`) against the closed subset (subset.mjs):
+// html-validate walks each slide; css-tree matches each inline style. Each error names the file, the element and the
+// nearest allowed form (the Artifacts spec, Checker).
+import { fork, generate, parse as parseCss, walk } from 'css-tree/dist/csstree.esm';
 import { HtmlValidate, Rule, StaticConfigLoader } from 'html-validate';
 
 import { checkIndex } from './deck-index.mjs';
@@ -17,12 +17,7 @@ const { lexer } = fork({
 });
 const UNITS = new Set(['px', 'deg', 'turn', 'rad', 'fr']);
 
-/** @typedef {{file: string, line?: number, column?: number, element: string, message: string, nearest: string}} SlideError */
-
-/** One error as the agent reads it: `file:line:col element — what is wrong. Nearest: the allowed form.` */
-export function describe({ file, line, column, element, message, nearest }) {
-  return `${file}${line === undefined ? '' : `:${line}:${column}`} ${element} — ${message}. Nearest: ${nearest}.`;
-}
+/** @typedef {import('./check.mjs').CheckError} SlideError */
 
 /**
  * Every error in a deck, given its files by their path under the deck's folder (`project/deck.json`,
