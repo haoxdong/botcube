@@ -133,8 +133,28 @@ The name, character, and look a user gives their agent, starting from the Cartri
 _Avoid_: identity (bare), profile, bot name
 
 **Artifact**:
-A file the agent makes for the user to keep, revise or pass on, with its own identity across versions: an HTML page, a PDF, an Office file or an email draft. The reply shows it as a card, not inline.
-_Avoid_: Report, document, long answer, canvas, page (bare)
+What the agent publishes for the User to keep, revise or pass on, with its own identity across Artifact Versions, shown as a web page. The reply shows it as a card, not inline; the User can edit it in place and download Exports of it.
+_Avoid_: Report, document, long answer, canvas, page (bare), file
+
+**Artifact Type**:
+A ready-made format an Artifact can be written in, which fixes how it is edited and exported: Doc, Slides, Sheet or Email, with Data planned. An Artifact without one is the agent's own HTML.
+_Avoid_: kind, template, Web Page
+
+**Source**:
+The files of an Artifact that the agent writes and the User's edits save to. Each Artifact Version is one saved state of its Source.
+_Avoid_: raw file, content, data
+
+**Viewer**:
+What shows an Artifact's Source in the panel and edits it in place, one kind for each Artifact Type and one for an Artifact without a type. It keeps nothing of its own.
+_Avoid_: renderer, preview, editor
+
+**Export**:
+A Word, PowerPoint, Excel, PDF or email file made from one Artifact Version when the User downloads it. It is not an Artifact.
+_Avoid_: conversion, rendition, attachment
+
+**Artifact Version**:
+One saved state of an Artifact, made each time the agent publishes it or the User saves an edit.
+_Avoid_: revision, snapshot, draft
 
 **Visual**:
 A chart, diagram, drawing or picture the agent embeds in a reply. It is the agent's own work, distinct from content a tool returns, and is not an Artifact.
