@@ -53,6 +53,7 @@ function arrive(id: string) {
 
 /** The call whose card waits on the user: it shows beside the answer, never folded away. */
 const PROPOSAL = "propose_scheduled_task";
+const SHOWN_CALLS = new Set([PROPOSAL, "Artifact"]);
 
 /** deepagents' execute tool reports a non-zero exit only as this trailer on an otherwise successful result. */
 const FAILED_COMMAND = /\n\[Command failed with exit code (\d+)\](\n\[Output was truncated due to size limits\])?$/;
@@ -77,10 +78,10 @@ function partsOf(messages: readonly TurnMessage[], isRunning: boolean): Map<stri
     const afterCalls = turn.slice(turn.findLastIndex((m) => m.toolCalls?.length) + 1).filter((m) => texts.includes(m));
     const answers = afterCalls.length > 0 ? afterCalls : texts.slice(-1);
     const answered = !(last && isRunning) || answers.at(-1) === turn.at(-1);
-    const proposals = new Set(turn.flatMap((m) => (m.toolCalls ?? []).filter((c) => c.function.name === PROPOSAL).map((c) => c.id)));
+    const shownCalls = new Set(turn.flatMap((m) => (m.toolCalls ?? []).filter((c) => SHOWN_CALLS.has(c.function.name)).map((c) => c.id)));
     for (const m of turn) {
-      const proposes = m.toolCalls?.some(({ id }) => proposals.has(id)) ?? false;
-      const shown = (answered && answers.includes(m)) || proposes || proposals.has(m.toolCallId ?? "");
+      const makesShownCall = m.toolCalls?.some(({ id }) => shownCalls.has(id)) ?? false;
+      const shown = (answered && answers.includes(m)) || makesShownCall || shownCalls.has(m.toolCallId ?? "");
       parts.set(m.id, shown ? "shown" : "work");
     }
     turn = [];

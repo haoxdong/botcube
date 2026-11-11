@@ -1,7 +1,8 @@
 out/
 .next/
 .next-*/
-public/
+public/*
+!public/artifact-sandbox/
 storybook-static/
 .storybook/public/
 .vitest-attachments/

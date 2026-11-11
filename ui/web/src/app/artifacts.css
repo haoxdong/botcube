@@ -1,0 +1,118 @@
+.artifact-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.artifact-layout > [data-slot="resizable-panel"] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.resizable-handle {
+  width: 1px;
+  background: var(--color-line);
+}
+
+.resizable-handle[data-closed] {
+  visibility: hidden;
+}
+
+.resizable-handle:focus-visible {
+  outline: 2px solid var(--color-blue);
+}
+
+.artifact-card {
+  width: 280px;
+  margin: 0 0 16px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-card[data-open] {
+  border-color: var(--color-blue);
+}
+
+.artifact-card .file-icon svg {
+  color: var(--color-text-muted);
+}
+
+.artifact-card-description {
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}
+
+.artifact-status,
+.artifact-refused {
+  margin: 0 0 16px;
+  font-size: var(--font-small);
+}
+
+.artifact-status {
+  color: var(--color-text-muted);
+}
+
+.artifact-refused {
+  color: var(--color-red);
+  overflow-wrap: anywhere;
+}
+
+.artifact-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.artifact-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-canvas);
+}
+
+.artifact-panel[data-full] {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+}
+
+.artifact-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.artifact-panel-actions {
+  display: flex;
+  margin-left: auto;
+}
+
+.artifact-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--color-white);
+}
+
+.sheet.artifact-sheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.artifact-sheet .sheet-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}

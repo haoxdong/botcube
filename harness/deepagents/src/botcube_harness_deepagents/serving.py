@@ -82,6 +82,7 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
+from .artifact import publishing_tools
 from .conversation import conversation
 from .files import (
     FilesBindingError,
@@ -108,7 +109,7 @@ from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
 )
-from .publish import publish_finished_files, publish_tool
+from .publish import publish_finished_files
 from .scheduled_tasks import propose_scheduled_task
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 from .shell_backend import WorkerShellBackend
@@ -667,7 +668,7 @@ def _get_agent(
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if syncs_files:
-            tools.append(publish_tool(Path(backend.cwd), _require_cartridge().skills))
+            tools.extend(publishing_tools(Path(backend.cwd), _require_cartridge().skills))
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)

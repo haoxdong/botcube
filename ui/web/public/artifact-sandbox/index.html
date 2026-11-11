@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  The sandbox an untyped Artifact's page runs in (ADR 0087). The app frames this page with
+  sandbox="allow-scripts allow-modals", so it runs in an opaque origin of its own: it cannot read the app's cookies,
+  storage or page. This policy lets its scripts and styles load only from the CDN allowlist and reach no network.
+  Behind the Artifacts flag.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdnjs.cloudflare.com/ajax/libs/ https://unpkg.com/; style-src 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdnjs.cloudflare.com/ajax/libs/ https://unpkg.com/; font-src data: https://cdn.jsdelivr.net/npm/ https://cdnjs.cloudflare.com/ajax/libs/ https://unpkg.com/; img-src data: blob:; media-src data: blob:; connect-src 'none'; form-action 'none'">
+<title>Artifact</title>
+</head>
+<body>
+<script>
+(() => {
+  // Opened any way but sandboxed in the app's frame, this page has the app's origin: it renders nothing then.
+  if (self.origin !== 'null' || parent === self) return;
+  const receive = (event) => {
+    if (event.source !== parent || event.origin !== location.origin) return;
+    if (event.data?.type === 'artifact-print') print();
+    if (event.data?.type === 'artifact-page') {
+      // Writing the page keeps this document, and with it the policy above; it drops this listener, so it is added again.
+      document.open();
+      document.write(event.data.html);
+      document.close();
+      addEventListener('message', receive);
+    }
+  };
+  addEventListener('message', receive);
+  parent.postMessage({ type: 'artifact-sandbox-ready' }, location.origin);
+})();
+</script>
+</body>
+</html>

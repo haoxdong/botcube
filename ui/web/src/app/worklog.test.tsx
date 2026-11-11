@@ -205,6 +205,17 @@ describe('a Worklog', () => {
     expect(screen.getByText("I'll propose a weekday brief.")).toBeVisible();
   });
 
+  it('leaves a published Artifact, the deliverable, outside the Worklog', () => {
+    const [question, note, result, answer] = turn('artifact');
+    assert(question && note && result && answer, 'the Turn');
+    const publish = { id: 'artifact-p', role: 'assistant', content: 'Publishing the chart.', toolCalls: [call('artifact-pc', 'Artifact', { file_path: '/q3.html' })] };
+    render(<Chat messages={[question, note, result, publish, { id: 'artifact-pt', role: 'tool', toolCallId: 'artifact-pc', content: '{}' }, answer]} running={false} />);
+
+    expect(heads()).toHaveLength(1);
+    expect(screen.queryByText("I'll check the rates skill first.")).toBeNull();
+    expect(screen.getByText('Publishing the chart.')).toBeVisible();
+  });
+
   it("shows each text after the Turn's last tool call as its own bubble, and folds a text a call follows", () => {
     const [question, note, result, answer] = turn('texts');
     assert(question && note && result && answer, 'the Turn');

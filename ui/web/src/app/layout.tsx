@@ -1,5 +1,6 @@
 import "./globals.css";
 import "./files.css";
+import "./artifacts.css";
 import "./side-chats.css";
 import "./scheduled-tasks.css";
 import "./code-blocks.css";
