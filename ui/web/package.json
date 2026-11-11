@@ -21,6 +21,7 @@
     "./computer/browser-view": "./src/computer/browser-view.tsx",
     "./computer/computer-view": "./src/computer/computer-view.tsx",
     "./computer/remote-viewport": "./src/computer/remote-viewport.tsx",
+    "./computer/files-service": "./src/computer/files-service.ts",
     "./computer/files-app": "./src/computer/files-app.tsx",
     "./computer/failure-detail": "./src/computer/failure-detail.ts",
     "./dcv-assets": "./src/config/dcv-assets.mjs"

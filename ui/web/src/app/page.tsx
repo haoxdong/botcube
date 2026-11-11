@@ -10,7 +10,7 @@ import { openingMainChat, type StoredMainChatCopy } from "./main-chat-copy";
 import { endOpeningMoment, type HistoryMoment } from "./latency";
 import { discardOpeningResponse } from "../opening-requests";
 import { rumConfig, startRum } from "./rum";
-import { keepFileDropsInPage } from "./composer-attach";
+import { keepFileDropsInPage } from "./keep-file-drops";
 import { KeptChat, prepareKeptChat } from "./kept-chat";
 import { SessionGate } from "./session-gate";
 import { Swap } from "./collapse";

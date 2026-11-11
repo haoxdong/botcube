@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { deleteFile, fileDownloadUrl, FilesApp, FilesWindow, listFiles, renameFile, uploadFile, withUploadsSettled, type FileEntry } from './files-app';
+import { FilesApp, FilesWindow } from './files-app';
+import { deleteFile, fileDownloadUrl, listFiles, renameFile, uploadFile, withUploadsSettled, type FileEntry } from './files-service';
 
 const entry = (name: string, size = 1, lastModified = '2026-10-01T09:00:00.000Z') => ({ name, size, lastModified });
 
@@ -307,9 +308,9 @@ describe('uploading a file the user attached in the chat', () => {
 
   it("waits for another tab's pending upload before claiming the shared account", async () => {
     vi.resetModules();
-    const uploadingTab = await import('./files-app');
+    const uploadingTab = await import('./files-service');
     vi.resetModules();
-    const claimingTab = await import('./files-app');
+    const claimingTab = await import('./files-service');
     expect(uploadingTab.uploadFile).not.toBe(claimingTab.uploadFile);
     const uploading = uploadingTab.uploadFile(file, { onProgress: vi.fn(), signal: new AbortController().signal }, { ...CHAT, fetchImpl: service() });
     const request = await put();

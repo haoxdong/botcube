@@ -1,6 +1,6 @@
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK } from "../cartridge/file-account";
-import { deleteFile, fileDownloadUrl, uploadFile, type UploadOptions } from "../computer/files-app";
+import { deleteFile, fileDownloadUrl, uploadFile, type UploadOptions } from "../computer/files-service";
 
 const CHAT_SERVICE_URL = chatServiceUrl();
 

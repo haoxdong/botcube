@@ -1,5 +1,7 @@
 "use client";
 
+import { carriesFiles } from "./keep-file-drops";
+
 import { useEffect, useRef, useState, type DragEvent, type RefObject } from "react";
 import { Menu } from "@base-ui/react/menu";
 import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
@@ -55,9 +57,6 @@ export function addMenuSlot(attached: ComposerFiles | null, picker: RefObject<HT
   };
   return { addMenuButton: AddMenu, onAddFile };
 }
-
-/** Whether a drag carries files from the computer, not text or a link. */
-const carriesFiles = (data: DataTransfer | null) => data?.types.includes("Files") === true;
 
 /** A drop's files, without its folders, which arrive as files too and only their entries tell apart. */
 function droppedFiles(data: DataTransfer): File[] {
@@ -127,23 +126,4 @@ export function useFileDrop(add: ComposerFiles["add"]) {
 /** The quiet sheet over the chat while files are dragged over it, fading in and out. */
 export function FileDropOverlay({ open }: { open: boolean }) {
   return <Fade open={open} className="file-drop">Drop files to attach</Fade>;
-}
-
-/**
- * Keeps a file dropped anywhere in the page from opening in place of the app, as browsers do with a drop nothing takes;
- * outside a chat it takes no drop, so the pointer says so. Returns the cleanup.
- */
-export function keepFileDropsInPage(target: Window) {
-  const refuse = (event: globalThis.DragEvent) => {
-    if (!carriesFiles(event.dataTransfer)) return;
-    // A chat's drop target took it first.
-    if (!event.defaultPrevented && event.dataTransfer) event.dataTransfer.dropEffect = "none";
-    event.preventDefault();
-  };
-  target.addEventListener("dragover", refuse);
-  target.addEventListener("drop", refuse);
-  return () => {
-    target.removeEventListener("dragover", refuse);
-    target.removeEventListener("drop", refuse);
-  };
 }
