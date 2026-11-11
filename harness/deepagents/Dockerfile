@@ -64,12 +64,13 @@ RUN --mount=type=secret,id=build_ca \
 
 FROM base AS cartridge
 
-# Install the pre-staged Cartridge CLI package
 WORKDIR /opt/tools
 COPY .tool-dist/ ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
-    npm install --omit=dev --ignore-scripts && npm link --ignore-scripts
+    if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; \
+    else test -f pnpm-lock.yaml && test -d node_modules; fi && \
+    node -e 'const fs = require("node:fs"); const path = require("node:path"); for (const [name, target] of Object.entries(require("./package.json").bin)) fs.symlinkSync(path.resolve(target), path.join("/usr/local/bin", name));'
 
 # Install the Harness Python package
 WORKDIR /opt/harness

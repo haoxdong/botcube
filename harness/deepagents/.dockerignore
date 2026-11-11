@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 tests/
 data/
+!.tool-dist/node_modules
+!.tool-dist/node_modules/**
