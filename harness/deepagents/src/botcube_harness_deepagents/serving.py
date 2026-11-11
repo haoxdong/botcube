@@ -82,7 +82,7 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
-from .artifact import publishing_tools
+from .artifact import artifacts_enabled, publishing_tools
 from .conversation import conversation
 from .files import (
     FilesBindingError,
@@ -163,6 +163,30 @@ artifact  0–1: for anything the user will present or forward, or details bigge
 Link every factual claim to its source, in chat and in artifacts.
 In chat, link each claim's key words to its source: `[key words](https://…)`.
 </citations>"""
+
+ARTIFACTS_PROMPT_LINES = {
+    "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a PDF, PowerPoint or Excel file when the content suits it or the user asks.":
+    "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a page published with the `Artifact` tool, written as the `artifacts` skill says.",
+    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<published link>), never a numbered link':
+    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message: a page published with the `Artifact` tool, which the reply shows as a card, or an email draft on its own line as [Download <name>](<published link>), never a numbered link',
+}
+
+
+def _served_prompt_hash(candidate: str | None) -> str | None:
+    if candidate is None:
+        return None
+    return hashlib.sha256(served_agent_system_prompt(candidate, artifacts_enabled()).encode()).hexdigest()
+
+
+def served_agent_system_prompt(prompt: str, artifacts: bool) -> str:
+    """The agent system prompt as the agent gets it: behind the Artifacts flag, with ARTIFACTS_PROMPT_LINES swapped in."""
+    if not (artifacts and prompt):
+        return prompt
+    for old, new in ARTIFACTS_PROMPT_LINES.items():
+        if old not in prompt:
+            raise ValueError(f'The Artifacts flag replaces a line this prompt lacks: {old}')
+        prompt = prompt.replace(old, new)
+    return prompt
 
 
 class SessionOpeningError(RuntimeError):
@@ -288,6 +312,7 @@ class _AgentKey(NamedTuple):
     invocation_prompt: str
     scheduled_run: bool
     agent_system_prompt: str
+    artifacts: bool
     cartridge_system_prompt: str | None
 
 
@@ -631,6 +656,7 @@ def _get_agent(
             invocation_prompt,
             scheduled_run,
             agent_system_prompt,
+            artifacts_enabled(),
             cartridge_system_prompt,
         )
         cached = _AGENTS.get(key)
@@ -678,7 +704,9 @@ def _get_agent(
             tools.extend(agent_document_tools(documents))
         cartridge = _require_cartridge()
         cartridge_prompt = _cartridge_instructions(cartridge, cartridge_system_prompt)
-        system_prompt = '\n\n'.join(part for part in (agent_system_prompt, cartridge_prompt) if part)
+        system_prompt = '\n\n'.join(
+            part for part in (served_agent_system_prompt(agent_system_prompt, key.artifacts), cartridge_prompt) if part
+        )
         user_prompt = _user_prompt(invocation_prompt, cartridge.skills if syncs_files else None, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(
@@ -955,11 +983,12 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         )
 
         candidate = forwarded.get('agentSystemPrompt')
+        prompt_hash = _served_prompt_hash(candidate)
         async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, files, context, read_locked)) as events:
             async for event in events:
                 yield event
-                if candidate is not None and event.type == EventType.RUN_STARTED:
-                    yield CustomEvent(name='AGENT_SYSTEM_PROMPT', value=hashlib.sha256(candidate.encode()).hexdigest())
+                if prompt_hash is not None and event.type == EventType.RUN_STARTED:
+                    yield CustomEvent(name='AGENT_SYSTEM_PROMPT', value=prompt_hash)
         return
     reads_history = forwarded.get('preparationScope', 'recorded') != 'startup'
     async with _SESSION_TURNS.preparation(session) as allowed:

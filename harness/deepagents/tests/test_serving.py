@@ -1585,6 +1585,25 @@ def test_the_environment_section_names_only_pinned_libraries_and_smoked_commands
     assert all(f"'{command}'" in (tools / 'smoke.py').read_text() for command in commands)
 
 
+def test_the_artifacts_flag_swaps_only_its_lines_into_the_agent_prompt_beside_the_artifact_tool(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service.turn('hello', files=_files())
+    monkeypatch.setenv('BOTCUBE_ARTIFACTS', '1')
+    service.turn('hello again', files=_files())
+    candidate = service.turn('hello once more', files=_files(), agentSystemPrompt=serving.AGENT_SYSTEM_PROMPT)
+
+    off, on, _ = service.recorder.prompts
+    served = serving.served_agent_system_prompt(serving.AGENT_SYSTEM_PROMPT, artifacts=True)
+    assert 'publish' in service.recorder.tools[0] and 'Artifact' in service.recorder.tools[1]
+    assert off.startswith(serving.AGENT_SYSTEM_PROMPT) and on.startswith(served)
+    lines = serving.ARTIFACTS_PROMPT_LINES
+    assert set(serving.AGENT_SYSTEM_PROMPT.splitlines()) ^ set(served.splitlines()) == set(lines) | set(lines.values())
+    assert candidate[1] == {'type': 'CUSTOM', 'name': 'AGENT_SYSTEM_PROMPT', 'value': hashlib.sha256(served.encode()).hexdigest()}
+    with pytest.raises(ValueError, match='The Artifacts flag replaces a line this prompt lacks'):
+        serving.served_agent_system_prompt('Candidate prompt.', artifacts=True)
+
+
 def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
