@@ -13,17 +13,20 @@ const PUBLISHED = {
   id: '/reports/q3.html', type: null, title: 'Q3 revenue by month', description: 'Monthly revenue against plan',
   version: 2, path: '/artifacts/reports/q3.html.versions/2.html',
 };
+/** The describe below shadows `PUBLISHED` with the time of the recorded publish. */
+const PUBLISHED_VERSION = PUBLISHED;
+const PAGE_1 = PAGE.replace('<h1>Q3</h1>', '<h1>Q3 draft</h1>');
 
 /** The chat's agent when no turn runs: these chats show saved messages. */
 const IDLE = new HttpAgent({ url: 'https://chat.test/agent' });
 
-const reply = (result: string = JSON.stringify(PUBLISHED)) => [
-  { id: 'u', role: 'user' as const, content: 'Chart Q3 revenue' },
+const reply = (result: string = JSON.stringify(PUBLISHED), turn = '') => [
+  { id: `u${turn}`, role: 'user' as const, content: 'Chart Q3 revenue' },
   {
-    id: 'a', role: 'assistant' as const, content: '',
-    toolCalls: [{ id: 'c', type: 'function' as const, function: { name: 'Artifact', arguments: JSON.stringify({ file_path: '/reports/q3.html', title: PUBLISHED.title }) } }],
+    id: `a${turn}`, role: 'assistant' as const, content: '',
+    toolCalls: [{ id: `c${turn}`, type: 'function' as const, function: { name: 'Artifact', arguments: JSON.stringify({ file_path: '/reports/q3.html', title: PUBLISHED.title }) } }],
   },
-  { id: 't', role: 'tool' as const, toolCallId: 'c', content: result },
+  { id: `t${turn}`, role: 'tool' as const, toolCallId: `c${turn}`, content: result },
 ];
 
 function Chat({ messages = reply() }: { messages?: ReturnType<typeof reply> }) {
@@ -41,9 +44,11 @@ function Chat({ messages = reply() }: { messages?: ReturnType<typeof reply> }) {
 function files() {
   const fetchImpl = vi.fn(async (input: string) => {
     if (input === 'https://files.test/2.html') return new Response(PAGE);
+    if (input === 'https://files.test/1.html') return new Response(PAGE_1);
     const name = new URL(input).searchParams.get('name');
-    return name === 'artifacts/reports/q3.html.versions/2.html'
-      ? Response.json({ url: 'https://files.test/2.html' })
+    const version = /^artifacts\/reports\/q3\.html\.versions\/([12])\.html$/.exec(name ?? '')?.[1];
+    return version
+      ? Response.json({ url: `https://files.test/${version}.html` })
       : Response.json({ detail: `No file named ${name}` }, { status: 404 });
   });
   vi.stubGlobal('fetch', fetchImpl);
@@ -120,6 +125,46 @@ it('prints the page as shown for Download as PDF', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Download as PDF' }));
 
   expect(posted).toHaveBeenLastCalledWith({ type: 'artifact-print' }, '*');
+});
+
+it('switches an open panel to the new version when the agent publishes an update, and an older card opens the latest', async () => {
+  phone(false);
+  const first = { ...PUBLISHED, version: 1, path: '/artifacts/reports/q3.html.versions/1.html' };
+  const view = render(<Chat messages={reply(JSON.stringify(first))} />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+  const posted = sandboxReady(screen.getByTitle<HTMLIFrameElement>('Q3 revenue by month'));
+  await waitFor(() => expect(posted).toHaveBeenCalledWith({ type: 'artifact-page', html: PAGE_1 }, '*'));
+
+  view.rerender(<Chat messages={[...reply(JSON.stringify(first)), ...reply(JSON.stringify(PUBLISHED), '2')]} />);
+
+  const panel = screen.getByRole('region', { name: 'Q3 revenue by month' });
+  await waitFor(() => expect(within(panel).getByText('Page · version 2')).toBeInTheDocument());
+  const reposted = sandboxReady(within(panel).getByTitle<HTMLIFrameElement>('Q3 revenue by month'));
+  await waitFor(() => expect(reposted).toHaveBeenCalledWith({ type: 'artifact-page', html: PAGE }, '*'));
+
+  await userEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  const [older] = screen.getAllByRole('button', { name: /Q3 revenue by month/ });
+  if (!older) throw new Error('the first card is gone');
+  await userEvent.click(older);
+  expect(within(screen.getByRole('region', { name: 'Q3 revenue by month' })).getByText('Page · version 2')).toBeInTheDocument();
+});
+
+it('shows a read or a list of Artifacts as a line of the reply, not as a card or an error', async () => {
+  phone(false);
+  const call = (id: string, args: object, result: object) => [
+    { id: `a-${id}`, role: 'assistant' as const, content: '', toolCalls: [{ id, type: 'function' as const, function: { name: 'Artifact', arguments: JSON.stringify(args) } }] },
+    { id: `t-${id}`, role: 'tool' as const, toolCallId: id, content: JSON.stringify(result) },
+  ];
+  render(<Chat messages={[
+    { id: 'u', role: 'user' as const, content: 'Update the dashboard you made yesterday' },
+    ...call('list', { action: 'list' }, { artifacts: [{ ...PUBLISHED, author: 'agent', read: 2 }] }),
+    ...call('read', { action: 'read', url: PUBLISHED.id }, { ...PUBLISHED, author: 'agent', read: 2, html: PAGE, versions: [] }),
+  ] as ReturnType<typeof reply>} />);
+
+  expect(await screen.findByText('Listed Artifacts')).toBeInTheDocument();
+  expect(screen.getByText('Read /reports/q3.html')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Q3 revenue by month/ })).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 it("shows a refused publish's message in place of a card", async () => {
@@ -330,20 +375,46 @@ describe('while the agent writes', () => {
   });
 
   it("keeps a card's version open while the agent writes its Source, until the publish opens the new version", async () => {
-    const { sent, until, run } = chat(TURN, reply());
+    // The saved chat's card is version 1; the turn publishes version 1 again (no newer version), then version 2.
+    const first = { ...PUBLISHED_VERSION, version: 1, path: '/artifacts/reports/q3.html.versions/1.html' };
+    const { sent, until, run } = chat(TURN, reply(JSON.stringify(first)));
     await until(16);
     await act(() => screen.getByRole('button', { name: /Q3 revenue by month/ }).click());
     await until(100);
-    expect(sent.map(({ message }) => message)).toEqual([{ type: 'artifact-page', html: EDITED }]);
+    expect(sent.map(({ message }) => message)).toEqual([{ type: 'artifact-page', html: WRITTEN }]);
     await run();
 
-    await until(PUBLISHED - 5);
-    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 2');
-    expect(previews(sent)).toEqual([]);
-
-    await until(PUBLISHED + 50);
+    await until(REPUBLISHED - 5);
     expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 1');
-    expect(sent.at(-1)?.message).toEqual({ type: 'artifact-page', html: WRITTEN });
+    expect(previews(sent)).toEqual([]);
+    expect(pages(sent)).toHaveLength(1);
+
+    await until(REPUBLISHED + 50);
+    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 2');
+    expect(sent.at(-1)?.message).toEqual({ type: 'artifact-page', html: EDITED });
+  });
+
+  it('keeps previewing the Source when the turn lists Artifacts in place of its first publish', async () => {
+    const listing = TURN.map((event) => {
+      if (event.toolCallId !== 'publish') return event;
+      if (event.type === 'TOOL_CALL_ARGS') return { ...event, delta: JSON.stringify({ action: 'list' }) };
+      if (event.type === 'TOOL_CALL_RESULT') return { ...event, content: JSON.stringify({ artifacts: [] }) };
+      return event;
+    });
+    const logged = vi.spyOn(console, 'error');
+    const { sent, until, run } = chat(listing);
+    await run();
+
+    await until(REPUBLISHED - 5);
+    expect(screen.getByText('Listed Artifacts')).toBeInTheDocument();
+    // AG-UI logs a subscriber's throw rather than fail the run.
+    expect(logged.mock.calls.filter(([first]) => String(first).startsWith('Subscriber error'))).toEqual([]);
+    expect(screen.getByRole('region', { name: 'q3.html' })).toBeInTheDocument();
+    expect(pages(sent)).toEqual([]);
+
+    await until(TURN_ENDS + 10);
+    expect(screen.getByRole('region', { name: 'Q3 revenue by month' })).toHaveTextContent('Page · version 2');
+    expect(sent.at(-1)?.message).toEqual({ type: 'artifact-page', html: EDITED });
   });
 });
 

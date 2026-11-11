@@ -13,6 +13,8 @@ from .files_mount import FilesMount
 
 HARNESS_DIRECTORY = 'botcube-harness-deepagents'
 SCRATCH_DIRECTORY = 'tmp'
+# The Artifact version store: in Files, but only the Artifact tool and a User save write it (ADR 0087).
+ARTIFACTS_DIRECTORY = 'artifacts'
 
 
 class FilesBindingError(RuntimeError):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import PurePosixPath
 from typing import Annotated, Any, NotRequired
 
 from deepagents import create_deep_agent
@@ -34,7 +36,7 @@ from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
 from .compaction import BackgroundCompaction
-from .files import HARNESS_DIRECTORY
+from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
 from .lazy_files import LazyFilesMiddleware
 from .llm import build_model
 
@@ -78,13 +80,35 @@ class _FilesMiddleware(FilesystemMiddleware):
         self, request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        if refused := _version_store_write(request):
+            return refused
         return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
 
     async def awrap_tool_call(
         self, request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        if refused := _version_store_write(request):
+            return refused
         return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
+
+
+_FILE_WRITES = frozenset({'write_file', 'edit_file', 'delete'})
+
+
+def _version_store_write(request: ToolCallRequest) -> ToolMessage | None:
+    """Refuse a file tool's change to the Artifact version store: a published version never changes."""
+    call = request.tool_call
+    path = call['args'].get('file_path')
+    if call['name'] not in _FILE_WRITES or not isinstance(path, str):
+        return None
+    parts = PurePosixPath(posixpath.normpath('/' + path.lstrip('/'))).parts
+    if parts[1:2] != (ARTIFACTS_DIRECTORY,):
+        return None
+    return ToolMessage(
+        content=f'Error: Only the Artifact tool writes /{ARTIFACTS_DIRECTORY}; publish the page again to make a new version.',
+        name=call['name'], tool_call_id=call['id'], status='error',
+    )
 
 
 def _tagged(tag: str, prompt: str, heading: str) -> str:

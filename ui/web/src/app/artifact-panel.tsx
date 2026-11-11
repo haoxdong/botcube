@@ -5,7 +5,8 @@ import { useRenderTool } from "@copilotkit/react-core/v2";
 import { m as motionElement } from "framer-motion";
 import { AppWindowIcon, Maximize2Icon, Minimize2Icon, PrinterIcon, XIcon } from "lucide-react";
 import {
-  createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject,
+  type SetStateAction,
 } from "react";
 import { Allow, parse as parsePartial } from "partial-json";
 import { usePanelRef } from "react-resizable-panels";
@@ -57,10 +58,21 @@ const SANDBOX_PAGE = "/artifact-sandbox/";
 const SANDBOX = "allow-scripts allow-modals";
 const OPEN_SIZE = "50%";
 
-/** A card's Artifact Version, which runs, or a Source the agent is writing, by its Files path, which previews. */
-type Opened = ({ artifact: Published } | { source: string }) & { full: boolean };
+/**
+ * The Artifact the panel shows, by its id (its Source's Files path). The panel shows the newest version the chat has
+ * seen published; one a write opened previews the Source instead until a version newer than `over` is published.
+ */
+type Opened = { id: string; full: boolean; over?: number };
 type Open = Dispatch<SetStateAction<Opened | null>>;
-const Panel = createContext<{ opened: Opened | null; open: Open; sources: ReadonlyMap<string, Source> } | null>(null);
+/** What the panel draws: an Artifact Version, which runs, or a Source the agent is writing, which previews. */
+type Shown = ({ artifact: Published } | { source: string }) & { full: boolean };
+const Panel = createContext<{
+  shown: Shown | null;
+  open: Open;
+  /** A published version, from a card or the agent's publish, so the panel and every card of its Artifact open the newest. */
+  seen: (artifact: Published) => void;
+  sources: ReadonlyMap<string, Source>;
+} | null>(null);
 
 function usePanel() {
   const panel = useContext(Panel);
@@ -79,14 +91,35 @@ export function publishedOf(result: string): Published | null {
   return Published.parse(json);
 }
 
+/** A read or list answers JSON; anything else is the tool's error text. */
+function isJson(result: string) {
+  try {
+    JSON.parse(result);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A call without an action publishes. */
+const publishes = (args: string) => (ArtifactCall.parse(JSON.parse(args)).action ?? "publish") === "publish";
+
 const kindOf = (artifact: Published) => `Page · version ${artifact.version}`;
 
-const titleOf = (opened: Opened) => "artifact" in opened ? opened.artifact.title : opened.source.slice(opened.source.lastIndexOf("/") + 1);
+const titleOf = (shown: Shown) => "artifact" in shown ? shown.artifact.title : shown.source.slice(shown.source.lastIndexOf("/") + 1);
 
 /** A version's Artifact is its Source's path. */
-const pathOf = (opened: Opened) => "source" in opened ? opened.source : opened.artifact.id;
+const pathOf = (shown: Shown) => "source" in shown ? shown.source : shown.artifact.id;
 
-const sourceIn = (opened: Opened, sources: ReadonlyMap<string, Source>) => "source" in opened ? sources.get(opened.source) : undefined;
+const sourceIn = (shown: Shown, sources: ReadonlyMap<string, Source>) => "source" in shown ? sources.get(shown.source) : undefined;
+
+/** `newest` is the newest version of the opened Artifact the chat has seen published. */
+function shownOf(opened: Opened | null, newest: Published | undefined): Shown | null {
+  if (opened === null) return null;
+  const { id, full, over } = opened;
+  if (over !== undefined && (newest?.version ?? 0) <= over) return { source: id, full };
+  return newest === undefined ? null : { artifact: newest, full };
+}
 
 async function readFile(path: string): Promise<string> {
   const response = await fetch(await agentFiles.url(path));
@@ -94,60 +127,81 @@ async function readFile(path: string): Promise<string> {
   return response.text();
 }
 
-function useKept(opened: Opened | null) {
-  const [kept, keep] = useState(opened);
-  if (opened !== null && opened !== kept) keep(opened);
+function useKept(shown: Shown | null) {
+  const [kept, keep] = useState(shown);
+  if (shown !== null && shown !== kept) keep(shown);
   return kept;
 }
 
 export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; children: ReactNode }) {
   const [opened, open] = useState<Opened | null>(null);
-  const kept = useKept(opened);
+  const [newest, setNewest] = useState<Readonly<Record<string, Published>>>({});
+  const seen = useCallback((artifact: Published) => setNewest((known) =>
+    (known[artifact.id]?.version ?? 0) >= artifact.version ? known : { ...known, [artifact.id]: artifact }), []);
+  const artifact = opened === null ? undefined : newest[opened.id];
+  const shown = useMemo(() => shownOf(opened, artifact), [opened, artifact]);
+  const kept = useKept(shown);
   const phone = useIsPhone();
-  const sources = useAgentSources(agent, opened, open, phone);
+  const sources = useAgentSources(agent, { shown, newest, open, seen, phone });
   useRenderTool({
     name: "Artifact",
     parameters: ArtifactCall,
-    render: ({ status, parameters, result }) =>
-      status === "complete" ? <ArtifactResult result={result} /> : (
+    render: ({ status, parameters, result }) => {
+      const done = status === "complete";
+      if (parameters.action === "list" || parameters.action === "read") {
+        if (done && !isJson(result)) return <p role="alert" className="artifact-refused">{result}</p>;
+        const named = parameters.url ?? parameters.file_path;
+        if (parameters.action === "list") return <p className="artifact-status">{done ? "Listed Artifacts" : "Listing Artifacts…"}</p>;
+        return <p className="artifact-status">{done ? `Read ${named}` : `Reading ${named}…`}</p>;
+      }
+      return done ? <ArtifactResult result={result} /> : (
         <p className="artifact-status">Publishing {parameters.title ?? parameters.file_path ?? "a page"}…</p>
-      ),
+      );
+    },
   }, []);
+  const panel = { shown, open, seen, sources };
   // A phone and a desktop lay the chat out differently, so turning across the breakpoint with an Artifact open
   // remounts the chat: rare, and the chat reloads its messages as it would on opening.
   if (phone) {
     return (
-      <Panel.Provider value={{ opened, open, sources }}>
+      <Panel.Provider value={panel}>
         {children}
         {kept && (
-          <Sheet open={opened !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
-            <ArtifactView opened={kept} />
+          <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
+            <ArtifactView shown={kept} />
           </Sheet>
         )}
       </Panel.Provider>
     );
   }
   return (
-    <Panel.Provider value={{ opened, open, sources }}>
-      <ArtifactSplit opened={opened} close={() => open(null)}>{children}</ArtifactSplit>
+    <Panel.Provider value={panel}>
+      <ArtifactSplit shown={shown} close={() => open(null)}>{children}</ArtifactSplit>
     </Panel.Provider>
   );
 }
 
+type Following = {
+  shown: Shown | null;
+  newest: Readonly<Record<string, Published>>;
+  open: Open;
+  seen: (artifact: Published) => void;
+  phone: boolean;
+};
+
 /**
  * The Sources the agent writes, from its runs' events as they stream; a reopened chat's finished writes are messages,
  * not events, so they change nothing. A write's first characters open its Source beside the chat on desktop when
- * nothing is open (on a phone it would cover the chat). A publish opens its new version in place of its Source or an
- * earlier version; nothing else replaces what is open.
+ * nothing is open (on a phone it would cover the chat). A publish is `seen` as its Artifact's newest version, which
+ * the panel then shows in place of its Source or an earlier version; nothing else replaces what is open.
  */
-function useAgentSources(agent: AbstractAgent, opened: Opened | null, open: Open, phone: boolean) {
+function useAgentSources(agent: AbstractAgent, following: Following) {
   const [sources, setSources] = useState<ReadonlyMap<string, Source>>(new Map());
-  const shown = useRef(opened);
-  shown.current = opened;
-  const onPhone = useRef(phone);
-  onPhone.current = phone;
+  const latest = useRef(following);
+  latest.current = following;
+  const { open, seen } = following;
   useEffect(() => {
-    const calls = new Map<string, { name: string; path?: string | undefined; content?: string | undefined; streamed?: true }>();
+    const calls = new Map<string, { name: string; args?: string; path?: string | undefined; content?: string | undefined; streamed?: true }>();
     const keep = (source: Source) => setSources((current) => new Map(current).set(source.path, source));
     // AG-UI fixes a run's subscribers when the run starts, so this one sees whole runs.
     return agent.subscribe({
@@ -158,15 +212,20 @@ function useAgentSources(agent: AbstractAgent, opened: Opened | null, open: Open
       // that package's CommonJS default export fails to load as ESM.
       onToolCallArgsEvent: ({ event, toolCallBuffer }) => {
         const call = calls.get(event.toolCallId);
-        if (call?.name !== "write_file" && call?.name !== "edit_file") return;
         const args = toolCallBuffer + event.delta;
+        if (call?.name === "Artifact") call.args = args;
+        if (call?.name !== "write_file" && call?.name !== "edit_file") return;
         // A path counts once it is whole: "/q3.htm" is on its way to "/q3.html".
         const { file_path: path } = FileCall.parse(parsePartial(args, Allow.OBJ));
         const { content } = FileCall.parse(parsePartial(args));
         Object.assign(call, { path, content });
         if (call.name !== "write_file" || path === undefined || content === undefined || !PREVIEWED.test(path)) return;
         keep({ path, html: content, complete: false });
-        if (call.streamed === undefined && !onPhone.current) open((current) => current ?? { source: path, full: false });
+        const { phone, newest } = latest.current;
+        if (call.streamed === undefined && !phone) {
+          const over = newest[path]?.version ?? 0;
+          open((current) => current ?? { id: path, full: false, over });
+        }
         call.streamed = true;
       },
       onToolCallResultEvent: ({ event }) => {
@@ -175,14 +234,15 @@ function useAgentSources(agent: AbstractAgent, opened: Opened | null, open: Open
         if (call === undefined) return;
         const result = contentToText(event.content);
         if (call.name === "Artifact") {
-          const artifact = publishedOf(result);
-          if (artifact !== null) open((current) => current !== null && pathOf(current) === artifact.id ? { artifact, full: current.full } : current);
+          // A read or a list answers JSON too, but it publishes nothing.
+          const artifact = publishes(call.args ?? "{}") ? publishedOf(result) : null;
+          if (artifact !== null) seen(artifact);
           return;
         }
         const { name, path, content } = call;
         if (path === undefined || !PREVIEWED.test(path)) return;
         if (name === "write_file" && content !== undefined && WRITTEN.test(result)) keep({ path, html: content, complete: true });
-        const previewed = shown.current;
+        const previewed = latest.current.shown;
         if (name === "edit_file" && EDITED.test(result) && previewed !== null && "source" in previewed && previewed.source === path) {
           readFile(path).then(
             (html) => keep({ path, html, complete: true }),
@@ -191,30 +251,30 @@ function useAgentSources(agent: AbstractAgent, opened: Opened | null, open: Open
         }
       },
     }).unsubscribe;
-  }, [agent, open]);
+  }, [agent, open, seen]);
   return sources;
 }
 
-function ArtifactSplit({ opened, close, children }: { opened: Opened | null; close: () => void; children: ReactNode }) {
+function ArtifactSplit({ shown, close, children }: { shown: Shown | null; close: () => void; children: ReactNode }) {
   const side = usePanelRef();
-  const shown = opened !== null;
+  const isOpen = shown !== null;
   useEffect(() => {
     const panel = side.current;
     if (panel === null) throw new Error("The Artifact panel mounted without its imperative handle");
-    if (!shown) panel.collapse();
+    if (!isOpen) panel.collapse();
     else if (panel.isCollapsed()) panel.resize(OPEN_SIZE);
-  }, [shown, side]);
+  }, [isOpen, side]);
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout">
       <ResizablePanel id="chat" minSize="30%">{children}</ResizablePanel>
-      <ResizableHandle disabled={!shown} data-closed={!shown || undefined} />
+      <ResizableHandle disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size) => {
-          if (shown && size.asPercentage === 0) close();
+          if (isOpen && size.asPercentage === 0) close();
         }}>
-        <Presence>{opened && (
-          <motionElement.div {...presenceMotion} layout={false} key={pathOf(opened)} className="artifact-side">
-            <ArtifactView opened={opened} heading={<DesktopHeading opened={opened} />} controls={<DesktopControls opened={opened} />} />
+        <Presence>{shown && (
+          <motionElement.div {...presenceMotion} layout={false} key={pathOf(shown)} className="artifact-side">
+            <ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} />} />
           </motionElement.div>
         )}</Presence>
       </ResizablePanel>
@@ -229,10 +289,11 @@ function ArtifactResult({ result }: { result: string }) {
 }
 
 function ArtifactCard({ artifact }: { artifact: Published }) {
-  const { opened, open } = usePanel();
+  const { shown, open, seen } = usePanel();
+  useEffect(() => seen(artifact), [seen, artifact]);
   return (
-    <button type="button" className="sent-file artifact-card" data-open={(opened !== null && "artifact" in opened && opened.artifact.path === artifact.path) || undefined}
-      onClick={() => open({ artifact, full: false })}>
+    <button type="button" className="sent-file artifact-card" data-open={(shown !== null && "artifact" in shown && shown.artifact.id === artifact.id) || undefined}
+      onClick={() => open({ id: artifact.id, full: false })}>
       <span className="file-icon"><AppWindowIcon aria-hidden /></span>
       <span className="sent-file-text">
         <span className="sent-file-name">{artifact.title}</span>
@@ -243,12 +304,12 @@ function ArtifactCard({ artifact }: { artifact: Published }) {
   );
 }
 
-function ArtifactView({ opened, heading, controls }: { opened: Opened; heading?: ReactNode; controls?: ReactNode }) {
+function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: ReactNode; controls?: ReactNode }) {
   const { sources } = usePanel();
-  const { full } = opened;
+  const { full } = shown;
   const frame = useRef<HTMLIFrameElement>(null);
-  const source = sourceIn(opened, sources);
-  const title = titleOf(opened);
+  const source = sourceIn(shown, sources);
+  const title = titleOf(shown);
   // The frame prints its own page: the app cannot reach into a frame of another origin.
   const print = () => frame.current?.contentWindow?.postMessage({ type: "artifact-print" }, "*");
   return (
@@ -260,31 +321,31 @@ function ArtifactView({ opened, heading, controls }: { opened: Opened; heading?:
           {controls}
         </span>
       </header>
-      <OpenedFrame opened={opened} source={source} title={title} frame={frame} />
+      <ShownFrame shown={shown} source={source} title={title} frame={frame} />
     </section>
   );
 }
 
-function DesktopHeading({ opened }: { opened: Opened }) {
+function DesktopHeading({ shown }: { shown: Shown }) {
   const { sources } = usePanel();
-  const source = sourceIn(opened, sources);
-  const kind = "artifact" in opened ? kindOf(opened.artifact) : source !== undefined && "html" in source && !source.complete ? "Page · writing…" : "Page";
+  const source = sourceIn(shown, sources);
+  const kind = "artifact" in shown ? kindOf(shown.artifact) : source !== undefined && "html" in source && !source.complete ? "Page · writing…" : "Page";
   return (
     <span className="sent-file-text">
-      <span className="sent-file-name">{titleOf(opened)}</span>
+      <span className="sent-file-name">{titleOf(shown)}</span>
       <span className="sent-file-kind">{kind}</span>
     </span>
   );
 }
 
-function DesktopControls({ opened }: { opened: Opened }) {
+function DesktopControls({ shown }: { shown: Shown }) {
   const { open } = usePanel();
-  const { full } = opened;
+  const { full } = shown;
   const label = full ? "Exit full screen" : "Full screen";
   const FullIcon = full ? Minimize2Icon : Maximize2Icon;
   return (
     <>
-      <button type="button" className="header-btn" aria-label={label} title={label} onClick={() => open({ ...opened, full: !full })}>
+      <button type="button" className="header-btn" aria-label={label} title={label} onClick={() => open((current) => current && { ...current, full: !full })}>
         <FullIcon aria-hidden />
       </button>
       <button type="button" className="header-btn" aria-label="Close" title="Close" onClick={() => open(null)}><XIcon aria-hidden /></button>
@@ -292,15 +353,15 @@ function DesktopControls({ opened }: { opened: Opened }) {
   );
 }
 
-function OpenedFrame({ opened, source, title, frame }: { opened: Opened; source: Source | undefined; title: string; frame: RefObject<HTMLIFrameElement | null> }) {
-  if ("artifact" in opened) return <VersionFrame key={opened.artifact.path} artifact={opened.artifact} frame={frame} />;
+function ShownFrame({ shown, source, title, frame }: { shown: Shown; source: Source | undefined; title: string; frame: RefObject<HTMLIFrameElement | null> }) {
+  if ("artifact" in shown) return <VersionFrame key={shown.artifact.path} artifact={shown.artifact} frame={frame} />;
   const failure = source !== undefined && "error" in source ? source.error : null;
   return (
     <>
       <Presence>{failure !== null && (
         <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">{failure}</motionElement.p>
       )}</Presence>
-      <SandboxFrame key={opened.source} title={title} html={source !== undefined && "html" in source ? source.html : null} runs={false} frame={frame} />
+      <SandboxFrame key={shown.source} title={title} html={source !== undefined && "html" in source ? source.html : null} runs={false} frame={frame} />
     </>
   );
 }

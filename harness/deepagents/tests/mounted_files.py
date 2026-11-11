@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,3 +31,21 @@ class MountedFiles:
 
     def read(self, name: str) -> bytes:
         return (self.root / name).read_bytes()
+
+
+@dataclass(frozen=True)
+class AccountFiles(FilesMount):
+    """The account's one Files tree, which every chat of the account mounts at its own workspace."""
+
+    account: Path = Path()
+
+    @classmethod
+    def at(cls, account: Path) -> AccountFiles:
+        account.mkdir(parents=True, exist_ok=True)
+        mount = FilesMount.from_binding(binding())
+        return cls(mount.file_system_id, mount.access_point_id, mount.mount_target_ip, mount.region,
+                   mount.credentials, account)
+
+    def pull(self, root: Path, excluded: Iterable[str] = ()) -> None:
+        if not root.exists():
+            root.symlink_to(self.account, target_is_directory=True)
