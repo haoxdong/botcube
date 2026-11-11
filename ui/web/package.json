@@ -28,7 +28,7 @@
   },
   "scripts": {
     "dev": "next dev --port 3001",
-    "build": "next build --webpack",
+    "build": "next build",
     "start": "serve .next-standalone --listen ${PORT:-3001}",
     "storybook": "storybook dev --port 6006",
     "build:storybook": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --max-old-space-size=4096\" storybook build --output-dir storybook-static",

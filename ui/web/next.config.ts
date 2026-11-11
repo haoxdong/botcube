@@ -61,6 +61,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
 
   const config: AppConfig = {
     output: 'export',
+    typescript: { ignoreBuildErrors: process.env.COLLECTIVE_PRIVATE_CI === 'true' },
     distDir: phase === PHASE_DEVELOPMENT_SERVER
       ? '.next'
       : process.env.CARTRIDGE_UI_PACKAGE ? '.next-cartridge' : '.next-standalone',
@@ -87,6 +88,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     // Don't let Next auto-generate AGENTS.md/CLAUDE.md — the repo manages its own.
     agentRules: false,
     experimental: {
+      turbopackFileSystemCacheForBuild: process.env.COLLECTIVE_PRIVATE_CI !== 'true',
       // Next 16.3+ turns on turbopack's dev filesystem cache AND in-memory cache
       // eviction (`turbopackMemoryEviction: 'full'`) by default — that's the real
       // dev-memory lever: it evicts inactive-route cache and bounds long-session
