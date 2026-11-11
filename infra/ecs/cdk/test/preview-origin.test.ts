@@ -1,9 +1,10 @@
+import { parkingTemplate } from './resolve-parking.js';
 import { ok as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, FileSystem } from 'aws-cdk-lib';
-import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 import { repositoryRoot, caPath, originProviderPath } from './origin-fixture';
 import { PreviewOriginStack, type PreviewOriginProps } from '../lib/preview-origin-stack.js';
 
@@ -16,10 +17,10 @@ const props: PreviewOriginProps = {
   cloudflareCidrs: ['173.245.48.0/20'], clientVersion: 'version',
   tokenSecretName: '/test/token', clientSecretName: '/test/client',
   caPath, corsOrigins: ['https://web.example.com'],
-  parked: false, parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
+  parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
 };
 test('preview requires Cloudflare HTTPS and private mTLS with no HTTP listener', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   template.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', 1);
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
     Port: 443, Protocol: 'HTTPS', MutualAuthentication: { Mode: 'verify', TrustStoreArn: Match.anyValue(), IgnoreClientCertificateExpiry: false },
@@ -34,7 +35,7 @@ test('preview requires Cloudflare HTTPS and private mTLS with no HTTP listener',
   expect(JSON.stringify(template.toJSON())).not.toContain('PRIVATE KEY');
 });
 test('production hostname gets certificate, AOP, and DNS on this origin', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'Production', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'Production', props));
   const resources = Object.entries(template.findResources('AWS::CloudFormation::CustomResource'));
   const find = (kind: string, hostname: string) => {
     const resource = resources.find(([, r]) => r.Properties.Kind === kind && r.Properties.Hostname === hostname);
@@ -52,14 +53,14 @@ test('production hostname gets certificate, AOP, and DNS on this origin', () => 
   expect(aop.Properties.CertId).toEqual({ Ref: find('Aop', 'preview.example.com')[0] });
 });
 test('the origin ALB is internet-facing in the public subnets behind only the Cloudflare ingress group', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const [ingress] = Object.keys(template.findResources('AWS::EC2::SecurityGroup'));
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', {
     Scheme: 'internet-facing', Subnets: ['subnet-fixture12345678', 'subnet-fixture23456789'], SecurityGroups: [{ 'Fn::GetAtt': [ingress, 'GroupId'] }],
   });
 });
 test('Cloudflare IPv6 ranges admit HTTPS by IPv6 CIDR', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', { ...props, cloudflareCidrs: ['173.245.48.0/32', '2400:cb00::/128'] }));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', { ...props, cloudflareCidrs: ['173.245.48.0/32', '2400:cb00::/128'] }));
   template.hasResourceProperties('AWS::EC2::SecurityGroup', {
     SecurityGroupIngress: [
       { CidrIp: '173.245.48.0/32', IpProtocol: 'tcp', FromPort: 443, ToPort: 443, Description: 'Cloudflare HTTPS' },
@@ -82,14 +83,14 @@ test.each(['0.0.0.0/0', 'bad/20', '1.2.3.4', '1.2.3.4/x', '1.2.3.4/x20', '1.2.3.
 const provider = { 'Fn::GetAtt': ['OriginProviderframeworkonEvent2E9E500B', 'Arn'] };
 
 test('the ingress group allows no outbound traffic', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   template.hasResourceProperties('AWS::EC2::SecurityGroup', {
     SecurityGroupEgress: [{ CidrIp: '255.255.255.255/32', Description: 'Disallow all traffic', FromPort: 252, IpProtocol: 'icmp', ToPort: 86 }],
   });
 });
 
 test('the ALB drops invalid headers, keeps clients alive a minute and logs connections to a private, TLS-only bucket kept 30 days', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const [bucketEntry] = Object.entries(template.findResources('AWS::S3::Bucket'));
   assert(bucketEntry);
   const [bucketId, bucket] = bucketEntry;
@@ -115,7 +116,7 @@ test('the ALB drops invalid headers, keeps clients alive a minute and logs conne
 });
 
 test('the HTTPS listener serves both hostnames certificates under the TLS 1.3 policy', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
     Certificates: [{ CertificateArn: { 'Fn::GetAtt': ['ServerCertificate', 'Arn'] } }],
     SslPolicy: 'ELBSecurityPolicy-TLS13-1-2-Res-2021-06',
@@ -124,36 +125,36 @@ test('the HTTPS listener serves both hostnames certificates under the TLS 1.3 po
 });
 
 test('the trust store holds the Cloudflare origin-pull CA', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const ca = FileSystem.fingerprint(path.join(props.repositoryRoot, props.caPath));
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TrustStore', { CaCertificatesBundleS3Key: `${ca}.crt` });
 });
 
 test('the provider creates each certificate, AOP and DNS record through one handler', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const custom = Object.fromEntries(Object.entries(template.findResources('AWS::CloudFormation::CustomResource'))
-    .map(([id, resource]) => [id, { ...resource.Properties, DependsOn: resource.DependsOn }]));
-  const listener = ['OriginHttpsDefaultCertificates1B8347611', 'OriginHttpsAC81CBD6'];
+    .map(([id, resource]) => [id, { ...resource.Properties, ...(resource.DependsOn ? { DependsOn: resource.DependsOn } : {}) }]));
+  const listener = { Ref: 'OriginHttpsAC81CBD6' };
   const target = { 'Fn::GetAtt': ['OriginBCF5A9D0', 'DNSName'] };
   expect(custom).toEqual({
     ServerCertificate: { ServiceToken: provider, Kind: 'Certificate', Hostname: 'preview.example.com' },
     ProductionCertificate: { ServiceToken: provider, Kind: 'Certificate', Hostname: 'api.example.com' },
-    PreviewAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'preview.example.com', ClientVersion: 'version', DependsOn: listener },
-    ProductionAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'api.example.com', ClientVersion: 'version', CertId: { Ref: 'PreviewAop' }, DependsOn: listener },
+    PreviewAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'preview.example.com', ClientVersion: 'version', ListenerArn: listener },
+    ProductionAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'api.example.com', ClientVersion: 'version', CertId: { Ref: 'PreviewAop' }, ListenerArn: listener },
     PreviewDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'preview.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['PreviewAop'] },
     ProductionDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'api.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['ProductionAop'] },
   });
 });
 
 test('the provider polls every 20 seconds for 30 minutes without waiter logs', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const [machine] = Object.values(template.findResources('AWS::StepFunctions::StateMachine')).map(resource => resource.Properties);
   expect(machine.LoggingConfiguration).toBeUndefined();
   expect(machine.DefinitionString['Fn::Join'][1][0]).toContain('"IntervalSeconds":20,"MaxAttempts":90,');
 });
 
 test('each provider handler reads both secrets and both hostnames and may manage only ACM certificates', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const functions = Object.values(template.findResources('AWS::Lambda::Function')).map(resource => resource.Properties)
     .filter(fn => fn.Handler.startsWith('handler.'));
   const secret = (name: string) => ({ 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, `:secretsmanager:us-east-1:123456789012:secret:${name}-??????`]] });
@@ -190,14 +191,14 @@ test('the provider bundle ships the handler and parked Worker without tests or b
   write(path.join(root, 'expected'), bundled);
   fs.mkdirSync(path.dirname(path.join(root, props.caPath)), { recursive: true });
   fs.copyFileSync(path.join(props.repositoryRoot, props.caPath), path.join(root, props.caPath));
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', { ...props, repositoryRoot: root, originProviderPath: path.join(root, 'origin-provider') }));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', { ...props, repositoryRoot: root, originProviderPath: path.join(root, 'origin-provider') }));
   const keys = Object.values(template.findResources('AWS::Lambda::Function')).map(resource => resource.Properties)
     .filter(fn => fn.Handler.startsWith('handler.')).map(fn => fn.Code.S3Key);
   expect(keys).toEqual(Array(2).fill(`${FileSystem.fingerprint(path.join(root, 'expected'))}.zip`));
 });
 
 test('the stack outputs the ids later deploy steps read', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'TestOrigin', props));
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   expect(template.toJSON().Outputs).toEqual({
     SecurityGroupId: { Value: { 'Fn::GetAtt': ['OriginIngress640B9738', 'GroupId'] } },
     ConnectionLogsBucket: { Value: { Ref: 'ConnectionLogs37703DFE' } },
@@ -210,7 +211,7 @@ test('the stack outputs the ids later deploy steps read', () => {
 });
 
 test('adopters name origin resources and both provider handlers without naming CDK helpers', () => {
-  const template = Template.fromStack(new PreviewOriginStack(new App(), 'NamedOrigin', {
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'NamedOrigin', {
     ...props, securityGroupName: 'adopter-ingress', connectionLogsBucketName: 'adopter-origin-logs',
     trustStoreName: 'adopter-trust', loadBalancerName: 'adopter-origin',
     providerNames: {

@@ -1,3 +1,4 @@
+import { parkingTemplate } from './resolve-parking.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -36,20 +37,24 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, parked, webLatency,
+    repositoryRoot: root, deployRoot, identity, webLatency,
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
       commit: 'local-fixture',
     },
   });
-  Template.fromStack(app.node.findChild('WebLatency') as Stack).hasResourceProperties('AWS::RUM::AppMonitor', {
+  parkingTemplate(app.node.findChild('WebLatency') as Stack).hasResourceProperties('AWS::RUM::AppMonitor', {
     AppMonitorConfiguration: { MetricDestinations: [{ Destination: 'CloudWatch', MetricDefinitions: [{ EventPattern: JSON.stringify({ event_type: ['latency'], event_details: { moment: ['first-response'], automated: [false] } }) }] }] },
   });
-  const origin = Template.fromStack(app.node.findChild('PreviewOrigin') as Stack);
+  for (const id of ['PrivateEgress', 'PreviewOrigin', 'ApiHealth']) {
+    const template = Template.fromStack(app.node.findChild(id) as Stack).toJSON();
+    expect(template.Parameters.parked).toEqual({ Type: 'String', AllowedValues: ['true', 'false'], Description: 'Production is Parked when true, Live when false.' });
+  }
+  const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
   origin.resourceCountIs('AWS::ECS::Service', 2);
   origin.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', parked ? 0 : 1);
-  Template.fromStack(app.node.findChild('PrivateEgress') as Stack).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
+  parkingTemplate(app.node.findChild('PrivateEgress') as Stack, parked).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
   expect((app.node.findChild('PreviewOrigin') as Stack).stackName).toBe(identity.aws.ecs.previewOriginStackName);
   origin.hasResourceProperties('AWS::BedrockAgentCore::BrowserCustom', { Name: identity.aws.agentCore.agentComputerBrowser.name });
   origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
@@ -63,14 +68,14 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
 test.each([true, false])('parks idle production and wakes it from the paused page with parked=%s', parked => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, parked, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    repositoryRoot: root, deployRoot, identity, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
       commit: 'local-fixture',
     },
   });
-  const parking = Template.fromStack(app.node.findChild('ProductionParking') as Stack);
+  const parking = parkingTemplate(app.node.findChild('ProductionParking') as Stack);
   const { functionName } = identity.aws.ecs.parking;
   parking.hasResourceProperties('AWS::Lambda::Function', { FunctionName: functionName, Runtime: 'nodejs24.x', Handler: 'dispatcher.handler' });
   parking.hasResourceProperties('AWS::Lambda::Function', { FunctionName: `${functionName}-wake`, Handler: 'wake.handler', ReservedConcurrentExecutions: 5 });
@@ -83,18 +88,26 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
   const policies = Object.values(parking.findResources('AWS::IAM::Policy')) as { Properties: { Roles: { Ref: string }[]; PolicyDocument: { Statement: { Action: string | string[]; Condition?: unknown }[] } } }[];
   const rolesAllowed = (action: string) => policies.filter(({ Properties }) => Properties.PolicyDocument.Statement.some(({ Action }) => [Action].flat().includes(action)))
     .flatMap(({ Properties }) => Properties.Roles.map(({ Ref }) => Ref.replace(/[A-F0-9]{8}$/, '')));
-  // Only the dispatcher may read the App key; the internet-facing wake function never can.
-  expect(rolesAllowed('secretsmanager:GetSecretValue')).toEqual(['dispatcherServiceRole']);
+  expect(rolesAllowed('secretsmanager:GetSecretValue')).toEqual(['TransitionServiceRole', 'dispatcherServiceRole']);
+  parking.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({ Action: 'ssm:GetParameters', Resource: Match.objectLike({ 'Fn::Join': Match.anyValue() }) })]) } });
+  for (const metric of ['ExecutionsFailed', 'ExecutionsTimedOut', 'ExecutionsAborted']) {
+    parking.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric, Threshold: 1, EvaluationPeriods: 1, AlarmActions: [{ 'Fn::Join': Match.anyValue() }] });
+  }
+  const machine = Object.values(parking.findResources('AWS::StepFunctions::StateMachine'))[0];
+  expect(JSON.stringify(machine)).toContain('TransientServiceError');
+  expect(JSON.stringify(machine)).toContain('MaxAttempts\\\":3');
+  expect(JSON.stringify(parking.findResources('AWS::CloudWatch::Alarm'))).toContain(identity.aws.ecs.alertsTopicName);
+  expect(JSON.stringify(parking.findResources('AWS::IAM::Policy'))).toContain('parameter/cdk-bootstrap/hnb659fds/version');
   expect(rolesAllowed('dynamodb:PutItem')).toEqual(['wakeServiceRole']);
   for (const { Properties } of policies) {
     for (const statement of Properties.PolicyDocument.Statement.filter(({ Action }) => [Action].flat().some(action => /^dynamodb:(Get|Put|Update|Delete)Item$|^dynamodb:Query$/.test(action)))) {
       expect(statement.Condition).toEqual({ 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['PRODUCTION_PARKING'] } });
     }
   }
-  Template.fromStack(app.node.findChild('ChatStorage') as Stack).hasResourceProperties('AWS::DynamoDB::Table', { StreamSpecification: { StreamViewType: 'NEW_IMAGE' } });
+  parkingTemplate(app.node.findChild('ChatStorage') as Stack).hasResourceProperties('AWS::DynamoDB::Table', { StreamSpecification: { StreamViewType: 'NEW_IMAGE' } });
   expect(Object.values(parking.toJSON().Outputs as Record<string, { Export?: { Name: string } }>).map(({ Export }) => Export?.Name))
     .toContain('ProductionParking:ExportsOutputFnGetAttwakeFunctionUrlA2A050A1FunctionUrl3B1B4F3E');
-  const origin = Template.fromStack(app.node.findChild('PreviewOrigin') as Stack);
+  const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
   if (parked) origin.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker', WakeUrl: Match.anyValue(), Script: Match.stringLikeRegexp('^[0-9a-f]{64}$') });
   origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([{ Name: 'BOTCUBE_REPORT_ACTIVITY', Value: 'true' }]) })]) });
 });
@@ -102,7 +115,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, parked, webLatency,
+    repositoryRoot: root, deployRoot, identity, webLatency,
     storage: { tableName: 'adopter-chat' },
     originConfig: {
       securityGroupName: 'adopter-origin-ingress',
@@ -116,11 +129,11 @@ test.each([true, false])('composition names adopter-owned networks and browser r
       commit: 'local-fixture',
     },
   });
-  Template.fromStack(app.node.findChild('WebLatency') as Stack).hasResourceProperties('AWS::RUM::AppMonitor', {
+  parkingTemplate(app.node.findChild('WebLatency') as Stack).hasResourceProperties('AWS::RUM::AppMonitor', {
     AppMonitorConfiguration: { MetricDestinations: [{ Destination: 'CloudWatch', MetricDefinitions: [{ EventPattern: JSON.stringify({ event_type: ['latency'], event_details: { moment: ['first-response'], automated: [false] } }) }] }] },
   });
-  const origin = Template.fromStack(app.node.findChild('PreviewOrigin') as Stack);
-  const storage = Template.fromStack(app.node.findChild('ChatStorage') as Stack);
+  const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
+  const storage = parkingTemplate(app.node.findChild('ChatStorage') as Stack);
   storage.hasResourceProperties('AWS::DynamoDB::Table', { TableName: 'adopter-chat' });
   for (const name of ['adopter-origin-ingress', 'adopter-agent-network', 'adopter-browser-network']) {
     origin.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: name });
@@ -128,14 +141,14 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   origin.hasResourceProperties('AWS::IAM::Role', { RoleName: 'adopter-browser-role' });
   origin.resourceCountIs('AWS::ECS::Service', 2);
   origin.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', parked ? 0 : 1);
-  Template.fromStack(app.node.findChild('PrivateEgress') as Stack).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
+  parkingTemplate(app.node.findChild('PrivateEgress') as Stack, parked).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
   expect((app.node.findChild('PreviewOrigin') as Stack).stackName).toBe(identity.aws.ecs.previewOriginStackName);
   origin.hasResourceProperties('AWS::BedrockAgentCore::BrowserCustom', { Name: identity.aws.agentCore.agentComputerBrowser.name });
 });
 
 test('composition rejects competing chat table names before creating resources', () => {
   expect(() => defineProduction(new App(), {
-    repositoryRoot: '/unused', deployRoot: '/unused', identity, parked: true,
+    repositoryRoot: '/unused', deployRoot: '/unused', identity,
     chatTableName: 'legacy-chat', storage: { tableName: 'configured-chat' },
   })).toThrow('Choose chatTableName or storage.tableName, not both');
 });

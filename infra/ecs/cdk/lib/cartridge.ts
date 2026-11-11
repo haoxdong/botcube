@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { DeployIdentity } from './production.js';
+import type { DeployIdentity } from './production-identity.js';
 import { projectDir } from './project-dir.js';
 
 /** The active Cartridge's deploy directory, named by `CARTRIDGE_DEPLOY_ROOT` and resolved from the working directory. */

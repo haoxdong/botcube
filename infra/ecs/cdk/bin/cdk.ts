@@ -6,7 +6,7 @@ import { App } from 'aws-cdk-lib';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
 import { cartridgeDeployRoot, cartridgeIdentity, projectDir } from '../lib/cartridge.js';
 import { repositoryImageProps } from '../lib/repository-image.js';
-import { defineProduction, parkedContext } from '../lib/production.js';
+import { defineProduction } from '../lib/production.js';
 
 export const app = new App();
 const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
@@ -42,4 +42,4 @@ if (momentsContext !== undefined) {
   }
   webLatency = { moments };
 }
-defineProduction(app, { repositoryRoot, deployRoot, identity, parked: parkedContext(app.node.tryGetContext('parked')), origin, ...(webLatency ? { webLatency } : {}) });
+defineProduction(app, { repositoryRoot, deployRoot, identity, origin, ...(webLatency ? { webLatency } : {}) });

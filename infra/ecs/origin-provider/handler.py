@@ -55,7 +55,11 @@ class Cloudflare:
                 with urllib.request.urlopen(request, timeout=25) as response:
                     status, result = response.status, json.load(response)
             except urllib.error.HTTPError as error:
+                if error.code == 429 or error.code >= 500:
+                    raise
                 status, result = error.code, json.load(error)
+        except urllib.error.HTTPError:
+            raise
         except (OSError, ValueError) as error:
             raise ProviderError('Cloudflare transport/response failure') from error
         if not result.get('success'):

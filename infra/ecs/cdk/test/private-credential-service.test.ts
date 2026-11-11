@@ -1,3 +1,4 @@
+import { parkingTemplate } from './resolve-parking.js';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { ok as assert } from 'node:assert';
 import { App, Stack } from 'aws-cdk-lib';
@@ -27,10 +28,10 @@ function synth(corporate = false, invocationTokenLength?: number, overrides: Par
     image: ecs.ContainerImage.fromRegistry('test-image'), tableName: 'test-vault',
     ...(invocationTokenLength === undefined ? {} : { invocationTokenLength }),
     rpcPath: '/rpc',
-    namespaceName: 'namespace.test', alertsTopicName: 'existing-alerts', port: 8081, parked: false,
+    namespaceName: 'namespace.test', alertsTopicName: 'existing-alerts', port: 8081,
     authBrowserId: 'test_auth_browser-1234567890', agentComputerBrowserId: 'test_agent_computer-1234567890', ...(typeof overrides === 'function' ? overrides(stack) : overrides),
   });
-  return Template.fromStack(stack);
+  return parkingTemplate(stack);
 }
 
 test('private DNS reaches one healthy Fargate task with only the two caller security groups', () => {

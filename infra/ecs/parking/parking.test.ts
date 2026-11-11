@@ -43,7 +43,7 @@ function production({ state = 'live', paused = state === 'parked', heartbeats = 
     forget: async (instances: string[]) => { world.heartbeats = world.heartbeats.filter(({ instance }) => !instances.includes(instance)); },
     forgetRequest: async (at: number) => { world.requests = world.requests.filter(({ claim }) => claim.at !== at); },
     dispatch: async (action: string) => {
-      if (world.refuse) throw new Error('GitHub refused the dispatch with HTTP 403');
+      if (world.refuse) throw new Error('CloudFormation refused the transition');
       world.dispatched.push(action);
     },
   };
@@ -150,11 +150,11 @@ describe('waking from the paused page', () => {
     expect((await wake.wake()).state).toBe('waking');
   });
 
-  it('gives the claim back when GitHub refuses, so the page shows parked and the next press tries again', async () => {
+  it('gives the claim back when AWS refuses, so the page shows parked and the next press tries again', async () => {
     const { world, wake, stream } = production({ state: 'parked', refuse: true });
     await wake.wake();
 
-    await expect(stream()).rejects.toThrow('GitHub refused the dispatch with HTTP 403');
+    await expect(stream()).rejects.toThrow('CloudFormation refused the transition');
     expect(await wake.status()).toEqual({ state: 'parked' });
     world.refuse = false;
     world.requests = [];

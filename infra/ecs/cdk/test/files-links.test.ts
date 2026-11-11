@@ -1,6 +1,7 @@
+import { parkingTemplate } from './resolve-parking.js';
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
-import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
 import { SecurityGroup } from 'aws-cdk-lib/aws-ec2';
@@ -19,18 +20,18 @@ function synth(parked: boolean) {
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath: path.resolve(__dirname, '../../origin-provider'),
     vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],
     cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', tokenSecretName: '/test/token', clientSecretName: '/test/client',
-    caPath, corsOrigins: [], parked, parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
+    caPath, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
   });
   const chat = new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com'], corsOrigins: [],
     runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
     sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'reap.js'], authBrowserId: 'test-browser',
-    chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), parked,
+    chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'),
   });
   const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });
   addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), ['https://web.example.com'], [runtime]);
-  return Template.fromStack(origin);
+  return parkingTemplate(origin, parked);
 }
 
 test.each([false, true])('Chat mounts the accounts access point with IAM and TLS while EFS selection stays off, parked=%s', parked => {

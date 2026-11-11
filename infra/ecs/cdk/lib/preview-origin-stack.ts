@@ -1,8 +1,9 @@
+import { parkState, liveResource } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CfnOutput, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnResource, Fn, Token, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
@@ -51,8 +52,6 @@ export interface PreviewOriginProps extends StackProps {
   originZone?: string;
   /** Web origins the Chat Service grants credentialed CORS; the parked Worker grants the same. */
   corsOrigins: string[];
-  /** Parked deletes the ALB; everything that makes it serve again on unpark stays. */
-  parked: boolean;
   /** Proxied DNS target while Parked: an RFC 2606 reserved name, so no origin ever answers. */
   parkedDnsTarget: string;
   wakeUrl: string;
@@ -66,6 +65,7 @@ export class PreviewOriginStack extends Stack {
 
   constructor(scope: Construct, id: string, props: PreviewOriginProps) {
     super(scope, id, props);
+    const state = parkState(this);
     if (props.publicSubnets.length < 2 || !props.clientVersion || !props.cloudflareCidrs.length) {
       throw new Error('Preview origin requires two public subnets, client version and Cloudflare ranges');
     }
@@ -140,16 +140,13 @@ export class PreviewOriginStack extends Stack {
       record.node.addDependency(dependency);
       return record;
     };
-    if (props.parked) {
+    {
       // Answers every request with 503 {"status":"parked"}; unpark deletes it after the ALB serves again.
       const worker = resource('ParkedWorker', {
         Kind: 'ParkedWorker', Hostnames: [props.production.hostname, props.hostname], Origins: props.corsOrigins, WakeUrl: props.wakeUrl,
         Script: createHash('sha256').update(fs.readFileSync(path.join(props.originProviderPath, 'parked-worker.mjs'))).digest('hex'),
       });
-      // The Worker routes before DNS leaves the ALB, so no request meets an unanswered name.
-      dns('PreviewDns', props.hostname, aop, props.parkedDnsTarget).node.addDependency(worker);
-      dns('ProductionDns', props.production.hostname, productionAop, props.parkedDnsTarget).node.addDependency(worker);
-      return;
+      (worker.node.defaultChild as CfnResource).cfnOptions.condition = state.parkedCondition;
     }
     const loadBalancer = new elb.ApplicationLoadBalancer(this, 'Origin', {
       vpc, internetFacing: true,
@@ -169,13 +166,28 @@ export class PreviewOriginStack extends Stack {
       mutualAuthentication: { mutualAuthenticationMode: elb.MutualAuthenticationMode.VERIFY, trustStore, ignoreClientCertificateExpiry: false },
       defaultAction: elb.ListenerAction.fixedResponse(503, { contentType: 'text/plain', messageBody: 'Preview Chat Service unavailable\n' }),
     });
-    aop.node.addDependency(listener);
-    productionAop.node.addDependency(listener);
-    dns('PreviewDns', props.hostname, aop, loadBalancer.loadBalancerDnsName);
-    dns('ProductionDns', props.production.hostname, productionAop, loadBalancer.loadBalancerDnsName);
+    for (const association of [aop, productionAop]) {
+      (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.liveCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
+    }
+    const worker = this.node.findChild('ParkedWorker');
+    const target = Token.asString(Fn.conditionIf(state.parkedCondition.logicalId, props.parkedDnsTarget, loadBalancer.loadBalancerDnsName));
+    const previewDns = dns('PreviewDns', props.hostname, aop, target);
+    const productionDns = dns('ProductionDns', props.production.hostname, productionAop, target);
+    for (const record of [previewDns, productionDns]) {
+      (record.node.defaultChild as CfnResource).addPropertyOverride('Worker', Fn.conditionIf(state.parkedCondition.logicalId, (worker as CustomResource).ref, { Ref: 'AWS::NoValue' }));
+    }
+    liveResource(this, loadBalancer);
+    liveListener(this, listener);
     this.alb = { loadBalancer, listener };
-    new CfnOutput(this, 'ListenerArn', { value: listener.listenerArn });
-    new CfnOutput(this, 'LoadBalancerArn', { value: loadBalancer.loadBalancerArn });
-    new CfnOutput(this, 'OriginDnsName', { value: loadBalancer.loadBalancerDnsName });
+    new CfnOutput(this, 'ListenerArn', { value: listener.listenerArn, condition: state.liveCondition });
+    new CfnOutput(this, 'LoadBalancerArn', { value: loadBalancer.loadBalancerArn, condition: state.liveCondition });
+    new CfnOutput(this, 'OriginDnsName', { value: loadBalancer.loadBalancerDnsName, condition: state.liveCondition });
+  }
+}
+
+function liveListener(scope: Construct, listener: elb.ApplicationListener) {
+  liveResource(scope, listener);
+  for (const resource of listener.node.findAll()) {
+    if (resource instanceof elb.CfnListenerCertificate) liveResource(scope, resource);
   }
 }

@@ -4,7 +4,7 @@ import runpy
 import unittest
 import urllib.error
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from email.message import Message
 from io import BytesIO
 from typing import Any, TypedDict
@@ -233,151 +233,8 @@ class LiveVerificationTests(unittest.TestCase):
         self.assertEqual(verifier['live_failures'](facts, EXPECTED), ['api-next.example.com still answers the parked 503'])
 
 
-class CredentialStartTests(unittest.TestCase):
-    def test_task_lookup_failures_are_not_reported_as_no_new_task(self):
-        since = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
-        for tasks in ([], [{'taskArn': 'new', 'createdAt': since, 'healthStatus': 'HEALTHY',
-                           'pullStartedAt': since, 'pullStoppedAt': since, 'startedAt': since}]):
-            with self.subTest(tasks=tasks):
-                ecs = Mock()
-                ecs.list_tasks.return_value = {'taskArns': ['new', 'missing']}
-                ecs.describe_tasks.return_value = {'tasks': tasks, 'failures': [{'arn': 'missing', 'reason': 'MISSING'}]}
-                watch = transition['CredentialWatch'](since)
-                watch.done.set()
-                with patch('boto3.client', return_value=ecs):
-                    watch.start()
-                    with self.assertRaisesRegex(RuntimeError, 'Credential Service task lookup failed'):
-                        watch.stop()
-                ecs.describe_tasks.assert_called_once_with(cluster=transition['IDENTITY']['aws']['ecs']['cluster'], tasks=['new', 'missing'])
-
-    def test_watch_preserves_no_task_and_successful_measurement_results(self):
-        since = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
-        for arns in ([], ['new']):
-            with self.subTest(arns=arns):
-                ecs = Mock()
-                ecs.list_tasks.return_value = {'taskArns': arns}
-                ecs.describe_tasks.return_value = {'tasks': [{'taskArn': 'new', 'createdAt': since,
-                    'healthStatus': 'HEALTHY', 'pullStartedAt': since,
-                    'pullStoppedAt': since + timedelta(seconds=2), 'startedAt': since}], 'failures': []}
-                watch = transition['CredentialWatch'](since)
-                watch.done.set()
-                with patch('boto3.client', return_value=ecs):
-                    watch.start()
-                    result = watch.stop()
-                if arns:
-                    self.assertEqual(result['task'], 'new')
-                    self.assertEqual(result['pullSeconds'], 2.0)
-                else:
-                    self.assertIsNone(result)
-                    ecs.describe_tasks.assert_not_called()
-
-    def test_time_to_healthy_runs_from_the_new_task_start_to_the_first_healthy_observation(self):
-        since = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
-
-        def at(seconds: float) -> datetime:
-            return since + timedelta(seconds=seconds)
-
-        old = {'taskArn': 'old', 'createdAt': at(-600), 'pullStartedAt': at(-599), 'pullStoppedAt': at(-560),
-               'startedAt': at(-555), 'healthStatus': 'HEALTHY'}
-        new = {'taskArn': 'new', 'createdAt': at(20), 'pullStartedAt': at(22), 'pullStoppedAt': at(40),
-               'startedAt': at(43), 'healthStatus': 'UNKNOWN'}
-        self.assertIsNone(transition['credential_start']([old, new], since, at(50)))
-        self.assertEqual(transition['credential_start']([old, {**new, 'healthStatus': 'HEALTHY'}], since, at(61)),
-                         {'task': 'new', 'pullSeconds': 18.0, 'startToHealthySeconds': 18.0})
 
 
-    # Run 42087296686 (2026-11-05 18:45Z) and an 11:22Z unpark: ECS reported the new task HEALTHY while it was
-    # still ACTIVATING, before `startedAt`, and the step crashed with KeyError: 'startedAt' after a good deploy.
-    def test_a_healthy_task_without_startedAt_is_not_measured_yet(self):
-        since = datetime(2026, 11, 5, 18, 0, tzinfo=UTC)
-        activating = {'taskArn': 'new', 'createdAt': since, 'healthStatus': 'HEALTHY',
-                      'pullStartedAt': since, 'pullStoppedAt': since + timedelta(seconds=100)}
-        self.assertIsNone(transition['credential_start']([activating], since, since + timedelta(seconds=110)))
-        self.assertEqual(transition['unstarted_task']([activating], since), 'new')
-
-    def test_the_watch_waits_for_startedAt_after_the_deploy(self):
-        since = datetime(2026, 11, 5, 18, 0, tzinfo=UTC)
-        activating = {'taskArn': 'new', 'createdAt': since, 'healthStatus': 'HEALTHY',
-                      'pullStartedAt': since, 'pullStoppedAt': since + timedelta(seconds=100)}
-        running = {**activating, 'startedAt': since + timedelta(seconds=109)}
-        ecs = Mock()
-        ecs.list_tasks.return_value = {'taskArns': ['new']}
-        ecs.describe_tasks.side_effect = [{'tasks': [activating]}, {'tasks': [activating]}, {'tasks': [running]}]
-        watch = transition['CredentialWatch'](since, pause=lambda _: None)
-        watch.done.set()
-        with patch('boto3.client', return_value=ecs):
-            watch.start()
-            result = watch.stop()
-        self.assertEqual((result['task'], result['pullSeconds']), ('new', 100.0))
-        self.assertEqual(ecs.describe_tasks.call_count, 3)
-
-    def test_a_task_never_started_within_the_grace_is_reported_not_started(self):
-        since = datetime(2026, 11, 5, 18, 0, tzinfo=UTC)
-        activating = {'taskArn': 'new', 'createdAt': since, 'healthStatus': 'HEALTHY',
-                      'pullStartedAt': since, 'pullStoppedAt': since}
-        ecs = Mock()
-        ecs.list_tasks.return_value = {'taskArns': ['new']}
-        ecs.describe_tasks.return_value = {'tasks': [activating]}
-        ticks = iter(range(1000))
-        watch = transition['CredentialWatch'](since, grace=5, clock=lambda: next(ticks), pause=lambda _: None)
-        watch.done.set()
-        with patch('boto3.client', return_value=ecs):
-            watch.start()
-            self.assertEqual(watch.stop(), {'task': 'new', 'started': False})
-
-
-class ServiceCapacityTests(unittest.TestCase):
-    def test_unpark_restores_both_services_from_desired_zero_and_waits_before_live_verification(self):
-        import tempfile
-        desired = dict.fromkeys(verifier['SERVICES'], 0)
-        ecs = Mock()
-        def update_service(*, cluster, service, desiredCount):
-            desired[service] = desiredCount
-        ecs.update_service.side_effect = update_service
-        def command(*args, **kwargs):
-            if 'live' in args and str(DEPLOY_ECS / 'verify-park.py') in args:
-                facts = live()
-                for name, count in desired.items():
-                    facts['services'][name]['desired'] = count
-                failures = verifier['live_failures'](facts, EXPECTED)
-                if failures:
-                    raise RuntimeError('; '.join(failures))
-                ecs.get_waiter.return_value.wait.assert_called_once()
-        with tempfile.TemporaryDirectory() as temp, \
-                patch.dict(transition['transition'].__globals__, {
-                    'run': command, 'CredentialWatch': Mock(return_value=Mock(stop=Mock(return_value=None))), 'session_api_capacity': Mock(),
-                    'refresh_runtime_spares': Mock(return_value={}), 'await_spare_handoff': Mock(), 'remove_legacy_files_imports': Mock()}), \
-                patch.dict('os.environ', {'RUNNER_TEMP': temp}), patch('boto3.client', return_value=ecs):
-            transition['transition']('unpark')
-        self.assertEqual(desired, dict.fromkeys(verifier['SERVICES'], 1))
-        ecs.get_waiter.return_value.wait.assert_called_once_with(
-            cluster=transition['IDENTITY']['aws']['ecs']['cluster'], services=list(verifier['SERVICES']),
-            WaiterConfig={'Delay': 15, 'MaxAttempts': 40})
-
-    def test_capacity_restore_failure_stops_the_transition(self):
-        for failure in ('update', 'stability'):
-            with self.subTest(failure=failure):
-                ecs = Mock()
-                if failure == 'update':
-                    ecs.update_service.side_effect = RuntimeError('service missing')
-                else:
-                    ecs.get_waiter.return_value.wait.side_effect = RuntimeError('service unstable')
-                with self.assertRaisesRegex(RuntimeError, 'service'):
-                    transition['restore_service_capacity'](ecs)
-                if failure == 'update':
-                    ecs.get_waiter.assert_not_called()
-
-    def test_park_keeps_service_capacity_at_zero(self):
-        import tempfile
-        ecs = Mock()
-        with tempfile.TemporaryDirectory() as temp, \
-                patch.dict(transition['transition'].__globals__, {
-                    'run': Mock(), 'CredentialWatch': Mock(return_value=Mock(stop=Mock(return_value=None))),
-                    'session_api_capacity': Mock(), 'remove_legacy_files_imports': Mock()}), \
-                patch.dict('os.environ', {'RUNNER_TEMP': temp}), patch('boto3.client', return_value=ecs):
-            transition['transition']('park')
-        ecs.update_service.assert_not_called()
-        ecs.get_waiter.assert_not_called()
 
 
 class TransitionTests(unittest.TestCase):
@@ -391,14 +248,6 @@ class TransitionTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(SystemExit, 'Stored park state'):
                 transition['parse_state'](value)
 
-    def test_steps_are_timed_and_a_failure_names_its_step(self):
-        clock = iter([0.0, 2.5, 2.5, 4.0])
-        run = transition['Run']('unpark', clock=lambda: next(clock))
-        run.step('record state', lambda: None)
-        with self.assertRaisesRegex(SystemExit, 'unpark failed at step "deploy": RuntimeError: boom'):
-            run.step('deploy', lambda: (_ for _ in ()).throw(RuntimeError('boom')))
-        self.assertEqual(run.steps, [{'step': 'record state', 'seconds': 2.5, 'ok': True},
-                                     {'step': 'deploy', 'seconds': 1.5, 'ok': False, 'error': 'RuntimeError: boom'}])
 
 
 class MissingProviderFieldTests(unittest.TestCase):
@@ -652,32 +501,7 @@ class RuntimeSparesTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'refresh UPDATE_FAILED'):
             transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
 
-    def test_unpark_refreshes_the_runtime_once_egress_is_back_before_the_deploy_that_opens_the_front_door(self):
-        # Spares take minutes to start; refreshed before the front door opens, they start during the main deploy,
-        # so the first users after a wake land on spares, not 30 s fresh microVMs.
-        for action, expected in (('unpark', ['deploy egress', 'refresh runtime spares', 'remove legacy Files imports', 'deploy', 'restore service capacity', 'measure credential service start']), ('park', ['verify parked', 'release session API capacity'])):
-            with self.subTest(action=action):
-                run = Mock(report=dict)
-                with patch.dict(transition['transition'].__globals__, {'Run': Mock(return_value=run), 'CredentialWatch': MagicMock()}), \
-                        patch.dict('os.environ', {'RUNNER_TEMP': '/tmp'}), patch.dict('sys.modules', {'boto3': MagicMock()}):
-                    transition['transition'](action)
-                steps = [call.args[0] for call in run.step.call_args_list]
-                start = steps.index(expected[0])
-                self.assertEqual(steps[start:start + len(expected)], expected)
-                self.assertEqual('refresh runtime spares' in steps, action == 'unpark')
-                self.assertEqual('deploy egress' in steps, action == 'unpark')
 
-    def test_unpark_deploys_egress_alone_and_live(self):
-        run = Mock(report=dict)
-        commands = []
-        with patch.dict(transition['transition'].__globals__, {'Run': Mock(return_value=run), 'CredentialWatch': MagicMock(),
-                                                               'run': lambda *command, **_: commands.append(command)}), \
-                patch.dict('os.environ', {'RUNNER_TEMP': '/tmp'}), patch.dict('sys.modules', {'boto3': MagicMock()}):
-            transition['transition']('unpark')
-            works = {call.args[0]: call.args[1] for call in run.step.call_args_list}
-            works['deploy egress']()
-        self.assertEqual(commands, [('./node_modules/.bin/cdk', 'deploy', 'PrivateEgress', '--exclusively', '-c', 'previewOrigin=true',
-                                     '-c', 'parked=false', '--require-approval', 'never')])
 
 
 READY = datetime(2026, 11, 5, 16, 8, 49, tzinfo=UTC)
@@ -740,41 +564,3 @@ class SpareHandoffTests(unittest.TestCase):
         self.assertEqual(self.wait(logs, clock), '::warning::Runtime version 208 handed off no spare microVM in 300 s after READY; '
                          'reporting Live while new chats start fresh microVMs (about 29 s each)')
         self.assertEqual(clock[0], start + 300)
-
-    def test_unpark_reports_live_only_after_the_spare_wait_and_park_does_not_wait(self):
-        for action in ('unpark', 'park'):
-            with self.subTest(action=action):
-                run = Mock(report=dict)
-                with patch.dict(transition['transition'].__globals__, {'Run': Mock(return_value=run), 'CredentialWatch': MagicMock()}), \
-                        patch.dict('os.environ', {'RUNNER_TEMP': '/tmp'}), patch.dict('sys.modules', {'boto3': MagicMock()}), \
-                        patch('builtins.print'):
-                    transition['transition'](action)
-                steps = [call.args[0] for call in run.step.call_args_list]
-                self.assertEqual(steps[-1] == 'await first spare handoff', action == 'unpark')
-                self.assertEqual('await first spare handoff' in steps, action == 'unpark')
-
-
-class LegacyFilesExportTests(unittest.TestCase):
-    def test_origin_removes_legacy_imports_before_storage_exports_can_be_deleted(self):
-        for names, expected in ((['ChatStorage:ExportsOutputFnGetAttFilesFileSystemFileSystemId'], 1),
-                                (['ChatStorage:FilesEfsArn'], 0)):
-            with self.subTest(names=names):
-                cloudformation = Mock()
-                cloudformation.get_paginator.return_value.paginate.return_value = [
-                    {'Exports': [{'Name': name} for name in names]}]
-                command = Mock()
-                with patch.dict(transition['remove_legacy_files_imports'].__globals__, {'run': command}), \
-                        patch.dict('sys.modules', {'boto3': Mock(client=Mock(return_value=cloudformation))}):
-                    transition['remove_legacy_files_imports']('live')
-                self.assertEqual(command.call_count, expected)
-                if expected:
-                    self.assertEqual(command.call_args.args, (
-                        './node_modules/.bin/cdk', 'deploy', 'PreviewOrigin', '--exclusively', '-c',
-                        'previewOrigin=true', '-c', 'parked=false', '--require-approval', 'never'))
-
-    def test_export_discovery_failure_stops_the_transition(self):
-        cloudformation = Mock()
-        cloudformation.get_paginator.return_value.paginate.side_effect = RuntimeError('export discovery denied')
-        with patch.dict('sys.modules', {'boto3': Mock(client=Mock(return_value=cloudformation))}), \
-                self.assertRaisesRegex(RuntimeError, 'export discovery denied'):
-            transition['remove_legacy_files_imports']('live')

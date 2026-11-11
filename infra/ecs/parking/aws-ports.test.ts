@@ -19,11 +19,11 @@ const dynamodb = new DynamoDBClient(aws);
 
 beforeAll(async () => {
   await createChatTable(endpoint, table);
-  Object.assign(process.env, { CHAT_TABLE: table, PARK_STATE_PARAMETER: parameter });
+  Object.assign(process.env, { CHAT_TABLE: table, PARK_STATE_PARAMETER: parameter, TRANSITION_FUNCTION: 'transition' });
 });
 afterAll(() => { process.env = saved; });
 
-const ports = () => dispatcherPorts({ dynamodb, ssm: new SSMClient(aws), s3: new S3Client({ ...aws, forcePathStyle: true }) });
+const ports = () => dispatcherPorts({ lambda: { async send() { return { Payload: Buffer.from('{"state":"parked"}') }; } }, dynamodb, ssm: new SSMClient(aws), s3: new S3Client({ ...aws, forcePathStyle: true }) });
 
 describe('the parking Lambda over DynamoDB and SSM', () => {
   it('claims at most the cap a day, and debounces a claim inside its window', async () => {

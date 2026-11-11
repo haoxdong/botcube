@@ -1,5 +1,6 @@
+import { parkState, parkServiceIngress } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
-import { ArnFormat, CfnOutput, Duration, Stack, Token } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, Fn, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -100,8 +101,6 @@ export interface PreviewChatServiceProps {
   /** The auth-browser reaper's command, run in the Chat Service image. */
   reaperCommand: string[];
   authBrowserId: string;
-  /** Parked runs no tasks and has no ALB; the target group stays so park can cut its streams. */
-  parked: boolean;
 }
 
 function validateChatService(props: PreviewChatServiceProps): void {
@@ -285,7 +284,7 @@ export class PreviewChatService extends Construct {
     }));
     const reaperSchedule = new events.CfnRule(this, 'ReaperSchedule', {
       ...optionalPhysicalName('name', props.reaperRuleName),
-      scheduleExpression: props.reaperSchedule ?? 'rate(5 minutes)', state: props.parked ? 'DISABLED' : 'ENABLED',
+      scheduleExpression: props.reaperSchedule ?? 'rate(5 minutes)', state: parkState(this).string('ENABLED', 'DISABLED'),
       description: 'Expire abandoned credential login browser sessions',
       targets: [{
         id: 'Reaper', arn: cluster.clusterArn, roleArn: schedulerRole.roleArn,
@@ -307,7 +306,7 @@ export class PreviewChatService extends Construct {
     const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
-      cluster: cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'chat-service-preview', desiredCount: props.parked ? 0 : 1,
+      cluster: cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'chat-service-preview', desiredCount: parkState(this).number(1, 0),
       ...(props.subnets ? { vpcSubnets: props.subnets } : {}),
       assignPublicIp: false,
       securityGroups: [ingress, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,
@@ -322,9 +321,10 @@ export class PreviewChatService extends Construct {
         alarmName: props.alarmNames?.[suffix] ?? alarmName, metric, threshold,
         comparisonOperator,
         evaluationPeriods: periods, datapointsToAlarm: periods, treatMissingData: missing,
-        // Parked runs zero tasks on purpose: silence rather than page (production-parking.md).
-        ...(silenceWhenParked ? { actionsEnabled: !props.parked } : {}),
       });
+      if (suffix === 'task-deficit') (value.node.defaultChild as cloudwatch.CfnAlarm).addPropertyOverride('TreatMissingData', parkState(this).string('breaching', 'notBreaching'));
+      if (silenceWhenParked) (value.node.defaultChild as cloudwatch.CfnAlarm).addPropertyOverride('ActionsEnabled', Fn.conditionIf(parkState(this).parkedCondition.logicalId, false, true));
+      if (['alb-5xx', 'target-5xx', 'unhealthy-hosts'].includes(suffix)) (value.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
       value.addAlarmAction(new actions.SnsAction(topic));
       value.addOkAction(new actions.SnsAction(topic));
     };
@@ -333,7 +333,7 @@ export class PreviewChatService extends Construct {
     alarm('task-deficit', new cloudwatch.Metric({
       namespace: 'AWS/ECS', metricName: 'CPUUtilization', statistic: 'SampleCount', period,
       dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
-    }), props.parked ? cloudwatch.TreatMissingData.NOT_BREACHING : cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
+    }), cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
     // Each counts logged failures, so it cannot breach at zero tasks and keeps its actions while Parked.
     const failures = (id: string, filter: keyof NonNullable<PreviewChatServiceProps['metricFilterNames']>, suffix: Parameters<typeof alarm>[0], line: string) => {
       const metric = new logs.MetricFilter(this, id, {
@@ -370,8 +370,9 @@ export class PreviewChatService extends Construct {
       ...optionalPhysicalName('targetGroupName', props.targetGroupName),
       vpc, port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
       healthCheck: { path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(props.healthIntervalSeconds ?? 5), timeout: Duration.seconds(props.healthTimeoutSeconds ?? 4), healthyThresholdCount: props.healthHealthyThreshold ?? 2, unhealthyThresholdCount: props.healthUnhealthyThreshold ?? 6 },
-      deregistrationDelay: Duration.seconds(props.parked ? 0 : (props.drainSeconds ?? 3600)),
+      deregistrationDelay: Duration.seconds(props.drainSeconds ?? 3600),
     });
+    target.setAttribute('deregistration_delay.timeout_seconds', parkState(this).string(String(props.drainSeconds ?? 3600), '0'));
     preserveTarget(service, target, providedOrigin);
     // The origin has an ALB only while Live.
     if (!alb) {
@@ -380,6 +381,7 @@ export class PreviewChatService extends Construct {
       return;
     }
     attachIngress(this, service, target, props, alb, providedOrigin);
+    if (providedOrigin) parkServiceIngress(service, target, providedOrigin, this.container.containerName, port);
     addIngressAlarms(alarm, target, alb.loadBalancer, period, providedOrigin !== undefined);
     new CfnOutput(outputScope, 'TargetGroupArn', { value: target.targetGroupArn });
   }

@@ -1,3 +1,4 @@
+import { parkingTemplate } from './resolve-parking.js';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { ok as assert } from 'node:assert';
@@ -20,14 +21,14 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
     env, hostname: 'preview.example.com', production: { hostname: 'api.example.com' }, repositoryRoot, originProviderPath,
     vpcId: 'vpc-fixture12345678', publicSubnets: [{ id: 'subnet-fixture11111111', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture22222222', availabilityZone: 'us-east-1b' }],
     cloudflareCidrs: ['173.245.48.0/20'], clientVersion: 'version', tokenSecretName: '/test/token', clientSecretName: '/test/client',
-    caPath, corsOrigins: [], parked, parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
+    caPath, corsOrigins: [], parkedDnsTarget: 'parked.invalid', wakeUrl: 'https://wake.example.com/',
   });
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'], corsOrigins: ['https://example.com', 'https://web.example.com'],
-    runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'test-reap-auth-browsers.js'], authBrowserId: 'test_credential_login-1234567890', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), parked, ...(typeof overrides === 'function' ? overrides(origin) : overrides),
+    runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'test-reap-auth-browsers.js'], authBrowserId: 'test_credential_login-1234567890', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
-  return Template.fromStack(origin);
+  return parkingTemplate(origin, parked);
 }
 
 /** The security group a construct path created, as the template references it. */

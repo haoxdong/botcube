@@ -13,7 +13,7 @@ if [[ "$#" -ne 0 ]]; then
   exit 2
 fi
 
-read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE OIDC_SUBJECT POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE < <(node -e '
+read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE OIDC_SUBJECT POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK < <(node -e '
   const identity = require(process.argv[1]);
   process.stdout.write([
     identity.aws.account,
@@ -31,6 +31,9 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     identity.aws.ecs.parking.functionName,
     identity.aws.agentCore.sessionApiFunction,
     identity.aws.iam.runtimeRole,
+    identity.aws.ecs.privateEgress.stackName,
+    identity.aws.ecs.previewOriginStackName,
+    identity.aws.ecs.apiHealth.stackName,
   ].join(" ") + "\n");
 ' "${CARTRIDGE_DEPLOY_ROOT:?}/identity.json")
 
@@ -119,6 +122,22 @@ cat > "$ROLE_POLICY" <<EOF
       "Effect": "Allow",
       "Action": ["ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "cloudformation:UpdateStack",
+      "Resource": ["arn:aws:cloudformation:$AWS_REGION:$AWS_ACCOUNT_ID:stack/$EGRESS_STACK/*", "arn:aws:cloudformation:$AWS_REGION:$AWS_ACCOUNT_ID:stack/$ORIGIN_STACK/*", "arn:aws:cloudformation:$AWS_REGION:$AWS_ACCOUNT_ID:stack/$HEALTH_STACK/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": "arn:aws:ssm:$AWS_REGION:$AWS_ACCOUNT_ID:parameter/cdk-bootstrap/hnb659fds/version"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::$AWS_ACCOUNT_ID:role/cdk-hnb659fds-cfn-exec-role-$AWS_ACCOUNT_ID-$AWS_REGION",
+      "Condition": {"StringEquals": {"iam:PassedToService": "cloudformation.amazonaws.com"}}
     },
     {
       "Effect": "Allow",
@@ -236,6 +255,16 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
+      "Action": "states:ListStateMachines",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "states:ListExecutions",
+      "Resource": "arn:aws:states:$AWS_REGION:$AWS_ACCOUNT_ID:stateMachine:$PARKING_FUNCTION-transition"
+    },
+    {
+      "Effect": "Allow",
       "Action": "lambda:InvokeFunction",
       "Resource": "arn:aws:lambda:$AWS_REGION:$AWS_ACCOUNT_ID:function:$PARKING_FUNCTION"
     },
@@ -308,7 +337,7 @@ cat > "$ROLE_POLICY" <<EOF
     {
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:$ORIGIN_PULL_SECRET-*"
+      "Resource": ["arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:$ORIGIN_PULL_SECRET-*", "arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:$ORIGIN_TOKEN_SECRET-*"]
     }
   ]
 }

@@ -20,7 +20,7 @@ export const DISPATCH = 'DISPATCH#';
  *   requestDispatch(action: Action, claim: Claim): Promise<void>,
  * }} WakePorts
  * @typedef {WakePorts & {
- *   state(): Promise<'live' | 'parked'>,
+ *   state(): Promise<'live' | 'parked' | 'transition incomplete'>,
  *   originClaimed(): Promise<boolean>,
  *   heartbeats(): Promise<Heartbeat[]>,
  *   forget(instances: string[]): Promise<void>,
@@ -83,7 +83,8 @@ export function dispatcherService(/** @type {DispatcherPorts} */ ports) {
     idle,
     dispatchRequested: dispatchUnder,
     async check() {
-      if (await ports.state() !== 'live') return { action: 'none', reason: 'production is not Live' };
+      const state = await ports.state();
+      if (state !== 'live') return { action: 'none', reason: state === 'transition incomplete' ? state : 'production is not Live' };
       if (await ports.originClaimed()) return { action: 'none', reason: 'a session holds the origin slot' };
       const verdict = await idle();
       if (!verdict.idle) return { action: 'none', reason: verdict.reason };

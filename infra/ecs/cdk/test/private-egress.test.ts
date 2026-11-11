@@ -1,15 +1,15 @@
+import { parkingTemplate } from './resolve-parking.js';
 import { App } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { type Template } from 'aws-cdk-lib/assertions';
 import { PrivateEgressStack } from '../lib/private-egress-stack.js';
 
 const EGRESS = {
   natGateway: { name: 'test-private-egress', publicSubnetId: 'subnet-fixture0fedcba9876543210' },
   routeTableId: 'rtb-placeholder',
-  parked: false,
 };
 
 function synth(): Template {
-  return Template.fromStack(new PrivateEgressStack(new App(), 'TestEgress', EGRESS));
+  return parkingTemplate(new PrivateEgressStack(new App(), 'TestEgress', EGRESS));
 }
 
 test('the Elastic IP is retained so the fixed egress IP survives any stack change', () => {

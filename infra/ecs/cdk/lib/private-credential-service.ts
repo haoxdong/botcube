@@ -1,3 +1,4 @@
+import { parkState } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
@@ -75,8 +76,6 @@ export interface PrivateCredentialServiceProps {
   alertsTopicName: string;
   port: number;
   rpcPath: string;
-  /** Parked production runs no tasks; the vault, key and namespace stay. */
-  parked: boolean;
   /** The AgentCore browser whose Auth Browser Sessions the Sign-in Sheet types into (ADR 0075). */
   authBrowserId: string;
   /** The AgentCore browser whose Agent Computer sessions are seeded with the account's session cookies (ADR 0075 decision 5). */
@@ -195,7 +194,7 @@ export class PrivateCredentialService extends Construct {
     const service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
-      cluster: props.cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'credential-service', desiredCount: props.parked ? 0 : (props.desiredCount ?? 1),
+      cluster: props.cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'credential-service', desiredCount: parkState(this).number(props.desiredCount ?? 1, 0),
       ...(props.subnets ? { vpcSubnets: props.subnets } : {}),
       assignPublicIp: false,
       securityGroups: [network, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,

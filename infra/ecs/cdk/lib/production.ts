@@ -5,7 +5,8 @@ import { App, CfnOutput, Tags } from 'aws-cdk-lib';
 import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
-import { createProductionParking, type ParkingIdentity } from './production-parking-stack.js';
+import type { DeployIdentity } from './production-identity.js';
+import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret } from 'aws-cdk-lib/aws-ecs';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -42,68 +43,6 @@ interface OriginInput {
   runtimeArn?: string;
 }
 
-interface Subnet {
-  id: string;
-  availabilityZone: string;
-}
-
-/** The fields of the Cartridge's deploy identity the ECS app reads. */
-export interface DeployIdentity {
-  aws: {
-    account: string;
-    region: string;
-    agentCore: {
-      runtime: string;
-      runtimeNetworkParameter: string;
-      sessionApiFunction: string;
-      sessionApiAlias: string;
-      /** The Agent Computer's own browser (ADR 0077); its profiles' names start with the prefix. */
-      agentComputerBrowser: { name: string; profileNamePrefix: string };
-      privateNatBrowser: {
-        id: string;
-        browserSecurityGroupId: string;
-        extension: { bucket: string; prefix: string; versionId: string };
-        subnets: Subnet[];
-      };
-    };
-    credentialService: { vpcId: string; port: number };
-    ecs: {
-      alertsTopicName: string;
-      apiHealth: { stackName: string; alarmName: string };
-      webLatency: { stackName: string; appMonitorName: string };
-      chatService: {
-        planUsageOwnerAccountParameter: string;
-        /** The private P-256 JWKs that sign per-Turn JWTs (ADR 0067 §8), created out of band. */
-        turnIdentityKeysSecretName: string;
-      };
-      cluster: string;
-      credentialService: {
-        tableName: string;
-
-        rpcPath: string;
-      };
-      originPullCaCertificate: string;
-      originPullClientSecretName: string;
-      originTokenSecretName: string;
-      parkedDnsTarget: string;
-      previewOriginStackName: string;
-      originOwnership: string;
-      parkedWorkerName: string;
-      parking: ParkingIdentity;
-      originZone: string;
-      privateEgress: { stackName: string; natGateway: { name: string; publicSubnetId: string }; routeTableId: string };
-      privateNamespace: string;
-      publicSubnets: Subnet[];
-    };
-  };
-  domains: { chatService: string; chatServicePreview: string; corsOrigins: string[] };
-  ssm: { parkState: string };
-  product: { name: string };
-  artifacts: { chatService: { reaperCommand: string[] } };
-  /** The repository's immutable GitHub OIDC subject prefix (`gh api repos/<repo>/actions/oidc/customization/sub`). */
-  github: { oidcSubjectPrefix: string };
-}
-
 export interface ProductionOptions {
   originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
     'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
@@ -130,8 +69,6 @@ export interface ProductionOptions {
   deployRoot: string;
   /** The Cartridge's deploy identity, as `cartridgeIdentity` reads it. */
   identity: DeployIdentity;
-  /** Production's operating state: Parked when true, Live when false. */
-  parked: boolean;
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
     input: OriginInput;
@@ -139,16 +76,6 @@ export interface ProductionOptions {
     /** The checkout's commit, tagged on each task definition for `scripts/dev-status.sh`. */
     commit: string;
   } | undefined;
-}
-
-/**
- * The `parked` CDK context flag, passed as `-c parked=true|false`. CLI context
- * arrives as a string, so `'false'` must not be read as truthy.
- */
-export function parkedContext(value: unknown): boolean {
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  throw new Error(`Context parked must be true or false, got ${JSON.stringify(value)}`);
 }
 
 /** Every stack of the ECS CDK app (ADR 0065). */
@@ -159,12 +86,10 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const egressConfig = identity.aws.ecs.privateEgress;
   const egress = new PrivateEgressStack(app, 'PrivateEgress', {
     env, stackName: egressConfig.stackName, natGateway: egressConfig.natGateway, routeTableId: egressConfig.routeTableId,
-    parked: options.parked,
   });
   const health = new ApiHealthStack(app, 'ApiHealth', {
     env, stackName: identity.aws.ecs.apiHealth.stackName, alarmName: identity.aws.ecs.apiHealth.alarmName,
     hostname: new URL(identity.domains.chatService).hostname, alertsTopicName: identity.aws.ecs.alertsTopicName,
-    parked: options.parked,
     ...options.apiHealth,
   });
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
@@ -207,7 +132,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     chatTable: storage.chatTable as ITable,
     image: images.chat,
     ...options.chat,
-    parked: options.parked,
   });
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
@@ -237,7 +161,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     image: images.credential, authBrowserId: identity.aws.agentCore.privateNatBrowser.id,
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
     ...options.credentials,
-    parked: options.parked,
   });
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
@@ -317,19 +240,12 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     clientSecretName: identity.aws.ecs.originPullClientSecretName,
     caPath: identity.aws.ecs.originPullCaCertificate,
     corsOrigins: identity.domains.corsOrigins,
-    parked: options.parked, parkedDnsTarget: identity.aws.ecs.parkedDnsTarget, wakeUrl,
+    parkedDnsTarget: identity.aws.ecs.parkedDnsTarget, wakeUrl,
     ...options.originConfig,
   });
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(origin).apply(options.permissionsBoundary);
-  // Monitoring is off whenever the origin is not serving: park silences it
-  // first, unpark restores it last, so neither transition raises an alert.
-  if (options.parked) origin.addDependency(health);
-  else health.addDependency(origin);
-  // Unpark creates the NAT Gateway and default route before the services start;
-  // park removes them only after the services have parked, so a failed park
-  // rolls back to Live services that still have egress.
-  if (options.parked) egress.addDependency(origin);
-  else origin.addDependency(egress);
+  origin.addDependency(egress);
+  health.addDependency(origin);
   return origin;
 }
 

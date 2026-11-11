@@ -1,21 +1,12 @@
 """Park/unpark production per docs/runbooks/production-parking.md."""
 import json
-import os
-import subprocess
 import sys
-import tempfile
-import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
-from deploy_identity import SERVICES, load_identity, required
+from deploy_identity import load_identity, required
 
-ROOT = Path(os.environ['CARTRIDGE_REPOSITORY_ROOT']).resolve()
-DEPLOY = Path(__file__).resolve().parent
-CDK = DEPLOY / 'cdk'
 IDENTITY = load_identity()
 PARAMETER = IDENTITY['ssm']['parkState']
 TARGETS = {'park': 'parked', 'unpark': 'live'}
@@ -35,104 +26,6 @@ def stored_state():
     except ssm.exceptions.ParameterNotFound as error:
         raise SystemExit(f'Stored park state {PARAMETER} is missing; bootstrap-deploy-role.sh creates it') from error
     return parse_state(required(parameter.get('Value'), 'stored park state Value'))
-
-
-class Run:
-    """Times each named step; a failure fails the run and names its step (ADR 0030)."""
-
-    def __init__(self, action: str, clock: Callable[[], float] = time.monotonic, evidence: Path | None = None):
-        self.action, self.clock, self.evidence, self.steps = action, clock, evidence, []
-        self.credential_start = None
-
-    def step(self, name: str, work: Callable[[], object]):
-        start = self.clock()
-        try:
-            work()
-        except Exception as error:
-            self.record(name, start, error=f'{type(error).__name__}: {error}')
-            raise SystemExit(f'{self.action} failed at step "{name}": {type(error).__name__}: {error}') from error
-        self.record(name, start)
-
-    def record(self, name: str, start: float, error: str | None = None):
-        self.steps.append({'step': name, 'seconds': round(self.clock() - start, 1), 'ok': error is None, **({'error': error} if error else {})})
-        if self.evidence:
-            self.evidence.write_text(json.dumps(self.report(), indent=2) + '\n')
-
-    def report(self) -> dict[str, object]:
-        return {'action': self.action, 'steps': self.steps, 'credentialServiceStart': self.credential_start}
-
-
-def run(*command: str, cwd: Path = ROOT):
-    subprocess.run(command, cwd=cwd, check=True)
-
-
-def credential_start(tasks: Iterable[Mapping[str, Any]], since: datetime, seen: datetime) -> dict[str, Any] | None:
-    """Pull and start-to-healthy seconds of the Credential Service task this deploy
-    created, once it is seen HEALTHY at `seen`; None before that. ECS can report a task
-    HEALTHY while it is still ACTIVATING, before it sets `startedAt` at RUNNING,
-    so such a task is not measured yet."""
-    for task in tasks:
-        if task['createdAt'] >= since and task.get('healthStatus') == 'HEALTHY' and 'startedAt' in task:
-            return {'task': task['taskArn'],
-                    'pullSeconds': (task['pullStoppedAt'] - task['pullStartedAt']).total_seconds(),
-                    'startToHealthySeconds': (seen - task['startedAt']).total_seconds()}
-    return None
-
-
-def unstarted_task(tasks: Iterable[Mapping[str, Any]], since: datetime) -> str | None:
-    """The Credential Service task this deploy created that is HEALTHY but has no `startedAt` yet."""
-    return next((task['taskArn'] for task in tasks
-                 if task['createdAt'] >= since and task.get('healthStatus') == 'HEALTHY' and 'startedAt' not in task), None)
-
-
-class CredentialWatch(threading.Thread):
-    """Polls ECS every 2 s during the deploy, since ECS records no time a task turned healthy."""
-
-    def __init__(self, since: datetime, grace: float = 60, clock: Callable[[], float] = time.monotonic,
-                 pause: Callable[[float], None] = time.sleep):
-        super().__init__(daemon=True)
-        self.since, self.done = since, threading.Event()
-        self.result: dict[str, Any] | None = None
-        self.error: Exception | None = None
-        self.unstarted: str | None = None
-        self.grace, self.clock, self.pause, self.deadline = grace, clock, pause, float('inf')
-
-    def run(self):
-        try:
-            import boto3
-            ecs, cluster = boto3.client('ecs'), IDENTITY['aws']['ecs']['cluster']
-            while self.result is None:
-                stopping = self.done.is_set()
-                arns = ecs.list_tasks(cluster=cluster, serviceName='credential-service')['taskArns']
-                response = ecs.describe_tasks(cluster=cluster, tasks=arns) if arns else {'tasks': []}
-                if response.get('failures'):
-                    raise RuntimeError('Credential Service task lookup failed')
-                tasks = response['tasks']
-                self.result = credential_start(tasks, self.since, datetime.now(UTC))
-                self.unstarted = unstarted_task(tasks, self.since)
-                # After the deploy, a HEALTHY task waiting for `startedAt` gets a bounded wait; nothing else does.
-                if stopping and (self.unstarted is None or self.clock() >= self.deadline):
-                    return
-                if stopping:
-                    self.pause(2)
-                else:
-                    self.done.wait(2)
-        except Exception as error:
-            self.error = error
-
-    def stop(self) -> dict[str, Any] | None:
-        """The measurement; `{'task': ..., 'started': False}` when the new task stayed HEALTHY without
-        `startedAt` past the grace; or None when the deploy started no Credential Service task."""
-        self.deadline = self.clock() + self.grace
-        self.done.set()
-        self.join()
-        if self.error:
-            raise self.error
-        if self.result is None and self.unstarted is not None:
-            print(f'Credential Service task {self.unstarted} is HEALTHY but not started after {self.grace:.0f} s; '
-                  'start time not measured', flush=True)
-            return {'task': self.unstarted, 'started': False}
-        return self.result
 
 
 SESSION_API_CAPACITY = 'lambda:function:ProvisionedConcurrency'
@@ -294,65 +187,16 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
         pause(10)
 
 
-def restore_service_capacity(ecs: Any = None):
-    import boto3
-    ecs = ecs or boto3.client('ecs')
-    cluster = IDENTITY['aws']['ecs']['cluster']
-    for service in SERVICES:
-        ecs.update_service(cluster=cluster, service=service, desiredCount=1)
-    ecs.get_waiter('services_stable').wait(
-        cluster=cluster, services=list(SERVICES), WaiterConfig={'Delay': 15, 'MaxAttempts': 40})
-
-
-def remove_legacy_files_imports(target: str):
-    import boto3
-    exports = boto3.client('cloudformation').get_paginator('list_exports').paginate()
-    if any(export['Name'].startswith('ChatStorage:') and 'FilesFileSystem' in export['Name']
-           for page in exports for export in page['Exports']):
-        run('./node_modules/.bin/cdk', 'deploy', 'PreviewOrigin', '--exclusively', '-c', 'previewOrigin=true',
-            '-c', f"parked={'true' if target == 'parked' else 'false'}", '--require-approval', 'never', cwd=CDK)
-
-
 def transition(action: str):
     import boto3
-    target = TARGETS[action]
-    if not os.environ.get('RUNNER_TEMP'):
-        os.environ['RUNNER_TEMP'] = tempfile.mkdtemp(prefix='production-')
-    temp = Path(os.environ['RUNNER_TEMP'])
-    os.environ['PREVIEW_ORIGIN_INPUT'] = str(temp / 'origin-input.json')
-    outputs = temp / 'origin-outputs.json'
-    steps = Run(action, evidence=temp / 'production-transition-evidence.json')
-    python = sys.executable
-    steps.step('build cdk', lambda: (run('pnpm', 'install', '--frozen-lockfile', '--filter', 'botcube-infra-ecs-cdk', cwd=CDK), run('pnpm', 'run', 'build', cwd=CDK)))
-    steps.step('store state', lambda: boto3.client('ssm').put_parameter(Name=PARAMETER, Value=target, Type='String', Overwrite=True))
-    steps.step('prepare', lambda: run(python, str(DEPLOY / 'prepare-origin.py')))
-    if target == 'live':
-        steps.step('restore session API capacity', lambda: session_api_capacity(target))
-    refreshed: dict[str, Any] = {}
-    if target == 'live':
-        steps.step('deploy egress', lambda: run(
-            './node_modules/.bin/cdk', 'deploy', 'PrivateEgress', '--exclusively', '-c', 'previewOrigin=true', '-c', 'parked=false',
-            '--require-approval', 'never', cwd=CDK))
-        steps.step('refresh runtime spares', lambda: refreshed.update(refresh_runtime_spares()))
-    steps.step('remove legacy Files imports', lambda: remove_legacy_files_imports(target))
-    watch = CredentialWatch(datetime.now(UTC))
-    watch.start()
-    steps.step('deploy', lambda: run(
-        './node_modules/.bin/cdk', 'deploy', 'ChatStorage', 'ProductionParking', 'PrivateEgress', 'PreviewOrigin', 'ApiHealth',
-        '-c', 'previewOrigin=true', '-c', f"parked={'true' if target == 'parked' else 'false'}",
-        '--require-approval', 'never', '--outputs-file', str(outputs), cwd=CDK))
-    if target == 'live':
-        steps.step('restore service capacity', restore_service_capacity)
-    steps.step('measure credential service start', lambda: setattr(steps, 'credential_start', watch.stop()))
-    steps.step(f'verify {target}', lambda: run(python, str(DEPLOY / 'verify-park.py'), target, str(outputs)))
-    if target == 'parked':
-        steps.step('release session API capacity', lambda: session_api_capacity(target))
-    if target == 'live':
-        steps.step('verify production origin', lambda: run(python, str(DEPLOY / 'verify-origin.py'), 'production', str(outputs)))
-        steps.step('verify preview origin', lambda: run(python, str(DEPLOY / 'verify-origin.py'), 'verify', str(outputs)))
-        steps.step('verify alarms', lambda: run(python, str(DEPLOY / 'verify-alarms.py'), str(outputs)))
-        steps.step('await first spare handoff', lambda: await_spare_handoff(refreshed))
-    print(json.dumps({'state': target, **steps.report()}, indent=2), flush=True)
+    response = boto3.client('lambda').invoke(
+        FunctionName=IDENTITY['aws']['ecs']['parking']['functionName'],
+        InvocationType='RequestResponse', Payload=json.dumps({'op': action}).encode())
+    payload = response['Payload'].read().decode()
+    if response.get('FunctionError'):
+        raise RuntimeError(f'{action} refused: {payload}')
+    print(payload, flush=True)
+
 
 
 def main(argv: list[str]):

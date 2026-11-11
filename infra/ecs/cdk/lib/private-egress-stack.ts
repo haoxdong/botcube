@@ -1,12 +1,11 @@
 import { CfnOutput, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import { parkState } from './park-state.js';
 import { Construct } from 'constructs';
 
 export interface PrivateEgressStackProps extends StackProps {
   natGateway: { name: string; publicSubnetId: string };
   routeTableId: string;
-  /** Parked deletes the Gateway and route; the Elastic IP stays in both states. */
-  parked: boolean;
 }
 
 /**
@@ -22,20 +21,22 @@ export class PrivateEgressStack extends Stack {
     address.applyRemovalPolicy(RemovalPolicy.RETAIN);
     new CfnOutput(this, 'PrivateNatPublicIp', { value: address.ref });
     new CfnOutput(this, 'PrivateNatAllocationId', { value: address.attrAllocationId });
-    if (props.parked) return;
+    const { liveCondition: live } = parkState(this);
     const gateway = new ec2.CfnNatGateway(this, 'PrivateNatGateway', {
       allocationId: address.attrAllocationId,
       subnetId: props.natGateway.publicSubnetId,
       connectivityType: 'public',
       tags: [{ key: 'Name', value: props.natGateway.name }],
     });
+    gateway.cfnOptions.condition = live;
     gateway.applyRemovalPolicy(RemovalPolicy.DESTROY);
     const route = new ec2.CfnRoute(this, 'PrivateNatDefaultRoute', {
       routeTableId: props.routeTableId,
       destinationCidrBlock: '0.0.0.0/0',
       natGatewayId: gateway.ref,
     });
+    route.cfnOptions.condition = live;
     route.applyRemovalPolicy(RemovalPolicy.DESTROY);
-    new CfnOutput(this, 'PrivateNatGatewayId', { value: gateway.ref });
+    new CfnOutput(this, 'PrivateNatGatewayId', { value: gateway.ref, condition: live });
   }
 }

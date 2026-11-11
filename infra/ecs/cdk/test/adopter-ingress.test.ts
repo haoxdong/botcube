@@ -1,5 +1,6 @@
+import { parkingTemplate } from './resolve-parking.js';
 import { App, Stack } from 'aws-cdk-lib';
-import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -24,11 +25,11 @@ function compose(overrides: Partial<PreviewChatServiceProps> = {}, second = fals
     clusterName: 'adopter', alertsTopicName: 'alerts', hostnames: ['chat.example.com'], corsOrigins: [],
     runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test',
     sessionApiFunctionName: 'session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'reap.js'], authBrowserId: 'browser-AbCd',
-    chatTable: dynamodb.Table.fromTableName(stack, 'Table', 'adopter-chat'), image: ContainerImage.fromRegistry('test-image'), parked: false, ...overrides,
+    chatTable: dynamodb.Table.fromTableName(stack, 'Table', 'adopter-chat'), image: ContainerImage.fromRegistry('test-image'), ...overrides,
   };
   new PreviewChatService(stack, 'Chat', props);
   if (second) new PreviewChatService(stack, 'OtherChat', { ...props, clusterName: 'other', serviceName: 'other-chat', hostnames: ['other.example.com'], ingress: { securityGroup, loadBalancer, listener, cdpRulePriority: 201, chatRulePriority: 202 } });
-  return Template.fromStack(stack);
+  return parkingTemplate(stack);
 }
 
 test('Chat Service composes with imported ingress without managing the shared ALB or unrelated hosts', () => {

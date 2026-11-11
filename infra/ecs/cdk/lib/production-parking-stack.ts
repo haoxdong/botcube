@@ -6,23 +6,24 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import { parkingTransition } from './parking-transition.js';
+import type { DeployIdentity } from './production-identity.js';
 import type { Construct } from 'constructs';
 
 export interface ProductionParkingProps extends StackProps {
   parkingPath: string;
+  identity: DeployIdentity;
   chatTable: ITable;
   parkStateParameter: string;
   hostname: string;
-  parking: { repository: string; appSecretName: string; slotBucket: string; originSlotKey: string };
+  parking: { slotBucket: string; originSlotKey: string };
   functionName: string;
   autoPark: boolean;
 }
 
 const PARTITION = 'PRODUCTION_PARKING';
-
-export type ParkingIdentity = ProductionParkingProps['parking'] & { functionName: string; automationUserAgents: string[]; autoPark: boolean };
 
 export class ProductionParkingStack extends Stack {
   readonly wakeUrl: string;
@@ -50,12 +51,14 @@ export class ProductionParkingStack extends Stack {
     wake.addToRolePolicy(items(['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem']));
     const url = wake.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
+    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity);
     const dispatcher = fn(props.functionName, 'dispatcher', {
       PARK_STATE_PARAMETER: props.parkStateParameter,
       SLOT_BUCKET: props.parking.slotBucket,
       ORIGIN_SLOT_KEY: props.parking.originSlotKey,
-      GITHUB_APP_SECRET: props.parking.appSecretName,
-      REPOSITORY: props.parking.repository,
+      TRANSITION_FUNCTION: transition.functionName,
+      GITHUB_APP_SECRET: props.identity.aws.ecs.parking.appSecretName,
+      REPOSITORY: props.identity.aws.ecs.parking.repository,
     });
     dispatcher.addToRolePolicy(items(['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']));
     dispatcher.addToRolePolicy(new iam.PolicyStatement({
@@ -66,7 +69,9 @@ export class ProductionParkingStack extends Stack {
     }));
     // S3 answers a missing key with NoSuchKey only to a caller who may list the bucket; otherwise AccessDenied.
     dispatcher.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [`arn:${this.partition}:s3:::${props.parking.slotBucket}`] }));
-    secretsmanager.Secret.fromSecretNameV2(this, 'GithubApp', props.parking.appSecretName).grantRead(dispatcher);
+    (dispatcher.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 1;
+    transition.grantInvoke(dispatcher);
+    secretsmanager.Secret.fromSecretNameV2(this, 'GithubApp', props.identity.aws.ecs.parking.appSecretName).grantRead(dispatcher);
     dispatcher.addEventSource(new DynamoEventSource(chatTable, {
       startingPosition: lambda.StartingPosition.LATEST, retryAttempts: 0, batchSize: 1,
       filters: [lambda.FilterCriteria.filter({
@@ -86,15 +91,11 @@ export class ProductionParkingStack extends Stack {
   }
 }
 
-export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, identity: {
-  aws: { account: string; region: string; ecs: { parking: ParkingIdentity } };
-  ssm: { parkState: string };
-  domains: { chatService: string };
-}): ProductionParkingStack {
-  const { functionName, autoPark, automationUserAgents: _, ...parking } = identity.aws.ecs.parking;
+export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, identity: DeployIdentity): ProductionParkingStack {
+  const { functionName, autoPark, slotBucket, originSlotKey } = identity.aws.ecs.parking;
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
     parkingPath: join(cubeRoot, 'infra/ecs/parking'), hostname: new URL(identity.domains.chatService).hostname,
-    chatTable, parkStateParameter: identity.ssm.parkState, parking, functionName, autoPark,
+    chatTable, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity,
   });
 }

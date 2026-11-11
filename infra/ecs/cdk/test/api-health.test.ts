@@ -1,11 +1,12 @@
+import { parkingTemplate } from './resolve-parking.js';
 import { App } from 'aws-cdk-lib';
-import { Match, Template } from 'aws-cdk-lib/assertions';
+import { Match } from 'aws-cdk-lib/assertions';
 import { ApiHealthStack } from '../lib/api-health-stack';
 
 test.each([true, false])('base health checks remain with paid options removed, parked=%s', (parked) => {
-  const template = Template.fromStack(new ApiHealthStack(new App(), 'Health', {
-    hostname: 'api.example.com', alarmName: 'health', alertsTopicName: 'alerts', parked,
-  }));
+  const template = parkingTemplate(new ApiHealthStack(new App(), 'Health', {
+    hostname: 'api.example.com', alarmName: 'health', alertsTopicName: 'alerts',
+  }), parked);
   template.hasResourceProperties('AWS::Route53::HealthCheck', {
     HealthCheckConfig: {
       Type: 'HTTP', Port: 80, FullyQualifiedDomainName: 'api.example.com', ResourcePath: '/health',

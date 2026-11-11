@@ -1,8 +1,9 @@
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { installationToken } from './github-app.mjs';
 import { ConditionalCheckFailedException, DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, NoSuchKey, S3Client } from '@aws-sdk/client-s3';
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { installationToken } from './github-app.mjs';
 import { ACTIVITY, DISPATCH, PARTITION } from './parking.mjs';
 
 const env = (/** @type {string} */ name) => {
@@ -61,14 +62,20 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThi
   };
 }
 
-export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), secrets = new SecretsManagerClient({}), fetch = globalThis.fetch } = {}) {
+export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}), secrets = new SecretsManagerClient({}), fetch = globalThis.fetch } = {}) {
   const TableName = env('CHAT_TABLE');
+  const invoke = async (/** @type {object} */ event) => {
+    const response = await lambda.send(new InvokeCommand({ FunctionName: env('TRANSITION_FUNCTION'), InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
+    const payload = Buffer.from(response.Payload ?? []).toString();
+    if (response.FunctionError) throw new Error(`Production transition refused: ${payload}`);
+    return JSON.parse(payload);
+  };
   return {
     ...wakePorts({ dynamodb, fetch }),
     async state() {
       const { Parameter } = await ssm.send(new GetParameterCommand({ Name: env('PARK_STATE_PARAMETER') }));
       if (Parameter?.Value !== 'live' && Parameter?.Value !== 'parked') throw new Error(`Park state is ${JSON.stringify(Parameter?.Value)}, not live or parked`);
-      return Parameter.Value;
+      return (await invoke({ op: 'state', stored: Parameter.Value })).state;
     },
     async originClaimed() {
       try {
@@ -97,7 +104,7 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
     async forgetRequest(/** @type {number} */ at) {
       await dynamodb.send(new DeleteItemCommand({ TableName, Key: { pk: { S: PARTITION }, sk: { S: `${DISPATCH}${at}` } } }));
     },
-    async dispatch(/** @type {'park' | 'unpark'} */ action) {
+    async fallback(/** @type {'park' | 'unpark'} */ action) {
       const { SecretString } = await secrets.send(new GetSecretValueCommand({ SecretId: env('GITHUB_APP_SECRET') }));
       // repository_dispatch needs contents:write; the App has no Actions permission for workflow_dispatch.
       const token = await installationToken(JSON.parse(SecretString ?? ''), env('REPOSITORY'), { contents: 'write' }, fetch);
@@ -107,6 +114,9 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
         body: JSON.stringify({ event_type: 'park-production', client_payload: { action } }),
       });
       if (response.status !== 204) throw new Error(`GitHub refused the ${action} dispatch with HTTP ${response.status}: ${await response.text()}`);
+    },
+    async dispatch(/** @type {'park' | 'unpark'} */ action) {
+      return invoke({ action, op: 'start' });
     },
   };
 }
