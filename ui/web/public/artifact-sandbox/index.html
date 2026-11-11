@@ -16,15 +16,29 @@
 (() => {
   // Opened any way but sandboxed in the app's frame, this page has the app's origin: it renders nothing then.
   if (self.origin !== 'null' || parent === self) return;
+  // A Source not yet published previews in a frame inside this one that runs no scripts: only a published version,
+  // whole and passed by its publish, runs them. The frame keeps this page's policy.
+  let preview = null;
+  const write = (html) => {
+    // Writing the page keeps this document, and with it the policy above; it drops this listener, so it is added again.
+    document.open();
+    document.write(html);
+    document.close();
+    addEventListener('message', receive);
+  };
   const receive = (event) => {
     if (event.source !== parent || event.origin !== location.origin) return;
     if (event.data?.type === 'artifact-print') print();
+    if (event.data?.type === 'artifact-preview') {
+      if (preview === null) {
+        write('<!doctype html><style>html,body{height:100%;margin:0}iframe{display:block;width:100%;height:100%;border:0}</style><iframe sandbox title="Preview"></iframe>');
+        preview = document.querySelector('iframe');
+      }
+      preview.srcdoc = event.data.html;
+    }
     if (event.data?.type === 'artifact-page') {
-      // Writing the page keeps this document, and with it the policy above; it drops this listener, so it is added again.
-      document.open();
-      document.write(event.data.html);
-      document.close();
-      addEventListener('message', receive);
+      preview = null;
+      write(event.data.html);
     }
   };
   addEventListener('message', receive);

@@ -4,8 +4,9 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "framer-motion";
 
-import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import type { AbstractAgent } from "@ag-ui/client";
 import { Blocks, MessageCircle } from "lucide-react";
 import { ModelEffortPicker } from "./model-effort-picker";
 import { ChatAlerts } from "./chat-alerts";
@@ -46,9 +47,9 @@ import type { ChatStop } from "./chat-surface";
 import { artifactsEnabled } from "../artifacts-flag";
 
 const ChatSurface = lazy(() => import("./chat-surface"));
-const ChatColumn = artifactsEnabled()
+const ChatColumn: ComponentType<{ agent: AbstractAgent; children: ReactNode }> = artifactsEnabled()
   ? lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })))
-  : Fragment;
+  : ({ children }) => children;
 const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
 
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
@@ -298,7 +299,7 @@ export default function App({
           >
             {(ChatThread) => <>
             <ChatAlerts errors={[auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
-            <ChatColumn>
+            <ChatColumn agent={agent}>
             <div className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
               <ChatThread

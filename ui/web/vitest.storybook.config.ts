@@ -3,6 +3,7 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
+import type { ShownElement } from './.storybook/frames';
 import type { ScriptSource } from './.storybook/script-hosts';
 import { viewports } from './.storybook/viewports.js';
 
@@ -62,6 +63,18 @@ export default defineConfig({
           });
         },
         scriptRequests: async (_context, url: string) => scriptRequests.get(url) ?? 0,
+        // Reads a frame a story's page cannot reach (.storybook/frames.ts).
+        readFrame: async (context, name: string, selector: string): Promise<ShownElement | null> => {
+          if (context.provider.name !== 'playwright') throw new Error('readFrame needs Playwright');
+          let frame = context.page.frames().find((candidate) => candidate.name() === name);
+          if (frame === undefined) throw new Error(`No frame is named ${name}`);
+          for (let child = frame.childFrames()[0]; child !== undefined; child = child.childFrames()[0]) frame = child;
+          const last = (await frame.$$(selector)).at(-1);
+          if (last === undefined) return null;
+          return last.evaluate((element) => ({
+            text: element.textContent, color: getComputedStyle(element).color, loaded: element.ownerDocument.readyState === 'complete',
+          }));
+        },
         stopServingScript: async (context, url: string) => {
           if (context.provider.name !== 'playwright') throw new Error('stopServingScript needs Playwright');
           await context.page.unroute(url);
