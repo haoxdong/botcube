@@ -62,6 +62,17 @@ RUN --mount=type=secret,id=build_ca \
     cp "/opt/browser/$BIN" /usr/local/bin/agent-browser && chmod +x /usr/local/bin/agent-browser && \
     rm -rf /opt/browser/node_modules
 
+# The checker the Artifact tool runs on publish (artifact-check), and the `artifacts` skill beside it that the agent
+# reads through the Harness (artifact.SKILLS).
+WORKDIR /opt/artifact-check
+COPY artifact-check/package.json artifact-check/package-lock.json ./
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+    npm ci --omit=dev --ignore-scripts
+COPY artifact-check/src/ ./src/
+COPY artifact-check/skills/ ./skills/
+ENV BOTCUBE_ARTIFACT_CHECK=/opt/artifact-check/src/cli.mjs
+
 FROM base AS cartridge
 
 WORKDIR /opt/tools

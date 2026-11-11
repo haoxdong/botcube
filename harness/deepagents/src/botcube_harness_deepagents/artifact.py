@@ -1,7 +1,8 @@
 """The `Artifact` tool: Claude Code's tool of that name, publishing a page the reply shows as a card (ADR 0087).
 
 An Artifact's identity is its Source's path in Files. Each publish copies the Source into Files as the next Artifact
-Version, at `/artifacts/<Source path>.versions/<n>.html`, so a version never changes once published. Beside it,
+Version, at `/artifacts/<Source path>.versions/<n>.html` (a deck's folder at `<n>/`, see `slides`), so a version never
+changes once published. Beside it,
 `<n>.json` records who made the version (`agent` or `user`), its title and description, and `read.json` holds the
 agent's read mark: the newest version it has published or read. Files are per account, so every chat of the account
 finds the same Artifacts. Only this tool and a User save write the store: the agent's file tools are refused there.
@@ -23,19 +24,28 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .files import ARTIFACTS_DIRECTORY, excluded_paths, is_files_path
+from .agent import TOOL_SKILLS
+from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY, excluded_paths, is_files_path
 from .lazy_files import current_turn_files, finish_in_thread
 from .publish import publish_tool
+from .slides import CHECKER, deck_folder, publish_deck
 
 _TITLE = re.compile(r'<title[^>]*>([^<]*)</title>', re.IGNORECASE)
 
+# The `artifacts` skill, which teaches each Artifact type's format, ships with the checker that holds Sources to it.
+SKILLS = CHECKER.parent.parent / 'skills'
+# Under the Harness's directory, which is never the user's Files.
+SKILLS_SOURCE = f'/{HARNESS_DIRECTORY}/skills/'
+
+
+def artifacts_enabled() -> bool:
+    """The Artifacts flag, BOTCUBE_ARTIFACTS=1, off by default; removing it also retires `publish`."""
+    return os.environ.get('BOTCUBE_ARTIFACTS') == '1'
+
 
 def publishing_tools(root: Path, skills: Iterable[str]) -> list[BaseTool]:
-    """The tool the agent publishes with: `Artifact` behind the Artifacts flag, else `publish`.
-
-    Flag BOTCUBE_ARTIFACTS=1, off by default; removing it also retires `publish`.
-    """
-    if os.environ.get('BOTCUBE_ARTIFACTS') == '1':
+    """The tool the agent publishes with: `Artifact` behind the Artifacts flag, else `publish`."""
+    if artifacts_enabled():
         return [artifact_tool(root, skills)]
     return [publish_tool(root, skills)]
 
@@ -51,10 +61,11 @@ def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
 
         Publish the same file_path again to make a new version of the same Artifact. The page runs its scripts in a
         sandbox and loads libraries only from cdn.jsdelivr.net, cdnjs.cloudflare.com or unpkg.com at a pinned version.
-        `title` defaults to the page's <title>; `description` is one sentence for the card.
-        action 'list' lists the Artifacts of every chat; 'read' returns one's latest page and its versions, each with
-        its author (you or the User), by its id as `url` or its `file_path`. Read one before updating it from another
-        chat.
+        `title` defaults to the page's <title>; `description` is one sentence for the card. A deck's
+        `project/deck.json` publishes the deck as Slides, once it passes the slide format's check.
+        action 'list' lists the Artifacts of every chat; 'read' returns one's latest page (a deck's files) and its
+        versions, each with its author (you or the User), by its id as `url` or its `file_path`. Read one before
+        updating it from another chat.
         """
         if action not in ('publish', 'read', 'list'):
             raise ValueError(f"action is 'publish', 'read' or 'list'; got {action!r}.")
@@ -78,8 +89,10 @@ def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
     ) -> tuple[str, dict[str, Any]]:
         return await finish_in_thread(artifact, file_path, action, title, description, url)
 
+    # The tool brings the `artifacts` skill, read from the Harness's own copy: it never lands in the user's Files.
     return StructuredTool.from_function(
         artifact, coroutine=aartifact, name='Artifact', response_format='content_and_artifact',
+        metadata={TOOL_SKILLS: {SKILLS_SOURCE: str(SKILLS)}},
     )
 
 
@@ -93,6 +106,8 @@ def _publish(
     root: Path, excluded: tuple[str, ...], file_path: str, title: str | None, description: str | None,
 ) -> tuple[str, dict[str, Any]]:
     source = _in_files(root, file_path)
+    if (deck := deck_folder(source)) is not None:
+        return _publish_deck(root, excluded, file_path, deck.resolve(), title, description)
     if not source.is_file():
         raise FileNotFoundError(f'No file at {file_path}. Write the page there, then publish it.')
     if source.suffix.lower() not in ('.html', '.htm'):
@@ -106,11 +121,29 @@ def _publish(
     version = _store(versions, body)
     found = _TITLE.search(body.decode('utf-8', errors='replace'))
     title = title or (found.group(1).strip() if found else resolved.name)
+    return _published(root, versions, f'/{name}', version, title, description)
+
+
+def _publish_deck(
+    root: Path, excluded: tuple[str, ...], file_path: str, deck: Path, title: str | None, description: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """Publishes the deck folder `deck` as Slides: its own checked, staged store, then the same records as a page."""
+    if (name := _files_name(root, excluded, deck)) is None:
+        raise ValueError(f'Save the deck in Files to publish it: {file_path}')
+    versions = _versions(root, f'/{name}')
+    version, deck_title = publish_deck(versions, deck)
+    return _published(root, versions, f'/{name}', version, title or deck_title or deck.name, description)
+
+
+def _published(
+    root: Path, versions: Path, identity: str, version: int, title: str, description: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """Records the agent as the new version's author and moves its read mark there; the tool's result."""
     _write_json(versions / f'{version}.json', {'author': 'agent', 'title': title, 'description': description or ''})
     _write_json(versions / 'read.json', {'version': version})
     published = {
-        'id': f'/{name}',
-        'type': None,
+        'id': identity,
+        'type': _type(versions, version),
         'title': title,
         'description': description or '',
         'version': version,
@@ -133,7 +166,8 @@ def _store(versions: Path, body: bytes) -> int:
 
 def _read(root: Path, excluded: tuple[str, ...], named: str) -> tuple[str, dict[str, Any]]:
     """The Artifact's latest version with its page and every version's author, moving the agent's read mark to it."""
-    if (name := _files_name(root, excluded, _in_files(root, named).resolve())) is None:
+    named_path = _in_files(root, named)
+    if (name := _files_name(root, excluded, (deck_folder(named_path) or named_path).resolve())) is None:
         raise ValueError(f"Name an Artifact in Files: {named}. List them with action 'list'.")
     identity = f'/{name}'
     versions = _versions(root, identity)
@@ -143,7 +177,7 @@ def _read(root: Path, excluded: tuple[str, ...], named: str) -> tuple[str, dict[
     _write_json(versions / 'read.json', {'version': numbers[-1]})
     found = {
         **_summary(root, identity),
-        'html': (versions / f'{numbers[-1]}.html').read_text(encoding='utf-8', errors='replace'),
+        **_content(versions, numbers[-1]),
         'versions': [
             {'version': number, 'author': _record(versions, number)['author'], 'path': _path(root, versions, number)}
             for number in numbers
@@ -168,7 +202,7 @@ def _summary(root: Path, identity: str) -> dict[str, Any]:
     record = _record(versions, latest)
     return {
         'id': identity,
-        'type': None,
+        'type': _type(versions, latest),
         'title': record['title'],
         'description': record['description'],
         'version': latest,
@@ -195,7 +229,25 @@ def _versions(root: Path, identity: str) -> Path:
 
 
 def _numbers(versions: Path) -> list[int]:
-    return [int(path.stem) for path in versions.glob('*.html') if path.stem.isdigit()]
+    """The published version numbers: a page's `<n>.html`, or a deck's `<n>/` folder."""
+    pages = [int(path.stem) for path in versions.glob('*.html') if path.stem.isdigit()]
+    return pages + [int(path.name) for path in versions.glob('*') if path.name.isdigit() and path.is_dir()]
+
+
+def _type(versions: Path, number: int) -> str | None:
+    """The version's Artifact Type: 'slides' for a deck's folder, None for a page."""
+    return 'slides' if (versions / str(number)).is_dir() else None
+
+
+def _content(versions: Path, number: int) -> dict[str, Any]:
+    """A page's HTML as `html`, or a deck's files by their path in the deck as `files`."""
+    if _type(versions, number) is None:
+        return {'html': (versions / f'{number}.html').read_text(encoding='utf-8', errors='replace')}
+    folder = versions / str(number)
+    return {'files': {
+        path.relative_to(folder).as_posix(): path.read_text(encoding='utf-8', errors='replace')
+        for path in sorted(folder.rglob('*')) if path.is_file()
+    }}
 
 
 def _record(versions: Path, number: int) -> dict[str, str]:
@@ -203,7 +255,8 @@ def _record(versions: Path, number: int) -> dict[str, str]:
 
 
 def _path(root: Path, versions: Path, number: int) -> str:
-    return f'/{(versions / f"{number}.html").relative_to(root).as_posix()}'
+    stored = versions / str(number) if _type(versions, number) else versions / f'{number}.html'
+    return f'/{stored.relative_to(root).as_posix()}'
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:

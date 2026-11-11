@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  The sandbox a Slides Artifact's deck shows in. The app frames this page with sandbox="allow-scripts", so it runs in
+  an opaque origin of its own: it cannot read the app's cookies, storage or page. Each slide is a frame of its own with
+  sandbox="" (no scripts, no handlers); each <x-embed> on a slide is a frame that runs its scripts. Every frame keeps
+  this policy, which reaches no network: a slide shows what its file holds and loads nothing.
+  Owner: the Artifacts spec, behind the Artifacts flag.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'">
+<title>Slides</title>
+<style>
+  html, body { margin: 0; background: #e8e6e1; font-family: system-ui, sans-serif; }
+  #deck { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+  .slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; margin: 0; background: #ffffff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); }
+  .canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; transform: scale(var(--scale, 0.25)); }
+  .canvas iframe { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; }
+  .slide[data-state="waiting"] { background: #f4f3ef; }
+  .slide[data-state="waiting"] iframe { visibility: hidden; }
+  .slide[data-state="waiting"]::after { content: attr(data-label) " · not written yet"; position: absolute; inset: 0; display: grid; place-items: center; color: #6a7179; font-size: 14px; }
+  @media print { html, body { background: none; } #deck { padding: 0; gap: 0; } .slide { break-inside: avoid; box-shadow: none; } }
+</style>
+</head>
+<body>
+<div id="deck"></div>
+<script>
+(() => {
+  // Opened any way but sandboxed in the app's frame, this page has the app's origin: it renders nothing then.
+  if (self.origin !== 'null' || parent === self) return;
+  const SLIDE_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+  const EMBED_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+  // The slide format's tag defaults: h1–h3 and p sizes, a div with no display is a column, aside holds notes.
+  const SLIDE_CSS = `
+    * { box-sizing: border-box; margin: 0; }
+    html, body { overflow: hidden; }
+    section { position: relative; width: 1920px; height: 1080px; overflow: hidden; display: flex; flex-direction: column; font-family: sans-serif; }
+    div { display: flex; flex-direction: column; min-width: 0; }
+    h1 { font-size: 96px; font-weight: 600; line-height: 1.1; } h2 { font-size: 64px; font-weight: 600; line-height: 1.15; }
+    h3 { font-size: 44px; font-weight: 600; line-height: 1.2; } p { font-size: 32px; line-height: 1.4; }
+    ul, ol { padding-left: 1.2em; } aside, x-embed { display: none; }
+    table { border-collapse: collapse; } th, td { padding: 0.35em 0.6em; border: 1px solid rgba(0, 0, 0, 0.15); }
+    th { font-weight: 600; } x-shape { display: block; } x-shape[kind="ellipse"] { border-radius: 50%; }`;
+  const deck = document.getElementById('deck');
+  const shown = new Map();
+  new ResizeObserver(() => document.documentElement.style.setProperty('--scale', String((deck.clientWidth - 32) / 1920))).observe(deck);
+
+  const slideDocument = (html) => `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${SLIDE_POLICY}"><style>${SLIDE_CSS}</style></head><body>${html}</body></html>`;
+  // The policy goes before anything the page holds, right after its doctype (which keeps it out of quirks mode): the
+  // parser opens the head for it, so it governs every script in the page, whatever the page's own markup.
+  const embedDocument = (html) => {
+    const policy = `<meta http-equiv="Content-Security-Policy" content="${EMBED_POLICY}">`;
+    return html.replace(/^\s*(<!doctype[^>]*>)?/i, (doctype) => doctype + policy);
+  };
+
+  const frame = (sandbox, title) => {
+    const element = document.createElement('iframe');
+    element.setAttribute('sandbox', sandbox);
+    element.title = title;
+    element.tabIndex = -1;
+    return element;
+  };
+
+  // `slides` is the whole deck in order; a slide whose file is not written yet has html null and shows as a slot.
+  const show = (slides) => {
+    const ids = new Set(slides.map((slide) => slide.id));
+    for (const [id, slide] of shown) if (!ids.has(id)) { slide.element.remove(); shown.delete(id); }
+    slides.forEach((slide, at) => {
+      let current = shown.get(slide.id);
+      if (current === undefined) {
+        const box = document.createElement('figure');
+        box.className = 'slide';
+        box.dataset.slideId = slide.id;
+        const canvas = document.createElement('div');
+        canvas.className = 'canvas';
+        const page = frame('', `Slide ${at + 1}`);
+        canvas.append(page);
+        box.append(canvas);
+        current = { element: box, canvas, page, html: undefined, embeds: "[]", embedFrames: [] };
+        shown.set(slide.id, current);
+      }
+      // Moving a frame reloads it, so a slide moves only when the order changed.
+      if (deck.children[at] !== current.element) deck.insertBefore(current.element, deck.children[at] ?? null);
+      current.element.dataset.label = `Slide ${at + 1}`;
+      current.page.title = `Slide ${at + 1}`;
+      current.element.dataset.state = slide.html === null ? 'waiting' : 'shown';
+      if (slide.html !== current.html) {
+        current.html = slide.html;
+        current.page.srcdoc = slide.html === null ? '' : slideDocument(slide.html);
+      }
+      const embeds = JSON.stringify(slide.embeds ?? []);
+      if (embeds !== current.embeds) {
+        current.embeds = embeds;
+        current.embedFrames.forEach((live) => live.remove());
+        current.embedFrames = (slide.embeds ?? []).map((embed, index) => {
+          const live = frame('allow-scripts', `Slide ${at + 1}, live embed ${index + 1}`);
+          live.style.cssText = embed.style;
+          live.style.position = 'absolute';
+          live.style.border = '0';
+          live.srcdoc = embedDocument(embed.html);
+          current.canvas.append(live);
+          return live;
+        });
+      }
+    });
+  };
+
+  addEventListener('message', (event) => {
+    if (event.source !== parent || event.origin !== location.origin) return;
+    if (event.data?.type === 'artifact-slides') show(event.data.slides);
+    if (event.data?.type === 'artifact-print') print();
+  });
+  parent.postMessage({ type: 'artifact-sandbox-ready' }, location.origin);
+})();
+</script>
+</body>
+</html>

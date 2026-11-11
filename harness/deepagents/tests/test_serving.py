@@ -60,6 +60,7 @@ from agentcore_fake import (
     turn_identity,
 )
 from botcube_harness_deepagents import (
+    artifact,
     files,
     llm,
     memory_document,
@@ -3143,6 +3144,34 @@ def test_publish_is_available_in_the_files_bound_serving_graph(service: _Service
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert files_bucket.read('artifacts/curve.svg') == b'<svg>curve</svg>'
     assert not path.exists()
+
+
+@pytest.mark.parametrize('flagged', [True, False])
+def test_the_artifacts_skill_reaches_the_agent_only_behind_the_artifacts_flag(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch, flagged: bool,
+) -> None:
+    if flagged:
+        monkeypatch.setenv('BOTCUBE_ARTIFACTS', '1')
+    else:
+        monkeypatch.delenv('BOTCUBE_ARTIFACTS', raising=False)
+    page = '/botcube-harness-deepagents/skills/artifacts/SKILL.md'
+
+    events = service.turn(f'read: {page}', files=_files())
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    prompt = service.recorder.prompts[0]
+    assert ('- artifacts: How to write an Artifact' in prompt) is flagged
+    assert (f'Read `{page}` for full instructions' in prompt) is flagged
+    assert '- grounding:' in prompt
+    read = _tool_output(events)
+    assert ('Publish with the `Artifact` tool.' in read) is flagged
+    assert ('`<package>@<x.y.z>`' in read) is flagged
+    # The skill is the Harness's own: the user's Files never get a copy, and the agent cannot change it.
+    assert not any('SKILL.md' in key for key in _keys(files_bucket))
+    if flagged:
+        refused = _tool_output(service.turn('write: /botcube-harness-deepagents/skills/artifacts/notes.md: mine', files=_files()))
+        assert 'read-only' in refused
+        assert not (artifact.SKILLS / 'artifacts' / 'notes.md').exists()
 
 
 def test_steering_control_joins_the_running_turn_and_persists_inline(

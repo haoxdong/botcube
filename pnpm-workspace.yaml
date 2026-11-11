@@ -1,5 +1,6 @@
 packages:
   - chat
+  - harness/deepagents/artifact-check
   - infra/agentcore/cdk
   - infra/ecs/cdk
   - templates/always-on/chat

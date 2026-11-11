@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from pathlib import PurePosixPath
 from typing import Annotated, Any, NotRequired
 
 from deepagents import create_deep_agent
 from deepagents._models import resolve_model
-from deepagents.backends import CompositeBackend, StateBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from deepagents.backends.protocol import (
+    DeleteResult,
+    EditResult,
+    FileUploadResponse,
+    WriteResult,
+)
 from deepagents.graph import DeepAgentState
 from deepagents.middleware._utils import append_to_system_message
 from deepagents.middleware.filesystem import FilesystemMiddleware, FilesystemPermission
@@ -214,6 +220,57 @@ def _restore_middleware_hook_dispatch() -> None:
         unwrap(AgentMiddleware, hook)
 
 
+TOOL_SKILLS = 'skills'
+"""The key in a tool's `metadata` for the skill sources that teach it: each source's path, to its folder on disk."""
+
+
+class _ReadOnlyFolder(FilesystemBackend):
+    """A folder on disk the agent's file tools read but never change."""
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        return WriteResult(error=f'{file_path} is read-only')
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        return EditResult(error=f'{file_path} is read-only')
+
+    def delete(self, file_path: str) -> DeleteResult:
+        return DeleteResult(error=f'{file_path} is read-only')
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=path, error='permission_denied') for path, _ in files]
+
+
+def tool_skills(tools: Iterable[Any]) -> dict[str, Any]:
+    """The skill sources `tools` bring, by path, each served read-only from its folder."""
+    return {
+        source: _ReadOnlyFolder(root_dir=folder, virtual_mode=True)
+        for tool in tools if isinstance(tool, BaseTool)
+        for source, folder in (tool.metadata or {}).get(TOOL_SKILLS, {}).items()
+    }
+
+
+def _route_tool_skills(
+    backend: Any, skills: Sequence[str], tools: Sequence[Any], subagents: Sequence[dict[str, Any]],
+) -> tuple[Any, list[str], list[dict[str, Any]]]:
+    """The files backend, the agent's skill sources and the subagent specs, with the skills `tools` bring.
+
+    A tool can bring the skills that teach it (TOOL_SKILLS): sources with a backend of their own, routed by their
+    path beside the workspace's `skills`, for the agent and each subagent that shares its tools.
+    """
+    skill_routes = tool_skills(tools)
+    if skill_routes and backend is None:
+        raise ValueError('A tool that brings skills needs a workspace backend to route them beside')
+    files_backend = (
+        CompositeBackend(default=backend, routes=skill_routes, artifacts_root=f'/{HARNESS_DIRECTORY}')
+        if backend is not None else None
+    )
+    specs = [
+        {**spec, 'skills': [*spec['skills'], *skill_routes]} if 'tools' not in spec and spec.get('skills') is not None else spec
+        for spec in subagents
+    ]
+    return files_backend, [*skills, *skill_routes], specs
+
+
 def build_agent(
     *,
     backend: Any,
@@ -233,12 +290,7 @@ def build_agent(
     _reject_dropped_settings(resolved_model, permissions)
     for spec in subagents or []:
         _reject_dropped_settings(spec.get('model', resolved_model), spec.get('permissions'))
-    files_backend = (
-        CompositeBackend(default=backend, routes={}, artifacts_root=f'/{HARNESS_DIRECTORY}')
-        if backend is not None else None
-    )
-    resolved_skills = list(skills)
-    specs = list(subagents or [])
+    files_backend, resolved_skills, specs = _route_tool_skills(backend, skills, tools or [], subagents or [])
     if not any(spec['name'] == GENERAL_PURPOSE_SUBAGENT['name'] for spec in specs):
         specs.append({**GENERAL_PURPOSE_SUBAGENT, 'skills': resolved_skills})
     resolved_subagents = [_subagent_spec(spec, files_backend, resolved_skills) for spec in specs]

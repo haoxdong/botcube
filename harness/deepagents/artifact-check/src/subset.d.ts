@@ -1,0 +1,25 @@
+export type PropertyRow = {
+  names: string[];
+  values: string;
+  syntax: string;
+  on: string[];
+  note?: string;
+  range?: [number, number];
+  units?: string[];
+  weight?: boolean;
+};
+export const TEXT: string[];
+export const PROPERTIES: PropertyRow[];
+export const ELEMENTS: Record<string, string[]>;
+export const SVG_ELEMENTS: string[];
+export const SVG_ATTRIBUTES: string[];
+export const NEAREST_SVG: Record<string, string>;
+export const INLINE: string[];
+export const SHAPE_KINDS: string[];
+export const ICON_NAMES: string[];
+export const LIMITS: Record<string, number>;
+export const SLIDE_ID: RegExp;
+export const IMAGE_SOURCE: RegExp;
+export const NEAREST_ELEMENT: Record<string, string>;
+export const NEAREST_PROPERTY: Record<string, string>;
+export function rulesTable(): string;

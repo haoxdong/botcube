@@ -3,13 +3,44 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
-import type { ShownElement } from './.storybook/frames';
+import type { BrowserCommandContext } from 'vitest/node';
+import type { FramePath, ShownElement } from './.storybook/frames';
 import type { ScriptSource } from './.storybook/script-hosts';
 import { viewports } from './.storybook/viewports.js';
+
+type DriverPage = BrowserCommandContext['page'];
+type DriverFrame = ReturnType<DriverPage['mainFrame']>;
+type DriverElement = NonNullable<Awaited<ReturnType<DriverFrame['$']>>>;
 
 const resolve = createRequire(import.meta.url).resolve;
 /** Requests each URL `serveScript` stands in for has had. */
 const scriptRequests = new Map<string, number>();
+/** Elements `holdFrameElement` keeps hold of, by the index it returned. */
+const heldElements: DriverElement[] = [];
+
+/** The frame a FramePath names under the frame named `name` (.storybook/frames.ts). */
+async function findFrame(page: DriverPage, name: string, path: FramePath): Promise<DriverFrame> {
+  const frame = page.frames().find((candidate) => candidate.name() === name);
+  if (frame === undefined) throw new Error(`No frame is named ${name}`);
+  return path === undefined ? deepest(frame) : titled(frame, name, path);
+}
+
+/** The first-child chain's last frame under `frame`. */
+function deepest(frame: DriverFrame): DriverFrame {
+  const child = frame.childFrames()[0];
+  return child === undefined ? frame : deepest(child);
+}
+
+/** The frame reached from `frame` by child frames of these titles, in order. */
+async function titled(frame: DriverFrame, name: string, path: readonly string[]): Promise<DriverFrame> {
+  const [title, ...rest] = path;
+  if (title === undefined) return frame;
+  const children = frame.childFrames();
+  const titles = await Promise.all(children.map(async (child) => (await child.frameElement()).getAttribute('title')));
+  const child = children[titles.indexOf(title)];
+  if (child === undefined) throw new Error(`No frame titled ${title} under the frame named ${name}`);
+  return titled(child, name, rest);
+}
 
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
 if (screen !== 'phone' && screen !== 'desktop')
@@ -64,16 +95,32 @@ export default defineConfig({
         },
         scriptRequests: async (_context, url: string) => scriptRequests.get(url) ?? 0,
         // Reads a frame a story's page cannot reach (.storybook/frames.ts).
-        readFrame: async (context, name: string, selector: string): Promise<ShownElement | null> => {
+        readFrame: async (context, name: string, selector: string, path?: FramePath): Promise<ShownElement[]> => {
           if (context.provider.name !== 'playwright') throw new Error('readFrame needs Playwright');
-          let frame = context.page.frames().find((candidate) => candidate.name() === name);
-          if (frame === undefined) throw new Error(`No frame is named ${name}`);
-          for (let child = frame.childFrames()[0]; child !== undefined; child = child.childFrames()[0]) frame = child;
-          const last = (await frame.$$(selector)).at(-1);
-          if (last === undefined) return null;
-          return last.evaluate((element) => ({
-            text: element.textContent, color: getComputedStyle(element).color, loaded: element.ownerDocument.readyState === 'complete',
-          }));
+          const elements = await (await findFrame(context.page, name, path)).$$(selector);
+          return Promise.all(elements.map((element) => element.evaluate((shown) => ({
+            text: shown.textContent,
+            color: getComputedStyle(shown).color,
+            data: { ...(shown as HTMLElement).dataset } as Record<string, string>,
+            height: shown.getBoundingClientRect().height,
+            loaded: shown.ownerDocument.readyState === 'complete',
+          }))));
+        },
+        holdFrameElement: async (context, name: string, selector: string, path?: FramePath) => {
+          if (context.provider.name !== 'playwright') throw new Error('holdFrameElement needs Playwright');
+          const element = await (await findFrame(context.page, name, path)).$(selector);
+          if (element === null) throw new Error(`No ${selector} in the frame named ${name}`);
+          heldElements.push(element);
+          return heldElements.length - 1;
+        },
+        // A frame that reloaded took the held element's document, and the driver's handle to it, with it.
+        frameElementHeld: async (_context, held: number) => {
+          const element = heldElements[held];
+          if (element === undefined) throw new Error(`No element is held at ${held}`);
+          return element.evaluate((shown) => shown.isConnected).catch((error: unknown) => {
+            if (error instanceof Error && /context was destroyed|not attached|detached/i.test(error.message)) return false;
+            throw error;
+          });
         },
         stopServingScript: async (context, url: string) => {
           if (context.provider.name !== 'playwright') throw new Error('stopServingScript needs Playwright');

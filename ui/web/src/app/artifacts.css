@@ -116,3 +116,14 @@
   flex-direction: column;
   min-height: 0;
 }
+
+/* What the sanitizer kept off a deck's slides, listed under the deck. */
+.artifact-stripped {
+  margin: 0;
+  padding: 8px 16px 8px 32px;
+  max-height: 96px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-line);
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}

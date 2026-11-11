@@ -1,0 +1,24 @@
+{
+  "name": "botcube-artifact-check",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Checks an Artifact's Source against its type's format on publish: Slides for now.",
+  "type": "module",
+  "bin": {
+    "artifact-check": "src/cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/slides.d.ts",
+      "default": "./src/slides.mjs"
+    },
+    "./subset": {
+      "types": "./src/subset.d.ts",
+      "default": "./src/subset.mjs"
+    }
+  },
+  "dependencies": {
+    "css-tree": "3.2.1",
+    "html-validate": "11.18.0"
+  }
+}

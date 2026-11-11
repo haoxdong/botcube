@@ -15,6 +15,7 @@ import { z } from "zod";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
 import { Sheet } from "../components/ui/sheet";
 import { agentFiles } from "./agent-files";
+import { deckFiles, deckOf, DeckFrame, sourceOf, VersionDeck } from "./artifact-slides";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { useIsPhone } from "./phone-query";
@@ -30,7 +31,7 @@ const ArtifactCall = z.object({
 
 const Published = z.object({
   id: z.string(),
-  type: z.null(),
+  type: z.enum(["slides"]).nullable(),
   title: z.string(),
   description: z.string(),
   version: z.number(),
@@ -45,9 +46,9 @@ const FileCall = z.object({ file_path: z.string().optional(), content: z.string(
 const WRITTEN = /^Updated file /;
 const EDITED = /^Successfully replaced /;
 
-// Any HTML write previews: a Source becomes an Artifact only on the publish that follows its write, and a preview runs
-// no scripts. Markdown joins once the panel has a viewer for it.
-const PREVIEWED = /\.html?$/i;
+// Any HTML write previews, and so does any file of a deck: a Source becomes an Artifact only on the publish that
+// follows its write, and a preview runs no scripts. Markdown joins once the panel has a viewer for it.
+const previewed = (path: string) => /\.html?$/i.test(path) || deckOf(path) !== null;
 
 /** A Source as the agent last wrote it, `complete` once its file is; or why the panel couldn't read it after an edit. */
 type Source = { path: string } & ({ html: string; complete: boolean } | { error: string });
@@ -104,7 +105,7 @@ function isJson(result: string) {
 /** A call without an action publishes. */
 const publishes = (args: string) => (ArtifactCall.parse(JSON.parse(args)).action ?? "publish") === "publish";
 
-const kindOf = (artifact: Published) => `Page · version ${artifact.version}`;
+const kindOf = (artifact: Published) => `${artifact.type === "slides" ? "Slides" : "Page"} · version ${artifact.version}`;
 
 const titleOf = (shown: Shown) => "artifact" in shown ? shown.artifact.title : shown.source.slice(shown.source.lastIndexOf("/") + 1);
 
@@ -219,12 +220,13 @@ function useAgentSources(agent: AbstractAgent, following: Following) {
         const { file_path: path } = FileCall.parse(parsePartial(args, Allow.OBJ));
         const { content } = FileCall.parse(parsePartial(args));
         Object.assign(call, { path, content });
-        if (call.name !== "write_file" || path === undefined || content === undefined || !PREVIEWED.test(path)) return;
+        if (call.name !== "write_file" || path === undefined || content === undefined || !previewed(path)) return;
         keep({ path, html: content, complete: false });
         const { phone, newest } = latest.current;
         if (call.streamed === undefined && !phone) {
-          const over = newest[path]?.version ?? 0;
-          open((current) => current ?? { id: path, full: false, over });
+          const id = sourceOf(path);
+          const over = newest[id]?.version ?? 0;
+          open((current) => current ?? { id, full: false, over });
         }
         call.streamed = true;
       },
@@ -240,10 +242,10 @@ function useAgentSources(agent: AbstractAgent, following: Following) {
           return;
         }
         const { name, path, content } = call;
-        if (path === undefined || !PREVIEWED.test(path)) return;
+        if (path === undefined || !previewed(path)) return;
         if (name === "write_file" && content !== undefined && WRITTEN.test(result)) keep({ path, html: content, complete: true });
-        const previewed = latest.current.shown;
-        if (name === "edit_file" && EDITED.test(result) && previewed !== null && "source" in previewed && previewed.source === path) {
+        const shownNow = latest.current.shown;
+        if (name === "edit_file" && EDITED.test(result) && shownNow !== null && "source" in shownNow && shownNow.source === sourceOf(path)) {
           readFile(path).then(
             (html) => keep({ path, html, complete: true }),
             (error: unknown) => keep({ path, error: `Couldn't show the edit to ${path}: ${reason(error)}` }),
@@ -329,7 +331,10 @@ function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: Re
 function DesktopHeading({ shown }: { shown: Shown }) {
   const { sources } = usePanel();
   const source = sourceIn(shown, sources);
-  const kind = "artifact" in shown ? kindOf(shown.artifact) : source !== undefined && "html" in source && !source.complete ? "Page · writing…" : "Page";
+  const deck = "source" in shown ? deckFiles(shown.source, sources.values()) : null;
+  const kind = "artifact" in shown ? kindOf(shown.artifact)
+    : deck !== null ? (deck.writing ? "Slides · writing…" : "Slides")
+    : source !== undefined && "html" in source && !source.complete ? "Page · writing…" : "Page";
   return (
     <span className="sent-file-text">
       <span className="sent-file-name">{titleOf(shown)}</span>
@@ -354,7 +359,15 @@ function DesktopControls({ shown }: { shown: Shown }) {
 }
 
 function ShownFrame({ shown, source, title, frame }: { shown: Shown; source: Source | undefined; title: string; frame: RefObject<HTMLIFrameElement | null> }) {
+  const { sources } = usePanel();
+  const deck = useMemo(() => "source" in shown ? deckFiles(shown.source, sources.values()) : null, [shown, sources]);
+  if ("artifact" in shown && shown.artifact.type === "slides") {
+    return <VersionDeck key={shown.artifact.path} title={title} path={shown.artifact.path} read={readFile} frame={frame} />;
+  }
   if ("artifact" in shown) return <VersionFrame key={shown.artifact.path} artifact={shown.artifact} frame={frame} />;
+  if (deck !== null) {
+    return <DeckFrame key={shown.source} title={title} folder={shown.source} files={deck.files} errors={deck.errors} runs={false} frame={frame} />;
+  }
   const failure = source !== undefined && "error" in source ? source.error : null;
   return (
     <>
