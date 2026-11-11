@@ -9607,7 +9607,7 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
     cartridge.auth = auth({ accountId: 'acct-first' });
     render(<LoadingPage />);
     await settle();
-    const loading = screen.getByRole('status', { name: 'Loading chat controls' });
+    const loading = await screen.findByRole('status', { name: 'Loading chat controls' });
     expect(loading).toHaveTextContent('Rates recap');
     expect(loading.textContent).not.toMatch(/\*\*|##|\|/);
   } finally {

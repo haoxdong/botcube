@@ -4,24 +4,48 @@ import { m as motionElement } from "framer-motion";
 
 import { Presence, presenceMotion } from "./collapse";
 
-import { useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
 import { ArrowUp, Plus } from "lucide-react";
-import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown";
-import { remarkRepairedBracketMath } from "./remark-bracket-math";
-import { rehypeReplyFiles } from "./reply-file-path";
-import { REPLY_MARKDOWN } from "./reply-markdown";
 import { SentFileCards, sentFilesOf } from "./composer-files";
 import { worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { MAIN_CHAT_COPY_MESSAGE_LIMIT } from "./main-chat-copy";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
 
-/**
- * Streamdown's own rehype plugins, with rehypeReplyFiles where the chat surface runs it (before harden, the last), so a
- * file a reply links to shows as the same card from the first frame.
- */
-const KEPT_REHYPE_PLUGINS = Object.values(defaultRehypePlugins).toSpliced(-1, 0, rehypeReplyFiles);
+type MarkdownState = { status: "ready"; Renderer: ComponentType<{ text: string }> } | { status: "error"; error: Error };
+let markdown: MarkdownState | undefined;
+let pendingMarkdown: Promise<void> | undefined;
+function loadMarkdown(): Promise<void> {
+  return pendingMarkdown ??= import("./kept-markdown").then(
+    ({ default: Renderer }) => { markdown = { status: "ready", Renderer }; },
+    (error: Error) => { markdown = { status: "error", error }; throw error; },
+  );
+}
+function readMarkdown() {
+  if (markdown === undefined) throw loadMarkdown();
+  if (markdown.status === "error") throw markdown.error;
+  return markdown.Renderer;
+}
+
+function isPlainAsciiParagraph(text: string) {
+  return /^[\x20-\x7e]+$/.test(text) && text.trim() === text && !/[\\`*_${}[\]<>()#!|~&@+-]/.test(text)
+    && !/^\d+\.\s/.test(text) && !/www\.|:\//i.test(text);
+}
+
+function needsMarkdown(messages: readonly Message[]) {
+  return messages.some((message) => message.role === "assistant" && !isPlainAsciiParagraph(scheduledRunOf(message)?.text ?? contentToText(message.content)));
+}
+
+export function prepareKeptChat(messages: readonly Message[]): Promise<void> | null {
+  return markdown === undefined && needsMarkdown(messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT)) ? loadMarkdown() : null;
+}
+
+function KeptReply({ text }: { text: string }) {
+  if (isPlainAsciiParagraph(text)) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"><p>{text}</p></div>;
+  const Formatted = readMarkdown();
+  return <Formatted text={text} />;
+}
 
 /** CopilotKit's side padding around the messages and the composer, inside the chat's container. */
 const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-6";
@@ -46,16 +70,14 @@ function keptRow(message: Message): ReactElement | null {
       if (run !== null) return (
         <div key={message.id} data-message-id={message.id}>
           <ScheduledRunCard run={run}>
-            <Streamdown {...REPLY_MARKDOWN} rehypePlugins={KEPT_REHYPE_PLUGINS} remarkPlugins={[...Object.values(defaultRemarkPlugins), [remarkRepairedBracketMath, run.text]]}>{run.text}</Streamdown>
+            <KeptReply text={run.text} />
           </ScheduledRunCard>
         </div>
       );
       return (
         <div data-copilotkit className="copilotKitMessage copilotKitAssistantMessage" key={message.id}>
           <div className="cpk:prose cpk:max-w-full cpk:break-words cpk:dark:prose-invert">
-            <Streamdown {...REPLY_MARKDOWN} rehypePlugins={KEPT_REHYPE_PLUGINS} remarkPlugins={[...Object.values(defaultRemarkPlugins), [remarkRepairedBracketMath, contentToText(message.content)]]}>
-              {contentToText(message.content)}
-            </Streamdown>
+            <KeptReply text={contentToText(message.content)} />
           </div>
         </div>
       );
@@ -73,6 +95,7 @@ function questionAtOrBefore(messages: readonly Message[], index: number): number
 
 export function KeptChat({ messages, running = false, disclaimer, composerAccessory, latestShown, onOpenRun }: { messages: Message[]; running?: boolean; disclaimer: string; composerAccessory?: ReactNode; latestShown?: RefObject<number>; onOpenRun?: (run: ReachedScheduledRun) => void }) {
   const kept = messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT);
+  if (needsMarkdown(kept)) readMarkdown();
   // Only the latest Turns that overflow the screen are formatted before the history's first frame. The copy
   // that replaces the Suspense fallback's starts where that one grew to.
   const [formatted, setFormatted] = useState(() => latestShown?.current ?? 1);

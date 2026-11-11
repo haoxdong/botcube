@@ -1,7 +1,7 @@
 "use client";
 
 import "@copilotkit/react-core/v2/styles.css";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
@@ -11,7 +11,7 @@ import { endOpeningMoment, type HistoryMoment } from "./latency";
 import { discardOpeningResponse } from "../opening-requests";
 import { rumConfig, startRum } from "./rum";
 import { keepFileDropsInPage } from "./composer-attach";
-import { KeptChat } from "./kept-chat";
+import { KeptChat, prepareKeptChat } from "./kept-chat";
 import { SessionGate } from "./session-gate";
 import { Swap } from "./collapse";
 import { LoadingSkeleton } from "./load-state";
@@ -56,12 +56,33 @@ export default function Page() {
 function Session({ auth }: { auth: AuthUiState }) {
   const loading = auth.sessionStatus === "loading";
   const [opening, setOpening] = useState<StoredMainChatCopy | null>(null);
+  const [openingError, setOpeningError] = useState<Error | null>(null);
   const pageOpeningMoment = useRef<HistoryMoment | null>(null);
   const latestShown = useRef(1);
+  const preparingOpening = useRef<{ accountId: string; active: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const pending = preparingOpening.current;
+    if (pending === null) return;
+    const matching = auth.accountId === pending.accountId;
+    const waiting = auth.sessionStatus === "loading" && (auth.accountId === undefined || matching);
+    if (waiting || (auth.sessionStatus === "ready" && matching)) return;
+    pending.active = false;
+    preparingOpening.current = null;
+  }, [auth.sessionStatus, auth.accountId]);
   useEffect(() => {
     const { copy, historyMoment: moment } = openingMainChat();
-    if (loading) setOpening(copy);
     pageOpeningMoment.current = moment;
+    if (!loading) return;
+    if (copy === null) { setOpening(null); return; }
+    const prepared = prepareKeptChat(copy.copy.messages);
+    if (prepared === null) { setOpening(copy); return; }
+    const pending = { accountId: copy.accountId, active: true };
+    preparingOpening.current = pending;
+    void prepared.then(
+      () => { if (pending.active) { preparingOpening.current = null; setOpening(copy); } },
+      (error: Error) => { if (pending.active) { preparingOpening.current = null; setOpeningError(error); } },
+    );
+    return () => { pending.active = false; preparingOpening.current = null; };
   }, []);
   useEffect(() => {
     if (auth.sessionStatus !== "loading" && auth.sessionStatus !== "ready") {
@@ -72,6 +93,7 @@ function Session({ auth }: { auth: AuthUiState }) {
   useEffect(() => {
     if (!loading && (auth.sessionStatus !== "ready" || auth.accountId !== opening?.accountId)) setOpening(null);
   }, [loading, auth.sessionStatus, auth.accountId, opening]);
+  if (openingError !== null) throw openingError;
   const matchingOpening = loading || (auth.sessionStatus === "ready" && auth.accountId === opening?.accountId && auth.isAccountCurrent?.(auth.accountId) !== false) ? opening : null;
   return auth.sessionStatus === "ready" || (loading && opening !== null)
     ? <Suspense fallback={<OpeningChat key={matchingOpening?.accountId ?? "empty"} opening={matchingOpening} latestShown={latestShown} />}><App auth={auth} opening={matchingOpening} historyMoment={pageOpeningMoment} keptChatLatestShown={latestShown} /></Suspense>

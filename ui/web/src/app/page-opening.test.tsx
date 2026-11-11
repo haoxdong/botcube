@@ -1,4 +1,5 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { Component, type ReactNode } from 'react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { AuthProviderProps, AuthUiState } from '../cartridge';
 import type { StoredMainChatCopy } from './main-chat-copy';
@@ -29,7 +30,7 @@ beforeEach(() => {
     { id: 'answer', role: 'assistant', content: 'The saved answer.' },
   ] }));
 });
-afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.doUnmock('./chat-app'); });
+afterEach(() => { state.release(); cleanup(); localStorage.clear(); vi.unstubAllGlobals(); vi.doUnmock('./chat-app'); vi.doUnmock('./kept-markdown'); });
 
 it('shows saved history while the live chat module is still loading', async () => {
   const { default: Page } = await import('./page');
@@ -76,4 +77,106 @@ it('keeps loading feedback while a first visit waits for the live module', async
   expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
   await act(async () => { state.release(); await vi.dynamicImportSettled(); });
   expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('new-account');
+});
+
+function formattedCopy() {
+  performance.clearMeasures('latency:history-returning');
+  localStorage.setItem('botcube.main-chat', JSON.stringify({ accountId: 'saved-account', id: 'saved-chat', messages: [
+    { id: 'answer', role: 'assistant', content: '**Formatted saved answer.**' },
+  ] }));
+}
+
+function holdMarkdown() {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const loaded = vi.importActual<typeof import('./kept-markdown')>('./kept-markdown');
+  vi.doMock('./kept-markdown', async () => { await gate; return loaded; });
+  return () => { release(); return loaded; };
+}
+
+it('waits for formatted saved history before showing and timing it', async () => {
+  const release = holdMarkdown();
+  formattedCopy();
+  const { default: Page } = await import('./page');
+  render(<Page />);
+  expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
+  expect(screen.queryByText('Formatted saved answer.')).toBeNull();
+  expect(performance.getEntriesByName('latency:history-returning', 'measure')).toHaveLength(0);
+  await act(async () => { await release(); });
+  expect(await screen.findByText('Formatted saved answer.')).toBeVisible();
+  await waitFor(() => expect(performance.getEntriesByName('latency:history-returning', 'measure')).toHaveLength(1));
+});
+
+it('shows prepared history when auth completes for the same account first', async () => {
+  const release = holdMarkdown();
+  formattedCopy();
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'saved-account';
+  view.rerender(<Page />);
+  await act(async () => { await release(); });
+  expect(await screen.findByText('Formatted saved answer.')).toBeVisible();
+});
+
+it('does not reveal a previous account when its formatter finishes late', async () => {
+  const release = holdMarkdown();
+  formattedCopy();
+  const { default: Page } = await import('./page');
+  const view = render(<Page />);
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'other-account';
+  view.rerender(<Page />);
+  state.auth.sessionStatus = 'loading';
+  state.auth.accountId = undefined;
+  view.rerender(<Page />);
+  await act(async () => { state.release(); await release(); await vi.dynamicImportSettled(); });
+  expect(screen.queryByText('Formatted saved answer.')).toBeNull();
+  expect(screen.queryByText('saved-account')).toBeNull();
+  state.auth.sessionStatus = 'ready';
+  state.auth.accountId = 'other-account';
+  view.rerender(<Page />);
+  expect(screen.getByRole('status', { name: 'Live chat' })).toHaveTextContent('other-account');
+});
+
+class OpeningFailure extends Component<{ children: ReactNode }, { error: Error | null }> {
+  override state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  override render() { return this.state.error ? <p role="alert">{this.state.error.message}</p> : this.props.children; }
+}
+
+it('ignores failed formatter preparation from a replaced account', async () => {
+  formattedCopy();
+  let rejectPreparation: (error: Error) => void = () => {};
+  const pending = new Promise<void>((_resolve, reject) => { rejectPreparation = reject; });
+  const kept = await import('./kept-chat');
+  const prepare = vi.spyOn(kept, 'prepareKeptChat').mockReturnValue(pending);
+  const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const { default: Page } = await import('./page');
+    const view = render(<OpeningFailure><Page /></OpeningFailure>);
+    state.auth.sessionStatus = 'ready';
+    state.auth.accountId = 'other-account';
+    view.rerender(<OpeningFailure><Page /></OpeningFailure>);
+    state.auth.sessionStatus = 'loading';
+    state.auth.accountId = undefined;
+    view.rerender(<OpeningFailure><Page /></OpeningFailure>);
+    await act(async () => { state.release(); rejectPreparation(new Error('Old formatter failed')); await vi.dynamicImportSettled(); });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status', { name: 'Loading Main Chat' })).toBeVisible();
+  } finally { prepare.mockRestore(); report.mockRestore(); }
+});
+
+it('reports a failed formatter without timing absent history', async () => {
+  formattedCopy();
+  const kept = await import('./kept-chat');
+  const prepare = vi.spyOn(kept, 'prepareKeptChat').mockImplementation(() => Promise.reject(new Error('Saved formatter unavailable')));
+  const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const { default: Page } = await import('./page');
+    render(<OpeningFailure><Page /></OpeningFailure>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Saved formatter unavailable');
+    expect(screen.queryByText('Formatted saved answer.')).toBeNull();
+    expect(performance.getEntriesByName('latency:history-returning', 'measure')).toHaveLength(0);
+  } finally { prepare.mockRestore(); report.mockRestore(); }
 });

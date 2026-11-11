@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { useLayoutEffect } from 'react';
 import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 
+import { Streamdown } from 'streamdown';
 import { KeptChat } from './kept-chat';
 
 const messages: Message[] = [
@@ -15,7 +16,7 @@ const messages: Message[] = [
 const observed = new Map<Element, ResizeObserverCallback>();
 const resize = (element: Element) => act(() => observed.get(element)?.([], {} as ResizeObserver));
 
-beforeEach(() => {
+beforeEach(async () => {
   observed.clear();
   vi.stubGlobal('ResizeObserver', class {
     constructor(private readonly callback: ResizeObserverCallback) {}
@@ -26,6 +27,13 @@ beforeEach(() => {
       for (const [element, callback] of observed) if (callback === this.callback) observed.delete(element);
     }
   });
+  const formatted = await act(async () => {
+    const view = render(<KeptChat messages={messages} disclaimer="" />);
+    await import('./kept-markdown');
+    return view;
+  });
+  await screen.findByRole('heading', { name: 'Rates recap' });
+  formatted.unmount();
 });
 
 const renderKept = () => {
@@ -50,7 +58,10 @@ function AfterKeptChat({ read }: { read: () => void }) {
 }
 
 it("shows the user's questions as they are and the replies formatted, and no tool results", async () => {
-  const { list } = renderKept();
+  const view = render(<KeptChat messages={messages} disclaimer="Check important info." />);
+  await screen.findByRole('heading', { name: 'Rates recap' });
+  const list = view.container.querySelector('.copilotKitMessages');
+  if (list === null) throw new Error('no message list');
 
   expect([...list.children].map((row) => row.className.split(' ').slice(0, 2).join(' '))).toEqual([
     'copilotKitMessage copilotKitUserMessage',
@@ -379,4 +390,34 @@ it('keeps an unreached scheduled run without an Open action', () => {
 
   expect(screen.getByText('Skipped')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Open' })).toBeNull();
+});
+
+it.each([
+  'The 10y closed at 4.12%, down 5bp on the day.',
+  'Point 1: the curve steepened. Point 2: front-end yields fell.',
+  'He said "hold"; I said: wait, 50% is enough.',
+  'One  two   three.',
+])('keeps the Markdown renderer\'s paragraph markup for plain prose: %s', (text) => {
+  const view = render(<KeptChat messages={[{ id: 'plain', role: 'assistant', content: text }]} disclaimer="" />);
+  const markdown = render(<Streamdown>{text}</Streamdown>);
+  expect(view.container.querySelector('.copilotKitAssistantMessage > div')?.innerHTML).toBe(markdown.container.innerHTML);
+});
+
+it.each([
+  ['www.example.com', 'http://www.example.com/'],
+  ['https://example.com', 'https://example.com/'],
+  ['a@example.com', 'mailto:a@example.com'],
+])('keeps automatic links clickable: %s', async (text, href) => {
+  const view = render(<KeptChat messages={[{ id: 'link', role: 'assistant', content: text }]} disclaimer="" />);
+  await waitFor(() => expect(within(view.container).getByRole('link', { name: text })).toHaveAttribute('href', href));
+});
+
+it('keeps numbered prose as an ordered list', () => {
+  const view = render(<KeptChat messages={[{ id: 'list', role: 'assistant', content: '1. Numbered item' }]} disclaimer="" />);
+  expect(within(view.container).getByRole('listitem')).toHaveTextContent('Numbered item');
+});
+
+it('preserves the Markdown repair of unfinished display math', () => {
+  const view = render(<KeptChat messages={[{ id: 'math', role: 'assistant', content: '$$x' }]} disclaimer="" />);
+  expect(view.container.querySelector('.copilotKitAssistantMessage')).toHaveTextContent('$$x$$');
 });
