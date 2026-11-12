@@ -24,9 +24,9 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
         fs.mkdirSync(path.join(outputDir, 'cartridge'), { recursive: true });
         fs.writeFileSync(path.join(outputDir, 'cartridge/identity.json'), JSON.stringify(identity));
         fs.copyFileSync(path.join(infraRoot, 'identity-defaults.json'), path.join(outputDir, 'identity-defaults.json'));
-        fs.cpSync(path.join(infraRoot, 'ecs'), path.join(outputDir, 'ecs'), { recursive: true,
-          filter: source => !['cdk', 'parking', '__pycache__'].includes(path.basename(source)),
-        });
+        // Copy entry by entry: cdk.out sits under ecs/cdk, and copying ecs/ whole into it is a copy into itself.
+        const skip = (source: string) => ['cdk', 'parking', '__pycache__'].includes(path.basename(source));
+        for (const entry of fs.readdirSync(path.join(infraRoot, 'ecs')).filter(name => !skip(name))) fs.cpSync(path.join(infraRoot, 'ecs', entry), path.join(outputDir, 'ecs', entry), { recursive: true, filter: source => !skip(source) });
         return true;
       } },
     } }),
