@@ -39,6 +39,22 @@ test('lets the transition register the Session API scalable target', () => {
   expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
 });
 
+test('grants provisioned concurrency changes on the unqualified Session API function', () => {
+  // Unpark 680a9ed8 (2026-11-12, after these were scoped to the alias ARN) failed: RegisterScalableTarget reported
+  // "User is missing the following permissions: lambda:PutProvisionedConcurrencyConfig, lambda:DeleteProvisionedConcurrencyConfig".
+  const stack = new Stack(new App(), 'Concurrency', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const statements = Object.values(Template.fromStack(stack).findResources('AWS::IAM::Policy'))
+    .flatMap(policy => (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[], Resource: unknown }[] } } }).Properties.PolicyDocument.Statement);
+  const resources = (action: string) => statements.filter(statement => [statement.Action].flat().includes(action))
+    .flatMap(statement => [statement.Resource].flat().map(resource => JSON.stringify(resource)));
+  // An unqualified ARN ends at the function name; the alias ARN continues with ':<alias>'.
+  const unqualified = `function:${identity.aws.agentCore.sessionApiFunction}"`;
+  for (const action of ['lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig']) {
+    expect(resources(action).some(resource => resource.includes(unqualified))).toBe(true);
+  }
+});
+
 test('binds stack updates to a dedicated CloudFormation execution role instead of CDK admin', () => {
   const stack = new Stack(new App(), 'Boundary', { env: { account: identity.aws.account, region: identity.aws.region } });
   parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);

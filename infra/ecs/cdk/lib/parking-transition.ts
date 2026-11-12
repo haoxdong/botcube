@@ -67,8 +67,10 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/${ecs.cluster}/*` }),
     stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);
   allow(['lambda:ListProvisionedConcurrencyConfigs'], [stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: agentCore.sessionApiFunction })]);
+  // RegisterScalableTarget checks Put/DeleteProvisionedConcurrencyConfig on the unqualified function, not only the alias (unpark 680a9ed8).
   allow(['lambda:GetProvisionedConcurrencyConfig', 'lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig', 'lambda:GetAlias', 'lambda:UpdateAlias'],
-    [stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: `${agentCore.sessionApiFunction}:${agentCore.sessionApiAlias}` })]);
+    [agentCore.sessionApiFunction, `${agentCore.sessionApiFunction}:${agentCore.sessionApiAlias}`]
+      .map(resourceName => stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName })));
   // RegisterScalableTarget checks the caller can manage target-tracking alarms on any resource (run 5e5fb38a, 2026-11-12).
   allow(['cloudwatch:PutMetricAlarm', 'cloudwatch:DescribeAlarms', 'cloudwatch:DeleteAlarms'], ['*']);
   allow(['bedrock-agentcore:GetAgentRuntime', 'bedrock-agentcore:UpdateAgentRuntime'], [stack.formatArn({ service: 'bedrock-agentcore', resource: `runtime/${agentCore.runtime}-*` })]);
