@@ -7,6 +7,7 @@ import type { BrowserCommandContext } from 'vitest/node';
 import type { FramePath, ShownElement } from './.storybook/frames';
 import type { ScriptSource } from './.storybook/script-hosts';
 import { viewports } from './.storybook/viewports.js';
+import { renderingProfile, prepareRendering, recordRendering } from '../../../scripts/web-checks/rendering-profile.mjs';
 
 type DriverPage = BrowserCommandContext['page'];
 type DriverFrame = ReturnType<DriverPage['mainFrame']>;
@@ -43,6 +44,8 @@ async function titled(frame: DriverFrame, name: string, path: readonly string[])
 }
 
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
+const profile = process.env.UI_RENDERING_PROFILE ?? '';
+const renderingDirectory = process.env.UI_RENDERING_OUTPUT ?? path.resolve('../../../.tmp/rendering');
 if (screen !== 'phone' && screen !== 'desktop')
   throw new Error(`Unknown Storybook viewport ${screen}`);
 
@@ -67,16 +70,27 @@ export default defineConfig({
     provide: {
       screenshotDirectory: process.env.STORYBOOK_SCREENSHOT_DIR ?? '',
       screen,
+      renderingProfile: profile,
     },
     browser: {
       enabled: true,
       headless: true,
       viewport: viewports[screen].viewport,
-      provider: playwright({ contextOptions: viewports[screen] }),
+      provider: playwright({
+        contextOptions: viewports[screen],
+        launchOptions: profile ? { args: renderingProfile(profile).args } : {},
+      }),
       instances: [{ browser: 'chromium' }],
       // A story named `…-reduce-motion` runs with the OS's Reduce Motion on (vitest.setup.ts), to prove BotCube still
       // moves in full.
       commands: {
+        prepareRendering: async (context) => {
+          if (context.provider.name !== 'playwright') throw new Error('Rendering profiles need Playwright');
+          return prepareRendering(context.page, profile);
+        },
+        recordRendering: async (_context, record: Parameters<typeof recordRendering>[2]) => {
+          await recordRendering(renderingDirectory, screen, record);
+        },
         emulateMedia: async (context, reducedMotion: 'reduce' | 'no-preference') => {
           if (context.provider.name !== 'playwright') throw new Error('emulateMedia needs Playwright');
           await context.page.emulateMedia({ reducedMotion });
