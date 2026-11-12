@@ -1,5 +1,6 @@
 import '../src/app/globals.css';
 import '../src/app/files.css';
+import '../src/app/artifacts.css';
 import '../src/app/side-chats.css';
 import '../src/app/scheduled-tasks.css';
 import '../src/app/code-blocks.css';

@@ -3,7 +3,8 @@
   min-height: 0;
 }
 
-.artifact-layout > [data-slot="resizable-panel"] {
+.artifact-layout > [data-slot="resizable-panel"],
+.artifact-layout > [data-slot="resizable-panel"] > div {
   display: flex;
   flex-direction: column;
   min-height: 0;
