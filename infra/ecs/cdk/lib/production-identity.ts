@@ -48,7 +48,7 @@ export interface DeployIdentity {
       parkedWorkerName: string;
       parking: { repository: string; appSecretName: string; slotBucket: string; originSlotKey: string; functionName: string; automationUserAgents: string[]; autoPark: boolean };
       originZone: string;
-      privateEgress: { stackName: string; natGateway: { name: string; publicSubnetId: string }; routeTableId: string };
+      privateEgress: { publicIp: string; stackName: string; natGateway: { name: string; publicSubnetId: string }; routeTableId: string };
       privateNamespace: string;
       publicSubnets: Subnet[];
     };

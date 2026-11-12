@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Capture, Match, Template } from 'aws-cdk-lib/assertions';
 import { cartridgeIdentity } from '../lib/cartridge.js';
 import { parkingTransition } from '../lib/parking-transition.js';
 
@@ -37,4 +37,39 @@ test('lets the transition register the Session API scalable target', () => {
     .flatMap(policy => (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }).Properties.PolicyDocument.Statement)
     .flatMap(statement => [statement.Action].flat());
   expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
+});
+
+test('binds stack updates to a dedicated CloudFormation execution role instead of CDK admin', () => {
+  const stack = new Stack(new App(), 'Boundary', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const template = Template.fromStack(stack);
+  template.hasResourceProperties('AWS::IAM::Role', {
+    AssumeRolePolicyDocument: { Statement: [{ Action: 'sts:AssumeRole', Effect: 'Allow', Principal: { Service: 'cloudformation.amazonaws.com' } }], Version: '2012-10-17' },
+  });
+  expect(JSON.stringify(template.toJSON())).not.toContain('cdk-hnb659fds-cfn-exec-role');
+});
+
+
+test('pins UpdateStack and PassRole to the CloudFormation role and narrows runtime probes', () => {
+  const stack = new Stack(new App(), 'TransitionBoundary', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const template = Template.fromStack(stack);
+  const roleArn = new Capture();
+  template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ PARKING_EXECUTION_ROLE_ARN: roleArn }) } });
+  const executionArn = roleArn.asObject();
+  expect(executionArn).toEqual({ 'Fn::GetAtt': [expect.stringContaining('ParkingExecutionRole'), 'Arn'] });
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    Environment: { Variables: Match.objectLike({ PARKING_EXECUTION_ROLE_ARN: executionArn }) },
+  });
+  template.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([
+    Match.objectLike({ Action: 'cloudformation:UpdateStack', Condition: { StringEquals: { 'cloudformation:RoleArn': executionArn } },
+      Resource: stack.resolve(['bot-cube-private-egress', 'bot-cube-preview-origin', 'bot-cube-api-health']
+        .map(name => stack.formatArn({ service: 'cloudformation', resource: `stack/${name}/*` }))),
+    }),
+    Match.objectLike({ Action: 'iam:PassRole', Resource: executionArn, Condition: { StringEquals: { 'iam:PassedToService': 'cloudformation.amazonaws.com' } } }),
+    Match.objectLike({ Action: 'ecs:RunTask', Resource: stack.resolve(stack.formatArn({ service: 'ecs', resource: 'task-definition/PreviewOriginChatServiceReaperTask*:*' })),
+      Condition: { ArnEquals: { 'ecs:cluster': stack.resolve(stack.formatArn({ service: 'ecs', resource: 'cluster/bot-cube' })) } } }),
+    Match.objectLike({ Action: ['bedrock-agentcore:GetAgentRuntime', 'bedrock-agentcore:UpdateAgentRuntime'],
+      Resource: stack.resolve(stack.formatArn({ service: 'bedrock-agentcore', resource: 'runtime/bot_cube_runtime-*' })) }),
+  ]) } });
 });

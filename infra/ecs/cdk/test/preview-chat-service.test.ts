@@ -48,13 +48,14 @@ test('private service replaces before stopping, rolls back failure and uses stor
   });
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', {
     HealthCheckPath: '/health', Matcher: { HttpCode: '200' }, TargetType: 'ip',
+    Tags: Match.arrayWith([{ Key: 'parking-stack', Value: 'Origin' }]),
     HealthCheckIntervalSeconds: 5, HealthCheckTimeoutSeconds: 4, HealthyThresholdCount: 2, UnhealthyThresholdCount: 6,
     TargetGroupAttributes: Match.arrayWith([{ Key: 'deregistration_delay.timeout_seconds', Value: '3600' }]),
   });
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::LoadBalancer', {
     LoadBalancerAttributes: Match.arrayWith([{ Key: 'idle_timeout.timeout_seconds', Value: '3600' }]),
   });
-  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::ListenerRule', { Conditions: [{ Field: 'host-header', HostHeaderConfig: { Values: ['preview.example.com', 'api.example.com'] } }] });
+  template.hasResourceProperties('AWS::ElasticLoadBalancingV2::ListenerRule', { Conditions: [{ Field: 'host-header', HostHeaderConfig: { Values: ['preview.example.com', 'api.example.com'] } }], Tags: Match.arrayWith([{ Key: 'parking-stack', Value: 'Origin' }]) });
   expect(Object.values(template.findResources('AWS::EC2::SecurityGroupIngress')).map(rule => rule.Properties)).toEqual([
     { GroupId: ingress, SourceSecurityGroupId: alb, IpProtocol: 'tcp', FromPort: 8123, ToPort: 8123, Description: 'Preview ALB only' },
   ]);
@@ -401,6 +402,7 @@ test('the public ALB never forwards the Agent Computer CDP channel, which the ha
   expect(cdp).toEqual([{
     ListenerArn: expect.anything(),
     Priority: 5,
+    Tags: [{ Key: 'parking-stack', Value: 'Origin' }],
     Conditions: [{ Field: 'path-pattern', PathPatternConfig: { Values: ['/agent-computer/cdp*'] } }],
     Actions: [{ Type: 'fixed-response', FixedResponseConfig: { StatusCode: '404', ContentType: 'text/plain', MessageBody: 'Not Found\n' } }],
   }]);
