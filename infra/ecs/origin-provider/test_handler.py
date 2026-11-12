@@ -132,16 +132,28 @@ class OriginTests(unittest.TestCase):
                 cf.call('zones')
             self.assertNotIn('never-log-token', str(raised.exception))
 
-    def test_malformed_http_error_body_is_a_classified_provider_failure(self):
+    def test_malformed_permanent_http_error_body_is_a_classified_provider_failure(self):
         cf = handler.Cloudflare.__new__(handler.Cloudflare)
         cf.token = 'never-log-token'
         for body in (b'<html>never-log-token: Bad Gateway</html>', b''):
-            failure = HTTPError('url', 502, 'Bad Gateway', Message(), io.BytesIO(body))
+            failure = HTTPError('url', 403, 'Forbidden', Message(), io.BytesIO(body))
             with self.subTest(body=body), patch.object(handler.urllib.request, 'urlopen', side_effect=failure):
                 with self.assertRaisesRegex(handler.ProviderError, 'Cloudflare transport/response failure') as raised:
                     cf.call('zones')
                 self.assertIsInstance(raised.exception.__cause__, json.JSONDecodeError)
                 self.assertNotIn('never-log-token', str(raised.exception))
+
+    def test_transient_http_errors_preserve_status_for_the_parking_retry_policy(self):
+        cf = handler.Cloudflare.__new__(handler.Cloudflare)
+        cf.token = 'never-log-token'
+        for status in (429, 500, 502, 503):
+            for body in (b'<html>never-log-token</html>', b'', b'{"success":false}'):
+                failure = HTTPError('url', status, 'provider unavailable', Message(), io.BytesIO(body))
+                with self.subTest(status=status, body=body), patch.object(handler.urllib.request, 'urlopen', side_effect=failure):
+                    with self.assertRaises(HTTPError) as raised:
+                        cf.call('zones')
+                    self.assertIs(raised.exception, failure)
+                    self.assertNotIn('never-log-token', str(raised.exception))
 
     def test_successful_cloudflare_response_preserves_the_result_and_request(self):
         cf = handler.Cloudflare.__new__(handler.Cloudflare)
