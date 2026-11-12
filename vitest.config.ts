@@ -5,6 +5,7 @@ import { TEST_AWS_ENV } from './chat/test/fakes/credentials.js';
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const node = { pool: 'forks', env: { TZ: 'UTC' } } as const;
 const liveView = 'ui/web/node_modules/bedrock-agentcore/dist/src/tools/browser/live-view/nice-dcv-web-client-sdk';
+const libreofficeTests = ['ui/web/src/app/sheet-libreoffice.test.ts', 'ui/web/src/app/sheet-import-openpyxl.test.ts'];
 const uiWebMarkdown = ['ui/web/src/app/markdown.test.tsx'];
 
 const uiWeb = (name: string, include: string[], exclude: string[], groupOrder: number) => ({
@@ -55,7 +56,8 @@ export default defineConfig({
           include: ['tests/**/*.test.ts', 'templates/always-on/chat/src/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts'],
         },
       },
-      uiWeb('ui-web', ['ui/web/src/**/*.test.{ts,tsx}', 'ui/web/.storybook/*.test.ts', 'templates/always-on/ui/web/src/**/*.test.tsx'], uiWebMarkdown, 0),
+      { test: { ...node, name: 'integration-libreoffice', include: libreofficeTests, testTimeout: 30_000 } },
+      uiWeb('ui-web', ['ui/web/src/**/*.test.{ts,tsx}', 'ui/web/.storybook/*.test.ts', 'templates/always-on/ui/web/src/**/*.test.tsx'], [...uiWebMarkdown, ...libreofficeTests], 0),
       uiWeb('ui-web-markdown', uiWebMarkdown, [], 2),
     ],
   },
