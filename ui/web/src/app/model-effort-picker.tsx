@@ -108,7 +108,7 @@ function PickerOption({ selected, onSelect, children }: { selected: boolean; onS
   return <button className="mep-option" onClick={onSelect}>
     {children}
     <Presence>{selected && (
-      <motionElement.svg {...presenceMotion} className="mep-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <motionElement.svg {...presenceMotion} layout={false} className="mep-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 6L9 17l-5-5" />
       </motionElement.svg>
     )}</Presence>
