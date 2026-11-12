@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
 import shutil
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
+from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
+
+from ag_ui.core import EventType, RunFinishedEvent
 
 from .files_mount import FilesMount
 
@@ -60,6 +64,18 @@ def import_linked_files(root: Path, answer: str, excluded: Iterable[str], filesy
             continue
         local.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(real, local)
+
+
+async def import_finished_files(
+    files: FilesMount | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
+) -> None:
+    """After a finished Turn, copies each file its answer links into Files, so a link to a saved file opens."""
+    if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:
+        return
+    started = perf_counter()
+    await asyncio.to_thread(import_linked_files, root, answer, excluded_paths(skills))
+    logging.getLogger(__name__).info('Harness Files import timing run_id=%s import_ms=%.3f',
+                                     completion.run_id, (perf_counter() - started) * 1000)
 
 
 def excluded_paths(skills: Iterable[str]) -> tuple[str, ...]:

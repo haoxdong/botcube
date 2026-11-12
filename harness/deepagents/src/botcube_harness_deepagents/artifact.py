@@ -32,7 +32,6 @@ from .artifact_check import CHECKER
 from .artifact_types import NAMED, PUBLISHES, TYPES, ArtifactType
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY, excluded_paths, is_files_path
 from .lazy_files import current_turn_files, finish_in_thread
-from .publish import publish_tool
 
 # The `artifacts` skill, which teaches each Artifact type's format, ships with the checker that holds Sources to it.
 SKILLS = CHECKER.parent.parent / 'skills'
@@ -53,15 +52,13 @@ DESCRIPTION = (
 
 
 def artifacts_enabled() -> bool:
-    """The Artifacts flag, BOTCUBE_ARTIFACTS=1, off by default; removing it also retires `publish`."""
+    """The Artifacts flag, BOTCUBE_ARTIFACTS=1, off by default."""
     return os.environ.get('BOTCUBE_ARTIFACTS') == '1'
 
 
-def publishing_tools(root: Path, skills: Iterable[str]) -> list[BaseTool]:
-    """The tool the agent publishes with: `Artifact` behind the Artifacts flag, else `publish`."""
-    if artifacts_enabled():
-        return [artifact_tool(root, skills)]
-    return [publish_tool(root, skills)]
+def artifact_tools(root: Path, skills: Iterable[str]) -> list[BaseTool]:
+    """The `Artifact` tool behind the Artifacts flag, and no tool without it."""
+    return [artifact_tool(root, skills)] if artifacts_enabled() else []
 
 
 def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:

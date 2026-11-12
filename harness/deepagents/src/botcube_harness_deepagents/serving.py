@@ -82,12 +82,13 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
-from .artifact import artifacts_enabled, publishing_tools
+from .artifact import artifact_tools, artifacts_enabled
 from .conversation import conversation
 from .files import (
     FilesBindingError,
     excluded_paths,
     files_prompt,
+    import_finished_files,
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
@@ -109,7 +110,6 @@ from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
 )
-from .publish import publish_finished_files
 from .scheduled_tasks import propose_scheduled_task
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 from .shell_backend import WorkerShellBackend
@@ -151,11 +151,11 @@ takeaway  1, under 25 words
 bullets   0–3, directly under the takeaway, each under 15 words, no final period
 table     0–1, under 10 rows and 5 columns
 visual    0–2, each one of:
-          plotly: fig.write_json('<name>.plotly.json'), embedded as ![<caption>](<published link>)
+          plotly: fig.write_json('<name>.plotly.json'), embedded as ![<caption>](<file path>)
           mermaid: a ```mermaid block
-          svg: embedded as ![<caption>](<published link>)
+          svg: embedded as ![<caption>](<file path>)
 closing   0–1, under 15 words: conviction, caveat, risk or catalyst
-artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<published link>), never a numbered link
+artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<file path>), never a numbered link
 </modules>
 </final_response>
 
@@ -167,7 +167,7 @@ In chat, link each claim's key words to its source: `[key words](https://…)`.
 ARTIFACTS_PROMPT_LINES = {
     "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a PDF, PowerPoint or Excel file when the content suits it or the user asks.":
     "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a page published with the `Artifact` tool, written as the `artifacts` skill says.",
-    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<published link>), never a numbered link':
+    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<file path>), never a numbered link':
     'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message: a page published with the `Artifact` tool, which the reply shows as a card, or an email draft on its own line as [Download <name>](<published link>), never a numbered link',
 }
 
@@ -694,7 +694,7 @@ def _get_agent(
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if syncs_files:
-            tools.extend(publishing_tools(Path(backend.cwd), _require_cartridge().skills))
+            tools.extend(artifact_tools(Path(backend.cwd), _require_cartridge().skills))
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
@@ -1242,7 +1242,7 @@ class _SessionTurns:
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            await publish_finished_files(files, root, readiness.used, completion, reply.text, _require_cartridge().skills)
+                            await import_finished_files(files, root, readiness.used, completion, reply.text, _require_cartridge().skills)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)

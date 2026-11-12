@@ -9,7 +9,7 @@ import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
 
 /**
- * A reply's image: a `.plotly.json` file the agent embeds as `![<caption>](<published link>)` draws as a live chart,
+ * A reply's image: a `.plotly.json` file the agent embeds as `![<caption>](<file path>)` draws as a live chart,
  * and anything else shows as the picture it is (ReplyImage).
  */
 export function ReplyVisual(props: ComponentProps<'img'>) {

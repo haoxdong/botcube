@@ -148,15 +148,15 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
     asyncio.run(exercise())
 
 
-def test_an_errored_graph_does_not_publish_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_an_errored_graph_does_not_import_linked_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from ag_ui.core import RunErrorEvent
 
-    from botcube_harness_deepagents import publish
+    from botcube_harness_deepagents import files
 
     def forbidden(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError('An errored graph published linked Files')
+        raise AssertionError('An errored graph imported linked Files')
 
-    monkeypatch.setattr(publish, 'import_linked_files', forbidden)
+    monkeypatch.setattr(files, 'import_linked_files', forbidden)
 
     class Agent:
         async def run(self, input: RunAgentInput):
@@ -218,80 +218,5 @@ def test_an_errored_stream_drains_background_files_before_eof(
         assert (await completion).code == 'GRAPH_FAILED'
         assert marker.read_text() == 'settled'
         await stream.aclose()
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.parametrize('stop_first', [False, True])
-def test_cancelled_publish_settles_before_the_replacement_writes_files(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stop_first: bool,
-) -> None:
-    from ag_ui.core import RunFinishedEvent
-
-    from botcube_harness_deepagents import publish
-    from botcube_harness_deepagents.publish import publish_tool
-
-    async def exercise() -> None:
-        uploading = threading.Event()
-        release = threading.Event()
-        replacement_started = asyncio.Event()
-        stored: list[bytes] = []
-        source = tmp_path / 'tmp' / 'chart.svg'
-        source.parent.mkdir()
-        source.write_bytes(b'old chart')
-
-        original = publish._publish_file
-
-        def move(root: Path, excluded: Any, path: str) -> str:
-            result = original(root, excluded, path)
-            content = (root / 'artifacts' / 'chart.svg').read_bytes()
-            if not stored:
-                uploading.set()
-                if not release.wait(5):
-                    raise AssertionError('The publish upload was never released')
-            stored.append(content)
-            return result
-
-        monkeypatch.setattr(publish, '_publish_file', move)
-
-        class Agent:
-            async def run(self, input: RunAgentInput):
-                if input.run_id == 'run':
-                    await publish_tool(tmp_path).ainvoke({'path': str(source)})
-                else:
-                    replacement_started.set()
-                    (tmp_path / 'artifacts' / 'chart.svg').write_bytes(b'replacement chart')
-                    await publish_tool(tmp_path).ainvoke({'path': '/artifacts/chart.svg'})
-                yield RunFinishedEvent(thread_id=input.thread_id or '', run_id=input.run_id)
-
-        monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-        files = cast(FilesMount, SimpleNamespace(pull=lambda *args: None))
-        turns = serving._SessionTurns()
-        session = ('owner', 'session')
-        agent = cast(LangGraphAgent, Agent())
-        stream = turns.stream(session, prepared(agent, tmp_path), _input(), files, serving._RequestContext(None))
-        replacement = turns.stream(session, prepared(agent, tmp_path), _input('next'), files, serving._RequestContext(None))
-        completion = asyncio.create_task(anext(stream))
-        completions = [completion]
-        try:
-            assert await asyncio.to_thread(uploading.wait, 2)
-            if stop_first:
-                turns.stop(session, 'run')
-            next_completion = asyncio.create_task(anext(replacement))
-            completions.append(next_completion)
-            for _ in range(20):
-                await asyncio.sleep(0)
-            assert not replacement_started.is_set(), 'Replacement started before the cancelled publication drained'
-            release.set()
-            async with asyncio.timeout(2):
-                await completion
-                assert (await next_completion).type == EventType.RUN_FINISHED
-            assert stored[-1] == b'replacement chart'
-            assert (tmp_path / 'artifacts' / 'chart.svg').read_bytes() == b'replacement chart'
-        finally:
-            release.set()
-            await asyncio.gather(*completions)
-            await stream.aclose()
-            await replacement.aclose()
 
     asyncio.run(exercise())

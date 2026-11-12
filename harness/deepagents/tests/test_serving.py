@@ -145,7 +145,7 @@ class _ScriptedModel(BaseChatModel):
         for prefix, tool, argument in (
             ('run: ', 'execute', 'command'), ('ls: ', 'ls', 'path'),
             ('soul: ', 'edit_soul', 'content'), ('rename: ', 'edit_agent_identity', 'name'),
-            ('read: ', 'read_file', 'file_path'), ('publish: ', 'publish', 'path'),
+            ('read: ', 'read_file', 'file_path'),
         ):
             if text.startswith(prefix):
                 return _call(tool, {argument: text.removeprefix(prefix)}, len(messages))
@@ -1595,7 +1595,7 @@ def test_the_artifacts_flag_swaps_only_its_lines_into_the_agent_prompt_beside_th
 
     off, on, _ = service.recorder.prompts
     served = serving.served_agent_system_prompt(serving.AGENT_SYSTEM_PROMPT, artifacts=True)
-    assert 'publish' in service.recorder.tools[0] and 'Artifact' in service.recorder.tools[1]
+    assert 'Artifact' not in service.recorder.tools[0] and 'Artifact' in service.recorder.tools[1]
     assert off.startswith(serving.AGENT_SYSTEM_PROMPT) and on.startswith(served)
     lines = serving.ARTIFACTS_PROMPT_LINES
     assert set(serving.AGENT_SYSTEM_PROMPT.splitlines()) ^ set(served.splitlines()) == set(lines) | set(lines.values())
@@ -3153,16 +3153,15 @@ def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _S
         assert 'The user\'s first name is' not in prompt
 
 
-def test_publish_is_available_in_the_files_bound_serving_graph(service: _Service, files_bucket: Any) -> None:
-    path = service.home / 'tmp' / 'curve.svg'
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b'<svg>curve</svg>')
+def test_the_files_bound_serving_graph_registers_no_publish_tool(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv('BOTCUBE_ARTIFACTS', raising=False)
 
-    events = service.turn(f'publish: {path}', files=_files())
+    events = service.turn('hello', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
-    assert files_bucket.read('artifacts/curve.svg') == b'<svg>curve</svg>'
-    assert not path.exists()
+    assert service.recorder.tools[0] and 'publish' not in service.recorder.tools[0]
 
 
 @pytest.mark.parametrize('flagged', [True, False])

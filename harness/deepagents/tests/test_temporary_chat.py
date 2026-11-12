@@ -39,7 +39,7 @@ def test_temporary_chat_uses_only_browser_context_without_a_user_or_persistent_b
     assert serving._BACKENDS == {}
     assert serving._CHECKPOINTER is None
     assert serving._STORE is None
-    forbidden = {'memory', 'session_search', 'propose_scheduled_task', 'edit_soul', 'edit_agent_identity', 'publish', 'execute'}
+    forbidden = {'memory', 'session_search', 'propose_scheduled_task', 'edit_soul', 'edit_agent_identity', 'Artifact', 'execute'}
     assert all(not forbidden.intersection(tools) for tools in service.recorder.tools)
 
 

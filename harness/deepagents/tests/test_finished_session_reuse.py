@@ -187,17 +187,17 @@ def test_changed_invoking_actor_does_not_reuse_same_filing_snapshot(
     assert service.recorder.heard[-1] == ['first', 'claimed']
 
 
-def test_failed_files_publication_does_not_promote_finished_snapshot(
+def test_failed_files_import_does_not_promote_finished_snapshot(
     service: _Service, memory: FakeAgentCoreMemory, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    publish = serving.publish_finished_files
+    finished = serving.import_finished_files
 
-    async def fail_publish(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError('Files publication failed')
+    async def fail_import(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError('Files import failed')
 
-    monkeypatch.setattr(serving, 'publish_finished_files', fail_publish)
+    monkeypatch.setattr(serving, 'import_finished_files', fail_import)
     assert _turn(service, 'write: /proof.txt: result', files=_files())[-1]['type'] == 'RUN_ERROR'
-    monkeypatch.setattr(serving, 'publish_finished_files', publish)
+    monkeypatch.setattr(serving, 'import_finished_files', finished)
     memory.listed.clear()
     assert _turn(service, 'failure-acknowledged')[-1]['type'] == 'RUN_ERROR'
     memory.listed.clear()

@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
-from botcube_harness_deepagents import files, publish, serving
+from botcube_harness_deepagents import files, serving
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.files_mount import FilesMount
 from conftest import ToolBindableFakeMessagesModel, prepared
@@ -31,21 +31,32 @@ class StreamingModel(ToolBindableFakeMessagesModel):
         ]))
 
 
+FIXTURES = Path(__file__).with_name('fixtures')
+PLOTLY = b'{"data": [{"type": "scatter", "x": [1, 2], "y": [3, 4]}], "layout": {}}'
+
+
 @pytest.mark.integration
-def test_a_turn_saves_its_linked_sandbox_pdf_before_finishing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace, filesystem = tmp_path / 'workspace', tmp_path / 'filesystem'
+@pytest.mark.parametrize(('name', 'content', 'answer'), [
+    ('report.pdf', (FIXTURES / 'sandbox-report.pdf').read_bytes(), '[Download report](/mnt/data/report.pdf)'),
+    ('curve.plotly.json', PLOTLY, '![Curve](/mnt/data/curve.plotly.json)'),
+    ('curve.svg', b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L1 1"/></svg>', '![Curve](/mnt/data/curve.svg)'),
+])
+def test_a_turn_saves_the_file_its_answer_links_by_path_before_finishing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, content: bytes, answer: str,
+) -> None:
+    workspace, filesystem, saved = tmp_path / 'workspace', tmp_path / 'filesystem', tmp_path / name
     workspace.mkdir()
-    source = filesystem / 'mnt/data/report.pdf'
-    pdf = Path(__file__).with_name('fixtures') / 'sandbox-report.pdf'
-    answer = '[Download report](/mnt/data/report.pdf)'
+    saved.write_bytes(content)
+    source = filesystem / 'mnt/data' / name
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
-    monkeypatch.setattr(publish, 'import_linked_files', lambda root, text, excluded: files.import_linked_files(
+    link_import = files.import_linked_files
+    monkeypatch.setattr(files, 'import_linked_files', lambda root, text, excluded: link_import(
         root, text, excluded, filesystem=filesystem,
-    ), raising=False)
+    ))
     model = StreamingModel(responses=[
         AIMessage(content='', id='create', tool_calls=[{
-            'id': 'write-pdf', 'name': 'execute',
-            'args': {'command': f'mkdir -p {shlex.quote(str(source.parent))} && cp {shlex.quote(str(pdf))} {shlex.quote(str(source))}'},
+            'id': 'write-file', 'name': 'execute',
+            'args': {'command': f'mkdir -p {shlex.quote(str(source.parent))} && cp {shlex.quote(str(saved))} {shlex.quote(str(source))}'},
         }]),
         AIMessage(content=answer, id='answer'),
     ])
@@ -56,7 +67,7 @@ def test_a_turn_saves_its_linked_sandbox_pdf_before_finishing(tmp_path: Path, mo
     agent = serving._SessionAgent(name='linked-files', graph=graph)
     request = RunAgentInput(
         thread_id='linked-files', run_id='linked-run',
-        messages=[UserMessage(id='question', role='user', content='Write and link a PDF in /mnt/data.')],
+        messages=[UserMessage(id='question', role='user', content='Write and link a file in /mnt/data.')],
         tools=[], context=[], state={}, forwarded_props={},
     )
     mounted = MountedFiles(workspace)
@@ -70,7 +81,7 @@ def test_a_turn_saves_its_linked_sandbox_pdf_before_finishing(tmp_path: Path, mo
         ):
             events.append(event)
             if event.type == EventType.RUN_FINISHED:
-                assert mounted.read('mnt/data/report.pdf') == pdf.read_bytes()
+                assert mounted.read(f'mnt/data/{name}') == content
         assert events[-1].type == EventType.RUN_FINISHED
         assert ''.join(event.delta for event in events if event.type == EventType.TEXT_MESSAGE_CONTENT) == answer
         state = await graph.aget_state({'configurable': {'thread_id': 'linked-files'}})
