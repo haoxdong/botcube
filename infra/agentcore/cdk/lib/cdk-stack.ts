@@ -406,6 +406,9 @@ export class AgentCoreStack extends Stack {
     });
     const sessionApi = new lambda.DockerImageFunction(this, 'SessionApi', {
       functionName: identity.sessionApiFunction,
+      currentVersionOptions: {
+        description: `Checkpoint fragmentation ${this.checkpointFragmentation.valueAsString}`,
+      },
       code: lambda.DockerImageCode.fromImageAsset(codeLocation, {
         file: 'session-api.Dockerfile',
         exclude: ['tools'],

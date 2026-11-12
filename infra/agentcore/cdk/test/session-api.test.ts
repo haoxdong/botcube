@@ -158,6 +158,23 @@ test('checkpoint fragmentation stays off for both writers until both decoders ar
   });
 });
 
+test('changing fragmentation replaces the published version behind the live alias', () => {
+  const synthesized = template();
+  const [alias] = Object.values(
+    synthesized.findResources('AWS::Lambda::Alias', {
+      Properties: { Name: IDENTITY.aws.agentCore.sessionApiAlias },
+    })
+  );
+  assert(alias, 'the Session API declares its live alias');
+  const [versionId] = alias.Properties.FunctionVersion['Fn::GetAtt'];
+  const version = synthesized.findResources('AWS::Lambda::Version')[versionId];
+  assert(version, 'the live alias references a declared Lambda version');
+
+  expect(version.Properties.Description).toEqual({
+    'Fn::Join': ['', ['Checkpoint fragmentation ', { Ref: 'CheckpointFragmentation' }]],
+  });
+});
+
 test("the session API may only list, get, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
   const synthesized = template();
   const roles = synthesized.findResources('AWS::IAM::Role', {
