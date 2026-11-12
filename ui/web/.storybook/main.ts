@@ -48,7 +48,6 @@ const config: StorybookConfig = {
       ...config.define,
       'process.env.NEXT_PUBLIC_CHAT_SERVICE_URL':
         JSON.stringify(CHAT_SERVICE_ORIGIN),
-      'process.env.NEXT_PUBLIC_TEMPORARY_CHATS': JSON.stringify('1'),
     };
     config.css = { ...config.css, postcss: app };
     config.server = {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { initializeAccountSession } from './account-session';
 
@@ -6,24 +6,17 @@ import { initializeAccountSession } from './account-session';
 const urlOf = (input: RequestInfo | URL) => (input instanceof Request ? input.url : input.toString());
 
 describe('initializeAccountSession', () => {
-  afterEach(() => { vi.unstubAllEnvs(); });
-
-  const sessionOf = (authenticated: boolean) => initializeAccountSession({
+  const sessionOf = (authenticated: boolean | undefined) => initializeAccountSession({
     chatServiceUrl: 'http://localhost:8123',
     fetchImpl: async () => Response.json({ accountId: 'acct-1', authenticated }),
   });
 
-  it('makes a visitor who is not signed in a temporary visitor while temporary chats are on', async () => {
-    vi.stubEnv('NEXT_PUBLIC_TEMPORARY_CHATS', '1');
-
-    await expect(sessionOf(false)).resolves.toMatchObject({ temporary: true });
-    await expect(sessionOf(true)).resolves.toMatchObject({ temporary: false });
+  it.each([false, undefined])('makes a visitor temporary when authenticated is %s', async (authenticated) => {
+    await expect(sessionOf(authenticated)).resolves.toMatchObject({ temporary: true });
   });
 
-  it('never makes a temporary visitor while temporary chats are off', async () => {
-    vi.stubEnv('NEXT_PUBLIC_TEMPORARY_CHATS', '');
-
-    await expect(sessionOf(false)).resolves.toMatchObject({ temporary: false });
+  it('keeps a signed-in visitor on stored chats', async () => {
+    await expect(sessionOf(true)).resolves.toMatchObject({ temporary: false });
   });
 
   it('requests the account session with credentials', async () => {
@@ -36,7 +29,7 @@ describe('initializeAccountSession', () => {
     await expect(initializeAccountSession({
       chatServiceUrl: 'http://localhost:8123',
       fetchImpl,
-    })).resolves.toEqual({ status: 'ready', accountId: 'acct-1', account: {accountId: 'acct-1', authenticated: false}, temporary: false });
+    })).resolves.toEqual({ status: 'ready', accountId: 'acct-1', account: {accountId: 'acct-1', authenticated: false}, temporary: true });
 
     expect(calls).toEqual([
       [

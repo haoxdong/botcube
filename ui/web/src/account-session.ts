@@ -1,7 +1,6 @@
 "use client";
 
 import { takeOpeningResponse } from "./opening-requests";
-import { temporaryChatsEnabled } from "./temporary-chats-flag";
 
 export type AccountSessionStatus = "loading" | "ready" | "parked" | "error";
 
@@ -20,7 +19,7 @@ export async function initializeAccountSession({
     const account = (await response.json()) as Record<string, unknown>;
     const { accountId } = account;
     if (typeof accountId !== "string") throw new Error("Account session response is invalid");
-    return { status: "ready", accountId, account, temporary: temporaryChatsEnabled() && account.authenticated !== true };
+    return { status: "ready", accountId, account, temporary: account.authenticated !== true };
   }
   if (response.status === 503) {
     const body = (await response.json().catch(() => null)) as { status?: unknown } | null;

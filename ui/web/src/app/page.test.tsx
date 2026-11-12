@@ -1,3 +1,4 @@
+import { initializeAccountSession } from '../account-session';
 import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
 import type { HttpAgent, Message } from '@ag-ui/client';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -10122,7 +10123,12 @@ it("gives a temporary visitor a temporary chat with none of the account's surfac
     if (url === 'http://chat.test/temporary-chats') return Promise.resolve(answer(200, { sessionId: 'temporary-1', token: 'temporary-token' }));
     return url === 'http://chat.test' && init?.method === 'POST' ? new Promise(() => undefined) : service(url, init);
   });
-  await renderPage(auth({ status: 'unauthed', temporary: true }));
+  const session = await initializeAccountSession({
+    chatServiceUrl: 'http://chat.test',
+    fetchImpl: async () => Response.json({ accountId: 'visitor-1', authenticated: false }),
+  });
+  if (session.status !== 'ready') throw new Error('Visitor session is not ready');
+  await renderPage(auth({ status: 'unauthed', temporary: session.temporary }));
   await openSidebar();
 
   expect(sidebar().queryByText('Side chats')).not.toBeInTheDocument();
