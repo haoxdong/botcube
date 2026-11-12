@@ -2,6 +2,7 @@
 .plugins {
   flex: 1;
   overflow: auto;
+  overscroll-behavior-y: contain;
   width: 100%;
   max-width: 640px;
   margin: 0 auto;

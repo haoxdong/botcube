@@ -519,10 +519,6 @@
 }
 
 @media (max-width: 640px) {
-  html:has(.app-plugins) {
-    overflow-y: hidden;
-  }
-
   .app-stage > .app-plugins {
     position: fixed;
   }
