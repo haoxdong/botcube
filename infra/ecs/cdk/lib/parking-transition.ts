@@ -50,9 +50,11 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `${ecs.previewOriginStackName}-ChatServiceReaperTask*` })]);
   allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/${ecs.cluster}/*` }),
     stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);
-  allow(['lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig', 'lambda:ListProvisionedConcurrencyConfigs', 'lambda:GetAlias', 'lambda:UpdateAlias'],
+  allow(['lambda:GetProvisionedConcurrencyConfig', 'lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig', 'lambda:ListProvisionedConcurrencyConfigs', 'lambda:GetAlias', 'lambda:UpdateAlias'],
     [stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: agentCore.sessionApiFunction }),
       stack.formatArn({ service: 'lambda', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'function', resourceName: `${agentCore.sessionApiFunction}:*` })]);
+  // RegisterScalableTarget checks the caller can manage target-tracking alarms on any resource (run 5e5fb38a, 2026-11-12).
+  allow(['cloudwatch:PutMetricAlarm', 'cloudwatch:DescribeAlarms', 'cloudwatch:DeleteAlarms'], ['*']);
   allow(['bedrock-agentcore:GetAgentRuntime', 'bedrock-agentcore:UpdateAgentRuntime'], ['*']);
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: identity.aws.iam.runtimeRole })]);
   const advance = new tasks.LambdaInvoke(stack, 'Advance', { lambdaFunction: worker, payloadResponseOnly: true, retryOnServiceExceptions: false });

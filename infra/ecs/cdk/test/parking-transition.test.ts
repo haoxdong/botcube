@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
+import { Template } from 'aws-cdk-lib/assertions';
 import { cartridgeIdentity } from '../lib/cartridge.js';
 import { parkingTransition } from '../lib/parking-transition.js';
 
@@ -26,4 +27,14 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
   } finally {
     fs.rmSync(infraRoot, { recursive: true, force: true });
   }
+});
+
+test('lets the transition register the Session API scalable target', () => {
+  // RegisterScalableTarget fails with a ValidationException unless the caller holds these (run 9e9ac581 on 2026-11-12).
+  const stack = new Stack(new App(), 'Scaling', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const actions = Object.values(Template.fromStack(stack).findResources('AWS::IAM::Policy'))
+    .flatMap(policy => (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }).Properties.PolicyDocument.Statement)
+    .flatMap(statement => [statement.Action].flat());
+  expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
 });
