@@ -74,4 +74,8 @@ afterEach(async (context) => {
   const shadow = drawing.getImageData(Math.floor((box.left + box.width / 2) * scale), y, 1, 1).data;
   const background = drawing.getImageData(0, y, 1, 1).data;
   await expect(shadow[0]).toBeLessThan(background[0] ?? 0);
+  const text = input.querySelector('textarea')?.getBoundingClientRect();
+  if (!text) throw new Error('Composer text missing');
+  const ink = drawing.getImageData(Math.floor(text.left * scale), Math.floor(text.top * scale), Math.floor(text.width * scale), Math.floor(text.height * scale)).data;
+  await expect(ink.some((value, index) => index % 4 === 0 && value < 128)).toBe(true);
 });

@@ -7,23 +7,50 @@
   background-color: var(--color-white) !important;
   border: 1px solid transparent !important;
   border-radius: var(--radius-xl) !important;
-  box-shadow: var(--shadow-rest) !important;
+  box-shadow: none !important;
   outline: none !important;
   outline-width: 0 !important;
   outline-style: none !important;
-  transition: border-color var(--motion-move) var(--ease), box-shadow var(--motion-move) var(--ease);
+  transition: border-color var(--motion-move) var(--ease);
   position: relative;
+  z-index: 0;
 }
 
 div.copilotKitInput {
   outline: 0 !important;
 }
 
-.copilotKitInput:focus-within {
-  box-shadow: var(--shadow-float) !important;
+.copilotKitInput::before,
+.copilotKitInput::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  background: inherit;
+  border: inherit;
+  border-radius: inherit;
+  pointer-events: none;
+  transition: opacity var(--motion-move) var(--ease);
 }
 
-/* CopilotKit's scroll-to-bottom chevron, a white disc over the messages, rests in the same shadow. */
+.copilotKitInput::before {
+  box-shadow: var(--shadow-rest);
+  opacity: 1;
+}
+
+.copilotKitInput::after {
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+}
+
+.copilotKitInput:focus-within::before {
+  opacity: 0;
+}
+
+.copilotKitInput:focus-within::after {
+  opacity: 1;
+}
+
 [data-copilotkit] [data-testid="copilot-scroll-to-bottom"] {
   box-shadow: var(--shadow-rest);
 }
