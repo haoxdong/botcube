@@ -631,13 +631,11 @@ it('removes the real browser profile only once every Chromium process has exited
   // A stopped helper outlives Chromium's main process, as a busy one does on a loaded host.
   process.kill(helper, 'SIGSTOP');
   const alive = () => {
-    try {
-      process.kill(helper, 0);
-      return true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
-      throw error;
-    }
+    const processes = execFileSync('ps', ['-A', '-o', 'pid=,stat='], { encoding: 'utf8' });
+    return processes.split('\n').some((line) => {
+      const [pid, state] = line.trim().split(/\s+/);
+      return Number(pid) === helper && !state?.startsWith('Z');
+    });
   };
   try {
     await browser.close();

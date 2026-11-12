@@ -1,4 +1,4 @@
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -69,7 +69,7 @@ export async function realSingleClientBrowser() {
 
 /** Chromium's helpers can outlive its main process and keep writing into the profile (ENOTEMPTY). */
 async function endProcessGroup(group: number) {
-  const signal = (name: NodeJS.Signals | 0) => {
+  const signal = (name: NodeJS.Signals) => {
     try {
       process.kill(-group, name);
       return true;
@@ -79,8 +79,13 @@ async function endProcessGroup(group: number) {
     }
   };
   if (!signal('SIGKILL')) return;
-  // eslint-disable-next-line no-await-in-loop -- waits for the kernel to reap one process group
-  while (signal(0)) await sleep(10);
+  const alive = () => execFileSync('ps', ['-A', '-o', 'pgid=,stat='], { encoding: 'utf8' })
+    .split('\n').some((line) => {
+      const [pgid, state] = line.trim().split(/\s+/);
+      return Number(pgid) === group && !state?.startsWith('Z');
+    });
+  // eslint-disable-next-line no-await-in-loop -- zombies have exited even when the host's PID 1 has not reaped them
+  while (alive()) await sleep(10);
 }
 
 export function realBrowserClient(endpoint: string, session: string) {
