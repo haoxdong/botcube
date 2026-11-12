@@ -44,6 +44,7 @@ from ...memory_tools import memory_tool
 from ...session_memory import SessionMemoryMiddleware
 from ...turn_memory import TurnMemoryMiddleware
 from .serializer import CompressedSerializer
+from .snapshot import FragmentedSnapshotClient
 from .warm_session import WarmSessionSaver
 
 __all__ = [
@@ -90,10 +91,15 @@ def is_access_denied(error: BaseException) -> bool:
 def build_checkpointer(memory_id: str, *, region_name: str) -> AgentCoreMemorySaver:
     """The stock saver in snapshot format, as shipped (ADR 0067 decision 9)."""
     # A non-checkpoint head sends the stock saver to a filtered page of full historical snapshots.
-    return AgentCoreMemorySaver(
+    saver = AgentCoreMemorySaver(
         memory_id, checkpoint_format='snapshot', limit=None, max_results=4, region_name=region_name,
         serde=CompressedSerializer(),
     )
+    saver.checkpoint_event_client = FragmentedSnapshotClient(
+        memory_id, saver.serializer, saver.checkpoint_event_client.client,
+        fragment=os.getenv('BOTCUBE_FRAGMENT_CHECKPOINTS') == '1',
+    )
+    return saver
 
 
 def build_store(memory_id: str, *, region_name: str) -> AgentCoreMemoryStore:

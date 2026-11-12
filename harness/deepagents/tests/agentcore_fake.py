@@ -110,6 +110,8 @@ class FakeAgentCoreMemory:
         events = self.events[(params['actorId'], params['sessionId'])]
         event = {
             'eventId': f'created-{self.create_event_calls}',
+            'actorId': params['actorId'],
+            'sessionId': params['sessionId'],
             'eventTimestamp': params['eventTimestamp'],
             'payload': payload,
             **({'metadata': params['metadata']} if 'metadata' in params else {}),

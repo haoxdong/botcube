@@ -139,6 +139,25 @@ test('a purge fits in one invocation at the per-Session delete rate', () => {
   expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);
 });
 
+test('checkpoint fragmentation stays off for both writers until both decoders are deployed', () => {
+  const synthesized = template();
+
+  synthesized.hasParameter('CheckpointFragmentation', {
+    Type: 'String',
+    Default: '0',
+    AllowedValues: ['0', '1'],
+  });
+  synthesized.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+    EnvironmentVariables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: { Ref: 'CheckpointFragmentation' } }),
+  });
+  synthesized.hasResourceProperties('AWS::Lambda::Function', {
+    FunctionName: IDENTITY.aws.agentCore.sessionApiFunction,
+    Environment: {
+      Variables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: { Ref: 'CheckpointFragmentation' } }),
+    },
+  });
+});
+
 test("the session API may only list, get, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
   const synthesized = template();
   const roles = synthesized.findResources('AWS::IAM::Role', {

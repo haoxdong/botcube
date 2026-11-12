@@ -179,10 +179,16 @@ function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
 export class AgentCoreStack extends Stack {
   /** The AgentCore application containing all agent environments */
   public readonly application: AgentCoreApplication;
+  private readonly checkpointFragmentation: CfnParameter;
 
   constructor(scope: Construct, id: string, props: AgentCoreStackProps) {
     const { permissionsBoundary, ...stackProps } = props;
     super(scope, id, stackProps);
+    this.checkpointFragmentation = new CfnParameter(this, 'CheckpointFragmentation', {
+      type: 'String',
+      default: '0',
+      allowedValues: ['0', '1'],
+    });
     validateRuntimeLifecycle(props);
 
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
@@ -262,6 +268,7 @@ export class AgentCoreStack extends Stack {
       env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
       configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
       env.runtime.addEnvironmentVariable('BOTCUBE_COMPRESS_CHECKPOINTS', checkpointCompression.valueAsString);
+      env.runtime.addEnvironmentVariable('BOTCUBE_FRAGMENT_CHECKPOINTS', this.checkpointFragmentation.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
       restrictRuntimePolicy(this, env.runtime.role);
       if (props.vpc) {
@@ -412,6 +419,7 @@ export class AgentCoreStack extends Stack {
       environment: {
         AGENTCORE_MEMORY_ID: memory.memoryId,
         AGENTCORE_REGION: this.region,
+        BOTCUBE_FRAGMENT_CHECKPOINTS: this.checkpointFragmentation.valueAsString,
       },
     });
     const sessionApiAlias = sessionApi.addAlias(identity.sessionApiAlias);

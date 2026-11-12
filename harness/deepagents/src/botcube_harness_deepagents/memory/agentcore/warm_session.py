@@ -42,13 +42,13 @@ from langgraph_checkpoint_aws.checkpoint.agentcore.models import (
 )
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     SNAPSHOT_LAYOUT,
-    AgentCoreSnapshotClient,
 )
 from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from ... import turn_timing
 from ...session_format import SessionFormatLegacyError
 from .serializer import CompressedSerializer
+from .snapshot import FragmentedSnapshotClient
 
 __all__ = ['WarmSessionSaver']
 
@@ -197,14 +197,15 @@ class _Confirmed:
     writes: str | None
 
 
-class _WarmSnapshotClient(AgentCoreSnapshotClient):
+class _WarmSnapshotClient(FragmentedSnapshotClient):
     """The stock snapshot client on the Turn's Memory client, holding each snapshot it stores."""
 
     def __init__(self, memory_id: str, serializer: EventSerializer, client: Any) -> None:
         # The Turn's client is already built with its credentials: no second boto3 client.
-        self.memory_id = memory_id
-        self.serializer = serializer
-        self.client = BedrockAgentCoreClientWithRetry(client)
+        super().__init__(
+            memory_id, serializer, BedrockAgentCoreClientWithRetry(client),
+            fragment=os.getenv('BOTCUBE_FRAGMENT_CHECKPOINTS') == '1',
+        )
         self.kept: tuple[_Snapshot, int] | None = None
         self._stored_events: ContextVar[list[str] | None] = ContextVar('stored_snapshot_events', default=None)
 
@@ -226,8 +227,11 @@ class _WarmSnapshotClient(AgentCoreSnapshotClient):
         response = super()._create_snapshot_event(
             payload, session_id, actor_id, checkpoint, kind, offset_ms=offset_ms,
         )
-        if (stored := self._stored_events.get()) is not None:
-            stored.extend(json.loads(item)['blob'] for item in payload)
+        if kind != 'blob_fragment' and (stored := self._stored_events.get()) is not None:
+            originals = self._scope.get().referenced_blobs
+            for item in payload:
+                blob = json.loads(item)['blob']
+                stored.append(originals.get(blob, blob))
         return response
 
 
