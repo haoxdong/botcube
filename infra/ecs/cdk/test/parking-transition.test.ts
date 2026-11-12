@@ -52,6 +52,7 @@ test('grants provisioned concurrency changes on the unqualified Session API func
   const unqualified = `function:${identity.aws.agentCore.sessionApiFunction}"`;
   for (const action of ['lambda:PutProvisionedConcurrencyConfig', 'lambda:DeleteProvisionedConcurrencyConfig']) {
     expect(resources(action).some(resource => resource.includes(unqualified))).toBe(true);
+    expect(resources(action).some(resource => resource.includes(`function:${identity.aws.agentCore.sessionApiFunction}:*"`))).toBe(true);
   }
 });
 
