@@ -245,6 +245,20 @@ describe('EFS account Files', () => {
         expect(JSON.parse(await read('artifacts/plans/q4.md.versions/2.json'))).toEqual({ author: 'user', title: 'Q4 plan', description: 'The plan' });
       });
 
+      it('saves a Doc kept at the root of Files', async () => {
+        // Live, the agent wrote its Doc beside no folder, and the save refused `.` as a path in Files.
+        const { files } = setup();
+        await put(HASH, 'q4.md', PLAN);
+        await put(HASH, 'artifacts/q4.md.versions/1.md', PLAN);
+        await put(HASH, 'artifacts/q4.md.versions/1.json', '{"author":"agent","title":"Q4 plan","description":"The plan"}');
+
+        const saved = await files.saveArtifact(ACCOUNT, { id: '/q4.md', version: 1, files: { 'q4.md': SAVED } });
+
+        expect(saved).toMatchObject({ id: '/q4.md', version: 2, author: 'user', path: '/artifacts/q4.md.versions/2.md' });
+        expect(await read('q4.md')).toBe(SAVED);
+        expect(await read('artifacts/q4.md.versions/2.md')).toBe(SAVED);
+      });
+
       it('refuses a save over a newer version and any file but the Doc\'s own', async () => {
         const { files } = setup();
         await publishedDoc();

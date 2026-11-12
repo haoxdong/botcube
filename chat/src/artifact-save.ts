@@ -276,6 +276,8 @@ class AccountTree {
 
   /** Makes each folder of `folder` from the root in turn, refusing a link or a file in the way. */
   private async folders(folder: string, depth = 1): Promise<void> {
+    // A file at the root of Files has no folder to make: its dirname is `.`.
+    if (folder === '.') return;
     const segments = folder.split('/');
     if (depth > segments.length) return;
     const walked = segments.slice(0, depth).join('/');
