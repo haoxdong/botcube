@@ -42,3 +42,11 @@ test('has no administrator attachment, IAM mutation, data mutation or Lambda con
     Match.objectLike({ Action: 'iam:PassRole', Resource: '*' }),
   ])) } });
 });
+
+test('can resolve every SSM-typed parameter of the stacks it updates', () => {
+  // UpdateStack resolves SSM-typed parameters as the execution role; a missing one fails the whole transition.
+  statement({
+    Action: 'ssm:GetParameters',
+    Resource: Match.arrayWith([stack.resolve(stack.formatArn({ service: 'ssm', resource: `parameter${identity.aws.ecs.chatService.planUsageOwnerAccountParameter}` }))]),
+  });
+});

@@ -11,7 +11,10 @@ export function parkingExecutionRole(stack: Stack, identity: DeployIdentity) {
   const arn = (service: string, resource: string) => stack.formatArn({ service, resource });
   const allow = (actions: string[], resources: string[], conditions?: Record<string, Record<string, string | string[]>>) =>
     role.addToPolicy(new iam.PolicyStatement({ actions, resources, ...(conditions ? { conditions } : {}) }));
-  allow(['ssm:GetParameters'], [arn('ssm', 'parameter/cdk-bootstrap/hnb659fds/version')]);
+  // CloudFormation resolves every SSM-typed stack parameter on UpdateStack: the bootstrap version, and the preview origin's
+  // plan-usage owner account (unpark 8980424a failed without it).
+  allow(['ssm:GetParameters'], [arn('ssm', 'parameter/cdk-bootstrap/hnb659fds/version'),
+    arn('ssm', `parameter${ecs.chatService.planUsageOwnerAccountParameter}`)]);
   allow(['ec2:DescribeNatGateways', 'ec2:DescribeAddresses', 'ec2:DescribeRouteTables', 'ec2:DescribeSubnets', 'ec2:DescribeNetworkInterfaces'], ['*']);
   allow(['ec2:CreateNatGateway'], [arn('ec2', 'natgateway/*')], { StringEquals: { 'aws:RequestTag/Name': ecs.privateEgress.natGateway.name } });
   allow(['ec2:CreateNatGateway'], [arn('ec2', `subnet/${ecs.privateEgress.natGateway.publicSubnetId}`), arn('ec2', `vpc/${identity.aws.credentialService.vpcId}`)]);
