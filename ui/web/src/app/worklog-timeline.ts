@@ -9,37 +9,15 @@ export type TimedStep = { id: string; kind: "start" | "thought" | "tool" | "answ
 /** "9s", "1m 12s". */
 export const seconds = (whole: number) => (whole < 60 ? `${whole}s` : `${Math.floor(whole / 60)}m ${whole % 60}s`);
 
-/** Whole seconds for spans summing to `total`, the leftover going to the largest remainders. */
-function apportioned(spans: readonly { id: string; span: number }[], total: number): Map<string, number> {
-  const each = new Map(spans.map(({ id, span }) => [id, Math.floor(span)]));
-  let left = total - spans.reduce((sum, { span }) => sum + Math.floor(span), 0);
-  for (const { id } of [...spans].sort((a, b) => (b.span % 1) - (a.span % 1))) {
-    if (left <= 0) break;
-    each.set(id, (each.get(id) ?? 0) + 1);
-    left -= 1;
-  }
-  return each;
-}
-
-/**
- * Each step's whole seconds on one timeline from `start`: in the order the steps ended, each runs from the end before
- * it to its own. The finished steps round once, to the largest remainders; the running step, ended at `now`, takes the
- * rest of the rounded total, so the rows sum to it and a finished row never changes as the clock ticks.
- */
 function stepSeconds(start: number, steps: readonly TimedStep[], now: number): { total: number; each: Map<string, number> } {
   let reached = start;
-  const byEnd = [...steps].sort((a, b) => (a.ended ?? Infinity) - (b.ended ?? Infinity));
-  const finished = byEnd.filter((step) => step.ended !== undefined || step.finished).map(({ id, ended = reached }) => {
-    const span = Math.max(ended - reached, 0) / 1000;
-    reached = Math.max(ended, reached);
-    return { id, span };
-  });
-  const done = Math.round((reached - start) / 1000);
-  const each = apportioned(finished, done);
-  const running = byEnd.filter((step) => step.ended === undefined && !step.finished);
-  const total = running.length ? Math.max(Math.round((now - start) / 1000), done) : done;
-  for (const [index, { id }] of running.entries()) each.set(id, index === 0 ? total - done : 0);
-  return { total, each };
+  const each = new Map<string, number>();
+  for (const { id, ended, finished } of steps) {
+    const end = Math.max(reached, ended ?? (finished ? reached : now));
+    each.set(id, Math.round((end - start) / 1000) - Math.round((reached - start) / 1000));
+    reached = end;
+  }
+  return { total: Math.round((reached - start) / 1000), each };
 }
 
 const hasText = (message: TimelineMessage) => typeof message.content === "string" && message.content.trim() !== "";

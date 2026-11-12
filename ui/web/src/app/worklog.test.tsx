@@ -468,15 +468,64 @@ const secondsIn = (time: string | null | undefined) => {
 };
 
 describe("a Worklog's step times", () => {
+  it('keeps a finished fractional step from dropping to zero when the next step finishes', () => {
+    vi.useFakeTimers({ now: START + 600 });
+    const question = { id: 'fraction-u', role: 'user', content: 'Search', ...stamp(0, 0) };
+    const thought = { id: 'fraction-r', role: 'reasoning', content: 'Plan', ...stamp(0, 0.6) };
+    const search = { id: 'fraction-a', role: 'assistant', content: '', toolCalls: [call('fraction-c', 'web_search', { query: 'Fed' })], ...stamp(0.6, 0.6) };
+    const view = render(<StepsChat messages={[question, thought, search]} running />);
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searching the webFed', '0s']]);
+
+    act(() => { vi.setSystemTime(START + 1300); });
+    const result = { id: 'fraction-t', role: 'tool', toolCallId: 'fraction-c', content: 'Found', ...stamp(0.6, 1.3) };
+    view.rerender(<StepsChat messages={[question, thought, search, result]} running />);
+
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    expect(head()).toHaveTextContent(/^Working · 1s$/);
+    view.rerender(<StepsChat messages={[question, thought, search, result]} />);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    view.unmount();
+    render(<StepsChat messages={[question, thought, search, result]} />);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    expect(head()).toHaveTextContent(/^Worked for 1s$/);
+  });
+
+  it('keeps elapsed parallel tool time on its step when another call completes', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'parallel-live-u', role: 'user', content: 'Run both', ...stamp(0, 0) };
+    const tools = { id: 'parallel-live-a', role: 'assistant', content: '', toolCalls: [call('parallel-live-slow', 'execute', { command: 'sleep 5' }), call('parallel-live-fast', 'execute', { command: 'true' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tools]} running />);
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(stepRows()).toEqual([['Runningsleep 5', '2s'], ['Runningtrue', '0s']]);
+
+    const fast = { id: 'parallel-live-result', role: 'tool', toolCallId: 'parallel-live-fast', content: '', ...stamp(0, 2) };
+    view.rerender(<StepsChat messages={[question, tools, fast]} running />);
+
+    expect(stepRows()).toEqual([['Runningsleep 5', '2s'], ['Rantrue', '0s']]);
+    expect(head()).toHaveTextContent(/^Working · 2s$/);
+    act(() => { vi.advanceTimersByTime(3000); });
+    const slow = { id: 'parallel-live-slow-result', role: 'tool', toolCallId: 'parallel-live-slow', content: '', ...stamp(0, 5) };
+    view.rerender(<StepsChat messages={[question, tools, fast, slow]} />);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ransleep 5', '5s'], ['Rantrue', '0s']]);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    view.unmount();
+    render(<StepsChat messages={[question, tools, fast, slow]} />);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ransleep 5', '5s'], ['Rantrue', '0s']]);
+  });
+
   it('gives every step one line and a time, rounding so the steps sum exactly to the header, after a reload', () => {
     render(<StepsChat messages={timed('sum')} />);
     fireEvent.click(head());
 
     expect(head()).toHaveTextContent(/^Worked for 36s$/);
     expect(stepRows()).toEqual([
-      ['Started up', '7s'],
+      ['Started up', '6s'],
       ['ThoughtPlanning the search', '9s'],
-      ['Searched the webFed minutes October 2026', '4s'],
+      ['Searched the webFed minutes October 2026', '5s'],
       ['Thought', '2s'],
       [`Ran${longCommand}`, '3s'],
       ['Answered', '11s'],
@@ -515,14 +564,14 @@ describe("a Worklog's step times", () => {
     expect(dialog).toHaveTextContent('Minutes first, then the price pull.');
   });
 
-  it('times parallel calls in the order they finished, so each keeps its own span', () => {
+  it('assigns overlapping time to the first call in message order after replay', () => {
     const [question, thought, , , , , , answer] = timed('parallel');
     assert(question && thought && answer, 'a Turn');
     const calls = { id: 'parallel-a', role: 'assistant' as const, content: '', toolCalls: [call('slow', 'execute', { command: 'sleep 5' }), call('quick', 'execute', { command: 'true' })], ...stamp(15.2, 15.6) };
     render(<StepsChat messages={[question, thought, calls, { id: 'rs', role: 'tool', toolCallId: 'slow', content: '', ...stamp(15.3, 21.2) }, { id: 'rq', role: 'tool', toolCallId: 'quick', content: '', ...stamp(15.3, 17.2) }, answer]} />);
     fireEvent.click(head());
 
-    expect(stepRows().slice(2, 4)).toEqual([['Ransleep 5', '4s'], ['Rantrue', '2s']]);
+    expect(stepRows().slice(2, 4)).toEqual([['Ransleep 5', '6s'], ['Rantrue', '0s']]);
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(36);
   });
 
