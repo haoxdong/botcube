@@ -6,6 +6,7 @@ import { render } from '@testing-library/react';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Streamdown } from 'streamdown';
+import './composer.css';
 
 import { KeptChat } from './kept-chat';
 import { ScheduledTaskProposalCard } from './scheduled-tasks';
@@ -291,14 +292,30 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
     happyDOM.setViewport({ width, height: 844 });
     const input = document.createElement('div');
     input.className = 'copilotKitInput';
+    input.innerHTML = '<span class="pseudo-before"></span><span class="pseudo-after"></span>';
     document.body.append(input);
     const { backgroundColor, borderTopColor, boxShadow } = getComputedStyle(input);
+    const resting = styleOf(input, '.pseudo-before');
+    const lifted = styleOf(input, '.pseudo-after');
+    const appearance = {
+      fill: backgroundColor,
+      border: borderTopColor,
+      parentShadow: boxShadow,
+      resting: { shadow: resting.boxShadow, opacity: resting.opacity },
+      lifted: { shadow: lifted.boxShadow, opacity: lifted.opacity },
+    };
     input.remove();
-    return { fill: backgroundColor, border: borderTopColor, shadow: boxShadow };
+    return appearance;
   };
 
   try {
-    const resting = { fill: '#fff', border: 'transparent', shadow: '0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)' };
+    const resting = {
+      fill: '#fff',
+      border: 'transparent',
+      parentShadow: 'none',
+      resting: { shadow: '0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)', opacity: '1' },
+      lifted: { shadow: '0 4px 20px rgba(0, 0, 0, 0.15)', opacity: '0' },
+    };
     expect(composer(1024)).toEqual(resting);
     expect(composer(440)).toEqual(resting);
   } finally {
