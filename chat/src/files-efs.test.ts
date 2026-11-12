@@ -156,6 +156,18 @@ describe('EFS account Files', () => {
       expect((await stored()).sort()).toEqual(['1', '1.json', '2', '2.json', 'read.json']);
     });
 
+    it('keeps no new version when the Source write fails', async () => {
+      await published();
+      const source = path.join(root, HASH, 'decks/q3/project/slides/cover.html');
+      await rm(source);
+      await mkdir(source);
+
+      await expect(saveCover()).rejects.toMatchObject({ code: 'EISDIR' });
+
+      expect((await stored()).sort()).toEqual(['1', '1.json', 'read.json']);
+      expect(await read('artifacts/decks/q3.versions/1/project/slides/cover.html')).toBe(COVER);
+    });
+
     it('refuses a save over a newer version, one carrying no file or a file the editor does not edit, and an unknown Artifact', async () => {
       const { files } = setup();
       await published();

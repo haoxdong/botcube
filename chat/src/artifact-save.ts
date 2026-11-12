@@ -48,8 +48,8 @@ export interface SavedArtifact {
 }
 
 /**
- * Stores the User's edit as the Artifact's next version, authored by the User, then writes the edited files into the
- * Source, so the agent's next turn works from them. `directory` is the account's Files on disk. A save refuses any
+ * Writes the User's edited files into the Source, then publishes the Artifact's next version, authored by the User,
+ * so the agent's next turn works from them. `directory` is the account's Files on disk. A save refuses any
  * symbolic link on its way, so it reads and writes only inside `directory`.
  */
 export async function saveArtifact(directory: string, { id, version, files }: ArtifactSave): Promise<SavedArtifact> {
@@ -66,8 +66,6 @@ export async function saveArtifact(directory: string, { id, version, files }: Ar
   const record = readRecord((await tree.read(`${versions}/${version}.json`)).toString('utf8'));
   await refuseChangedKept(edit);
   const next = await storeNext(edit, record);
-  // The Source after the version: a failed write leaves the User's version stored, which the agent's next read shows.
-  await Promise.all(edits.map(([name, text]) => tree.write(sourceFile(edit, name), text, 'replace')));
   return {
     id, type: type.name, title: record.title, description: record.description, version: next, author: 'user',
     path: `/${versions}/${next}${type.suffix}`,
@@ -142,10 +140,6 @@ function attachments(text: string): string[] {
   return (readDraft(text).attachments ?? []).map(({ file }, index) => `attachment ${index} is ${file}`);
 }
 
-/**
- * Builds the next version under a hidden name, claims its number by creating its `<n>.json` (the User as author), then
- * renames it into place, so a version is visible only once its record is.
- */
 async function storeNext(edit: Edit, { title, description, imports }: VersionRecord): Promise<number> {
   const { tree, id, versions, version, type: { suffix }, files, kept } = edit;
   const next = version + 1;
@@ -160,10 +154,13 @@ async function storeNext(edit: Edit, { title, description, imports }: VersionRec
     await tree.write(claimed, JSON.stringify({ author: 'user', title, description, imports }), 'new').catch((error: unknown) => {
       throw errorCode(error) === 'EEXIST' ? new HttpError(409, `Version ${next} of ${id} was saved first. Open the newest and edit again.`) : error;
     });
-    await tree.rename(building, `${versions}/${next}${suffix}`).catch(async (error: unknown) => {
+    try {
+      await Promise.all(Object.entries(files).map(([name, text]) => tree.write(sourceFile(edit, name), text, 'replace')));
+      await tree.rename(building, `${versions}/${next}${suffix}`);
+    } catch (error) {
       await tree.remove(claimed);
       throw error;
-    });
+    }
   } finally {
     await tree.remove(building);
   }
