@@ -139,7 +139,7 @@ test('a purge fits in one invocation at the per-Session delete rate', () => {
   expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);
 });
 
-test("the session API may only list, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
+test("the session API may only list, get, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
   const synthesized = template();
   const roles = synthesized.findResources('AWS::IAM::Role', {
     Properties: { RoleName: IDENTITY.aws.iam.sessionApiRole },
@@ -156,6 +156,7 @@ test("the session API may only list, create and delete events, list sessions, li
     {
       Action: [
         'bedrock-agentcore:ListEvents',
+        'bedrock-agentcore:GetEvent',
         'bedrock-agentcore:CreateEvent',
         'bedrock-agentcore:DeleteEvent',
         'bedrock-agentcore:ListSessions',

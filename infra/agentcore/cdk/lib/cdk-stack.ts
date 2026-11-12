@@ -371,6 +371,7 @@ export class AgentCoreStack extends Stack {
       new iam.PolicyStatement({
         actions: [
           'bedrock-agentcore:ListEvents',
+          'bedrock-agentcore:GetEvent',
           'bedrock-agentcore:CreateEvent',
           'bedrock-agentcore:DeleteEvent',
           'bedrock-agentcore:ListSessions',

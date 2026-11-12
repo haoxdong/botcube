@@ -11,8 +11,12 @@ from typing import Any
 import boto3
 import pytest
 import uvicorn
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import empty_checkpoint
+from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory
 from botcube_harness_deepagents import memory_document, session_api
@@ -163,6 +167,35 @@ def test_a_get_reads_the_sessions_record_once(agentcore_record: FakeAgentCoreMem
         ('user', 'hello'), ('assistant', 'Echo: hello'), ('user', 'again'), ('assistant', 'Echo: again'),
     ]
     assert agentcore_record.listed['session-1'] == 1
+
+
+@pytest.mark.parametrize('pending_count', [98, 99], ids=['single-event', 'chunked'])
+@pytest.mark.parametrize('allow_get_event', [False, True], ids=['get-denied', 'get-allowed'])
+def test_session_history_reads_snapshot_chunks(
+    agentcore_record: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+    pending_count: int, allow_get_event: bool,
+) -> None:
+    config: RunnableConfig = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
+    checkpoint = empty_checkpoint()
+    checkpoint['channel_values'] = {'messages': [HumanMessage('Saved question', id='saved-question')]}
+    checkpoint['channel_versions'] = {'messages': '1'}
+    writer = agentcore.build_checkpointer(MEMORY_ID, region_name=session_api.AGENTCORE_REGION)
+    writer.put_with_writes(
+        config, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
+        [PendingWrite(config, [('messages', [HumanMessage(f'Pending {index}')])], f'task-{index}', '')
+         for index in range(pending_count)],
+    )
+    if not allow_get_event:
+        def denied(**_params: Any) -> Any:
+            raise ClientError({'Error': {'Code': 'AccessDeniedException', 'Message': 'GetEvent denied'}}, 'GetEvent')
+
+        monkeypatch.setattr(agentcore_record, 'get_event', denied)
+    if pending_count == 99 and not allow_get_event:
+        with pytest.raises(ClientError, match='AccessDeniedException'):
+            asyncio.run(session_api.handle(GET))
+    else:
+        replayed = asyncio.run(session_api.handle(GET))['messages']
+        assert [(message['role'], message['content']) for message in replayed] == [('user', 'Saved question')]
 
 
 def test_each_get_reads_the_record_as_the_harness_left_it(agentcore_record: FakeAgentCoreMemory) -> None:
