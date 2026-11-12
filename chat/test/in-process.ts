@@ -94,6 +94,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     credentialProps: [],
     authorizeBrowserLiveView: async () => undefined,
     warmSession: async () => undefined,
+    stopSessionComputer: async () => undefined,
     ...options.cartridge,
   };
   const config: ChatServiceConfig = {

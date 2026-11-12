@@ -1,11 +1,15 @@
+import type { AgentComputerBrowser, AgentComputerRecords, AgentComputerState, AwakeComputer, BrowserControl } from './agent-computer-types.js';
+export type { AgentComputerBrowser, AgentComputerRecords, AgentComputerState } from './agent-computer-types.js';
+import { startAgentComputer } from './agent-computer-start.js';
+import { ScheduledBrowserAdmissionError } from './account-resources.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentCoreEndpointFromEnv } from './upstream.js';
 import { awsFetch } from './aws.js';
 import { HttpError } from './cartridge.js';
 import { BrowserSessions, BrowserSessionEnded } from './browser-sessions.js';
 import type { Cdp } from './cdp.js';
-import type { AccountResources, RunningAgentComputer, AgentComputerStream } from './account-resources.js';
-import type { AccountFiles, FilesMount } from './files.js';
+import type { RunningAgentComputer, AgentComputerStream } from './account-resources.js';
+import type { AccountFiles } from './files.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { sweepEvery } from './task-drain.js';
 
@@ -18,45 +22,6 @@ const SESSION_NAME = 'botcube-agent-computer';
  * and AgentCore's own default, 1456x819, would leave the rest black.
  */
 const VIEWPORT = { width: 1280, height: 720 };
-
-/** The AgentCore operations an Agent Computer browser needs. */
-export interface AgentComputerBrowser {
-  /** The AgentCore browser its Sessions run in. */
-  readonly browserId: string;
-  /**
-   * Start a browser Session, from the browser profile when there is one, with
-   * the account's Files mounted as Chrome's download directory; answers its ID.
-   */
-  start(profileId: string | null, files: FilesMount): Promise<string>;
-  /** The page as a JPEG data URL. */
-  screenshot(sessionId: string): Promise<string>;
-  /** Run the Cartridge's trusted cleanup before a browser profile is saved. */
-  beforeProfileSave(sessionId: string): Promise<void>;
-  /** Create the account's browser profile; answers its ID. */
-  createProfile(accountId: string): Promise<string>;
-  /** Save the browser's cookies and local storage into the profile; the last save wins. */
-  saveProfile(profileId: string, sessionId: string): Promise<void>;
-  /** Delete the account's browser profile; one already gone counts as deleted, so a retried deletion goes on. */
-  deleteProfile(profileId: string): Promise<void>;
-  stop(sessionId: string): Promise<void>;
-  /** The browser's CDP automation stream, with the headers that open it. */
-  automationStream(sessionId: string): Promise<{ endpoint: string; headers: Record<string, string> }>;
-  /** Who drives the browser: the user once they have taken it over, else the agent. */
-  control(sessionId: string): Promise<BrowserControl>;
-  /** End the user's Take-over: the agent drives the browser again. */
-  handBack(sessionId: string): Promise<void>;
-}
-
-type BrowserControl = 'user' | 'agent';
-
-export type AgentComputerRecords = Pick<AccountResources, 'agentComputer' | 'saveAgentComputer' | 'agentComputerScreenshot' | 'saveAgentComputerScreenshot' | 'deleteAgentComputer' | 'withAgentComputerLease' | 'runningAgentComputer' | 'runningAgentComputers' | 'saveRunningAgentComputer' | 'deleteRunningAgentComputer' | 'agentComputerStream' | 'claimAgentComputerStream' | 'renewAgentComputerStream' | 'releaseAgentComputerStream'>;
-
-/** The Session's last screenshot comes with either state: it stands in until the live view shows the browser. */
-export type AgentComputerState =
-  | { state: 'awake'; browserSessionId: string; control: BrowserControl; screenshot: string | null }
-  | { state: 'starting' | 'asleep'; screenshot: string | null };
-
-type AwakeComputer = Extract<AgentComputerState, { state: 'awake' }>;
 
 /** A browser profile name AgentCore accepts, one per account. */
 const profileName = (accountId: string, profilePrefix: string) =>
@@ -301,7 +266,15 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
     await records().deleteRunningAgentComputer(record.accountId, record.threadId);
   }
 
-  async function stop(record: RunningAgentComputer): Promise<void> {
+  async function confirmScheduledStop(record: RunningAgentComputer, until = Date.now() + 5000): Promise<void> {
+    if (await control(record) === null) return;
+    if (Date.now() >= until) throw new Error('Scheduled Browser termination is unproved; retain fleet admission');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await confirmScheduledStop(record, until);
+  }
+
+  async function stop(record: RunningAgentComputer, confirm = record.scheduledExecution !== undefined): Promise<void> {
+    if (confirm && record.sessionId === null) throw new Error('Scheduled Browser start receipt is unproved; retain fleet admission');
     const key = keyOf(record.accountId, record.threadId);
     clearTimeout(timers.get(key));
     timers.delete(key);
@@ -313,6 +286,7 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
         }
         await closeStreams(record.sessionId);
         await browser().stop(record.sessionId);
+        if (confirm) await confirmScheduledStop(record);
       } catch (error) {
         record.idleDeadline = deadline();
         await records().saveRunningAgentComputer(record);
@@ -388,31 +362,6 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
     };
   }
 
-  async function start(accountId: string, threadId: string): Promise<RunningAgentComputer> {
-    const record: RunningAgentComputer = { accountId, threadId, sessionId: null, phase: 'starting', idleDeadline: deadline() };
-    await records().saveRunningAgentComputer(record);
-    try {
-      const { profileId } = await records().agentComputer(accountId);
-      record.sessionId = await browser().start(profileId, await files().mount(accountId));
-      // Record the browser before seeding credentials, so another task can revoke or clean up an interrupted start.
-      await records().saveRunningAgentComputer(record);
-      await seed(accountId, threadId, record.sessionId);
-      record.phase = 'awake';
-      record.idleDeadline = deadline();
-      await records().saveRunningAgentComputer(record);
-      return record;
-    } catch (error) {
-      record.phase = 'failed';
-      const errors = [error];
-      try { await records().saveRunningAgentComputer(record); }
-      catch (storageError) { errors.push(storageError); }
-      try { await stop(record); }
-      catch (stopError) { errors.push(stopError); }
-      if (errors.length > 1) throw new AggregateError(errors, error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
   async function wake(accountId: string, threadId: string): Promise<AwakeComputer> {
     const key = keyOf(accountId, threadId);
     const warmup = warmups.get(key);
@@ -425,7 +374,9 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
     await sleepFinished(accountId, threadId);
     const done = records().withAgentComputerLease(accountId, () => records().withAgentComputerLease(accountId, async () => {
       await raiseSleepFailure(accountId, threadId);
+      const admission = await records().scheduledBrowserAdmission(accountId, threadId);
       let record = await records().runningAgentComputer(accountId, threadId);
+      if (record !== null && admission !== null) record.scheduledExecution = admission.holder;
       const driver = record?.phase === 'awake' ? await control(record) : undefined;
       if (record !== null && driver === null) {
         await forget(record);
@@ -438,7 +389,7 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
       }
       if (record === null) {
         if (stopping) throw new HttpError(503, 'The Chat Service is stopping: wake the Agent Computer again in a moment');
-        record = await start(accountId, threadId);
+        record = await startAgentComputer(accountId, threadId, { records, browser, files, seed, stop, deadline });
       }
       record.idleDeadline = deadline();
       await records().saveRunningAgentComputer(record);
@@ -523,6 +474,17 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
 
   return {
     wake, use, revoke,
+    async stopThread(accountId: string, threadId: string): Promise<void> {
+      const key = keyOf(accountId, threadId);
+      const pending = starting.get(key);
+      const [settled] = await Promise.allSettled(pending === undefined ? [] : [pending]);
+      if (settled?.status === 'rejected' && !(settled.reason instanceof ScheduledBrowserAdmissionError)) throw settled.reason;
+      await records().withAgentComputerLease(accountId, async () => {
+        const record = await records().runningAgentComputer(accountId, threadId);
+        if (record !== null) await stop(record, true);
+      }, threadId);
+      warmups.delete(key);
+    },
     warm(accountId: string, threadId: string): void {
       const key = keyOf(accountId, threadId);
       warmups.delete(key);
@@ -548,7 +510,7 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
     async erase(accountId: string): Promise<void> {
       await revoke(accountId);
       await records().withAgentComputerLease(accountId, async () => {
-        await Promise.all((await records().runningAgentComputers(accountId)).map(stop));
+        await Promise.all((await records().runningAgentComputers(accountId)).map((record) => stop(record)));
         const { profileId } = await records().agentComputer(accountId);
         if (profileId !== null) await browser().deleteProfile(profileId);
         await records().deleteAgentComputer(accountId);

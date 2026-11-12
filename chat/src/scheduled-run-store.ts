@@ -1,3 +1,4 @@
+import { ScheduledExecution, scheduledSessionKey } from './scheduled-execution.js';
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
@@ -39,6 +40,12 @@ export class ScheduledRunStore {
     this.documents = DynamoDBDocumentClient.from(client);
   }
 
+  async execution(owner: string, sessionId: string): Promise<ScheduledExecution> {
+    const execution = new ScheduledExecution(this.tableName, this.documents);
+    await execution.acquire(owner, sessionId);
+    return execution;
+  }
+
   async get(owner: string, deliveryId: string, taskId: string): Promise<ScheduledDelivery | null> {
     const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: key(owner, deliveryId), ConsistentRead: true }));
     if (Item === undefined) return null;
@@ -75,6 +82,7 @@ export class ScheduledRunStore {
       { ConditionCheck: { TableName: this.tableName, Key: { pk: ownerFenceKey(owner).pk, sk: 'CLAIM' }, ConditionExpression: 'attribute_not_exists(pk)' } },
       ...main.checks,
       { Put: { TableName: this.tableName, Item: { ...key(owner, deliveryId), ...record }, ConditionExpression: 'attribute_not_exists(pk)' } },
+      { Put: { TableName: this.tableName, Item: scheduledSessionKey(sideChat) } },
     ] }));
     return record;
   }
@@ -136,6 +144,7 @@ export class ScheduledRunStore {
           ExpressionAttributeValues: { ':session': record.mainChat, ':filing': record.mainFilingUserId },
         } },
       ]),
+      { Put: { TableName: this.tableName, Item: scheduledSessionKey(record.sideChat) } },
       { Update: { TableName: this.tableName, Key: key(record.owner, record.deliveryId), UpdateExpression: expression,
         ConditionExpression: '#phase = :reserved AND attempt = :attempt AND taskId = :task AND postMessageId = :message',
         ExpressionAttributeNames: { '#phase': 'phase' },

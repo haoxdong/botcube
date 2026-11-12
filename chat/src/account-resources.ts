@@ -1,8 +1,10 @@
+import { SCHEDULED_EXECUTION_KEY, scheduledSessionKey } from './scheduled-execution.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { ConditionalCheckFailedException, TransactionConflictException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, DeleteCommand, TransactWriteCommand, UpdateCommand, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
 export class AccountStoreError extends Error {}
+export class ScheduledBrowserAdmissionError extends AccountStoreError {}
 export interface AgentComputerRecord { profileId: string | null; }
 export interface RunningAgentComputer {
   accountId: string;
@@ -10,6 +12,7 @@ export interface RunningAgentComputer {
   sessionId: string | null;
   phase: 'starting' | 'awake' | 'sleeping' | 'failed';
   idleDeadline: number;
+  scheduledExecution?: string;
 }
 export interface AgentComputerStream {
   accountId: string;
@@ -236,6 +239,19 @@ export class AccountResources {
       new GetCommand({ TableName: this.tableName, Key: key(pk, sk), ConsistentRead: true }),
     );
     return Item;
+  }
+
+  async scheduledBrowserAdmission(accountId: string, threadId: string): Promise<{ holder: string } | null> {
+    const marker = await this.get(scheduledSessionKey(threadId).pk);
+    if (marker === undefined) {
+      const session = await this.get(`SESSIONS#${accountId}`, `SESSION#${threadId}`);
+      if (session?.scheduled_task_id === undefined) return null;
+    }
+    const execution = await this.get(SCHEDULED_EXECUTION_KEY.pk);
+    if (execution?.owner !== accountId || execution.sessionId !== threadId || execution.phase !== 'running' || typeof execution.holder !== 'string') {
+      throw new ScheduledBrowserAdmissionError('Scheduled Browser requires its active fleet admission');
+    }
+    return { holder: execution.holder };
   }
 
   async agentComputer(accountId: string): Promise<AgentComputerRecord> {

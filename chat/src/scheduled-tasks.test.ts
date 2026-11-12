@@ -1077,7 +1077,7 @@ describe('ScheduledTasks', () => {
           scheduledRequester: async (owner) => ({ owner }),
           signInNeeded: async () => null,
           authorizeBrowserLiveView: async () => undefined,
-          warmSession: async () => undefined,
+          warmSession: async () => undefined, stopSessionComputer: async () => undefined,
         };
       },
       {

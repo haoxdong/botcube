@@ -97,6 +97,7 @@ export function templateCartridgeFactory(
       turnStarting: computer.turnStarting,
       browserLiveView: computer.browserLiveView,
       sleepAgentComputers: computer.sleepAll,
+      stopSessionComputer: computer.stopThread,
     };
   };
 }

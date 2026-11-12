@@ -1,9 +1,9 @@
 import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { DeleteCommand, DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, GetCommand, DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUNTIME_ARN } from '../test/fakes/stack.js';
 import { defined } from '../test/defined.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
@@ -19,6 +19,18 @@ import { agentCoreUpstream } from './upstream.js';
 
 import { owner, stack, stream, text } from '../test/scheduled-run-fixture.js';
 import { motoAws } from '../test/fakes/moto.js';
+
+afterEach(async () => {
+  const documents = DynamoDBDocumentClient.from(stack.table.client);
+  const key = { pk: 'PAID_EXECUTION#scheduled-tasks', sk: 'META' };
+  const { Item } = await documents.send(new GetCommand({ TableName: stack.table.name, Key: key, ConsistentRead: true }));
+  if (Item === undefined) return;
+  const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url });
+  await runtime.stop(String(Item.sessionId));
+  await documents.send(new DeleteCommand({ TableName: stack.table.name, Key: key,
+    ConditionExpression: 'holder = :holder AND #phase = :stopping', ExpressionAttributeNames: { '#phase': 'phase' },
+    ExpressionAttributeValues: { ':holder': Item.holder, ':stopping': 'stopping' } }));
+});
 
 function interruptReservation(store: NonNullable<SessionMetadata['scheduledRuns']>, failure: string, entered: () => void, released: Promise<void>) {
   const claim = store.claim.bind(store);
@@ -87,11 +99,11 @@ describe('scheduled persistence dispatch admission', () => {
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
       };
       const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
-        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Brief', summary: 'Checked the curve.' }),
       };
       isolated.agentcore.scriptPrompt('Check the curve', { ...stream(...text('brief', 'Rates rose.')), hold });
@@ -139,11 +151,11 @@ describe('scheduled persistence dispatch admission', () => {
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
       };
       const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
-        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
       };
       isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
@@ -176,7 +188,7 @@ describe('scheduled persistence dispatch admission', () => {
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
       };
       // Storage refuses the first retirement, as a throttled transaction would.
       let refusals = 1;
@@ -186,7 +198,7 @@ describe('scheduled persistence dispatch admission', () => {
       };
       const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), retire, issueSideChat: tasks.issueSideChat.bind(tasks) },
-        upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
+        stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
       };
       isolated.agentcore.scriptPrompt('Preview payrolls', stream(...text('payrolls', 'Payrolls beat.')));
@@ -227,11 +239,11 @@ describe('scheduled persistence dispatch admission', () => {
       models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
       routes: new Hono(), requester: async () => ({ owner: source }), scheduledRequester: async (account) => ({ owner: account }),
       filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const deps = { turnIdentity: null, cartridge, sessionMetadata: claimed.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
-      upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
+      stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
       summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
     };
     await runs.fire(taskId);
@@ -349,7 +361,7 @@ describe('scheduled persistence dispatch admission', () => {
       accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
@@ -358,7 +370,7 @@ describe('scheduled persistence dispatch admission', () => {
       cartridge, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
-      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, async () => undefined), invokeSessionApi: post,
+      stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, async () => undefined), invokeSessionApi: post,
     };
     const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
     await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
@@ -381,7 +393,7 @@ describe('scheduled persistence dispatch admission', () => {
       accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
@@ -391,7 +403,7 @@ describe('scheduled persistence dispatch admission', () => {
       cartridge, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
-      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, stop), invokeSessionApi: post,
+      stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, stop), invokeSessionApi: post,
     };
     const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
     await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
@@ -416,7 +428,7 @@ describe('scheduled persistence dispatch admission', () => {
       accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
@@ -479,7 +491,7 @@ describe('scheduled persistence dispatch admission', () => {
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined,
+      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,
@@ -498,7 +510,7 @@ describe('scheduled persistence dispatch admission', () => {
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
-      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
+      stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
     };
     const begin = stack.sessionMetadata.beginDispatch.bind(stack.sessionMetadata);
@@ -543,7 +555,7 @@ describe('scheduled persistence dispatch admission', () => {
         const reserved = defined(await store.get(account, message.deliveryId, task.id), 'original reservation');
         const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
         await runScheduledTask({ ...deps, sessionMetadata: replacement,
-          upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+          stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
         const completed = await defined(replacement.scheduledRuns, 'replacement delivery store').get(account, message.deliveryId, task.id);
         expect(completed).toMatchObject({ phase: 'completed', sideChat: reserved.sideChat, mainChat: reserved.mainChat, runId: reserved.runId, postMessageId: reserved.postMessageId });
         releaseReservation();
@@ -603,7 +615,7 @@ describe('scheduled persistence dispatch admission', () => {
       expect(post).not.toHaveBeenCalled();
       const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
       await runScheduledTask({ ...deps, sessionMetadata: replacement,
-        upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+        stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
       expect(invoke).toHaveBeenCalledTimes(1);
       expect(post).toHaveBeenCalledTimes(1);
       return;
@@ -616,7 +628,7 @@ describe('scheduled persistence dispatch admission', () => {
     } else await expect(stack.sessionMetadata.assertNoDispatch(address)).resolves.toBeUndefined();
     const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
     const retry = () => runScheduledTask({ ...deps, sessionMetadata: replacement,
-      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
+      stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined) }, message);
     if (failure === 'success proof failure' || failure === 'uncertain post') {
       await expect(retry()).rejects.toThrow('Scheduled delivery outcome is unproved');
     } else if (failure === 'failed run') {
@@ -641,7 +653,7 @@ describe('scheduled persistence dispatch admission', () => {
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined,
+      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined,
@@ -656,7 +668,7 @@ describe('scheduled persistence dispatch admission', () => {
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
       cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun, retire: async () => undefined, issueSideChat: async () => task.id },
-      upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
+      stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
     };
     const message = { owner: account, taskId: task.id, deliveryId: 'record-retry-occurrence' };
@@ -683,7 +695,7 @@ describe('scheduled persistence dispatch admission', () => {
       },
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined,
+      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,
@@ -713,7 +725,7 @@ describe('scheduled persistence dispatch admission', () => {
       requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined,
+      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,

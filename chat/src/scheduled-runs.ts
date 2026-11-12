@@ -1,3 +1,4 @@
+import type { ScheduledExecution } from './scheduled-execution.js';
 import { readScheduledRun, type ScheduledRunOutput } from './scheduled-run-output.js';
 import { forwardTurnIdentity, type TurnIdentity } from './turn-identity.js';
 import type { RunAgentInput } from '@ag-ui/client';
@@ -24,6 +25,7 @@ export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire' | 'issueSideChat'>;
   summarizeTurn: TurnSummarizer;
   parkHistory?: ParkHistory | undefined;
+  stopScheduledRuntime?: ((sessionId: string) => Promise<void | 'absent'>) | undefined;
 }
 
 async function allocateSideChat(metadata: SessionMetadata, owner: string, sideChat: string, turn: { filingUserId: string; title: string; scheduledTaskId: string }): Promise<void> {
@@ -154,6 +156,13 @@ async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previou
   }
 }
 
+function scheduledTeardown(deps: ScheduledRunDeps, owner: string, sideChat: string) {
+  if (deps.upstream?.runtimeTarget !== undefined && (deps.stopScheduledRuntime === undefined || deps.cartridge.stopSessionComputer === undefined)) {
+    throw new HttpError(503, 'Scheduled execution requires Runtime and Browser teardown');
+  }
+  return [() => deps.stopScheduledRuntime?.(sideChat), () => deps.cartridge.stopSessionComputer?.(owner, sideChat)];
+}
+
 async function runInSideChat(
   deps: ScheduledRunDeps,
   owner: string,
@@ -166,6 +175,7 @@ async function runInSideChat(
   const { cartridge, sessionMetadata } = deps;
   if (deps.upstream === null) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
   const sideChat = delivery.sideChat;
+  const stops = scheduledTeardown(deps, owner, sideChat);
   const messageId = delivery.inputMessageId;
   const requester = await cartridge.scheduledRequester(owner);
   // The task's chosen model, else the account's default.
@@ -199,7 +209,12 @@ async function runInSideChat(
   const sessionUserId = prepared.session.filing_user_id;
   reached.sideChat = true;
   let output: ScheduledRunOutput;
+  let execution: ScheduledExecution | undefined;
+  let phase: 'preparing' | 'submitted' | 'received' = 'preparing';
+  let failure: unknown;
   try {
+    execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
+    if (execution === undefined) throw new HttpError(503, 'Scheduled execution admission is unavailable');
     const payload = await cartridge.invocationPayload(input, requester, model);
     const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
@@ -219,14 +234,24 @@ async function runInSideChat(
     if (!fired(current) && (current.paused || (boundsChanged && outsideBounds(current)))) return { status: 'skipped', text: 'the task was outside its active time window' };
     const complete = await prepared.dispatch();
     forwardSnapshotEpoch(payload.forwardedProps, complete);
+    phase = 'submitted';
+    const response = await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete);
+    phase = 'received';
     output = await readScheduledRun(
-      await deps.upstream.invokeRegistered(JSON.stringify(payload), complete.session, complete),
+      response,
       deps.upstream.label,
       turnCredentials(payload.forwardedProps, cartridge.credentialProps),
       initialMessages,
     );
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
+    try {
+      await execution?.finish(stops, phase !== 'submitted', failure);
+    } finally {
+      await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
+    }
   }
   const signIn = await cartridge.signInNeeded(owner, [...output.toolResults, ...output.texts]);
   const answer = output.texts.at(-1);

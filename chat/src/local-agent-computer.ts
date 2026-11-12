@@ -245,6 +245,18 @@ export function localAgentComputer({
     /** The `/agent-computer/cdp`, live-view and Take-over routes; mount `computerFilesRoutes` over `state` and `wake`. */
     routes,
     ...computers,
+    async stopThread(owner: string, threadId: string): Promise<void> {
+      const key = keyOf(owner, threadId);
+      const computer = running.get(key);
+      const previousFailure = cleanupFailures.get(key);
+      if (previousFailure !== undefined) throw previousFailure;
+      if (computer === undefined) return;
+      clearTimeout(computer.idleTimer);
+      await (await computer.ready).stop();
+      running.delete(key);
+      const failure = cleanupFailures.get(key);
+      if (failure !== undefined) throw failure;
+    },
     /** The Turn's `agentComputerCdpUrl`, tokened for the Session; the agent's connection wakes its computer. */
     async forwardedProps(owner: string, threadId: string) {
       await requireOwner(owner, threadId);

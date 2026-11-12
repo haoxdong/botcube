@@ -128,6 +128,7 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   recoverAccountDeletions?(): Promise<void>;
   /** The task is stopping: put every awake Agent Computer to sleep before it exits. */
   sleepAgentComputers?(): TaskStopSleep;
+  stopSessionComputer?(owner: string, sessionId: string): Promise<void>;
 }
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */
