@@ -1,5 +1,6 @@
 import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { expect, it } from 'vitest';
+import { agentComputers } from './agent-computer.js';
 import { AccountResources } from './account-resources.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 it('deletes Agent Computer screenshots across every DynamoDB page while leaving another account alone', async () => {
@@ -109,4 +110,18 @@ it('distinguishes an active Claim destination from a deleted or deleting account
   expect(await store.filesAccountActive('acct_active')).toBe(true);
   expect(await store.filesAccountActive('acct_deleting')).toBe(false);
   expect(await store.filesAccountActive('acct_deleted')).toBe(false);
+});
+
+
+it('refuses a capped Session before any Browser factory or Files mount', async () => {
+  const documents = memoryDocuments();
+  const records = new AccountResources('chat', documents);
+  await documents.send(new PutCommand({ TableName: 'chat', Item: { pk: 'SESSIONS#owner', sk: 'SESSION#smoke', browser_limit: 0 } }));
+  const computers = agentComputers({ records: () => records,
+    browser: () => { throw new Error('Browser must not be constructed'); },
+    files: () => { throw new Error('Files must not be mounted'); },
+    seed: async () => {}, idleSeconds: 60 });
+  await expect(computers.wake('owner', 'smoke')).rejects.toThrow('Browser sessions are denied');
+  await expect(records.assertBrowserAllowed('other-owner', 'smoke')).resolves.toBeUndefined();
+  await expect(records.assertBrowserAllowed('owner', 'ordinary')).resolves.toBeUndefined();
 });

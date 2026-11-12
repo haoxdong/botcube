@@ -8,7 +8,7 @@ import {
 import { DeleteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../test/fakes/stack.js';
-import { DynamoDBSessionMetadata, SessionDeletedError, SessionProviderError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
+import { DynamoDBSessionMetadata, SessionConcurrencyError, SessionDeletedError, SessionProviderError, SessionClaimError, SessionOpeningError } from './session-metadata.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { purgeQueue } from './purges.js';
 import { RuntimeAdmissionUnprovedError, runtimeSessionId, sessionLifecycle } from './session-lifecycle.js';
@@ -2054,4 +2054,14 @@ it('retains a scheduled completion written after Account Claim takes its chat sn
   });
   await claiming.transferOwner('source', 'destination');
   expect(await metadata.get('destination', 'main-race')).toMatchObject({ turn_completed_at: T2 });
+});
+
+
+it('admits only one Turn for a smoke Session, even after a warmup clears its run marker', async () => {
+  await metadata.recordTurn('owner', 'smoke', { filingUserId: 'filing', title: 'smoke', allocation: true, warmup: true });
+  await DynamoDBDocumentClient.from(client()).send(new UpdateCommand({ TableName: table, Key: { pk: 'SESSIONS#owner', sk: 'SESSION#smoke' }, UpdateExpression: 'SET single_turn = :one', ExpressionAttributeValues: { ':one': true } }));
+  const first = { filingUserId: 'filing', title: 'smoke', provider: 'anthropic' as const, running: { runId: 'first', startedAt: T1 } };
+  await metadata.prepareTurn('owner', 'smoke', first);
+  await metadata.recordTurn('owner', 'smoke', { filingUserId: 'filing', title: 'warmup', warmup: true });
+  await expect(metadata.prepareTurn('owner', 'smoke', { ...first, running: { runId: 'second', startedAt: T2 } })).rejects.toBeInstanceOf(SessionConcurrencyError);
 });

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import boto3
 from botocore.exceptions import ClientError
 from deploy_identity import load_identity
+from origin_smoke import OriginSmoke, cleanup_conversation
 from test_user import test_user
 
 if TYPE_CHECKING:
@@ -363,7 +364,7 @@ def require_invalid_invocation_rejected(client: urllib.request.OpenerDirector, h
 
 def verify_conversation(*, table: Table, observation_seconds: float = 0, progress_rounds: int = 120, timing: dict[str, Any] | None = None,
                         on_progress: Callable[[], object] | None = None, before_replay: Callable[[], object] | None = None,
-                        settle: Callable[[], object] | None = None, session_record: SessionRecord | None = None) -> dict[str, Any]:
+                        settle: Callable[[], object] | None = None, smoke: OriginSmoke | None = None, session_record: SessionRecord | None = None) -> dict[str, Any]:
     timing = {} if timing is None else timing
     owner_client, owner = ACCEPTANCE['conversation_owner_client']()
     with test_user(table, IDENTITY['domains'][DOMAIN]) as (other_client, other_id):
@@ -373,6 +374,8 @@ def verify_conversation(*, table: Table, observation_seconds: float = 0, progres
         status, issued = request(clients[0], '/threads', method='POST')
         require(status == 201 and isinstance(issued, dict) and isinstance(issued.get('id'), str), 'The Chat Service did not issue a Session ID')
         thread_id, run_id = issued['id'], str(uuid.uuid4())
+        if smoke is not None:
+            smoke.bind(owner, thread_id)
         expected = 'preview acceptance ' + uuid.uuid4().hex
         prompt = ACCEPTANCE['conversation_prompt'](expected, observation_seconds, progress_rounds)
         payload = {'threadId': thread_id, 'runId': run_id,
@@ -413,19 +416,14 @@ def verify_conversation(*, table: Table, observation_seconds: float = 0, progres
                 if settle is not None:
                     settle()
             finally:
-                cleanup_conversation(clients[0], thread_id, timing)
+                try:
+                    if smoke is not None:
+                        smoke.stop_runtime()
+                finally:
+                    cleanup_conversation(clients[0], thread_id, timing, request)
                 if session_record is not None:
                     session_record.wait_purged(ACCEPTANCE['filing_user_id'](owner), thread_id)
                     timing['sessionRecordPurged'] = True
-
-def cleanup_conversation(client: urllib.request.OpenerDirector, thread_id: str, timing: dict[str, Any]) -> None:
-    status, _ = request(client, '/threads/' + thread_id, method='DELETE')
-    require(status == 204, 'Test conversation cleanup failed')
-    status, history = request(client, '/threads')
-    require(status == 200 and all(thread['id'] != thread_id for thread in history['threads']), 'Deleted test conversation remains in history')
-    status, _ = request(client, '/threads/' + thread_id)
-    require(status == 404, 'Deleted test conversation still replays')
-    timing['conversationDeleted'] = True
 
 
 def main():
@@ -452,7 +450,8 @@ def main():
                 'conversation': {'timing': timing}, 'status': 'failed', 'workflowRunId': os.environ['GITHUB_RUN_ID']}
     try:
         evidence['sessionApi'] = verify_session_api(record, boto3.client('lambda'))
-        evidence['conversation'] = verify_conversation(observation_seconds=args.observation_seconds, progress_rounds=args.progress_rounds, timing=timing, session_record=record, table=table)
+        with OriginSmoke.for_deployment(table, outputs['TaskDefinitionArn'], timing) as smoke:
+            evidence['conversation'] = verify_conversation(observation_seconds=args.observation_seconds, progress_rounds=args.progress_rounds, timing=timing, session_record=record, table=table, smoke=smoke)
         if args.replacement_evidence:
             after = verify_deployment(outputs, boto3.client('ecs'), boto3.client('elbv2'))
             require(after == deployment, 'Task changed during replacement conversation acceptance')

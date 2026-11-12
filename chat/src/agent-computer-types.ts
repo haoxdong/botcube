@@ -31,7 +31,7 @@ export interface AgentComputerBrowser {
 
 export type BrowserControl = 'user' | 'agent';
 
-export type AgentComputerRecords = Pick<AccountResources, 'scheduledBrowserAdmission' | 'agentComputer' | 'saveAgentComputer' | 'agentComputerScreenshot' | 'saveAgentComputerScreenshot' | 'deleteAgentComputer' | 'withAgentComputerLease' | 'runningAgentComputer' | 'runningAgentComputers' | 'saveRunningAgentComputer' | 'deleteRunningAgentComputer' | 'agentComputerStream' | 'claimAgentComputerStream' | 'renewAgentComputerStream' | 'releaseAgentComputerStream'>;
+export type AgentComputerRecords = Pick<AccountResources, 'assertBrowserAllowed' | 'scheduledBrowserAdmission' | 'agentComputer' | 'saveAgentComputer' | 'agentComputerScreenshot' | 'saveAgentComputerScreenshot' | 'deleteAgentComputer' | 'withAgentComputerLease' | 'runningAgentComputer' | 'runningAgentComputers' | 'saveRunningAgentComputer' | 'deleteRunningAgentComputer' | 'agentComputerStream' | 'claimAgentComputerStream' | 'renewAgentComputerStream' | 'releaseAgentComputerStream'>;
 
 /** The Session's last screenshot comes with either state: it stands in until the live view shows the browser. */
 export type AgentComputerState =

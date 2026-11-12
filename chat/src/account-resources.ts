@@ -241,6 +241,11 @@ export class AccountResources {
     return Item;
   }
 
+  async assertBrowserAllowed(accountId: string, threadId: string): Promise<void> {
+    const session = await this.get(`SESSIONS#${accountId}`, `SESSION#${threadId}`);
+    if (session?.browser_limit === 0) throw new AccountStoreError('Browser sessions are denied for this Session');
+  }
+
   async scheduledBrowserAdmission(accountId: string, threadId: string): Promise<{ holder: string } | null> {
     const marker = await this.get(scheduledSessionKey(threadId).pk);
     if (marker === undefined) {

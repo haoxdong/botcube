@@ -12,6 +12,7 @@ export async function startAgentComputer(accountId: string, threadId: string, {
   stop: (record: RunningAgentComputer) => Promise<void>;
   deadline: () => number;
 }): Promise<RunningAgentComputer> {
+    await records().assertBrowserAllowed(accountId, threadId);
     const admission = await records().scheduledBrowserAdmission(accountId, threadId);
     const record: RunningAgentComputer = { accountId, threadId, sessionId: null, phase: 'starting', idleDeadline: deadline(),
       ...(admission === null ? {} : { scheduledExecution: admission.holder }) };

@@ -681,7 +681,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
                   runningUpdate.set +
                   providerUpdate.set + (postAcceptance ? '' : ' REMOVE turn_failure' + runningUpdate.remove + (provider === undefined ? '' : ', provider_pending')),
                 ConditionExpression: `attribute_not_exists(deleted_at) AND ${creating ? 'attribute_not_exists' : 'attribute_exists'}(session_id)${providerUpdate.condition}` +
-                  scheduledUpdate.condition + runtime.condition + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
+                  scheduledUpdate.condition + runtime.condition + (warmup || postAcceptance ? '' : ' AND (attribute_not_exists(single_turn) OR (attribute_not_exists(title) AND attribute_not_exists(latest_message_id)))') + (opening ? " AND attribute_not_exists(title) AND attribute_not_exists(turn_latest_run_id) AND attribute_not_exists(latest_message_id) AND attribute_not_exists(turn_running_since)" : ""),
                 ExpressionAttributeValues: {
                   ':session_id': sessionId,
                   ':now': metadataTimestamp(),
@@ -1230,6 +1230,7 @@ function retryUnboundTurn(error: unknown, sessionId: string, newUnbound: boolean
   if (ownerFence?.Code === 'ConditionalCheckFailed' || (session?.Code === 'ConditionalCheckFailed' && session.Item?.deleted_at !== undefined)) throw new SessionDeletedError(sessionId);
   if (claimFence?.Code === 'ConditionalCheckFailed') throw new SessionClaimError(sessionId);
   if (session?.Code === 'ConditionalCheckFailed') {
+    if (session.Item?.single_turn?.BOOL === true && (session.Item.title !== undefined || session.Item.latest_message_id !== undefined)) throw new SessionConcurrencyError('This Session permits one Turn');
     if (opening && ['title', 'turn_latest_run_id', 'latest_message_id', 'turn_running_since'].some((field) => session.Item?.[field] !== undefined)) throw new SessionOpeningError();
     if (session.Item?.turn_running_since !== undefined && (scheduledTaskId !== undefined || session.Item.scheduled_task_id !== undefined)) {
       throw new SessionBusyError('The previous Turn is still going');
