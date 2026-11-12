@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shlex
 import sys
 import time
+import venv
 from pathlib import Path
 
 import pytest
 from deepagents.backends.protocol import ExecuteResponse
+from opentelemetry.instrumentation import auto_instrumentation
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
@@ -26,6 +30,27 @@ def _backend(tmp_path: Path) -> WorkerShellBackend:
 @pytest.mark.integration
 def test_a_command_runs_in_the_backend_root(tmp_path: Path) -> None:
     assert _backend(tmp_path).execute('echo hello') == ExecuteResponse(output='hello\n', exit_code=0)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_tool_python_does_not_load_the_harness_instrumentation(tmp_path: Path, exit_code: int) -> None:
+    tools = tmp_path / 'python-tools'
+    venv.EnvBuilder(with_pip=False).create(tools)
+    modules = tmp_path / 'modules'
+    modules.mkdir()
+    (modules / 'shell_helper.py').write_text("result = 'tool result'\n")
+    instrumentation = str(Path(auto_instrumentation.__file__).parent)
+    backend = WorkerShellBackend(
+        root_dir=tmp_path, inherit_env=False,
+        env={'PYTHONPATH': os.pathsep.join([instrumentation, str(modules)])},
+    )
+    program = f'import shell_helper, sys; print(shell_helper.result); sys.exit({exit_code})'
+
+    result = backend.execute(f'{shlex.quote(str(tools / "bin/python"))} -c {shlex.quote(program)}')
+
+    assert result.exit_code == exit_code
+    assert result.output == ('tool result\n' if exit_code == 0 else 'tool result\n\nExit code: 7')
 
 
 def test_a_command_keeps_its_own_timeout(tmp_path: Path) -> None:

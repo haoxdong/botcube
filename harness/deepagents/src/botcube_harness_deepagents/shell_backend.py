@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
 import subprocess
@@ -12,6 +13,7 @@ from typing import Any, cast
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse
 from opentelemetry import trace
+from opentelemetry.instrumentation import auto_instrumentation
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from botcube_harness_deepagents._shell_process import Request, Result
@@ -152,14 +154,18 @@ class WorkerShellBackend(LocalShellBackend):
             return _err(error)
 
     def _command_env(self) -> dict[str, str]:
+        env = dict(self._env)
+        if python_path := env.get('PYTHONPATH'):
+            instrumentation = str(Path(auto_instrumentation.__file__).parent)
+            env['PYTHONPATH'] = os.pathsep.join(part for part in python_path.split(os.pathsep) if part != instrumentation)
         span_context = trace.get_current_span().get_span_context()
         if self._trace_relay_endpoint is None or not span_context.is_valid or not span_context.trace_flags.sampled:
-            return {**self._env, 'OTEL_TRACES_EXPORTER': 'none'}
+            return {**env, 'OTEL_TRACES_EXPORTER': 'none'}
         count_failures_under(span_context.span_id)
         carrier: dict[str, str] = {}
         TraceContextTextMapPropagator().inject(carrier)
         return {
-            **self._env,
+            **env,
             'TRACEPARENT': carrier['traceparent'],
             'OTEL_TRACES_EXPORTER': 'otlp',
             'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/protobuf',
