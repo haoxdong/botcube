@@ -20,7 +20,7 @@ afterAll(async () => {
   }
 });
 
-it('runs a confirmed template schedule with the owner site link and reports an unlinked site to Main Chat', { timeout: 120_000 }, async () => {
+it('tears down scheduled Browsers after success, failed site access and recovery', { timeout: 120_000 }, async () => {
   const bin = resolve('templates/always-on/.venv/bin');
   site = await startOnFreePort((port) => ({
     command: `${bin}/template-site`,
@@ -91,7 +91,7 @@ it('runs a confirmed template schedule with the owner site link and reports an u
   const { threads } = await (await browser.get('/threads')).json();
   const scheduled = threads.find((thread: { title: string }) => thread.title === JSON.parse(args).title);
   expect(scheduled).toBeDefined();
-  expect(await (await browser.get(`/agent-computer?thread_id=${scheduled.id}`)).json()).toMatchObject({ state: 'awake' });
+  expect(await (await browser.get(`/agent-computer?thread_id=${scheduled.id}`)).json()).toMatchObject({ state: 'asleep' });
   expect((await browser.post('/warmup', { threadId: 'unknown-scheduled-session' })).status).toBe(404);
   expect((await browser.post('/account/fake-site-link/unlink', {})).status).toBe(200);
   const unlinked = await browser.sendTurn(threadId, { text: 'Read the template site data.' });
@@ -99,6 +99,7 @@ it('runs a confirmed template schedule with the owner site link and reports an u
   expect(await unlinked.text()).toContain('sign-in needed');
   await scheduler.fire(task.id);
   expect(await posted('could not finish')).toContain('Template site sign-in needed.');
+  expect(await (await browser.get(`/agent-computer?thread_id=${scheduled.id}`)).json()).toMatchObject({ state: 'asleep' });
   const failedRun = await (await browser.get(`/threads/${scheduled.id}`)).json();
   expect(failedRun.messages.at(-1)).toMatchObject({ role: 'assistant', content: expect.stringContaining('Template site sign-in needed.') });
   expect(failedRun.messages.filter((message: { role: string }) => message.role === 'user')).toHaveLength(2);
@@ -116,6 +117,7 @@ it('runs a confirmed template schedule with the owner site link and reports an u
     const replay = await (await browser.get(`/threads/${mainChat}`)).json();
     return replay.messages.at(-1)?.content;
   }, { timeout: 20_000, interval: 100 }).toBe('Scheduled task "Template data": Template data: {"items": [{"name": "Sample item", "value": 42}]}\n\n[Command succeeded with exit code 0]');
+  expect(await (await browser.get(`/agent-computer?thread_id=${scheduled.id}`)).json()).toMatchObject({ state: 'asleep' });
   const recoveredRun = await (await browser.get(`/threads/${scheduled.id}`)).json();
   expect(recoveredRun.messages.filter((message: { role: string }) => message.role === 'user')).toHaveLength(3);
   expect(recoveredRun.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Template data: {"items": [{"name": "Sample item", "value": 42}]}\n\n[Command succeeded with exit code 0]' });
