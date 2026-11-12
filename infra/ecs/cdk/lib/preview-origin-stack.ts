@@ -3,7 +3,7 @@ import { optionalPhysicalName } from './physical-name.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { CfnOutput, CfnResource, Fn, Token, CustomResource, Duration, RemovalPolicy, Stack, Tags, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnResource, Fn, Token, CustomResource, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
@@ -65,10 +65,6 @@ export class PreviewOriginStack extends Stack {
 
   constructor(scope: Construct, id: string, props: PreviewOriginProps) {
     super(scope, id, props);
-    Tags.of(this).add('parking-stack', this.stackName, { includeResourceTypes: [
-      'AWS::ElasticLoadBalancingV2::LoadBalancer', 'AWS::ElasticLoadBalancingV2::Listener',
-      'AWS::ElasticLoadBalancingV2::ListenerRule', 'AWS::ElasticLoadBalancingV2::TargetGroup',
-    ] });
     const state = parkState(this);
     if (props.publicSubnets.length < 2 || !props.clientVersion || !props.cloudflareCidrs.length) {
       throw new Error('Preview origin requires two public subnets, client version and Cloudflare ranges');

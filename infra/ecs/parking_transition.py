@@ -128,7 +128,6 @@ def update_stack(cloudformation, name, target, started):
         raise RuntimeError(f'{name} completed without the requested parked parameter')
     cloudformation.update_stack(
         StackName=name, UsePreviousTemplate=True,
-        RoleARN=os.environ['PARKING_EXECUTION_ROLE_ARN'],
         Parameters=[{'ParameterKey': item['ParameterKey'], **(
             {'ParameterValue': 'true' if target == 'parked' else 'false'}
             if item['ParameterKey'] == 'parked' else {'UsePreviousValue': True})} for item in parameters],
@@ -196,8 +195,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=STEPS)
     args = parser.parse_args()
-    os.environ.setdefault('PARKING_EXECUTION_ROLE_ARN',
-                          f"arn:aws:iam::{IDENTITY['aws']['account']}:role/cdk-hnb659fds-cfn-exec-role-{IDENTITY['aws']['account']}-{IDENTITY['aws']['region']}")
     state = {'action': args.action, 'op': 'advance'}
     deadline = time.monotonic() + 7200
     while time.monotonic() < deadline:

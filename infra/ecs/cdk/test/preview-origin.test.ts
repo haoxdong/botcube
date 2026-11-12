@@ -232,12 +232,3 @@ test('adopters name origin resources and both provider handlers without naming C
     template.hasResourceProperties('AWS::IAM::Role', { RoleName: roleName });
   }
 });
-
-
-test('tags parking load balancers and listeners for the execution role boundary', () => {
-  const stack = new PreviewOriginStack(new App(), 'ParkingTags', props);
-  const template = parkingTemplate(stack);
-  for (const type of ['AWS::ElasticLoadBalancingV2::LoadBalancer', 'AWS::ElasticLoadBalancingV2::Listener']) {
-    template.allResourcesProperties(type, { Tags: Match.arrayWith([{ Key: 'parking-stack', Value: stack.stackName }]) });
-  }
-});

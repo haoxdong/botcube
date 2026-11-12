@@ -9,11 +9,6 @@ import pytest
 from deploy_script_support import DEPLOY_ECS
 
 
-@pytest.fixture(autouse=True)
-def execution_role(monkeypatch):
-    monkeypatch.setenv('PARKING_EXECUTION_ROLE_ARN', 'arn:aws:iam::123456789012:role/parking-cfn-execution')
-
-
 def test_unpark_starts_egress_with_previous_template_and_preserves_other_parameters():
     spec = importlib.util.spec_from_file_location('parking_transition', DEPLOY_ECS / 'parking_transition.py')
     assert spec and spec.loader
@@ -25,7 +20,6 @@ def test_unpark_starts_egress_with_previous_template_and_preserves_other_paramet
     assert result['waiting'] is True
     assert cloudformation.updates == [{
         'StackName': 'bot-cube-private-egress', 'UsePreviousTemplate': True,
-        'RoleARN': 'arn:aws:iam::123456789012:role/parking-cfn-execution',
         'Parameters': [{'ParameterKey': 'parked', 'ParameterValue': 'false'},
                        {'ParameterKey': 'image', 'UsePreviousValue': True}],
         'Capabilities': ['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
@@ -258,38 +252,3 @@ def test_cloudflare_service_failures_during_verification_reach_the_retry_policy(
         world.complete(load(), 'unpark')
     assert type(result.value).__name__ == 'TransientServiceError'
     assert world.stored == 'parked'
-
-
-def test_missing_execution_role_fails_before_submitting_an_update(monkeypatch):
-    monkeypatch.delenv('PARKING_EXECUTION_ROLE_ARN')
-    world = Production(True)
-    with pytest.raises(KeyError, match='PARKING_EXECUTION_ROLE_ARN'):
-        world.advance(load(), {'action': 'unpark', 'op': 'advance'})
-    assert world.updates == []
-
-
-def test_github_fallback_keeps_its_existing_execution_role(monkeypatch):
-    import sys
-    monkeypatch.delenv('PARKING_EXECUTION_ROLE_ARN')
-    monkeypatch.setattr(sys, 'argv', ['parking_transition.py', 'unpark'])
-    module, world = load(), Production(True)
-    operate = module.operate
-    def advance(state, context):
-        operate(state, context, cloudformation=world)
-        return {'done': True}
-    monkeypatch.setattr(module, 'handler', advance)
-    module.main()
-    assert world.updates[0]['RoleARN'] == 'arn:aws:iam::000000000000:role/cdk-hnb659fds-cfn-exec-role-000000000000-us-east-1'
-
-
-def test_denied_update_fails_without_publishing_a_new_state():
-    from botocore.exceptions import ClientError
-    world = Production(True)
-    def denied(**request):
-        assert request['RoleARN'] == 'arn:aws:iam::123456789012:role/parking-cfn-execution'
-        raise ClientError({'Error': {'Code': 'AccessDenied', 'Message': 'outside parking scope'}}, 'UpdateStack')
-    world.update_stack = denied
-    with pytest.raises(ClientError, match='outside parking scope'):
-        world.advance(load(), {'action': 'unpark', 'op': 'advance'})
-    assert world.stored == 'parked'
-    assert world.effects == []
