@@ -88,7 +88,10 @@ class _FilesMiddleware(FilesystemMiddleware):
     ) -> ToolMessage | Command[Any]:
         if refused := _version_store_write(request):
             return refused
-        return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
+        try:
+            return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
+        except _REFUSALS as error:
+            return _artifact_refused(request, error)
 
     async def awrap_tool_call(
         self, request: ToolCallRequest,
@@ -96,10 +99,24 @@ class _FilesMiddleware(FilesystemMiddleware):
     ) -> ToolMessage | Command[Any]:
         if refused := _version_store_write(request):
             return refused
-        return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
+        try:
+            return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
+        except _REFUSALS as error:
+            return _artifact_refused(request, error)
 
 
 _FILE_WRITES = frozenset({'write_file', 'edit_file', 'delete'})
+
+# What the Artifact tool raises to refuse a call; anything else is the Harness failing, which ends the Turn.
+_REFUSALS = (ValueError, FileNotFoundError)
+
+
+def _artifact_refused(request: ToolCallRequest, error: Exception) -> ToolMessage:
+    """The Artifact tool's refusal as its result, so the agent reads it and fixes the call in the same Turn."""
+    call = request.tool_call
+    if call['name'] != 'Artifact':
+        raise error
+    return ToolMessage(content=f'Error: {error}', name=call['name'], tool_call_id=call['id'], status='error')
 
 
 def _version_store_write(request: ToolCallRequest) -> ToolMessage | None:

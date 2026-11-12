@@ -8,11 +8,14 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from langchain_core.messages import ToolMessage
+from deepagents.backends import LocalShellBackend
+from langchain_core.messages import AIMessage, ToolMessage
 
 from botcube_harness_deepagents import artifact_check, slides
+from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.artifact import artifact_tool
 from botcube_harness_deepagents.artifact_check import CHECKER, errors
+from conftest import ToolBindableFakeMessagesModel
 
 SKILL_PAGE = CHECKER.parent.parent / 'skills' / 'artifacts' / 'SKILL.md'
 
@@ -158,6 +161,34 @@ def test_a_deck_lists_and_reads_as_slides_with_each_versions_author(tmp_path: Pa
         ],
     }
     assert json.loads((versions / 'read.json').read_text()) == {'version': 2}
+
+
+def test_the_agent_reads_a_refused_deck_fixes_it_and_publishes_in_the_same_turn(tmp_path: Path) -> None:
+    # Live, the refusal ended the Turn ("The agent could not answer: The deck breaks the slide format") and nothing was published.
+    write_deck(tmp_path, DECK, {'cover': COVER, 'agenda': BROKEN_AGENDA})
+
+    def turn(number: int, name: str, **args: str) -> AIMessage:
+        return AIMessage(content='', tool_calls=[{'id': f'call-{number}', 'name': name, 'args': args}])
+
+    model = ToolBindableFakeMessagesModel(responses=[
+        turn(1, 'Artifact', file_path='/decks/q3/project/deck.json'),
+        turn(2, 'edit_file', file_path='/decks/q3/project/slides/agenda.html', old_string=BROKEN_AGENDA, new_string=AGENDA),
+        turn(3, 'Artifact', file_path='/decks/q3/project/deck.json'),
+        AIMessage(content='Published the deck.'),
+    ])
+    agent = build_agent(
+        model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
+        skills=[], tools=[artifact_tool(tmp_path)],
+    )
+
+    state = agent.invoke({'messages': 'Make the Q3 deck.'})
+
+    refused, _edited, published = [message for message in state['messages'] if isinstance(message, ToolMessage)]
+    assert refused.status == 'error'
+    assert 'The deck breaks the slide format, so nothing was published.' in str(refused.content)
+    assert 'project/slides/agenda.html:2:' in str(refused.content)
+    assert json.loads(str(published.content))['version'] == 1
+    assert state['messages'][-1].content == 'Published the deck.'
 
 
 def test_a_symlinked_slide_is_refused_by_name_and_nothing_is_saved(tmp_path: Path) -> None:
