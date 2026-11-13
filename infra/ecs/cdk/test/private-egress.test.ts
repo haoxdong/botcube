@@ -63,3 +63,19 @@ test('the stack reports the egress identity', () => {
   template.hasOutput('PrivateNatPublicIp', { Value: { Ref: 'PrivateNatAddress' } });
   template.hasOutput('PrivateNatAllocationId', { Value: { 'Fn::GetAtt': ['PrivateNatAddress', 'AllocationId'] } });
 });
+
+test.each([true, false])('parking removes paid egress and unpark restores it on the retained allocation, parked=%s', parked => {
+  const template = parkingTemplate(new PrivateEgressStack(new App(), 'TestEgress', EGRESS), parked);
+  template.resourceCountIs('AWS::EC2::EIP', 1);
+  expect(template.toJSON().Resources.PrivateNatAddress.DeletionPolicy).toBe('Retain');
+  template.hasOutput('PrivateNatAllocationId', { Value: { 'Fn::GetAtt': ['PrivateNatAddress', 'AllocationId'] } });
+  template.resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
+  template.resourceCountIs('AWS::EC2::Route', parked ? 0 : 1);
+  if (parked) {
+    expect(template.toJSON().Outputs.PrivateNatGatewayId).toBeUndefined();
+  } else {
+    template.hasResourceProperties('AWS::EC2::NatGateway', { AllocationId: { 'Fn::GetAtt': ['PrivateNatAddress', 'AllocationId'] } });
+    template.hasResourceProperties('AWS::EC2::Route', { NatGatewayId: { Ref: 'PrivateNatGateway' }, DestinationCidrBlock: '0.0.0.0/0' });
+    template.hasOutput('PrivateNatGatewayId', { Value: { Ref: 'PrivateNatGateway' } });
+  }
+});
