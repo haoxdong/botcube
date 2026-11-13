@@ -161,6 +161,28 @@ def test_failed_verification_keeps_previous_stored_state_and_can_be_retried():
     assert len(world.updates) == 3
 
 
+@pytest.mark.parametrize(('action', 'parked', 'verification_count'), [('unpark', True, 3), ('park', False, 1)])
+def test_cli_sleeps_only_for_pending_stacks_and_keeps_every_verifier(monkeypatch, action, parked, verification_count):
+    import sys
+    module, world, sleeps = load(), Production(parked), []
+    operate = module.handler
+    monkeypatch.setattr(sys, 'argv', ['parking_transition.py', action])
+    monkeypatch.setattr(module, 'handler', lambda state, context: operate(
+        state, context, cloudformation=world, ssm=world, verify=world.verify,
+        capacity=world.capacity, refresh=world.refresh, spares=world.spares))
+
+    def settle(seconds):
+        sleeps.append(seconds)
+        for stack in world.stacks.values():
+            stack['StackStatus'] = 'UPDATE_COMPLETE'
+
+    monkeypatch.setattr(module.time, 'sleep', settle)
+    module.main()
+    assert sleeps == [15, 15, 15]
+    assert world.effects.count('verify ' + ('parked' if action == 'park' else 'live')) == verification_count
+    assert world.effects[-1] == 'store ' + ('parked' if action == 'park' else 'live')
+
+
 class Executions:
     def __init__(self, running=False):
         self.running = running

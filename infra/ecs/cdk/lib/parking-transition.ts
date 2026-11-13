@@ -61,7 +61,10 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   advance.addRetry({ errors: ['TransientServiceError', 'Lambda.ServiceException', 'Lambda.AWSLambdaException', 'Lambda.SdkClientException', 'Lambda.TooManyRequestsException'], interval: Duration.seconds(2), backoffRate: 2, maxAttempts: 3 });
   const wait = new sfn.Wait(stack, 'WaitForStack', { time: sfn.WaitTime.duration(Duration.seconds(15)) });
   const done = new sfn.Succeed(stack, 'Verified');
-  advance.next(new sfn.Choice(stack, 'Finished').when(sfn.Condition.booleanEquals('$.done', true), done).otherwise(wait));
+  advance.next(new sfn.Choice(stack, 'Finished')
+    .when(sfn.Condition.booleanEquals('$.done', true), done)
+    .when(sfn.Condition.booleanEquals('$.waiting', false), advance)
+    .otherwise(wait));
   wait.next(advance);
   allow(['states:StartExecution', 'states:ListExecutions'], [stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` })]);
   const machine = new sfn.StateMachine(stack, 'TransitionStateMachine', {

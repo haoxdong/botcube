@@ -201,7 +201,8 @@ def main():
         state = handler(state, None)
         if state['done']:
             return
-        time.sleep(15)
+        if state['waiting']:
+            time.sleep(15)
     raise TimeoutError('Production transition exceeded two hours')
 
 
