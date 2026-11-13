@@ -1,7 +1,6 @@
 "use client";
 
 import { m as motionElement } from "framer-motion";
-
 import { Presence, presenceMotion } from "./collapse";
 
 import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
@@ -13,19 +12,19 @@ import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { MAIN_CHAT_COPY_MESSAGE_LIMIT } from "./main-chat-copy";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
 
-type MarkdownState = { status: "ready"; Renderer: ComponentType<{ text: string }> } | { status: "error"; error: Error };
+type MarkdownState = { status: "ready"; Renderer: ComponentType<{ text: string }>; prepare: (texts: string[]) => Promise<void> | null } | { status: "error"; error: Error };
 let markdown: MarkdownState | undefined;
 let pendingMarkdown: Promise<void> | undefined;
 function loadMarkdown(): Promise<void> {
   return pendingMarkdown ??= import("./kept-markdown").then(
-    ({ default: Renderer }) => { markdown = { status: "ready", Renderer }; },
-    (error: Error) => { markdown = { status: "error", error }; throw error; },
+    (module) => { markdown = { status: "ready", Renderer: module.default, prepare: module.prepareKeptMarkdown }; },
+    (error: Error) => { markdown = { status: "error", error }; },
   );
 }
 function readMarkdown() {
   if (markdown === undefined) throw loadMarkdown();
   if (markdown.status === "error") throw markdown.error;
-  return markdown.Renderer;
+  return markdown;
 }
 
 function isPlainAsciiParagraph(text: string) {
@@ -37,13 +36,22 @@ function needsMarkdown(messages: readonly Message[]) {
   return messages.some((message) => message.role === "assistant" && !isPlainAsciiParagraph(scheduledRunOf(message)?.text ?? contentToText(message.content)));
 }
 
+export function preloadKeptChat(messages: readonly Message[]) {
+  if (needsMarkdown(messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT))) void loadMarkdown();
+}
+
 export function prepareKeptChat(messages: readonly Message[]): Promise<void> | null {
-  return markdown === undefined && needsMarkdown(messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT)) ? loadMarkdown() : null;
+  const kept = messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT);
+  if (!needsMarkdown(kept)) return null;
+  const texts = kept.filter((message) => message.role === "assistant")
+    .map((message) => scheduledRunOf(message)?.text ?? contentToText(message.content));
+  const prepare = () => readMarkdown().prepare(texts);
+  return markdown === undefined ? loadMarkdown().then(() => prepare() ?? undefined) : prepare();
 }
 
 function KeptReply({ text }: { text: string }) {
   if (isPlainAsciiParagraph(text)) return <div className="space-y-4 whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"><p>{text}</p></div>;
-  const Formatted = readMarkdown();
+  const Formatted = readMarkdown().Renderer;
   return <Formatted text={text} />;
 }
 

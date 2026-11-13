@@ -188,11 +188,35 @@ function wrapWidth(bubble: HTMLElement, style: CSSStyleDeclaration): number {
   return Math.min(room, max.endsWith("%") ? (content * parseFloat(max)) / 100 : px(style, "max-width"));
 }
 
-/** `bubble`'s width hugging its lines, or null where it keeps its CSS width. */
+function paragraphWidth(bubble: HTMLElement): number | null {
+  if (bubble.querySelector(':scope > :not(p), p :not(em, br, [data-streamdown="strong"]), [dir], [align], [style]')) return null;
+  const style = getComputedStyle(bubble);
+  if (style.direction !== "ltr" || !["start", "left"].includes(style.textAlign)) return null;
+  const walker = bubble.ownerDocument.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+  const range = bubble.ownerDocument.createRange();
+  const left = bubble.getBoundingClientRect().left;
+  let right = left;
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const text = node.textContent ?? "";
+    if (/[\u00a0\u2007\u202f]|\s+(?:\n|$)/u.test(text)) return null;
+    for (const word of text.matchAll(/\S+/g)) {
+      range.setStart(node, word.index);
+      range.setEnd(node, word.index + word[0].length);
+      for (const rect of range.getClientRects()) right = Math.max(right, rect.right);
+    }
+  }
+  return right > left ? Math.ceil((right - left) / zoomOf(bubble) + px(style, "padding-right") + px(style, "border-right-width")) : null;
+}
+
 function huggedWidthOf(bubble: HTMLElement): number | null {
   if (bubble.matches(COLUMN_WIDE)) return null;
   const width = bubble.getBoundingClientRect().width / zoomOf(bubble);
   if (width === 0) return null;
+  const nativeWidth = paragraphWidth(bubble);
+  if (nativeWidth !== null) {
+    delete bubble.dataset.unmeasured;
+    return Math.min(width, nativeWidth);
+  }
   const flow = bubbleFlow(bubble);
   if (typeof flow === "string") {
     bubble.dataset.unmeasured = flow;

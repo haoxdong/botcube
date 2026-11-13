@@ -12,7 +12,9 @@ type PresenceChildProps = { children?: ReactNode; inert?: boolean | undefined; i
 let features: Promise<typeof import("./motion-features").default> | undefined;
 let ready: typeof import("./motion-features").default | undefined;
 /** Motion's animation features, fetched once after first load; until they land, a box shows as it starts. */
-const loadFeatures = () => (features ??= import("./motion-features").then((module) => (ready = module.default)));
+const loadFeatures = () => (features ??= new Promise<void>((resolve) => {
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+}).then(() => import("./motion-features")).then((module) => (ready = module.default)));
 
 export const presenceMotion = { layout: true, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
 

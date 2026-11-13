@@ -3,7 +3,6 @@ import { Swap } from "./collapse";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
 import { Avatar } from "./avatar";
-import { HeaderName } from "./header-status";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";
 import { WakeUpButton } from "./wake-up-button";
@@ -43,7 +42,7 @@ export function SessionGate({
           <header className="chat-header" inert>
             <button type="button" className="chat-header-agent" disabled aria-label="Agent profile">
               <Avatar name={agentName} agent size={72} />
-              <HeaderName name={agentName} working={false} />
+              <span className="chat-header-name"><span className="chat-header-label">{agentName}</span></span>
             </button>
           </header>
           {children ?? <LoadingSkeleton label="Main Chat" />}

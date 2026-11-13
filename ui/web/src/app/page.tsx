@@ -3,6 +3,7 @@
 import "@copilotkit/react-core/v2/styles.css";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
+import { flushSync } from "react-dom";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
@@ -11,14 +12,26 @@ import { endOpeningMoment, type HistoryMoment } from "./latency";
 import { discardOpeningResponse } from "../opening-requests";
 import { rumConfig, startRum } from "./rum";
 import { keepFileDropsInPage } from "./keep-file-drops";
-import { KeptChat, prepareKeptChat } from "./kept-chat";
+import { KeptChat, preloadKeptChat, prepareKeptChat } from "./kept-chat";
 import { SessionGate } from "./session-gate";
-import { Swap } from "./collapse";
 import { LoadingSkeleton } from "./load-state";
+import { Swap } from "./collapse";
 
-const App = lazy(() => import("./chat-app"));
+const App = lazy(async () => {
+  if (typeof window !== "undefined" && openingMainChat().copy !== null) {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
+  return import("./chat-app");
+});
 const UI_CONFIG = webUiPlugin.config;
 const CHAT_SERVICE_URL = chatServiceUrl();
+
+if (typeof window !== "undefined") {
+  const { copy } = openingMainChat();
+  if (copy !== null) preloadKeptChat(copy.copy.messages);
+}
 
 function OpeningChat({ opening, latestShown }: { opening: StoredMainChatCopy | null; latestShown: RefObject<number> }) {
   useEffect(() => {
@@ -69,7 +82,7 @@ function Session({ auth }: { auth: AuthUiState }) {
     pending.active = false;
     preparingOpening.current = null;
   }, [auth.sessionStatus, auth.accountId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const { copy, historyMoment: moment } = openingMainChat();
     pageOpeningMoment.current = moment;
     if (!loading) return;
@@ -79,7 +92,7 @@ function Session({ auth }: { auth: AuthUiState }) {
     const pending = { accountId: copy.accountId, active: true };
     preparingOpening.current = pending;
     void prepared.then(
-      () => { if (pending.active) { preparingOpening.current = null; setOpening(copy); } },
+      () => { if (pending.active) { preparingOpening.current = null; flushSync(() => setOpening(copy)); } },
       (error: Error) => { if (pending.active) { preparingOpening.current = null; setOpeningError(error); } },
     );
     return () => { pending.active = false; preparingOpening.current = null; };

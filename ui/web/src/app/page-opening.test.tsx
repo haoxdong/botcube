@@ -180,3 +180,12 @@ it('reports a failed formatter without timing absent history', async () => {
     expect(performance.getEntriesByName('latency:history-returning', 'measure')).toHaveLength(0);
   } finally { prepare.mockRestore(); report.mockRestore(); }
 });
+
+it('surfaces a formatter module failure that occurred during code preload', async () => {
+  vi.doMock('./kept-markdown', () => { throw new Error('Preloaded formatter unavailable'); });
+  formattedCopy();
+  const { default: Page } = await import('./page');
+  render(<OpeningFailure><Page /></OpeningFailure>);
+  expect(await screen.findByRole('alert')).not.toBeEmptyDOMElement();
+  expect(screen.queryByText('Formatted saved answer.')).toBeNull();
+});

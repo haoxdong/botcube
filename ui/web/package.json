@@ -72,6 +72,7 @@
     "framer-motion": "^14.9.0",
     "jszip": "3.10.2",
     "lucide-react": "^0.577.0",
+    "marked": "18.0.14",
     "mimetext": "3.0.28",
     "next": "^16.4.3",
     "papaparse": "5.7.0",
