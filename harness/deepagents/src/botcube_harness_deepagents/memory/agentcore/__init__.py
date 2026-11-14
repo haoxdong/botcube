@@ -63,6 +63,9 @@ _MEMORY_OPERATIONS = frozenset(botocore.session.get_session().get_service_model(
 _TAGS_CLAIM = 'https://aws.amazon.com/tags'
 # Live, a Turn's opening Memory read, history read and turn feed overlapped 12 calls.
 _MEMORY_CONNECTIONS = 16
+_AWS_CONFIG = Config(connect_timeout=2, read_timeout=5,
+                     retries={'mode': 'standard', 'total_max_attempts': 2},
+                     max_pool_connections=_MEMORY_CONNECTIONS)
 # A Turn exchanges its JWT again when the credentials held for its tags expire within this.
 _REUSE_MARGIN = timedelta(minutes=5)
 
@@ -173,7 +176,7 @@ def _memory_client(credentials: _TurnCredentials, like: Any) -> Any:
     session = botocore.session.Session()
     session.register_component('data_loader', _LOADER)
     session.register_component('credential_provider', CredentialResolver([_TurnCredentialProvider(credentials)]))
-    config = like.meta.config.merge(Config(max_pool_connections=_MEMORY_CONNECTIONS))
+    config = like.meta.config.merge(_AWS_CONFIG)
     return boto3.Session(botocore_session=session).client(
         'bedrock-agentcore', region_name=like.meta.region_name, config=config)
 
@@ -198,8 +201,7 @@ def prime_spare(memory_id: str, region_name: str) -> None:
 
 
 def prime_memory_client(region_name: str) -> None:
-    """Builds a throwaway Memory client as a Turn does and sends it one write and one read, each answered before it
-    leaves the process, so the client's data files, signing and parsing are loaded before a V2 snapshot."""
+    """Prime Memory writes, event reads and personal-Memory pagination before snapshot, without network."""
     issued = Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)
     signing = _TurnCredentials({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
     # The store's client as `build_store` configures it, but given credentials so that none are fetched.
@@ -209,13 +211,15 @@ def prime_memory_client(region_name: str) -> None:
     client = _memory_client(signing, like)
     event = {'memoryId': 'snapshot', 'actorId': 'snapshot', 'sessionId': 'snapshot', 'eventId': 'snapshot',
              'eventTimestamp': 0, 'payload': []}
-    for operation, body in (('CreateEvent', {'event': event}), ('ListEvents', {'events': [event]})):
+    for operation, body in (('CreateEvent', {'event': event}), ('ListEvents', {'events': [event]}),
+                            ('ListMemoryRecords', {'memoryRecordSummaries': []})):
         def answer(request: Any, *, answered: bytes = json.dumps(body).encode(), **_: Any) -> AWSResponse:
             return AWSResponse(request.url, 200, HTTPHeaders(), _AnsweredBody(answered))
         client.meta.events.register_first(f'before-send.bedrock-agentcore.{operation}', answer)
     names = {'memoryId': 'snapshot-memory', 'actorId': 'snapshot', 'sessionId': 'snapshot'}
     client.create_event(**names, eventTimestamp=datetime.now(UTC), payload=[{'blob': '{}'}])
     client.list_events(**names, includePayloads=True, maxResults=1)
+    list(client.get_paginator('list_memory_records').paginate(memoryId='snapshot-memory', namespace='/snapshot/'))
 
 
 _MEMORY_LOCK = threading.Lock()
@@ -294,7 +298,7 @@ def _sandbox(tags: dict[str, list[str]]) -> tuple[str, str]:
 @cache
 def sts_client(region_name: str) -> Any:
     """One unsigned transport per region; JWTs and issued credentials belong to each exchange."""
-    return boto3.client('sts', region_name=region_name, config=Config(signature_version=UNSIGNED))
+    return boto3.client('sts', region_name=region_name, config=_AWS_CONFIG.merge(Config(signature_version=UNSIGNED)))
 
 
 def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> tuple[Credentials, datetime]:

@@ -140,3 +140,45 @@ def test_the_sdk_request_paths_are_primed_without_the_network(monkeypatch: pytes
     with pytest.raises(HTTPClientError, match='must not send'):
         agentcore.sts_client('us-east-1').assume_role_with_web_identity(
             RoleArn='arn:aws:iam::000000000000:role/turn', RoleSessionName='turn', WebIdentityToken='turn' * 4)
+
+
+def test_personal_memory_paginator_needs_no_directory_scan_after_snapshot_prime(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.credentials import Credentials
+    from botocore.loaders import create_loader
+    from langgraph_checkpoint_aws import AgentCoreMemoryStore
+
+    monkeypatch.setattr(agentcore, '_LOADER', create_loader())
+    agentcore.prime_memory_client('us-east-1')
+    like = AgentCoreMemoryStore(
+        memory_id='snapshot', region_name='us-east-1', aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
+    ).client
+    credentials = agentcore._TurnCredentials(
+        {'filingActorId': ['snapshot'], 'sessionId': ['snapshot']},
+        (Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)), -1,
+    )
+    client = agentcore._memory_client(credentials, like)
+
+    def forbidden(_path: str) -> None:
+        raise AssertionError('personal Memory scans SDK data directories after the snapshot')
+
+    with monkeypatch.context() as restored:
+        restored.setattr('botocore.loaders.os.listdir', forbidden)
+        client.get_paginator('list_memory_records')
+
+
+def test_sts_and_scoped_memory_use_bounded_standard_retries() -> None:
+    from botocore.credentials import Credentials
+    from langgraph_checkpoint_aws import AgentCoreMemoryStore
+
+    like = AgentCoreMemoryStore(
+        memory_id='snapshot', region_name='us-east-1', aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
+    ).client
+    credentials = agentcore._TurnCredentials(
+        {'filingActorId': ['snapshot'], 'sessionId': ['snapshot']},
+        (Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)), -1,
+    )
+    clients = (agentcore.sts_client('us-east-1'), agentcore._memory_client(credentials, like))
+    for client in clients:
+        assert client.meta.config.connect_timeout == 2
+        assert client.meta.config.read_timeout == 5
+        assert client.meta.config.retries == {'mode': 'standard', 'total_max_attempts': 2}

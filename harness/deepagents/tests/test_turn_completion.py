@@ -7,13 +7,20 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core import EventType, RunAgentInput, RunErrorEvent
 from ag_ui_langgraph import LangGraphAgent
 from langchain.agents import AgentState
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt.tool_node import ToolCallRequest, ToolRuntime
+from opentelemetry.instrumentation.langchain.patch import (
+    create_graph_invocation_wrapper,
+)
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.files_mount import FilesMount
@@ -70,6 +77,49 @@ def test_finished_run_does_not_build_the_whole_session_messages_snapshot(monkeyp
         assert events[-1].type == EventType.RUN_FINISHED
         assert EventType.MESSAGES_SNAPSHOT not in [event.type for event in events]
         assert agent.active_run is None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_successful_graph_exhausts_before_the_terminal_without_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def exercise() -> None:
+        agent = _agent()
+        graph = agent.graph
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        wrapper = create_graph_invocation_wrapper(provider.get_tracer('completion'), is_async=True)
+        original = graph.astream
+        monkeypatch.setattr(graph, 'astream', lambda *args, **kwargs: wrapper(original, graph, args, kwargs))
+        try:
+            events = [event async for event in agent.run(_input())]
+            assert [event.type for event in events if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR)] == [EventType.RUN_FINISHED]
+            assert not [event for span in exporter.get_finished_spans() for event in span.events if event.name == 'exception']
+            state = await graph.aget_state({'configurable': {'thread_id': 'session'}})
+            assert state.values['messages'][-1].content == 'Done'
+        finally:
+            provider.shutdown()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.integration
+def test_terminal_callback_failure_is_an_error_instead_of_a_successful_turn() -> None:
+    class FailingRoot(AsyncCallbackHandler):
+        raise_error = True
+
+        async def on_chain_end(self, outputs: Any, *, parent_run_id: Any = None, **kwargs: Any) -> None:
+            if parent_run_id is None:
+                raise ValueError('terminal callback failed')
+
+    async def exercise() -> None:
+        agent = _agent()
+        agent.config = {'callbacks': [FailingRoot()]}
+        events = [event async for event in agent.run(_input())]
+        assert [event.type for event in events if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR)] == [EventType.RUN_ERROR]
+        assert isinstance(events[-1], RunErrorEvent)
+        assert events[-1].message == 'terminal callback failed'
 
     asyncio.run(exercise())
 

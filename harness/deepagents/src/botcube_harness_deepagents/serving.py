@@ -92,6 +92,7 @@ from .files import (
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
+from .graph_stream import complete_before_root_end
 from .lazy_files import TurnFiles, current_turn_files, turn_files
 from .llm import (
     PLAN_MODEL_PREFIX,
@@ -333,16 +334,11 @@ class _Thinking:
 
 
 class _SessionAgent(LangGraphAgent):
-    """A LangGraphAgent that takes no tool result the Session's record already holds.
+    """Merge replayed tool calls and results by their persisted IDs.
 
-    TOOL_CALL_RESULT carries a fresh message ID, which only the run's closing
-    MESSAGES_SNAPSHOT replaces with the recorded one. A client that missed the
-    snapshot resends the result under its streamed ID, and the ID-keyed merge
-    would append it as a second answer to an answered call. So too the
-    tool calls: a model that names its message only at the stream's end records
-    it under another ID than the one streamed, and a resent call would land as
-    a second step before the new user message. The web has sent only its
-    new user messages, so only an older client resends either.
+    AG-UI streams fresh IDs until the final snapshot. Resent streams must not
+    append duplicate replies or tool steps. Current web clients send only new
+    user messages; older clients can resend the streamed history.
     """
 
     _graph_ended_at: float | None = None
@@ -527,10 +523,11 @@ class _SessionAgent(LangGraphAgent):
             if not (message.role == 'assistant' and message.id in kept_text_ids and message.tool_calls)
         ]})
         for message in input.messages:
-            if message.role == 'assistant':
-                for call in message.tool_calls or []:
-                    if call.function.arguments:
-                        json.loads(call.function.arguments)
+            if message.role != 'assistant':
+                continue
+            for call in message.tool_calls or []:
+                if call.function.arguments:
+                    json.loads(call.function.arguments)
         if (timing := turn_timing.current()) is not None:
             timing.history_messages = len(agent_state.values.get('messages', []))
         configurable = config.setdefault('configurable', {})
@@ -539,7 +536,8 @@ class _SessionAgent(LangGraphAgent):
         self._asked = message_times.turn_start((input.forwarded_props or {}).get('turn_started_at'))
         with turn_timing.phase('state_preparation'):
             prepared = await super().prepare_stream(input, agent_state, config)
-        self._graph_stream = prepared.get('stream')
+        if (source := prepared.get('stream')) is not None:
+            prepared['stream'] = self._graph_stream = complete_before_root_end(source)
         return prepared
 
     def langgraph_default_merge_state(self, state: Any, messages: list[Any], input: RunAgentInput) -> Any:
