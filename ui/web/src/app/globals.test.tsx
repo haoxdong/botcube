@@ -36,7 +36,11 @@ beforeAll(() => {
   style.textContent = page.replace(/::(before|after|placeholder)\b/g, ' > .pseudo-$1').replace(/:placeholder-shown\b/g, '.placeholder-shown');
   document.head.append(style);
 });
-afterAll(() => style.remove());
+afterAll(async () => {
+  await happyDOM.waitUntilComplete();
+  await import('./motion-features');
+  style.remove();
+});
 
 const styleOf = (parent: ParentNode, selector: string) => {
   const element = parent.querySelector(selector);

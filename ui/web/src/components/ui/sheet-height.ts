@@ -2,6 +2,7 @@ import { animate } from 'framer-motion';
 import { useLayoutEffect, useState } from 'react';
 import { motionTokens } from '../../app/motion-tokens';
 
+// CSS cannot interpolate auto-to-auto size; Base UI has no resize animation, and UI SDK beta.2 translates content snaps without interpolating box height.
 export function useSheetHeight(snapped: boolean) {
   const [popup, setPopup] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);

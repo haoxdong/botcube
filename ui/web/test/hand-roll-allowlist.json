@@ -103,7 +103,7 @@
     }
   },
   "components/ui/sheet-height.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS cannot interpolate auto-to-auto size; Base UI has no resize animation, and UI SDK beta.2 translates content snaps without interpolating box height.",
     "counts": {
       "ResizeObserver": 1,
       "requestAnimationFrame": 1,
