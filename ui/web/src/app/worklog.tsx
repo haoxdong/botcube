@@ -114,7 +114,7 @@ function messageIdOf(row: ReactElement): string {
  * counts it as one and a renamed message keeps its Worklog's clock. A Worklog runs while the run is its Turn's, and its
  * time is its Turn's, answer included.
  */
-export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean): ReactElement[] {
+export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, started = isRunning): ReactElement[] {
   const parts = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
@@ -145,6 +145,9 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
     }
   }
   fold();
+  if (isRunning && started && latest?.role === "user") {
+    out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} running asked={latest.id} />);
+  }
   return out;
 }
 

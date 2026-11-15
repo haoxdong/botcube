@@ -50,6 +50,18 @@ afterEach(() => {
 });
 
 describe('a Worklog', () => {
+  it('owns both the startup Worklog and its first populated Worklog', () => {
+    const messages = turn('retained-startup');
+    const view = render(<Chat messages={messages.slice(0, 1)} running />);
+    const owner = view.container.querySelector('.worklog');
+    expect(owner).not.toBeNull();
+    expect(view.container.querySelectorAll('.worklog-title')).toHaveLength(1);
+    view.rerender(<Chat messages={messages.slice(0, 3)} running />);
+    expect(view.container.querySelectorAll('.worklog')).toHaveLength(1);
+    expect(view.container.querySelectorAll('.worklog-title')).toHaveLength(1);
+    expect(head()).toHaveAttribute('aria-expanded', 'true');
+  });
+
   it("folds a finished Turn's work under one header timed from its messages, its answer outside", () => {
     render(<Chat messages={turn('fold')} running={false} />);
 

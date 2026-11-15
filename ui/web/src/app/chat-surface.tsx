@@ -42,7 +42,7 @@ import { Button } from "@/components/ui/button";
 import { cn, zoomOf } from "@/lib/utils";
 import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { FileDropOverlay, addMenuSlot, useFileDrop } from "./composer-attach";
-import { ThoughtStep, ToolStep, Worklog, worklogRows } from "./worklog";
+import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
@@ -515,9 +515,8 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
               <ReplyTurnRunning.Provider value={isRunning}>
-                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer)} messages={messages} list={list} />
+                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, isRunning ? started : onServer)} messages={messages} list={list} />
               </ReplyTurnRunning.Provider>
-              {(isRunning ? started : onServer) && last?.role === "user" && <div key={last.id}><Worklog id={last.id} running asked={last.id} /></div>}
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="cpk:mt-2"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
               {isRunning && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
