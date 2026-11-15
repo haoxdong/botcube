@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, inject } from 'vitest';
 import { commands, page } from 'vitest/browser';
+import { configure } from 'storybook/test';
 import { animationsSettled } from './animations-settled';
 import { frameTimings, startFrameSampling, stopFrameSampling } from '../../../../scripts/web-checks/frame-timings.mjs';
 import type { prepareRendering } from '../../../../scripts/web-checks/rendering-profile.mjs';
@@ -29,6 +30,7 @@ const REDUCE_MOTION = /-reduce-motion$/;
 beforeEach(async (context) => {
   if (REDUCE_MOTION.test(context.task.name)) await commands.emulateMedia('reduce');
   if (inject('renderingProfile')) {
+    configure({ asyncUtilTimeout: 60000 });
     renderingProof = await commands.prepareRendering();
     startFrameSampling();
   }
