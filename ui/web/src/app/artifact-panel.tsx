@@ -3,7 +3,7 @@
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { m as motionElement } from "framer-motion";
-import { AppWindowIcon, Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react";
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
   type ReactNode, type SetStateAction,
@@ -19,6 +19,8 @@ import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { deckFiles, deckOf, DeckFrame, sourceOf } from "./artifact-slides";
+import { ArtifactFace } from "./artifact-face";
+import { Published } from "./artifact-published";
 import { TYPES, writtenType } from "./artifact-types";
 import type { ArtifactEdit, ArtifactType, ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
@@ -33,17 +35,6 @@ const ArtifactCall = z.object({
   description: z.string().optional(),
   url: z.string().optional(),
 });
-
-const Published = z.object({
-  id: z.string(),
-  type: z.enum(["slides", "doc", "sheet", "email"]).nullable(),
-  title: z.string(),
-  description: z.string(),
-  version: z.number(),
-  path: z.string(),
-  author: z.enum(["agent", "user"]).optional(),
-});
-type Published = z.infer<typeof Published>;
 
 /** deepagents' `write_file` and `edit_file` arguments, as far as the panel reads them. */
 const FileCall = z.object({ file_path: z.string().optional(), content: z.string().optional() });
@@ -304,12 +295,7 @@ function ArtifactCard({ artifact }: { artifact: Published }) {
   return (
     <button type="button" className="sent-file artifact-card" data-open={(shown !== null && "artifact" in shown && shown.artifact.id === artifact.id) || undefined}
       onClick={() => open({ id: artifact.id, full: false })}>
-      <span className="file-icon"><AppWindowIcon aria-hidden /></span>
-      <span className="sent-file-text">
-        <span className="sent-file-name">{artifact.title}</span>
-        <span className="sent-file-kind">{kindOf(artifact)}</span>
-        <span className="artifact-card-description" hidden={!artifact.description}>{artifact.description}</span>
-      </span>
+      <ArtifactFace artifact={artifact} />
     </button>
   );
 }

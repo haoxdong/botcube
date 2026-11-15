@@ -79,7 +79,7 @@ it("shows a published Artifact as a card with its title, type, version and descr
   render(<Chat />);
 
   const card = await screen.findByRole('button', { name: /Q3 revenue by month/ });
-  expect(card).toHaveTextContent('Q3 revenue by monthPage · version 2Monthly revenue against plan');
+  expect(card).toHaveTextContent('Q3 revenue by monthPage Artifact · version 2Monthly revenue against plan');
 });
 
 it('opens the page beside the chat on desktop, in its sandbox, and expands it to full screen and back', async () => {
@@ -454,4 +454,14 @@ it("keeps the chat's version open and says why when Files can't say whether a ne
   const panel = screen.getByRole('region', { name: 'Q3 revenue by month' });
   expect(await within(panel).findByRole('alert')).toHaveTextContent("Couldn't look for a newer version in Files: Files is unavailable");
   expect(within(panel).getByText('Page · version 2')).toBeVisible();
+});
+
+it.each([
+  ['doc', 'Doc', 'file-text'], ['slides', 'Slides', 'presentation'], ['sheet', 'Sheet', 'table-2'],
+  ['email', 'Email', 'mail'], [null, 'Page', 'app-window'],
+])('shows the %s Artifact with a type icon and explicit Artifact label', async (type, label, icon) => {
+  render(<Chat messages={reply(JSON.stringify({ ...PUBLISHED, type }))} />);
+  const card = await screen.findByRole('button', { name: /Q3 revenue by month/ });
+  expect(card).toHaveTextContent(`${label} Artifact · version 2`);
+  expect(card.querySelector(`.lucide-${icon}`)).toBeInTheDocument();
 });

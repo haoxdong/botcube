@@ -89,6 +89,7 @@ export const PDF = pdfOf(({ frame }) => frame.current?.contentWindow?.postMessag
 
 /** An Artifact Type as the panel draws it. */
 export type ArtifactType = {
+  Icon: LucideIcon;
   label: string;
   /** Its Viewer, which edits it in place when the type is edited. */
   Viewer: ComponentType<ViewerProps>;

@@ -248,7 +248,7 @@ it("opens a published deck's version from Files, slide by slide in the deck's or
   );
 
   const card = await screen.findByRole('button', { name: /Q3 Operating Review/ });
-  expect(card).toHaveTextContent('Slides · version 1');
+  expect(card).toHaveTextContent('Slides Artifact · version 1');
   await userEvent.click(card);
   const posted = sandboxReady(screen.getByTitle<HTMLIFrameElement>('Q3 Operating Review'));
 

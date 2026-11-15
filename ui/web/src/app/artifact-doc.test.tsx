@@ -113,7 +113,7 @@ async function openDoc() {
   );
   const { rerender } = render(chat(first));
   const card = await screen.findByRole('button', { name: /Q4 plan/ });
-  expect(card).toHaveTextContent('Doc · version 1');
+  expect(card).toHaveTextContent('Doc Artifact · version 1');
   await userEvent.click(card);
   const panel = screen.getByRole('region', { name: 'Q4 plan' });
   const doc = await within(panel).findByRole('textbox', { name: 'Q4 plan' });
@@ -223,7 +223,7 @@ describe('while the agent writes a Doc', () => {
     expect(within(doc).getByRole('cell', { name: 'Launch' })).toBeVisible();
 
     await until(ends + 300);
-    expect(screen.getByRole('button', { name: /Q4 plan/ })).toHaveTextContent('Doc · version 1');
+    expect(screen.getByRole('button', { name: /Q4 plan/ })).toHaveTextContent('Doc Artifact · version 1');
   });
 });
 
