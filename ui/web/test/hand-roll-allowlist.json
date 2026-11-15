@@ -51,7 +51,7 @@
     }
   },
   "app/late-boxes.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS has no cross-visit diagram-size memory or streaming maximum; Streamdown supplies neither.",
     "counts": {
       "ResizeObserver": 1
     }

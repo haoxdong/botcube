@@ -1,17 +1,6 @@
 import { withStorage } from "./main-chat-copy";
 
-/**
- * A reply's content that comes after its row, a diagram drawn or an image loaded, takes a box from the row's first
- * frame when the row joins the history above the reader: the size it last came to, kept here across visits,
- * or a default until it has come once. A row that joins above stays that size, so nothing above the row read moves as
- * its content comes; one that opens the chat takes its content's own size, as the reader sees it come. In a row that
- * arrives under the history, a streaming reply, a diagram's box only grows: streamdown steps it through a
- * placeholder, an empty frame, its loading message and drawings that shrink as nodes widen them, and each step down
- * would move the chat under the reader. The box keeps its tallest height while the row stays, as a joined row's does;
- * the reply shows at its own height when the chat opens again. Accepted: a window that narrows and widens again leaves
- * the box at its tallest, and streamdown's stand-in for the whole block while the diagram renderer first loads, once
- * per page, is not held.
- */
+// CSS has no cross-visit diagram-size memory or streaming maximum; Streamdown supplies neither.
 export type Size = { width: number; height: number };
 
 const KEY = "late-box-sizes";
