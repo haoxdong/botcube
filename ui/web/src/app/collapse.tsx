@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, type HTMLMotionProps } from "framer-motion";
+import { AnimatePresence, domAnimation, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, type HTMLMotionProps } from "framer-motion";
 import { Children, Fragment, cloneElement, isValidElement, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref } from "react";
 
 import { motionTokens } from "./motion-tokens";
@@ -49,7 +49,7 @@ export function Swap({ state, children, className, as = "div" }: { state: Key; c
   const Box = as;
   if (instant) return <Box key={state} className={className}>{children}</Box>;
   return (
-    <LazyMotion features={ready ?? loadFeatures} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence mode="popLayout" initial={false}>
+    <LazyMotion features={domAnimation} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence mode="popLayout" initial={false}>
       <Fading key={state} as={as} className={className ?? ""}>{children}</Fading>
     </AnimatePresence></MotionConfig></LazyMotion>
   );
