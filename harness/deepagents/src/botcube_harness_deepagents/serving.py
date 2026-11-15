@@ -1438,7 +1438,8 @@ def _prime_snapshot() -> None:
         agentcore_memory_backend.prime_memory_client(AGENTCORE_REGION)
         region = os.environ.get('AWS_REGION') or AGENTCORE_REGION
         aws_clients.prime(region)
-        restore_prime.prime_if_enabled(region, AGENTCORE_MEMORY_ID)
+        if os.getenv('BOTCUBE_RESTORE_PRIME') == '1' and AGENTCORE_MEMORY_ID:
+            agentcore_memory_backend.prime_spare(AGENTCORE_MEMORY_ID, region)
     finally:
         _AGENTS.clear()
         _BACKENDS.clear()
@@ -1451,6 +1452,8 @@ def main() -> None:
 
     # `openai.resources` leaves out the Responses resource the plan model's first request imports.
     importlib.import_module('openai.resources.responses')
+    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
+        restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     if _cartridge is None:

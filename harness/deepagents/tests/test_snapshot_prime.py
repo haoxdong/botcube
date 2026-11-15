@@ -12,7 +12,10 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_real_workspace(tmp_path: Path) -> None:
+@pytest.mark.parametrize('restore_enabled', ['0', '1'])
+def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_real_workspace(
+    tmp_path: Path, restore_enabled: str,
+) -> None:
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
     program = textwrap.dedent('''
@@ -20,6 +23,7 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         import os
         import socket
         import sys
+        from functools import partial
         from pathlib import Path
 
         attempts = []
@@ -31,7 +35,10 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
 
         import uvicorn
         from botcube_cartridge import HarnessDefinition
-        from botcube_harness_deepagents import serving
+        from botcube_harness_deepagents import aws_clients, restore_prime, serving
+
+        prepared_root = Path(sys.argv[1]).parent / 'restore'
+        restore_prime.prime = partial(restore_prime.prime, root=prepared_root, mount=lambda command: None)
 
         roots = []
         serving.configure_harness_definition(HarnessDefinition(
@@ -48,6 +55,11 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         serving._get_agent = counting
 
         def serve(app, **options):
+            spare = serving.agentcore_memory_backend._SPARE
+            clients = [serving.agentcore_memory_backend.sts_client(serving.AGENTCORE_REGION),
+                       *aws_clients.bedrock(serving.AGENTCORE_REGION)]
+            if spare is not None:
+                clients.append(spare[0].client)
             print(json.dumps({
                 'built': built,
                 'roots': roots,
@@ -56,6 +68,10 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
                 'workspaceEntries': sorted(os.listdir(sys.argv[1])),
                 'cached': [len(serving._AGENTS), len(serving._BACKENDS), len(serving._BACKEND_BY_AGENT), len(serving._MODEL_RELAYS)],
                 'network': len(attempts),
+                'transportVerifyPaths': [client._endpoint.http_session._verify for client in clients],
+                'preparedBundle': str(prepared_root / 'aws_ca_bundle.pem'),
+                'spareUnbound': spare is not None and spare[1].sandbox is None,
+                'memoryUnbound': serving.agentcore_memory_backend._MEMORY is None,
             }))
         uvicorn.run = serve
         serving.main()
@@ -63,7 +79,10 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
     result = subprocess.run(
         [sys.executable, '-c', program, str(workspace)],
         capture_output=True, text=True, timeout=120, check=False,
-        env={**os.environ, 'BOTCUBE_WORKSPACE': str(workspace), 'AGENTCORE_MEMORY_ID': '', 'BOTCUBE_SNAPSHOT_PRIME': '1'},
+        env={**os.environ, 'BOTCUBE_WORKSPACE': str(workspace), 'AGENTCORE_MEMORY_ID': 'snapshot',
+             'BOTCUBE_SNAPSHOT_PRIME': '1', 'BOTCUBE_RESTORE_PRIME': restore_enabled,
+             'AWS_ACCESS_KEY_ID': 'snapshot', 'AWS_SECRET_ACCESS_KEY': 'snapshot',
+             'AWS_SESSION_TOKEN': 'snapshot', 'AWS_DEFAULT_REGION': 'us-east-1'},
     )
     assert result.returncode == 0, result.stderr
     state = json.loads(result.stdout.strip().splitlines()[-1])
@@ -74,6 +93,12 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
     assert state['workspaceEntries'] == []
     assert state['cached'] == [0, 0, 0, 0]
     assert state['network'] == 0
+    assert state['memoryUnbound']
+    if restore_enabled == '1':
+        assert state['spareUnbound']
+        assert state['transportVerifyPaths'] == [state['preparedBundle']] * 4
+    else:
+        assert not state['spareUnbound']
 
 
 def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_no_files(tmp_path: Path) -> None:

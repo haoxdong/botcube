@@ -43,19 +43,17 @@ def run(command: Sequence[str]) -> None:
     subprocess.run(list(command), check=True, capture_output=True)
 
 
-def prime_if_enabled(region: str, memory_id: str) -> None:
+def prime_if_enabled(region: str) -> None:
     """Runtime V2 only (BOTCUBE_RESTORE_PRIME=1): V1's pre-started spares have nothing to restore."""
     if os.getenv('BOTCUBE_RESTORE_PRIME') == '1':
-        prime(region, memory_id)
+        prime(region)
 
 
-def prime(region: str, memory_id: str, *, root: Path = ROOT, mount: Callable[[Sequence[str]], None] = run) -> None:
+def prime(region: str, *, root: Path = ROOT, mount: Callable[[Sequence[str]], None] = run) -> None:
     hold_in_memory(root)
     bind_static_resolver_config(root, mount)
     runtime_credentials(region)
     answer_sdk_calls(region)
-    if memory_id:
-        agentcore_memory_backend.prime_spare(memory_id, region)
 
 
 def hold_in_memory(root: Path) -> None:
