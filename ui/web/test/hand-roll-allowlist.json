@@ -76,10 +76,9 @@
     }
   },
   "app/reading-hold.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS anchoring suppresses adjustment at scrollTop=0; use-stick-to-bottom does not prepare app-paginated history.",
     "counts": {
-      "scroll-write": 3,
-      "requestAnimationFrame": 2,
+      "scroll-write": 2,
       "ResizeObserver": 1
     }
   },
