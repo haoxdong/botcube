@@ -454,7 +454,7 @@ describe("the User's edit of a published deck's text", () => {
     const boxes = within(panel).getAllByRole('textbox').map((box) => box.getAttribute('aria-label'));
     expect(boxes).toEqual(['Heading 1', 'Paragraph 1', 'Heading 1', 'List item 1', 'List item 2']);
     expect(panel.querySelectorAll('[draggable="true"], [data-resize-handle], [role="slider"]')).toHaveLength(0);
-    expect(within(panel).queryByRole('button', { name: /move|resize|position|size/i })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: /move(?! panel to)|resize|position|size/i })).toBeNull();
   });
 
   it("keeps the User's edit and says why when the save is refused", async () => {

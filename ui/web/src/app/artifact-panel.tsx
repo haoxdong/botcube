@@ -3,7 +3,7 @@
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
 import { m as motionElement } from "framer-motion";
-import { Maximize2Icon, Minimize2Icon, XIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
   type ReactNode, type SetStateAction,
@@ -23,6 +23,8 @@ import { ArtifactFace } from "./artifact-face";
 import { Published } from "./artifact-published";
 import { TYPES, writtenType } from "./artifact-types";
 import type { ArtifactEdit, ArtifactType, ViewerProps } from "./artifact-viewer";
+import { withStorage } from "./main-chat-copy";
+import { Layout } from "./collapse";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { useIsPhone } from "./phone-query";
@@ -132,7 +134,7 @@ function useKept(shown: Shown | null) {
   return kept;
 }
 
-export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; children: ReactNode }) {
+export function ArtifactLayout({ agent, children, header, accountId = "" }: { agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined }) {
   const [opened, open] = useState<Opened | null>(null);
   const [newest, setNewest] = useState<Readonly<Record<string, Published>>>({});
   const seen = useCallback((artifact: Published) => setNewest((known) =>
@@ -165,6 +167,7 @@ export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; chil
   if (phone) {
     return (
       <Panel.Provider value={panel}>
+        {header}
         {children}
         {kept && (
           <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
@@ -176,7 +179,7 @@ export function ArtifactLayout({ agent, children }: { agent: AbstractAgent; chil
   }
   return (
     <Panel.Provider value={panel}>
-      <ArtifactSplit shown={shown} close={() => open(null)}>{children}</ArtifactSplit>
+      <ArtifactSplit accountId={accountId} shown={shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
     </Panel.Provider>
   );
 }
@@ -256,7 +259,17 @@ function useAgentSources(agent: AbstractAgent, following: Following) {
   return sources;
 }
 
-function ArtifactSplit({ shown, close, children }: { shown: Shown | null; close: () => void; children: ReactNode }) {
+function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | null; close: () => void; children: ReactNode; accountId: string }) {
+  const preference = `botcube.artifact-side.${accountId}`;
+  const [position, setPosition] = useState<"left" | "right">("left");
+  useEffect(() => {
+    setPosition(withStorage(() => localStorage.getItem(preference)) === "right" ? "right" : "left");
+  }, [preference]);
+  const switchSide = () => {
+    const next = position === "left" ? "right" : "left";
+    withStorage(() => localStorage.setItem(preference, next));
+    setPosition(next);
+  };
   const side = usePanelRef();
   const isOpen = shown !== null;
   useEffect(() => {
@@ -266,16 +279,16 @@ function ArtifactSplit({ shown, close, children }: { shown: Shown | null; close:
     else if (panel.isCollapsed()) panel.resize(OPEN_SIZE);
   }, [isOpen, side]);
   return (
-    <ResizablePanelGroup orientation="horizontal" className="artifact-layout">
-      <ResizablePanel id="chat" minSize="30%">{children}</ResizablePanel>
+    <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
+      <ResizablePanel id="chat" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle disabled={!isOpen} data-closed={!isOpen || undefined} />
-      <ResizablePanel id="artifact" panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
+      <ResizablePanel id="artifact" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size) => {
           if (isOpen && size.asPercentage === 0) close();
         }}>
         <Presence>{shown && (
           <motionElement.div {...presenceMotion} layout={false} key={pathOf(shown)} className="artifact-side">
-            <ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} />} />
+            <Layout className="artifact-view-motion" layout={shown.full ? false : "position"} style={{ direction: "ltr" }}><ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} position={position} switchSide={switchSide} />} /></Layout>
           </motionElement.div>
         )}</Presence>
       </ResizablePanel>
@@ -345,13 +358,16 @@ function Kind({ shown }: { shown: Shown }) {
   return writing ? `${label} · writing…` : label;
 }
 
-function DesktopControls({ shown }: { shown: Shown }) {
+function DesktopControls({ shown, position, switchSide }: { shown: Shown; position: "left" | "right"; switchSide: () => void }) {
   const { open } = usePanel();
   const { full } = shown;
   const label = full ? "Exit full screen" : "Full screen";
   const FullIcon = full ? Minimize2Icon : Maximize2Icon;
+  const move = position === "left" ? "Move panel to right" : "Move panel to left";
+  const SideIcon = position === "left" ? PanelRightIcon : PanelLeftIcon;
   return (
     <>
+      <button type="button" className="header-btn" aria-label={move} title={move} onClick={switchSide}><SideIcon aria-hidden /></button>
       <button type="button" className="header-btn" aria-label={label} title={label} onClick={() => open((current) => current && { ...current, full: !full })}>
         <FullIcon aria-hidden />
       </button>

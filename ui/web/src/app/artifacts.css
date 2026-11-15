@@ -1,4 +1,5 @@
 .artifact-layout {
+  min-width: 0;
   flex: 1;
   min-height: 0;
 }
@@ -403,4 +404,28 @@
 .artifact-card .file-icon > svg {
   width: 28px;
   height: 28px;
+}
+
+.artifact-chat-column,
+.artifact-chat-motion,
+.artifact-view-motion {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.artifact-layout > [data-slot="resizable-panel"] {
+  transition: flex-grow var(--motion-move) var(--ease);
+}
+
+.artifact-layout:has([data-separator="active"]) > [data-slot="resizable-panel"] {
+  transition: none;
+}
+
+.artifact-chat-column,
+.artifact-view-motion {
+  overflow: hidden;
 }

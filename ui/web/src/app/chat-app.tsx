@@ -47,9 +47,9 @@ import type { ChatStop } from "./chat-surface";
 import { artifactsEnabled } from "../artifacts-flag";
 
 const ChatSurface = lazy(() => import("./chat-surface"));
-const ChatColumn: ComponentType<{ agent: AbstractAgent; children: ReactNode }> = artifactsEnabled()
+const ChatColumn: ComponentType<{ agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined }> = artifactsEnabled()
   ? lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })))
-  : ({ children }) => children;
+  : ({ children, header }) => <>{header}{children}</>;
 const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
 
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
@@ -132,7 +132,7 @@ export default function App({
     layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile", slides: true,
     enabled: isPhone && activeId !== null && accountReady && !pluginsOpen && !sidebarExpanded && !swipe.dragging,
     expanded: agentProfileOpen,
-    onExpandedChange: (open) => { if (open) setAgentProfileOpen(true); else setAgentProfileOpen(false); },
+    onExpandedChange: setAgentProfileOpen,
   });
   useEffect(() => {
     if (profileSwipe.visible) setProfileKept(true);
@@ -192,16 +192,18 @@ export default function App({
   const [agentRunning] = useAgentRunning(agent);
   const working = useHeaderWorking(activeId, turnRunsOnServer || agentRunning);
 
+  const headerInPane = artifactsEnabled() && !isPhone;
   const chatHeader = (
     <ChatHeader opener={agentProfileOpenerRef} working={working} ready={accountReady} chatId={activeId} open={profileSwipe.show}
       picture={agentProfile?.picture} emoji={agentProfile?.avatar} name={agentName} />
   );
-  const noChat = linkedChatError !== null ? (
-    <LoadFailed error={linkedChatError} onRetry={() => void openMainChat()} action="Go to Main Chat" />
-  ) : mainChatError === null ? (
+  const paneHeader = <>{headerInPane && chatHeader}</>;
+  const chatFailure = linkedChatError ?? mainChatError;
+  const retryAction = linkedChatError === null ? "Retry" : "Go to Main Chat";
+  const noChat = chatFailure === null ? (
     <LoadingSkeleton label="Main Chat" />
   ) : (
-    <LoadFailed error={mainChatError} onRetry={() => void openMainChat()} />
+    <LoadFailed error={chatFailure} onRetry={() => void openMainChat()} action={retryAction} />
   );
   const covered = keptChatShown || (activeId !== null && openAt == null && openedChat !== activeId);
   const keptChat = (
@@ -287,9 +289,9 @@ export default function App({
         </motionElement.main>
       )}</Presence>
       <main className="app-shell" style={{ visibility: pluginsOpen ? "hidden" : undefined }} aria-hidden={pluginsOpen} inert={pluginsOpen || profileSwipe.open || (isPhone && sidebarExpanded)}>
-        {chatHeader}
-        {activeId === null ? noChat : (
-          <Suspense fallback={<div className="app-chat app-chat-opening">{keptChat}</div>}>
+        {!headerInPane && chatHeader}
+        {activeId === null ? <>{paneHeader}{noChat}</> : (
+          <Suspense fallback={<>{paneHeader}<div className="app-chat app-chat-opening">{keptChat}</div></>}>
           <ChatSurface
             key={activeId}
             chatId={activeId}
@@ -299,7 +301,7 @@ export default function App({
           >
             {(ChatThread) => <>
             <ChatAlerts errors={[auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
-            <ChatColumn agent={agent}>
+            <ChatColumn agent={agent} accountId={accountId} header={headerInPane ? chatHeader : undefined}>
             <div className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
               <ChatThread

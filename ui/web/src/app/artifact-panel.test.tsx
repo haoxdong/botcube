@@ -29,11 +29,11 @@ const reply = (result: string = JSON.stringify(PUBLISHED), turn = '') => [
   { id: `t${turn}`, role: 'tool' as const, toolCallId: `c${turn}`, content: result },
 ];
 
-function Chat({ messages = reply() }: { messages?: ReturnType<typeof reply> }) {
+function Chat({ messages = reply(), accountId = "pane-test" }: { messages?: ReturnType<typeof reply>; accountId?: string }) {
   return (
     <CopilotKitProvider>
       <CopilotChatConfigurationProvider threadId="thread">
-        <ArtifactLayout agent={IDLE}>
+        <ArtifactLayout agent={IDLE} accountId={accountId}>
           <div className="app-chat"><CopilotChatMessageView messages={messages} isRunning={false} /></div>
         </ArtifactLayout>
       </CopilotChatConfigurationProvider>
@@ -464,4 +464,29 @@ it.each([
   const card = await screen.findByRole('button', { name: /Q3 revenue by month/ });
   expect(card).toHaveTextContent(`${label} Artifact · version 2`);
   expect(card.querySelector(`.lucide-${icon}`)).toBeInTheDocument();
+});
+
+it('defaults left, moves both ways without remounting, and remembers this User’s side across reloads', async () => {
+  phone(false);
+  localStorage.removeItem("botcube.artifact-side.pane-test");
+  const view = render(<Chat />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+  const frame = screen.getByTitle('Q3 revenue by month');
+  const chat = view.container.querySelector('.app-chat');
+  expect(view.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'left');
+  await userEvent.click(screen.getByRole('button', { name: 'Move panel to right' }));
+  expect(view.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'right');
+  expect(screen.getByTitle('Q3 revenue by month')).toBe(frame);
+  expect(view.container.querySelector('.app-chat')).toBe(chat);
+  await userEvent.click(screen.getByRole('button', { name: 'Move panel to left' }));
+  expect(view.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'left');
+  await userEvent.click(screen.getByRole('button', { name: 'Move panel to right' }));
+  view.unmount();
+  const reload = render(<Chat />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+  expect(reload.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'right');
+  reload.unmount();
+  const other = render(<Chat accountId="another-user" />);
+  await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
+  expect(other.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'left');
 });

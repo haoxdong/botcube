@@ -1,0 +1,35 @@
+@import '@radix-ui/colors/gray-dark.css';
+@import '@radix-ui/colors/blue-dark.css';
+@import '@radix-ui/colors/red-dark.css';
+@import '@radix-ui/colors/green-dark.css';
+
+.artifact-pane-fixture {
+  height: 100vh;
+  min-height: 100vh;
+  color: var(--color-text);
+}
+
+.artifact-pane-fixture-chat {
+  padding: 24px;
+}
+
+.artifact-pane-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 280px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dark .artifact-pane-fixture {
+  --frost: var(--gray-1);
+}
+
+@media (max-width: 640px) {
+  .artifact-pane-fixture-chat {
+    padding-top: calc(var(--chat-header-height) + 24px);
+  }
+}
