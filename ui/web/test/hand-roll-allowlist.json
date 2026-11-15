@@ -89,12 +89,6 @@
       "ResizeObserver": 2
     }
   },
-  "components/plotly-chart.tsx": {
-    "reason": "Plot geometry is the feature, excluded from UI retirement.",
-    "counts": {
-      "ResizeObserver": 1
-    }
-  },
   "components/ui/sheet-height.ts": {
     "reason": "CSS cannot interpolate auto-to-auto size; Base UI has no resize animation, and UI SDK beta.2 translates content snaps without interpolating box height.",
     "counts": {
