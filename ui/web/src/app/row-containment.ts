@@ -1,3 +1,5 @@
+import { cancelFrame, frame } from "framer-motion";
+
 /** Marks a row whose rendering the browser may skip while it is off screen (chat.css). */
 export const CONTAINED = "data-contained";
 
@@ -10,8 +12,15 @@ export function containRows(list: HTMLElement | null): (() => void) | undefined 
     row.setAttribute(CONTAINED, "");
     rows.unobserve(row);
   };
+  // Containment changes the ancestor list's size; writing it during observer delivery leaves that notification undelivered.
+  const pending = new Map<Element, number>();
+  const commit = () => {
+    for (const [target, height] of pending) contain(target, height);
+    pending.clear();
+  };
   const rows = new ResizeObserver((entries) => {
-    for (const { target, borderBoxSize } of entries) contain(target, borderBoxSize[0]?.blockSize ?? 0);
+    for (const { target, borderBoxSize } of entries) pending.set(target, borderBoxSize[0]?.blockSize ?? 0);
+    frame.read(commit);
   });
   // Observing again delivers the row's size after the next layout: a row no longer last, or after a new width.
   const watch = (row: Element) => {
@@ -20,6 +29,8 @@ export function containRows(list: HTMLElement | null): (() => void) | undefined 
     rows.observe(row);
   };
   const relayout = () => {
+    cancelFrame(commit);
+    pending.clear();
     for (const row of list.children) {
       if (!(row instanceof HTMLElement)) continue;
       row.removeAttribute(CONTAINED);
@@ -32,7 +43,11 @@ export function containRows(list: HTMLElement | null): (() => void) | undefined 
     if (entry === undefined || entry.contentRect.width === width) return;
     const first = width === undefined;
     width = entry.contentRect.width;
-    if (!first) relayout();
+    if (!first) {
+      cancelFrame(commit);
+      pending.clear();
+      frame.read(relayout);
+    }
   });
   const fonts = list.ownerDocument.fonts;
   const changed = new MutationObserver(() => {
@@ -43,6 +58,9 @@ export function containRows(list: HTMLElement | null): (() => void) | undefined 
   fonts.addEventListener("loadingdone", relayout);
   for (const row of list.children) watch(row);
   return () => {
+    cancelFrame(commit);
+    cancelFrame(relayout);
+    pending.clear();
     rows.disconnect();
     resized.disconnect();
     changed.disconnect();

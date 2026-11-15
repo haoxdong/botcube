@@ -16,7 +16,10 @@ class LayoutObserver {
     if (entries.length > 0) this.callback(entries as unknown as ResizeObserverEntry[], this);
   }
 }
-const layout = (height: (target: Element) => number, width?: number) => { for (const observer of LayoutObserver.all) observer.report(height, width); };
+const frames = vi.hoisted(() => new Set<() => void>());
+vi.mock('framer-motion', () => ({ frame: { read: (run: () => void) => frames.add(run) }, cancelFrame: (run: () => void) => frames.delete(run) }));
+const paint = () => { const pending = [...frames]; frames.clear(); for (const run of pending) run(); };
+const layout = (height: (target: Element) => number, width?: number) => { for (const observer of LayoutObserver.all) observer.report(height, width); paint(); };
 /** Mutation observers report in a microtask. */
 const observed = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
@@ -34,6 +37,7 @@ let list: HTMLDivElement;
 let stop: (() => void) | undefined;
 beforeEach(() => {
   LayoutObserver.all = [];
+  frames.clear();
   vi.stubGlobal('ResizeObserver', LayoutObserver);
   list = document.createElement('div');
   list.append(row('a'), row('b'), row('c'));
@@ -68,7 +72,26 @@ it('lays every row out again at a new width, and contains them at their new heig
   // Narrower: the list reports first, and every row turns live until it reports its new height.
   const [rows, width] = LayoutObserver.all;
   width?.report(() => 0, 400);
+  paint();
   expect(state(list)).toEqual([['a', 'live'], ['b', 'live'], ['c', 'live']]);
   rows?.report(() => 180, 400);
+  paint();
   expect(state(list)).toEqual([['a', 'auto 180px'], ['b', 'auto 180px'], ['c', 'live']]);
+});
+
+it('commits containment outside the ResizeObserver delivery that measured the rows', () => {
+  const [rows] = LayoutObserver.all;
+  rows?.report(() => 120);
+  expect(state(list)).toEqual([['a', 'live'], ['b', 'live'], ['c', 'live']]);
+  paint();
+  expect(state(list)).toEqual([['a', 'auto 120px'], ['b', 'auto 120px'], ['c', 'live']]);
+});
+
+it('cancels pending containment when the list is disposed', () => {
+  const [rows] = LayoutObserver.all;
+  rows?.report(() => 120);
+  stop?.();
+  paint();
+  expect(state(list)).toEqual([['a', 'live'], ['b', 'live'], ['c', 'live']]);
+  expect(frames.size).toBe(0);
 });
