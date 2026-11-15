@@ -21,6 +21,7 @@ import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { deckFiles, deckOf, DeckFrame, sourceOf } from "./artifact-slides";
 import { ArtifactFace } from "./artifact-face";
 import { Published } from "./artifact-published";
+import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES, writtenType } from "./artifact-types";
 import type { ArtifactEdit, ArtifactType, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
@@ -134,11 +135,12 @@ function useKept(shown: Shown | null) {
   return kept;
 }
 
-export function ArtifactLayout({ agent, children, header, accountId = "" }: { agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined }) {
+export function ArtifactLayout({ agent, children, header, accountId = "", request }: { agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined; request?: ArtifactRequest | undefined }) {
   const [opened, open] = useState<Opened | null>(null);
   const [newest, setNewest] = useState<Readonly<Record<string, Published>>>({});
   const seen = useCallback((artifact: Published) => setNewest((known) =>
     (known[artifact.id]?.version ?? 0) >= artifact.version ? known : { ...known, [artifact.id]: artifact }), []);
+  useArtifactRequest(request, accountId, seen, open);
   const artifact = opened === null ? undefined : newest[opened.id];
   const shown = useMemo(() => shownOf(opened, artifact), [opened, artifact]);
   const kept = useKept(shown);
@@ -283,8 +285,8 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
       <ResizablePanel id="chat" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
-        onResize={(size) => {
-          if (isOpen && size.asPercentage === 0) close();
+        onResize={(size, _id, previous) => {
+          if (isOpen && size.asPercentage === 0 && previous?.asPercentage) close();
         }}>
         <Presence>{shown && (
           <motionElement.div {...presenceMotion} layout={false} key={pathOf(shown)} className="artifact-side">

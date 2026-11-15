@@ -1,0 +1,14 @@
+.artifact-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-library-list .artifact-card {
+  width: 100%;
+  margin: 0;
+}
