@@ -1,17 +1,7 @@
 /** Marks a row whose rendering the browser may skip while it is off screen (chat.css). */
 export const CONTAINED = "data-contained";
 
-/**
- * Lets the browser skip each row of `list` while it is off screen (`content-visibility: auto`), so a Turn start on a
- * long chat restyles and lays out the rows in view, not the whole chat: every row it inserts invalidated the style of
- * all 27,000 elements of a 174-message chat, and each read of a box laid all of them out, 400 ms each.
- *
- * A row is contained only once laid out, at the height it was laid out at, as a skipped row takes the size it was last
- * given: a row contained before its first layout would hold a guess and change height as it came into view, and the
- * list keeps the reading place itself (`overflow-anchor: none`). A new width wraps every row anew, so it lays them all
- * out again before containing them at their new heights, as does a font loading: rows laid out in a fallback font wrap
- * at its widths. The last row stays live, as a streamed reply grows there.
- */
+// CSS does not refresh remembered sizes while rows remain size-contained; use-stick-to-bottom has no per-row invalidation API.
 export function containRows(list: HTMLElement | null): (() => void) | undefined {
   if (list === null) return undefined;
   const contain = (row: Element, height: number) => {

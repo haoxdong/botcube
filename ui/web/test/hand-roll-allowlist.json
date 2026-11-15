@@ -91,7 +91,7 @@
     }
   },
   "app/row-containment.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS does not refresh remembered sizes while rows remain size-contained; use-stick-to-bottom has no per-row invalidation API.",
     "counts": {
       "ResizeObserver": 2
     }
