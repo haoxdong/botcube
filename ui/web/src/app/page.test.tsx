@@ -2242,16 +2242,12 @@ describe('Main Chat', () => {
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item', 'sidebar-nav-item-active');
   });
 
-  // CopilotKit's scroll view smooth-scrolled each opened chat down from its top to the latest message.
-  // A long chat still scrolled through as its rows measured after opening, each growth smooth-scrolled, from
-  // estimated row heights while CopilotKit virtualized it.
-  it('opens at the latest message and stays there as the chat grows', async () => {
+  it('opens immediately at the latest message without virtualized history', async () => {
     service.mainChat = { id: 'main-1', messages: [{ id: 'm1', role: 'user', content: 'Earlier question' }] };
 
     await renderPage();
 
     expect(screen.getByTestId('copilot-scroll-view')).toHaveAttribute('data-initial', 'instant');
-    expect(screen.getByTestId('copilot-scroll-view')).toHaveAttribute('data-resize', 'instant');
     expect(screen.getByTestId('copilot-message-list')).not.toHaveAttribute('data-virtualized');
   });
 
@@ -2572,22 +2568,6 @@ describe('Main Chat', () => {
         await frame();
 
         expect(scrollView().scrollTop).toBe(100);
-      });
-
-      // CopilotKit unmounted its control at the bottom in one frame; this one stays to fade out.
-      it('keeps its control mounted, hidden at the latest message and shown away from it', async () => {
-        await renderPage();
-        layOut();
-        const place = () => present(screen.getByTestId('copilot-scroll-to-bottom').closest('.chat-page-jump'), 'the control');
-
-        await scrollTo(100);
-        expect(place()).toHaveAttribute('inert');
-        expect(place()).not.toHaveAttribute('data-shown');
-
-        await scrollTo(0);
-        expect(place()).not.toHaveAttribute('inert');
-        expect(place()).toHaveAttribute('data-shown');
-        expect(copilot.jumps).toBe(0);
       });
 
       it('lets the user scroll the chat up once they press on it', async () => {

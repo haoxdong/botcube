@@ -22,8 +22,7 @@
     "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
     "counts": {
       "scroll-write": 2,
-      "requestAnimationFrame": 5,
-      "ResizeObserver": 1
+      "requestAnimationFrame": 5
     }
   },
   "app/collapse.tsx": {
@@ -85,7 +84,7 @@
     }
   },
   "app/rotation-reading.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "use-stick-to-bottom cannot transfer a reading anchor between document and element scrolling.",
     "counts": {
       "scroll-write": 2,
       "requestAnimationFrame": 1,

@@ -33,7 +33,7 @@ import { useComposerOpen } from "./composer-open";
 import { holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
 import { messagesScroller, OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
-import { AT_BOTTOM_PX, useInitialStick, useRotationReading } from "./rotation-reading";
+import { useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
 import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
 import { webUiPlugin } from "@cartridge-ui";
@@ -316,32 +316,6 @@ function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickTo
 
 type ScrollControlProps = { inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null>; opened: RefObject<boolean>; followsLatest: () => boolean; follow: () => void };
 
-/** CopilotKit unmounts its jump control at the bottom in one frame. */
-function DesktopJump({ inputContainerHeight, isResizing, follow }: ScrollControlProps) {
-  const place = useRef<HTMLDivElement>(null);
-  const [atBottom, setAtBottom] = useState(true);
-  useLayoutEffect(() => {
-    // CopilotKit renders its feather slot right after its StickToBottom content, the chat's scroller.
-    const scroller = place.current?.parentElement?.previousElementSibling;
-    if (!scroller) throw new Error("The desktop jump control needs the chat's scroller before it");
-    const measure = () => setAtBottom(scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= AT_BOTTOM_PX);
-    measure();
-    scroller.addEventListener("scroll", measure, { passive: true });
-    const resized = new ResizeObserver(measure);
-    for (const box of [scroller, ...scroller.children]) resized.observe(box);
-    return () => {
-      scroller.removeEventListener("scroll", measure);
-      resized.disconnect();
-    };
-  }, []);
-  const hidden = atBottom || isResizing;
-  return (
-    <div ref={place} className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: `${inputContainerHeight + 16}px` }}>
-      <JumpToBottom follow={follow} />
-    </div>
-  );
-}
-
 const NO_BUTTON = () => null;
 
 function DocumentStick({ inputContainerHeight, isResizing, contentRef, opened, followsLatest, follow }: ScrollControlProps) {
@@ -390,7 +364,7 @@ function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>
       instance={instance}
       className="chat-scroll-view"
       scrollToBottomButton={NO_BUTTON}
-      feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <DesktopJump {...controlProps} /> }}
+      feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <ScrollButton stick={instance} inputHeight={controlProps.inputContainerHeight} resizing={controlProps.isResizing} follow={follow} /> }}
     >
       <div ref={attach}>{props.children}</div>
     </CopilotChatView.ScrollView>
