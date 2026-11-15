@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <!--
-  The sandbox a Slides Artifact's deck shows in. The app frames this page with sandbox="allow-scripts", so it runs in
+  The sandbox a Slides Artifact's deck shows in. The app frames this page with sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox", so it runs in
   an opaque origin of its own: it cannot read the app's cookies, storage or page. Each slide is a frame of its own with
-  sandbox="" (no scripts, no handlers); each <x-embed> on a slide is a frame that runs its scripts. Every frame keeps
+  sandbox="allow-popups allow-popups-to-escape-sandbox" (no scripts, no handlers); each <x-embed> on a slide is a frame that runs its scripts. Every frame keeps
   this policy, which reaches no network: a slide shows what its file holds and loads nothing.
   Owner: the Artifacts spec, behind the Artifacts flag.
 -->
@@ -74,7 +74,7 @@
         box.dataset.slideId = slide.id;
         const canvas = document.createElement('div');
         canvas.className = 'canvas';
-        const page = frame('', `Slide ${at + 1}`);
+        const page = frame('allow-popups allow-popups-to-escape-sandbox', `Slide ${at + 1}`);
         canvas.append(page);
         box.append(canvas);
         current = { element: box, canvas, page, html: undefined, embeds: "[]", embedFrames: [] };

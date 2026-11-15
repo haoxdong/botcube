@@ -11,6 +11,8 @@ export type FramePath = string[] | undefined;
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
+    clickFrameElement: (name: string, selector: string, path?: FramePath) => Promise<{ opened: number; navigated: boolean }>;
+    openFrameLink: (name: string, selector: string, path?: FramePath) => Promise<{ url: string; opener: boolean }>;
     readFrame: (name: string, selector: string, path?: FramePath) => Promise<ShownElement[]>;
     holdFrameElement: (name: string, selector: string, path?: FramePath) => Promise<number>;
     frameElementHeld: (held: number) => Promise<boolean>;
@@ -35,3 +37,7 @@ export async function holdFrameElement(name: string, selector: string, path?: Fr
   const held = await commands.holdFrameElement(name, selector, path);
   return { stillShown: () => commands.frameElementHeld(held) };
 }
+
+export const openFrameLink = (name: string, selector: string, path?: FramePath) => commands.openFrameLink(name, selector, path);
+
+export const clickFrameElement = (name: string, selector: string, path?: FramePath) => commands.clickFrameElement(name, selector, path);

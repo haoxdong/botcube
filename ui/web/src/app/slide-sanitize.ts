@@ -44,8 +44,15 @@ export function sanitizeSlide(file: string, source: string): CleanSlide {
   purify.addHook("uponSanitizeAttribute", (node, data) => {
     // Inside an svg chart, only the subset's svg attributes, as the checker holds them: no style there.
     const inChart = node.namespaceURI === SVG_NAMESPACE && node.nodeName.toLowerCase() !== "svg";
-    if (inChart && !SVG_ATTRIBUTES.includes(data.attrName) && !/^(id|class|data-[\w-]+)$/.test(data.attrName)) data.keepAttr = false;
+    if (data.attrName === "src" && !data.attrValue.startsWith("data:")) data.keepAttr = false;
+    else if (inChart && !SVG_ATTRIBUTES.includes(data.attrName) && !/^(id|class|data-[\w-]+)$/.test(data.attrName)) data.keepAttr = false;
     else if (data.attrName === "style" && data.keepAttr) data.attrValue = allowedStyle(file, node.nodeName.toLowerCase(), data.attrValue, stripped);
+  });
+  purify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.nodeName.toLowerCase() === "a" && node.hasAttribute("href")) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
   });
   const html = purify.sanitize(emptied, {
     ALLOWED_TAGS: [...Object.keys(ELEMENTS), ...SVG_ELEMENTS],
@@ -56,14 +63,9 @@ export function sanitizeSlide(file: string, source: string): CleanSlide {
       attributeNameCheck: /^(kind|name|x1|y1|x2|y2|head|head-start|head-end|route|from|style|data-[\w-]+)$/,
       allowCustomizedBuiltInElements: false,
     },
-    // A slide has no navigation: a link shows as its text, and following it would only navigate the slide's frame.
-    // Its href stays in the Source, and is not listed as stripped.
-    FORBID_ATTR: ["href"],
-    // An image is held in the slide as a data: URI, which DOMPurify keeps on an <img src>; no other URL is kept.
-    ALLOWED_URI_REGEXP: /^#/,
-    // DOMPurify holds every allowed attribute but its short URI-safe list to ALLOWED_URI_REGEXP: `kind="ellipse"`
-    // or an svg path's `d` would fail it. Only `src` holds a URL here.
-    ADD_URI_SAFE_ATTR: [...new Set(Object.values(ELEMENTS).flat()), ...SVG_ATTRIBUTES].filter((name) => name !== "src"),
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
+    // Shape and SVG attributes hold drawing values. URL attributes must pass DOMPurify's URI checks.
+    ADD_URI_SAFE_ATTR: [...new Set(Object.values(ELEMENTS).flat()), ...SVG_ATTRIBUTES].filter((name) => name !== "src" && name !== "href"),
   });
   for (const removed of purify.removed as Array<{ element?: Node; attribute?: Attr | null; from?: Node }>) {
     if (removed.attribute?.name === "href") continue;

@@ -21,7 +21,10 @@ const heldElements: DriverElement[] = [];
 
 /** The frame a FramePath names under the frame named `name` (.storybook/frames.ts). */
 async function findFrame(page: DriverPage, name: string, path: FramePath): Promise<DriverFrame> {
-  const frame = page.frames().find((candidate) => candidate.name() === name);
+  const frames = page.frames();
+  const names = await Promise.all(frames.map(async (candidate) => candidate.parentFrame() === null
+    ? null : (await candidate.frameElement()).getAttribute('name')));
+  const frame = frames[names.indexOf(name)];
   if (frame === undefined) throw new Error(`No frame is named ${name}`);
   return path === undefined ? deepest(frame) : titled(frame, name, path);
 }
@@ -119,6 +122,35 @@ export default defineConfig({
             height: shown.getBoundingClientRect().height,
             loaded: shown.ownerDocument.readyState === 'complete',
           }))));
+        },
+        clickFrameElement: async (context, name: string, selector: string, path?: FramePath) => {
+          if (context.provider.name !== 'playwright') throw new Error('clickFrameElement needs Playwright');
+          const frame = await findFrame(context.page, name, path);
+          const before = { pages: context.page.context().pages().length, url: frame.url() };
+          await frame.locator(selector).click();
+          return { opened: context.page.context().pages().length - before.pages, navigated: frame.url() !== before.url };
+        },
+        openFrameLink: async (context, name: string, selector: string, path?: FramePath) => {
+          if (context.provider.name !== 'playwright') throw new Error('openFrameLink needs Playwright');
+          const frame = await findFrame(context.page, name, path);
+          const link = frame.locator(selector);
+          const href = await link.getAttribute('href');
+          if (!href) throw new Error('The cited link has no href');
+          await context.page.context().route(href, (route) => route.fulfill({ contentType: 'text/html', body: '<title>Citation source</title>' }));
+          try {
+            const [popup] = await Promise.all([
+              context.page.context().waitForEvent('page', { timeout: 5000 }),
+              link.click(),
+            ]);
+            try {
+              await popup.waitForLoadState();
+              return { url: popup.url(), opener: await popup.evaluate(() => window.opener !== null) };
+            } finally {
+              await popup.close();
+            }
+          } finally {
+            await context.page.context().unroute(href);
+          }
         },
         holdFrameElement: async (context, name: string, selector: string, path?: FramePath) => {
           if (context.provider.name !== 'playwright') throw new Error('holdFrameElement needs Playwright');

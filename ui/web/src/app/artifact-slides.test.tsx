@@ -220,14 +220,14 @@ it("shows an error, not an empty deck, when the published deck.json does not par
   expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't open Q3 Operating Review: its deck.json does not parse as a deck");
 });
 
-it('keeps the attributes a shape and an svg chart draw with, an image held in the slide, and a link as its text', () => {
+it('keeps the attributes a shape and an svg chart draw with, an image held in the slide, and a cited link', () => {
   const photo = 'data:image/png;base64,iVBORw0KGgo=';
   const slide = [
     '<section id="mix">',
     '<x-shape kind="ellipse" style="width:200px;height:200px;background:#1d4ed8"></x-shape>',
     '<svg viewBox="0 0 100 50" width="400" height="200" fill="none"><path d="M0 50 L50 10 L100 30" stroke="#1d4ed8" stroke-width="2"></path>',
     '<rect x="10" y="20" width="30" height="30" fill="#f59e0b"></rect></svg>',
-    `<p><a href="https://example.com/q3">Q3 report</a> <a href="javascript:alert(1)">Bad link</a></p><img alt="" src="${photo}"><img alt="" src="/_blob/x">`,
+    `<p><a href="https://example.com/q3">Q3 report</a> <a href="javascript:alert(1)">Bad link</a></p><img alt="" src="${photo}"><img alt="" src="/_blob/x"><img alt="" src="https://example.com/photo.png">`,
     '</section>',
   ].join('');
 
@@ -239,10 +239,43 @@ it('keeps the attributes a shape and an svg chart draw with, an image held in th
   expect(html).toContain('<rect x="10" y="20" width="30" height="30" fill="#f59e0b">');
   expect(html).toContain('<svg viewBox="0 0 100 50" width="400" height="200" fill="none">');
   expect(html).toContain(`<img alt="" src="${photo}">`);
-  // A slide has no navigation: its links keep their text and lose their href, which the format allows.
-  expect(html).toContain('<a>Q3 report</a> <a>Bad link</a>');
-  expect(html).not.toContain('href');
+  const content = document.createElement('div');
+  content.innerHTML = html;
+  const [cited, bad] = content.querySelectorAll('a');
+  expect(cited).toHaveAttribute('href', 'https://example.com/q3');
+  expect(cited).toHaveAttribute('target', '_blank');
+  expect(cited).toHaveAttribute('rel', 'noopener noreferrer');
+  expect(bad).not.toHaveAttribute('href');
   expect(stripped).toEqual(['slides/mix.html: <img src>']);
+});
+
+it.each([
+  ['https://example.com/source', true],
+  ['http://example.com/source', true],
+  ['mailto:source@example.com', true],
+  ['HTTPS://example.com/source', true],
+  ['javascript:alert(1)', false],
+  ['java&#x09;script:alert(1)', false],
+  ['data:text/html,unsafe', false],
+  ['ftp://example.com/source', false],
+  ['//example.com/source', false],
+  ['/source', false],
+  ['#source', false],
+])('keeps only the permitted citation schemes in %s', (href, allowed) => {
+  const { html } = sanitizeSlide('slides/source.html', `<section><a href="${href}" target="_top" rel="opener" style="color:#f4f1ea">Source</a></section>`);
+  const content = document.createElement('div');
+  content.innerHTML = html;
+  const link = content.querySelector('a');
+  expect(link).toHaveTextContent('Source');
+  expect(link).toHaveAttribute('style', 'color:#f4f1ea');
+  if (allowed) {
+    expect(link).toHaveAttribute('href', href);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  } else {
+    expect(link).not.toHaveAttribute('href');
+    expect(link).not.toHaveAttribute('target');
+  }
 });
 
 /** What an svg chart holds, inside `<svg viewBox="0 0 100 50">`, and whether the slide format allows it. */
