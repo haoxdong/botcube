@@ -114,9 +114,7 @@
   font-weight: var(--weight-regular);
 }
 
-.mep-pill-model,
-.mep-pill-effort {
-  display: block;
+.mep-pill-model {
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -126,13 +124,8 @@
 }
 
 .mep-pill-effort,
-.mep-pill-chevron {
+.mep-pill > svg {
   flex-shrink: 0;
-}
-
-.mep-pill-chevron {
-  position: relative;
-  display: flex;
 }
 
 .mep-pill-model-phone {
@@ -152,7 +145,7 @@
     display: inline;
   }
 
-  .chat-model-picker .mep-pill-chevron {
+  .chat-model-picker .mep-pill > svg {
     display: none;
   }
 

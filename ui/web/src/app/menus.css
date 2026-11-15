@@ -548,12 +548,8 @@
 }
 
 
-
 .mep {
   position: relative;
-  display: inline-grid;
-  align-items: center;
-  min-width: 0;
 }
 
 .mep-pill {
@@ -656,12 +652,30 @@
   margin-top: 2px;
 }
 
-.mep-check {
+.mep-option-right {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+}
+
+.mep-check {
   flex-shrink: 0;
   color: var(--color-blue);
 }
 
+.mep-back {
+  gap: 10px;
+  justify-content: flex-start;
+  color: var(--color-text-muted);
+}
+
+.mep-separator {
+  height: 1px;
+  background: var(--color-line);
+  margin: 6px 16px;
+}
 
 /* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names (mapped
    once, near the top), the type sizes and weights, and its default transition and spin (streamdown's toolbar and
@@ -712,143 +726,4 @@
 .load-state {
   width: 100%;
   height: 100%;
-}
-
-.mep-option[data-highlighted] {
-  background: var(--color-fill);
-}
-
-.mep-option-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
-}
-
-.mep-back {
-  gap: 10px;
-  justify-content: flex-start;
-  color: var(--color-text-muted);
-}
-
-.mep-separator {
-  height: 1px;
-  background: var(--color-line);
-  margin: 6px 16px;
-}
-
-.mep::after {
-  content: "Loading models… Medium";
-  visibility: hidden;
-  grid-area: 1 / 1;
-  padding: 0 16px;
-  font-size: var(--font-small);
-  white-space: nowrap;
-}
-
-.mep > .mep-pill,
-.chat-model-picker .mep > .mep-pill {
-  transition: none;
-  position: relative;
-  grid-area: 1 / 1;
-  justify-self: stretch;
-  justify-content: flex-end;
-  background: transparent;
-}
-
-.mep-spring.standard-popup {
-  transition: none;
-}
-
-.mep-spring.standard-popup[data-starting-style],
-.mep-spring.standard-popup[data-ending-style] {
-  opacity: unset;
-}
-
-.mep-spring .mep-option {
-  transition: none;
-}
-
-
-.mep-pill-background {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: inherit;
-  max-width: 100%;
-  padding: 0 22px 0 6px;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.mep-pill-background::before,
-.mep-pill-background::after {
-  visibility: hidden;
-  white-space: nowrap;
-}
-
-.mep-pill-background::before {
-  content: attr(data-model);
-}
-
-.mep-pill-background::after {
-  content: attr(data-effort);
-}
-
-@media (max-width: 767px) {
-  .mep-pill-background {
-    padding: 0 8px;
-  }
-
-  .mep-pill-background::before {
-    content: attr(data-phone-model);
-  }
-}
-
-.mep > .mep-pill:focus-visible {
-  outline: none !important;
-}
-
-.mep-pill:focus-visible .mep-pill-background {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
-}
-
-@media (hover: hover) {
-  .mep-pill:hover .mep-pill-background {
-    background: var(--color-fill);
-  }
-}
-
-.mep-pill:active .mep-pill-background {
-  background: var(--color-fill);
-}
-
-@media (hover: none) {
-  .mep-pill[aria-expanded="true"] .mep-pill-background {
-    background: var(--color-fill);
-  }
-}
-
-@supports (position-anchor: --mep-composer) {
-  .copilotKitInput:has(.mep) {
-    anchor-name: --mep-composer;
-  }
-
-  .mep-positioner:not([hidden]) {
-    display: contents;
-  }
-
-  .mep-spring.standard-popup {
-    position: fixed;
-    position-anchor: --mep-composer;
-    inset: auto;
-    right: anchor(right);
-    top: calc(anchor(top) - 8px);
-    translate: 0 -100%;
-  }
 }

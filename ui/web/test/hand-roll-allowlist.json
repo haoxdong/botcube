@@ -50,6 +50,12 @@
       "ResizeObserver": 1
     }
   },
+  "app/model-effort-picker.tsx": {
+    "reason": "Temporary emergency restoration. The off-the-shelf picker rebuild retires this exception.",
+    "counts": {
+      "animateMini": 1
+    }
+  },
   "app/motion.ts": {
     "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
     "counts": {

@@ -27,11 +27,10 @@ export async function checkModelPicker(page, base, name, chatService) {
   await page.setViewportSize({ width: viewport.width > 767 ? 1280 : viewport.width, height: 633 });
   await page.goto(base);
   if (viewport.width <= 767) await page.locator('.copilotKitInput.picker-ready textarea').click();
-  const pill = page.getByRole('button', { name: /^Model / });
-  const reasoning = page.getByRole('button', { name: /^Reasoning / });
+  const pill = page.locator('.chat-model-picker .mep-pill');
   await pill.waitFor();
   await pill.click();
-  const dropdown = page.locator('.mep-dropdown:not([data-ending-style])');
+  const dropdown = page.locator('.mep-dropdown');
   const boundsFailure = await checkPickerBounds(page, dropdown, name);
   if (boundsFailure !== null) return boundsFailure;
   for (const label of VISIBLE_MODELS) {
@@ -56,9 +55,10 @@ export async function checkModelPicker(page, base, name, chatService) {
   await page.getByRole('button', { name: 'Model GPT-6.1-Sol, reasoning Medium', exact: true }).waitFor();
   await dropdown.locator('.mep-option').filter({ has: page.getByText('GPT-6-Astra', { exact: true }) }).click();
   await page.getByRole('button', { name: 'Model GPT-6-Astra, reasoning Medium', exact: true }).waitFor();
-  await reasoning.click();
+  await dropdown.locator('.mep-option:not(.mep-back)').filter({ has: page.getByText('Effort', { exact: true }) }).click();
   await dropdown.locator('.mep-option').filter({ has: page.getByText('High', { exact: true }) }).click();
   await page.getByRole('button', { name: 'Model GPT-6-Astra, reasoning High', exact: true }).waitFor();
+  await dropdown.locator('.mep-option:not(.mep-back)').filter({ has: page.getByText('Effort', { exact: true }) }).click();
   await dropdown.locator('.mep-option').filter({ has: page.getByText('Medium', { exact: true }) }).click();
   await page.getByRole('button', { name: 'Model GPT-6-Astra, reasoning Medium', exact: true }).waitFor();
   await page.locator('textarea').click();
@@ -94,6 +94,6 @@ async function checkPickerBounds(page, dropdown, name) {
   if (bounds.scrollHeight > bounds.clientHeight && !/auto|scroll/.test(bounds.overflowY)) return 'PICKER_NOT_SCROLLABLE';
   if (bounds.width > 280.5 || (bounds.composerWidth !== undefined && bounds.width >= bounds.composerWidth)) return `PICKER_TOO_WIDE ${JSON.stringify(bounds)}`;
   const labels = await dropdown.locator('.mep-option-name').allTextContents();
-  if (JSON.stringify(labels) !== JSON.stringify(VISIBLE_MODELS)) return `PICKER_MODELS ${JSON.stringify(labels)}`;
+  if (JSON.stringify(labels) !== JSON.stringify([...VISIBLE_MODELS, 'Effort'])) return `PICKER_MODELS ${JSON.stringify(labels)}`;
   return null;
 }
