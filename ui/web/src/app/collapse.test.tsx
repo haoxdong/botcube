@@ -22,10 +22,11 @@ describe('Collapse', () => {
   });
 
   describe('with the motion tokens', () => {
-    it('shrinks away, inert, until its height has closed, then unmounts', async () => {
+    it('shrinks away, inert, until its height has closed, then unmounts with cached features', async () => {
       tokens();
-      const view = render(<Collapse open><button type="button">Ran ls</button></Collapse>);
       await loaded();
+      const view = render(<Collapse open><button type="button">Ran ls</button></Collapse>);
+      await waitFor(() => expect(view.container.querySelector<HTMLElement>('.collapsible')?.style.height).toBe('auto'));
       view.rerender(<Collapse open={false}><button type="button">Ran ls</button></Collapse>);
       const box = view.container.querySelector('.collapsible');
       expect(box).toHaveAttribute('data-closing');
