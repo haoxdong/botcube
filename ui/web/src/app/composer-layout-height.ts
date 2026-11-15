@@ -2,18 +2,6 @@ import { useLayoutEffect, type RefObject } from 'react';
 
 import { sizeGlide } from './motion';
 
-const LAYOUT = '.copilotKitInput > [data-layout]';
-
-/** The text box's height for its draft, up to the cap CopilotKit sets, as CopilotKit sizes it. */
-function resize(target: Node) {
-  const layout = target instanceof Element && target.matches('.copilotKitInput') ? target.querySelector(':scope > [data-layout]') : target;
-  if (!(layout instanceof Element) || !layout.matches(LAYOUT)) return;
-  const textarea = layout.querySelector('textarea');
-  if (textarea === null) return;
-  textarea.style.height = 'auto';
-  textarea.style.height = `${Math.min(textarea.scrollHeight, parseFloat(textarea.style.maxHeight) || Infinity)}px`;
-}
-
 /**
  * Grows and shrinks the composer's box from its last height to its new one over --motion-move (DESIGN.md Motion), as
  * a line, a chip or a cleared draft changes it, so the thread above follows instead of jumping. Its controls stay at its
@@ -39,20 +27,11 @@ function smoothHeight(box: HTMLElement) {
   return () => { stop(); observer.disconnect(); children.disconnect(); };
 }
 
-/**
- * Sizes the composer under `root`. CopilotKit sizes its text box to its draft, then lays a desktop's composer out
- * `expanded` once the draft outgrows the compact text column, and skips sizing it in the new layout: a line that wrapped
- * in the compact column kept two lines' height across the expanded one. Each change of layout sizes it again. Its box
- * glides to each new height (smoothHeight).
- */
+// CSS cannot interpolate auto-to-auto composer/chip height; Vercel's textarea sizing only covers the field.
 export function useComposerSizing(root: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
-    const element = root.current;
-    if (element === null) return undefined;
-    const observer = new MutationObserver((records) => records.forEach(({ target }) => resize(target)));
-    observer.observe(element, { attributes: true, attributeFilter: ['data-layout', 'data-open'], subtree: true });
-    const box = element.querySelector<HTMLElement>('.copilotKitInput');
-    const stop = box && typeof ResizeObserver === 'function' ? smoothHeight(box) : undefined;
-    return () => { observer.disconnect(); stop?.(); };
+    const box = root.current?.querySelector<HTMLElement>('.copilotKitInput');
+    if (!box || typeof ResizeObserver !== 'function') return undefined;
+    return smoothHeight(box);
   }, [root]);
 }

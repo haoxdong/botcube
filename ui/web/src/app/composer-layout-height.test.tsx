@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { render, waitFor } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { useComposerSizing } from './composer-layout-height';
 
@@ -16,43 +16,6 @@ function Fixture() {
     </div>
   );
 }
-
-/** A composer whose draft, laid out anew, is `draftHeight` tall. */
-function composer(draftHeight: number) {
-  const view = render(<Fixture />);
-  const textarea = view.getByLabelText('Ask anything');
-  Object.defineProperty(textarea, 'scrollHeight', { configurable: true, get: () => draftHeight });
-  const layout = textarea.parentElement;
-  if (layout === null) throw new Error('no layout');
-  return { textarea, layout };
-}
-
-// A line that wrapped in a desktop's compact text column fits on one in its expanded one; CopilotKit kept two lines'
-// height.
-it('sizes the text box to its draft as the composer changes layout', async () => {
-  const { textarea, layout } = composer(36);
-
-  layout.setAttribute('data-layout', 'expanded');
-
-  await waitFor(() => expect(textarea.style.height).toBe('36px'));
-});
-
-it("keeps the text box within CopilotKit's cap", async () => {
-  const { textarea, layout } = composer(200);
-
-  layout.setAttribute('data-layout', 'expanded');
-
-  await waitFor(() => expect(textarea.style.height).toBe('116px'));
-});
-
-// A phone's composer opening from rest changes its text's padding; the box kept its resting height.
-it('sizes the text box to its draft as a phone composer opens or rests', async () => {
-  const { textarea, layout } = composer(30);
-
-  layout.parentElement?.setAttribute('data-open', '');
-
-  await waitFor(() => expect(textarea.style.height).toBe('30px'));
-});
 
 describe('the composer box', () => {
   /** A ResizeObserver that reports when the test says, and the box's height as the test sets it. */

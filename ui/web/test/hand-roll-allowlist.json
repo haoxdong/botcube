@@ -32,7 +32,7 @@
     }
   },
   "app/composer-layout-height.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS cannot interpolate auto-to-auto composer/chip height; Vercel's textarea sizing only covers the field.",
     "counts": {
       "ResizeObserver": 1
     }

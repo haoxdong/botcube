@@ -481,6 +481,13 @@ div.copilotKitInput {
   scrollbar-width: none;
 }
 
+@supports (field-sizing: content) and (height: calc-size(auto, round(size, 1px))) {
+  .copilotKitInput textarea {
+    field-sizing: content;
+    height: calc-size(auto, round(size, 1px)) !important;
+  }
+}
+
 /* Safari before 18.2 ignores `scrollbar-width`. */
 .copilotKitInput textarea::-webkit-scrollbar {
   display: none;
