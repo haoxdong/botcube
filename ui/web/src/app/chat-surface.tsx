@@ -517,7 +517,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
               <ReplyTurnRunning.Provider value={isRunning}>
                 <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer)} messages={messages} list={list} />
               </ReplyTurnRunning.Provider>
-              <Presence>{(isRunning ? started : onServer) && last?.role === "user" && <motionElement.div {...presenceMotion} key={last.id}><Worklog id={last.id} running asked={last.id} /></motionElement.div>}</Presence>
+              {(isRunning ? started : onServer) && last?.role === "user" && <div key={last.id}><Worklog id={last.id} running asked={last.id} /></div>}
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="cpk:mt-2"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
               {isRunning && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
