@@ -29,11 +29,7 @@ const STEPS = 24;
 /** Longer than any stall seen live: WebKit's compositor shows the last painted scale once an animation ends. */
 const HOLD_MS = 5000;
 
-/**
- * The agent's name in the chat header's capsule, and "is working" under it while a Turn runs. The capsule takes
- * its new size at once and scales over from its old one, its content counter-scaled: a compositor transform keeps moving
- * while a Turn's start busies the page.
- */
+// Motion layout can finish inside a busy Turn-start task before any frame paints; retain compositor scaling.
 export function HeaderName({ name, working }: { name: string; working: boolean }) {
   const capsule = useRef<HTMLSpanElement>(null);
   const content = useRef<HTMLSpanElement>(null);

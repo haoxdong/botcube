@@ -1,0 +1,145 @@
+{
+  "app/bubble-width.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "requestAnimationFrame": 1,
+      "ResizeObserver": 1
+    }
+  },
+  "app/chat-app.tsx": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "requestAnimationFrame": 1
+    }
+  },
+  "app/chat-opening.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "requestAnimationFrame": 2
+    }
+  },
+  "app/chat-surface.tsx": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "scroll-write": 2,
+      "requestAnimationFrame": 5,
+      "ResizeObserver": 1
+    }
+  },
+  "app/collapse.tsx": {
+    "reason": "Motion presence owner, retained until area 4 migration.",
+    "counts": {
+      "requestAnimationFrame": 2
+    }
+  },
+  "app/composer-layout-height.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "ResizeObserver": 1
+    }
+  },
+  "app/drawer-swipe.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "requestAnimationFrame": 1
+    }
+  },
+  "app/header-status.tsx": {
+    "reason": "Motion layout clock elapsed before the first painted frame during a busy Turn start; compositor scaling remains necessary.",
+    "counts": {
+      "animate": 2,
+      "requestAnimationFrame": 1
+    }
+  },
+  "app/kept-chat.tsx": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "ResizeObserver": 3,
+      "scroll-write": 1
+    }
+  },
+  "app/late-boxes.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "ResizeObserver": 1
+    }
+  },
+  "app/model-effort-picker.tsx": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "animateMini": 1
+    }
+  },
+  "app/motion.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "animate": 1
+    }
+  },
+  "app/page.tsx": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "requestAnimationFrame": 3
+    }
+  },
+  "app/reading-hold.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "scroll-write": 3,
+      "requestAnimationFrame": 2,
+      "ResizeObserver": 1
+    }
+  },
+  "app/rotation-reading.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "scroll-write": 2,
+      "requestAnimationFrame": 1,
+      "ResizeObserver": 1
+    }
+  },
+  "app/row-containment.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "ResizeObserver": 2
+    }
+  },
+  "components/plotly-chart.tsx": {
+    "reason": "Plot geometry is the feature, excluded from UI retirement.",
+    "counts": {
+      "ResizeObserver": 1
+    }
+  },
+  "components/ui/sheet-height.ts": {
+    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "counts": {
+      "ResizeObserver": 1,
+      "requestAnimationFrame": 1,
+      "animate": 1
+    }
+  },
+  "computer/agent-computer.tsx": {
+    "reason": "Existing Computer UI behavior; pending retirement or a demonstrated platform limitation.",
+    "counts": {
+      "scroll-write": 1
+    }
+  },
+  "computer/file-name.tsx": {
+    "reason": "Existing Computer UI behavior; pending retirement or a demonstrated platform limitation.",
+    "counts": {
+      "ResizeObserver": 1
+    }
+  },
+  "computer/files-app.tsx": {
+    "reason": "Existing Computer UI behavior; pending retirement or a demonstrated platform limitation.",
+    "counts": {
+      "requestAnimationFrame": 1
+    }
+  },
+  "computer/remote-viewport.tsx": {
+    "reason": "Feature geometry, excluded from UI retirement.",
+    "counts": {
+      "ResizeObserver": 1
+    }
+  }
+}
