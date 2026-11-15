@@ -234,15 +234,12 @@ function Step({ id, kind, state, icon: Icon, label, time, sheet }: {
   const icon = <Shown className="worklog-step-icon" strokeWidth={1.75} aria-hidden />;
   const words = <span className="worklog-step-label">{label}</span>;
   const column = <span className="worklog-step-time">{time}</span>;
+  const Head = sheet ? "button" : "div";
   const step = (
     <div className="worklog-step" data-kind={kind} data-state={state}>
-      <Presence>{sheet ? (
-        <motionElement.button {...presenceMotion} key="0" type="button" className="worklog-step-head" onClick={sheet.show} aria-haspopup="dialog" aria-expanded={sheet.open}>
-          {icon}{words}<ChevronRightIcon className="worklog-step-chevron" aria-hidden />{column}
-        </motionElement.button>
-      ) : (
-        <motionElement.div {...presenceMotion} key="1" className="worklog-step-head">{icon}{words}{column}</motionElement.div>
-      )}</Presence>
+      <Head type={sheet ? "button" : undefined} className="worklog-step-head" onClick={sheet?.show} aria-haspopup={sheet ? "dialog" : undefined} aria-expanded={sheet?.open}>
+        {icon}{words}<ChevronRightIcon className="worklog-step-chevron" style={{ display: sheet ? undefined : "none" }} aria-hidden />{column}
+      </Head>
     </div>
   );
   return grows ? <Collapse open>{step}</Collapse> : step;
