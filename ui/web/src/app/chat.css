@@ -352,14 +352,6 @@
   border-bottom: 0;
 }
 
-.chat-wrapper :is([data-testid="copilot-message-list"], [data-testid="copilot-scroll-to-bottom"]) {
-  transition: opacity var(--motion-quick) var(--ease);
-}
-
-.chat-wrapper[data-jumping] :is([data-testid="copilot-message-list"], [data-testid="copilot-scroll-to-bottom"]) {
-  opacity: 0;
-}
-
 .chat-page-jump {
   position: absolute;
   left: 0;

@@ -27,7 +27,6 @@ const copilot = vi.hoisted(() => ({
   // Whether each row comes between custom-message slots, as CopilotKit 1.61 lays them out, rendering nothing.
   slots: false,
   rowMounts: 0,
-  jumps: 0,
   listeners: new Set<() => void>(),
   openingTurn: undefined as unknown as ReturnType<typeof vi.fn<(options: { agent: HttpAgent | undefined; forwardedProps?: Record<string, unknown> }) => void>>,
   runAgent: undefined as unknown as ReturnType<typeof vi.fn<(options: { agent: HttpAgent | undefined }) => void>>,
@@ -141,8 +140,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   const ScrollToBottomButton = (props: ButtonHTMLAttributes<HTMLButtonElement>) => <button type="button" data-testid="copilot-scroll-to-bottom" {...props} />;
   // Like CopilotChatView.ScrollView: a StickToBottom that scrolls to the latest message on mount (`initial`) and
   // as the content grows (`resize`), smoothly unless a scroll view slot object overrides them. It scrolls itself; its
-  // content wrapper is styled to scroll too, but is as tall as its content, so it never does. Its jump-to-bottom button
-  // slot sits beside it, its click CopilotKit's own jump, which here only counts itself, after its feather slot.
+  // content wrapper is styled to scroll too, but is as tall as its content, so it never does.
   const CopilotChatScrollView = ({
     children,
     initial = 'smooth',
@@ -161,7 +159,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
         {children}
       </div>
       {typeof Feather === 'function' ? <Feather /> : <div {...Feather} />}
-      <JumpButton onClick={() => { copilot.jumps += 1; }} />
+      <JumpButton />
     </>
   );
   return {
@@ -496,8 +494,6 @@ async function renderPage(state: AuthUiState = auth()) {
   return view;
 }
 
-/** The jump runs once the messages have faded out, after `--motion-quick`, which happy-dom leaves unset. */
-const faded = () => act(async () => { await new Promise((done) => setTimeout(done, 0)); });
 
 /** Let the page finish its Chat Service requests. */
 async function settle() {
@@ -530,7 +526,6 @@ beforeEach(() => {
   localStorage.clear();
   copilot.kits = [];
   copilot.mounts = 0;
-  copilot.jumps = 0;
   copilot.chat = undefined;
   copilot.runAgent = vi.fn();
   copilot.stopAgent = vi.fn();
@@ -2486,99 +2481,6 @@ describe('Main Chat', () => {
       await grow();
 
       expect(scrollView().scrollTop).toBe(0);
-    });
-
-    describe('after the jump-to-bottom button', () => {
-      it.each(['150ms', '.15s'])('waits for the full %s fade before moving the thread', async (duration) => {
-        await renderPage();
-        layOut();
-        scrollView().scrollTop = 50;
-        const wrapper = present(scrollView().closest<HTMLElement>('.chat-wrapper'), 'the chat');
-        wrapper.style.setProperty('--motion-quick', duration);
-        vi.useFakeTimers();
-        fireEvent.click(screen.getByTestId('copilot-scroll-to-bottom'));
-
-        await act(async () => { await vi.advanceTimersByTimeAsync(149); });
-        expect(scrollView().scrollTop).toBe(50);
-        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-        expect(scrollView().scrollTop).toBe(100);
-      });
-
-      const frames: FrameRequestCallback[] = [];
-      const frame = () => act(async () => { for (const callback of frames.splice(0)) callback(0); });
-      const scrollTo = (top: number) => act(async () => {
-        scrollView().scrollTop = top;
-        scrollView().dispatchEvent(new Event('scroll'));
-      });
-      const jump = async () => {
-        await renderPage();
-        layOut();
-        scrollView().scrollTop = 50;
-        frames.length = 0;
-        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
-        fireEvent.click(screen.getByTestId('copilot-scroll-to-bottom'));
-        await faded();
-      };
-
-      // The jump moved the thread thousands of pixels in one frame with the messages showing: it fades them out
-      // first, and moves the thread only once they are hidden.
-      it('fades the messages out before it moves the thread, and back in after', async () => {
-        await renderPage();
-        layOut();
-        scrollView().scrollTop = 50;
-        frames.length = 0;
-        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
-        fireEvent.click(screen.getByTestId('copilot-scroll-to-bottom'));
-        const wrapper = present(scrollView().closest<HTMLElement>('.chat-wrapper'), 'the chat');
-        expect(wrapper).toHaveAttribute('data-jumping');
-        expect(scrollView().scrollTop).toBe(50);
-
-        await faded();
-        expect(scrollView().scrollTop).toBe(100);
-        expect(wrapper).toHaveAttribute('data-jumping');
-        await frame();
-        expect(wrapper).not.toHaveAttribute('data-jumping');
-      });
-
-      // A click as the chat still coasted up did nothing: CopilotKit's jump stopped at the coast's next
-      // scroll up, which it took for the user's.
-      it('jumps once the messages fade and holds the bottom until 3 frames pass without movement', async () => {
-        await jump();
-        expect(scrollView().scrollTop).toBe(100);
-
-        await scrollTo(40);
-        expect(scrollView().scrollTop).toBe(100);
-        await frame();
-        await frame();
-        await scrollTo(90);
-        expect(scrollView().scrollTop).toBe(100);
-        await frame();
-        await frame();
-        await frame();
-        await scrollTo(70);
-
-        expect(scrollView().scrollTop).toBe(70);
-      });
-
-      it('lands at the bottom when a coalesced spring and coast scroll ends 3px short', async () => {
-        await jump();
-        await scrollTo(97);
-        await frame();
-        await frame();
-        await frame();
-
-        expect(scrollView().scrollTop).toBe(100);
-      });
-
-      it('lets the user scroll the chat up once they press on it', async () => {
-        await jump();
-        await scrollTo(100);
-
-        await act(async () => scrollView().dispatchEvent(new Event('pointerdown')));
-        await scrollTo(70);
-
-        expect(scrollView().scrollTop).toBe(70);
-      });
     });
 
     // The rows that joined last rendered nothing, so the top stayed in view, never came into view again, and
@@ -8305,7 +8207,8 @@ describe('model and effort picker', () => {
     it.each([
       ['keeping a model the user chose', 'Fast', 'fast'],
       ["starting on that account's first model over the previous default", 'Deep', 'plan'],
-    ])("offers that account's models, %s", async (_, picked, expected) => {
+    ])("before a Session starts, offers that account's models, %s", async (_, picked, expected) => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
       const view = await renderPage(auth({ accountId: 'acct-anonymous' }));
       if (picked === 'Fast') {
         await userEvent.click(pill());

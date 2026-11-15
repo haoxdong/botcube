@@ -19,10 +19,10 @@
     }
   },
   "app/chat-surface.tsx": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "Element.scrollIntoView is one-shot; an opening history-row target must survive late reply and composer layout.",
     "counts": {
-      "scroll-write": 2,
-      "requestAnimationFrame": 5
+      "scroll-write": 1,
+      "requestAnimationFrame": 2
     }
   },
   "app/collapse.tsx": {

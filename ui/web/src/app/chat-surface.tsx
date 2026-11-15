@@ -4,7 +4,7 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "framer-motion";
 
-import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
@@ -31,7 +31,7 @@ import { ReplyTurnRunning } from "./reply-turn";
 import { useComposerSizing } from "./composer-layout-height";
 import { useComposerOpen } from "./composer-open";
 import { holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
-import { messagesScroller, OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
+import { OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
@@ -222,37 +222,11 @@ const OpensAt = createContext<string | null>(null);
 
 const couldNotAnswer = (message: string): TurnFailure => ({ message: `The agent could not answer: ${message}` });
 
-const JUMP_SETTLE_FRAMES = 3;
-
 function eventsOf(scroller: Element): EventTarget {
   return scroller === document.scrollingElement ? window : scroller;
 }
 
-function holdAtBottom(scroller: Element) {
-  let still = 0;
-  const events = eventsOf(scroller);
-  const hold = () => {
-    const bottom = scroller.scrollHeight - scroller.clientHeight;
-    if (scroller.scrollTop < bottom) {
-      scroller.scrollTop = bottom;
-      still = 0;
-    }
-  };
-  const release = () => {
-    events.removeEventListener("scroll", hold);
-    events.removeEventListener("pointerdown", release);
-  };
-  const frame = () => {
-    still += 1;
-    if (still < JUMP_SETTLE_FRAMES) requestAnimationFrame(frame);
-    else release();
-  };
-  events.addEventListener("scroll", hold);
-  events.addEventListener("pointerdown", release);
-  hold();
-  requestAnimationFrame(frame);
-}
-
+// Element.scrollIntoView is one-shot; an opening history-row target must survive late reply and composer layout.
 function holdAtRow(wrapper: Element, id: string): () => void {
   const started = performance.now();
   let frame = 0;
@@ -275,41 +249,13 @@ function holdAtRow(wrapper: Element, id: string): () => void {
 }
 const USER_SCROLLS = ["wheel", "touchstart", "pointerdown", "keydown"];
 
-/** CopilotKit's spring mistakes momentum for a new user scroll and cancels the jump. */
-function JumpToBottom({ onClick, follow, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { follow: () => void }) {
-  return (
-    <CopilotChatView.ScrollToBottomButton
-      {...props}
-      onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
-        const wrapper = event.currentTarget.closest<HTMLElement>(".chat-wrapper");
-        const scroller = messagesScroller(wrapper);
-        if (!wrapper || !scroller) {
-          onClick?.(event);
-          return;
-        }
-        if (wrapper.dataset.jumping !== undefined) return;
-        wrapper.dataset.jumping = "";
-        const duration = getComputedStyle(wrapper).getPropertyValue("--motion-quick").trim();
-        const milliseconds = parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000) || 0;
-        window.setTimeout(() => {
-          follow();
-          const reveal = () => requestAnimationFrame(() => delete wrapper.dataset.jumping);
-          holdAtBottom(scroller);
-          reveal();
-          onClick?.(event);
-        }, milliseconds);
-      }}
-    />
-  );
-}
-
 const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
 
 function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickToBottomInstance; inputHeight: number; resizing: boolean; follow: () => void }) {
   const hidden = stick.isAtBottom || resizing;
   return (
     <div className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: inputHeight + 16 }}>
-      <JumpToBottom follow={follow} />
+      <CopilotChatView.ScrollToBottomButton onClick={() => { follow(); void stick.scrollToBottom({ animation: "smooth", ignoreEscapes: true }); }} />
     </div>
   );
 }
