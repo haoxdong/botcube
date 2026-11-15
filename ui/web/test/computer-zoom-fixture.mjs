@@ -80,6 +80,7 @@ export function BrowserLiveView({onConnectionEstablished,onDisconnect}){
 }`;
   const bundled = await build({
     stdin: { contents: fixture, loader: 'tsx', resolveDir: root },
+    define: { 'process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP': JSON.stringify(process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP ?? '0') },
     bundle: true,
     write: false,
     format: 'esm',

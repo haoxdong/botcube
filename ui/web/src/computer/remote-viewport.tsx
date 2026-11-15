@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { zoomOf } from '../lib/utils';
 
 type Viewport = { scale: number; x: number; y: number };
+const clampOnResize = process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP === '1';
 const HOME: Viewport = { scale: 1, x: 0, y: 0 };
 // A finger held still this long is a remote press, so a long-press reaches the browser; a pinch's second finger comes sooner.
 const HOLD_MS = 250;
@@ -47,7 +48,8 @@ export function RemoteViewport({ expanded, interactive, sessionId, completeTouch
     const zoom = zoomOf(box);
     const cx = (origin[0] - rect.left) / zoom;
     const cy = (origin[1] - rect.top) / zoom;
-    const anchor = first ? { ...current.current, cx, cy } : memo as Viewport & { cx: number; cy: number };
+    const rendered = clampOnResize && first ? content.current?.getBoundingClientRect() : undefined;
+    const anchor = first ? { ...current.current, ...(clampOnResize && rendered ? { x: (rendered.left - rect.left) / zoom, y: (rendered.top - rect.top) / zoom } : {}), cx, cy } : memo as Viewport & { cx: number; cy: number };
     const ratio = scale / anchor.scale;
     const x = Math.min(0, Math.max((rect.width / zoom) * (1 - scale), cx - (anchor.cx - anchor.x) * ratio));
     const y = Math.min(0, Math.max((rect.height / zoom) * (1 - scale), cy - (anchor.cy - anchor.y) * ratio));
@@ -129,6 +131,7 @@ export function RemoteViewport({ expanded, interactive, sessionId, completeTouch
   useEffect(() => {
     const box = host.current;
     if (box === null) return;
+    if (clampOnResize) return;
     const observer = new ResizeObserver(() => {
       current.current = HOME;
       setViewport(HOME);
@@ -137,8 +140,9 @@ export function RemoteViewport({ expanded, interactive, sessionId, completeTouch
     return () => observer.disconnect();
   }, []);
 
+  const minimumTranslation = 100 * (1 - viewport.scale) / viewport.scale;
   return <div ref={host} className="remote-viewport" data-scale={viewport.scale} style={{ touchAction: expanded ? 'none' : undefined }}>
-    <div ref={content} className="remote-viewport-content" inert={!interactive} style={{ width: `${100 * viewport.scale}%`, height: `${100 * viewport.scale}%`, transform: `translate(${viewport.x}px, ${viewport.y}px)` }}>{children}</div>
+    <div ref={content} className="remote-viewport-content" inert={!interactive} style={{ width: `${100 * viewport.scale}%`, height: `${100 * viewport.scale}%`, transform: clampOnResize ? `translate(clamp(${minimumTranslation}%, ${viewport.x}px, 0px), clamp(${minimumTranslation}%, ${viewport.y}px, 0px))` : `translate(${viewport.x}px, ${viewport.y}px)` }}>{children}</div>
     <div className="remote-viewport-shield" aria-hidden="true" hidden={interactive} />
   </div>;
 }
