@@ -8,7 +8,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type Comp
 import { createPortal } from "react-dom";
 import type { AbstractAgent } from "@ag-ui/client";
 import { Blocks, MessageCircle } from "lucide-react";
-import { ModelEffortPicker } from "./model-effort-picker";
+import { ModelSelector } from "./model-selector";
 import { ChatAlerts } from "./chat-alerts";
 import { UserMenu } from "./user-menu";
 import { useAgentWarmup } from "./agent-warmup";
@@ -330,7 +330,7 @@ export default function App({
                 onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)}
               >
                 <div className="chat-model-picker">
-                  <ModelEffortPicker {...picker} />
+                  <ModelSelector {...picker} />
                 </div>
               </ChatThread>
               </TurnStart.Provider>

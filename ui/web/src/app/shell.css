@@ -114,13 +114,30 @@
   font-weight: var(--weight-regular);
 }
 
-.mep-pill-model {
+.mep-pill-model,
+.mep-pill-effort {
+  display: grid;
   position: relative;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: inherit;
+}
+
+.mep-pill-model::after,
+.mep-pill-effort::after {
+  content: attr(data-reserve-label);
+  visibility: hidden;
+  grid-area: 1 / 1;
+}
+
+.mep-pill-model > span,
+.mep-pill-effort > span {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mep-pill-effort,

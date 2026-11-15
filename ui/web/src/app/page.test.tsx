@@ -609,13 +609,13 @@ describe('cartridge wiring', () => {
     await renderPage();
 
     const pill = present(screen.getByText('Deep').closest('button'), 'the model pill');
-    expect(pill).toHaveTextContent(/^DeepMedium$/);
+    expect(pill).toHaveTextContent(/^Deep$/);
     expect(kit().properties).toEqual({ model: 'deep', effort: 'medium', sandbox: true });
 
     await userEvent.click(pill);
     expect(
       [...document.querySelectorAll('.mep-dropdown .mep-option-name')].map((option) => option.textContent),
-    ).toEqual(['Deep', 'Fast', 'Effort']);
+    ).toEqual(['Deep', 'Fast']);
     expect(document.body.textContent).not.toMatch(/sonnet/i);
   });
 
@@ -3264,9 +3264,9 @@ describe('warming a chat as the user composes', () => {
     await renderPage();
     await openNewSideChat();
     await userEvent.click(present(document.querySelector<HTMLElement>('.mep-pill'), 'model picker'));
-    const dropdown = within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'model dropdown'));
-    await userEvent.click(dropdown.getByText('Effort'));
-    await userEvent.click(dropdown.getByText('High'));
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
+    const effortMenu = within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'reasoning dropdown'));
+    await userEvent.click(effortMenu.getByText('High'));
     await settle();
 
     await type();
@@ -8039,7 +8039,7 @@ describe('model and effort picker', () => {
   const pill = () => document.querySelector('.mep-pill') as HTMLElement;
   const dropdown = () => document.querySelector<HTMLElement>('.mep-dropdown');
   const openDropdown = () => present(dropdown(), 'the picker dropdown');
-  const checked = () => [...openDropdown().querySelectorAll('.mep-check')].map((check) => check.closest('button')?.textContent);
+  const checked = () => [...openDropdown().querySelectorAll('.mep-check')].map((check) => check.closest('[role=menuitemradio]')?.textContent);
 
   it('sits in the chat input beside Send', async () => {
     await renderPage();
@@ -8130,12 +8130,11 @@ describe('model and effort picker', () => {
     service.models = [{ key: 'gpt-plan', label: 'GPT Plan', provider: 'openai' }];
     await renderPage();
 
-    expect(pill()).toHaveTextContent(/^GPT PlanMedium$/);
+    expect(pill()).toHaveTextContent(/^GPT Plan$/);
     expect(kit().properties).toEqual({ model: 'gpt-plan', effort: 'medium', sandbox: true });
     await userEvent.click(pill());
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
       'GPT Plan',
-      'Effort',
     ]);
   });
 
@@ -8155,7 +8154,7 @@ describe('model and effort picker', () => {
       expect(copilot.openingTurn).not.toHaveBeenCalled();
 
       await userEvent.click(pill());
-      expect(names()).toEqual(['Deep', 'Fast', 'Plan', 'Effort']);
+      expect(names()).toEqual(['Deep', 'Fast', 'Plan']);
     });
 
     it("never hands another provider's model to a replayed Session", async () => {
@@ -8163,7 +8162,7 @@ describe('model and effort picker', () => {
       service.replies.set('on-plan', [{ id: 'm1', role: 'user', content: 'On the plan' }]);
       service.providers.set('on-plan', 'openai');
       await renderPage();
-      expect(pill()).toHaveTextContent(/^DeepMedium$/);
+      expect(pill()).toHaveTextContent(/^Deep$/);
 
       await userEvent.click(sidebar().getByText('On the plan'));
       await settle();
@@ -8181,10 +8180,10 @@ describe('model and effort picker', () => {
 
       await userEvent.click(sidebar().getByText('On the plan'));
 
-      expect(pill()).toHaveTextContent(/^PlanMedium$/);
+      expect(pill()).toHaveTextContent(/^Plan$/);
       expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
       await userEvent.click(pill());
-      expect(names()).toEqual(['Plan', 'Effort']);
+      expect(names()).toEqual(['Plan']);
     });
 
     it('for the replayed Main Chat', async () => {
@@ -8192,7 +8191,7 @@ describe('model and effort picker', () => {
       await renderPage();
 
       await userEvent.click(pill());
-      expect(names()).toEqual(['Plan', 'Effort']);
+      expect(names()).toEqual(['Plan']);
     });
 
     it("from the first Turn's model once the user sends it", async () => {
@@ -8202,7 +8201,7 @@ describe('model and effort picker', () => {
 
       await sendMessage('Hello');
 
-      expect(names()).toEqual(['Deep', 'Fast', 'Effort']);
+      expect(names()).toEqual(['Deep', 'Fast']);
       expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
     });
 
@@ -8215,7 +8214,7 @@ describe('model and effort picker', () => {
       await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
 
       await userEvent.click(pill());
-      expect(names()).toEqual(['Deep', 'Fast', 'Plan', 'Effort']);
+      expect(names()).toEqual(['Deep', 'Fast', 'Plan']);
     });
   });
 
@@ -8223,7 +8222,7 @@ describe('model and effort picker', () => {
     service.failing.set('GET /agent/models', 503);
     await renderPage();
 
-    expect(pill()).toHaveTextContent(/^Models could not load: Failed to load the models: 503Medium$/);
+    expect(pill()).toHaveTextContent(/^Models could not load: Failed to load the models: 503$/);
     await sendMessage('What is 2+2? One word.');
     expect(copilot.runAgent).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
@@ -8232,7 +8231,6 @@ describe('model and effort picker', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     await userEvent.click(pill());
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
-      'Effort',
     ]);
   });
 
@@ -8247,7 +8245,7 @@ describe('model and effort picker', () => {
     await userEvent.click(within(openDropdown()).getByText('Fast'));
 
     expect(kit().properties).toEqual({ model: 'fast', effort: 'medium', sandbox: true });
-    expect(pill()).toHaveTextContent(/^FastMedium$/);
+    expect(pill()).toHaveTextContent(/^Fast$/);
     expect(checked()).toEqual(['Fast']);
   });
 
@@ -8255,9 +8253,8 @@ describe('model and effort picker', () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
-      'Effort',
       'Low',
       'Medium',
       'High',
@@ -8267,12 +8264,9 @@ describe('model and effort picker', () => {
     await userEvent.click(within(openDropdown()).getByText('High'));
 
     expect(kit().properties).toEqual({ model: 'deep', effort: 'high', sandbox: true });
-    expect(pill()).toHaveTextContent(/^DeepHigh$/);
-    expect(within(openDropdown()).getByText('Fast')).toBeInTheDocument();
-
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    expect(pill()).toHaveTextContent(/^Deep$/);
     expect(checked()).toEqual(['High']);
-    await userEvent.click(present(openDropdown().querySelector('.mep-back'), 'the back button'));
+    await userEvent.click(pill());
     expect(within(openDropdown()).getByText('Fast')).toBeInTheDocument();
   });
 
@@ -8280,8 +8274,8 @@ describe('model and effort picker', () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
-    await userEvent.click(present(openDropdown().querySelector('.mep-separator'), 'the separator'));
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
+    await userEvent.click(within(openDropdown()).getByText('Medium'));
     expect(dropdown()).not.toBeNull();
     await userEvent.click(present(document.querySelector('.sidebar-recents'), 'the recents'));
     expect(dropdown()).toBeNull();
@@ -8292,7 +8286,7 @@ describe('model and effort picker', () => {
     expect(dropdown()).toBeNull();
   });
 
-  it('closes on Escape from either panel, returning focus to its trigger', async () => {
+  it('closes either menu on Escape and returns focus to its trigger', async () => {
     await renderPage();
 
     await userEvent.click(pill());
@@ -8302,18 +8296,17 @@ describe('model and effort picker', () => {
     expect(pill()).toHaveFocus();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
     await userEvent.keyboard('{Escape}');
     expect(dropdown()).toBeNull();
-    expect(pill()).toHaveFocus();
+    expect(screen.getByRole('button', { name: /^Reasoning / })).toHaveFocus();
   });
 
-  it('reopens on the main panel after closing from the effort panel', async () => {
+  it('opens model choices independently after closing reasoning', async () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
-    await userEvent.click(pill());
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
     await userEvent.click(pill());
 
     expect(within(openDropdown()).getByText('Fast')).toBeInTheDocument();
@@ -8339,7 +8332,7 @@ describe('model and effort picker', () => {
         await userEvent.click(within(openDropdown()).getByText(picked));
         await userEvent.keyboard('{Escape}');
       }
-      expect(pill()).toHaveTextContent(`${picked}Medium`);
+      expect(pill()).toHaveTextContent(picked);
 
       service.models = [plan, ...service.models];
       await switchAccount(view, 'acct-linked');
@@ -8350,8 +8343,7 @@ describe('model and effort picker', () => {
         'Plan',
         'Deep',
         'Fast',
-        'Effort',
-      ]);
+        ]);
     });
 
     it("starts from that account's first model when it does not offer the chosen one", async () => {
@@ -8363,7 +8355,7 @@ describe('model and effort picker', () => {
       await switchAccount(view, 'acct-linked');
 
       expect(kit().properties).toEqual({ model: 'plan', effort: 'medium', sandbox: true });
-      expect(pill()).toHaveTextContent(/^PlanMedium$/);
+      expect(pill()).toHaveTextContent(/^Plan$/);
     });
 
     it('uses a later account default after the chosen model was replaced by an implicit fallback', async () => {
@@ -8518,7 +8510,7 @@ describe('model and effort picker', () => {
       service.models = [plan];
       await switchAccount(view, 'acct-linked');
 
-      expect(pill()).toHaveTextContent(/^Loading models…Medium$/);
+      expect(pill()).toHaveTextContent(/^Loading models…$/);
       const sideChatsBefore = sideChatLoads();
       await sendMessage('What is 2+2? One word.');
       expect(copilot.runAgent).not.toHaveBeenCalled();
@@ -8555,7 +8547,7 @@ describe('the model and effort the user last picked', () => {
       await renderPage(auth({ accountId: 'acct-first' }));
       releaseModels();
       await settle();
-      expect(pill()).toHaveTextContent(/^DeepMedium$/);
+      expect(pill()).toHaveTextContent(/^Deep$/);
       cleanup();
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
         if (url === 'http://chat.test/agent/models') await new Promise(() => {});
@@ -8564,7 +8556,7 @@ describe('the model and effort the user last picked', () => {
 
       await renderPage(auth({ accountId: 'acct-first' }));
 
-      expect(pill()).toHaveTextContent(/^DeepMedium$/);
+      expect(pill()).toHaveTextContent(/^Deep$/);
     });
 
     it('shows no older model after the user picks another and the page leaves the account and comes back', async () => {
@@ -8594,7 +8586,7 @@ describe('the model and effort the user last picked', () => {
 
       await renderPage(auth({ accountId: 'acct-first' }));
 
-      expect(pill()).toHaveTextContent(/^Loading models…Medium$/);
+      expect(pill()).toHaveTextContent(/^Loading models…$/);
     });
 
     it('shows the last model before the session says whose it is', async () => {
@@ -8604,14 +8596,14 @@ describe('the model and effort the user last picked', () => {
 
       await renderPage(auth({ sessionStatus: 'loading' }));
 
-      expect(pill()).toHaveTextContent(/^FastMedium$/);
+      expect(pill()).toHaveTextContent(/^Fast$/);
     });
   });
   const dropdown = () => present(document.querySelector<HTMLElement>('.mep-dropdown'), 'the picker dropdown');
   async function pick(model: string, effort: string) {
     await userEvent.click(pill());
     await userEvent.click(within(dropdown()).getByText(model));
-    await userEvent.click(within(dropdown()).getByText('Effort'));
+    await userEvent.click(screen.getByRole('button', { name: /^Reasoning / }));
     await userEvent.click(within(dropdown()).getByText(effort));
   }
 
@@ -8622,7 +8614,7 @@ describe('the model and effort the user last picked', () => {
 
     await renderPage();
 
-    expect(pill()).toHaveTextContent(/^FastHigh$/);
+    expect(pill()).toHaveTextContent(/^Fast$/);
     expect(kit().properties).toEqual({ model: 'fast', effort: 'high', sandbox: true });
   });
 
@@ -9443,7 +9435,7 @@ describe('an offline first Turn refused before dispatch', () => {
     expect(copilot.runAgent).not.toHaveBeenCalled();
     expect(agent().messages).toEqual([]);
     await openModels();
-    expect(modelNames()).toEqual(['Deep', 'Astra', 'Effort']);
+    expect(modelNames()).toEqual(['Deep', 'Astra']);
     expect(welcome()).not.toBeNull();
     expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
@@ -9454,7 +9446,7 @@ describe('an offline first Turn refused before dispatch', () => {
     await sendMessage('Create one reminder');
     expect(copilot.runAgent).toHaveBeenCalledOnce();
     await openModels();
-    expect(modelNames()).toEqual(['Deep', 'Effort']);
+    expect(modelNames()).toEqual(['Deep']);
     expect(welcome()).toBeNull();
   });
 
@@ -9463,7 +9455,7 @@ describe('an offline first Turn refused before dispatch', () => {
     fireEvent.keyDown(present(document.querySelector('.chat-wrapper'), 'chat wrapper'), { key: 'Enter' });
     expect(copilot.runAgent).not.toHaveBeenCalled();
     await openModels();
-    expect(modelNames()).toEqual(['Deep', 'Astra', 'Effort']);
+    expect(modelNames()).toEqual(['Deep', 'Astra']);
     expect(welcome()).not.toBeNull();
     expect(copilot.openingTurn).not.toHaveBeenCalled();
   });
@@ -9482,7 +9474,7 @@ describe('an offline first Turn refused before dispatch', () => {
     expect(submittedProperties).toEqual([{ model: 'astra', effort: 'medium', sandbox: true }]);
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     await openModels();
-    expect(modelNames()).toEqual(['Astra', 'Effort']);
+    expect(modelNames()).toEqual(['Astra']);
   });
 
   it('locks the provider only after the refused Turn succeeds on Retry', async () => {
@@ -9496,7 +9488,7 @@ describe('an offline first Turn refused before dispatch', () => {
     expect(copilot.runAgent).toHaveBeenCalledOnce();
     expect(agent().messages).toEqual([expect.objectContaining({ role: 'user', content: 'Create one reminder' })]);
     await openModels();
-    expect(modelNames()).toEqual(['Deep', 'Effort']);
+    expect(modelNames()).toEqual(['Deep']);
     expect(screen.queryByRole('alert')).toBeNull();
     expect(welcome()).toBeNull();
   });
@@ -9978,10 +9970,10 @@ describe('opening admission navigation regressions', () => {
     copilot.openingTurn.mockImplementation(() => new Promise<void>((resolve) => { finishOpening = resolve; }));
     await renderPage();
     await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
-    const otherProvider = screen.queryByRole('button', { name: 'Astra' });
+    const otherProvider = screen.queryByRole('menuitemradio', { name: 'Astra' });
     if (otherProvider !== null) await userEvent.click(otherProvider);
     expect(kit().properties.model).toBe('deep');
-    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
+    expect(screen.queryByRole('menuitemradio', { name: 'Astra' })).toBeNull();
     await userEvent.keyboard('{Escape}');
     await act(async () => {
       agent().addMessage({ id: 'opening-reply', role: 'assistant', content: 'Hi Ada' });
@@ -9991,8 +9983,8 @@ describe('opening admission navigation regressions', () => {
     expect(kit().properties.model).toBe('deep');
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
-    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Fast' })).toBeVisible();
+    expect(screen.queryByRole('menuitemradio', { name: 'Astra' })).toBeNull();
+    expect(screen.getByRole('menuitemradio', { name: 'Fast' })).toBeVisible();
   });
 });
 

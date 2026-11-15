@@ -548,9 +548,12 @@
 }
 
 
-/* ── Model + Effort picker (Claude-style) ── */
+
 .mep {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .mep-pill {
@@ -653,30 +656,12 @@
   margin-top: 2px;
 }
 
-.mep-option-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
-}
-
 .mep-check {
+  display: flex;
   flex-shrink: 0;
   color: var(--color-blue);
 }
 
-.mep-back {
-  gap: 10px;
-  justify-content: flex-start;
-  color: var(--color-text-muted);
-}
-
-.mep-separator {
-  height: 1px;
-  background: var(--color-line);
-  margin: 6px 16px;
-}
 
 /* Tailwind's theme, for its classes and copied-in shadcn components, read from our tokens: shadcn's color names (mapped
    once, near the top), the type sizes and weights, and its default transition and spin (streamdown's toolbar and
@@ -727,4 +712,8 @@
 .load-state {
   width: 100%;
   height: 100%;
+}
+
+.mep-option[data-highlighted] {
+  background: var(--color-fill);
 }

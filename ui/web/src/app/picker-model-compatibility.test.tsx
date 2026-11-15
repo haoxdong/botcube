@@ -1,7 +1,7 @@
 import { cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { ModelEffortPicker } from "./model-effort-picker";
+import { ModelSelector } from "./model-selector";
 import { useModelSelection } from "./model-selection";
 import { modelChoices } from "./scheduled-task-draft";
 
@@ -15,12 +15,12 @@ const models = [
 
 it("keeps an older selected chat model while hiding it from choices", async () => {
   const onModelChange = vi.fn();
-  render(<ModelEffortPicker models={{ loaded: true, accountId: "account", models }} model={models[0]?.key} effort="medium" loadingLabel={undefined} onModelChange={onModelChange} onEffortChange={vi.fn()} />);
+  render(<ModelSelector models={{ loaded: true, accountId: "account", models }} model={models[0]?.key} effort="medium" loadingLabel={undefined} onModelChange={onModelChange} onEffortChange={vi.fn()} />);
   await userEvent.click(screen.getByRole("button", { name: "Model GPT-6-Luna, reasoning Medium" }));
-  expect(screen.queryByRole("button", { name: "GPT-6-Luna" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "GPT-6-Sol" })).toBeNull();
+  expect(screen.queryByRole("menuitemradio", { name: "GPT-6-Luna" })).toBeNull();
+  expect(screen.queryByRole("menuitemradio", { name: "GPT-6-Sol" })).toBeNull();
   expect(onModelChange).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "GPT-6.1-Sol" }));
+  await userEvent.click(screen.getByRole("menuitemradio", { name: "GPT-6.1-Sol" }));
   expect(onModelChange).toHaveBeenCalledWith("openai-plan:gpt-6.1-sol");
 });
 
