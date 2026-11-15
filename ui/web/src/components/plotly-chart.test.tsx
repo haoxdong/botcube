@@ -1,11 +1,12 @@
-import { render, waitFor } from '@testing-library/react';
+import assert from 'node:assert/strict';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PlotlyChart } from './plotly-chart';
 
 // plotly.js's prebuilt bundle, which happy-dom cannot draw with: some of its trace types, drawing as `react` settles.
 const plotly = vi.hoisted(() => ({
   react: vi.fn(async () => undefined),
-  purge: vi.fn(),
+  purge: vi.fn<(element: HTMLElement) => void>(),
   Plots: { resize: vi.fn(async () => undefined) },
   PlotSchema: { get: () => ({ traces: { scatter: {}, candlestick: {}, sankey: {}, heatmap: {} } }) },
 }));
@@ -73,4 +74,50 @@ it('sets the title and its source above the chart as text, and leaves plotly no 
   expect(figure.querySelector('.plotly-chart-subtitle')).toHaveTextContent('Source: FRED');
   await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
   expect((plotly.react.mock.calls[0] as unknown[])[2]).not.toHaveProperty('title');
+});
+
+it('lets a chart finish its active drag before purging it on unmount', async () => {
+  plotly.purge.mockClear();
+  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}]}' title="Line" />);
+  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
+  const chart = view.getByRole('figure').querySelector('.plotly-chart');
+  assert.ok(chart);
+  fireEvent.mouseDown(chart);
+  view.unmount();
+  expect(plotly.purge).not.toHaveBeenCalled();
+  fireEvent.mouseMove(document);
+  fireEvent.mouseUp(document);
+  expect(plotly.purge).not.toHaveBeenCalled();
+  await waitFor(() => expect(plotly.purge).toHaveBeenCalledWith(chart));
+});
+
+it('keeps a replacement chart separate from the chart finishing a touch drag', async () => {
+  plotly.purge.mockClear();
+  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}]}' title="Line" />);
+  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
+  const oldChart = view.getByRole('figure').querySelector('.plotly-chart');
+  assert.ok(oldChart);
+  fireEvent.touchStart(oldChart);
+  view.rerender(<PlotlyChart text='{"data":[{"y":[3,4]}]}' title="Line" />);
+  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(2));
+  const replacement = view.getByRole('figure').querySelector('.plotly-chart');
+  expect(replacement).not.toBe(oldChart);
+  expect(plotly.purge).not.toHaveBeenCalled();
+  fireEvent.touchEnd(document);
+  await waitFor(() => expect(plotly.purge).toHaveBeenCalledWith(oldChart));
+  expect(plotly.purge).toHaveBeenCalledTimes(1);
+  expect(plotly.purge.mock.calls[0]?.[0]).toBe(oldChart);
+});
+
+it('purges a draw that settles after its chart unmounts', async () => {
+  const pending = Promise.withResolvers<undefined>();
+  plotly.react.mockImplementationOnce(() => pending.promise);
+  plotly.purge.mockClear();
+  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}]}' title="Line" />);
+  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
+  const chart = view.getByRole('figure').querySelector('.plotly-chart');
+  view.unmount();
+  expect(plotly.purge).not.toHaveBeenCalled();
+  pending.resolve(undefined);
+  await waitFor(() => expect(plotly.purge.mock.calls[0]?.[0]).toBe(chart));
 });

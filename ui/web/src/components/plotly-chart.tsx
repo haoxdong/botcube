@@ -45,6 +45,32 @@ async function draw(element: HTMLElement, figure: Figure): Promise<Plotly> {
   return library;
 }
 
+function afterChartDrag(element: HTMLElement, purge: () => void): () => void {
+  let state: 'idle' | 'dragging' | 'retiring' | 'retired' = 'idle';
+  const listeners = new AbortController();
+  const retire = () => {
+    if (state === 'retired') return;
+    state = 'retired';
+    listeners.abort();
+    purge();
+  };
+  const start = () => { state = 'dragging'; };
+  const end = () => {
+    // Plotly's document release handler must finish before purge deletes its layout.
+    if (state === 'retiring') setTimeout(retire, 0);
+    else if (state !== 'retired') state = 'idle';
+  };
+  const options = { capture: true, signal: listeners.signal };
+  element.addEventListener('mousedown', start, options);
+  element.addEventListener('touchstart', start, options);
+  document.addEventListener('mouseup', end, options);
+  document.addEventListener('touchend', end, options);
+  return () => {
+    if (state === 'dragging') state = 'retiring';
+    else if (state === 'idle') retire();
+  };
+}
+
 /**
  * A live Plotly chart from a `.plotly.json` file's text: it hovers, zooms and pans in place, across its box's
  * width, under its title and subtitle as the page's own text, with the notes the agent put under the plot as a
@@ -64,10 +90,14 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
   }, [text]);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
-    const element = box.current;
-    if (element === null) return;
+    const host = box.current;
+    if (host === null) return;
+    const element = document.createElement('div');
+    element.className = 'plotly-chart';
+    host.append(element);
     const gone = new AbortController();
     let drawn: Plotly | undefined;
+    const dispose = afterChartDrag(element, () => drawn?.purge(element));
     // plotly's `responsive` follows only the window; the box also changes width as the reply lays out, so the chart
     // redraws at the box's width whenever it does, and never runs past the bubble. plotly rejects a resize of a box
     // that is not displayed (display none, or none at all once detached), so a hidden chart waits for its next resize.
@@ -76,17 +106,17 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
       if (drawn !== undefined && shown) void drawn.Plots.resize(element);
     });
     setFailure(null);
-    void (async () => {
+    const drawing = (async () => {
       drawn = await draw(element, parseFigure(text));
-      if (gone.signal.aborted) drawn.purge(element);
-      else resized.observe(element);
+      if (!gone.signal.aborted) resized.observe(element);
     })().catch((cause: unknown) => {
       if (!gone.signal.aborted) setFailure(cause instanceof Error ? cause.message : String(cause));
     });
     return () => {
       gone.abort();
       resized.disconnect();
-      drawn?.purge(element);
+      element.remove();
+      void drawing.then(dispose);
     };
   }, [text]);
   if (failure !== null)
@@ -100,7 +130,7 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
     <div className="plotly-chart-frame" role="figure" aria-label={title}>
       <p className="plotly-chart-title">{heading.title}</p>
       <p className="plotly-chart-subtitle">{heading.subtitle}</p>
-      <div ref={box} className="plotly-chart" />
+      <div ref={box} style={{ display: 'contents' }} />
       {notes.map((note, index) => <p key={index} className="plotly-chart-note">{note}</p>)}
     </div>
   );
