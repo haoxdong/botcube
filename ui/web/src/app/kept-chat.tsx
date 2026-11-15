@@ -131,8 +131,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
   // Stryker disable next-line ArrayDeclaration: any constant dependency list measures from mount on
   []);
 
-  // As the chat surface's scroll view at either width (use-stick-to-bottom's end): 1px short of its latest message,
-  // and kept there, so the latest message is where the chat surface shows it.
+  // use-stick-to-bottom defers resize following by a frame; saved history must stay at its end on every paint.
   useLayoutEffect(() => {
     const element = scroller.current;
     // Stryker disable next-line OptionalChaining: the ref holds the scroller once mounted
