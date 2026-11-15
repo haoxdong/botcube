@@ -158,30 +158,14 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
-      "Action": ["bedrock-agentcore:GetAgentRuntime", "bedrock-agentcore:GetAgentRuntimeEndpoint", "bedrock-agentcore:UpdateAgentRuntime"],
+      "Action": ["bedrock-agentcore:GetAgentRuntimeEndpoint", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:StopRuntimeSession"],
       "Resource": "arn:aws:bedrock-agentcore:$AWS_REGION:$AWS_ACCOUNT_ID:runtime/${STACK_FAMILY}_runtime-*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": "bedrock-agentcore:ListAgentRuntimes",
-      "Resource": "*"
     },
     {
       "Effect": "Allow",
       "Action": "iam:PassRole",
       "Resource": "arn:aws:iam::$AWS_ACCOUNT_ID:role/$RUNTIME_ROLE",
       "Condition": {"StringEquals": {"iam:PassedToService": "bedrock-agentcore.amazonaws.com"}}
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ecs:DescribeServices",
-        "ecs:DescribeTasks"
-      ],
-      "Resource": [
-        "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/*",
-        "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:task/$CLUSTER/*"
-      ]
     },
     {
       "Effect": "Allow",
@@ -207,16 +191,6 @@ cat > "$ROLE_POLICY" <<EOF
         "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/chat-service-preview",
         "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/$CLUSTER/credential-service"
       ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": "ecs:ListTasks",
-      "Resource": "*",
-      "Condition": {
-        "ArnEquals": {
-          "ecs:cluster": "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:cluster/$CLUSTER"
-        }
-      }
     },
     {
       "Effect": "Allow",
@@ -300,6 +274,24 @@ cat > "$ROLE_POLICY" <<EOF
       "Resource": "arn:aws:dynamodb:$AWS_REGION:$AWS_ACCOUNT_ID:table/chat",
       "Condition": {
         "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["ACCOUNT#acct_*", "TOKEN#test_*", "SESSIONS#acct_*"]},
+        "Null": {"dynamodb:LeadingKeys": "false"}
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+      "Resource": "arn:aws:dynamodb:$AWS_REGION:$AWS_ACCOUNT_ID:table/chat",
+      "Condition": {
+        "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["PAID_EXECUTION#origin-smoke"]},
+        "Null": {"dynamodb:LeadingKeys": "false"}
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "dynamodb:UpdateItem",
+      "Resource": "arn:aws:dynamodb:$AWS_REGION:$AWS_ACCOUNT_ID:table/chat",
+      "Condition": {
+        "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["SESSIONS#acct_*"]},
         "Null": {"dynamodb:LeadingKeys": "false"}
       }
     },
