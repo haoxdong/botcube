@@ -26,7 +26,8 @@
 
 .artifact-card {
   width: 280px;
-  margin: 0 0 16px;
+  max-width: 100%;
+  margin: 0;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -34,15 +35,6 @@
 
 .artifact-card[data-open] {
   border-color: var(--color-blue);
-}
-
-.artifact-card .file-icon svg {
-  color: var(--color-text-muted);
-}
-
-.artifact-card-description {
-  color: var(--color-text-muted);
-  font-size: var(--font-small);
 }
 
 .artifact-status,

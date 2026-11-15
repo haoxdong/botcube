@@ -2,6 +2,8 @@
 @import '@radix-ui/colors/blue-dark.css';
 @import '@radix-ui/colors/red-dark.css';
 @import '@radix-ui/colors/green-dark.css';
+@import '@radix-ui/colors/amber-dark.css';
+@import '@radix-ui/colors/violet-dark.css';
 
 .artifact-library-fixture {
   height: 100vh;

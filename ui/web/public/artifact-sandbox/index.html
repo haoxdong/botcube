@@ -19,12 +19,16 @@
   // A Source not yet published previews in a frame inside this one that runs no scripts: only a published version,
   // whole and passed by its publish, runs them. The frame keeps this page's policy.
   let preview = null;
-  const write = (html) => {
+  const write = (html, position = { left: 0, top: 0 }) => {
     // Writing the page keeps this document, and with it the policy above; it drops this listener, so it is added again.
     document.open();
     document.write(html);
     document.close();
     addEventListener('message', receive);
+    const follow = () => parent.postMessage({ type: 'artifact-scroll', left: scrollX, top: scrollY }, location.origin);
+    addEventListener('scroll', follow);
+    addEventListener('load', () => { scrollTo(position); follow(); }, { once: true });
+    scrollTo(position);
   };
   const receive = (event) => {
     if (event.source !== parent || event.origin !== location.origin) return;
@@ -38,7 +42,7 @@
     }
     if (event.data?.type === 'artifact-page') {
       preview = null;
-      write(event.data.html);
+      write(event.data.html, event.data.position);
     }
   };
   addEventListener('message', receive);

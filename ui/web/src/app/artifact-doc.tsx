@@ -14,6 +14,7 @@ import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type PreviewProps, type ViewerProps,
   type Writes,
 } from "./artifact-viewer";
+import { useArtifactScroll } from "./artifact-scroll";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 
@@ -89,6 +90,7 @@ function useMarkdown(path: string, read: (path: string) => Promise<string>) {
 }
 
 export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps) {
+  const scroll = useArtifactScroll();
   const [edit, setEdit] = useState<{ version: ArtifactVersion; markdown: string } | null>(null);
   const [opened, setOpened] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -134,15 +136,15 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
       <Presence>{failures.map((failure) => (
         <motionElement.p key={failure} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{failure}</motionElement.p>
       ))}</Presence>
-      <DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
-        onEdit={(markdown) => setEdit({ version: doc, markdown })} />
+      <div className="artifact-doc-page" {...scroll}><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
+        onEdit={(markdown) => setEdit({ version: doc, markdown })} /></div>
     </>
   );
 }
 
 function DocEditor({ title, markdown, onEdit }: { title: string; markdown: string; onEdit: (markdown: string) => void }) {
   const editor = useDoc(title, markdown, true, onEdit);
-  return <div className="artifact-doc-page"><EditorContent editor={editor} /></div>;
+  return <EditorContent editor={editor} />;
 }
 
 function htmlOf(markdown: string): string {

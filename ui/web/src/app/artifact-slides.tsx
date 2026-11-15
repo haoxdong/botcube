@@ -7,31 +7,8 @@ import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 import { sanitizeSlide, type CleanSlide, type Embed } from "./slide-sanitize";
 
-/**
- * A Slides Source is a deck folder: `<folder>/project/deck.json`, the index, and one `<folder>/project/slides/<id>.html`
- * per slide. The folder is the Artifact's identity.
- */
-const DECK_FILE = /^(.+)\/project\/(?:deck\.json|slides\/[A-Za-z0-9_-]{1,64}\.html)$/;
-export const deckOf = (path: string): string | null => DECK_FILE.exec(path)?.[1] ?? null;
-/** The Source a written file belongs to: a slide or deck.json is its deck's folder, a page is itself. */
-export const sourceOf = (path: string) => deckOf(path) ?? path;
-
 /** A deck's file as the agent last wrote it, partly while its write streams. */
 export type DeckFile = { path: string; text: string; complete: boolean };
-/** A file as the agent last wrote it, `complete` once it is; or why the panel couldn't read it after an edit. */
-type Written = { path: string } & ({ text: string; complete: boolean } | { error: string });
-
-/** The deck's files the agent wrote in this chat, `writing` until each is whole; null when `folder` is no deck's. */
-export function deckFiles(folder: string, sources: Iterable<Written>): { files: DeckFile[]; errors: string[]; writing: boolean } | null {
-  const written = [...sources].filter(({ path }) => deckOf(path) === folder);
-  if (written.length === 0) return null;
-  const files = written.flatMap((source) => "text" in source ? [{ path: source.path, text: source.text, complete: source.complete }] : []);
-  return {
-    files,
-    errors: written.flatMap((source) => "error" in source ? [source.error] : []),
-    writing: files.some(({ complete }) => !complete),
-  };
-}
 /** A slide as its sandbox page shows it: null until its file is written; its live embeds only in a published version. */
 type ShownSlide = { id: string; html: string | null; embeds: Embed[] };
 
@@ -57,7 +34,7 @@ export function orderOf(text: string): string[] | null {
  * the deck on screen. Below it, what the sanitizer stripped from the slides whose files are whole. A published version
  * `runs` its slides' `<x-embed>` pages; a Source only previews, so its embeds stay empty.
  */
-export function DeckFrame({ title, folder, files, errors = [], runs, frame }: { title: string; folder: string; files: readonly DeckFile[]; errors?: readonly string[]; runs: boolean; frame: RefObject<HTMLIFrameElement | null> }) {
+function DeckFrame({ title, folder, files, errors = [], runs, frame }: { title: string; folder: string; files: readonly DeckFile[]; errors?: readonly string[]; runs: boolean; frame: RefObject<HTMLIFrameElement | null> }) {
   const order = useRef<string[] | null>(null);
   const cleaned = useRef(new Map<string, CleanSlide>());
   const deck = useMemo(() => {

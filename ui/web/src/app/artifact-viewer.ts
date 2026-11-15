@@ -91,6 +91,8 @@ export const PDF = pdfOf(({ frame }) => frame.current?.contentWindow?.postMessag
 export type ArtifactType = {
   Icon: LucideIcon;
   label: string;
+  tint: string;
+  ink: string;
   /** Its Viewer, which edits it in place when the type is edited. */
   Viewer: ComponentType<ViewerProps>;
   exports: readonly Export[];

@@ -2,7 +2,7 @@
 // @vitest-environment jsdom
 import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -114,7 +114,7 @@ async function openDoc() {
   );
   const { rerender } = render(chat(first));
   const card = await screen.findByRole('button', { name: /Q4 plan/ });
-  expect(card).toHaveTextContent('Doc Artifact · version 1');
+  expect(card).toHaveTextContent('Q4 planDoc');
   await userEvent.click(card);
   const panel = screen.getByRole('region', { name: 'Q4 plan' });
   const doc = await within(panel).findByRole('textbox', { name: 'Q4 plan' });
@@ -122,6 +122,20 @@ async function openDoc() {
   const agentPublishes = (artifact: object) => rerender(chat([...first, ...published('c2', artifact)]));
   return { panel, doc, agentPublishes };
 }
+
+it('keeps the reading position when the open Doc receives a new version', async () => {
+  const { stored } = docInFiles();
+  const { panel, doc, agentPublishes } = await openDoc();
+  const scroller = doc.closest('.artifact-doc-page');
+  if (!(scroller instanceof HTMLElement)) throw new Error('The Doc needs its scroll container');
+  scroller.scrollTop = 240;
+  fireEvent.scroll(scroller);
+  stored['artifacts/plans/q4.md.versions/2.md'] = PLAN.replace('Q4 plan', 'Updated plan');
+  agentPublishes({ ...PUBLISHED, version: 2, path: '/artifacts/plans/q4.md.versions/2.md' });
+  const heading = await within(panel).findByRole('heading', { name: 'Updated plan' });
+  expect(heading.closest('.artifact-doc-page')?.scrollTop).toBe(240);
+  expect(screen.getByRole('region', { name: 'Q4 plan' })).toBe(panel);
+});
 
 /** Puts the caret at the start of `node`'s text; a click would land on the resize handle jsdom lays over everything. */
 function caretAt(doc: HTMLElement, node: HTMLElement) {
@@ -177,7 +191,7 @@ describe('while the agent writes a Doc', () => {
     vi.useRealTimers();
   });
 
-  it('opens it beside the chat and fills it as the Markdown streams, then the card opens the published version', async () => {
+  it('keeps the panel closed while Markdown streams and publishes a clickable Doc card', async () => {
     const { events, written, sent, ends } = docTurn();
     phone(false);
     const encoder = new TextEncoder();
@@ -211,20 +225,12 @@ describe('while the agent writes a Doc', () => {
     });
 
     await until(sent('## Milestones') + 260);
-    expect(sent('## Milestones') + 260).toBeLessThan(sent('| Month'));
-    const panel = screen.getByRole('region', { name: 'q4.md' });
-    const doc = within(panel).getByRole('textbox', { name: 'q4.md' });
-    expect(within(panel).getByText('Doc · writing…')).toBeVisible();
-    expect(within(doc).getByRole('heading', { level: 1 })).toHaveTextContent('Q4 plan');
-    expect(within(doc).queryByRole('table')).toBeNull();
-    expect(doc).toHaveAttribute('contenteditable', 'false');
-
+    expect(screen.queryByRole('region')).toBeNull();
     await until(written + 300);
-    expect(within(panel).getByText('Doc')).toBeVisible();
-    expect(within(doc).getByRole('cell', { name: 'Launch' })).toBeVisible();
-
+    expect(screen.queryByRole('region')).toBeNull();
     await until(ends + 300);
-    expect(screen.getByRole('button', { name: /Q4 plan/ })).toHaveTextContent('Doc Artifact · version 1');
+    expect(screen.queryByRole('region')).toBeNull();
+    expect(screen.getByRole('button', { name: /Q4 plan/ })).toHaveTextContent('Q4 planDoc');
   });
 });
 

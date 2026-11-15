@@ -7,6 +7,7 @@ import type { Imported } from "botcube-artifact-check/record";
 import { m as motionElement } from "framer-motion";
 import { MailIcon, PaperclipIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useArtifactScroll } from "./artifact-scroll";
 import { recordOf } from "./artifact-newest";
 import {
   pdfOf, saveFile, storedVersion, type ArtifactEdit, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
@@ -107,6 +108,7 @@ function useDraft(path: string, read: ViewerProps["read"]): Loaded | null {
  * edit: a newer one arriving is announced, and the edits drop only on Save, Cancel or "Discard edits and open".
  */
 export function EditableEmail({ artifact: newest, read, save, shows }: ViewerProps) {
+  const scroll = useArtifactScroll();
   const [held, setHeld] = useState<ArtifactVersion | null>(null);
   const [edited, setEdited] = useState(false);
   const [opened, setOpened] = useState(0);
@@ -126,7 +128,7 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
         <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {shown.title}: {loaded.error}</motionElement.p>
       )}</Presence>
       <Presence>{loaded !== null && "draft" in loaded && (
-        <motionElement.div {...presenceMotion} key={`${loaded.path}#${opened}`} className="artifact-email">
+        <motionElement.div {...presenceMotion} key={`${loaded.path}#${opened}`} className="artifact-email" {...scroll}>
           <DraftForm version={shown} newest={newest} loaded={loaded.draft} close={close}
             edits={(now) => {
               setEdited(now);

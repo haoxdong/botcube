@@ -10,13 +10,9 @@ import { POWERPOINT } from "./slides-download";
 
 /** Each Artifact Type in the panel, with its Exports from ADR 0087's table. */
 export const TYPES = {
-  page: { Icon: AppWindowIcon, label: "Page", Viewer: VersionFrame, exports: [PDF], stored: "", writes: PAGE_WRITES },
-  slides: { Icon: PresentationIcon, label: "Slides", Viewer: EditableDeck, exports: [POWERPOINT, PDF], stored: "/project/deck.json", writes: null },
-  doc: { Icon: FileTextIcon, label: "Doc", Viewer: EditableDoc, exports: DOC_EXPORTS, stored: "", writes: DOC_WRITES },
-  sheet: { Icon: Table2Icon, label: "Sheet", Viewer: SheetVersion, exports: [EXCEL], stored: "", writes: null },
-  email: { Icon: MailIcon, label: "Email", Viewer: EditableEmail, exports: [EML], stored: "", writes: null },
+  page: { tint: "bg-(--violet-3)!", ink: "text-(--violet-11)!", Icon: AppWindowIcon, label: "Page", Viewer: VersionFrame, exports: [PDF], stored: "", writes: PAGE_WRITES },
+  slides: { tint: "bg-(--red-3)!", ink: "text-(--red-11)!", Icon: PresentationIcon, label: "Slides", Viewer: EditableDeck, exports: [POWERPOINT, PDF], stored: "/project/deck.json", writes: null },
+  doc: { tint: "bg-(--blue-3)!", ink: "text-(--blue-11)!", Icon: FileTextIcon, label: "Doc", Viewer: EditableDoc, exports: DOC_EXPORTS, stored: "", writes: DOC_WRITES },
+  sheet: { tint: "bg-(--green-3)!", ink: "text-(--green-11)!", Icon: Table2Icon, label: "Sheet", Viewer: SheetVersion, exports: [EXCEL], stored: "", writes: null },
+  email: { tint: "bg-(--amber-3)!", ink: "text-(--amber-11)!", Icon: MailIcon, label: "Email", Viewer: EditableEmail, exports: [EML], stored: "", writes: null },
 } satisfies Record<string, ArtifactType>;
-
-/** The type of a one-file Source the agent writes, if the panel previews it. */
-export const writtenType = (path: string): ArtifactType | undefined =>
-  Object.values<ArtifactType>(TYPES).find(({ writes }) => writes?.matches(path) ?? false);

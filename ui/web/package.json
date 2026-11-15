@@ -76,7 +76,6 @@
     "mimetext": "3.0.28",
     "next": "^16.4.3",
     "papaparse": "5.7.0",
-    "partial-json": "^0.1.7",
     "pdfjs-dist": "^6.4.299",
     "plotly.js-dist-min": "4.1.1",
     "pptxgenjs": "4.0.1",

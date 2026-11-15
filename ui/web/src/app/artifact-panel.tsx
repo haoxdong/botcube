@@ -8,7 +8,6 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
   type ReactNode, type SetStateAction,
 } from "react";
-import { Allow, parse as parsePartial } from "partial-json";
 import { usePanelRef } from "react-resizable-panels";
 import { z } from "zod";
 
@@ -18,16 +17,14 @@ import { agentFiles } from "./agent-files";
 import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
-import { deckFiles, deckOf, DeckFrame, sourceOf } from "./artifact-slides";
 import { ArtifactFace } from "./artifact-face";
 import { Published } from "./artifact-published";
 import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
-import { TYPES, writtenType } from "./artifact-types";
-import type { ArtifactEdit, ArtifactType, ViewerProps } from "./artifact-viewer";
+import { TYPES } from "./artifact-types";
+import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
 import { Layout } from "./collapse";
 import { Presence, presenceMotion } from "./collapse";
-import { reason } from "./composer-files";
 import { useIsPhone } from "./phone-query";
 
 /** The harness `Artifact` tool's arguments (botcube_harness_deepagents/artifact.py). */
@@ -39,32 +36,16 @@ const ArtifactCall = z.object({
   url: z.string().optional(),
 });
 
-/** deepagents' `write_file` and `edit_file` arguments, as far as the panel reads them. */
-const FileCall = z.object({ file_path: z.string().optional(), content: z.string().optional() });
-
-/** What deepagents' file tools answer when the file is written; anything else (an error, a stopped call) is not. */
-const WRITTEN = /^Updated file /;
-const EDITED = /^Successfully replaced /;
-
-/** A Source as the agent last wrote it, `complete` once its file is; or why the panel couldn't read it after an edit. */
-type Source = { path: string } & ({ text: string; complete: boolean } | { error: string });
-
 const OPEN_SIZE = "50%";
 
-/**
- * The Artifact the panel shows, by its id (its Source's Files path). The panel shows the newest version the chat has
- * seen published; one a write opened previews the Source instead until a version newer than `over` is published.
- */
-type Opened = { id: string; full: boolean; over?: number };
+type Opened = { id: string; full: boolean };
 type Open = Dispatch<SetStateAction<Opened | null>>;
-/** What the panel draws: an Artifact Version, which runs, or a Source the agent is writing, which previews. */
-type Shown = ({ artifact: Published } | { source: string }) & { full: boolean };
+type Shown = { artifact: Published; full: boolean };
 const Panel = createContext<{
   shown: Shown | null;
   open: Open;
   /** A published version, from a card or the agent's publish, so the panel and every card of its Artifact open the newest. */
   seen: (artifact: Published) => void;
-  sources: ReadonlyMap<string, Source>;
   /** Why Files couldn't give an opened Artifact's newest version, by its id. */
   failures: Readonly<Record<string, string | undefined>>;
 } | null>(null);
@@ -101,29 +82,14 @@ const publishes = (args: string) => (ArtifactCall.parse(JSON.parse(args)).action
 
 const typeOf = (type: Published["type"]) => TYPES[type ?? "page"];
 
-// A Source becomes an Artifact only on the publish that follows its write, and a preview runs no scripts.
-const previewed = (path: string) => deckOf(path) !== null || writtenType(path) !== undefined;
-
-/** A Source being written: a deck's by its files, a one-file Source by its path. */
-const sourceType = (path: string, sources: ReadonlyMap<string, Source>): ArtifactType =>
-  deckFiles(path, sources.values()) !== null ? TYPES.slides : writtenType(path) ?? TYPES.page;
-
 const kindOf = (artifact: Published) =>
   `${typeOf(artifact.type).label} · version ${artifact.version}${artifact.author === "user" ? " · saved by you" : ""}`;
 
-const titleOf = (shown: Shown) => "artifact" in shown ? shown.artifact.title : shown.source.slice(shown.source.lastIndexOf("/") + 1);
+const titleOf = (shown: Shown) => shown.artifact.title;
+const pathOf = (shown: Shown) => shown.artifact.id;
 
-/** A version's Artifact is its Source's path. */
-const pathOf = (shown: Shown) => "source" in shown ? shown.source : shown.artifact.id;
-
-const sourceIn = (shown: Shown, sources: ReadonlyMap<string, Source>) => "source" in shown ? sources.get(shown.source) : undefined;
-
-/** `newest` is the newest version of the opened Artifact the chat has seen published. */
 function shownOf(opened: Opened | null, newest: Published | undefined): Shown | null {
-  if (opened === null) return null;
-  const { id, full, over } = opened;
-  if (over !== undefined && (newest?.version ?? 0) <= over) return { source: id, full };
-  return newest === undefined ? null : { artifact: newest, full };
+  return opened === null || newest === undefined ? null : { artifact: newest, full: opened.full };
 }
 
 /** An Artifact's newest version in Files. */
@@ -145,7 +111,7 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
   const shown = useMemo(() => shownOf(opened, artifact), [opened, artifact]);
   const kept = useKept(shown);
   const phone = useIsPhone();
-  const sources = useAgentSources(agent, { shown, newest, open, seen, phone });
+  useAgentPublications(agent, seen);
   const failures = useNewestInFiles(opened?.id, artifact, newestOf, seen);
   useRenderTool({
     name: "Artifact",
@@ -163,7 +129,7 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
       );
     },
   }, []);
-  const panel = { shown, open, seen, sources, failures };
+  const panel = { shown, open, seen, failures };
   // A phone and a desktop lay the chat out differently, so turning across the breakpoint with an Artifact open
   // remounts the chat: rare, and the chat reloads its messages as it would on opening.
   if (phone) {
@@ -186,79 +152,26 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
   );
 }
 
-type Following = {
-  shown: Shown | null;
-  newest: Readonly<Record<string, Published>>;
-  open: Open;
-  seen: (artifact: Published) => void;
-  phone: boolean;
-};
-
-/**
- * The Sources the agent writes, from its runs' events as they stream; a reopened chat's finished writes are messages,
- * not events, so they change nothing. A write's first characters open its Source beside the chat on desktop when
- * nothing is open (on a phone it would cover the chat). A publish is `seen` as its Artifact's newest version, which
- * the panel then shows in place of its Source or an earlier version; nothing else replaces what is open.
- */
-function useAgentSources(agent: AbstractAgent, following: Following) {
-  const [sources, setSources] = useState<ReadonlyMap<string, Source>>(new Map());
-  const latest = useRef(following);
-  latest.current = following;
-  const { open, seen } = following;
+function useAgentPublications(agent: AbstractAgent, seen: (artifact: Published) => void) {
   useEffect(() => {
-    const calls = new Map<string, { name: string; args?: string; path?: string | undefined; content?: string | undefined; streamed?: true }>();
-    const keep = (source: Source) => setSources((current) => new Map(current).set(source.path, source));
-    // AG-UI fixes a run's subscribers when the run starts, so this one sees whole runs.
+    const calls = new Map<string, string>();
     return agent.subscribe({
       onToolCallStartEvent: ({ event }) => {
-        calls.set(event.toolCallId, { name: event.toolCallName });
+        if (event.toolCallName === "Artifact") calls.set(event.toolCallId, "");
       },
-      // AG-UI's `partialToolCallArgs` is never the parsed arguments: it is untruncate-json's repaired text, or {} where
-      // that package's CommonJS default export fails to load as ESM.
-      onToolCallArgsEvent: ({ event, toolCallBuffer }) => {
-        const call = calls.get(event.toolCallId);
-        const args = toolCallBuffer + event.delta;
-        if (call?.name === "Artifact") call.args = args;
-        if (call?.name !== "write_file" && call?.name !== "edit_file") return;
-        // A path counts once it is whole: "/q3.htm" is on its way to "/q3.html".
-        const { file_path: path } = FileCall.parse(parsePartial(args, Allow.OBJ));
-        const { content } = FileCall.parse(parsePartial(args));
-        Object.assign(call, { path, content });
-        if (call.name !== "write_file" || path === undefined || content === undefined || !previewed(path)) return;
-        keep({ path, text: content, complete: false });
-        const { phone, newest } = latest.current;
-        if (call.streamed === undefined && !phone) {
-          const id = sourceOf(path);
-          const over = newest[id]?.version ?? 0;
-          open((current) => current ?? { id, full: false, over });
-        }
-        call.streamed = true;
+      onToolCallArgsEvent: ({ event }) => {
+        const args = calls.get(event.toolCallId);
+        if (args !== undefined) calls.set(event.toolCallId, args + event.delta);
       },
       onToolCallResultEvent: ({ event }) => {
-        const call = calls.get(event.toolCallId);
+        const args = calls.get(event.toolCallId);
         calls.delete(event.toolCallId);
-        if (call === undefined) return;
-        const result = contentToText(event.content);
-        if (call.name === "Artifact") {
-          // A read or a list answers JSON too, but it publishes nothing.
-          const artifact = publishes(call.args ?? "{}") ? publishedOf(result) : null;
-          if (artifact !== null) seen(artifact);
-          return;
-        }
-        const { name, path, content } = call;
-        if (path === undefined || !previewed(path)) return;
-        if (name === "write_file" && content !== undefined && WRITTEN.test(result)) keep({ path, text: content, complete: true });
-        const shownNow = latest.current.shown;
-        if (name === "edit_file" && EDITED.test(result) && shownNow !== null && "source" in shownNow && shownNow.source === sourceOf(path)) {
-          readFile(path).then(
-            (text) => keep({ path, text, complete: true }),
-            (error: unknown) => keep({ path, error: `Couldn't show the edit to ${path}: ${reason(error)}` }),
-          );
-        }
+        if (args === undefined || !publishes(args || "{}")) return;
+        const artifact = publishedOf(contentToText(event.content));
+        if (artifact !== null) seen(artifact);
       },
     }).unsubscribe;
-  }, [agent, open, seen]);
-  return sources;
+  }, [agent, seen]);
 }
 
 function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | null; close: () => void; children: ReactNode; accountId: string }) {
@@ -308,7 +221,7 @@ function ArtifactCard({ artifact }: { artifact: Published }) {
   const { shown, open, seen } = usePanel();
   useEffect(() => seen(artifact), [seen, artifact]);
   return (
-    <button type="button" className="sent-file artifact-card" data-open={(shown !== null && "artifact" in shown && shown.artifact.id === artifact.id) || undefined}
+    <button type="button" className={`sent-file artifact-card ${typeOf(artifact.type).tint}`} data-open={(shown !== null && shown.artifact.id === artifact.id) || undefined}
       onClick={() => open({ id: artifact.id, full: false })}>
       <ArtifactFace artifact={artifact} />
     </button>
@@ -316,14 +229,13 @@ function ArtifactCard({ artifact }: { artifact: Published }) {
 }
 
 function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: ReactNode; controls?: ReactNode }) {
-  const { sources, failures } = usePanel();
-  const failure = "artifact" in shown ? failures[shown.artifact.id] : undefined;
+  const { failures } = usePanel();
+  const failure = failures[shown.artifact.id];
   const { full } = shown;
   const frame = useRef<HTMLIFrameElement>(null);
-  const source = sourceIn(shown, sources);
   const title = titleOf(shown);
-  const type = "artifact" in shown ? typeOf(shown.artifact.type) : sourceType(shown.source, sources);
-  const exports = useExports(type.exports, { title, frame, read: readFile, readBytes, newest: "artifact" in shown ? shown.artifact : null });
+  const type = typeOf(shown.artifact.type);
+  const exports = useExports(type.exports, { title, frame, read: readFile, readBytes, newest: shown.artifact });
   return (
     <section aria-label={title} className="artifact-panel" data-full={full || undefined}>
       <header className="artifact-panel-head">
@@ -335,7 +247,7 @@ function ArtifactView({ shown, heading, controls }: { shown: Shown; heading?: Re
       </header>
       <Refusal message={failure ?? null} />
       {exports.failure}
-      <ShownFrame shown={shown} source={source} title={title} frame={frame} shows={exports.shows} />
+      <ShownFrame shown={shown} frame={frame} shows={exports.shows} />
     </section>
   );
 }
@@ -349,15 +261,8 @@ function DesktopHeading({ shown }: { shown: Shown }) {
   );
 }
 
-/** What the panel shows: a version by its type, or a Source by its type and whether the agent is still writing it. */
 function Kind({ shown }: { shown: Shown }) {
-  const { sources } = usePanel();
-  const source = sourceIn(shown, sources);
-  if ("artifact" in shown) return kindOf(shown.artifact);
-  const deck = deckFiles(shown.source, sources.values());
-  const { label } = sourceType(shown.source, sources);
-  const writing = deck !== null ? deck.writing : source !== undefined && "text" in source && !source.complete;
-  return writing ? `${label} · writing…` : label;
+  return kindOf(shown.artifact);
 }
 
 function DesktopControls({ shown, position, switchSide }: { shown: Shown; position: "left" | "right"; switchSide: () => void }) {
@@ -378,25 +283,9 @@ function DesktopControls({ shown, position, switchSide }: { shown: Shown; positi
   );
 }
 
-function ShownFrame({ shown, source, title, frame, shows }: { shown: Shown; source: Source | undefined; title: string } & Pick<ViewerProps, "frame" | "shows">) {
-  const { sources, seen } = usePanel();
+function ShownFrame({ shown, frame, shows }: { shown: Shown } & Pick<ViewerProps, "frame" | "shows">) {
+  const { seen } = usePanel();
   const save = useCallback(async (edit: ArtifactEdit) => seen(Published.parse(await agentFiles.saveArtifact(edit))), [seen]);
-  const deck = useMemo(() => "source" in shown ? deckFiles(shown.source, sources.values()) : null, [shown, sources]);
-  if ("artifact" in shown) {
-    // Keyed by the Artifact, so a Viewer editing a version stays mounted when a newer one arrives.
-    const { Viewer } = typeOf(shown.artifact.type);
-    return <Viewer key={shown.artifact.id} artifact={shown.artifact} read={readFile} readBytes={readBytes} save={save} frame={frame} shows={shows} />;
-  }
-  if (deck !== null) {
-    return <DeckFrame key={shown.source} title={title} folder={shown.source} files={deck.files} errors={deck.errors} runs={false} frame={frame} />;
-  }
-  const failure = source !== undefined && "error" in source ? source.error : null;
-  const { text, complete } = source !== undefined && "text" in source ? source : { text: null, complete: false };
-  const { Preview } = writtenType(shown.source)?.writes ?? TYPES.page.writes;
-  return (
-    <>
-      <Refusal message={failure} />
-      <Preview key={shown.source} title={title} text={text} complete={complete} frame={frame} />
-    </>
-  );
+  const { Viewer } = typeOf(shown.artifact.type);
+  return <Viewer key={shown.artifact.id} artifact={shown.artifact} read={readFile} readBytes={readBytes} save={save} frame={frame} shows={shows} />;
 }

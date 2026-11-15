@@ -598,9 +598,6 @@ importers:
       papaparse:
         specifier: 5.7.0
         version: 5.7.0
-      partial-json:
-        specifier: ^0.1.7
-        version: 0.1.7
       pdfjs-dist:
         specifier: ^6.4.299
         version: 6.4.299

@@ -37,6 +37,7 @@ import { useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
 import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
 import { webUiPlugin } from "@cartridge-ui";
+import { ArtifactMessage } from "./artifact-message";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/ui/button";
 import { cn, zoomOf } from "@/lib/utils";
@@ -317,12 +318,10 @@ function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>
   );
 }
 
-const MARKDOWN_RENDERER = ({ content }: { content: string }) => <MarkdownRenderer content={content} />;
-
 function AssistantMessage(props: CopilotChatAssistantMessageProps) {
   const run = scheduledRunOf(props.message);
   if (run !== null) return <div data-message-id={props.message.id}><ScheduledRunCard run={run}><MarkdownRenderer content={run.text} /></ScheduledRunCard></div>;
-  return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN_RENDERER} />;
+  return <ArtifactMessage {...props} />;
 }
 
 /** The slot types its component with CopilotKit's sub-components, which it never reads, only renders. */

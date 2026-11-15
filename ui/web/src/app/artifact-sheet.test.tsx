@@ -17,7 +17,7 @@ vi.mock('./sheet-grid', () => ({
     grid.cells = structuredClone(data);
     grid.changed = changed;
     rendered();
-    return { cells: () => grid.cells, dispose: () => {} };
+    return { cells: () => grid.cells, position: () => ({ sheet: "Budget", sheetViewStartRow: 0, sheetViewStartColumn: 0, offsetX: 0, offsetY: 0 }), dispose: () => {} };
   },
 }));
 

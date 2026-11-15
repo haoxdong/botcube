@@ -95,7 +95,6 @@ function sandboxReady(frame: HTMLIFrameElement) {
 }
 
 type Shown = { id: string; html: string | null; embeds: { style: string; html: string }[] };
-type Sent = { at: number; slides: Shown[] };
 
 beforeEach(() => {
   vi.stubEnv('NEXT_PUBLIC_ARTIFACTS', '1');
@@ -111,7 +110,7 @@ afterEach(() => {
 
 describe('while the agent writes a deck', () => {
   const { events, written } = deckTurn();
-  const [DECK_WRITTEN = 0, COVER_WRITTEN = 0, AGENDA_WRITTEN = 0, NUMBERS_WRITTEN = 0] = written;
+  const [DECK_WRITTEN = 0] = written;
   const TURN_ENDS = (events.at(-1)?.atMs ?? 0) + 1;
 
   function Messages() {
@@ -140,21 +139,14 @@ describe('while the agent writes a deck', () => {
       void agent.runAgent();
       await vi.advanceTimersByTimeAsync(STEP_MS * 10);
     });
-    const panel = screen.getByRole('region', { name: 'q3' });
-    const sent: Sent[] = [];
-    sandboxReady(within(panel).getByTitle<HTMLIFrameElement>('q3')).mockImplementation((message: { type: string; slides: Shown[] }) => {
-      if (message.type === 'artifact-slides') sent.push({ at: Date.now(), slides: message.slides });
-    });
     // Frame by frame, each step after the last one's renders: recursion, not a loop of awaits.
     const until = async (ms: number): Promise<void> => {
       if (Date.now() >= ms) return;
       await act(() => vi.advanceTimersByTimeAsync(Math.min(16, ms - Date.now())));
       return until(ms);
     };
-    return { panel, sent, until };
+    return { until };
   }
-
-  const shown = (sent: Sent[]) => sent.at(-1)?.slides.map(({ id, html }) => [id, html === null ? 'waiting' : html.includes('</section>') ? 'whole' : 'partial']);
 
   beforeEach(() => {
     // The clock the stream and the panel run on, and no more: a faked setImmediate stalls Node's streams under the turn.
@@ -164,71 +156,14 @@ describe('while the agent writes a deck', () => {
     vi.useRealTimers();
   });
 
-  it('opens the deck beside the chat with a slot for every slide once deck.json is written, then fills the slides one by one', async () => {
-    const { sent, until } = await startTurn();
-
+  it('keeps the panel closed while a deck streams and opens only on its card click', async () => {
+    const { until } = await startTurn();
     await until(DECK_WRITTEN + 300);
-    expect(shown(sent)).toEqual([['cover', 'waiting'], ['agenda', 'waiting'], ['numbers', 'waiting']]);
-
-    await until(COVER_WRITTEN - RESULT_MS - 2 * STEP_MS);
-    expect(shown(sent)).toEqual([['cover', 'partial'], ['agenda', 'waiting'], ['numbers', 'waiting']]);
-
-    await until(COVER_WRITTEN + 300);
-    expect(shown(sent)).toEqual([['cover', 'whole'], ['agenda', 'waiting'], ['numbers', 'waiting']]);
-
+    expect(screen.queryByRole('region')).toBeNull();
     await until(TURN_ENDS + 300);
-    expect(shown(sent)).toEqual([['cover', 'whole'], ['agenda', 'whole'], ['numbers', 'whole']]);
-    // Never blank once deck.json is in: every message holds every slide, at most four a second.
-    const first = sent.findIndex(({ slides }) => slides.length > 0);
-    expect(sent.slice(first).every(({ slides }) => slides.length === 3)).toBe(true);
-    const times = sent.map(({ at }) => at);
-    expect(Math.min(...times.slice(1).map((at, index) => at - (times[index] ?? Number.NaN)))).toBeGreaterThanOrEqual(250);
-  });
-
-  it('strips what the slide format has no place for, and lists it under the deck', async () => {
-    const { panel, sent, until } = await startTurn();
-
-    await until(AGENDA_WRITTEN + 300);
-
-    const agenda = sent.at(-1)?.slides.find(({ id }) => id === 'agenda');
-    expect(agenda?.html).toContain('<h2 style="font-size:72px">Agenda</h2>');
-    expect(agenda?.html).not.toMatch(/onclick|z-index/);
-    const stripped = within(panel).getByRole('list', { name: 'Not shown: outside the slide format' });
-    expect(within(stripped).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      'slides/agenda.html: <div> z-index:2',
-      'slides/agenda.html: <div onclick>',
-    ]);
-  });
-
-  it('refuses Download as PowerPoint while the agent writes the deck, and offers the PDF instead', async () => {
-    const { panel, until } = await startTurn();
-
-    await until(COVER_WRITTEN + 300);
-    await act(async () => within(panel).getByRole('button', { name: 'Download as PowerPoint' }).click());
-
-    const failure = within(panel).getByRole('alert');
-    expect(failure).toHaveTextContent("Couldn't make the PowerPoint: the deck is still being written; it downloads once it is published.");
-    expect(within(failure).getByRole('button', { name: 'Download as PDF' })).toBeInTheDocument();
-  });
-
-  it("previews a slide without its <x-embed> page, and runs it once the publish opens the version", async () => {
-    const { sent, until } = await startTurn();
-
-    await until(NUMBERS_WRITTEN + 300);
-    const numbers = sent.flatMap(({ slides }) => slides.filter(({ id, html }) => id === 'numbers' && html !== null));
-    expect(numbers.at(-1)?.html).toContain('</section>');
-    expect(numbers.flatMap(({ embeds }) => embeds)).toEqual([]);
-
-    await until(TURN_ENDS + 300);
-    const panel = screen.getByRole('region', { name: 'Q3 Operating Review' });
-    expect(panel).toHaveTextContent('Slides · version 1');
-    vi.useRealTimers();
-    const posted = sandboxReady(within(panel).getByTitle<HTMLIFrameElement>('Q3 Operating Review'));
-    await waitFor(() => expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'artifact-slides' }), '*'));
-    const { slides } = posted.mock.lastCall?.[0] as { slides: Shown[] };
-    expect(slides.find(({ id }) => id === 'numbers')?.embeds).toEqual([
-      { style: 'position:absolute;left:128px;top:400px;width:800px;height:300px', html: EMBED_PAGE },
-    ]);
+    expect(screen.queryByRole('region')).toBeNull();
+    await act(() => screen.getByRole('button', { name: /Q3 Operating Review/ }).click());
+    expect(screen.getByRole('region', { name: 'Q3 Operating Review' })).toHaveTextContent('Slides · version 1');
   });
 });
 
@@ -249,7 +184,7 @@ it("opens a published deck's version from Files, slide by slide in the deck's or
   );
 
   const card = await screen.findByRole('button', { name: /Q3 Operating Review/ });
-  expect(card).toHaveTextContent('Slides Artifact · version 1');
+  expect(card).toHaveTextContent('Q3 Operating ReviewSlides');
   await userEvent.click(card);
   const posted = sandboxReady(screen.getByTitle<HTMLIFrameElement>('Q3 Operating Review'));
 

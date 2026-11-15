@@ -9,7 +9,7 @@ import { recordOf } from "./artifact-newest";
 import { saveFile, storedVersion, type ArtifactVersion, type Export, type ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
-import type { Grid } from "./sheet-grid";
+import type { Grid, GridPosition } from "./sheet-grid";
 import { readImports } from "./sheet-import";
 import { editsOf, replay, univerDataOf, type ImportedSheets } from "./sheet-model";
 
@@ -67,6 +67,7 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
   const [loaded, setLoaded] = useState<Loaded>(null);
   const host = useRef<HTMLDivElement>(null);
   const grid = useRef<Grid | null>(null);
+  const position = useRef<GridPosition | null>(null);
   const [mounts, remount] = useState(0);
   const [drawn, setDrawn] = useState<object | null>(null);
   const [changed, setChanged] = useState(false);
@@ -94,6 +95,7 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
     import("./sheet-grid").then(({ mountGrid }) => {
       if (disposed) return;
       grid.current = mountGrid(container, univerDataOf(book.workbook), {
+        position: position.current,
         rendered: () => setDrawn(book),
         changed: () => {
           const edited = grid.current !== null && editsOf(book.workbook, grid.current.cells()).length > 0;
@@ -104,7 +106,10 @@ export function SheetVersion({ artifact: newest, read, readBytes, save, shows }:
     }, (error: unknown) => setLoaded({ error: `the grid didn't load: ${reason(error)}` }));
     return () => {
       disposed = true;
-      grid.current?.dispose();
+      if (grid.current !== null) {
+        position.current = grid.current.position();
+        grid.current.dispose();
+      }
       grid.current = null;
       setChanged(false);
     };

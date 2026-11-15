@@ -2,7 +2,7 @@
 import { HttpAgent, type Message } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider } from '@copilotkit/react-core/v2';
 import { Editor } from '@tiptap/react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EMAIL_ELEMENTS } from 'botcube-artifact-check/email-html';
 import PostalMime from 'postal-mime';
@@ -138,6 +138,20 @@ function only<T>(list: readonly T[]): T {
   if (list.length !== 1 || one === undefined) throw new Error(`expected one, got ${list.length}`);
   return one;
 }
+
+it('keeps the reading position when the open Email receives a new version', async () => {
+  const { stored } = draftInFiles();
+  const { panel, agentPublishes } = await openDraft();
+  const scroller = panel.querySelector('.artifact-email');
+  if (!(scroller instanceof HTMLElement)) throw new Error('The Email needs its scroll container');
+  scroller.scrollTop = 240;
+  fireEvent.scroll(scroller);
+  stored[V2] = JSON.stringify({ ...DRAFT, subject: 'Updated subject' });
+  stored['artifacts/drafts/q3.email.json.versions/2.json'] = JSON.stringify({ author: 'agent', title: PUBLISHED.title, description: '', imports: [] });
+  agentPublishes({ ...PUBLISHED, version: 2, path: `/${V2}` });
+  await waitFor(() => expect(within(panel).getByRole('textbox', { name: 'Subject' })).toHaveValue('Updated subject'));
+  expect(panel.querySelector('.artifact-email')?.scrollTop).toBe(240);
+});
 
 describe('an Email in the panel', () => {
   it('shows the draft as Gmail does, with the .eml as its one Export', async () => {

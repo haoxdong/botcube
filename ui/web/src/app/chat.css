@@ -472,9 +472,6 @@
   padding: 0 !important;
 }
 
-/* Each message's prose in Marq's bubble; its tool rows and cards stay outside it (dots Fig 1, Fig 7). One reply is
-   one bubble; a table, code or diagram scrolls inside past its cap. One line is the user's pill; a wrapped one hugs
-   its widest line (bubble-width.ts). White on the canvas, lifted by the resting shadow it shares with the composer. */
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty) {
   width: fit-content;
   max-width: 90%;
