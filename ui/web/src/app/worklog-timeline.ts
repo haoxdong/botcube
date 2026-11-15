@@ -54,6 +54,18 @@ function retainSeconds(timed: ReturnType<typeof stepSeconds>, kept: Record<strin
   return { total, each };
 }
 
+function allocationFor(kept: TurnTiming | undefined, viewId: string, steps: readonly TimedStep[]) {
+  if (!kept) return undefined;
+  if (kept.allocations[viewId]) return kept.allocations[viewId];
+  const first = steps.find((step) => step.kind !== "start");
+  const startId = steps.find((step) => step.kind === "start")?.id;
+  const previous = first && Object.keys(kept.allocations).find((key) => Object.keys(kept.allocations[key] ?? {}).find((id) => id !== startId) === first.id);
+  const allocation = (previous === undefined ? undefined : kept.allocations[previous]) ?? {};
+  if (previous !== undefined) delete kept.allocations[previous];
+  kept.allocations[viewId] = allocation;
+  return allocation;
+}
+
 const hasText = (message: TimelineMessage) => typeof message.content === "string" && message.content.trim() !== "";
 
 function observedStep(kept: TurnTiming | undefined, id: string, running: boolean, now: number) {
@@ -104,7 +116,7 @@ export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefi
   const startId = `${question?.id ?? id}-started-up`;
   const steps = stepsOf(turn, startId, running, kept, now).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: kept?.ended } : step));
   if (!running && !kept && steps.some((step) => step.ended === undefined)) return undefined;
-  const allocation = kept && (kept.allocations[viewId] ??= {});
+  const allocation = allocationFor(kept, viewId, steps);
   const timed = retainSeconds(stepSeconds(start, steps, now, running, kept), allocation);
   const shown = timed.each.get(startId) ? steps : steps.filter((step) => step.id !== startId);
   if (kept) withStorage(() => sessionStorage.setItem(TIMINGS_KEY, JSON.stringify([...timings ?? []])));

@@ -588,6 +588,37 @@ describe("a Worklog's step times", () => {
     expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '5s']]);
   });
 
+  it('retains completed step allocations when reload replaces the message view key', async () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'view-reload-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const tool = { id: 'view-reload-live', role: 'assistant', content: '', toolCalls: [call('view-reload-first', 'execute', { command: 'first' }), call('view-reload-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+    view.unmount();
+    vi.setSystemTime(START + 9000);
+    vi.resetModules();
+    const reloaded = await import('./worklog');
+    const result = { id: 'view-reload-t', role: 'tool', toolCallId: 'view-reload-first', content: 'Done', ...stamp(0, 0.2) };
+    const replayed = { ...tool, id: 'view-reload-persisted' };
+    const restored = render(<reloaded.Worklog id="view-reload-persisted" asked={question.id} question={question} turn={[replayed, result]} running>
+      <reloaded.ToolStep id="view-reload-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+      <reloaded.ToolStep id="view-reload-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
+    </reloaded.Worklog>);
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '4s']]);
+    expect(head()).toHaveTextContent(/^Working · 9s$/);
+    act(() => { vi.advanceTimersByTime(1000); });
+    restored.unmount();
+    vi.resetModules();
+    const again = await import('./worklog');
+    render(<again.Worklog id="view-reload-again" asked={question.id} question={question} turn={[{ ...replayed, id: 'view-reload-again' }, result]} running>
+      <again.ToolStep id="view-reload-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+      <again.ToolStep id="view-reload-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
+    </again.Worklog>);
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '5s']]);
+    expect(head()).toHaveTextContent(/^Working · 10s$/);
+  });
+
   it('keeps later elapsed time when replay moves an earlier completion forward', () => {
     vi.useFakeTimers({ now: START });
     const question = { id: 'forward-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
