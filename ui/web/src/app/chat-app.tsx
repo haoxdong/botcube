@@ -11,7 +11,7 @@ import { ModelSelector } from "./model-selector";
 import { ChatAlerts } from "./chat-alerts";
 import { UserMenu } from "./user-menu";
 import { useAgentWarmup } from "./agent-warmup";
-import { ChatHeader, useHeaderWorking } from "./header-status";
+import { ChatHeader, useHeaderWorking } from "./chat-header";
 import { KeptChat } from "./kept-chat";
 import { usePhoneProfileFocus } from "./phone-profile-focus";
 import { useDrawerSwipe } from "./drawer-swipe";

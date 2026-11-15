@@ -43,13 +43,6 @@
       "requestAnimationFrame": 1
     }
   },
-  "app/header-status.tsx": {
-    "reason": "Motion layout clock elapsed before the first painted frame during a busy Turn start; compositor scaling remains necessary.",
-    "counts": {
-      "animate": 2,
-      "requestAnimationFrame": 1
-    }
-  },
   "app/kept-chat.tsx": {
     "reason": "use-stick-to-bottom defers resize following by a frame; saved history must stay at its end on every paint.",
     "counts": {
