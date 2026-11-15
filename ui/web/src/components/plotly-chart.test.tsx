@@ -7,7 +7,6 @@ import { PlotlyChart } from './plotly-chart';
 const plotly = vi.hoisted(() => ({
   react: vi.fn(async () => undefined),
   purge: vi.fn<(element: HTMLElement) => void>(),
-  Plots: { resize: vi.fn(async () => undefined) },
   PlotSchema: { get: () => ({ traces: { scatter: {}, candlestick: {}, sankey: {}, heatmap: {} } }) },
 }));
 vi.mock('./plotly-bundle', () => ({ default: async () => plotly }));
@@ -30,50 +29,18 @@ it('names a trace type plotly.js does not have, which plotly would draw as an em
   expect(plotly.react).not.toHaveBeenCalled();
 });
 
-it('redraws at the box\u2019s width whenever the box resizes, so a chart never runs past its bubble', async () => {
-  const observed: { callback: () => void; targets: Element[] }[] = [];
-  vi.stubGlobal('ResizeObserver', class {
-    readonly entry: { callback: () => void; targets: Element[] };
-    constructor(callback: () => void) {
-      this.entry = { callback, targets: [] };
-      observed.push(this.entry);
-    }
-    observe(target: Element) { this.entry.targets.push(target); }
-    disconnect() { this.entry.targets = []; }
-  });
-  plotly.Plots.resize.mockClear();
-  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}]}' title="Line" />);
-  const chart = (await view.findByRole('figure', { name: 'Line' })).querySelector('.plotly-chart');
-  await waitFor(() => expect(observed.at(-1)?.targets).toEqual([chart]));
-  observed.at(-1)?.callback();
-  expect(plotly.Plots.resize).toHaveBeenCalledWith(chart);
-  // plotly.js rejects a resize of a chart that is not displayed, as WebKit logged when a chart's box was hidden.
-  plotly.Plots.resize.mockClear();
-  (chart as HTMLElement).style.display = 'none';
-  observed.at(-1)?.callback();
-  expect(plotly.Plots.resize).not.toHaveBeenCalled();
-  view.unmount();
-  expect(observed.at(-1)?.targets).toEqual([]);
-  vi.unstubAllGlobals();
-});
-
-it('shows the notes under the plot as a caption under the chart, not in it', async () => {
-  plotly.react.mockClear();
-  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}],"layout":{"annotations":[{"text":"Source: user-provided values","xref":"paper","yref":"paper","x":0,"y":-0.2}]}}' title="CPI" />);
-  const figure = await view.findByRole('figure', { name: 'CPI' });
-  expect(figure.querySelector('.plotly-chart-note')).toHaveTextContent('Source: user-provided values');
+it('passes titles, annotations, shapes and layout dimensions to Plotly unchanged', async () => {
+  const layout = {
+    title: { text: 'US Treasury yield', subtitle: { text: 'Source: FRED' } },
+    annotations: [{ text: 'Source', xref: 'paper', yref: 'paper', x: 0, y: -0.2 }],
+    shapes: [{ type: 'line', x0: 0, x1: 1, y0: 2, y1: 2 }],
+    width: 700, height: 850, margin: { t: 85 }, legend: { y: -0.08 },
+  };
+  const view = render(<PlotlyChart text={JSON.stringify({ data: [{ y: [1, 2] }], layout })} title="Yield" />);
+  await view.findByRole('figure', { name: 'Yield' });
   await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
-  expect((plotly.react.mock.calls[0] as unknown[])[2]).toMatchObject({ annotations: [] });
-});
-
-it('sets the title and its source above the chart as text, and leaves plotly no title to draw', async () => {
-  plotly.react.mockClear();
-  const view = render(<PlotlyChart text='{"data":[{"y":[1,2]}],"layout":{"title":{"text":"US 10-year Treasury yield since 2020, daily close","subtitle":{"text":"Source: FRED"}}}}' title="Yield" />);
-  const figure = await view.findByRole('figure', { name: 'Yield' });
-  expect(figure.querySelector('.plotly-chart-title')).toHaveTextContent('US 10-year Treasury yield since 2020, daily close');
-  expect(figure.querySelector('.plotly-chart-subtitle')).toHaveTextContent('Source: FRED');
-  await waitFor(() => expect(plotly.react).toHaveBeenCalledTimes(1));
-  expect((plotly.react.mock.calls[0] as unknown[])[2]).not.toHaveProperty('title');
+  expect((plotly.react.mock.calls[0] as unknown[])[2]).toEqual(layout);
+  expect((plotly.react.mock.calls[0] as unknown[])[3]).toMatchObject({ responsive: true });
 });
 
 it('lets a chart finish its active drag before purging it on unmount', async () => {

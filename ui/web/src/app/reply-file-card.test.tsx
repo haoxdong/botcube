@@ -241,7 +241,7 @@ function figureFile(name: string, body: string) {
 it.each([
   ['an embedded figure', '![US CPI chart](/cpi.plotly.json)'],
   ['a lone link to a figure', '[US CPI chart](/cpi.plotly.json)'],
-])('draws %s as a live Plotly chart from the file, in its own template under its title as text', async (_, content) => {
+])('draws %s as a live Plotly chart from the file, with its title and template passed unchanged to Plotly', async (_, content) => {
   figureFile('cpi.plotly.json', '{"data":[{"type":"scatter","y":[3.1,2.9]}],"layout":{"template":{"layout":{}},"title":{"text":"US CPI"}},"config":{"editable":true}}');
   plotly.react.mockClear();
   const view = render(<MarkdownRenderer content={`Inflation eased.\n\n${content}`} />);
@@ -250,9 +250,7 @@ it.each([
   const [element, data, layout, config] = plotly.react.mock.calls[0] as unknown as [HTMLElement, unknown, Record<string, unknown>, Record<string, unknown>];
   expect(element).toBe(chart.querySelector('.plotly-chart'));
   expect(data).toEqual([{ type: 'scatter', y: [3.1, 2.9] }]);
-  expect(layout).not.toHaveProperty('title');
-  expect(layout).toMatchObject({ template: { layout: {} }, paper_bgcolor: 'transparent' });
-  expect(chart.querySelector('.plotly-chart-title')).toHaveTextContent('US CPI');
+  expect(layout).toEqual({ template: { layout: {} }, title: { text: 'US CPI' } });
   expect(config).toEqual({ responsive: true, displayModeBar: false, displaylogo: false, showLink: false, showSendToCloud: false, scrollZoom: false });
   expect(view.container.querySelector('img')).toBeNull();
 });

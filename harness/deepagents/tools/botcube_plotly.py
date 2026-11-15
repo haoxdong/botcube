@@ -21,10 +21,21 @@ def register() -> None:
     from plotly import io as pio
     from plotly.graph_objs.layout import Template
 
-    axis = {'showgrid': False, 'linecolor': LINE, 'tickcolor': LINE, 'ticklen': 4, 'zerolinecolor': LINE}
+    axis = {
+        'automargin': True, 'autotickangles': [0], 'ticklabelstep': 1,
+        'showgrid': False, 'linecolor': LINE, 'tickcolor': LINE, 'ticklen': 4, 'zerolinecolor': LINE,
+    }
     pio.templates['botcube'] = Template(pio.templates['simple_white']).update(layout={
         'font': {'family': FONT, 'size': 13, 'color': TEXT_MUTED},
         'colorway': COLORWAY,
+        'paper_bgcolor': 'rgba(0,0,0,0)',
+        'plot_bgcolor': 'rgba(0,0,0,0)',
+        'legend': {
+            'orientation': 'h', 'yref': 'container', 'y': 0.97, 'yanchor': 'top',
+            'entrywidth': 0, 'maxheight': 30,
+        },
+        'title': {'automargin': True, 'y': 1, 'yanchor': 'top', 'font': {'size': 13}},
+        'shapedefaults': {'line': {'width': 2}, 'opacity': 1},
         'xaxis': axis,
         'yaxis': axis,
         'hoverlabel': {'bgcolor': WHITE, 'bordercolor': LINE, 'font': {'family': FONT, 'size': 13, 'color': TEXT}},

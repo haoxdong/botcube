@@ -126,3 +126,29 @@ else:
         assert saved['layout'][axis]['showgrid'] is False
         assert saved['layout'][axis]['showline'] is True
         assert saved['layout'][axis]['ticks'] == 'outside'
+
+
+@pytest.mark.integration
+def test_subplot_exports_use_native_layout_and_visible_reference_lines(tmp_path: Path) -> None:
+    chart = tmp_path / 'subplots.plotly.json'
+    result = run_in_fresh_tools_python(tmp_path, f"""
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+figure = make_subplots(rows=3, cols=1, subplot_titles=['Short interest', 'Volatility', 'Skew'])
+for row in [1, 2, 3]:
+    figure.add_trace(go.Scatter(x=[1, 2], y=[3, 4], name='Series'), row=row, col=1)
+    figure.add_hline(y=3, line_dash='dot', row=row, col=1)
+    figure.add_vline(x=2, row=row, col=1)
+figure.write_json({str(chart)!r})
+""")
+    assert result.returncode == 0, result.stderr
+    layout = json.loads(chart.read_text())['layout']
+    theme = layout['template']['layout']
+    assert theme['legend']['yref'] == 'container'
+    assert theme['legend']['orientation'] == 'h'
+    assert theme['shapedefaults']['line']['width'] > 0
+    assert theme['shapedefaults']['opacity'] == 1
+    assert len(layout['shapes']) == 6
+    for key in ['xaxis', 'xaxis2', 'xaxis3', 'yaxis', 'yaxis2', 'yaxis3']:
+        assert layout[key]['automargin'] is True
+        assert layout[key]['autotickangles'] == [0]
