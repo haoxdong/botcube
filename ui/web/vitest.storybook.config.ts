@@ -123,6 +123,17 @@ export default defineConfig({
             loaded: shown.ownerDocument.readyState === 'complete',
           }))));
         },
+        serveFrameHeaders: async (context, url: string, headers: Record<string, string>) => {
+          if (context.provider.name !== 'playwright') throw new Error('serveFrameHeaders needs Playwright');
+          await context.page.route(url, async (route) => {
+            const response = await route.fetch();
+            await route.fulfill({ response, headers: { ...response.headers(), ...headers } });
+          });
+        },
+        stopFrameHeaders: async (context, url: string) => {
+          if (context.provider.name !== 'playwright') throw new Error('stopFrameHeaders needs Playwright');
+          await context.page.unroute(url);
+        },
         clickFrameElement: async (context, name: string, selector: string, path?: FramePath) => {
           if (context.provider.name !== 'playwright') throw new Error('clickFrameElement needs Playwright');
           const frame = await findFrame(context.page, name, path);
