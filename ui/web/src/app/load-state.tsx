@@ -83,8 +83,3 @@ export function Loaded<T>({
     </Swap>
   );
 }
-
-export function ChatLoadState({ linkedError, error, retry }: { linkedError: string | null; error: string | null; retry: () => void }) {
-  const failure = linkedError ?? error;
-  return failure === null ? <LoadingSkeleton label="Main Chat" /> : <LoadFailed error={failure} onRetry={retry} action={linkedError === null ? "Retry" : "Go to Main Chat"} />;
-}

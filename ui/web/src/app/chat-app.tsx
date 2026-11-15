@@ -7,7 +7,7 @@ import { m as motionElement } from "framer-motion";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { AbstractAgent } from "@ag-ui/client";
-import { Blocks, MessageCircle, PanelsTopLeftIcon } from "lucide-react";
+import { Blocks, MessageCircle } from "lucide-react";
 import { ModelSelector } from "./model-selector";
 import { ChatAlerts } from "./chat-alerts";
 import { UserMenu } from "./user-menu";
@@ -32,7 +32,7 @@ import { forgetMainChatCopy, withStorage, type StoredMainChatCopy } from "./main
 import { forgetSteering } from "./steering";
 import { useModelSelection } from "./model-selection";
 import { useAgentRunning } from "./agent-running";
-import { ChatLoadState, LoadingSkeleton } from "./load-state";
+import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
@@ -45,14 +45,11 @@ import { UnreadDot } from "./unread-dot";
 import { TurnStart } from "./worklog";
 import type { ChatStop } from "./chat-surface";
 import { artifactsEnabled } from "../artifacts-flag";
-import { useArtifactWorkspace, useChatSurfaceKey, type ArtifactRequest } from "./artifact-request";
 
-const ArtifactNavigation = motionElement.create(SidebarRow);
 const ChatSurface = lazy(() => import("./chat-surface"));
-const ChatColumn: ComponentType<{ agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined; request?: ArtifactRequest | undefined }> = artifactsEnabled()
+const ChatColumn: ComponentType<{ agent: AbstractAgent; children: ReactNode; header?: ReactNode; accountId?: string | undefined }> = artifactsEnabled()
   ? lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })))
   : ({ children, header }) => <>{header}{children}</>;
-const ArtifactLibrary = lazy(() => import("./artifact-library").then(({ ArtifactLibrary }) => ({ default: ArtifactLibrary })));
 const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
 
 const { config: UI_CONFIG, ComputerView } = webUiPlugin;
@@ -91,15 +88,12 @@ export default function App({
     swipe.toggle();
     if (!isPhone) withStorage(() => localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(!sidebarExpanded)));
   };
-  const [screen, setScreen] = useState<'chat' | 'plugins' | 'artifacts'>('chat');
-  const screenOpen = screen !== 'chat';
-  const { request: artifactRequest, initialized: artifactWorkspace, select: selectArtifact } = useArtifactWorkspace(auth);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const [keptChatShown, setKeptChatShown] = useState(true);
   const [openedChat, setOpenedChat] = useState<string | null>(null);
   const ready = auth.sessionStatus === "ready";
   const { accountId } = auth;
   const temporary = auth.temporary === true;
-  useEffect(() => setScreen('chat'), [accountId]);
   const {
     current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
     mainChatId,
@@ -115,8 +109,7 @@ export default function App({
     messageSubmitted,
     turnStarting,
     accountReady,
-  } = useChatSession({ ready, temporary, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
-  const surfaceKey = useChatSurfaceKey(accountId, activeId);
+  } = useChatSession({ ready, temporary, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !pluginsOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
     ready, accountId, activeProvider, showWelcome, chatServiceUrl: CHAT_SERVICE_URL,
   });
@@ -137,7 +130,7 @@ export default function App({
   const agentProfileRef = useRef<HTMLDivElement>(null);
   const profileSwipe = useDrawerSwipe({
     layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile", slides: true,
-    enabled: isPhone && activeId !== null && accountReady && !screenOpen && !sidebarExpanded && !swipe.dragging,
+    enabled: isPhone && activeId !== null && accountReady && !pluginsOpen && !sidebarExpanded && !swipe.dragging,
     expanded: agentProfileOpen,
     onExpandedChange: setAgentProfileOpen,
   });
@@ -178,8 +171,8 @@ export default function App({
     [accountReady, accountId],
   );
 
-  const showMain = (view: 'chat' | 'plugins' | 'artifacts') => {
-    setScreen(view);
+  const showMain = (view: 'chat' | 'plugins') => {
+    setPluginsOpen(view === 'plugins');
     if (isPhone) swipe.close();
   };
 
@@ -205,21 +198,19 @@ export default function App({
       picture={agentProfile?.picture} emoji={agentProfile?.avatar} name={agentName} />
   );
   const paneHeader = <>{headerInPane && chatHeader}</>;
-  const noChat = <ChatLoadState linkedError={linkedChatError} error={mainChatError} retry={() => void openMainChat()} />;
+  const chatFailure = linkedChatError ?? mainChatError;
+  const retryAction = linkedChatError === null ? "Retry" : "Go to Main Chat";
+  const noChat = chatFailure === null ? (
+    <LoadingSkeleton label="Main Chat" />
+  ) : (
+    <LoadFailed error={chatFailure} onRetry={() => void openMainChat()} action={retryAction} />
+  );
   const covered = keptChatShown || (activeId !== null && openAt == null && openedChat !== activeId);
   const keptChat = (
     <div className="kept-chat" role="status" aria-label="Loading chat controls">
       <KeptChat messages={agent.messages} running={turnRunsOnServer} disclaimer={UI_CONFIG.disclaimer} composerAccessory={auth.composerAccessory} latestShown={keptChatLatestShown} onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)} />
     </div>
   );
-
-  const screenContent = {
-    chat: { label: "Chat", content: null },
-    plugins: { label: "Plugins", content: <PluginsScreen agentName={agentName} /> },
-    artifacts: { label: "Artifacts", content: <ArtifactLibrary accountId={accountId} onSelect={(artifact) => {
-      if (selectArtifact(artifact)) setScreen('chat');
-    }} /> },
-  }[screen];
 
   return (
     <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style, ...viewportStyle }}>
@@ -242,7 +233,7 @@ export default function App({
           <nav className="sidebar-nav sidebar-main">
             <SidebarRow
               className="sidebar-main-chat"
-              active={!screenOpen && activeId !== null && activeId === mainChatId}
+              active={!pluginsOpen && activeId !== null && activeId === mainChatId}
               onClick={() => {
                 showMain('chat');
                 selectMainChat();
@@ -254,7 +245,7 @@ export default function App({
               <UnreadDot unread={mainChatUnread} />
             </SidebarRow>
             <SidebarRow
-              active={screen === 'plugins'}
+              active={pluginsOpen}
               onClick={() => showMain('plugins')}
               aria-label="Plugins"
               title="Plugins"
@@ -262,14 +253,10 @@ export default function App({
               <Blocks className="sidebar-nav-icon" aria-hidden />
               <span className="sidebar-nav-label">Plugins</span>
             </SidebarRow>
-            <Presence>{artifactsEnabled() && !temporary && <ArtifactNavigation {...presenceMotion} active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
-              <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
-              <span className="sidebar-nav-label">Artifacts</span>
-            </ArtifactNavigation>}</Presence>
           </nav>
         </div>
 
-        <Presence>{!temporary && <SideChats exit={{ opacity: 0 }} accountId={accountId} activeId={activeId} pluginsOpen={screenOpen} visible={swipe.visible} entries={sideChats} listed={sideChatsListed} error={sideChatsError} rename={renameSideChat} remove={handleDeleteConversation} select={handleSelectConversation} create={handleNewConversation} showChat={() => showMain('chat')} />}</Presence>
+        <Presence>{!temporary && <SideChats exit={{ opacity: 0 }} accountId={accountId} activeId={activeId} pluginsOpen={pluginsOpen} visible={swipe.visible} entries={sideChats} listed={sideChatsListed} error={sideChatsError} rename={renameSideChat} remove={handleDeleteConversation} select={handleSelectConversation} create={handleNewConversation} showChat={() => showMain('chat')} />}</Presence>
 
         <div className="sidebar-bottom">
           <UserMenu
@@ -296,30 +283,29 @@ export default function App({
       )}</Presence>
 
       <div className="app-stage">
-      <Presence>{screenOpen && (
+      <Presence>{pluginsOpen && (
         <motionElement.main {...presenceMotion} className="app-shell app-plugins">
-          <Suspense fallback={<LoadingSkeleton label={screenContent.label} />}>{screenContent.content}</Suspense>
+          <Suspense fallback={<LoadingSkeleton label="Plugins" />}><PluginsScreen agentName={agentName} /></Suspense>
         </motionElement.main>
       )}</Presence>
-      <main className="app-shell" style={{ visibility: screenOpen ? "hidden" : undefined }} aria-hidden={screenOpen} inert={screenOpen || profileSwipe.open || (isPhone && sidebarExpanded)}>
+      <main className="app-shell" style={{ visibility: pluginsOpen ? "hidden" : undefined }} aria-hidden={pluginsOpen} inert={pluginsOpen || profileSwipe.open || (isPhone && sidebarExpanded)}>
         {!headerInPane && chatHeader}
-        {activeId === null && !artifactWorkspace ? <>{paneHeader}{noChat}</> : (
+        {activeId === null ? <>{paneHeader}{noChat}</> : (
           <Suspense fallback={<>{paneHeader}<div className="app-chat app-chat-opening">{keptChat}</div></>}>
           <ChatSurface
-            key={surfaceKey}
-            chatId={activeId ?? ""}
+            key={activeId}
+            chatId={activeId}
             stopRef={setChatStop}
             selfManagedAgents={selfManagedAgents}
             properties={properties}
           >
             {(ChatThread) => <>
-            {activeId !== null && <ChatAlerts errors={[auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />}
-            <ChatColumn agent={agent} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
-            {activeId === null ? noChat : (
+            <ChatAlerts errors={[auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
+            <ChatColumn agent={agent} accountId={accountId} header={headerInPane ? chatHeader : undefined}>
             <div className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
               <ChatThread
-                key={surfaceKey}
+                key={activeId}
                 agent={agent}
                 threadId={activeId}
                 accountId={accountId}
@@ -352,9 +338,8 @@ export default function App({
               </TurnStart.Provider>
               {covered && keptChat}
             </div>
-            )}
             </ChatColumn>
-            {layoutElement !== null && activeId !== null && createPortal(<>
+            {layoutElement !== null && createPortal(<>
               {webUiPlugin.auxiliaryPanels?.map((Panel, index) => (
                 <Panel
                   key={index}
