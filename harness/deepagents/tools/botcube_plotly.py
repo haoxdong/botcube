@@ -22,7 +22,7 @@ def register() -> None:
     from plotly.graph_objs.layout import Template
 
     axis = {
-        'automargin': True, 'autotickangles': [0], 'ticklabelstep': 1,
+        'automargin': True, 'autotickangles': [0, 30, 90], 'nticks': 3,
         'showgrid': False, 'linecolor': LINE, 'tickcolor': LINE, 'ticklen': 4, 'zerolinecolor': LINE,
     }
     pio.templates['botcube'] = Template(pio.templates['simple_white']).update(layout={
@@ -32,7 +32,7 @@ def register() -> None:
         'plot_bgcolor': 'rgba(0,0,0,0)',
         'legend': {
             'orientation': 'h', 'yref': 'container', 'y': 0.97, 'yanchor': 'top',
-            'entrywidth': 0, 'maxheight': 30,
+            'x': 0, 'xanchor': 'left',
         },
         'title': {'automargin': True, 'y': 1, 'yanchor': 'top', 'font': {'size': 13}},
         'shapedefaults': {'line': {'width': 2}, 'opacity': 1},

@@ -145,10 +145,14 @@ figure.write_json({str(chart)!r})
     layout = json.loads(chart.read_text())['layout']
     theme = layout['template']['layout']
     assert theme['legend']['yref'] == 'container'
+    assert theme['legend']['y'] == 0.97
+    assert 'maxheight' not in theme['legend']
+    assert 'entrywidth' not in theme['legend']
     assert theme['legend']['orientation'] == 'h'
     assert theme['shapedefaults']['line']['width'] > 0
     assert theme['shapedefaults']['opacity'] == 1
     assert len(layout['shapes']) == 6
     for key in ['xaxis', 'xaxis2', 'xaxis3', 'yaxis', 'yaxis2', 'yaxis3']:
         assert layout[key]['automargin'] is True
-        assert layout[key]['autotickangles'] == [0]
+        assert layout[key]['autotickangles'] == [0, 30, 90]
+        assert layout[key]['nticks'] == 3
