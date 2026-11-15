@@ -32,6 +32,20 @@ function documentWith(animations: () => Animation[]) {
 }
 
 describe('animationsSettled', () => {
+  it('waits for an entry animation queued for the next paint', async () => {
+    const finished = Promise.withResolvers<void>();
+    const entering = animation(finished.promise);
+    let animations: Animation[] = [];
+    requestAnimationFrame(() => {
+      animations = [entering];
+      requestAnimationFrame(() => finished.resolve());
+    });
+
+    await animationsSettled(documentWith(() => animations));
+
+    expect(entering.playState).toBe('finished');
+  });
+
   it('waits past a cancelled animation for the one replacing it', async () => {
     const cancelled = animation(
       Promise.reject(new DOMException('The user aborted a request.', 'AbortError'))

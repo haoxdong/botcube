@@ -1,10 +1,11 @@
 /**
+ * Entry transitions can be registered on a later paint, so an idle timeline must stay idle across two paints.
  * Resolves once no finite animation on the document's timeline is running. A cancelled animation counts as settled:
  * its element left the page, and its `finished` rejects with an AbortError. Animations its replacement starts are
  * waited for in turn. Any other timeline is skipped: a scroll-driven animation advances only with scroll, so its
  * `finished` never resolves on a page nobody scrolls.
  */
-async function timelineSettled(document: Document): Promise<void> {
+async function timelineSettled(document: Document, idlePaints = 0): Promise<void> {
   const running = document
     .getAnimations()
     .filter(
@@ -13,7 +14,11 @@ async function timelineSettled(document: Document): Promise<void> {
         animation.timeline === document.timeline &&
         animation.effect?.getTiming().iterations !== Infinity
     );
-  if (running.length === 0) return;
+  if (running.length === 0) {
+    if (idlePaints === 2) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    return timelineSettled(document, idlePaints + 1);
+  }
   await Promise.allSettled(running.map((animation) => animation.finished));
   return timelineSettled(document);
 }

@@ -338,7 +338,6 @@ describe('ComposerFileChips', () => {
     const sheet = document.head.appendChild(document.createElement('style'));
     sheet.textContent = ':root { --motion-move: 300ms; --motion-quick: 150ms; --ease: cubic-bezier(0.32, 0.72, 0, 1); }';
     onTestFinished(() => sheet.remove());
-    await act(() => import('./motion-features'));
     const one: ComposerFile[] = [{ id: '2', file: notes, state: { status: 'uploaded', path: '/notes.md' } }];
     const view = render(<ComposerFileChips files={one} onRetry={vi.fn()} onRemove={vi.fn()} />);
     await waitFor(() => expect(chip('notes.md').style.opacity).toBe('1'));

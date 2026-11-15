@@ -25,12 +25,6 @@
       "requestAnimationFrame": 2
     }
   },
-  "app/collapse.tsx": {
-    "reason": "Motion presence owner, retained until area 4 migration.",
-    "counts": {
-      "requestAnimationFrame": 2
-    }
-  },
   "app/composer-layout-height.ts": {
     "reason": "CSS cannot interpolate auto-to-auto composer/chip height; Vercel's textarea sizing only covers the field.",
     "counts": {

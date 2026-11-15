@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutGroup, LazyMotion, m as motionElement } from "framer-motion";
+import { LayoutGroup, LazyMotion, domMax, m as motionElement } from "framer-motion";
 import { useEffect, useState, type RefObject } from "react";
 
 import { Avatar } from "./avatar";
@@ -22,14 +22,12 @@ export function useHeaderWorking(chatId: string | null, working: boolean) {
   return chatId !== null && (working || heldFor === chatId);
 }
 
-const loadFeatures = () => import("./motion-features").then((module) => module.default);
-
 export function HeaderName({ name, working }: { name: string; working: boolean }) {
   const { move } = motionTokens();
   const layoutDependency = `${name}:${working}`;
   const transition = { layout: { type: "spring" as const, visualDuration: move.duration, bounce: 0 } };
   return (
-    <LazyMotion features={loadFeatures} strict><LayoutGroup>
+    <LazyMotion features={domMax} strict><LayoutGroup>
       <motionElement.span layout layoutDependency={layoutDependency} transition={transition} className="chat-header-name">
         <motionElement.span layout="position" layoutDependency={layoutDependency} transition={transition} className="chat-header-label">
           {name}

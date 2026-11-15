@@ -20,7 +20,6 @@ it('says nothing while the agent rests, and "is working" while a Turn runs', () 
 it('lets "is working" fade as the Turn ends before it leaves the capsule', async () => {
   tokens();
   const view = render(<HeaderName name="Marq" working />);
-  await act(() => import("./motion-features"));
   view.rerender(<HeaderName name="Marq" working={false} />);
   expect(screen.getByText('is working')).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByText('is working')).toBeNull(), { timeout: 1000 });

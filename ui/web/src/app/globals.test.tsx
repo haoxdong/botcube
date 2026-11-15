@@ -38,7 +38,6 @@ beforeAll(() => {
 });
 afterAll(async () => {
   await happyDOM.waitUntilComplete();
-  await import('./motion-features');
   style.remove();
 });
 

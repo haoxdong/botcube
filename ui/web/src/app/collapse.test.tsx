@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { m } from 'framer-motion';
@@ -11,8 +11,6 @@ const tokens = () => {
   sheet.textContent = ':root { --motion-move: 300ms; --motion-quick: 150ms; --ease: cubic-bezier(0.32, 0.72, 0, 1); }';
   onTestFinished(() => sheet.remove());
 };
-// Motion's features load after first paint; until then a box shows as it starts and leaves at once.
-const loaded = () => act(() => import('./motion-features'));
 
 describe('Collapse', () => {
   it('unmounts with nothing to wait for without the motion tokens (no stylesheet)', async () => {
@@ -24,7 +22,6 @@ describe('Collapse', () => {
   describe('with the motion tokens', () => {
     it('shrinks away, inert, until its height has closed, then unmounts with cached features', async () => {
       tokens();
-      await loaded();
       const view = render(<Collapse open><button type="button">Ran ls</button></Collapse>);
       await waitFor(() => expect(view.container.querySelector<HTMLElement>('.collapsible')?.style.height).toBe('auto'));
       view.rerender(<Collapse open={false}><button type="button">Ran ls</button></Collapse>);
@@ -41,7 +38,6 @@ describe('Collapse', () => {
     // the box's computed style while it holds the end height, to resolve a close from "auto".
     it('closes from the height it shows, never laid out at its end height first', async () => {
       tokens();
-      await loaded();
       const view = render(<Collapse open>Steps</Collapse>);
       const box = view.container.querySelector<HTMLElement>('.collapsible');
       if (!box) throw new Error('The open Collapse has no box');
@@ -64,7 +60,6 @@ describe('Collapse', () => {
     it('opens again from where it is when reopened while closing', async () => {
       tokens();
       const view = render(<Collapse open>Steps</Collapse>);
-      await loaded();
       view.rerender(<Collapse open={false}>Steps</Collapse>);
       view.rerender(<Collapse open>Steps</Collapse>);
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -95,7 +90,6 @@ describe('Collapse', () => {
     it('closes a removed row up, inert, before it leaves the list', async () => {
       tokens();
       const view = render(rows(['Rates recap', 'FX check']));
-      await loaded();
       view.rerender(rows(['Rates recap']));
       const leaving = screen.getByText('FX check').closest('li');
       expect(leaving).toHaveAttribute('inert');
@@ -115,7 +109,6 @@ describe('Fade', () => {
   describe('with the motion tokens', () => {
     it('fades in from nothing as it mounts', async () => {
       tokens();
-      await loaded();
       const view = render(<Fade open className="menu">Log out</Fade>);
       expect(view.container.querySelector<HTMLElement>('.menu')?.style.opacity).toBe('0');
     });
@@ -132,13 +125,11 @@ describe('Presence', () => {
 
   it('retains each fragment child until its fade finishes and prevents actions during exit', async () => {
     tokens();
-    await loaded();
     const contents = (open: boolean) => <Presence>{open && <>
       <m.button {...presenceMotion} key="cancel">Cancel editing</m.button>
       <m.button {...presenceMotion} key="save">Save changes</m.button>
     </>}</Presence>;
     const view = render(contents(true));
-    await loaded();
     view.rerender(contents(false));
     expect(screen.getByText('Cancel editing')).toHaveAttribute('inert');
     expect(screen.getByText('Save changes')).toHaveAttribute('inert');
@@ -148,10 +139,8 @@ describe('Presence', () => {
 
   it('restores an exiting control when it reenters before the fade finishes', async () => {
     tokens();
-    await loaded();
     const contents = (open: boolean) => <Presence>{open && <m.button {...presenceMotion}>Retry upload</m.button>}</Presence>;
     const view = render(contents(true));
-    await loaded();
     const button = screen.getByText('Retry upload');
     view.rerender(contents(false));
     expect(button).toHaveAttribute('inert');
@@ -168,7 +157,6 @@ describe('Swap', () => {
     tokens();
     const view = render(<Swap state="loading"><article><Swap state="loading">Loading Memory</Swap></article></Swap>);
     view.rerender(<Swap state="loaded"><article>Loaded Memory</article></Swap>);
-    await loaded();
     await waitFor(() => expect(screen.queryByText('Loading Memory')).toBeNull());
     await waitFor(() => expect(screen.getByText('Loaded Memory')).toBeVisible());
   });
