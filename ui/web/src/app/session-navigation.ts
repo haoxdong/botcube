@@ -221,20 +221,20 @@ export function useSessionNavigation({
     const opened = openedCopy.current;
     openedCopy.current = null;
     if (copy === null || !show) return null;
-    // The copy the page opened with is this account's, and stays on screen on its agent.
-    if (opened?.id === copy.id && activeId === copy.id && copiedAccount.current === accountId) return opened;
+    if (activeId === copy.id && (copiedAccount.current === accountId || activeChat?.accountId === accountId)) return opened ?? copy;
     setMainChatId(copy.id);
     openChat(copy.id, copy, false);
     copiedAccount.current = accountId;
     return copy;
   };
 
-  /**
-   * The copy's agent takes the loaded history, so a draft started meanwhile stays; a Turn sent from the copy brings
-   * the history with its own answer.
-   */
-  const loadIntoCopy = (copy: MainChatCopy, { messages, provider, running, runId, runningSince, failure }: ReplayedSession) => {
+  const loadIntoCopy = (copy: MainChatCopy, session: ReplayedSession) => {
     const shown = agentRef.current;
+    if (shown.threadId !== copy.id) {
+      openChat(copy.id, session);
+      return;
+    }
+    const { messages, provider, running, runId, runningSince, failure } = session;
     setTurnKnown(true);
     const copied = JSON.stringify(copy.messages);
     if (!shown.isRunning && JSON.stringify(shown.messages) === copied) {
@@ -321,8 +321,10 @@ export function useSessionNavigation({
 
   // The copy shows before the first paint, without waiting on the account session.
   const openedCopy = useRef<MainChatCopy | null>(null);
+  const openingShown = useRef(false);
   useLayoutEffect(() => {
-    if (opening === null) return;
+    if (opening === null || openingShown.current) return;
+    openingShown.current = true;
     setMainChatId(opening.copy.id);
     openChat(opening.copy.id, opening.copy, false);
     copiedAccount.current = opening.accountId;
