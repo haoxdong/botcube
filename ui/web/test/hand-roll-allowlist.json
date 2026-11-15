@@ -1,6 +1,6 @@
 {
   "app/bubble-width.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "CSS fit-content and text-wrap cannot hug the widest wrapped line while preserving its line breaks.",
     "counts": {
       "requestAnimationFrame": 1,
       "ResizeObserver": 1

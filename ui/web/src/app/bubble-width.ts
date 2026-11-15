@@ -234,11 +234,7 @@ function huggedWidthOf(bubble: HTMLElement): number | null {
   return Math.min(width, Math.ceil(huggedWidth(flow, wraps, widestLine)));
 }
 
-/**
- * Shrinks each bubble to its widest line, as Muse's: CSS keeps a box that wraps at its max width, so a two-line bubble
- * had empty room right of its lines. Each bubble's CSS width, the cap when its text wraps, is read first, all at once,
- * so the page lays out once. A bubble whose content can't be read keeps that width and names why in `data-unmeasured`.
- */
+// CSS fit-content and text-wrap cannot hug the widest wrapped line while preserving its line breaks.
 function fit(bubbles: HTMLElement[]) {
   for (const bubble of bubbles) bubble.style.removeProperty("width");
   const widths = bubbles.map((bubble) => [bubble, huggedWidthOf(bubble)] as const);
