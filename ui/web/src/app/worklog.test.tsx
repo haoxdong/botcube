@@ -480,6 +480,51 @@ const secondsIn = (time: string | null | undefined) => {
 };
 
 describe("a Worklog's step times", () => {
+  it.each(['tool', 'thought'] as const)('omits an unallocated %s clock from its detail title', async (kind) => {
+    const prefix = `unallocated-${kind}`;
+    const question = { id: `${prefix}-u`, role: 'user', content: 'Compare markets', ...stamp(0, 0) };
+    const work = kind === 'tool' ? [
+      { id: `${prefix}-a`, role: 'assistant', content: '', toolCalls: [call(`${prefix}-c`, 'execute', { command: 'research' })], ...stamp(23, 23) },
+      { id: `${prefix}-t`, role: 'tool', toolCallId: `${prefix}-c`, content: 'Done', ...stamp(23, 23.2) },
+    ] : [{ id: `${prefix}-r`, role: 'reasoning', content: '**Plan**', ...stamp(23, 23.2) }];
+    render(<StepsChat messages={[question, ...work]} />);
+    fireEvent.click(head());
+    fireEvent.click(screen.getByRole('button', { name: kind === 'tool' ? /^Ran/ : /^Thought/ }));
+    const title = await screen.findByRole('heading', { name: kind === 'tool' ? /^Terminal/ : /^Thought/ });
+    expect(title).toHaveTextContent(kind === 'tool' ? /^Terminal$/ : /^Thought$/);
+  });
+
+  it('waits for a positive allocation before revealing a new step clock', () => {
+    vi.useFakeTimers({ now: START + 23000 });
+    const question = { id: 'first-clock-u', role: 'user', content: 'Compare investment markets', ...stamp(0, 0) };
+    const first = { id: 'first-clock-a', role: 'assistant', content: '', toolCalls: [call('first-clock-c', 'execute', { command: 'research' })], ...stamp(23, 23) };
+    const view = render(<StepsChat messages={[question, first]} running />);
+    const clock = view.container.querySelector('.worklog-step[data-kind="tool"] .worklog-step-time');
+    assert(clock, 'the running tool clock');
+    expect(head()).toHaveTextContent(/^Working · 23s$/);
+    expect(clock).toHaveTextContent(/^0s$/);
+    expect(clock).not.toBeVisible();
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(clock).toBeVisible();
+    expect(clock).toHaveTextContent(/^1s$/);
+    expect(head()).toHaveTextContent(/^Working · 24s$/);
+    const result = { id: 'first-clock-t', role: 'tool', toolCallId: 'first-clock-c', content: 'Done', ...stamp(23, 23.2) };
+    const next = { id: 'next-clock-a', role: 'assistant', content: '', toolCalls: [call('next-clock-c', 'execute', { command: 'calculate' })], ...stamp(24, 24) };
+    view.rerender(<StepsChat messages={[question, first, result, next]} running />);
+    const clocks = view.container.querySelectorAll('.worklog-step[data-kind="tool"] .worklog-step-time');
+    expect(clocks[0]).toBeVisible();
+    expect(clocks[0]).toHaveTextContent(/^1s$/);
+    expect(clocks[1]).not.toBeVisible();
+    const visibleSeconds = [...view.container.querySelectorAll('.worklog-step-time')].filter((element) => getComputedStyle(element).visibility !== 'hidden').reduce((sum, element) => sum + secondsIn(element.textContent), 0);
+    expect(visibleSeconds).toBe(24);
+    expect(head()).toHaveTextContent(/^Working · 24s$/);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(clocks[1]).toBeVisible();
+    expect(clocks[1]).toHaveTextContent(/^1s$/);
+    expect(clocks[0]).toHaveTextContent(/^1s$/);
+    expect(head()).toHaveTextContent(/^Working · 25s$/);
+  });
+
   it('keeps card-separated views from double-counting the same Turn', () => {
     vi.useFakeTimers({ now: START + 8000 });
     const messages = [
@@ -494,6 +539,9 @@ describe("a Worklog's step times", () => {
     render(<StepsChat messages={messages} running />);
     expect(heads()).not.toHaveLength(0);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 8s$/);
+    for (const header of heads()) fireEvent.click(header);
+    const diagnosticIds = [...document.querySelectorAll('.worklog-step')].map(step => step.getAttribute('data-step-id'));
+    expect(new Set(diagnosticIds).size).toBe(diagnosticIds.length);
     act(() => { vi.advanceTimersByTime(1000); });
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
   });

@@ -186,6 +186,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   );
   const start = stepOf(timeline, "start");
   const answer = stepOf(timeline, "answer");
+  const diagnosticView = timeline?.steps.find(step => step.kind !== "start")?.id ?? id;
   if (children === undefined) return <div className="worklog"><div className="worklog-head">{title}</div></div>;
   return (
     <div className="worklog" data-open={open || undefined}>
@@ -198,13 +199,13 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
           <StepTimes.Provider value={timeline?.each ?? null}>
             <Presence>{start && (
               <motionElement.div {...presenceMotion} key="start">
-                <Step kind="start" state="done" icon={TimerIcon} label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
+                <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon={TimerIcon} label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
               </motionElement.div>
             )}</Presence>
             {children}
             <Presence>{answer && (
               <motionElement.div {...presenceMotion} key="answer">
-                <Step kind="answer" state={running ? "live" : "done"} icon={AlignLeftIcon} label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
+                <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon={AlignLeftIcon} label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
               </motionElement.div>
             )}</Presence>
           </StepTimes.Provider>
@@ -219,8 +220,9 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
  * over the chat, and its time in the right-hand column. Live, its words shimmer, and the Worklog's head stands still.
  * Arriving live (`id` first seen), it grows in.
  */
-function Step({ id, kind, state, icon: Icon, label, time, sheet }: {
+function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, sheet }: {
   id?: string | undefined;
+  diagnosticId?: string | undefined;
   kind: "start" | "thought" | "tool" | "answer";
   state: "live" | "done" | "failed" | "stopped";
   icon: LucideIcon;
@@ -236,10 +238,10 @@ function Step({ id, kind, state, icon: Icon, label, time, sheet }: {
   const Shown = state === "failed" ? CircleXIcon : Icon;
   const icon = <Shown className="worklog-step-icon" strokeWidth={1.75} aria-hidden />;
   const words = <span className="worklog-step-label">{label}</span>;
-  const column = <span className="worklog-step-time">{time}</span>;
+  const column = <span className="worklog-step-time" style={{ visibility: time === "0s" ? "hidden" : undefined }}>{time}</span>;
   const Head = sheet ? "button" : "div";
   const step = (
-    <div className="worklog-step" data-kind={kind} data-state={state}>
+    <div className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
       <Head type={sheet ? "button" : undefined} className="worklog-step-head" onClick={sheet?.show} aria-haspopup={sheet ? "dialog" : undefined} aria-expanded={sheet?.open}>
         {icon}{words}<ChevronRightIcon className="worklog-step-chevron" style={{ display: sheet ? undefined : "none" }} aria-hidden />{column}
       </Head>
@@ -331,7 +333,7 @@ export function ToolStep({ id, name, params, status: reported, output: result }:
   return (
     <>
       <Step id={id} kind="tool" state={state} icon={icon} label={label} time={time} sheet={{ open, show: () => { setOpened(true); setOpen(true); } }} />
-      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time ? `${title} · ${time}` : title} name={name} params={params} output={shown} exit={exit} prose={prose} />}</Suspense>
+      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `${title} · ${time}` : title} name={name} params={params} output={shown} exit={exit} prose={prose} />}</Suspense>
     </>
   );
 }
@@ -358,7 +360,7 @@ export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMes
   return (
     <>
       <Step id={message.id} kind="thought" state={live ? "live" : "done"} icon={BrainIcon} label={label} time={time} sheet={sheet} />
-      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time ? `Thought · ${time}` : "Thought"} summary={words} />}</Suspense>
+      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `Thought · ${time}` : "Thought"} summary={words} />}</Suspense>
     </>
   );
 }
