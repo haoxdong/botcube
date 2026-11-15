@@ -47,6 +47,7 @@ function Chat({ messages = MESSAGES }: { messages?: object[] }) {
 function files({ failing = Infinity } = {}) {
   let reads = 0;
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (new URL(input).pathname === '/files') return Response.json({ files: [{ name: VERSION_1, size: 1, lastModified: '2026-11-15T18:00:00Z' }] });
     if (input === 'https://files.test/1') return (reads += 1) >= failing ? new Response('', { status: 500 }) : new Response(JSON.stringify(SHEET));
     const name = new URL(input).searchParams.get('name');
     return name === VERSION_1 ? Response.json({ url: 'https://files.test/1' }) : Response.json({ detail: `No file named ${name}` }, { status: 404 });
@@ -142,6 +143,7 @@ describe('a Sheet that imports a File', () => {
     };
     const saves: { files: Record<string, string> }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      if (new URL(input).pathname === '/files') return Response.json({ files: Object.keys(stored).map((name) => ({ name, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
       if (input.startsWith('https://files.test/')) return new Response(stored[decodeURIComponent(input.slice('https://files.test/'.length))]);
       if (new URL(input).pathname === '/files/artifact-save') {
         saves.push(JSON.parse(typeof init?.body === 'string' ? init.body : ''));

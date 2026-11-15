@@ -30,6 +30,7 @@ afterAll(() => filesService.close());
 function files(edit: (path: string, text: string) => string = (_path, text) => text) {
   const stored = new Map(FIDELITY_DECK.map(({ path, text }) => [path.replace('/decks/q3/', 'artifacts/decks/q3.versions/1/'), edit(path, text)]));
   filesService.use(
+    http.get('*/files', () => HttpResponse.json({ files: [...stored.keys()].map((name) => ({ name, size: 1, lastModified: "2026-11-15T18:00:00Z" })) })),
     http.get('*/files/download-url', ({ request }) => {
       const name = new URL(request.url).searchParams.get('name') ?? '';
       return stored.has(name) ? HttpResponse.json({ url: `https://files.test/${encodeURIComponent(name)}` }) : HttpResponse.json({ detail: `No file named ${name}` }, { status: 404 });

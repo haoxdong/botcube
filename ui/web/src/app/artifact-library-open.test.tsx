@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
     const url = new URL(input);
+    if (url.pathname === '/files') return Response.json({ files: [{ name: artifact.path.slice(1), size: 1, lastModified: '2026-11-15T18:00:00Z' }] });
     if (url.pathname === '/files/download-url') return url.searchParams.get('name')?.endsWith('/2.html')
       ? Response.json({}, { status: 404 }) : Response.json({ url: 'https://files.test/page' });
     return new Response('<!doctype html><h1>Revenue dashboard</h1>');

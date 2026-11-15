@@ -83,6 +83,7 @@ function docInFiles(markdown = PLAN, answer?: Response) {
   const stored: Record<string, string> = { [V1]: markdown };
   const saves: Save[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (new URL(input).pathname === '/files') return Response.json({ files: Object.keys(stored).map((name) => ({ name, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
     if (input.startsWith('https://files.test/')) return new Response(stored[decodeURIComponent(input.slice('https://files.test/'.length))]);
     if (new URL(input).pathname === '/files/artifact-save') {
       const save = JSON.parse(typeof init?.body === 'string' ? init.body : '') as Save;

@@ -39,6 +39,7 @@ const STORED: Record<string, string> = {
 
 /** Files' answers: a signed URL for a stored file, then its text. */
 function files(input: string) {
+  if (new URL(input).pathname === '/files') return Response.json({ files: Object.keys(STORED).map((name) => ({ name, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
   if (input.startsWith('https://files.test/')) return new Response(STORED[decodeURIComponent(input.slice('https://files.test/'.length))]);
   const name = new URL(input).searchParams.get('name') ?? '';
   return name in STORED ? Response.json({ url: `https://files.test/${encodeURIComponent(name)}` }) : Response.json({ detail: `No file named ${name}` }, { status: 404 });
@@ -358,6 +359,7 @@ describe("the User's edit of a published deck's text", () => {
     const saves: Save[] = [];
     // As the Chat Service stores a save: the next version beside its record, refused over any newer version.
     vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      if (new URL(input).pathname === '/files') return Response.json({ files: Object.keys(stored).map((name) => ({ name, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
       if (input.startsWith('https://files.test/')) return new Response(stored[decodeURIComponent(input.slice('https://files.test/'.length))]);
       if (new URL(input).pathname === '/files/artifact-save') {
         const save = JSON.parse(init?.body as string) as Save;

@@ -43,6 +43,7 @@ function Chat({ messages = reply(), accountId = "pane-test" }: { messages?: Retu
 
 function files() {
   const fetchImpl = vi.fn(async (input: string) => {
+    if (new URL(input).pathname === '/files') return Response.json({ files: [1, 2].map((version) => ({ name: `artifacts/reports/q3.html.versions/${version}.html`, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
     if (input === 'https://files.test/2.html') return new Response(PAGE);
     if (input === 'https://files.test/1.html') return new Response(PAGE_1);
     const name = new URL(input).searchParams.get('name');
@@ -445,7 +446,7 @@ it("keeps the version a card opened when a saved chat's finished write shows", a
 it("keeps the chat's version open and says why when Files can't say whether a newer one is stored", async () => {
   phone(false);
   const stored = fetch;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => new URL(input).searchParams.get('name') === 'artifacts/reports/q3.html.versions/3.html'
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => new URL(input).pathname === '/files'
     ? Response.json({ detail: 'Files is unavailable' }, { status: 503 })
     : stored(input)));
   render(<Chat />);

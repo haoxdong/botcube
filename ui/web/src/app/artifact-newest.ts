@@ -3,8 +3,8 @@
 import { readRecord, type VersionRecord } from "botcube-artifact-check/record";
 import { useEffect, useRef, useState } from "react";
 
-import { HttpStatusError } from "../computer/files-upload";
-import { fileUrl } from "./artifact-files";
+import { chatServiceUrl } from "../cartridge/chat-service-url";
+import { listFiles } from "../computer/files-service";
 import { reason } from "./composer-files";
 
 /** The record of the version stored at `path`: `<n>.json` beside it. */
@@ -18,17 +18,6 @@ export async function recordOf(path: string, read: (path: string) => Promise<str
 /** An Artifact Version as the panel knows it: `path` is where Files stores it. */
 type Known = { version: number; path: string };
 
-/** Whether Files holds `path`: a 404 says it doesn't, and any other failure throws. */
-async function inFiles(path: string): Promise<boolean> {
-  try {
-    await fileUrl(path);
-    return true;
-  } catch (error) {
-    if (error instanceof HttpStatusError && error.status === 404) return false;
-    throw error;
-  }
-}
-
 /**
  * The Artifact's newest version in Files, from a version the chat has seen: a User's save is no message, so a reloaded
  * chat knows only the versions published in it. A version counts once `stored`, the file under its path that its type
@@ -37,9 +26,9 @@ async function inFiles(path: string): Promise<boolean> {
 export async function newestInFiles<T extends Known>(known: T, stored: string, read: (path: string) => Promise<string>): Promise<T> {
   const folder = known.path.slice(0, known.path.lastIndexOf("/") + 1);
   const suffix = known.path.slice(folder.length).replace(/^\d+/, "");
+  const files = new Set((await listFiles({ chatServiceUrl: chatServiceUrl() })).map(({ name }) => `/${name}`));
   let version = known.version;
-  // eslint-disable-next-line no-await-in-loop -- each version is looked for only once the one before it is found
-  while (await inFiles(`${folder}${version + 1}${suffix}${stored}`)) version += 1;
+  while (files.has(`${folder}${version + 1}${suffix}${stored}`)) version += 1;
   if (version === known.version) return known;
   const path = `${folder}${version}${suffix}`;
   const { author, title, description } = await recordOf(path, read);

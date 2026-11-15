@@ -68,6 +68,7 @@ function draftInFiles(draft: object | string = DRAFT, refusal?: Response) {
   };
   const saves: Save[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (new URL(input).pathname === '/files') return Response.json({ files: Object.keys(stored).map((name) => ({ name, size: 1, lastModified: '2026-11-15T18:00:00Z' })) });
     if (input.startsWith('https://files.test/')) {
       const file = stored[decodeURIComponent(input.slice('https://files.test/'.length))];
       return file === undefined ? new Response(null, { status: 404 }) : new Response(file);
