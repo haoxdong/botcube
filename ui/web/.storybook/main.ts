@@ -46,6 +46,7 @@ const config: StorybookConfig = {
     };
     config.define = {
       ...config.define,
+      'process.env.NEXT_PUBLIC_ARTIFACTS': JSON.stringify('1'),
       'process.env.NEXT_PUBLIC_CHAT_SERVICE_URL':
         JSON.stringify(CHAT_SERVICE_ORIGIN),
     };

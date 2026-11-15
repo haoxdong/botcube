@@ -26,11 +26,12 @@ const loadFeatures = () => import("./motion-features").then((module) => module.d
 
 export function HeaderName({ name, working }: { name: string; working: boolean }) {
   const { move } = motionTokens();
+  const layoutDependency = `${name}:${working}`;
   const transition = { layout: { type: "spring" as const, visualDuration: move.duration, bounce: 0 } };
   return (
     <LazyMotion features={loadFeatures} strict><LayoutGroup>
-      <motionElement.span layout transition={transition} className="chat-header-name">
-        <motionElement.span layout="position" transition={transition} className="chat-header-label">
+      <motionElement.span layout layoutDependency={layoutDependency} transition={transition} className="chat-header-name">
+        <motionElement.span layout="position" layoutDependency={layoutDependency} transition={transition} className="chat-header-label">
           {name}
           <Presence>{working && <motionElement.span {...presenceMotion} layout={false} className="chat-header-status">is working</motionElement.span>}</Presence>
         </motionElement.span>
