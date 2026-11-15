@@ -43,14 +43,7 @@ function hasRenderedReplies(wrapper: Element | null): boolean {
 /** The bottom of the latest message in `wrapper`, on screen. */
 const latestBottom = (wrapper: Element | null) => [...(wrapper?.querySelectorAll(".copilotKitMessage") ?? [])].at(-1)?.getBoundingClientRect().bottom;
 
-/**
- * Calls `onOpened` on the first frame the chat in `wrapper` shows at its latest message, with room made for its
- * composer and its replies rendered: CopilotKit's scroll view reaches the latest message some frames after it mounts,
- * and keeps to it a frame after a reply grows, so the chat opens only once that message held still since the
- * frame before, and its wait for that counts from when its replies rendered. Mermaid initialization can outlast
- * scroll settling, but a stalled renderer must not hide the chat indefinitely. The messages it held as it opened are
- * marked `data-opened`: history, which shows without the entrance fade. Returns what stops watching.
- */
+// use-stick-to-bottom exposes position, not whether app reply renderers and composer padding are ready to reveal history.
 export function watchOpening(wrapper: () => Element | null, onOpened: () => void): () => void {
   const started = performance.now();
   let held: number | undefined;

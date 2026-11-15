@@ -13,7 +13,7 @@
     }
   },
   "app/chat-opening.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "use-stick-to-bottom exposes position, not app renderer readiness or reserved composer room before history is revealed.",
     "counts": {
       "requestAnimationFrame": 2
     }
