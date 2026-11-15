@@ -25,6 +25,7 @@ declare module 'vitest/browser' {
   }
 }
 
+const nativeFrame = window.requestAnimationFrame.bind(window);
 const REDUCE_MOTION = /-reduce-motion$/;
 
 beforeEach(async (context) => {
@@ -32,7 +33,7 @@ beforeEach(async (context) => {
   if (inject('renderingProfile')) {
     configure({ asyncUtilTimeout: 60000 });
     renderingProof = await commands.prepareRendering();
-    startFrameSampling();
+    startFrameSampling(nativeFrame);
   }
 });
 

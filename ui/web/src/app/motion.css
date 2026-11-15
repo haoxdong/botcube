@@ -26,6 +26,10 @@
 }
 
 @media (min-width: 641px) {
+  :root[data-glide] {
+    view-transition-name: none;
+  }
+
   [data-glide] .app-shell {
     view-transition-name: chat-stage;
   }
