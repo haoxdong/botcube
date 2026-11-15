@@ -116,7 +116,7 @@
 
 .mep-pill-model,
 .mep-pill-effort {
-  display: grid;
+  display: block;
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -125,24 +125,14 @@
   font-weight: inherit;
 }
 
-.mep-pill-model::after,
-.mep-pill-effort::after {
-  content: attr(data-reserve-label);
-  visibility: hidden;
-  grid-area: 1 / 1;
-}
-
-.mep-pill-model > span,
-.mep-pill-effort > span {
-  grid-area: 1 / 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .mep-pill-effort,
-.mep-pill > svg {
+.mep-pill-chevron {
   flex-shrink: 0;
+}
+
+.mep-pill-chevron {
+  position: relative;
+  display: flex;
 }
 
 .mep-pill-model-phone {
@@ -162,7 +152,7 @@
     display: inline;
   }
 
-  .chat-model-picker .mep-pill > svg {
+  .chat-model-picker .mep-pill-chevron {
     display: none;
   }
 
