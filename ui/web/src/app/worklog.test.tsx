@@ -468,6 +468,232 @@ const secondsIn = (time: string | null | undefined) => {
 };
 
 describe("a Worklog's step times", () => {
+  it('keeps card-separated views from double-counting the same Turn', () => {
+    vi.useFakeTimers({ now: START + 8000 });
+    const messages = [
+      { id: 'card-clock-u', role: 'user', content: 'Build a chart and compare rates', ...stamp(0, 0) },
+      { id: 'card-clock-r', role: 'reasoning', content: 'Plan', ...stamp(0, 2) },
+      { id: 'card-clock-card', role: 'assistant', content: '', toolCalls: [call('card-clock-artifact', 'Artifact', { description: 'Rates chart' })], ...stamp(2, 2) },
+      { id: 'card-clock-card-result', role: 'tool', toolCallId: 'card-clock-artifact', content: 'Chart ready', ...stamp(2, 4) },
+      { id: 'card-clock-next', role: 'assistant', content: '', toolCalls: [call('card-clock-query', 'execute', { command: 'compare rates' })], ...stamp(4, 4) },
+      { id: 'card-clock-next-result', role: 'tool', toolCallId: 'card-clock-query', content: 'Done', ...stamp(4, 6) },
+      { id: 'card-clock-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) },
+    ];
+    render(<StepsChat messages={messages} running />);
+    expect(heads()).not.toHaveLength(0);
+    for (const header of heads()) expect(header).toHaveTextContent(/^Working · 8s$/);
+    act(() => { vi.advanceTimersByTime(1000); });
+    for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
+  });
+
+  it('keeps seconds on their rows when replay corrects the Turn start by a fraction', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'fraction-origin-u', role: 'user', content: 'Rates' };
+    const first = { id: 'fraction-origin-a1', role: 'assistant', content: '', toolCalls: [call('fraction-origin-c1', 'execute', { command: 'first' })], ...stamp(0, 0) };
+    const chat = (messages: TurnMessage[]) => <TurnStart.Provider value={new Date(START).toISOString()}><StepsChat messages={messages} running /></TurnStart.Provider>;
+    const view = render(chat([question, first]));
+    act(() => { vi.advanceTimersByTime(400); });
+    const result = { id: 'fraction-origin-t', role: 'tool', toolCallId: 'fraction-origin-c1', content: 'Done', ...stamp(0, 0.4) };
+    const second = { id: 'fraction-origin-a2', role: 'assistant', content: '', toolCalls: [call('fraction-origin-c2', 'execute', { command: 'second' })], ...stamp(0.4, 0.4) };
+    view.rerender(chat([question, first, result, second]));
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(stepRows()).toEqual([['Ranfirst', '0s'], ['Runningsecond', '1s']]);
+    view.rerender(chat([{ ...question, ...stamp(-0.4, -0.4) }, first, result, second]));
+    expect(stepRows()).toEqual([['Ranfirst', '0s'], ['Runningsecond', '1s']]);
+    expect(head()).toHaveTextContent(/^Working · 1s$/);
+  });
+
+  it('keeps a historical Turn on its own timestamps while another Turn runs', () => {
+    const [question, ...rest] = timed('historical-current');
+    assert(question, 'a question');
+    render(<TurnStart.Provider value={new Date(START + 100000).toISOString()}>
+      <StepsChat messages={[{ ...question, metadata: undefined }, ...rest]} />
+    </TurnStart.Provider>);
+    expect(head()).toHaveTextContent(/^Worked for 29s$/);
+    fireEvent.click(head());
+    expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(29);
+  });
+
+  it('accounts for the final wait when a Turn stops without an answer', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'stopped-wait-u', role: 'user', content: 'Rates', ...stamp(0, 0) };
+    const tool = { id: 'stopped-wait-a', role: 'assistant', content: '', toolCalls: [call('stopped-wait-c', 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    act(() => { vi.advanceTimersByTime(2000); });
+    const result = { id: 'stopped-wait-t', role: 'tool', toolCallId: 'stopped-wait-c', content: 'Done', ...stamp(0, 2) };
+    view.rerender(<StepsChat messages={[question, tool, result]} running />);
+    act(() => { vi.advanceTimersByTime(2000); });
+    vi.setSystemTime(START + 4600);
+    view.rerender(<StepsChat messages={[question, tool, result]} />);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranrates', '5s']]);
+  });
+
+  it('keeps displayed tool time when the earlier server Turn start arrives', () => {
+    vi.useFakeTimers({ now: START + 9000 });
+    const question = { id: 'late-origin-u', role: 'user', content: 'Rates' };
+    const tool = { id: 'late-origin-a', role: 'assistant', content: '', toolCalls: [call('late-origin-c', 'execute', { command: 'rates' })], ...stamp(3, 3) };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    expect(head()).toHaveTextContent(/^Working · 6s$/);
+    view.rerender(<TurnStart.Provider value={new Date(START).toISOString()}><StepsChat messages={[question, tool]} running /></TurnStart.Provider>);
+    expect(head()).toHaveTextContent(/^Working · 9s$/);
+    expect(stepRows()).toEqual([['Started up', '3s'], ['Runningrates', '6s']]);
+  });
+
+  it('refreshes Turn time immediately on reconnect after a paused browser clock', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'online-u', role: 'user', content: 'Rates', ...stamp(0, 0) };
+    const tool = { id: 'online-a', role: 'assistant', content: '', toolCalls: [call('online-c', 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    render(<StepsChat messages={[question, tool]} running />);
+    act(() => {
+      vi.setSystemTime(START + 5000);
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(head()).toHaveTextContent(/^Working · 5s$/);
+    expect(stepRows()).toEqual([['Runningrates', '5s']]);
+  });
+
+  it('retains step times on a reload mid-Turn after delayed replay', async () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'reload-live-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const tool = { id: 'reload-live-a', role: 'assistant', content: '', toolCalls: [call('reload-live-first', 'execute', { command: 'first' }), call('reload-live-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+    view.unmount();
+    vi.setSystemTime(START + 9000);
+    vi.resetModules();
+    const reloaded = await import('./worklog');
+    const result = { id: 'reload-live-t', role: 'tool', toolCallId: 'reload-live-first', content: 'Done', ...stamp(0, 0.2) };
+    render(<reloaded.Worklog id="reload-live-a" asked="reload-live-u" question={question} turn={[tool, result]} running>
+      <reloaded.ToolStep id="reload-live-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+      <reloaded.ToolStep id="reload-live-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
+    </reloaded.Worklog>);
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '4s']]);
+    expect(head()).toHaveTextContent(/^Working · 9s$/);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '5s']]);
+  });
+
+  it('keeps later elapsed time when replay moves an earlier completion forward', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'forward-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const first = { id: 'forward-a1', role: 'assistant', content: '', toolCalls: [call('forward-c1', 'execute', { command: 'first' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, first]} running />);
+    act(() => { vi.advanceTimersByTime(2000); });
+    const result = { id: 'forward-t1', role: 'tool', toolCallId: 'forward-c1', content: 'Done', ...stamp(0, 2) };
+    const second = { id: 'forward-a2', role: 'assistant', content: '', toolCalls: [call('forward-c2', 'execute', { command: 'second' })], ...stamp(2, 2) };
+    view.rerender(<StepsChat messages={[question, first, result, second]} running />);
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(stepRows()).toEqual([['Ranfirst', '2s'], ['Runningsecond', '3s']]);
+    view.rerender(<StepsChat messages={[question, first, { ...result, ...stamp(0, 5) }, second]} running />);
+    expect(stepRows()).toEqual([['Ranfirst', '2s'], ['Runningsecond', '3s']]);
+    expect(head()).toHaveTextContent(/^Working · 5s$/);
+  });
+
+  it('keeps the startup row and its time when replay backdates the first tool start', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'backdated-u', role: 'user', content: 'Search' };
+    const tool = { id: 'backdated-a', role: 'assistant', content: '', toolCalls: [call('backdated-c', 'execute', { command: 'rates' })] };
+    const chat = (messages: TurnMessage[]) => <TurnStart.Provider value={new Date(START).toISOString()}><StepsChat messages={messages} running /></TurnStart.Provider>;
+    const view = render(chat([question]));
+    act(() => { vi.advanceTimersByTime(2000); });
+    view.rerender(chat([question, tool]));
+    act(() => { vi.advanceTimersByTime(3000); });
+    expect(stepRows()).toEqual([['Started up', '2s'], ['Runningrates', '3s']]);
+    view.rerender(chat([{ ...question, ...stamp(0, 0) }, { ...tool, ...stamp(0, 0) }]));
+    expect(stepRows()).toEqual([['Started up', '2s'], ['Runningrates', '3s']]);
+    expect(head()).toHaveTextContent(/^Working · 5s$/);
+  });
+
+  it('keeps displayed parallel time from resetting to zero when a delayed result arrives', async () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'delayed-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const tools = { id: 'delayed-a', role: 'assistant', content: '', toolCalls: [call('delayed-first', 'execute', { command: 'first' }), call('delayed-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tools]} running />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+
+    const result = { id: 'delayed-t', role: 'tool', toolCallId: 'delayed-first', content: 'Done', ...stamp(0, 0.2) };
+    view.rerender(<StepsChat messages={[question, tools, result]} running />);
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '0s']]);
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '1s']]);
+    expect(head()).toHaveTextContent(/^Working · 6s$/);
+    view.unmount();
+    vi.resetModules();
+    const reloaded = await import('./worklog');
+    const second = { id: 'delayed-second-t', role: 'tool', toolCallId: 'delayed-second', content: 'Done', ...stamp(0, 6) };
+    render(<reloaded.Worklog id="delayed-a" asked="delayed-u" question={question} turn={[tools, result, second]} running={false}>
+      <reloaded.ToolStep id="delayed-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+      <reloaded.ToolStep id="delayed-second" name="execute" params={{ command: 'second' }} status="complete" output="Done" />
+    </reloaded.Worklog>);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Ransecond', '1s']]);
+    expect(head()).toHaveTextContent(/^Worked for 6s$/);
+  });
+
+  it('keeps twelve tool rows and their times in order through reversed completion and replay', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'reverse-u', role: 'user', content: 'Compare markets', ...stamp(0, 0) };
+    const calls = Array.from({ length: 12 }, (_, index) => call(`reverse-${index}`, 'execute', { command: `market ${index}` }));
+    const tools = { id: 'reverse-a', role: 'assistant', content: '', toolCalls: calls, ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tools]} running />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    const order = calls.map((_, index) => `market ${index}`);
+    const results: TurnMessage[] = [];
+    for (const tool of [...calls].reverse()) {
+      results.push({ id: `${tool.id}-result`, role: 'tool', toolCallId: tool.id, content: 'Done', ...stamp(0, 5) });
+      view.rerender(<StepsChat messages={[question, tools, ...results]} running />);
+      expect(stepRows().map(([label]) => label?.replace(/^Running|^Ran/, ''))).toEqual(order);
+      expect(stepRows().map(([, time]) => time)).toEqual(['5s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s']);
+    }
+    view.rerender(<StepsChat messages={[question, tools, ...results]} />);
+    fireEvent.click(head());
+    const completed = stepRows();
+    view.unmount();
+    render(<StepsChat messages={[question, tools, ...results]} />);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual(completed);
+  });
+
+  it('accounts for every second between twelve sequential finance tool steps', () => {
+    vi.useFakeTimers({ now: START });
+    const messages: TurnMessage[] = [{ id: 'finance-u', role: 'user', content: 'Compare twelve markets', ...stamp(0, 0) }];
+    const view = render(<StepsChat messages={messages} running />);
+    const gaps: number[] = [];
+    for (let index = 0; index < 12; index++) {
+      const began = index * 3;
+      const id = `finance-${index}`;
+      messages.push({ id: `${id}-a`, role: 'assistant', content: '', toolCalls: [call(id, 'execute', { command: `market ${index}` })], ...stamp(began, began) });
+      view.rerender(<StepsChat messages={[...messages]} running />);
+      act(() => { vi.advanceTimersByTime(2000); });
+      messages.push({ id: `${id}-t`, role: 'tool', toolCallId: id, content: 'Done', ...stamp(began, began + 2) });
+      view.rerender(<StepsChat messages={[...messages]} running />);
+      act(() => { vi.advanceTimersByTime(1000); });
+      const sum = stepRows().reduce((total, [, time]) => total + secondsIn(time), 0);
+      const total = secondsIn(/· (.+)$/.exec(head().textContent)?.[1]);
+      gaps.push(total - sum);
+    }
+    expect(stepRows()).toHaveLength(12);
+    expect(gaps).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('keeps the step sum equal to the running Turn while waiting after a tool result', () => {
+    vi.useFakeTimers({ now: START });
+    const question = { id: 'between-u', role: 'user', content: 'Compare markets', ...stamp(0, 0) };
+    const tools = { id: 'between-a', role: 'assistant', content: '', toolCalls: [call('between-c', 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tools]} running />);
+    act(() => { vi.advanceTimersByTime(2000); });
+    const result = { id: 'between-t', role: 'tool', toolCallId: 'between-c', content: 'Done', ...stamp(0, 2) };
+    view.rerender(<StepsChat messages={[question, tools, result]} running />);
+    act(() => { vi.advanceTimersByTime(1000); });
+
+    expect(head()).toHaveTextContent(/^Working · 3s$/);
+    expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(3);
+  });
+
   it('keeps a finished fractional step from dropping to zero when the next step finishes', () => {
     vi.useFakeTimers({ now: START + 600 });
     const question = { id: 'fraction-u', role: 'user', content: 'Search', ...stamp(0, 0) };
@@ -678,7 +904,7 @@ describe("a Worklog's step times", () => {
   it.each(['tool', 'thought'] as const)('gives elapsed time to the live tool after a completed %s without a visible clock', (kind) => {
     vi.useFakeTimers({ now: START });
     const messages: TurnMessage[] = [
-      { id: 'hidden-u', role: 'user', content: 'Search' },
+      { id: `hidden-${kind}-u`, role: 'user', content: 'Search' },
       { id: 'observed-a', role: 'assistant', content: '', toolCalls: [call('observed-call', 'read_file')], ...stamp(0, 0) },
       { id: 'observed-result', role: 'tool', toolCallId: 'observed-call', content: 'Read', ...stamp(0, 0) },
       ...(kind === 'tool' ? [
@@ -702,7 +928,7 @@ describe("a Worklog's step times", () => {
 
   it('counts the running step up live, its steps summing to "Working" all along, from the Chat Service\'s start', () => {
     vi.useFakeTimers({ now: START });
-    const live = timed('live').map(({ metadata: _metadata, ...message }) => message);
+    const live = timed('live-sum').map(({ metadata: _metadata, ...message }) => message);
     const [question, thought, search, result] = live;
     assert(question && thought && search && result, 'a live Turn');
     const view = render(<TurnStart.Provider value={new Date(START).toISOString()}><StepsChat messages={[question]} running /></TurnStart.Provider>);
@@ -722,7 +948,7 @@ describe("a Worklog's step times", () => {
     expect(stepRows()).toEqual([['Started up', '2s'], ['ThoughtPlanning the search', '6s'], ['Searching the webFed minutes October 2026', '1s']]);
     expect(head()).toHaveTextContent(/^Working · 9s$/);
     at(12, [question, thought, search, result]);
-    expect(sum()).toBe(12);
+    expect(sum()).toBe(13);
     expect(head()).toHaveTextContent(/^Working · 13s$/);
     at(14, [question, thought, search, result, { ...thought, id: 'live-r2', content: '' }]);
     expect(sum()).toBe(15);

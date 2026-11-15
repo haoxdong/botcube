@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
-import { CLOCKS_KEPT, spanOf, startOf, thoughtClocks, turnClocks, useClock, useToolClock } from "./worklog-clock";
+import { CLOCKS_KEPT, spanOf, startOf, useWorklogClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
 
 // A step's sheet loads after first load (web-cold-open-check.mjs), once the page is idle, so a tap need not wait
@@ -173,9 +173,9 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   if (chosen && !current) setChosen(null);
   const open = current ? chosen.open : phase === "working";
   const serverStart = useContext(TurnStart);
-  const time = useClock(turnClocks, id, running, running ? asked : undefined, serverStart === undefined ? startedAt : Date.parse(serverStart)) ?? took;
-  const timeline = timelineOf(id, turn, question, running, serverStart);
-  const total = totalOf(timeline, time);
+  useWorklogClock(running);
+  const timeline = timelineOf(question?.id ?? asked ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), id);
+  const total = totalOf(timeline, took);
   const title = (
     <span className="worklog-title" data-live={running || undefined}>
       {running ? `Working · ${total ?? seconds(0)}` : total === undefined ? "Worked" : `Worked for ${total}`}
@@ -302,7 +302,6 @@ export function ToolStep({ id, name, params, status: reported, output: result }:
   const cut = reported === "complete" && result !== undefined && UNANSWERED_CALL.test(result);
   const status = cut ? "stopped" : reported;
   const output = cut ? undefined : result;
-  useToolClock(id, status === "running");
   const time = useStepTime(id);
   const [open, setOpen] = useState(false);
   // A step's sheet mounts as it first opens, and stays to animate closed: a closed sheet for every step of a long
@@ -343,7 +342,6 @@ export function ToolStep({ id, name, params, status: reported, output: result }:
  */
 export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMessage; isRunning?: boolean; isLatest?: boolean }) {
   const live = Boolean(isRunning && isLatest);
-  useClock(thoughtClocks, message.id, live);
   const time = useStepTime(message.id);
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
