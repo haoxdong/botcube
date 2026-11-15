@@ -572,7 +572,7 @@ it("shows a message's markdown table flat on the bubble, as wide as its content,
 });
 
 // a white band ran from the scroll-to-bottom chevron's row down to the composer, hiding the messages behind it.
-it("scrolls the messages behind CopilotKit's scroll-to-bottom chevron down to the composer, with no band around it (memo 0049 Fig 7)", () => {
+it("scrolls the messages behind CopilotKit's scroll-to-bottom chevron down to the composer, with no band around it (Muse/dots north star Fig 7)", () => {
   const chat = document.createElement('div');
   chat.setAttribute('data-copilotkit', '');
   chat.innerHTML = '<div class="row"><button data-testid="copilot-scroll-to-bottom"></button></div>';
@@ -592,7 +592,7 @@ it("fills the visible viewport, so iOS Safari's toolbars never let the page scro
   // happy-dom drops the dvh unit, so this reads the sheet itself.
   expect(sheet).toMatch(/\n\.app-layout \{[^}]*height: calc\(100dvh - var\(--app-safe-top\) - var\(--app-safe-bottom\)\);/);
   expect(sheet).toMatch(/\n\.sidebar \{[^}]*height: 100dvh;/);
-  // A phone's layout runs under the status and home bars (memo 0049 Fig 21), its contents padded clear of them, and
+  // A phone's layout runs under the status and home bars (Muse/dots north star Fig 21), its contents padded clear of them, and
   // grows with the chat that scrolls the page.
   expect(sheet).toMatch(/\n {2}\.app-layout \{\s*height: auto;\s*min-height: 100dvh;\s*margin: 0 var\(--app-safe-right\) 0 var\(--app-safe-left\);\s*padding-top: var\(--app-safe-top\);\s*transform: none;/);
 });
@@ -786,7 +786,7 @@ it('spaces a scheduled-task proposal in a message by its own gap, not prose para
   expect(styleOf(message, '.scheduled-proposal').gap).toBe('4px');
 });
 
-it("shows the agent's name in a capsule over the avatar's bottom edge, which sinks when pressed (memo 0049 Figs 1, 7 and 11)", () => {
+it("shows the agent's name in a capsule over the avatar's bottom edge, which sinks when pressed (Muse/dots north star Figs 1, 7 and 11)", () => {
   const { container } = render(
     <header className="chat-header">
       <button className="chat-header-agent">
@@ -870,7 +870,7 @@ it('keeps the avatar keyboard focus ring while the pointer is over it', () => {
   }
 });
 
-it("floats the agent's header over the chat, which scrolls beneath it without a backing band, and starts the first message below it (memo 0049 Figs 7 and 11)", () => {
+it("floats the agent's header over the chat, which scrolls beneath it without a backing band, and starts the first message below it (Muse/dots north star Figs 7 and 11)", () => {
   const { container } = render(
     <main className="app-shell">
       <header className="chat-header">
@@ -1037,7 +1037,7 @@ it('fills the Main chat pill only while it is the open chat, and opens the drawe
   }
 });
 
-// the open drawer covered the whole chat; memo 0049 Fig 21 slides the chat right as a rounded card beside it, its
+// the open drawer covered the whole chat; the Muse/dots north star's Fig 21 slides the chat right as a rounded card beside it, its
 // soft shadow on the drawer.
 it("slides the chat right by the phone drawer's width as a rounded, shadowed card", () => {
   // happy-dom leaves :has() and vw unresolved, so this reads the sheet.
@@ -1179,7 +1179,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         </aside>,
       );
       try {
-        // Side chats sit right under their header on both (memo 0049 Fig 21)
+        // Side chats sit right under their header on both (Muse/dots north star Fig 21)
         expect(zero(styleOf(container, '.sidebar-list').paddingTop)).toBe('0px');
         for (const selector of ['.sidebar-new-chat']) {
           expect(styleOf(container, selector).width).toBe('44px');
@@ -1187,7 +1187,7 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
           // A phone's plus is as light as the rows' icons
           expect(styleOf(container, `${selector} svg`).width).toBe('20px');
         }
-        // On a phone, memo 0049 Fig 21's drawer
+        // On a phone, the Muse/dots north star's Fig 21 drawer
         if (width === 440) {
           expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('10px');
           expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('10px');
@@ -1227,7 +1227,7 @@ it('floats translucent phone controls over the scrolling chat with the pill over
 });
 
 // Muse's chat runs up under the iPhone status bar, behind its fade, and beside the avatar at full strength, its name on
-// a pill of its own (memo 0049 Fig 11). In an iOS Safari tab only the page's own scroll runs under the status bar, so a
+// a pill of its own (Muse/dots north star Fig 11). In an iOS Safari tab only the page's own scroll runs under the status bar, so a
 // phone's chat scrolls the page, its header and composer fixed on screen. A dimming band of ours had to start below
 // the status bar, as iOS Safari paints the bar white over a fixed fill at its edge, and left a strip of undimmed text
 // between Safari's fade and its own. Desktop keeps the chat's own scroll view.
@@ -1357,7 +1357,7 @@ it("turns the page the drawer's grey while the phone drawer is open, up behind t
 });
 
 // An earlier design drew a 99px Marq, about 77px tall with his hat, behind a shadowed pill over his body. Muse's 68px avatar sits
-// in front of its pill, which tucks about 6px behind it (memo 0049 Fig 11). The layout check measures the heights and
+// in front of its pill, which tucks about 6px behind it (Muse/dots north star Fig 11). The layout check measures the heights and
 // the tuck; the desktop has its own, below.
 it("draws the phone's Marq 68px tall in front of the pill tucked behind him", () => {
   happyDOM.setViewport({ width: 440, height: 956 });
@@ -1381,7 +1381,7 @@ it("draws the phone's Marq 68px tall in front of the pill tucked behind him", ()
   }
 });
 
-// The desktop takes the phone's top of chat and drawer layout, measured against memo 0049
+// The desktop takes the phone's top of chat and drawer layout, measured against the Muse/dots north star
 // Fig 1 (dots desktop): the avatar's top 1.5pt under the window's, a 44pt row pitch and the account row 4px up.
 // happy-dom reports an unset length as '' and a written `0` as '0'.
 const zero = (value: string) => (value === '' || value === '0' ? '0px' : value);
@@ -1434,7 +1434,7 @@ it('sets the desktop chat square and edge to edge, as it meets no rounded screen
   }
 });
 
-it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name pill with no frost or glow (memo 0049 Fig 1)", () => {
+it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name pill with no frost or glow (Muse/dots north star Fig 1)", () => {
   happyDOM.setViewport({ width: 1440, height: 900 });
   const { container, unmount } = render(desktopApp('sidebar-collapsed'));
   try {
@@ -1458,7 +1458,7 @@ it("sets Marq 1.5px under the desktop card's top, in front of a crisp white name
   }
 });
 
-it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side chats header, a grey selected fill, a plain plus and the account row 4px off the bottom (memo 0049 Fig 1)", () => {
+it("lays out the desktop sidebar as the phone drawer: a 44px pitch, a grey Side chats header, a grey selected fill, a plain plus and the account row 4px off the bottom (Muse/dots north star Fig 1)", () => {
   happyDOM.setViewport({ width: 1440, height: 900 });
   try {
     const { container, unmount } = render(desktopApp('sidebar-expanded'));

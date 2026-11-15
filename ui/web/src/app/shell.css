@@ -253,7 +253,7 @@
   padding: 12px 8px 8px;
 }
 
-/* The name hangs from the nav icons' 20px edge, as the phone's does (memo 0049 Fig 21) */
+/* The name hangs from the nav icons' 20px edge, as the phone's does (Muse/dots north star Fig 21) */
 .sidebar-expanded .sidebar-brand {
   padding-left: 20px;
 }
@@ -310,7 +310,7 @@
   display: none;
 }
 
-/* The menu button is a round translucent chip (memo 0049 Fig 21), a finger's 44px */
+/* The menu button is a round translucent chip (Muse/dots north star Fig 21), a finger's 44px */
 .sidebar-collapsed .sidebar-logo-btn,
 .sidebar-strip-close-menu {
   flex: none;
@@ -364,7 +364,7 @@
     }
 }
 
-/* The open row's fill, as light as Muse's (memo 0049 Fig 21) and dots' rail (Fig 1) */
+/* The open row's fill, as light as Muse's (Muse/dots north star Fig 21) and dots' rail (Fig 1) */
 .sidebar-nav-item-active {
   background: var(--color-line);
 }
@@ -442,7 +442,7 @@
     min-height: 64px;
   }
 
-  /* The rows step at a 44px pitch in both states, as dots' rail steps (memo 0049 Fig 1) */
+  /* The rows step at a 44px pitch in both states, as dots' rail steps (Muse/dots north star Fig 1) */
   .sidebar-expanded .sidebar-main {
     gap: 0;
     padding: 0 var(--sidebar-pad-x) calc(var(--spacing) * 1.25);
@@ -457,7 +457,7 @@
     margin-left: calc(var(--spacing) * 3);
   }
 
-  /* The label on the title's and icons' 20px edge, the rows right under it (memo 0049 Fig 21) */
+  /* The label on the title's and icons' 20px edge, the rows right under it (Muse/dots north star Fig 21) */
   .sidebar-expanded .sidebar-section-header {
     justify-content: space-between;
     gap: calc(var(--spacing) * 2);

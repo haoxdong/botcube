@@ -107,8 +107,9 @@ imports them from `botcube-ui-web/ui`. Behaviour is pinned by `globals.test.tsx`
   - One line is an exact pill, twice `xl` tall (40px): the padding is `xl` less half a line, 16px at the sides.
   - Bubbles in a row from one sender, nothing between them, stack 4px apart; where two meet, the sender's side is `sm`.
 - **Chat header**: Marq centred over the scrolling messages, his name in a frosted capsule; "is working" in `small`
-  `text-muted` while he bobs behind a laptop lid (memo 0049, Muse). Messages fade under it on a desktop and run under
-  iOS Safari's own fade on a phone.
+  `text-muted` while he bobs behind a laptop lid (Muse, Fig 11 of the
+  [Muse and dots north star](../../../docs/northstars/muse-dots-and-grok-bot-for-always-on.md)). Messages fade under it
+  on a desktop and run under iOS Safari's own fade on a phone.
 - **Safe zones**: on an iPhone the chat runs edge to edge, under the status bar at the top and on past the composer
   under Safari's toolbar and the home indicator at the bottom, both under Safari's own blur. No band of its own at
   either edge.

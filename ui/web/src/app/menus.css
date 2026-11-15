@@ -24,7 +24,7 @@
 }
 
 /* Phones: the chat keeps the full width. A round menu button top-left opens the sidebar as a
-   drawer beside the chat, which slides right as a faded card; tapping that card closes it (memo 0049 Fig 21). */
+   drawer beside the chat, which slides right as a faded card; tapping that card closes it (Muse/dots north star Fig 21). */
 @media (max-width: 640px) {
   /* iOS's sizes: phone body text is 17px, the drawer rows' size (Muse Fig 11, dots Fig 7) */
   :root {
@@ -34,7 +34,7 @@
     --font-label: 0.8125rem;
   }
 
-  /* The drawer and the screens beside it run under the status and home bars (memo 0049 Fig 21); their contents
+  /* The drawer and the screens beside it run under the status and home bars (Muse/dots north star Fig 21); their contents
      keep to the safe area. The page scrolls the chat, not a box of its own, so iOS Safari draws it under the status
      bar behind its own fade: the layout grows with the chat, and holds no transform, which would hold
      the fixed header and composer to it as it scrolls away. */
@@ -62,13 +62,13 @@
     padding-bottom: var(--app-safe-bottom);
   }
 
-  /* The open drawer takes 80% of the screen with large rows, the chat peeking beside it (memo 0049 Fig 21) */
+  /* The open drawer takes 80% of the screen with large rows, the chat peeking beside it (Muse/dots north star Fig 21) */
   .sidebar-expanded {
     width: 80%;
   }
 
   /* The chat slides right by the drawer's width as a rounded card, its strip still in view, the drawer's grey
-     showing past its corners (memo 0049 Fig 21) */
+     showing past its corners (Muse/dots north star Fig 21) */
   .app-layout:has(> .sidebar-expanded) {
     background: var(--color-fill);
   }

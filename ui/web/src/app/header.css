@@ -127,7 +127,7 @@
   }
 
   /* Marq's hat, which rises 1px above his box, and the menu button's top meet the top of the screen below the status
-     bar, where Muse's avatar and menu stand (memo 0049 Fig 11). The header keeps to Marq's width: Safari fills the
+     bar, where Muse's avatar and menu stand (Muse/dots north star Fig 11). The header keeps to Marq's width: Safari fills the
      strip behind the clock with the colour of a fixed element spanning the screen's top edge, and keeps that colour
      while a `header` stays rendered, held or not (WebKit's LocalFrameView::fixedContainerEdges and
      Page::updateFixedContainerEdges), which hid the chat and the drawer there. */
@@ -144,7 +144,7 @@
     top: var(--viewport-top, 0px);
   }
 
-  /* Muse's 44px menu sits 24px in from the screen's edge, its centre about 12px above the avatar's (memo 0049 Fig 11).
+  /* Muse's 44px menu sits 24px in from the screen's edge, its centre about 12px above the avatar's (Muse/dots north star Fig 11).
      It stands 2px below the sidebar's safe area: at the top edge, iOS Safari paints its status bar white over the
      chat. */
   .sidebar-collapsed .sidebar-brand {
@@ -155,7 +155,7 @@
     overflow: visible;
   }
 
-  /* Marq stands 68px tall, hat included, as Muse's avatar disc (memo 0049 Fig 11), with his hat where the larger
+  /* Marq stands 68px tall, hat included, as Muse's avatar disc (Muse/dots north star Fig 11), with his hat where the larger
      figure had it, and in front of the pill. */
   .chat-header-agent .avatar-agent svg {
     position: relative;
@@ -166,7 +166,7 @@
     transform: translateY(-5.5px);
   }
 
-  /* The pill tucks about 6px behind the bottom of Marq's body (memo 0049 Fig 11). The chat runs beneath the header
+  /* The pill tucks about 6px behind the bottom of Marq's body (Muse/dots north star Fig 11). The chat runs beneath the header
      undimmed, under iOS Safari's own fade alone, as Muse's does: a band of ours, which must start below the status
      bar, left a strip of undimmed text between the two fades. So the pill carries its own crisp white
      backing, as Muse's does, which keeps the name readable over the text. */

@@ -5214,7 +5214,7 @@ describe('sidebar on a phone', () => {
     expect(screen.queryByLabelText('Close sidebar')).toBeNull();
   });
 
-  // The drawer had a panel button in its title row, which memo 0049 Fig 21 does not; the chat strip's
+  // The drawer had a panel button in its title row, which the Muse/dots north star's Fig 21 does not; the chat strip's
   // Close sidebar button closes it, by keyboard too.
   it('closes from the chat strip alone, which a keyboard reaches', async () => {
     await renderPage();

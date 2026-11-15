@@ -20,7 +20,7 @@
   margin: 0 0 16px !important;
 }
 
-/* Hanging indent with markers in the text colour, as Muse does (memo 0049 Fig 11); streamdown sets `list-inside`. */
+/* Hanging indent with markers in the text colour, as Muse does (Muse/dots north star Fig 11); streamdown sets `list-inside`. */
 .copilotKitAssistantMessage ol,
 .copilotKitAssistantMessage ul {
   margin: 0 0 12px !important;
