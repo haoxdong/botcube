@@ -68,8 +68,26 @@
   align-items: center;
 }
 
-/* A diagram's fullscreen view: streamdown renders it on the body, outside the message, and its layout classes are
-   uncompiled here, so it is laid out here, over the app's layers (sheets and popups at 500), its buttons over the diagram. */
+.reply-diagram {
+  position: relative;
+}
+
+.reply-diagram [data-streamdown="mermaid-block"] > div:has(> [data-streamdown="mermaid-block-actions"]) {
+  padding-right: 26px;
+}
+
+.diagram-fullscreen-trigger {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  color: var(--color-text-muted);
+}
+
 [data-streamdown="mermaid-fullscreen"] {
   position: fixed;
   inset: 0;
@@ -77,23 +95,63 @@
   background: var(--frost);
 }
 
-[data-streamdown="mermaid-fullscreen"] > div:first-child {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 1;
-  gap: 0.25rem;
+.diagram-fullscreen-popup {
+  width: 100%;
+  height: 100%;
+  outline: none;
 }
 
-[data-streamdown="mermaid-fullscreen"] > div:last-child {
+.diagram-fullscreen-popup > [data-streamdown="mermaid-block"] {
+  display: contents;
+}
+
+.diagram-fullscreen-popup [data-streamdown="mermaid-block"] > div:first-child {
+  display: none;
+}
+
+.diagram-fullscreen-close,
+.diagram-fullscreen-popup [data-streamdown="mermaid-block-actions"] {
+  position: absolute;
+  top: 1rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: 0;
+  background: none;
+  color: var(--color-text-muted);
+}
+
+.diagram-fullscreen-close {
+  right: 1rem;
+  width: 16px;
+  height: 22px;
+}
+
+.diagram-fullscreen-close svg {
+  flex-shrink: 0;
+}
+
+.diagram-fullscreen-popup [data-streamdown="mermaid-block-actions"] {
+  right: 1.75rem;
+  height: 22px;
+  pointer-events: auto;
+}
+
+.diagram-fullscreen-popup [data-streamdown="mermaid-block"] > div:last-child {
   width: 100%;
   height: 100%;
   padding: 1rem;
+  overflow: hidden;
+  border: 0;
+  background: none;
 }
 
 [data-streamdown="mermaid-fullscreen"] :is([data-streamdown="mermaid"], [data-streamdown="mermaid"] > div) {
   width: 100%;
-  height: 100%;
+  height: 100% !important;
+  max-height: calc(100dvh - 2rem);
 }
 
 [data-streamdown="mermaid-fullscreen"] [data-streamdown="mermaid"] > div {
@@ -112,6 +170,22 @@
   z-index: 1;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+/* Native fullscreen uses the browser's 300px SVG viewport, capped by Mermaid's intrinsic width. */
+[data-streamdown="mermaid-fullscreen"] [aria-label="Mermaid chart"] > svg {
+  width: auto !important;
+  height: auto !important;
+  max-width: 300px !important;
+}
+
+[data-streamdown="mermaid-fullscreen"] [role="application"] {
+  transition: transform var(--motion-move) var(--ease);
+}
+
+/* Streamdown exposes an active pointer drag through its frame's cursor. */
+[data-streamdown="mermaid-fullscreen"] [style*="grabbing"] > [role="application"] {
+  transition: none;
 }
 
 /* Streamdown's 200px offscreen estimate shrinks when short code enters view. */

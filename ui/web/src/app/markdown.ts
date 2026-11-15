@@ -5,6 +5,7 @@ import remarkBreaks from "remark-breaks";
 import { SHIKI_THEMES } from "./shiki-themes";
 import { defaultRehypePlugins, defaultRemarkPlugins } from "streamdown";
 
+import { ReplyCode } from "./diagram-code";
 import { diagrams } from "./diagram-theme";
 import { remarkBracketMath } from "./remark-bracket-math";
 import { REPLY_MARKDOWN } from "./reply-markdown";
@@ -74,6 +75,7 @@ export const tableInProgress = {
  */
 export const MARKDOWN_RENDERER = {
   plugins: { cjk, code, math, mermaid: diagrams },
+  components: { ...REPLY_MARKDOWN.components, code: ReplyCode },
   shikiTheme: SHIKI_THEMES,
   linkSafety: REPLY_MARKDOWN.linkSafety,
   remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBracketMath, remarkBareListMarkersAsText, remarkBreaks],
