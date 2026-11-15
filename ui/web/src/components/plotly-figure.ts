@@ -47,7 +47,7 @@ export function parseFigure(text: string): Figure {
   return { data: parsed.data, layout };
 }
 
-const X_AXIS = /^xaxis\d*$/;
+const AXIS = /^[xy]axis\d*$/;
 
 /** Below this width a chart is a phone's: its x ticks stay level and fewer, so no label runs into the next. */
 const NARROW = 480;
@@ -121,10 +121,13 @@ function autoTicks(agent: Record<string, unknown>, width: number): Record<string
  */
 export function fittedLayout(layout: Record<string, unknown>, width: number): Record<string, unknown> {
   const { width: _width, height: _height, margin: _margin, title: _title, ...own } = layout;
-  const xAxes = width < NARROW ? [...new Set(['xaxis', ...Object.keys(own).filter((key) => X_AXIS.test(key))])] : [];
+  const axes = [...new Set(['xaxis', 'yaxis', ...Object.keys(own).filter((key) => AXIS.test(key))])];
   return {
     ...own,
-    ...Object.fromEntries(xAxes.map((key) => [key, autoTicks(isRecord(own[key]) ? own[key] : {}, width)])),
+    ...Object.fromEntries(axes.map((key) => {
+      const axis = isRecord(own[key]) ? own[key] : {};
+      return [key, { ...(key.startsWith('x') && width < NARROW ? autoTicks(axis, width) : axis), automargin: true }];
+    })),
     ...(Array.isArray(own.annotations) ? { annotations: own.annotations.filter((note) => !isBelowPlot(note)) } : {}),
     // A row over the plot, rather than a column beside it that takes the width.
     legend: { ...(isRecord(own.legend) ? own.legend : {}), orientation: 'h', x: 0, xanchor: 'left', y: 1, yanchor: 'bottom' },

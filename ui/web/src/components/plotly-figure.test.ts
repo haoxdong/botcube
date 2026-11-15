@@ -33,21 +33,21 @@ it('keeps a layout image from the file itself and drops one from anywhere else',
 it('keeps the figure’s own look, its template included, and fits the layout to the box', () => {
   const template = { layout: { colorway: ['#0090ff'], font: { size: 13 } } };
   const layout = fittedLayout(
-    { ...parseFigure(CPI).layout, template, yaxis2: { gridcolor: 'red' }, height: 900, margin: { r: 220 }, legend: { x: 1.02, title: { text: 'Series' } } },
+    { ...parseFigure(CPI).layout, template, yaxis2: { gridcolor: 'red', automargin: false }, height: 900, margin: { r: 220 }, legend: { x: 1.02, title: { text: 'Series' } } },
     640,
   );
   expect(layout).not.toHaveProperty('height');
   expect(layout).not.toHaveProperty('title');
   expect(layout).toMatchObject({
     template,
-    yaxis2: { gridcolor: 'red' },
+    yaxis2: { gridcolor: 'red', automargin: true },
     paper_bgcolor: 'transparent',
     plot_bgcolor: 'transparent',
     legend: { orientation: 'h', x: 0, y: 1, yanchor: 'bottom', title: { text: 'Series' } },
     margin: { l: 4, r: 8, t: 8, b: 4 },
     autosize: true,
   });
-  expect(layout).not.toHaveProperty('xaxis');
+  expect(layout.xaxis).toEqual({ automargin: true });
 });
 
 it('gives the title and its source subtitle as plain text for the page to wrap', () => {
@@ -62,6 +62,7 @@ it('gives a phone plotly’s own level, fewer x ticks over the agent’s fixed m
   const layout = fittedLayout({ xaxis: { title: { text: 'Month' }, dtick: 'M1', tick0: '2026-01-01', tickformat: '%b %Y', tickangle: -45 } }, 290);
   expect(layout.xaxis).toEqual({
     title: { text: 'Month' },
+    automargin: true,
     tickmode: 'auto',
     tickangle: 0,
     nticks: 3,
