@@ -63,10 +63,7 @@ function recognize(session: DragSession, dx: number, dy: number, last: boolean, 
     width: session.startExpanded ? drawer?.getBoundingClientRect().width ?? 0 : 0 };
 }
 
-/**
- * A phone panel that follows a sideways swipe across `layoutRef` and snaps open or shut on release: the app sidebar
- * from the left, the Agent Profile from the right.
- */
+// UI SDK 0.1.0-beta.3 cannot swipe open from chat; Base UI 1.9 SwipeArea leaves it open on touch cancellation.
 export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, expanded, slides = false, onExpandedChange }: Options) {
   const sessionRef = useRef<DragSession>(IDLE);
   const [session, setSession] = useState<DragSession>(sessionRef.current);

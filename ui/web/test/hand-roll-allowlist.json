@@ -38,7 +38,7 @@
     }
   },
   "app/drawer-swipe.ts": {
-    "reason": "Existing UI lifecycle or geometry; retire or justify under the UI retirement epic.",
+    "reason": "UI SDK 0.1.0-beta.3 cannot swipe open from chat; Base UI 1.9 SwipeArea leaves it open on touch cancellation.",
     "counts": {
       "requestAnimationFrame": 1
     }
