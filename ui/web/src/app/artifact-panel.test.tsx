@@ -4,7 +4,8 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ArtifactLayout, publishedOf } from './artifact-panel';
+import { ArtifactLayout } from './artifact-panel';
+import { publishedOf } from './artifact-published';
 import recorded from './artifact-live-fill.stream.json';
 import MarkdownRenderer from './markdown-renderer';
 
@@ -166,11 +167,13 @@ it('shows a read or a list of Artifacts as a line of the reply, not as a card or
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-it("shows a refused publish's message in place of a card", async () => {
+it("leaves a refused publish's message to its Worklog step, out of the chat", async () => {
   phone(false);
   render(<Chat messages={reply("Error invoking tool 'Artifact' with kwargs {}: No file at /reports/q3.html. Write the page there, then publish it.")} />);
 
-  expect(await screen.findByText(/No file at \/reports\/q3\.html/)).toBeInTheDocument();
+  expect(await screen.findByText('Chart Q3 revenue')).toBeVisible();
+  expect(screen.queryByText(/No file at \/reports\/q3\.html/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByRole('button', { name: /Q3 revenue by month/ })).toBeNull();
 });
 

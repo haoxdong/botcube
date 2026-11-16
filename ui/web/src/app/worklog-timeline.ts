@@ -26,14 +26,15 @@ function timingOf(id: string, start: number, running: boolean) {
   return current;
 }
 
-function stepSeconds(start: number, steps: readonly TimedStep[], now: number, running: boolean, kept?: TurnTiming): { total: number; each: Map<string, number> } {
+function stepSeconds(start: number, steps: readonly TimedStep[], now: number, running: boolean, kept?: TurnTiming, recordedEnd?: number): { total: number; each: Map<string, number> } {
   let reached = start;
   const each = new Map<string, number>();
   for (const [index, { id, ended, finished }] of steps.entries()) {
     const next = steps[index + 1];
     const end = Math.max(reached, ended ?? (finished ? reached : now), next === undefined ? (running ? now : kept?.ended ?? reached) : reached);
-    each.set(id, Math.round((end - start) / 1000) - Math.round((reached - start) / 1000));
-    reached = end;
+    const bounded = recordedEnd === undefined ? end : Math.max(reached, Math.min(end, recordedEnd));
+    each.set(id, Math.round((bounded - start) / 1000) - Math.round((reached - start) / 1000));
+    reached = bounded;
   }
   return { total: Math.round((reached - start) / 1000), each };
 }
@@ -83,20 +84,27 @@ function stepsOf(turn: readonly TimelineMessage[], startId: string, running: boo
   const lastCall = turn.findLastIndex((message) => message.toolCalls?.length);
   const texts = turn.filter((message, index) => message.role === "assistant" && !message.toolCalls?.length && hasText(message) && index > lastCall);
   const answer = texts.at(-1) ?? turn.findLast((message) => message.role === "assistant" && !message.toolCalls?.length && hasText(message));
-  const work = turn.flatMap((message): TimedStep[] => {
+  const work = turn.flatMap((message, index): TimedStep[] => {
+    const next = !running ? turn.slice(index + 1).find((candidate) => candidate.role !== "tool" && stampsOf(candidate) !== undefined) : undefined;
+    const observedEnd = (next && stampsOf(next)?.[0]) ?? now;
     if (message.role === "reasoning") {
-      const clock = observedStep(kept, message.id, running && message === turn.at(-1), now);
-      return [{ id: message.id, kind: "thought", finished: clock === undefined && message !== turn.at(-1), began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? clock?.ended }];
+      const clock = observedStep(kept, message.id, running && message === turn.at(-1), observedEnd);
+      return [{ id: message.id, kind: "thought", finished: clock === undefined && message !== turn.at(-1), began: stampsOf(message)?.[0] ?? clock?.started, ended: stampsOf(message)?.[1] ?? (!running && next ? stampsOf(next)?.[0] : undefined) ?? clock?.ended }];
     }
     return (message.toolCalls ?? []).map((call) => {
       const result = turn.find((other) => other.role === "tool" && other.toolCallId === call.id);
-      const clock = observedStep(kept, call.id, running && result === undefined, now);
-      return { id: call.id, kind: "tool", finished: clock === undefined && result !== undefined, began: stampsOf(message)?.[0] ?? clock?.started, ended: running && !result ? undefined : (result && stampsOf(result)?.[1]) ?? clock?.ended };
+      const clock = observedStep(kept, call.id, running && result === undefined, (result && stampsOf(result)?.[1]) ?? observedEnd);
+      return { id: call.id, kind: "tool", finished: clock === undefined && result !== undefined, began: stampsOf(message)?.[0] ?? clock?.started, ended: running && !result ? undefined : (result && stampsOf(result)?.[1]) ?? (!running && result && next ? stampsOf(next)?.[0] : undefined) ?? clock?.ended };
     });
   });
   const answered: TimedStep[] = answer ? [{ id: answer.id, kind: "answer", began: stampsOf(answer)?.[0], ended: stampsOf(answer)?.[1] }] : [];
   const first = [...work, ...answered].find((step) => step.began !== undefined);
   return [{ id: startId, kind: "start", ended: first?.began }, ...work, ...answered];
+}
+
+function finishedEndOf(turn: readonly TimelineMessage[] | undefined, running: boolean) {
+  const last = turn?.at(-1);
+  return !running && last?.role === "assistant" && !last.toolCalls?.length && hasText(last) ? stampsOf(last)?.[1] : undefined;
 }
 
 /**
@@ -111,13 +119,15 @@ export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefi
   if (kept && origin !== undefined) kept.start = Math.min(kept.start, origin);
   const start = kept?.start ?? origin;
   if (start === undefined) return undefined;
-  if (kept) kept.ended = running ? undefined : kept.ended ?? now;
+  const recordedEnd = finishedEndOf(turn, running);
+  const finishedAt = recordedEnd ?? now;
+  if (kept) kept.ended = running ? undefined : recordedEnd ?? kept.ended ?? now;
   if (!turn?.length) return { total: Math.round(((kept?.ended ?? now) - start) / 1000), each: new Map<string, number>(), steps: [] };
   const startId = `${question?.id ?? id}-started-up`;
-  const steps = stepsOf(turn, startId, running, kept, now).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: kept?.ended } : step));
+  const steps = stepsOf(turn, startId, running, kept, finishedAt).map((step) => (step.kind === "answer" && step.ended === undefined && !running ? { ...step, ended: kept?.ended } : step));
   if (!running && !kept && steps.some((step) => step.ended === undefined)) return undefined;
   const allocation = allocationFor(kept, viewId, steps);
-  const timed = retainSeconds(stepSeconds(start, steps, now, running, kept), allocation);
+  const timed = retainSeconds(stepSeconds(start, steps, now, running, kept, recordedEnd), allocation);
   const shown = timed.each.get(startId) ? steps : steps.filter((step) => step.id !== startId);
   if (kept) withStorage(() => sessionStorage.setItem(TIMINGS_KEY, JSON.stringify([...timings ?? []])));
   return { ...timed, steps: shown };

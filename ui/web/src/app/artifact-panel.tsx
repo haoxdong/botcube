@@ -18,7 +18,7 @@ import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { ArtifactFace } from "./artifact-face";
-import { Published } from "./artifact-published";
+import { Published, publishedOf } from "./artifact-published";
 import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES } from "./artifact-types";
 import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
@@ -54,17 +54,6 @@ function usePanel() {
   const panel = useContext(Panel);
   if (panel === null) throw new Error("An Artifact card needs the ArtifactLayout around the chat");
   return panel;
-}
-
-/** A refused publish's result is the tool's error text, never JSON; a JSON result that is no Artifact throws. */
-export function publishedOf(result: string): Published | null {
-  let json: unknown;
-  try {
-    json = JSON.parse(result);
-  } catch {
-    return null;
-  }
-  return Published.parse(json);
 }
 
 /** A read or list answers JSON; anything else is the tool's error text. */
@@ -119,7 +108,7 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
     render: ({ status, parameters, result }) => {
       const done = status === "complete";
       if (parameters.action === "list" || parameters.action === "read") {
-        if (done && !isJson(result)) return <p role="alert" className="artifact-refused">{result}</p>;
+        if (done && !isJson(result)) return null;
         const named = parameters.url ?? parameters.file_path;
         if (parameters.action === "list") return <p className="artifact-status">{done ? "Listed Artifacts" : "Listing Artifacts…"}</p>;
         return <p className="artifact-status">{done ? `Read ${named}` : `Reading ${named}…`}</p>;
@@ -213,11 +202,11 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
 
 function ArtifactResult({ result }: { result: string }) {
   const artifact = publishedOf(result);
-  if (artifact === null) return <p role="alert" className="artifact-refused">{result}</p>;
+  if (artifact === null) return null;
   return <ArtifactCard artifact={artifact} />;
 }
 
-function ArtifactCard({ artifact }: { artifact: Published }) {
+export function ArtifactCard({ artifact }: { artifact: Published }) {
   const { shown, open, seen } = usePanel();
   useEffect(() => seen(artifact), [seen, artifact]);
   return (

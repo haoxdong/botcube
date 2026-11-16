@@ -7,9 +7,11 @@ import { Presence, presenceMotion, Collapse } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { AlignLeftIcon, BrainIcon, ChevronRightIcon, CircleXIcon, TimerIcon, type LucideIcon } from "lucide-react";
-import { argumentOf, lookOf, showsProposalCard } from "./worklog-tools";
+import { argumentOf, lookOf } from "./worklog-tools";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
+import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
+import { AnswerCards, type Published } from "./artifact-published";
 import { CLOCKS_KEPT, spanOf, startOf, useWorklogClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
 
@@ -26,18 +28,6 @@ function preloadStepSheet(): void {
   else setTimeout(load, 1000);
 }
 
-/**
- * A chat message as a Worklog reads it. A replayed agent, reasoning or tool message carries `started_at` and `ended_at`
- * in its metadata, in epoch ms; a user message, and one recorded before the stamps, has none.
- */
-export type TurnMessage = {
-  id: string;
-  role: string;
-  content?: unknown;
-  toolCalls?: readonly { id: string; function: { name: string; arguments?: string } }[] | undefined;
-  toolCallId?: string | undefined;
-  metadata?: Record<string, unknown> | undefined;
-};
 
 export const TurnStart = createContext<string | undefined>(undefined);
 // The steps seen arriving live, so a row CopilotKit remounts mid-run doesn't grow in again; the newest CLOCKS_KEPT.
@@ -50,8 +40,6 @@ function arrive(id: string) {
   if (arrived.size > CLOCKS_KEPT && oldest !== undefined) arrived.delete(oldest);
 }
 
-/** The call whose card waits on the user: it shows beside the answer, never folded away. */
-const PROPOSAL = "propose_scheduled_task";
 const SHOWN_CALLS = new Set([PROPOSAL, "Artifact"]);
 const CardOnly = createContext(false);
 
@@ -60,48 +48,6 @@ const FAILED_COMMAND = /\n\[Command failed with exit code (\d+)\](\n\[Output was
 
 const text = (message: TurnMessage) => (typeof message.content === "string" ? message.content.trim() : "");
 
-
-type Part = "question" | "work" | "shown";
-
-/**
- * Each message's part in its Turn. The answers are the Turn's texts after its last tool call, each its own bubble; a
- * text before a call is a note, unless no text follows the last call: then the Turn's last text that calls no tool is
- * its answer. While the last Turn runs they show only while its latest message is one: a note reads as an answer until
- * its tool call arrives. A proposed schedule and its result show too. A scheduled run's card, which the Chat Service
- * posts to the Main Chat with no question before it, is no Turn's work: it ends the Turn before it and shows on its own.
- */
-function partsOf(messages: readonly TurnMessage[], isRunning: boolean): Map<string, Part> {
-  const parts = new Map<string, Part>();
-  let turn: TurnMessage[] = [];
-  const close = (last: boolean) => {
-    const texts = turn.filter((m) => m.role === "assistant" && text(m) !== "" && !m.toolCalls?.length);
-    const afterCalls = turn.slice(turn.findLastIndex((m) => m.toolCalls?.length) + 1).filter((m) => texts.includes(m));
-    const answers = afterCalls.length > 0 ? afterCalls : texts.slice(-1);
-    const answered = !(last && isRunning) || answers.at(-1) === turn.at(-1);
-    const shownCalls = new Set(turn.flatMap((m) => (m.toolCalls ?? []).filter((c) => {
-      if (c.function.name !== PROPOSAL) return SHOWN_CALLS.has(c.function.name);
-      const result = turn.find((other) => other.toolCallId === c.id);
-      return result !== undefined && showsProposalCard(typeof result.content === "string" ? result.content : undefined);
-    }).map((c) => c.id)));
-    for (const m of turn) {
-      const makesShownCall = m.toolCalls?.some(({ id }) => shownCalls.has(id)) ?? false;
-      const shown = (answered && answers.includes(m)) || makesShownCall || shownCalls.has(m.toolCallId ?? "");
-      parts.set(m.id, shown ? "shown" : "work");
-    }
-    turn = [];
-  };
-  for (const message of messages) {
-    if (message.role === "user") {
-      close(false);
-      parts.set(message.id, "question");
-    } else if (message.metadata?.scheduledRun !== undefined) {
-      close(false);
-      parts.set(message.id, "shown");
-    } else turn.push(message);
-  }
-  close(true);
-  return parts;
-}
 
 /**
  * The message a row lays out. CopilotKit passes each of its rows, custom-message slots included, its message, and keys
@@ -119,7 +65,7 @@ function messageIdOf(row: ReactElement): string {
  * time is its Turn's, answer included.
  */
 export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, cardSteps = true }: { started?: boolean; cardSteps?: boolean } = {}): ReactElement[] {
-  const parts = partsOf(messages, isRunning);
+  const { parts, cards } = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
   const latest = messages.at(-1);
@@ -128,7 +74,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   let work: ReactElement[] = [];
   let shown: ReactElement[] = [];
   let firstMessage: string | undefined;
-  const summarized = new Set<string>();
+  const steps: Steps = { turn: messages, lastQuestion, isRunning, cardSteps, summarized: new Set<string>() };
   const fold = () => {
     const [row] = work;
     if (row !== undefined) {
@@ -156,14 +102,12 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       out.push(row);
     } else if (parts.get(messageId) === "work") {
       firstMessage ??= messageId;
-      work.push(row);
+      work.push(...workRow(row, message, steps));
     } else {
-      if (cardSteps && message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)) && !summarized.has(messageId)) {
-        summarized.add(messageId);
-        firstMessage ??= messageId;
-        work.push(<CardSteps key={row.key} message={message} turn={messages} running={isRunning && messages.indexOf(message) > lastQuestion} />);
-      }
-      shown.push(<CardOnly.Provider key={row.key} value={Boolean(message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)))}>{row}</CardOnly.Provider>);
+      const summary = stepsOf(row, message, SHOWN_CALLS, steps);
+      if (summary.length > 0) firstMessage ??= messageId;
+      work.push(...summary);
+      shown.push(...shownRow(row, message, parts.get(messageId), cards.get(messageId)));
     }
   }
   fold();
@@ -171,6 +115,30 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
     out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} running asked={latest.id} />);
   }
   return out;
+}
+
+/** What a Turn's card calls need to show as its Worklog's ToolSteps; `summarized` keeps each message's steps once across its rows. */
+type Steps = { turn: readonly TurnMessage[]; lastQuestion: number; isRunning: boolean; cardSteps: boolean; summarized: Set<string> };
+
+/** A message's card calls as ToolSteps, once per message; none when it makes none, its steps already show, or the chat shows no steps. */
+function stepsOf(row: ReactElement, message: TurnMessage | undefined, names: ReadonlySet<string>, { turn, lastQuestion, isRunning, cardSteps, summarized }: Steps): ReactElement[] {
+  if (!cardSteps || !message?.toolCalls?.some((call) => names.has(call.function.name)) || summarized.has(message.id)) return [];
+  summarized.add(message.id);
+  return [<CardSteps key={row.key} message={message} turn={turn} running={isRunning && turn.indexOf(message) > lastQuestion} />];
+}
+
+const ARTIFACT_CALL = new Set(["Artifact"]);
+
+/** A work row: an Artifact call's steps show as the Worklog's ToolSteps, so a refused publish reads as a step, not an error. */
+function workRow(row: ReactElement, message: TurnMessage | undefined, steps: Steps): ReactElement[] {
+  return steps.cardSteps && message?.toolCalls?.some((call) => call.function.name === "Artifact") ? stepsOf(row, message, ARTIFACT_CALL, steps) : [row];
+}
+
+/** A shown row: a card shows without its ToolStep, and an answer shows the cards of the Artifacts its Turn published; a card the answer shows has no row. */
+function shownRow(row: ReactElement, message: TurnMessage | undefined, part: Part | undefined, answerCards: readonly Published[] | undefined): ReactElement[] {
+  if (part === "card") return [];
+  const card = <CardOnly.Provider key={row.key} value={Boolean(message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)))}>{row}</CardOnly.Provider>;
+  return [answerCards === undefined ? card : <AnswerCards.Provider key={row.key} value={answerCards}>{card}</AnswerCards.Provider>];
 }
 
 function CardSteps({ message, turn, running }: { message: TurnMessage; turn: readonly TurnMessage[]; running: boolean }) {

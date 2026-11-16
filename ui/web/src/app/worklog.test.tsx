@@ -3,7 +3,11 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
-import { ThoughtStep, ToolStep, TurnStart, Worklog, worklogRows, type TurnMessage } from './worklog';
+import type { TurnMessage } from './turn-parts';
+import { ThoughtStep, ToolStep, TurnStart, Worklog, worklogRows } from './worklog';
+
+/** A publish call's result as the Artifact tool returns it. */
+const PUBLISHED = JSON.stringify({ id: '/q3', type: null, title: 'Rates chart', description: '', version: 1, path: '/q3.html' });
 
 const START = Date.parse('2026-10-11T14:05:41Z');
 /** When a replayed message started and ended, `from` and `to` seconds into its Turn. */
@@ -217,15 +221,37 @@ describe('a Worklog', () => {
     expect(screen.getByText("I'll propose a weekday brief.")).toBeVisible();
   });
 
-  it('leaves a published Artifact, the deliverable, outside the Worklog', () => {
+  it('folds the note that published an Artifact once the answer, which shows its card, arrives', () => {
     const [question, note, result, answer] = turn('artifact');
     assert(question && note && result && answer, 'the Turn');
     const publish = { id: 'artifact-p', role: 'assistant', content: 'Publishing the chart.', toolCalls: [call('artifact-pc', 'Artifact', { file_path: '/q3.html' })] };
-    render(<Chat messages={[question, note, result, publish, { id: 'artifact-pt', role: 'tool', toolCallId: 'artifact-pc', content: '{}' }, answer]} running={false} />);
+    render(<Chat messages={[question, note, result, publish, { id: 'artifact-pt', role: 'tool', toolCallId: 'artifact-pc', content: PUBLISHED }, answer]} running={false} />);
 
     expect(heads()).toHaveLength(1);
     expect(screen.queryByText("I'll check the rates skill first.")).toBeNull();
-    expect(screen.getByText('Publishing the chart.')).toBeVisible();
+    expect(screen.queryByText('Publishing the chart.')).toBeNull();
+  });
+
+  it('folds a message that refused one publish and made another, leaving no error in the chat', () => {
+    const [question, note, result, answer] = turn('mixed-publish');
+    assert(question && note && result && answer, 'the Turn');
+    const publish = { id: 'mixed-publish-p', role: 'assistant', content: 'Publishing both.', toolCalls: [call('mixed-publish-bad', 'Artifact', { file_path: '/a.html' }), call('mixed-publish-good', 'Artifact', { file_path: '/q3.html' })] };
+    render(<Chat messages={[question, note, result, publish, { id: 'mixed-publish-bt', role: 'tool', toolCallId: 'mixed-publish-bad', content: 'Error: no file at /a.html' }, { id: 'mixed-publish-gt', role: 'tool', toolCallId: 'mixed-publish-good', content: PUBLISHED }, answer]} running={false} />);
+
+    expect(heads()).toHaveLength(1);
+    expect(screen.queryByText('Publishing both.')).toBeNull();
+    expect(screen.queryByText('Error: no file at /a.html')).toBeNull();
+  });
+
+  it('folds a refused publish into the Worklog, where the agent recovers from it', () => {
+    const [question, note, result, answer] = turn('refused');
+    assert(question && note && result && answer, 'the Turn');
+    const publish = { id: 'refused-p', role: 'assistant', content: 'Publishing the chart.', toolCalls: [call('refused-pc', 'Artifact', { file_path: '/q3.html' })] };
+    render(<Chat messages={[question, note, result, publish, { id: 'refused-pt', role: 'tool', toolCallId: 'refused-pc', content: 'Error: publish refused' }, answer]} running={false} />);
+
+    expect(heads()).toHaveLength(1);
+    expect(screen.queryByText('Publishing the chart.')).toBeNull();
+    expect(screen.queryByText('Error: publish refused')).toBeNull();
   });
 
   it("shows each text after the Turn's last tool call as its own bubble, and folds a text a call follows", () => {
@@ -537,7 +563,7 @@ describe("a Worklog's step times", () => {
       { id: 'card-clock-u', role: 'user', content: 'Build a chart and compare rates', ...stamp(0, 0) },
       { id: 'card-clock-r', role: 'reasoning', content: 'Plan', ...stamp(0, 2) },
       { id: 'card-clock-card', role: 'assistant', content: '', toolCalls: [call('card-clock-artifact', 'Artifact', { description: 'Rates chart' })], ...stamp(2, 2) },
-      { id: 'card-clock-card-result', role: 'tool', toolCallId: 'card-clock-artifact', content: 'Chart ready', ...stamp(2, 4) },
+      { id: 'card-clock-card-result', role: 'tool', toolCallId: 'card-clock-artifact', content: PUBLISHED, ...stamp(2, 4) },
       { id: 'card-clock-next', role: 'assistant', content: '', toolCalls: [call('card-clock-query', 'execute', { command: 'compare rates' })], ...stamp(4, 4) },
       { id: 'card-clock-next-result', role: 'tool', toolCallId: 'card-clock-query', content: 'Done', ...stamp(4, 6) },
       { id: 'card-clock-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) },
@@ -554,9 +580,8 @@ describe("a Worklog's step times", () => {
     }
     const diagnosticIds = [...document.querySelectorAll('.worklog-step')].map(step => step.getAttribute('data-step-id'));
     expect(new Set(diagnosticIds).size).toBe(diagnosticIds.length);
-    expect(screen.getByTestId('card-card-clock-card')).toBeVisible();
+    expect(screen.queryByTestId('card-card-clock-card')).toBeNull();
     fireEvent.click(head());
-    expect(screen.getByTestId('card-card-clock-card')).toBeVisible();
     act(() => { vi.advanceTimersByTime(1000); });
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
   });
@@ -566,7 +591,7 @@ describe("a Worklog's step times", () => {
     const question = { id: 'publication-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
     const thought = { id: 'publication-r', role: 'reasoning', content: 'Plan', ...stamp(0, 2) };
     const publication = { id: 'publication-a', role: 'assistant', content: 'Rates chart', toolCalls: [call('publication-c', 'Artifact')], ...stamp(2, 2) };
-    const publicationResult = { id: 'publication-t', role: 'tool', toolCallId: 'publication-c', content: 'Chart ready', ...stamp(2, 4) };
+    const publicationResult = { id: 'publication-t', role: 'tool', toolCallId: 'publication-c', content: PUBLISHED, ...stamp(2, 4) };
     const query = { id: 'publication-next', role: 'assistant', content: '', toolCalls: [call('publication-query', 'execute', { command: 'compare rates' })], ...stamp(4, 4) };
     const queryResult = { id: 'publication-query-result', role: 'tool', toolCallId: 'publication-query', content: 'Done', ...stamp(4, 6) };
     const answer = { id: 'publication-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) };
@@ -598,14 +623,14 @@ describe("a Worklog's step times", () => {
     verify(8, ['2s', '2s', '2s', '2s']);
     view.rerender(<StepsChat messages={[question, thought, { ...publication, id: 'publication-replayed' }, publicationResult, { ...query, id: 'query-replayed' }, queryResult, answer]} running />);
     verify(8, ['2s', '2s', '2s', '2s']);
-    expect(screen.getByTestId('card-publication-replayed')).toBeVisible();
+    expect(screen.queryByTestId('card-publication-replayed')).toBeNull();
   });
 
   it('counts a publication once across CopilotKit custom-message slots', () => {
     const [question, note, result, answer] = turn('publication-slots');
     assert(question && note && result && answer, 'a Turn');
     const publication = { id: 'publication-slot-message', role: 'assistant' as const, content: 'Published chart', toolCalls: [call('publication-slot-call', 'Artifact')], ...stamp(3, 3) };
-    render(<CopilotKitChat messages={[question, note, result, publication, { id: 'publication-slot-result', role: 'tool', toolCallId: 'publication-slot-call', content: 'Ready', ...stamp(3, 4) }, answer]} />);
+    render(<CopilotKitChat messages={[question, note, result, publication, { id: 'publication-slot-result', role: 'tool', toolCallId: 'publication-slot-call', content: PUBLISHED, ...stamp(3, 4) }, answer]} />);
     expect(heads()).toHaveLength(1);
     fireEvent.click(head());
     expect(document.querySelectorAll('[data-step-id="publication-slot-call"]')).toHaveLength(1);
@@ -640,7 +665,7 @@ describe("a Worklog's step times", () => {
     const messages = [
       { id: 'mixed-u', role: 'user' as const, content: 'Compare rates', ...stamp(0, 0) },
       { id: 'mixed-a', role: 'assistant' as const, content: 'Chart', toolCalls: [call('mixed-card', 'Artifact'), call('mixed-query', 'execute', { command: 'compare rates' })], ...stamp(0, 0) },
-      { id: 'mixed-t1', role: 'tool' as const, toolCallId: 'mixed-card', content: 'Ready', ...stamp(0, 2) },
+      { id: 'mixed-t1', role: 'tool' as const, toolCallId: 'mixed-card', content: PUBLISHED, ...stamp(0, 2) },
       { id: 'mixed-t2', role: 'tool' as const, toolCallId: 'mixed-query', content: 'Compared', ...stamp(0, 4) },
       { id: 'mixed-answer', role: 'assistant' as const, content: 'Rates compared', ...stamp(4, 8) },
     ];
@@ -653,7 +678,91 @@ describe("a Worklog's step times", () => {
     expect(document.querySelectorAll('[data-step-id="mixed-query"]')).toHaveLength(1);
     expect(stepRows()).toEqual([['Artifact', '2s'], ['Rancompare rates', '2s'], ['Answered', '4s']]);
     fireEvent.click(head());
-    expect(screen.getByRole('button', { name: 'Rates chart' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Rates chart' })).toBeNull();
+  });
+
+  it.each([true, false])('does not count time away after a Turn finishes, result timestamps %s', (stampedResult) => {
+    vi.useFakeTimers({ now: START + 2000 });
+    const prefix = `finished-return-${stampedResult}`;
+    const question = { id: `${prefix}-u`, role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const tool = { id: `${prefix}-a`, role: 'assistant', content: '', toolCalls: [call(`${prefix}-c`, 'execute', { command: 'compare rates' })], ...stamp(0, 0) };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    expect(stepRows()).toEqual([['Runningcompare rates', '2s']]);
+    view.unmount();
+    vi.setSystemTime(START + 3341000);
+    const result = { id: `${prefix}-t`, role: 'tool', toolCallId: `${prefix}-c`, content: 'Compared', ...(stampedResult ? stamp(0, 0.2) : {}) };
+    const answer = { id: `${prefix}-answer`, role: 'assistant', content: 'Rates compared', ...stamp(0.2, 49) };
+    render(<StepsChat messages={[question, tool, result, answer]} />);
+    expect(head()).toHaveTextContent(/^Worked for 49s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Rancompare rates', '2s'], ['Answered', '47s']]);
+  });
+
+  it.each([false, true])('keeps the displayed minimum when final timestamps arrive late, previously finished %s', async (alreadyFinished) => {
+    vi.useFakeTimers({ now: START + 5000 });
+    const prefix = `late-finished-minimum-${alreadyFinished}`;
+    const question = { id: `${prefix}-u`, role: 'user', content: 'Rates', ...stamp(0, 0) };
+    const tool = { id: `${prefix}-a`, role: 'assistant', content: '', toolCalls: [call(`${prefix}-c`, 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    const result = { id: `${prefix}-t`, role: 'tool', toolCallId: `${prefix}-c`, content: 'Done', ...stamp(0, 0.2) };
+    const answer = { id: `${prefix}-answer`, role: 'assistant', content: 'Rates compared' };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    expect(stepRows()).toEqual([['Runningrates', '5s']]);
+    if (alreadyFinished) view.rerender(<StepsChat messages={[question, tool, result, answer]} />);
+    const recorded = { ...answer, ...stamp(0.2, 4.4) };
+    view.rerender(<StepsChat messages={[question, tool, result, recorded]} />);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+    view.unmount();
+    vi.resetModules();
+    const restored = await import('./worklog');
+    render(<restored.Worklog id={tool.id} asked={question.id} question={question} turn={[tool, result, recorded]} running={false}>
+      <restored.ToolStep id={`${prefix}-c`} name="execute" params={{ command: 'rates' }} status="complete" output="Done" />
+    </restored.Worklog>);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+  });
+
+  it('keeps an observed completion minimum across reload before final timestamps', async () => {
+    vi.useFakeTimers({ now: START + 5000 });
+    const question = { id: 'observed-finish-u', role: 'user', content: 'Rates', ...stamp(0, 0) };
+    const tool = { id: 'observed-finish-a', role: 'assistant', content: '', toolCalls: [call('observed-finish-c', 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    const result = { id: 'observed-finish-t', role: 'tool', toolCallId: 'observed-finish-c', content: 'Done', ...stamp(0, 0.2) };
+    const answer = { id: 'observed-finish-answer', role: 'assistant', content: 'Rates compared' };
+    const view = render(<StepsChat messages={[question, tool]} running />);
+    view.rerender(<StepsChat messages={[question, tool, result, answer]} />);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    view.unmount();
+    vi.resetModules();
+    const restored = await import('./worklog');
+    render(<restored.Worklog id={tool.id} asked={question.id} question={question} turn={[tool, result, { ...answer, ...stamp(0.2, 4.4) }]} running={false}>
+      <restored.ToolStep id="observed-finish-c" name="execute" params={{ command: 'rates' }} status="complete" output="Done" />
+    </restored.Worklog>);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+  });
+
+  it('keeps a valid legacy completion minimum when its final timestamp arrives', async () => {
+    vi.useFakeTimers({ now: START + 10000 });
+    const question = { id: 'legacy-minimum-u', role: 'user', content: 'Rates', ...stamp(0, 0) };
+    const tool = { id: 'legacy-minimum-a', role: 'assistant', content: '', toolCalls: [call('legacy-minimum-c', 'execute', { command: 'rates' })], ...stamp(0, 0) };
+    const result = { id: 'legacy-minimum-t', role: 'tool', toolCallId: 'legacy-minimum-c', content: 'Done', ...stamp(0, 0.2) };
+    const answer = { id: 'legacy-minimum-answer', role: 'assistant', content: 'Rates compared', ...stamp(0.2, 4.4) };
+    sessionStorage.setItem('botcube.worklog-turns', JSON.stringify([[question.id, {
+      start: START, ended: START + 5000,
+      observed: { 'legacy-minimum-c': { started: START, ended: START + 200 } },
+      allocations: { [tool.id]: { 'legacy-minimum-u-started-up': 0, 'legacy-minimum-c': 5, [answer.id]: 0 } },
+    }]]));
+    vi.resetModules();
+    const restored = await import('./worklog');
+    render(<restored.Worklog id={tool.id} asked={question.id} question={question} turn={[tool, result, answer]} running={false}>
+      <restored.ToolStep id="legacy-minimum-c" name="execute" params={{ command: 'rates' }} status="complete" output="Done" />
+    </restored.Worklog>);
+    expect(head()).toHaveTextContent(/^Worked for 5s$/);
+    fireEvent.click(head());
+    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
   });
 
   it('keeps seconds on their rows when replay corrects the Turn start by a fraction', () => {

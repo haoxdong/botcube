@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { listArtifacts } from "./artifact-catalog";
-import { TYPES } from "./artifact-types";
+import { ArtifactFace } from "./artifact-face";
 import type { Published } from "./artifact-published";
 import { Swap } from "./collapse";
 import { reason } from "./composer-files";
@@ -30,16 +30,12 @@ export function ArtifactLibrary({ accountId, onSelect }: { accountId: string | u
       <p role="alert">{shown.error}</p>
       <button type="button" className="btn" onClick={() => retry((value) => value + 1)}>Try again</button>
     </> : shown.artifacts.length === 0 ? <p>No Artifacts yet. Artifacts you make in chat appear here.</p> : (
-      <ul aria-label="Artifacts, newest first" className="m-0 grid max-w-4xl list-none grid-cols-2 gap-3 p-0 sm:grid-cols-3">
-        {shown.artifacts.map((artifact) => {
-          const { Icon, tint, ink } = TYPES[artifact.type ?? "page"];
-          return <li key={artifact.id}>
-            <button type="button" className="flex w-full cursor-pointer flex-col overflow-hidden rounded-(--radius-lg) border border-line bg-(--color-white) text-left" onClick={() => onSelect(artifact)}>
-              <span className={`flex h-24 w-full items-center justify-center ${tint}`}><Icon aria-hidden className={`file-icon size-7 ${ink}`} /></span>
-              <span className="sent-file-name w-full truncate p-3">{artifact.title}</span>
-            </button>
-          </li>;
-        })}
+      <ul aria-label="Artifacts, newest first" className="m-0 flex max-w-2xl list-none flex-col gap-1 p-0">
+        {shown.artifacts.map((artifact) => <li key={artifact.id}>
+          <button type="button" className="artifact-row flex w-full cursor-pointer items-center gap-3 rounded-(--radius-lg) p-2 text-left hover:bg-(--color-fill)" onClick={() => onSelect(artifact)}>
+            <ArtifactFace artifact={artifact} tile />
+          </button>
+        </li>)}
       </ul>
     )}
     </Swap>
