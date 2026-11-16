@@ -83,12 +83,6 @@
       "ResizeObserver": 1
     }
   },
-  "app/row-containment.ts": {
-    "reason": "CSS does not refresh remembered sizes while rows remain size-contained; use-stick-to-bottom has no per-row invalidation API.",
-    "counts": {
-      "ResizeObserver": 2
-    }
-  },
   "components/ui/sheet-height.ts": {
     "reason": "CSS cannot interpolate auto-to-auto size; Base UI has no resize animation, and UI SDK beta.2 translates content snaps without interpolating box height.",
     "counts": {

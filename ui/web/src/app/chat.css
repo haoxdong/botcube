@@ -238,9 +238,19 @@
 }
 
 @media (min-width: 641px) {
-  .copilotKitMessages > [data-contained] {
+  .copilotKitMessages > :not([data-chat-earlier]) {
+    contain-intrinsic-block-size: auto none;
+  }
+
+  .copilotKitMessages > :not([data-chat-earlier]):not(:last-child) {
+    contain: layout style;
     content-visibility: auto;
     overflow-clip-margin: 32px;
+    transition: content-visibility var(--motion-quick) var(--ease) allow-discrete;
+
+    @starting-style {
+      content-visibility: visible;
+    }
   }
 }
 

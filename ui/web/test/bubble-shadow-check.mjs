@@ -63,10 +63,11 @@ async function checkCorner(page, row, box, corner, answer) {
   assert(width, 'Corner comparison needs a viewport');
   const x = corner === 'left' ? box.x : box.x + box.width;
   const clip = { x: Math.max(0, Math.min(width - 64, Math.floor(x) - 32)), y: Math.floor(box.y + box.height) - 32, width: 64, height: 64 };
+  await row.evaluate(element => { element.style.transition = 'none'; });
   const actual = await page.screenshot({ clip });
-  await row.evaluate(element => { element.style.contentVisibility = 'visible'; });
+  await row.evaluate(element => { element.style.contentVisibility = 'visible'; element.style.contain = 'none'; });
   const reference = await page.screenshot({ clip });
-  await row.evaluate(element => { element.style.removeProperty('content-visibility'); });
+  await row.evaluate(element => { element.style.removeProperty('content-visibility'); element.style.removeProperty('contain'); element.style.removeProperty('transition'); });
   const label = `${answer}-${corner}`;
   if (process.env.LAYOUT_SCREENSHOTS) {
     await mkdir(process.env.LAYOUT_SCREENSHOTS, { recursive: true });
