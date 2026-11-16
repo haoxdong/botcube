@@ -534,7 +534,7 @@ const secondsIn = (time: string | null | undefined) => {
 };
 
 describe("a Worklog's step times", () => {
-  it.each(['tool', 'thought'] as const)('omits an unallocated %s clock from its detail title', async (kind) => {
+  it.each(['tool', 'thought'] as const)('shows an unallocated %s clock in its detail title', async (kind) => {
     const prefix = `unallocated-${kind}`;
     const question = { id: `${prefix}-u`, role: 'user', content: 'Compare markets', ...stamp(0, 0) };
     const work = kind === 'tool' ? [
@@ -545,10 +545,10 @@ describe("a Worklog's step times", () => {
     fireEvent.click(head());
     fireEvent.click(screen.getByRole('button', { name: kind === 'tool' ? /^Ran/ : /^Thought/ }));
     const title = await screen.findByRole('heading', { name: kind === 'tool' ? /^Terminal/ : /^Thought/ });
-    expect(title).toHaveTextContent(kind === 'tool' ? /^Terminal$/ : /^Thought$/);
+    expect(title).toHaveTextContent(kind === 'tool' ? /^Terminal · 0s$/ : /^Thought · 0s$/);
   });
 
-  it('waits for a positive allocation before revealing a new step clock', () => {
+  it('shows a new step clock at zero before its first positive allocation', () => {
     vi.useFakeTimers({ now: START + 23000 });
     const question = { id: 'first-clock-u', role: 'user', content: 'Compare investment markets', ...stamp(0, 0) };
     const first = { id: 'first-clock-a', role: 'assistant', content: '', toolCalls: [call('first-clock-c', 'execute', { command: 'research' })], ...stamp(23, 23) };
@@ -557,7 +557,7 @@ describe("a Worklog's step times", () => {
     assert(clock, 'the running tool clock');
     expect(head()).toHaveTextContent(/^Working · 23s$/);
     expect(clock).toHaveTextContent(/^0s$/);
-    expect(clock).not.toBeVisible();
+    expect(clock).toBeVisible();
     act(() => { vi.advanceTimersByTime(1000); });
     expect(clock).toBeVisible();
     expect(clock).toHaveTextContent(/^1s$/);
@@ -568,7 +568,8 @@ describe("a Worklog's step times", () => {
     const clocks = view.container.querySelectorAll('.worklog-step[data-kind="tool"] .worklog-step-time');
     expect(clocks[0]).toBeVisible();
     expect(clocks[0]).toHaveTextContent(/^1s$/);
-    expect(clocks[1]).not.toBeVisible();
+    expect(clocks[1]).toBeVisible();
+    expect(clocks[1]).toHaveTextContent(/^0s$/);
     const visibleSeconds = [...view.container.querySelectorAll('.worklog-step-time')].filter((element) => getComputedStyle(element).visibility !== 'hidden').reduce((sum, element) => sum + secondsIn(element.textContent), 0);
     expect(visibleSeconds).toBe(24);
     expect(head()).toHaveTextContent(/^Working · 24s$/);

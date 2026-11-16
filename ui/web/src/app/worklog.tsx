@@ -249,7 +249,7 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
   const Shown = state === "failed" ? CircleXIcon : Icon;
   const icon = <Shown className="worklog-step-icon" strokeWidth={1.75} aria-hidden />;
   const words = <span className="worklog-step-label">{label}</span>;
-  const column = <span className="worklog-step-time" style={{ visibility: time === "0s" ? "hidden" : undefined }}>{time}</span>;
+  const column = <span className="worklog-step-time">{time}</span>;
   const Head = sheet ? "button" : "div";
   const step = (
     <div className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
@@ -316,7 +316,7 @@ function TimedToolStep({ id, name, params, status: reported, output: result }: T
   return (
     <>
       <Step id={id} kind="tool" state={state} icon={icon} label={label} time={time} sheet={{ open, show: () => { setOpened(true); setOpen(true); } }} />
-      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `${title} · ${time}` : title} name={name} params={params} output={shown} exit={exit} prose={prose} />}</Suspense>
+      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time ? `${title} · ${time}` : title} name={name} params={params} output={shown} exit={exit} prose={prose} />}</Suspense>
     </>
   );
 }
@@ -343,7 +343,7 @@ export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMes
   return (
     <>
       <Step id={message.id} kind="thought" state={live ? "live" : "done"} icon={BrainIcon} label={label} time={time} sheet={sheet} />
-      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `Thought · ${time}` : "Thought"} summary={words} heading={title} />}</Suspense>
+      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time ? `Thought · ${time}` : "Thought"} summary={words} heading={title} />}</Suspense>
     </>
   );
 }
