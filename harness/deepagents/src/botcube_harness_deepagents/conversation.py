@@ -36,16 +36,24 @@ def reasoning_blocks(message: AIMessage) -> list[ReasoningContentBlock]:
     return [block for block in message.content_blocks if block['type'] == 'reasoning']
 
 
-def reasoning_texts(message: BaseMessage) -> list[str]:
+def reasoning_chunk(message: AIMessage) -> ReasoningContentBlock | None:
+    """A streamed reasoning item or summary, excluding its encrypted completion."""
+    return next((block for block in reasoning_blocks(message)
+                 if not block.get('extras', {}).get('encrypted_content')), None)
+
+
+def reasoning_texts(message: BaseMessage, *, include_empty: bool = False) -> list[str]:
     """The text of each reasoning block an AI message replays as its own reasoning message."""
     blocks = reasoning_blocks(message) if isinstance(message, AIMessage) else []
-    return [text for block in blocks if (text := block.get('reasoning'))]
+    return [block.get('reasoning', '') for block in blocks if include_empty or block.get('reasoning')]
 
 
 def _replayed(message: BaseMessage) -> list[Message]:
     """The message as AG-UI messages; an AI message's reasoning goes first, as its Turn streamed it."""
     reasoning = reasoning_texts(message)
     times = message.response_metadata.get(MESSAGE_TIMES)
+    if times and len(times.get('reasoning', [])) > len(reasoning):
+        reasoning = reasoning_texts(message, include_empty=True)
     if times and times.get('reasoning') and not reasoning:
         reasoning = ['']
     card = message.additional_kwargs.get(SCHEDULED_RUN)

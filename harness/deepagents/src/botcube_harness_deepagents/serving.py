@@ -83,7 +83,7 @@ from .agent_documents import (
     pop_agent_documents,
 )
 from .artifact import SKILLS_SOURCE, artifact_tool
-from .conversation import conversation, reasoning_blocks
+from .conversation import conversation, reasoning_chunk
 from .files import (
     FilesBindingError,
     excluded_paths,
@@ -407,15 +407,15 @@ class _SessionAgent(LangGraphAgent):
 
     def _reasoning_chunk(self, lane: str, thought: _Thinking, reasoning: ReasoningContentBlock) -> list[Any]:
         events = []
+        index = reasoning.get('index', 0)
+        if thought.open and thought.index != index:
+            events.extend(self._thought_end(lane, thought))
+            thought.block += 1
+        if not thought.open:
+            events.extend(self._thought_start(lane, thought.block))
+            thought.open = True
+        thought.index = index
         if text := reasoning.get('reasoning'):
-            index = reasoning.get('index', 0)
-            if thought.open and thought.index != index:
-                events.extend(self._thought_end(lane, thought))
-                thought.block += 1
-            if not thought.open:
-                events.extend(self._thought_start(lane, thought.block))
-                thought.open = True
-            thought.index = index
             events.append(self._dispatch_event(ReasoningMessageContentEvent(
                 message_id=f'{lane}-reasoning-{thought.block}', delta=text)))
         return events
@@ -423,7 +423,7 @@ class _SessionAgent(LangGraphAgent):
     def _thought_chunk(self, event: Any, lane: str, thought: _Thinking | None, chunk: Any) -> list[Any] | None:
         if thought is None or chunk is None:
             return None
-        reasoning = next(iter(reasoning_blocks(chunk)), None)
+        reasoning = reasoning_chunk(chunk)
         if reasoning is not None:
             return self._reasoning_chunk(lane, thought, reasoning)
         if not chunk.text and not chunk.tool_call_chunks:

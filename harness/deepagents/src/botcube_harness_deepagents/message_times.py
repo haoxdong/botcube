@@ -1,6 +1,6 @@
 """When each Turn message started and ended, kept in its record so a reopened chat can time it.
 
-A thought starts at its first words, so the wait for a model's first token goes to whatever it streams first.
+A thought starts at its reasoning item, before its summary or words may arrive.
 A message starts when its first AG-UI event streams and ends with its last: the agent's message from its
 TEXT_MESSAGE_START or first TOOL_CALL_START to its model call's end, its reasoning from REASONING_START to
 REASONING_END, and a tool's result from its call's TOOL_CALL_START to the result landing. The stream adapter
@@ -38,7 +38,7 @@ from langchain_core.tracers.context import register_configure_hook
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from .conversation import MESSAGE_TIMES, reasoning_blocks, reasoning_texts
+from .conversation import MESSAGE_TIMES, reasoning_chunk, reasoning_texts
 
 _Message = TypeVar('_Message', bound=BaseMessage)
 _clock: ContextVar[_ModelClock | None] = ContextVar('message_times_clock', default=None)
@@ -79,10 +79,9 @@ class _ModelClock(BaseCallbackHandler):
         if not isinstance(chunk, ChatGenerationChunk) or not isinstance(chunk.message, AIMessageChunk):
             raise TypeError(f'A chat model streams agent message chunks, not {type(chunk).__name__}')
         message, at = chunk.message, now()
-        reasoning = next(iter(reasoning_blocks(message)), None)
-        if reasoning:
-            if reasoning.get('reasoning'):
-                self._open_reasoning(reasoning.get('index', 0), at)
+        reasoning = reasoning_chunk(message)
+        if reasoning is not None:
+            self._open_reasoning(reasoning.get('index', 0), at)
             return
         if resolve_encrypted_reasoning_content(message):
             return
@@ -109,10 +108,10 @@ class _ModelClock(BaseCallbackHandler):
 
     def stamped(self, message: AIMessage, ended: int) -> AIMessage:
         self._close(ended)
-        if len(self.reasoning) != len(reasoning_texts(message)):
+        if len(self.reasoning) != len(reasoning_texts(message, include_empty=True)):
             raise RuntimeError(
                 f'The model streamed {len(self.reasoning)} reasoning blocks but answered with '
-                f'{len(reasoning_texts(message))}'
+                f'{len(reasoning_texts(message, include_empty=True))}'
             )
         calls: list[str] = []
         for call in message.tool_calls:
