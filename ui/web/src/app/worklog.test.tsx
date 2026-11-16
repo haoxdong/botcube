@@ -491,7 +491,7 @@ describe('a tool step', () => {
 });
 
 /** The chat's rows as the chat surface lays them out: a thought, each tool call, a note or the answer. */
-function StepsChat({ messages, running = false }: { messages: readonly TurnMessage[]; running?: boolean }) {
+function StepsChat({ messages, running = false, started = running }: { messages: readonly TurnMessage[]; running?: boolean; started?: boolean }) {
   const latest = messages.at(-1)?.id;
   const rows = messages.filter(({ role }) => role !== 'tool').map((message) => {
     if (message.role === 'reasoning') return <ThoughtStep key={message.id} message={message} isRunning={running} isLatest={message.id === latest} />;
@@ -507,7 +507,7 @@ function StepsChat({ messages, running = false }: { messages: readonly TurnMessa
     });
     return <div key={message.id}>{calls ?? String(message.content)}</div>;
   });
-  return <>{worklogRows(rows, messages, running)}</>;
+  return <>{worklogRows(rows, messages, running, { started })}</>;
 }
 
 const longCommand = 'acme data query --dataset EQUITY_PRICES --ticker AAPL --start 2026-10-14T13:30:00Z --end 2026-10-14T20:00:00Z --fields open,high,low,close,volume';
@@ -744,6 +744,23 @@ describe("a Worklog's step times", () => {
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
     expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+  });
+
+  it('keeps a replayed final timestamp while the interactive client briefly reports running', () => {
+    vi.useFakeTimers({ now: START + 6 * 60 * 60 * 1000 });
+    const question = { id: 'responsive-replay-u', role: 'user', content: 'Publish a slide', ...stamp(0, 0) };
+    const tool = { id: 'responsive-replay-a', role: 'assistant', content: '', toolCalls: [call('responsive-replay-c', 'execute', { command: 'publish' })], ...stamp(2, 2) };
+    const result = { id: 'responsive-replay-t', role: 'tool', toolCallId: 'responsive-replay-c', content: 'Published', ...stamp(2, 4) };
+    const answer = { id: 'responsive-replay-answer', role: 'assistant', content: 'Slide published', ...stamp(4, 49) };
+    const messages = [question, tool, result, answer];
+    const view = render(<StepsChat messages={messages} />);
+    expect(head()).toHaveTextContent(/^Worked for 49s$/);
+    view.rerender(<StepsChat messages={messages} running started={false} />);
+    expect.soft(head()).toHaveTextContent(/^Worked for 49s$/);
+    view.rerender(<StepsChat messages={messages} />);
+    expect(head()).toHaveTextContent(/^Worked for 49s$/);
+    fireEvent.click(head());
+    expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(49);
   });
 
   it('keeps an observed completion minimum across reload before final timestamps', async () => {

@@ -88,7 +88,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const turn = messages.slice(first, next < 0 ? undefined : next);
       const question = messages.findLast((m, i) => i < first && m.role === "user");
       out.push(
-        <Worklog key={id} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
+        <Worklog key={id} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} expanding={isRunning && started && first > lastQuestion && !answering} asked={asked}>
           {work}
         </Worklog>,
       );
