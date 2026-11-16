@@ -47,7 +47,6 @@ const config: StorybookConfig = {
     config.define = {
       ...config.define,
       'process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP': JSON.stringify(process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP ?? '0'),
-      'process.env.NEXT_PUBLIC_ARTIFACTS': JSON.stringify('1'),
       'process.env.NEXT_PUBLIC_CHAT_SERVICE_URL':
         JSON.stringify(CHAT_SERVICE_ORIGIN),
     };
