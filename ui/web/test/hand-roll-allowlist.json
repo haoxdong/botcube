@@ -70,7 +70,7 @@
     }
   },
   "app/rotation-reading.ts": {
-    "reason": "use-stick-to-bottom cannot transfer a reading anchor between document and element scrolling.",
+    "reason": "Native rotation anchors on the header; use-stick-to-bottom cannot transfer free reading.",
     "counts": {
       "scroll-write": 2,
       "requestAnimationFrame": 1,

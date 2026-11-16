@@ -10,7 +10,7 @@ const AT_BOTTOM_PX = 70;
 
 type Position = { phone: boolean } & ({ kind: "latest" } | { kind: "reading"; row: Element; top: number });
 
-// use-stick-to-bottom cannot transfer a reading anchor between document and element scrolling.
+// Native rotation anchors on the header; use-stick-to-bottom cannot transfer free reading.
 export function useRotationReading(phone: boolean, initial: boolean) {
   const options = phone ? { initial: false, resize: false } as const : { initial: initial ? "instant" : false, resize: "smooth" } as const;
   const desktop = useStickToBottom({ initial: !phone && initial ? "instant" : false, resize: "smooth" });
