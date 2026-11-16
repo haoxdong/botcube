@@ -52,6 +52,31 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
     expect(template.Parameters.parked).toEqual({ Type: 'String', AllowedValues: ['true', 'false'], Description: 'Production is Parked when true, Live when false.' });
   }
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
+  origin.hasResourceProperties('AWS::IAM::Policy', {
+    Roles: [identity.aws.ecs.deployRoleName],
+    PolicyDocument: { Statement: [
+      {
+        Effect: 'Allow', Action: ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'],
+        Resource: { 'Fn::ImportValue': Match.stringLikeRegexp('ChatStorage:.*ChatTable.*Arn') },
+        Condition: {
+          'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['PAID_EXECUTION#origin-smoke'] },
+          Null: { 'dynamodb:LeadingKeys': 'false' },
+        },
+      },
+      {
+        Effect: 'Allow', Action: 'dynamodb:UpdateItem',
+        Resource: { 'Fn::ImportValue': Match.stringLikeRegexp('ChatStorage:.*ChatTable.*Arn') },
+        Condition: {
+          'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['SESSIONS#acct_*'] },
+          Null: { 'dynamodb:LeadingKeys': 'false' },
+        },
+      },
+      {
+        Effect: 'Allow', Action: 'bedrock-agentcore:StopRuntimeSession',
+        Resource: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture`,
+      },
+    ] },
+  });
   origin.resourceCountIs('AWS::ECS::Service', 2);
   origin.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', parked ? 0 : 1);
   parkingTemplate(app.node.findChild('PrivateEgress') as Stack, parked).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);

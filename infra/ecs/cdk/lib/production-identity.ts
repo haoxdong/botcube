@@ -25,6 +25,7 @@ export interface DeployIdentity {
     };
     credentialService: { vpcId: string; port: number };
     ecs: {
+      deployRoleName: string;
       alertsTopicName: string;
       apiHealth: { stackName: string; alarmName: string };
       webLatency: { stackName: string; appMonitorName: string };

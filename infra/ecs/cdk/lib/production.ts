@@ -40,7 +40,7 @@ export const CHAT_SERVICE_ENV = {
 interface OriginInput {
   cloudflareCidrs: string[];
   clientVersion: string;
-  runtimeArn?: string;
+  runtimeArn: string;
 }
 
 export interface ProductionOptions {
@@ -122,7 +122,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     alertsTopicName: identity.aws.ecs.alertsTopicName,
     hostnames: [identity.domains.chatServicePreview, identity.domains.chatService].map(url => new URL(url).hostname),
     corsOrigins: identity.domains.corsOrigins,
-    ...(input.runtimeArn ? { runtimeArn: input.runtimeArn } : {}),
+    runtimeArn: input.runtimeArn,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
     sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
     reaperCommand: identity.artifacts.chatService.reaperCommand,
@@ -132,6 +132,29 @@ export function defineProduction(app: App, options: ProductionOptions) {
     chatTable: storage.chatTable as ITable,
     image: images.chat,
     ...options.chat,
+  });
+  new iam.Policy(origin, 'OriginSmokePolicy', {
+    roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
+    statements: [
+      new iam.PolicyStatement({
+        actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'],
+        resources: [storage.chatTable.tableArn],
+        conditions: {
+          'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['PAID_EXECUTION#origin-smoke'] },
+          Null: { 'dynamodb:LeadingKeys': 'false' },
+        },
+      }),
+      new iam.PolicyStatement({
+        actions: ['dynamodb:UpdateItem'], resources: [storage.chatTable.tableArn],
+        conditions: {
+          'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['SESSIONS#acct_*'] },
+          Null: { 'dynamodb:LeadingKeys': 'false' },
+        },
+      }),
+      new iam.PolicyStatement({
+        actions: ['bedrock-agentcore:StopRuntimeSession'], resources: [options.chat?.runtimeArn ?? input.runtimeArn],
+      }),
+    ],
   });
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
