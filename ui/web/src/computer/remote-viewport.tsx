@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { zoomOf } from '../lib/utils';
 
 type Viewport = { scale: number; x: number; y: number };
-const clampOnResize = process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP === '1';
+const clampOnResize = process.env.NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP !== '0';
 const HOME: Viewport = { scale: 1, x: 0, y: 0 };
 // A finger held still this long is a remote press, so a long-press reaches the browser; a pinch's second finger comes sooner.
 const HOLD_MS = 250;

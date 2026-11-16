@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { afterAll, expect, it, vi } from 'vitest';
 
 const gesture = vi.hoisted(() => {
-  vi.stubEnv('NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP', '1');
+  vi.stubEnv('NEXT_PUBLIC_REMOTE_VIEWPORT_CLAMP', undefined);
   return { pinch: (_state: { first: boolean; offset: [number, number]; origin: [number, number]; memo: undefined }): unknown => { throw new Error('Pinch handler has not mounted'); } };
 });
 vi.mock('@use-gesture/react', () => ({ usePinch: (handler: typeof gesture.pinch) => { gesture.pinch = handler; } }));
