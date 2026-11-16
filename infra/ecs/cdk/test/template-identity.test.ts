@@ -76,7 +76,8 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
       },
       {
         Effect: 'Allow', Action: 'bedrock-agentcore:StopRuntimeSession',
-        Resource: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture`,
+        Resource: [`arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture`,
+          `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture/runtime-endpoint/DEFAULT`],
       },
     ] },
   });

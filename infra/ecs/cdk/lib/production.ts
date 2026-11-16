@@ -133,6 +133,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     image: images.chat,
     ...options.chat,
   });
+  const smokeRuntimeArn = options.chat?.runtimeArn ?? input.runtimeArn;
   new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
     roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
     statements: [
@@ -152,7 +153,8 @@ export function defineProduction(app: App, options: ProductionOptions) {
         },
       }),
       new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:StopRuntimeSession'], resources: [options.chat?.runtimeArn ?? input.runtimeArn],
+        actions: ['bedrock-agentcore:StopRuntimeSession'],
+        resources: [smokeRuntimeArn, `${smokeRuntimeArn}/runtime-endpoint/DEFAULT`],
       }),
     ],
   });
