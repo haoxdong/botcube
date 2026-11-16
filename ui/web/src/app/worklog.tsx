@@ -371,7 +371,7 @@ export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMes
   return (
     <>
       <Step id={message.id} kind="thought" state={live ? "live" : "done"} icon={BrainIcon} label={label} time={time} sheet={sheet} />
-      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `Thought · ${time}` : "Thought"} summary={words} />}</Suspense>
+      <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time && time !== "0s" ? `Thought · ${time}` : "Thought"} summary={words} heading={title} />}</Suspense>
     </>
   );
 }

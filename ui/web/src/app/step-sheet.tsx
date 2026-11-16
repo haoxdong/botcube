@@ -15,7 +15,7 @@ import KeptMarkdown from "./kept-markdown";
 import { useIsPhone } from "./phone-query";
 import { SHIKI_THEMES } from "./shiki-themes";
 
-type Section = { label: string; text: string; look: "prose" | "markdown" | "shell" | "code"; badge?: string | undefined };
+type Section = { label: string; text: string; look: "prose" | "markdown" | "shell" | "code"; heading?: string | undefined; badge?: string | undefined };
 
 const SNAP_POINTS = [0.6, 1];
 
@@ -42,12 +42,12 @@ type StepData = {
   prose: boolean | undefined;
 };
 
-type StepSheetProps = (StepData | { summary: string }) & { open: boolean; onClose: () => void; title: string };
+type StepSheetProps = (StepData | { summary: string; heading: string | undefined }) & { open: boolean; onClose: () => void; title: string };
 
 export function StepSheet(props: StepSheetProps) {
   const { open, onClose, title } = props;
   const phone = useIsPhone();
-  const sections: Section[] = "summary" in props ? [{ label: "Reasoning", text: props.summary, look: "markdown" }] : sectionsOf(props);
+  const sections: Section[] = "summary" in props ? [{ label: "Reasoning", text: props.summary, look: "markdown", heading: props.heading }] : sectionsOf(props);
   const body = (
     <div className="step-sheet-body">
       {sections.map((section) => <StepSection key={section.label} {...section} />)}
@@ -74,7 +74,7 @@ export function StepSheet(props: StepSheetProps) {
   );
 }
 
-function StepSection({ label, text, look, badge }: Section) {
+function StepSection({ label, text, look, heading, badge }: Section) {
   return (
     <section className="step-section">
       <div className="step-section-head">
@@ -83,7 +83,14 @@ function StepSection({ label, text, look, badge }: Section) {
         <Copy label={label} text={text} />
       </div>
       {look === "markdown" ? (
-        <div className="step-section-text" data-prose><KeptMarkdown text={text} /></div>
+        <div className="step-section-text" data-prose>
+          {heading === undefined ? <KeptMarkdown text={text} /> : (
+            <div className="space-y-4 whitespace-normal">
+              <p><strong className="font-semibold">{heading}</strong></p>
+              <KeptMarkdown text={text.slice(heading.length + 4)} />
+            </div>
+          )}
+        </div>
       ) : (
         <pre className="step-section-text" data-prose={look === "prose" || undefined}><Swap as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Swap></pre>
       )}

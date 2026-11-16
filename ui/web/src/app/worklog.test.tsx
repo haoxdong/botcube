@@ -1181,3 +1181,22 @@ it('shows every summary part and opens the last multi-sentence thought intact', 
   expect(dialog.querySelector('.step-section-text')).toHaveTextContent('Verify the final result');
   expect(dialog.querySelector('.step-section-text')).toHaveTextContent('The second part belongs to the next item. Its final sentence must survive replay.');
 });
+
+it('renders a completed Thought heading with a literal internal asterisk in bold', async () => {
+  const summary = '**Expressing E* targets**';
+  render(<StepsChat messages={[
+    { id: 'star-u', role: 'user', content: 'Audit the targets', ...stamp(0, 0) },
+    { id: 'star-r', role: 'reasoning', content: summary, ...stamp(0, 1) },
+    { id: 'star-a', role: 'assistant', content: 'Targets audited.', ...stamp(1, 2) },
+  ]} />);
+  fireEvent.click(head());
+  fireEvent.click(screen.getByRole('button', { name: /^Thought Expressing E\* targets/ }));
+  const dialog = await screen.findByRole('dialog');
+  const detail = dialog.querySelector('.step-section-text');
+  await waitFor(() => expect(detail?.querySelector('strong, [data-streamdown="strong"]')).toHaveTextContent('Expressing E* targets'));
+  expect(detail?.textContent).toBe('Expressing E* targets');
+  const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Copy reasoning' }));
+  expect(write).toHaveBeenCalledWith(summary);
+  write.mockRestore();
+});
