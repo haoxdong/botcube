@@ -1,27 +1,27 @@
 # BotCube Context
 
-BotCube is the generic agentic-chat platform that bots fork; a Cartridge seated in it decides which bot it is. Its relationships to the other contexts are in [GLOSSARY-MAP.md](../GLOSSARY-MAP.md).
+BotCube is the generic agentic-chat platform that each bot deploys and configures; the configuration decides which bot it is. Its relationships to the other contexts are in [GLOSSARY-MAP.md](../GLOSSARY-MAP.md).
 
 ## Language
 
 **BotCube**:
-The generic agentic-chatbot platform, free of any bot identity, that new bots fork. It holds the Chat Service, the Harnesses, white-label UI templates, per-host infrastructure, and Always On.
-_Avoid_: AgentCradle (former name), agentstack, the stack, console
+The generic agentic-chatbot platform, free of any bot identity, that each bot deploys and configures rather than extends with code. It holds the Chat Service, the Harnesses, the white-label UI, per-host infrastructure, and a public and an enterprise example.
+_Avoid_: AgentCradle (former name), agentstack, the stack, console, framework, Cartridge (retired: a bot is configuration, not plug-in code), Always On (retired: an example, not a term)
 
-**Cartridge**:
-The pluggable unit seated in BotCube that answers "which bot is this?": skills, tool staging, auth routes, deploy identity, and UI plugins. It holds no harness-library code, so one Cartridge runs on any Harness. A Cartridge's folder is named for its bot, such as `botcube/templates/always-on/`.
-_Avoid_: Bot Definition, app, bot config, plugin (that is only its UI part)
+**Deployment Config**:
+The settings for one BotCube deployment: which adapter reaches each External Service, and the values it needs.
+_Avoid_: environment, Deployment Environment, config (bare), env file
 
-**Always On**:
-The example Cartridge that new bots fork: a personal agent that keeps its memory, files and scheduled work between conversations.
-_Avoid_: template, BotCube template, example bot, starter
+**External Service**:
+Something outside BotCube that one deployment depends on, chosen by its operator in the Deployment Config, such as the model gateway, identity provider or scheduler.
+_Avoid_: backing service, dependency, integration, Connector
 
 **Harness**:
 A complete agent implementation on one third-party harness library, such as deepagents with LangGraph, together with everything coupled to that library, such as memory backends and LLM provider factories. It is swapped whole, never in place, and lives in `botcube/harness/<library>/`.
 _Avoid_: Agent Service (former name), agent server, runtime, agent (bare), test harness (a test double is a Fake)
 
 **Chat Service**:
-The UI-facing service and durable center: it holds Session Metadata, mounts the Cartridge's User routes, and reaches the agent. It never runs the agent and holds no harness-library code, so it survives any Harness swap.
+The UI-facing service and durable center: it holds Session Metadata and reaches the agent. It never runs the agent and holds no harness-library code, so it survives any Harness swap.
 _Avoid_: Backend, middleware, gateway, chat server
 
 **Session**:
@@ -49,7 +49,7 @@ A User created only through an operator-only path for tests (isolation checks, M
 _Avoid_: anonymous account, throwaway account, service account
 
 **Sign-in**:
-A User's link to their identity at one provider, unique on that identity; a User holds many. Its provider is an identity provider (identity only, such as Google or Apple), a plan provider (identity plus Plan Usage, such as OpenAI), or a site provider (a Cartridge's own site, whose login also sets up that site's Connector). An app designates which providers are login-capable: their Sign-ins log the user in and recover the Account.
+A User's link to their identity at one provider, unique on that identity; a User holds many. Its provider is an identity provider (identity only, such as Google or Apple), a plan provider (identity plus Plan Usage, such as OpenAI), or a site provider (a bot's own site, whose login also sets up that site's Connector). An app designates which providers are login-capable: their Sign-ins log the user in and recover the Account.
 _Avoid_: connection, integration, linked account, login (bare)
 
 **Plan Usage**:
@@ -57,8 +57,8 @@ The user's paid AI plan at a plan provider paying for their model calls, in plac
 _Avoid_: API key, inference credential, bring your own key, Model Subscription
 
 **Connector**:
-A User's link to an outside service the agent uses on their behalf, such as Gmail; a User holds many. A Connector never logs the user in; a site provider's login also sets up that site's Connector.
-_Avoid_: Sign-in, integration, plugin (that is a Cartridge's UI part)
+A User's link to their account at an outside site, which the agent uses on their behalf, such as Gmail; a User holds many. A Connector never logs the user in; a site provider's login also sets up that site's Connector.
+_Avoid_: Sign-in, integration, plugin
 
 **Durable Credential**:
 A Sign-in's or Connector's long-lived credential, which alone renews its short-lived access with no password or MFA, such as a plan provider's refresh token, which is replaced on every use.
@@ -125,11 +125,11 @@ Any Session other than the Main Chat, started by the user to keep a topic apart.
 _Avoid_: thread, conversation, sub-chat
 
 **Soul**:
-The values and habits the agent holds to in every Session. It starts from a template the Cartridge ships, and the user and agent can both change it per User.
+The values and habits the agent holds to in every Session. It starts from a template the bot's configuration sets, and the user and agent can both change it per User.
 _Avoid_: system prompt, persona file, skills (those hold the bot's rules)
 
 **Agent Identity**:
-The name, character, and look a user gives their agent, starting from the Cartridge's defaults. It is distinct from Soul and from the User.
+The name, character, and look a user gives their agent, starting from the defaults the bot's configuration sets. It is distinct from Soul and from the User.
 _Avoid_: identity (bare), profile, bot name
 
 **Artifact**:
