@@ -221,6 +221,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     CopilotChatInput,
     CopilotChatMessageView,
     CopilotChatView: { ScrollToBottomButton, ScrollView: CopilotChatScrollView },
+    useRenderTool: () => {},
     useDefaultRenderTool: (config: { render: typeof copilot.renderTool }, deps?: unknown[]) => {
       useEffect(() => { copilot.renderTool = config.render; }, [JSON.stringify(deps ?? [])]);
     },
@@ -290,6 +291,9 @@ vi.mock('./rum', () => ({ rumConfig: rum.config, startRum: rum.start }));
 
 const { default: Page } = await import('./page');
 const { agentFiles } = await import('./agent-files');
+await import('./chat-app');
+await import('./chat-surface');
+await import('./artifact-panel');
 
 function auth(overrides: Partial<AuthUiState> = {}): AuthUiState {
   return {
@@ -486,8 +490,6 @@ const warmups = () => fetchMock.mock.calls
   });
 
 async function renderPage(state: AuthUiState = auth()) {
-  await import("./chat-app");
-  await import("./chat-surface");
   cartridge.auth = state;
   const view = render(<Page />);
   await settle();
@@ -741,7 +743,10 @@ describe('account errors in a conversation', () => {
     ['signed out', 'unauthed', 'Account locked'],
     ['whose sign-in failed', 'error', 'Provider sign-in failed'],
     ['signed in', 'authed', 'Logout failed'],
-  ] as const)('shows a user %s the account error below the header', async (_, status, error) => {
+  ] as const)('shows a user %s the account error below the phone header', async (_, status, error) => {
+    const { happyDOM } = window as unknown as HappyDomWindow;
+    happyDOM.setViewport({ width: 390, height: 844 });
+    onTestFinished(() => happyDOM.setViewport({ width: 1024, height: 768 }));
     await renderConversation(auth({ status, error }));
 
     const alert = screen.getByRole('alert');
@@ -5489,6 +5494,7 @@ describe('agent profile', () => {
       });
       try {
         await import('./chat-app');
+        await import('./artifact-panel');
         const { default: FreshPage } = await import('./page');
         cartridge.auth = auth();
         render(<FreshPage />);
@@ -5538,7 +5544,7 @@ describe('agent profile', () => {
     // At rest, no laptop.
     expect(avatar()).not.toHaveAttribute('data-working');
     expect(avatar().querySelector('.avatar-laptop')).toBeNull();
-    expect(avatar().closest('main > header')).not.toBeNull();
+    expect(avatar().closest('main .artifact-chat-column > header')).not.toBeNull();
     // A tooltip names what the avatar opens.
     expect(avatar()).toHaveAttribute('title', 'Agent profile');
     expect(profile()).toBeNull();
@@ -5550,7 +5556,10 @@ describe('agent profile', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://chat.test/agent', { credentials: 'include', cache: 'no-store' });
   });
 
-  it('opens from a press on the loading chat that is released once the chat has loaded', async () => {
+  it('opens from a press on the loading phone chat that is released once the chat has loaded', async () => {
+    const { happyDOM } = window as unknown as HappyDomWindow;
+    happyDOM.setViewport({ width: 390, height: 844 });
+    onTestFinished(() => happyDOM.setViewport({ width: 1024, height: 768 }));
     // This file's page loads its chat controls first, so the other tests keep them whatever runs after this one.
     (await renderPage()).unmount();
     // A fresh page, whose chat controls load only when the test lets them.
@@ -5562,6 +5571,7 @@ describe('agent profile', () => {
     });
     try {
       await import('./chat-app');
+      await import('./artifact-panel');
       const { default: LoadingPage } = await import('./page');
       cartridge.auth = auth();
       render(<LoadingPage />);
@@ -9477,6 +9487,7 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
   vi.doMock('./chat-surface', () => new Promise(() => {}));
   try {
     await import('./chat-app');
+    await import('./artifact-panel');
     const { default: LoadingPage } = await import('./page');
     const reply = '## Rates recap\n\nThe **10y** closed at **4.12%**.\n\n| Tenor | Close |\n| --- | --- |\n| 10y | 4.12% |';
     localStorage.setItem(KEY, JSON.stringify({

@@ -63,7 +63,6 @@ const phone = (matches: boolean) =>
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: matches && query === '(max-width: 640px)', media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList);
 
 beforeEach(() => {
-  vi.stubEnv('NEXT_PUBLIC_ARTIFACTS', '1');
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   // jsdom lays nothing out; ProseMirror asks where the caret is after each keystroke.
   const rects = () => Object.assign([], { item: () => null }) as unknown as DOMRectList;
@@ -455,24 +454,8 @@ describe("the User's edit of a published Doc", () => {
   });
 });
 
-describe("the skill page's Doc examples", () => {
-  const lines = readFileSync(path.join(import.meta.dirname, '../../../../harness/deepagents/artifact-check/skills/artifacts/SKILL.md'), 'utf8').split('\n');
-  // The Doc section runs to the next section's heading outside a fence.
-  const start = lines.indexOf('## Doc');
-  let fenced = false;
-  const end = lines.findIndex((line, index) => index > start && (fenced = fenced !== line.startsWith('```'), !fenced && line.startsWith('## ')));
-  const section = lines.slice(start, end < 0 ? undefined : end).join('\n');
-  const examples = [...section.matchAll(/```markdown\n([\s\S]*?)\n```/g)].map(([, markdown]) => markdown ?? '');
-
-  it('has examples', () => {
-    expect(start).toBeGreaterThan(0);
-    expect(examples.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it("says a look Markdown cannot hold is dropped on the User's save", () => {
-    expect(section).toContain('Markdown holds no look.');
-    expect(section).toContain("the User's next save would drop the HTML");
-  });
+describe('Doc Markdown fixtures', () => {
+  const examples: string[] = JSON.parse(readFileSync(path.join(import.meta.dirname, '../../../../harness/deepagents/tests/fixtures/doc-examples.json'), 'utf8'));
 
   it.each(examples)('loads in the Doc viewer with no Markdown syntax left as text: %s', (example) => {
     render(<DocFrame title="Example" markdown={example} complete />);

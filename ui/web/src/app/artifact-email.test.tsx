@@ -38,7 +38,6 @@ function redefine(target: object, key: PropertyKey, value: unknown) {
 }
 
 beforeEach(() => {
-  vi.stubEnv('NEXT_PUBLIC_ARTIFACTS', '1');
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   // jsdom has no matchMedia; the panel asks whether it is on a phone.
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList);

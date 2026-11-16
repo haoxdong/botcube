@@ -237,7 +237,7 @@
   }
 
   /* The scroll view, CopilotKit's first child of the chat; the composer, its sibling, stays crisp. */
-  .chat-header + .app-chat .copilotKitChat > :first-child {
+  .chat-header + :is(.app-chat, .artifact-layout) .copilotKitChat > :first-child {
     -webkit-mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
     mask-image: linear-gradient(to bottom, transparent 16px, var(--color-white) var(--chat-header-height));
   }
@@ -245,7 +245,7 @@
 
 /* What follows the header in the shell, other than the chat, which scrolls beneath it, starts below it: an
    alert, then the chat below the alert, or the Main Chat's skeleton or failure. */
-.chat-header + :not(.app-chat) {
+.chat-header + :not(.app-chat, .artifact-layout) {
   margin-top: var(--chat-header-height);
 }
 

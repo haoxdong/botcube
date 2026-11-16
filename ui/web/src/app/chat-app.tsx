@@ -4,7 +4,7 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "framer-motion";
 
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ComponentType, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Blocks, MessageCircle, PanelsTopLeftIcon } from "lucide-react";
 import { ModelEffortPicker } from "./model-effort-picker";
@@ -43,15 +43,11 @@ import { SideChats } from "./side-chats";
 import { UnreadDot } from "./unread-dot";
 import { TurnStart } from "./worklog";
 import type { ChatStop } from "./chat-surface";
-import { artifactsEnabled } from "../artifacts-flag";
-import type { ArtifactLayout } from "./artifact-panel";
 import { useArtifactWorkspace, useChatSurfaceKey } from "./artifact-request";
 
 const ArtifactNavigation = motionElement.create(SidebarRow);
 const ChatSurface = lazy(() => import("./chat-surface"));
-const ChatColumn: ComponentType<ComponentProps<typeof ArtifactLayout>> = artifactsEnabled()
-  ? lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })))
-  : ({ children, header }) => <>{header}{children}</>;
+const ChatColumn = lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })));
 const ArtifactLibrary = lazy(() => import("./artifact-library").then(({ ArtifactLibrary }) => ({ default: ArtifactLibrary })));
 const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
 
@@ -199,7 +195,7 @@ export default function App({
   const [agentRunning] = useAgentRunning(agent);
   const working = useHeaderWorking(activeId, turnRunsOnServer || agentRunning);
 
-  const headerInPane = artifactsEnabled() && !isPhone;
+  const headerInPane = !isPhone;
   const chatHeader = (
     <ChatHeader opener={agentProfileOpenerRef} working={working} ready={accountReady} chatId={activeId} open={profileSwipe.show}
       picture={agentProfile?.picture} emoji={agentProfile?.avatar} name={agentName} />
@@ -262,7 +258,7 @@ export default function App({
               <Blocks className="sidebar-nav-icon" aria-hidden />
               <span className="sidebar-nav-label">Plugins</span>
             </SidebarRow>
-            <Presence>{artifactsEnabled() && !temporary && <ArtifactNavigation {...presenceMotion} active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
+            <Presence>{!temporary && <ArtifactNavigation {...presenceMotion} active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
               <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
               <span className="sidebar-nav-label">Artifacts</span>
             </ArtifactNavigation>}</Presence>

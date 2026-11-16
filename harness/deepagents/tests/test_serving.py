@@ -1586,23 +1586,19 @@ def test_the_environment_section_names_only_pinned_libraries_and_smoked_commands
     assert all(f"'{command}'" in (tools / 'smoke.py').read_text() for command in commands)
 
 
-def test_the_artifacts_flag_swaps_only_its_lines_into_the_agent_prompt_beside_the_artifact_tool(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+def test_artifacts_are_in_the_agent_prompt_and_candidate_hash(
+    service: _Service, files_bucket: Any,
 ) -> None:
     service.turn('hello', files=_files())
-    monkeypatch.setenv('BOTCUBE_ARTIFACTS', '1')
-    service.turn('hello again', files=_files())
-    candidate = service.turn('hello once more', files=_files(), agentSystemPrompt=serving.AGENT_SYSTEM_PROMPT)
+    candidate = service.turn('hello again', files=_files(), agentSystemPrompt=serving.AGENT_SYSTEM_PROMPT)
 
-    off, on, _ = service.recorder.prompts
-    served = serving.served_agent_system_prompt(serving.AGENT_SYSTEM_PROMPT, artifacts=True)
-    assert 'Artifact' not in service.recorder.tools[0] and 'Artifact' in service.recorder.tools[1]
-    assert off.startswith(serving.AGENT_SYSTEM_PROMPT) and on.startswith(served)
-    lines = serving.ARTIFACTS_PROMPT_LINES
-    assert set(serving.AGENT_SYSTEM_PROMPT.splitlines()) ^ set(served.splitlines()) == set(lines) | set(lines.values())
-    assert candidate[1] == {'type': 'CUSTOM', 'name': 'AGENT_SYSTEM_PROMPT', 'value': hashlib.sha256(served.encode()).hexdigest()}
-    with pytest.raises(ValueError, match='The Artifacts flag replaces a line this prompt lacks'):
-        serving.served_agent_system_prompt('Candidate prompt.', artifacts=True)
+    assert all('Artifact' in tools for tools in service.recorder.tools)
+    assert all(prompt.startswith(serving.AGENT_SYSTEM_PROMPT) for prompt in service.recorder.prompts)
+    assert 'Publish each with the `Artifact` tool' in serving.AGENT_SYSTEM_PROMPT
+    assert candidate[1] == {
+        'type': 'CUSTOM', 'name': 'AGENT_SYSTEM_PROMPT',
+        'value': hashlib.sha256(serving.AGENT_SYSTEM_PROMPT.encode()).hexdigest(),
+    }
 
 
 def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
@@ -1614,10 +1610,10 @@ def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
     prompt = service.recorder.prompts[0]
     assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n')
     for tag in ('artifacts', 'environment', 'writing', 'final_response', 'modules', 'citations', 'skills', 'files', 'agent_identity', 'soul'):
-        assert prompt.count(f'<{tag}>') == prompt.count(f'</{tag}>') == 1
+        assert prompt.splitlines().count(f'<{tag}>') == prompt.splitlines().count(f'</{tag}>') == 1
         assert prompt.index(f'<{tag}>') < prompt.index(f'</{tag}>')
-    blocks = ["You are the user's own agent", '<artifacts>', '<environment>', '<writing>', '<final_response>', '<citations>', 'Cartridge instructions.', '<skills>', '<files>', '<agent_identity>']
-    assert [prompt.index(block) for block in blocks] == sorted(prompt.index(block) for block in blocks)
+    blocks = ["You are the user's own agent", '<environment>', '<writing>', '<final_response>', '<visuals>', '<artifacts>', '<citations>', 'Cartridge instructions.', '<skills>', '<files>', '<agent_identity>']
+    assert [prompt.index('\n' + block) if block.startswith('<') else prompt.index(block) for block in blocks] == sorted(prompt.index('\n' + block) if block.startswith('<') else prompt.index(block) for block in blocks)
     assert '<agent_identity>\nName: Ada Bot' in prompt
     assert '<soul>\nBe candid. Say what you do not know.' in prompt
 
@@ -3155,42 +3151,34 @@ def test_opening_uses_the_page_name_and_skips_a_pitch_without_memory(service: _S
 
 
 def test_the_files_bound_serving_graph_registers_no_publish_tool(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, files_bucket: Any,
 ) -> None:
-    monkeypatch.delenv('BOTCUBE_ARTIFACTS', raising=False)
-
     events = service.turn('hello', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     assert service.recorder.tools[0] and 'publish' not in service.recorder.tools[0]
 
 
-@pytest.mark.parametrize('flagged', [True, False])
-def test_the_artifacts_skill_reaches_the_agent_only_behind_the_artifacts_flag(
-    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch, flagged: bool,
+@pytest.mark.parametrize('kind', ['page', 'slides', 'doc', 'sheet', 'email'])
+def test_the_artifact_type_file_reaches_the_agent(
+    service: _Service, files_bucket: Any, kind: str,
 ) -> None:
-    if flagged:
-        monkeypatch.setenv('BOTCUBE_ARTIFACTS', '1')
-    else:
-        monkeypatch.delenv('BOTCUBE_ARTIFACTS', raising=False)
-    page = '/botcube-harness-deepagents/skills/artifacts/SKILL.md'
+    page = f'{artifact.SKILLS_SOURCE}artifacts/{kind}.md'
 
     events = service.turn(f'read: {page}', files=_files())
 
     assert events[-1]['type'] == 'RUN_FINISHED'
     prompt = service.recorder.prompts[0]
-    assert ('- artifacts: How to write an Artifact' in prompt) is flagged
-    assert (f'Read `{page}` for full instructions' in prompt) is flagged
+    assert '- artifacts:' not in prompt
+    assert page in prompt
     assert '- grounding:' in prompt
     read = _tool_output(events)
-    assert ('Publish with the `Artifact` tool.' in read) is flagged
-    assert ('`<package>@<x.y.z>`' in read) is flagged
-    # The skill is the Harness's own: the user's Files never get a copy, and the agent cannot change it.
+    assert read
+    assert (artifact.SKILLS / 'artifacts' / f'{kind}.md').read_text().splitlines()[2] in read
     assert not any('SKILL.md' in key for key in _keys(files_bucket))
-    if flagged:
-        refused = _tool_output(service.turn('write: /botcube-harness-deepagents/skills/artifacts/notes.md: mine', files=_files()))
-        assert 'read-only' in refused
-        assert not (artifact.SKILLS / 'artifacts' / 'notes.md').exists()
+    refused = _tool_output(service.turn('write: /botcube-harness-deepagents/skills/artifacts/notes.md: mine', files=_files()))
+    assert 'read-only' in refused
+    assert not (artifact.SKILLS / 'artifacts' / 'notes.md').exists()
 
 
 def test_steering_control_joins_the_running_turn_and_persists_inline(
@@ -3352,6 +3340,12 @@ def test_unreachable_efs_finishes_plain_answers_and_bounds_file_tool_errors(
         assert 'deadline' in failed[-1]['message']
     finally:
         release.set()
+
+
+def test_system_prompt_matches_the_approved_target_with_the_served_type_directory() -> None:
+    target = Path(__file__).parent / 'fixtures/agent-system-prompt.txt'
+    assert target.read_text().rstrip('\n').replace('{artifacts}', f'{artifact.SKILLS_SOURCE}artifacts') == serving.AGENT_SYSTEM_PROMPT
+
 
 @pytest.mark.integration
 def test_a_plan_turn_keeps_every_part_when_reasoning_items_restart_the_summary_index(service: _Service) -> None:

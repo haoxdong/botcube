@@ -82,7 +82,7 @@ from .agent_documents import (
     agent_document_tools,
     pop_agent_documents,
 )
-from .artifact import artifact_tools, artifacts_enabled
+from .artifact import SKILLS_SOURCE, artifact_tool
 from .conversation import conversation, reasoning_blocks
 from .files import (
     FilesBindingError,
@@ -130,16 +130,12 @@ from .turn_state import (
 log = logging.getLogger(__name__)
 AGENT_SYSTEM_PROMPT = """You are the user's own agent, with your own computer, Files and schedule.
 
-<artifacts>
-An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a PDF, PowerPoint or Excel file when the content suits it or the user asks.
-</artifacts>
-
 <environment>
 pandas, numpy, matplotlib, plotly, openpyxl, python-pptx, python-docx, reportlab, pypdf and rsvg-convert are preinstalled; use them rather than installing packages.
 </environment>
 
 <writing>
-Write everything BLUF: authoritative and sharp; bold only key words, under 4 at a time; no emoji, no em dashes.
+Write everything BLUF: authoritative and sharp; bold only key words, at most 3 at a time; no emoji, no em dashes.
 When the user opens the chat, greet them by first name, say in one line what you can do, and pitch one thing their Memory suggests they'd care about.
 For longer tasks, share meaningful progress in one sentence.
 </writing>
@@ -148,46 +144,40 @@ For longer tasks, share meaningful progress in one sentence.
 Write it for IM, to be read at a glance. Build it from these modules, in the order that reads best. Show, don't tell: a table or visual beats text whenever it can carry the point. The whole response stays under 100 words.
 
 <modules>
-takeaway  1, under 25 words
-bullets   0–3, directly under the takeaway, each under 15 words, no final period
-table     0–1, under 10 rows and 5 columns
-visual    0–2, each one of:
-          plotly: fig.write_json('<name>.plotly.json'), embedded as ![<caption>](<file path>)
-          mermaid: a ```mermaid block
-          svg: embedded as ![<caption>](<file path>)
-closing   0–1, under 15 words: conviction, caveat, risk or catalyst
-artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<file path>), never a numbered link
+takeaway    1, under 25 words
+bullets     0–3, directly under the takeaway, each under 15 words, no final period
+table       0–1, under 10 rows and 5 columns
+visual      0–3, as <visuals> says
+closing     0–1, under 15 words: conviction, caveat, risk or catalyst
+artifact    0–3: whatever the modules above can't hold, as <artifacts> says
+attachment  0–3, when the user asks for a file or no Artifact type fits: a file in Files, on its own line as [<name>](<file path>); more files go in one .zip
 </modules>
 </final_response>
 
-<citations>
-Link every factual claim to its source, in chat and in artifacts.
-In chat, link each claim's key words to its source: `[key words](https://…)`.
-</citations>"""
+<visuals>
+plotly: set the data, names, titles and on-data annotations, and style only what carries meaning; layout is the default theme's. fig.write_json('<name>.plotly.json') in Files, embedded as ![<caption>](<file path>)
+mermaid: a ```mermaid block
+svg: embedded as ![<caption>](<file path>)
+</visuals>
 
-ARTIFACTS_PROMPT_LINES = {
-    "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a PDF, PowerPoint or Excel file when the content suits it or the user asks.":
-    "An artifact is a tight, skimmable file in the user's Files: an email draft (`.eml` with `X-Unsent: 1`), or a page published with the `Artifact` tool, written as the `artifacts` skill says.",
-    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message, on its own line as [Download <name>](<file path>), never a numbered link':
-    'artifact  0–1: for anything the user will present or forward, or details bigger than a chat message: a page published with the `Artifact` tool, which the reply shows as a card, or an email draft on its own line as [Download <name>](<published link>), never a numbered link',
-}
+<artifacts>
+Publish each with the `Artifact` tool; the reply shows it as a card. Publishing the same file_path again makes a new version. The tool checks it first and lists every error: fix them all and publish again in the same turn. Prefer a Page for its flexibility; use another type when the user will edit it or open it in Word, Excel, PowerPoint or their mail. Before writing one, read its type's file:
+Page: one self-contained HTML file, {artifacts}/page.md
+Slides: a folder's project/deck.json and its slides, {artifacts}/slides.md
+Doc: one Markdown file, {artifacts}/doc.md
+Sheet: one <name>.sheet.json, {artifacts}/sheet.md
+Email: one <name>.email.json, {artifacts}/email.md
+</artifacts>
+
+<citations>
+Link every factual claim to its source, in chat and in every Artifact: at most 3 of the claim's key words, as `[key words](https://…)`.
+</citations>""".replace('{artifacts}', f'{SKILLS_SOURCE}artifacts')
 
 
 def _served_prompt_hash(candidate: str | None) -> str | None:
     if candidate is None:
         return None
-    return hashlib.sha256(served_agent_system_prompt(candidate, artifacts_enabled()).encode()).hexdigest()
-
-
-def served_agent_system_prompt(prompt: str, artifacts: bool) -> str:
-    """The agent system prompt as the agent gets it: behind the Artifacts flag, with ARTIFACTS_PROMPT_LINES swapped in."""
-    if not (artifacts and prompt):
-        return prompt
-    for old, new in ARTIFACTS_PROMPT_LINES.items():
-        if old not in prompt:
-            raise ValueError(f'The Artifacts flag replaces a line this prompt lacks: {old}')
-        prompt = prompt.replace(old, new)
-    return prompt
+    return hashlib.sha256(candidate.encode()).hexdigest()
 
 
 class SessionOpeningError(RuntimeError):
@@ -313,7 +303,6 @@ class _AgentKey(NamedTuple):
     invocation_prompt: str
     scheduled_run: bool
     agent_system_prompt: str
-    artifacts: bool
     cartridge_system_prompt: str | None
 
 
@@ -653,7 +642,6 @@ def _get_agent(
             invocation_prompt,
             scheduled_run,
             agent_system_prompt,
-            artifacts_enabled(),
             cartridge_system_prompt,
         )
         cached = _AGENTS.get(key)
@@ -691,7 +679,7 @@ def _get_agent(
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if syncs_files:
-            tools.extend(artifact_tools(Path(backend.cwd), _require_cartridge().skills))
+            tools.append(artifact_tool(Path(backend.cwd), _require_cartridge().skills))
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
@@ -702,7 +690,7 @@ def _get_agent(
         cartridge = _require_cartridge()
         cartridge_prompt = _cartridge_instructions(cartridge, cartridge_system_prompt)
         system_prompt = '\n\n'.join(
-            part for part in (served_agent_system_prompt(agent_system_prompt, key.artifacts), cartridge_prompt) if part
+            part for part in (agent_system_prompt, cartridge_prompt) if part
         )
         user_prompt = _user_prompt(invocation_prompt, cartridge.skills if syncs_files else None, documents)
         with turn_timing.phase('graph_build'):

@@ -81,7 +81,6 @@ function openDeck() {
 }
 
 beforeEach(() => {
-  vi.stubEnv('NEXT_PUBLIC_ARTIFACTS', '1');
   // jsdom has no matchMedia: the panel asks whether the screen is a phone's.
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList);
   // jsdom lays nothing out: the resizable panels observe sizes that never change.

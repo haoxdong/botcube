@@ -16,7 +16,7 @@ from chat_save import UserSave, chat_service_save
 
 pytestmark = pytest.mark.integration
 
-SKILL_PAGE = SKILLS / 'artifacts/SKILL.md'
+SKILL_PAGE = SKILLS / 'artifacts/email.md'
 
 DRAFT = {
     'to': ['dana@example.com'],
@@ -260,9 +260,7 @@ def test_the_chat_service_refuses_a_save_that_is_not_json_or_breaks_the_format(t
 
 def test_every_email_example_in_the_skill_page_passes_the_checker(tmp_path: Path) -> None:
     page = SKILL_PAGE.read_text(encoding='utf-8')
-    start = page.index('\n## Email\n')
-    section = page[start:page.index('\n## ', start + 1)]
-    examples = re.findall(r'```json\n(.*?)\n```', section, re.DOTALL)
+    examples = re.findall(r'```json\n(.*?)\n```', page, re.DOTALL)
     assert examples
     for example in examples:
         for attachment in json.loads(example).get('attachments', []):

@@ -1,9 +1,3 @@
-// The Sheet format: one JSON file `{"edits": [...]}` whose edits are claude.ai's own sheet edits, with their kinds, keys
-// and values exactly. It takes the nine kinds below; any other kind is refused by name, and so is a key under another
-// name or a key too many. What the grid or the Excel file would drop is refused too, naming the edit and the field: a
-// checkbox, a table (its banded rows and footer rows), and a merge overlapping another, which Excel can't write. A
-// formula is a string like any other value, so its text is not checked: a range Excel can't read (`F2:F`) passes here
-// and shows as an error in the grid.
 import { z } from 'zod';
 
 /** @typedef {import('./check.mjs').CheckError} CheckError */
@@ -151,6 +145,15 @@ function checkText(file, text) {
     if (!result.success) {
       return result.error.issues.map((issue) => error(`edit ${index} (${kind})`, messageOf(issue, raw), nearestOf(kind, issue)));
     }
+    if (kind === 'writeCells') {
+      return result.data.rows.flatMap((row, rowIndex) => row.flatMap((value, columnIndex) =>
+        openEndedRanges(value).map((range) => error(
+          `edit ${index} (writeCells)`,
+          `rows[${rowIndex}][${columnIndex}] has open-ended range "${range}", which Excel cannot read`,
+          'a bounded range such as F2:F200',
+        )),
+      ));
+    }
     if (kind !== 'mergeCells') return [];
     return result.data.ranges.flatMap((range, position) => {
       const merge = { sheet: result.data.sheet, range, index, bounds: boundsOf(range) };
@@ -166,6 +169,17 @@ function checkText(file, text) {
       )];
     });
   });
+}
+
+function openEndedRanges(value) {
+  if (typeof value !== 'string' || !value.startsWith('=')) return [];
+  const formula = value.replace(/"(?:[^"\n]|"")*"|'(?:[^'\n]|'')*'|\[[^\]]*\]/g, ' ');
+  const ranges = [...formula.matchAll(/(?<![A-Z0-9_.])(?:\$?[A-Z]+\$?\d+|\$?[A-Z]+|\$?\d+)\s*:\s*(?:\$?[A-Z]+\$?\d+|\$?[A-Z]+|\$?\d+)(?![A-Z0-9_.])/gi)];
+  return ranges.filter(([range]) => {
+    const [first, last] = range.replaceAll('$', '').replaceAll(/\s/g, '').split(':');
+    const shape = (reference) => /^\d+$/.test(reference) ? 'row' : /^[A-Z]+$/i.test(reference) ? 'column' : 'cell';
+    return shape(first) !== shape(last);
+  }).map(([range]) => range);
 }
 
 const columnOf = (letters) => [...letters].reduce((number, letter) => number * 26 + letter.charCodeAt(0) - 64, 0);

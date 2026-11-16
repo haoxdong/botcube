@@ -14,7 +14,7 @@ from botcube_harness_deepagents.artifact_check import CHECKER
 
 pytestmark = pytest.mark.integration
 
-SKILL_PAGE = CHECKER.parent.parent / 'skills/artifacts/SKILL.md'
+SKILL_PAGE = CHECKER.parent.parent / 'skills/artifacts/sheet.md'
 KINDS = 'writeCells, formatCells, setBorders, setColumnWidths, fitColumns, setSheetSettings, mergeCells, setCellTable, importFile'
 
 BUDGET = {'edits': [
@@ -62,9 +62,7 @@ def test_an_edit_kind_a_sheet_does_not_take_is_refused_by_name_and_nothing_is_sa
 
 def skill_page_sheets() -> list[str]:
     page = SKILL_PAGE.read_text(encoding='utf-8')
-    section = page[page.index('\n## Sheet\n'):]
-    section = section[:section.find('\n## ', 1)] if '\n## ' in section[1:] else section
-    return re.findall(r'```json\n(\{"edits".*?)\n```', section, re.DOTALL)
+    return re.findall(r'```json\n(\{"edits".*?)\n```', page, re.DOTALL)
 
 
 def test_every_sheet_example_in_the_skill_page_passes_the_checker(tmp_path: Path) -> None:
@@ -75,16 +73,17 @@ def test_every_sheet_example_in_the_skill_page_passes_the_checker(tmp_path: Path
         assert json.loads(str(call(tmp_path, file_path='/sheets/budget.sheet.json').content))['type'] == 'sheet'
 
 
-def test_the_skill_pages_example_keeps_an_open_ended_range_the_checker_lets_through(tmp_path: Path) -> None:
-    # Google Sheets reads `F2:F` as F2 down to the last row; Excel, LibreOffice (#NAME?) and the grid (#VALUE!) have
-    # no such range. A formula is a string the checker does not read, so the example publishes and the total shows as
-    # an error. This pins the gap until the checker refuses such a range, a loader rewrites it, or the example changes.
-    (example,) = skill_page_sheets()
-    formulas = [value for edit in json.loads(example)['edits'] if edit['kind'] == 'writeCells'
-                for row in edit['rows'] for value in row if isinstance(value, str) and value.startswith('=')]
+@pytest.mark.parametrize(('formula', 'count'), [('=SUMIFS(F2:F,E2:E,FALSE)', 2), ('=SUM($F$2:$F)', 1), ('=SUM(F:F200)', 1), ('=SUM(2:F200)', 1)])
+def test_publishing_refuses_open_ended_formula_ranges(tmp_path: Path, formula: str, count: int) -> None:
+    errors = refusals(tmp_path, {'kind': 'writeCells', 'sheet': 'Tasks', 'topLeft': 'I1', 'rows': [[formula]]})
+    assert len(errors) == count
+    assert 'rows[0][0]' in errors[0]
+    assert 'open-ended range' in errors[0]
 
-    assert formulas == ['=SUM(B2:B3)', '=SUMIFS(F2:F,E2:E,FALSE)']
-    write_sheet(tmp_path, {'edits': [{'kind': 'writeCells', 'sheet': 'Tasks', 'topLeft': 'I1', 'rows': [['=SUMIFS(F2:F,E2:E,FALSE)']]}]})
+
+@pytest.mark.parametrize('value', ['=SUM(F2:F200)', '=SUM(F:F)', '=SUM(2:200)', '=HYPERLINK("https://example.com/F2:F","F2:F")', "'=SUM(F2:F)", 'F2:F'])
+def test_publishing_keeps_bounded_formulas_whole_columns_and_literal_range_text(tmp_path: Path, value: str) -> None:
+    write_sheet(tmp_path, {'edits': [{'kind': 'writeCells', 'sheet': 'Tasks', 'topLeft': 'I1', 'rows': [[value]]}]})
     assert json.loads(str(call(tmp_path, file_path='/sheets/budget.sheet.json').content))['version'] == 1
 
 

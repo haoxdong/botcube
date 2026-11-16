@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -97,26 +96,9 @@ def test_a_doc_version_is_built_aside_and_takes_the_number_after_one_already_cla
     assert sorted(path.name for path in versions.iterdir()) == ['1.json', '2.json', '2.md', 'read.json']
 
 
-SKILL_PAGE = Path(__file__).resolve().parents[1] / 'artifact-check/skills/artifacts/SKILL.md'
-
-
-def skill_page_docs() -> list[str]:
-    """The Doc section's Markdown examples: up to the next section's heading, outside a fence."""
-    lines = SKILL_PAGE.read_text(encoding='utf-8').split('\n')
-    start = lines.index('## Doc')
-    fenced = False
-    for end in range(start + 1, len(lines)):
-        fenced ^= lines[end].startswith('```')
-        if not fenced and lines[end].startswith('## '):
-            break
-    else:
-        end = len(lines)
-    return re.findall(r'```markdown\n(.*?)\n```', '\n'.join(lines[start:end]), re.DOTALL)
-
-
-def test_every_doc_example_in_the_skill_page_publishes_as_a_doc(tmp_path: Path) -> None:
-    examples = skill_page_docs()
-    assert len(examples) >= 3
+def test_every_doc_fixture_publishes_as_a_doc(tmp_path: Path) -> None:
+    examples = json.loads((Path(__file__).parent / 'fixtures/doc-examples.json').read_text())
+    assert len(examples) == 5
     for index, example in enumerate(examples):
         (tmp_path / f'example-{index}.md').write_text(example, encoding='utf-8')
         published = json.loads(str(call(tmp_path, file_path=f'/example-{index}.md').content))

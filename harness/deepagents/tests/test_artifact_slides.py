@@ -17,7 +17,7 @@ from botcube_harness_deepagents.artifact import artifact_tool
 from botcube_harness_deepagents.artifact_check import CHECKER, errors
 from conftest import ToolBindableFakeMessagesModel
 
-SKILL_PAGE = CHECKER.parent.parent / 'skills' / 'artifacts' / 'SKILL.md'
+SKILL_PAGE = CHECKER.parent.parent / 'skills' / 'artifacts' / 'slides.md'
 
 DECK: dict[str, object] = {
     'v': 4, 'createdOnFiles': {'v': 1, 'at': '2026-11-11T09:00:00Z'}, 'lists': 'css', 'title': 'Q3 Operating Review',
@@ -292,9 +292,7 @@ def test_an_image_is_held_in_the_slide_as_a_data_uri_since_a_slide_loads_nothing
 
 def skill_page_slides() -> list[str]:
     page = SKILL_PAGE.read_text(encoding='utf-8')
-    section = page[page.index('\n## Slides\n'):]
-    section = section[:section.find('\n## ', 1)] if '\n## ' in section[1:] else section
-    return re.findall(r'```html\n(<section.*?</section>)\n```', section, re.DOTALL)
+    return re.findall(r'```html\n(<section.*?</section>)\n```', page, re.DOTALL)
 
 
 def test_every_slides_example_in_the_skill_page_passes_the_checker(tmp_path: Path) -> None:

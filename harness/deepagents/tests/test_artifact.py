@@ -11,7 +11,7 @@ from deepagents.backends import LocalShellBackend
 from langchain_core.messages import AIMessage, ToolMessage
 
 from botcube_harness_deepagents.agent import build_agent
-from botcube_harness_deepagents.artifact import artifact_tool, artifacts_enabled
+from botcube_harness_deepagents.artifact import artifact_tool
 from botcube_harness_deepagents.artifact_types import TYPES
 from botcube_harness_deepagents.files import excluded_paths
 from botcube_harness_deepagents.files_mount import FilesMount
@@ -164,13 +164,6 @@ def test_read_moves_the_agents_read_mark_past_a_version_the_user_saved(tmp_path:
 def test_reading_an_artifact_that_does_not_exist_names_the_way_to_find_one(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"No Artifact /q3\.html\. List them with action 'list'\."):
         call(tmp_path, action='read', file_path='/q3.html')
-
-
-def test_the_artifacts_flag_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv('BOTCUBE_ARTIFACTS', raising=False)
-    assert not artifacts_enabled()
-    monkeypatch.setenv('BOTCUBE_ARTIFACTS', '1')
-    assert artifacts_enabled()
 
 
 @pytest.mark.parametrize('identity', ['../../outside/q3.html', '/../../outside/q3.html', 'tmp/q3.html'])

@@ -97,7 +97,6 @@ function sandboxReady(frame: HTMLIFrameElement) {
 type Shown = { id: string; html: string | null; embeds: { style: string; html: string }[] };
 
 beforeEach(() => {
-  vi.stubEnv('NEXT_PUBLIC_ARTIFACTS', '1');
   vi.stubGlobal('matchMedia', vi.fn());
   // jsdom lays nothing out: the resizable panels observe sizes that never change.
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });

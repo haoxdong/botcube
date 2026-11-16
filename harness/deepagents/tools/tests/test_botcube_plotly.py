@@ -59,7 +59,7 @@ def test_python_that_draws_no_chart_does_not_load_plotly(tmp_path: Path) -> None
 
 @pytest.mark.integration
 @pytest.mark.parametrize('kind', ['line', 'bar'])
-def test_saved_charts_use_the_approved_theme_despite_agent_overrides(tmp_path: Path, kind: str) -> None:
+def test_saved_charts_keep_agent_colours_and_template(tmp_path: Path, kind: str) -> None:
     chart = tmp_path / 'chart.plotly.json'
     result = run_in_fresh_tools_python(tmp_path, f"""
 import plotly.express as px
@@ -72,17 +72,9 @@ figure.write_json({str(chart)!r})
     saved = json.loads(chart.read_text())
     layout = saved['layout']
     theme = layout['template']['layout']
-    assert theme['font']['size'] == 13
-    assert theme['font']['color'] == '#646464'
-    assert theme['font']['family'].startswith('-apple-system')
-    for axis in (theme['xaxis'], theme['yaxis']):
-        assert axis['showgrid'] is False
-        assert axis['showline'] is True
-        assert axis['ticks'] == 'outside'
-        assert axis['ticklen'] == 4
-        assert axis['linecolor'] == axis['tickcolor'] == '#e8e8e8'
+    assert theme['paper_bgcolor'] == 'white'
     colour_key = 'line' if kind == 'line' else 'marker'
-    assert [trace[colour_key]['color'] for trace in saved['data']] == ['#0090ff', '#f76b15']
+    assert [trace[colour_key]['color'] for trace in saved['data']] == ['#1765b5', '#e76f24']
     assert [list(struct.unpack('<2d', base64.b64decode(trace['y']['bdata']))) for trace in saved['data']] == [
         [7676.77, 7800], [29273.405, 29500],
     ]
@@ -120,12 +112,12 @@ else:
     saved = json.loads(chart.read_text())
     assert saved['data'][0]['marker']['color'] == [10, 20]
     assert saved['data'][0]['marker']['colorscale'][0] == [0.0, '#440154']
-    assert saved['layout']['font']['size'] == 13
-    assert saved['layout']['font']['color'] == '#646464'
-    for axis in ('xaxis', 'yaxis2'):
-        assert saved['layout'][axis]['showgrid'] is False
-        assert saved['layout'][axis]['showline'] is True
-        assert saved['layout'][axis]['ticks'] == 'outside'
+    assert saved['layout']['font']['size'] == 12
+    assert saved['layout']['font']['color'] == '#2a3f5f'
+    assert saved['layout']['xaxis']['showgrid'] is True
+    assert saved['layout']['xaxis']['showline'] is False
+    assert saved['layout']['xaxis']['ticks'] == ''
+    assert saved['layout']['yaxis2']['showgrid'] is True
 
 
 @pytest.mark.integration
@@ -153,6 +145,8 @@ figure.write_json({str(chart)!r})
     assert theme['shapedefaults']['opacity'] == 1
     assert len(layout['shapes']) == 6
     for key in ['xaxis', 'xaxis2', 'xaxis3', 'yaxis', 'yaxis2', 'yaxis3']:
-        assert layout[key]['automargin'] is True
-        assert layout[key]['autotickangles'] == [0, 30, 90]
-        assert layout[key]['nticks'] == 3
+        assert 'automargin' not in layout[key]
+        axis_theme = theme['xaxis' if key.startswith('x') else 'yaxis']
+        assert axis_theme['automargin'] is True
+        assert axis_theme['autotickangles'] == [0, 30, 90]
+        assert axis_theme['nticks'] == 3

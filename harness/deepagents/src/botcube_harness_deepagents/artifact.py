@@ -16,7 +16,6 @@ takes the same spellings, as `file_path` or as the Artifact's id in `url`; only 
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import time
@@ -33,7 +32,6 @@ from .artifact_types import NAMED, PUBLISHES, TYPES, ArtifactType
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY, excluded_paths, is_files_path
 from .lazy_files import current_turn_files, finish_in_thread
 
-# The `artifacts` skill, which teaches each Artifact type's format, ships with the checker that holds Sources to it.
 SKILLS = CHECKER.parent.parent / 'skills'
 # Under the Harness's directory, which is never the user's Files.
 SKILLS_SOURCE = f'/{HARNESS_DIRECTORY}/skills/'
@@ -49,16 +47,6 @@ DESCRIPTION = (
     'versions, each with its author (you or the User), by its id as `url` or its `file_path`. Read one before '
     'updating it from another chat.'
 )
-
-
-def artifacts_enabled() -> bool:
-    """The Artifacts flag, BOTCUBE_ARTIFACTS=1, off by default."""
-    return os.environ.get('BOTCUBE_ARTIFACTS') == '1'
-
-
-def artifact_tools(root: Path, skills: Iterable[str]) -> list[BaseTool]:
-    """The `Artifact` tool behind the Artifacts flag, and no tool without it."""
-    return [artifact_tool(root, skills)] if artifacts_enabled() else []
 
 
 def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
@@ -90,7 +78,6 @@ def artifact_tool(root: Path, skills: Iterable[str] = ()) -> BaseTool:
     ) -> tuple[str, dict[str, Any]]:
         return await finish_in_thread(artifact, file_path, action, title, description, url)
 
-    # The tool brings the `artifacts` skill, read from the Harness's own copy: it never lands in the user's Files.
     return StructuredTool.from_function(
         artifact, coroutine=aartifact, name='Artifact', description=DESCRIPTION, response_format='content_and_artifact',
         metadata={TOOL_SKILLS: {SKILLS_SOURCE: str(SKILLS)}},

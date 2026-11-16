@@ -897,7 +897,7 @@ it("floats the agent's header over the chat, which scrolls beneath it without a 
   expect(styleOf(container, '.pseudo-before').backgroundImage || 'none').toBe('none');
   // happy-dom leaves var() and calc() unresolved, so this reads the sheet: the header's height, then the column's gap.
   expect(sheet).toMatch(/\n\.app-shell \{[^}]*--chat-header-height: 97px;/);
-  expect(sheet).toMatch(/\n\.chat-header \+ \.app-chat \.copilotKitMessages \{\s*padding-top: calc\(var\(--chat-header-height\) \+ 0\.5rem\);/);
+  expect(sheet).toMatch(/\n\.chat-header \+ :is\(\.app-chat, \.artifact-layout\) \.copilotKitMessages \{\s*padding-top: calc\(var\(--chat-header-height\) \+ 0\.5rem\);/);
   expect(sheet).toMatch(/\n\.welcome-screen \{[^}]*top: var\(--chat-header-height\);/);
 });
 
@@ -913,7 +913,7 @@ it('starts an alert under the header below it, and the chat below the alert with
   );
 
   // happy-dom leaves var() unresolved, so this reads the sheet for the alert's margin.
-  expect(sheet).toMatch(/\n\.chat-header \+ :not\(\.app-chat\) \{\s*margin-top: var\(--chat-header-height\);/);
+  expect(sheet).toMatch(/\n\.chat-header \+ :not\(\.app-chat, \.artifact-layout\) \{\s*margin-top: var\(--chat-header-height\);/);
   expect(styleOf(container, '.copilotKitMessages').paddingTop).toBe('20px');
 });
 

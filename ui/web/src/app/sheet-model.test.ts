@@ -7,13 +7,11 @@ import { describe, expect, it } from 'vitest';
 
 import { replay, univerDataOf } from './sheet-model';
 
-const SKILL_PAGE = 'botcube/harness/deepagents/artifact-check/skills/artifacts/SKILL.md';
+const SKILL_PAGE = 'botcube/harness/deepagents/artifact-check/skills/artifacts/sheet.md';
 
 function skillPageSheets(): Sheet[] {
   const page = readFileSync(fileURLToPath(new URL(`../../../../../${SKILL_PAGE}`, import.meta.url)), 'utf8');
-  const section = page.slice(page.indexOf('\n## Sheet\n'));
-  const next = section.indexOf('\n## ', 1);
-  return [...(next === -1 ? section : section.slice(0, next)).matchAll(/```json\n(\{"edits".*?)\n```/gs)].map(([, json = '']) => {
+  return [...page.matchAll(/```json\n(\{"edits".*?)\n```/gs)].map(([, json = '']) => {
     const sheet: Sheet = JSON.parse(json);
     return sheet;
   });
@@ -41,10 +39,10 @@ describe("the skill page's Sheet example, loaded into the grid", () => {
     });
   });
 
-  it("hands the grid the open-ended range as written, which it can't compute", () => {
+  it("hands the grid bounded ranges that Excel can compute", () => {
     const data = univerDataOf(replay(skillPageExample()));
 
-    expect(data).toMatchObject({ sheets: { 'sheet-1': { cellData: { 0: { 9: { f: '=SUMIFS(F2:F,E2:E,FALSE)' } } } } } });
+    expect(data).toMatchObject({ sheets: { 'sheet-1': { cellData: { 0: { 9: { f: '=SUMIFS(F2:F200,E2:E200,FALSE)' } } } } } });
     expect(data).not.toMatchObject({ sheets: { 'sheet-1': { cellData: { 0: { 9: { v: expect.anything() } } } } } });
   });
 });

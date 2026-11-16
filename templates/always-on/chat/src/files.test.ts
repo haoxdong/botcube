@@ -61,12 +61,9 @@ it('runs the shared Files routes through account-scoped offline uploads, downloa
   expect((await app.request('http://fixture/files/upload-url', { method: 'POST', headers, body: JSON.stringify({ name: '../escape' }) })).status).toBe(400);
 });
 
-it('saves an edited Artifact only behind the Artifacts flag, and refuses a save that is not one', async () => {
+it('saves an edited Artifact and refuses a save that is not one', async () => {
   const edit = { id: '/decks/q3', version: 1, files: { 'project/slides/cover.html': '<section id="cover"></section>' } };
   const save = async (app: Hono, body: unknown) => app.request('http://fixture/files/artifact-save', { method: 'POST', headers: await signedIn(app), body: JSON.stringify(body) });
-  expect((await save(filesApp(), edit)).status).toBe(404);
-
-  vi.stubEnv('BOTCUBE_ARTIFACTS', '1');
   const app = filesApp();
   const refused = await Promise.all([{ ...edit, files: { 'project/slides/cover.html': 3 } }, { ...edit, version: 1.5 }, { files: edit.files }].map(async (body) => (await save(app, body)).status));
   expect(refused).toEqual([422, 422, 422]);
