@@ -52,7 +52,10 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
     expect(template.Parameters.parked).toEqual({ Type: 'String', AllowedValues: ['true', 'false'], Description: 'Production is Parked when true, Live when false.' });
   }
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
-  origin.hasResourceProperties('AWS::IAM::Policy', {
+  expect(Object.keys(origin.findResources('AWS::IAM::Policy', {
+    Properties: { Roles: [identity.aws.ecs.deployRoleName] },
+  }))).toHaveLength(0);
+  origin.hasResourceProperties('AWS::IAM::ManagedPolicy', {
     Roles: [identity.aws.ecs.deployRoleName],
     PolicyDocument: { Statement: [
       {

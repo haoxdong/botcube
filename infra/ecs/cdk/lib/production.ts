@@ -133,7 +133,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     image: images.chat,
     ...options.chat,
   });
-  new iam.Policy(origin, 'OriginSmokePolicy', {
+  new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
     roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
     statements: [
       new iam.PolicyStatement({
