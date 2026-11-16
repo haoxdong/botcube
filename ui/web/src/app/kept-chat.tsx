@@ -7,7 +7,7 @@ import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElemen
 import { contentToText, type Message } from "@ag-ui/client";
 import { ArrowUp, Plus } from "lucide-react";
 import { SentFileCards, sentFilesOf } from "./composer-files";
-import { worklogRows } from "./worklog";
+import { ThoughtStep, worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { MAIN_CHAT_COPY_MESSAGE_LIMIT } from "./main-chat-copy";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
@@ -58,7 +58,7 @@ function KeptReply({ text }: { text: string }) {
 /** CopilotKit's side padding around the messages and the composer, inside the chat's container. */
 const COLUMN_PADDING = "cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-6";
 
-function keptRow(message: Message): ReactElement | null {
+function keptRow(message: Message, running: boolean, latest: boolean): ReactElement | null {
   switch (message.role) {
     case "user": {
       const { text, paths } = sentFilesOf(contentToText(message.content));
@@ -91,7 +91,7 @@ function keptRow(message: Message): ReactElement | null {
       );
     }
     case "reasoning":
-      return <div key={message.id} />;
+      return <ThoughtStep key={message.id} message={message} isRunning={running} isLatest={latest} />;
     default:
       return null;
   }
@@ -180,7 +180,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
                 <div ref={room} style={{ paddingBottom: "32px" }}>
                   <div className="cpk:max-w-3xl cpk:mx-auto">
                     <div ref={fitBubbles} data-copilotkit className="copilotKitMessages cpk:flex cpk:flex-col">
-                      {worklogRows(kept.slice(from).map(keptRow).filter((row) => row !== null), messages, running, { cardSteps: false, advanceClock: false })}
+                      {worklogRows(kept.slice(from).map((message) => keptRow(message, running, message.id === kept.at(-1)?.id)).filter((row) => row !== null), messages, running, { rendering: "saved" })}
                     </div>
                   </div>
                 </div>

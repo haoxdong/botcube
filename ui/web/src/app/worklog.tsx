@@ -3,6 +3,7 @@
 
 import { m as motionElement } from "framer-motion";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
+import { partialJSONParse } from "@copilotkit/shared";
 import { Presence, presenceMotion, Collapse } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
@@ -40,6 +41,8 @@ function arrive(id: string) {
   if (arrived.size > CLOCKS_KEPT && oldest !== undefined) arrived.delete(oldest);
 }
 
+type WorklogRendering = "interactive" | "saved";
+
 const SHOWN_CALLS = new Set([PROPOSAL, "Artifact"]);
 const CardOnly = createContext(false);
 
@@ -64,7 +67,8 @@ function messageIdOf(row: ReactElement): string {
  * counts it as one and a renamed message keeps its Worklog's clock. A Worklog runs while the run is its Turn's, and its
  * time is its Turn's, answer included.
  */
-export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, cardSteps = true, advanceClock = true }: { started?: boolean; cardSteps?: boolean; advanceClock?: boolean } = {}): ReactElement[] {
+export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, rendering = "interactive" }: { started?: boolean; rendering?: WorklogRendering } = {}): ReactElement[] {
+  const advanceClock = rendering === "interactive";
   const { parts, cards } = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
@@ -74,7 +78,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   let work: ReactElement[] = [];
   let shown: ReactElement[] = [];
   let firstMessage: string | undefined;
-  const steps: Steps = { turn: messages, lastQuestion, isRunning, cardSteps, summarized: new Set<string>() };
+  const steps: Steps = { turn: messages, lastQuestion, isRunning, rendering, summarized: new Set<string>() };
   const fold = () => {
     const [row] = work;
     if (row !== undefined) {
@@ -117,21 +121,19 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   return out;
 }
 
-/** What a Turn's card calls need to show as its Worklog's ToolSteps; `summarized` keeps each message's steps once across its rows. */
-type Steps = { turn: readonly TurnMessage[]; lastQuestion: number; isRunning: boolean; cardSteps: boolean; summarized: Set<string> };
+type Steps = { turn: readonly TurnMessage[]; lastQuestion: number; isRunning: boolean; rendering: WorklogRendering; summarized: Set<string> };
 
-/** A message's card calls as ToolSteps, once per message; none when it makes none, its steps already show, or the chat shows no steps. */
-function stepsOf(row: ReactElement, message: TurnMessage | undefined, names: ReadonlySet<string>, { turn, lastQuestion, isRunning, cardSteps, summarized }: Steps): ReactElement[] {
-  if (!cardSteps || !message?.toolCalls?.some((call) => names.has(call.function.name)) || summarized.has(message.id)) return [];
+function stepsOf(row: ReactElement, message: TurnMessage | undefined, names: ReadonlySet<string>, { turn, lastQuestion, isRunning, rendering, summarized }: Steps): ReactElement[] {
+  if (!message?.toolCalls?.some((call) => rendering === "saved" || names.has(call.function.name)) || summarized.has(message.id)) return [];
   summarized.add(message.id);
-  return [<CardSteps key={row.key} message={message} turn={turn} running={isRunning && turn.indexOf(message) > lastQuestion} />];
+  return [<CallSteps key={rendering === "saved" ? `${String(row.key)}-calls` : row.key} message={message} turn={turn} rendering={rendering} running={isRunning && turn.indexOf(message) > lastQuestion} />];
 }
 
 const ARTIFACT_CALL = new Set(["Artifact"]);
 
-/** A work row: an Artifact call's steps show as the Worklog's ToolSteps, so a refused publish reads as a step, not an error. */
 function workRow(row: ReactElement, message: TurnMessage | undefined, steps: Steps): ReactElement[] {
-  return steps.cardSteps && message?.toolCalls?.some((call) => call.function.name === "Artifact") ? stepsOf(row, message, ARTIFACT_CALL, steps) : [row];
+  if (steps.rendering === "saved") return [row, ...stepsOf(row, message, SHOWN_CALLS, steps)];
+  return message?.toolCalls?.some((call) => call.function.name === "Artifact") ? stepsOf(row, message, ARTIFACT_CALL, steps) : [row];
 }
 
 /** A shown row: a card shows without its ToolStep, and an answer shows the cards of the Artifacts its Turn published; a card the answer shows has no row. */
@@ -141,11 +143,11 @@ function shownRow(row: ReactElement, message: TurnMessage | undefined, part: Par
   return [answerCards === undefined ? card : <AnswerCards.Provider key={row.key} value={answerCards}>{card}</AnswerCards.Provider>];
 }
 
-function CardSteps({ message, turn, running }: { message: TurnMessage; turn: readonly TurnMessage[]; running: boolean }) {
+function CallSteps({ message, turn, running, rendering }: { message: TurnMessage; turn: readonly TurnMessage[]; running: boolean; rendering: WorklogRendering }) {
   return <>{message.toolCalls?.map((call) => {
     const result = turn.find((candidate) => candidate.toolCallId === call.id);
-    if (!SHOWN_CALLS.has(call.function.name)) return <RenderedCall key={call.id} call={call} result={result} />;
-    return <ToolStep key={call.id} id={call.id} name={call.function.name} params={undefined} status={result ? "complete" : running ? "running" : "stopped"} output={typeof result?.content === "string" ? result.content : undefined} />;
+    if (rendering === "interactive" && !SHOWN_CALLS.has(call.function.name)) return <RenderedCall key={call.id} call={call} result={result} />;
+    return <ToolStep key={call.id} id={call.id} name={call.function.name} params={rendering === "saved" ? partialJSONParse(call.function.arguments ?? "") : undefined} status={result ? "complete" : running ? "running" : "stopped"} output={typeof result?.content === "string" ? result.content : undefined} />;
   })}</>;
 }
 
@@ -159,7 +161,7 @@ function RenderedCall({ call, result }: { call: NonNullable<TurnMessage["toolCal
 }
 
 /** Each step's whole seconds in the Worklog around it, by the step's id; none where its Turn has no timeline. */
-const StepTimes = createContext<ReadonlyMap<string, number> | null>(null);
+const StepTimes = createContext<{ each: ReadonlyMap<string, number> | undefined; arriving: boolean }>({ each: undefined, arriving: true });
 
 /**
  * Open while its Turn works, folded while its answer streams or once it ends. A tap overrides the current phase
@@ -202,9 +204,9 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
       </button>
-      <Collapse open={open}>
+      <Collapse open={open} appear={advanceClock}>
         <div className="worklog-body">
-          <StepTimes.Provider value={timeline?.each ?? null}>
+          <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
             <Presence>{start && (
               <motionElement.div {...presenceMotion} key="start">
                 <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon={TimerIcon} label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
@@ -239,7 +241,8 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
   sheet?: { open: boolean; show: () => void } | undefined;
 }) {
   const live = state === "live";
-  const [grows] = useState(() => live && id !== undefined && !arrived.has(id));
+  const { arriving } = useContext(StepTimes);
+  const [grows] = useState(() => arriving && live && id !== undefined && !arrived.has(id));
   useEffect(() => {
     if (live && id !== undefined) arrive(id);
   }, [id, live]);
@@ -260,7 +263,7 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
 
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */
 function useStepTime(id: string | undefined): string | undefined {
-  const time = useContext(StepTimes)?.get(id ?? "");
+  const time = useContext(StepTimes).each?.get(id ?? "");
   return time === undefined ? undefined : seconds(time);
 }
 

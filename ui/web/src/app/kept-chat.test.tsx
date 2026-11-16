@@ -470,3 +470,38 @@ it('keeps the last observed clock while saved running history awaits replay', as
   </restored.Worklog>);
   expect.soft(screen.getByRole('button', { name: /^Worked/ })).toHaveTextContent(/^Worked for 49s/);
 });
+
+it('keeps saved tool steps accountable to the loading Worklog header', () => {
+  const start = Date.parse('2026-11-16T02:00:00Z');
+  const stamp = (from: number, to: number) => ({ metadata: { started_at: start + from, ended_at: start + to } });
+  const history: Message[] = [
+    { id: 'loading-steps-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) },
+    { id: 'loading-steps-a', role: 'assistant', content: 'Researching rates', toolCalls: [{ id: 'loading-steps-call', type: 'function', function: { name: 'execute', arguments: '{"command":"compare rates"}' } }], ...stamp(0, 0) },
+    { id: 'loading-steps-result', role: 'tool', toolCallId: 'loading-steps-call', content: 'Compared', ...stamp(0, 2000) },
+  ];
+  const { container } = render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  expect(container.querySelector('.worklog-title')).toHaveTextContent('Working · 2s');
+  expect([...container.querySelectorAll('.worklog-step-time')].map(row => row.textContent)).toEqual(['2s']);
+  expect(container.querySelector('.worklog-step')).toHaveTextContent('compare rates');
+});
+
+it('keeps saved thought and mixed card calls timed without the interactive provider', () => {
+  const start = Date.parse('2026-11-16T02:00:00Z');
+  const stamp = (from: number, to: number) => ({ metadata: { started_at: start + from * 1000, ended_at: start + to * 1000 } });
+  const history: Message[] = [
+    { id: 'saved-mixed-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) },
+    { id: 'saved-mixed-thought', role: 'reasoning', content: 'Compare each market', ...stamp(0, 1) },
+    { id: 'saved-mixed-a', role: 'assistant', content: 'Publishing the comparison', toolCalls: [
+      { id: 'saved-mixed-card', type: 'function', function: { name: 'Artifact', arguments: '{"title":"Rates"}' } },
+      { id: 'saved-mixed-query', type: 'function', function: { name: 'execute', arguments: '{"command":"compare rates' } },
+    ], ...stamp(1, 1) },
+    { id: 'saved-mixed-card-result', role: 'tool', toolCallId: 'saved-mixed-card', content: 'Ready', ...stamp(1, 3) },
+    { id: 'saved-mixed-query-result', role: 'tool', toolCallId: 'saved-mixed-query', content: 'Compared', ...stamp(3, 5) },
+  ];
+  const { container } = render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  expect(container.querySelector('.worklog-title')).toHaveTextContent('Working · 5s');
+  const rows = [...container.querySelectorAll<HTMLElement>('.worklog-step')];
+  expect(rows.map(row => row.dataset.stepId)).toEqual(['saved-mixed-thought', 'saved-mixed-card', 'saved-mixed-query']);
+  expect(rows.map(row => row.querySelector('.worklog-step-time')?.textContent)).toEqual(['1s', '2s', '2s']);
+  expect(rows.at(-1)).toHaveTextContent('compare rates');
+});

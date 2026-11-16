@@ -45,6 +45,7 @@
     "@cloudscape-design/design-tokens": "^3.0.116",
     "@cloudscape-design/global-styles": "^1.0.71",
     "@copilotkit/react-core": "^1.80.0",
+    "@copilotkit/shared": "^1.83.0",
     "@radix-ui/colors": "3.0.0",
     "@streamdown/cjk": "^1.0.4",
     "@streamdown/code": "^2.0.0",
