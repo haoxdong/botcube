@@ -421,3 +421,21 @@ it('preserves the Markdown repair of unfinished display math', () => {
   const view = render(<KeptChat messages={[{ id: 'math', role: 'assistant', content: '$$x' }]} disclaimer="" />);
   expect(view.container.querySelector('.copilotKitAssistantMessage')).toHaveTextContent('$$x$$');
 });
+
+it('shows saved running history with mixed card calls before CopilotKit mounts', () => {
+  const started = Date.now() - 4000;
+  const stamped = (from: number, to: number) => ({ metadata: { started_at: started + from, ended_at: started + to } });
+  const history: Message[] = [
+    { id: 'kept-mixed-u', role: 'user', content: 'Compare rates', ...stamped(0, 0) },
+    { id: 'kept-mixed-a', role: 'assistant', content: 'Chart ready', toolCalls: [
+      { id: 'kept-mixed-card', type: 'function', function: { name: 'Artifact', arguments: '{}' } },
+      { id: 'kept-mixed-query', type: 'function', function: { name: 'execute', arguments: '{"command":"compare rates"}' } },
+    ], ...stamped(0, 0) },
+    { id: 'kept-mixed-card-result', role: 'tool', toolCallId: 'kept-mixed-card', content: 'Ready', ...stamped(0, 2000) },
+    { id: 'kept-mixed-query-result', role: 'tool', toolCallId: 'kept-mixed-query', content: 'Compared', ...stamped(0, 4000) },
+  ];
+  render(<KeptChat messages={history} running disclaimer="Loading controls" />);
+  expect(screen.getByText('Compare rates')).toBeVisible();
+  expect(screen.getByText('Chart ready')).toBeVisible();
+  expect(screen.getByText('Loading controls')).toBeVisible();
+});

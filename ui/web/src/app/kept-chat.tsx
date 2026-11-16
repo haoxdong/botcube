@@ -180,7 +180,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
                 <div ref={room} style={{ paddingBottom: "32px" }}>
                   <div className="cpk:max-w-3xl cpk:mx-auto">
                     <div ref={fitBubbles} data-copilotkit className="copilotKitMessages cpk:flex cpk:flex-col">
-                      {worklogRows(kept.slice(from).map(keptRow).filter((row) => row !== null), messages, running)}
+                      {worklogRows(kept.slice(from).map(keptRow).filter((row) => row !== null), messages, running, { cardSteps: false })}
                     </div>
                   </div>
                 </div>

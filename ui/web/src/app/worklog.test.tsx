@@ -1,4 +1,4 @@
-import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider } from '@copilotkit/react-core/v2';
+import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useDefaultRenderTool } from '@copilotkit/react-core/v2';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
@@ -447,6 +447,12 @@ function StepsChat({ messages, running = false }: { messages: readonly TurnMessa
   const latest = messages.at(-1)?.id;
   const rows = messages.filter(({ role }) => role !== 'tool').map((message) => {
     if (message.role === 'reasoning') return <ThoughtStep key={message.id} message={message} isRunning={running} isLatest={message.id === latest} />;
+    if (message.toolCalls?.some(({ id, function: tool }) => {
+      const result = messages.find(other => other.toolCallId === id);
+      return tool.name === 'Artifact' || (tool.name === 'propose_scheduled_task' && result && !String(result.content).startsWith("Error invoking tool 'propose_scheduled_task'") && !String(result.content).includes('was interrupted before completion'));
+    })) {
+      return <div key={message.id} data-testid={`card-${message.id}`}>{String(message.content) || 'Published card'}</div>;
+    }
     const calls = (message.toolCalls as ReturnType<typeof call>[] | undefined)?.map(({ id, function: { name, arguments: args } }) => {
       const result = messages.find((other) => other.toolCallId === id);
       return <ToolStep key={id} id={id} name={name} params={JSON.parse(args) as Record<string, unknown>} status={result ? 'complete' : 'running'} output={result ? String(result.content) : undefined} />;
@@ -537,13 +543,117 @@ describe("a Worklog's step times", () => {
       { id: 'card-clock-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) },
     ];
     render(<StepsChat messages={messages} running />);
-    expect(heads()).not.toHaveLength(0);
+    expect(heads()).toHaveLength(1);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 8s$/);
     for (const header of heads()) fireEvent.click(header);
+    for (const header of heads()) {
+      const group = header.closest('.worklog');
+      assert(group, 'a Worklog group');
+      const displayed = [...group.querySelectorAll('.worklog-step-time')].reduce((sum, clock) => sum + secondsIn(clock.textContent), 0);
+      expect(displayed).toBe(8);
+    }
     const diagnosticIds = [...document.querySelectorAll('.worklog-step')].map(step => step.getAttribute('data-step-id'));
     expect(new Set(diagnosticIds).size).toBe(diagnosticIds.length);
+    expect(screen.getByTestId('card-card-clock-card')).toBeVisible();
+    fireEvent.click(head());
+    expect(screen.getByTestId('card-card-clock-card')).toBeVisible();
     act(() => { vi.advanceTimersByTime(1000); });
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
+  });
+
+  it('retains allocations while a card arrives between live steps and replay', () => {
+    vi.useFakeTimers({ now: START + 2000 });
+    const question = { id: 'publication-u', role: 'user', content: 'Compare rates', ...stamp(0, 0) };
+    const thought = { id: 'publication-r', role: 'reasoning', content: 'Plan', ...stamp(0, 2) };
+    const publication = { id: 'publication-a', role: 'assistant', content: 'Rates chart', toolCalls: [call('publication-c', 'Artifact')], ...stamp(2, 2) };
+    const publicationResult = { id: 'publication-t', role: 'tool', toolCallId: 'publication-c', content: 'Chart ready', ...stamp(2, 4) };
+    const query = { id: 'publication-next', role: 'assistant', content: '', toolCalls: [call('publication-query', 'execute', { command: 'compare rates' })], ...stamp(4, 4) };
+    const queryResult = { id: 'publication-query-result', role: 'tool', toolCallId: 'publication-query', content: 'Done', ...stamp(4, 6) };
+    const answer = { id: 'publication-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) };
+    const view = render(<StepsChat messages={[question, thought]} running />);
+    const owner = view.container.querySelector('.worklog');
+    const verify = (total: number, times: string[]) => {
+      expect(heads()).toHaveLength(1);
+      expect(head()).toHaveTextContent(`Working · ${total}s`);
+      expect(stepRows().map(([, time]) => time)).toEqual(times);
+      expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(total);
+      expect(view.container.querySelector('.worklog')).toBe(owner);
+    };
+    verify(2, ['2s']);
+    view.rerender(<StepsChat messages={[question, thought, publication]} running />);
+    verify(2, ['2s', '0s']);
+    expect(screen.getByTestId('card-publication-a')).toBeVisible();
+    act(() => { vi.advanceTimersByTime(2000); });
+    verify(4, ['2s', '2s']);
+    const continued = [question, thought, publication, publicationResult, query];
+    view.rerender(<StepsChat messages={continued} running />);
+    verify(4, ['2s', '2s', '0s']);
+    act(() => { vi.advanceTimersByTime(2000); });
+    verify(6, ['2s', '2s', '2s']);
+    view.rerender(<StepsChat messages={[...continued, queryResult, { ...answer, ...stamp(6, 6) }]} running />);
+    fireEvent.click(head());
+    verify(6, ['2s', '2s', '2s', '0s']);
+    act(() => { vi.advanceTimersByTime(2000); });
+    view.rerender(<StepsChat messages={[...continued, queryResult, answer]} running />);
+    verify(8, ['2s', '2s', '2s', '2s']);
+    view.rerender(<StepsChat messages={[question, thought, { ...publication, id: 'publication-replayed' }, publicationResult, { ...query, id: 'query-replayed' }, queryResult, answer]} running />);
+    verify(8, ['2s', '2s', '2s', '2s']);
+    expect(screen.getByTestId('card-publication-replayed')).toBeVisible();
+  });
+
+  it('counts a publication once across CopilotKit custom-message slots', () => {
+    const [question, note, result, answer] = turn('publication-slots');
+    assert(question && note && result && answer, 'a Turn');
+    const publication = { id: 'publication-slot-message', role: 'assistant' as const, content: 'Published chart', toolCalls: [call('publication-slot-call', 'Artifact')], ...stamp(3, 3) };
+    render(<CopilotKitChat messages={[question, note, result, publication, { id: 'publication-slot-result', role: 'tool', toolCallId: 'publication-slot-call', content: 'Ready', ...stamp(3, 4) }, answer]} />);
+    expect(heads()).toHaveLength(1);
+    fireEvent.click(head());
+    expect(document.querySelectorAll('[data-step-id="publication-slot-call"]')).toHaveLength(1);
+  });
+
+  it.each([undefined, "Error invoking tool 'propose_scheduled_task': unavailable", "Tool call 'propose_scheduled_task' with id 'pending-proposal-call' was interrupted before completion."])('shows one timed pending or unsuccessful proposal for %s', (output) => {
+    vi.useFakeTimers({ now: START + 4000 });
+    const question = { id: 'pending-proposal-u', role: 'user', content: 'Schedule a rates brief', ...stamp(0, 0) };
+    const proposal = { id: 'pending-proposal-a', role: 'assistant', content: '', toolCalls: [call('pending-proposal-call', 'propose_scheduled_task', { description: 'Rates brief' })], ...stamp(0, 0) };
+    const messages = [question, proposal, ...(output === undefined ? [] : [{ id: 'pending-proposal-t', role: 'tool', toolCallId: 'pending-proposal-call', content: output, ...stamp(0, 4) }])];
+    render(<StepsChat messages={messages} running />);
+    expect(document.querySelectorAll('[data-step-id="pending-proposal-call"]')).toHaveLength(1);
+    expect(stepRows().map(([, time]) => time)).toEqual(['4s']);
+    expect(head()).toHaveTextContent('Working · 4s');
+  });
+
+  it.each(['read', 'list'])('does not label an Artifact %s as a publication', (action) => {
+    vi.useFakeTimers({ now: START + 4000 });
+    render(<StepsChat messages={[
+      { id: 'artifact-action-u', role: 'user', content: 'Inspect Artifacts', ...stamp(0, 0) },
+      { id: 'artifact-action-a', role: 'assistant', content: '', toolCalls: [call('artifact-action-c', 'Artifact', { action })], ...stamp(0, 0) },
+      { id: 'artifact-action-t', role: 'tool', toolCallId: 'artifact-action-c', content: '{}', ...stamp(0, 4) },
+    ]} running />);
+    expect(stepRows()).toEqual([['Artifact', '4s']]);
+  });
+
+  it('counts mixed ordinary and card calls once through the real tool renderer', () => {
+    function Tools() {
+      useDefaultRenderTool({ render: ({ name, toolCallId, status, parameters, result }) => name === 'Artifact' ? <button>Rates chart</button> : <ToolStep id={toolCallId} name={name} params={parameters as Record<string, unknown>} status={status === 'complete' ? 'complete' : 'running'} output={result ?? undefined} /> });
+      return null;
+    }
+    const messages = [
+      { id: 'mixed-u', role: 'user' as const, content: 'Compare rates', ...stamp(0, 0) },
+      { id: 'mixed-a', role: 'assistant' as const, content: 'Chart', toolCalls: [call('mixed-card', 'Artifact'), call('mixed-query', 'execute', { command: 'compare rates' })], ...stamp(0, 0) },
+      { id: 'mixed-t1', role: 'tool' as const, toolCallId: 'mixed-card', content: 'Ready', ...stamp(0, 2) },
+      { id: 'mixed-t2', role: 'tool' as const, toolCallId: 'mixed-query', content: 'Compared', ...stamp(0, 4) },
+      { id: 'mixed-answer', role: 'assistant' as const, content: 'Rates compared', ...stamp(4, 8) },
+    ];
+    render(<CopilotKitProvider><Tools /><CopilotChatConfigurationProvider threadId="mixed">
+      <CopilotChatMessageView messages={messages} isRunning={false}>
+        {({ messageElements, messages: shown, isRunning }) => <>{worklogRows(messageElements, shown, isRunning)}</>}
+      </CopilotChatMessageView>
+    </CopilotChatConfigurationProvider></CopilotKitProvider>);
+    fireEvent.click(head());
+    expect(document.querySelectorAll('[data-step-id="mixed-query"]')).toHaveLength(1);
+    expect(stepRows()).toEqual([['Artifact', '2s'], ['Rancompare rates', '2s'], ['Answered', '4s']]);
+    fireEvent.click(head());
+    expect(screen.getByRole('button', { name: 'Rates chart' })).toBeVisible();
   });
 
   it('keeps seconds on their rows when replay corrects the Turn start by a fraction', () => {

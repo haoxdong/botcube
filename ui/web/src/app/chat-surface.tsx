@@ -44,6 +44,7 @@ import { cn, zoomOf } from "@/lib/utils";
 import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { FileDropOverlay, addMenuSlot, useFileDrop } from "./composer-attach";
 import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
+import { showsProposalCard } from "./worklog-tools";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
@@ -75,7 +76,7 @@ function ToolCallRenderer({ agent }: { agent: AbstractAgent }) {
   useDefaultRenderTool({
     render: ({ name, toolCallId, status, parameters, result }) => {
       if (name === "propose_scheduled_task" && status === "complete" &&
-        !(typeof result === "string" && result.startsWith("Error invoking tool 'propose_scheduled_task'"))) {
+        showsProposalCard(result)) {
         return (
           <ScheduledTaskProposalCard
             chatServiceUrl={CHAT_SERVICE_URL}
@@ -460,7 +461,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
               <ReplyTurnRunning.Provider value={isRunning}>
-                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, isRunning ? started : onServer)} messages={messages} list={list} />
+                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} list={list} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="cpk:mt-2"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>

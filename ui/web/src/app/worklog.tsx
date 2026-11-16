@@ -2,13 +2,12 @@
 
 
 import { m as motionElement } from "framer-motion";
+import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { Presence, presenceMotion, Collapse } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
-import {
-  AlignLeftIcon, BotIcon, BrainIcon, CalendarClockIcon, ChevronRightIcon, CircleXIcon, FilePenLineIcon, FileTextIcon, FolderSearchIcon,
-  GlobeIcon, ListChecksIcon, SearchIcon, SquareTerminalIcon, TimerIcon, WrenchIcon, type LucideIcon,
-} from "lucide-react";
+import { AlignLeftIcon, BrainIcon, ChevronRightIcon, CircleXIcon, TimerIcon, type LucideIcon } from "lucide-react";
+import { argumentOf, lookOf, showsProposalCard } from "./worklog-tools";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { CLOCKS_KEPT, spanOf, startOf, useWorklogClock } from "./worklog-clock";
@@ -35,7 +34,7 @@ export type TurnMessage = {
   id: string;
   role: string;
   content?: unknown;
-  toolCalls?: readonly { id: string; function: { name: string } }[] | undefined;
+  toolCalls?: readonly { id: string; function: { name: string; arguments?: string } }[] | undefined;
   toolCallId?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
 };
@@ -54,6 +53,7 @@ function arrive(id: string) {
 /** The call whose card waits on the user: it shows beside the answer, never folded away. */
 const PROPOSAL = "propose_scheduled_task";
 const SHOWN_CALLS = new Set([PROPOSAL, "Artifact"]);
+const CardOnly = createContext(false);
 
 /** deepagents' execute tool reports a non-zero exit only as this trailer on an otherwise successful result. */
 const FAILED_COMMAND = /\n\[Command failed with exit code (\d+)\](\n\[Output was truncated due to size limits\])?$/;
@@ -78,7 +78,11 @@ function partsOf(messages: readonly TurnMessage[], isRunning: boolean): Map<stri
     const afterCalls = turn.slice(turn.findLastIndex((m) => m.toolCalls?.length) + 1).filter((m) => texts.includes(m));
     const answers = afterCalls.length > 0 ? afterCalls : texts.slice(-1);
     const answered = !(last && isRunning) || answers.at(-1) === turn.at(-1);
-    const shownCalls = new Set(turn.flatMap((m) => (m.toolCalls ?? []).filter((c) => SHOWN_CALLS.has(c.function.name)).map((c) => c.id)));
+    const shownCalls = new Set(turn.flatMap((m) => (m.toolCalls ?? []).filter((c) => {
+      if (c.function.name !== PROPOSAL) return SHOWN_CALLS.has(c.function.name);
+      const result = turn.find((other) => other.toolCallId === c.id);
+      return result !== undefined && showsProposalCard(typeof result.content === "string" ? result.content : undefined);
+    }).map((c) => c.id)));
     for (const m of turn) {
       const makesShownCall = m.toolCalls?.some(({ id }) => shownCalls.has(id)) ?? false;
       const shown = (answered && answers.includes(m)) || makesShownCall || shownCalls.has(m.toolCallId ?? "");
@@ -114,7 +118,7 @@ function messageIdOf(row: ReactElement): string {
  * counts it as one and a renamed message keeps its Worklog's clock. A Worklog runs while the run is its Turn's, and its
  * time is its Turn's, answer included.
  */
-export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, started = isRunning): ReactElement[] {
+export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, cardSteps = true }: { started?: boolean; cardSteps?: boolean } = {}): ReactElement[] {
   const parts = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
@@ -122,26 +126,44 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   const answering = latest?.role === "assistant" && parts.get(latest.id) === "shown" && !latest.toolCalls?.length && latest.metadata?.scheduledRun === undefined;
   const out: ReactElement[] = [];
   let work: ReactElement[] = [];
+  let shown: ReactElement[] = [];
+  let firstMessage: string | undefined;
+  const summarized = new Set<string>();
   const fold = () => {
     const [row] = work;
-    if (row === undefined) return;
-    const id = String(row.key);
-    const first = messages.findIndex((m) => m.id === messageIdOf(row));
-    const next = messages.findIndex((m, i) => i > first && m.role === "user");
-    const turn = messages.slice(first, next < 0 ? undefined : next);
-    const question = messages.findLast((m, i) => i < first && m.role === "user");
-    out.push(
-      <Worklog key={id} id={id} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
-        {work}
-      </Worklog>,
-    );
+    if (row !== undefined) {
+      const id = String(row.key);
+      const first = messages.findIndex((m) => m.id === firstMessage);
+      const next = messages.findIndex((m, i) => i > first && (m.role === "user" || m.metadata?.scheduledRun !== undefined));
+      const turn = messages.slice(first, next < 0 ? undefined : next);
+      const question = messages.findLast((m, i) => i < first && m.role === "user");
+      out.push(
+        <Worklog key={id} id={id} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
+          {work}
+        </Worklog>,
+      );
+    }
+    out.push(...shown);
     work = [];
+    shown = [];
+    firstMessage = undefined;
   };
   for (const row of rows) {
-    if (parts.get(messageIdOf(row)) === "work") work.push(row);
-    else {
+    const messageId = messageIdOf(row);
+    const message = messages.find((candidate) => candidate.id === messageId);
+    if (message?.role === "user" || message?.metadata?.scheduledRun !== undefined) {
       fold();
       out.push(row);
+    } else if (parts.get(messageId) === "work") {
+      firstMessage ??= messageId;
+      work.push(row);
+    } else {
+      if (cardSteps && message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)) && !summarized.has(messageId)) {
+        summarized.add(messageId);
+        firstMessage ??= messageId;
+        work.push(<CardSteps key={row.key} message={message} turn={messages} running={isRunning && messages.indexOf(message) > lastQuestion} />);
+      }
+      shown.push(<CardOnly.Provider key={row.key} value={Boolean(message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)))}>{row}</CardOnly.Provider>);
     }
   }
   fold();
@@ -149,6 +171,23 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
     out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} running asked={latest.id} />);
   }
   return out;
+}
+
+function CardSteps({ message, turn, running }: { message: TurnMessage; turn: readonly TurnMessage[]; running: boolean }) {
+  return <>{message.toolCalls?.map((call) => {
+    const result = turn.find((candidate) => candidate.toolCallId === call.id);
+    if (!SHOWN_CALLS.has(call.function.name)) return <RenderedCall key={call.id} call={call} result={result} />;
+    return <ToolStep key={call.id} id={call.id} name={call.function.name} params={undefined} status={result ? "complete" : running ? "running" : "stopped"} output={typeof result?.content === "string" ? result.content : undefined} />;
+  })}</>;
+}
+
+function RenderedCall({ call, result }: { call: NonNullable<TurnMessage["toolCalls"]>[number]; result: TurnMessage | undefined }) {
+  const render = useRenderToolCall();
+  if (result && typeof result.content !== "string") throw new Error("A tool result must contain text");
+  return render({
+    toolCall: { id: call.id, type: "function", function: { name: call.function.name, arguments: call.function.arguments ?? "" } },
+    ...(result && typeof result.content === "string" ? { toolMessage: { id: result.id, role: "tool", toolCallId: call.id, content: result.content } } : {}),
+  });
 }
 
 /** Each step's whole seconds in the Worklog around it, by the step's id; none where its Turn has no timeline. */
@@ -250,40 +289,6 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
   return grows ? <Collapse open>{step}</Collapse> : step;
 }
 
-/**
- * How each tool the harness offers reads: its name in its sheet's title, its verb done and running ("Ran", not
- * `execute`), its icon, and whether its argument is words rather than code, which reads in sans. Any other tool reads
- * by its name.
- */
-const TOOLS: Record<string, { title: string; done: string; running: string; icon: LucideIcon; prose?: true }> = {
-  execute: { title: "Terminal", done: "Ran", running: "Running", icon: SquareTerminalIcon },
-  read_file: { title: "Read file", done: "Read", running: "Reading", icon: FileTextIcon },
-  write_file: { title: "Write file", done: "Wrote", running: "Writing", icon: FilePenLineIcon },
-  edit_file: { title: "Edit file", done: "Edited", running: "Editing", icon: FilePenLineIcon },
-  ls: { title: "List files", done: "Listed", running: "Listing", icon: FolderSearchIcon },
-  glob: { title: "Find files", done: "Found files", running: "Finding files", icon: FolderSearchIcon },
-  grep: { title: "Search files", done: "Searched files", running: "Searching files", icon: SearchIcon },
-  web_search: { title: "Web search", done: "Searched the web", running: "Searching the web", icon: GlobeIcon, prose: true },
-  task: { title: "Helper", done: "Asked a helper", running: "Asking a helper", icon: BotIcon, prose: true },
-  write_todos: { title: "Plan", done: "Updated plan", running: "Updating plan", icon: ListChecksIcon, prose: true },
-  [PROPOSAL]: { title: "Schedule", done: "Proposed a schedule", running: "Proposing a schedule", icon: CalendarClockIcon, prose: true },
-};
-
-/** The one argument that says what a call did: the command, the path, the plan's current item, the helper's brief. */
-function argumentOf(name: string, params: Record<string, unknown> | undefined): string | undefined {
-  if (name === "write_todos" && Array.isArray(params?.todos)) {
-    const todos = params.todos as { content?: string; status?: string }[];
-    const now = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
-    const done = todos.filter((t) => t.status === "completed").length;
-    return `${done}/${todos.length} done${now?.content ? ` · ${now.content}` : ""}`;
-  }
-  for (const key of ["command", "file_path", "path", "description"]) {
-    const value = params?.[key];
-    if (typeof value === "string") return value;
-  }
-  return Object.values(params ?? {}).find((value): value is string => typeof value === "string");
-}
-
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */
 function useStepTime(id: string | undefined): string | undefined {
   const time = useContext(StepTimes)?.get(id ?? "");
@@ -294,13 +299,20 @@ function useStepTime(id: string | undefined): string | undefined {
  * A tool call: its verb and its argument exactly as run, then its time, opening to a sheet of its full arguments, exit
  * code and output.
  */
-export function ToolStep({ id, name, params, status: reported, output: result }: {
+type ToolStepProps = {
   id?: string | undefined;
   name: string;
   params: Record<string, unknown> | undefined;
   status: "running" | "stopped" | "complete";
   output: string | undefined;
-}) {
+};
+
+export function ToolStep(props: ToolStepProps) {
+  const cardOnly = useContext(CardOnly);
+  return cardOnly ? null : <TimedToolStep {...props} />;
+}
+
+function TimedToolStep({ id, name, params, status: reported, output: result }: ToolStepProps) {
   const cut = reported === "complete" && result !== undefined && UNANSWERED_CALL.test(result);
   const status = cut ? "stopped" : reported;
   const output = cut ? undefined : result;
@@ -311,8 +323,7 @@ export function ToolStep({ id, name, params, status: reported, output: result }:
   const [opened, setOpened] = useState(false);
   const argument = argumentOf(name, params);
   useEffect(preloadStepSheet, []);
-  const said = name.replace(/_/g, " ");
-  const look: (typeof TOOLS)[string] = TOOLS[name] ?? { title: said.charAt(0).toUpperCase() + said.slice(1), done: said, running: said, icon: WrenchIcon };
+  const look = lookOf(name);
   const { title, done, running, icon, prose } = look;
   const exit = status === "complete" ? FAILED_COMMAND.exec(output ?? "")?.[1] : undefined;
   // The exit code moves to a badge; a truncation note stays with the output.
