@@ -7,7 +7,6 @@ import type { Imported } from "botcube-artifact-check/record";
 import { m as motionElement } from "framer-motion";
 import { MailIcon, PaperclipIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useArtifactScroll } from "./artifact-scroll";
 import { recordOf } from "./artifact-newest";
 import {
   pdfOf, saveFile, storedVersion, type ArtifactEdit, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
@@ -86,21 +85,21 @@ export const EML: Export = {
   },
 };
 
-type Loaded = { path: string } & ({ draft: EmailDraft } | { error: string });
+type Loaded = { version: ArtifactVersion } & ({ draft: EmailDraft } | { error: string });
 
-function useDraft(path: string, read: ViewerProps["read"]): Loaded | null {
+function useDraft(version: ArtifactVersion, read: ViewerProps["read"]): Loaded | null {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   useEffect(() => {
     let current = true;
-    read(path).then(
-      (text) => current && setLoaded({ path, draft: readDraft(text) }),
-      (error: unknown) => current && setLoaded({ path, error: reason(error) }),
-    ).catch((error: unknown) => current && setLoaded({ path, error: `it is not an email draft: ${reason(error)}` }));
+    read(version.path).then(
+      (text) => current && setLoaded({ version, draft: readDraft(text) }),
+      (error: unknown) => current && setLoaded({ version, error: reason(error) }),
+    ).catch((error: unknown) => current && setLoaded({ version, error: `it is not an email draft: ${reason(error)}` }));
     return () => {
       current = false;
     };
-  }, [path, read]);
-  return loaded?.path === path ? loaded : null;
+  }, [version, read]);
+  return loaded;
 }
 
 /**
@@ -108,12 +107,11 @@ function useDraft(path: string, read: ViewerProps["read"]): Loaded | null {
  * edit: a newer one arriving is announced, and the edits drop only on Save, Cancel or "Discard edits and open".
  */
 export function EditableEmail({ artifact: newest, read, save, shows }: ViewerProps) {
-  const scroll = useArtifactScroll();
   const [held, setHeld] = useState<ArtifactVersion | null>(null);
   const [edited, setEdited] = useState(false);
   const [opened, setOpened] = useState(0);
-  const shown = held ?? newest;
-  const loaded = useDraft(shown.path, read);
+  const loaded = useDraft(held ?? newest, read);
+  const shown = loaded?.version ?? newest;
   useEffect(() => {
     shows({ version: shown, unsaved: edited });
   }, [shows, shown, edited]);
@@ -128,8 +126,8 @@ export function EditableEmail({ artifact: newest, read, save, shows }: ViewerPro
         <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {shown.title}: {loaded.error}</motionElement.p>
       )}</Presence>
       <Presence>{loaded !== null && "draft" in loaded && (
-        <motionElement.div {...presenceMotion} key={`${loaded.path}#${opened}`} className="artifact-email" {...scroll}>
-          <DraftForm version={shown} newest={newest} loaded={loaded.draft} close={close}
+        <motionElement.div {...presenceMotion} className="artifact-email">
+          <DraftForm key={`${shown.path}#${opened}`} version={shown} newest={newest} loaded={loaded.draft} close={close}
             edits={(now) => {
               setEdited(now);
               if (now) setHeld((current) => current ?? shown);

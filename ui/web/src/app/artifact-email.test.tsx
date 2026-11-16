@@ -150,7 +150,8 @@ it('keeps the reading position when the open Email receives a new version', asyn
   stored['artifacts/drafts/q3.email.json.versions/2.json'] = JSON.stringify({ author: 'agent', title: PUBLISHED.title, description: '', imports: [] });
   agentPublishes({ ...PUBLISHED, version: 2, path: `/${V2}` });
   await waitFor(() => expect(within(panel).getByRole('textbox', { name: 'Subject' })).toHaveValue('Updated subject'));
-  expect(panel.querySelector('.artifact-email')?.scrollTop).toBe(240);
+  expect(panel.querySelector('.artifact-email')).toBe(scroller);
+  expect(scroller.scrollTop).toBe(240);
 });
 
 describe('an Email in the panel', () => {

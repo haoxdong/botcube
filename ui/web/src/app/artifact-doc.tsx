@@ -14,7 +14,6 @@ import {
   pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type PreviewProps, type ViewerProps,
   type Writes,
 } from "./artifact-viewer";
-import { useArtifactScroll } from "./artifact-scroll";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
 
@@ -74,29 +73,28 @@ function DocPreview({ title, text, complete }: PreviewProps) {
 
 export const DOC_WRITES: Writes = { matches: isDocSource, Preview: DocPreview };
 
-function useMarkdown(path: string, read: (path: string) => Promise<string>) {
-  const [loaded, setLoaded] = useState<{ path: string; markdown: string } | { path: string; error: string } | null>(null);
+function useMarkdown(version: ArtifactVersion, read: (path: string) => Promise<string>) {
+  const [loaded, setLoaded] = useState<{ version: ArtifactVersion } & ({ markdown: string } | { error: string }) | null>(null);
   useEffect(() => {
     let current = true;
-    read(path).then(
-      (markdown) => current && setLoaded({ path, markdown }),
-      (error: unknown) => current && setLoaded({ path, error: reason(error) }),
+    read(version.path).then(
+      (markdown) => current && setLoaded({ version, markdown }),
+      (error: unknown) => current && setLoaded({ version, error: reason(error) }),
     );
     return () => {
       current = false;
     };
-  }, [path, read]);
-  return loaded?.path === path ? loaded : null;
+  }, [version, read]);
+  return loaded;
 }
 
 export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps) {
-  const scroll = useArtifactScroll();
   const [edit, setEdit] = useState<{ version: ArtifactVersion; markdown: string } | null>(null);
   const [opened, setOpened] = useState(0);
   const [saving, setSaving] = useState(false);
   const [failures, setFailures] = useState<string[]>([]);
-  const doc = edit?.version ?? newest;
-  const loaded = useMarkdown(doc.path, read);
+  const loaded = useMarkdown(edit?.version ?? newest, read);
+  const doc = loaded?.version ?? newest;
   const unsaved = edit !== null;
   useEffect(() => shows({ version: doc, unsaved }), [shows, doc, unsaved]);
   const stop = () => {
@@ -136,7 +134,7 @@ export function EditableDoc({ artifact: newest, read, save, shows }: ViewerProps
       <Presence>{failures.map((failure) => (
         <motionElement.p key={failure} {...presenceMotion} role="alert" className="artifact-refused artifact-edit-failure">{failure}</motionElement.p>
       ))}</Presence>
-      <div className="artifact-doc-page" {...scroll}><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
+      <div className="artifact-doc-page"><DocEditor key={`${doc.path}:${opened}`} title={doc.title} markdown={loaded.markdown}
         onEdit={(markdown) => setEdit({ version: doc, markdown })} /></div>
     </>
   );

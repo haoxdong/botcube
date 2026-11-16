@@ -133,7 +133,8 @@ it('keeps the reading position when the open Doc receives a new version', async 
   stored['artifacts/plans/q4.md.versions/2.md'] = PLAN.replace('Q4 plan', 'Updated plan');
   agentPublishes({ ...PUBLISHED, version: 2, path: '/artifacts/plans/q4.md.versions/2.md' });
   const heading = await within(panel).findByRole('heading', { name: 'Updated plan' });
-  expect(heading.closest('.artifact-doc-page')?.scrollTop).toBe(240);
+  expect(heading.closest('.artifact-doc-page')).toBe(scroller);
+  expect(scroller.scrollTop).toBe(240);
   expect(screen.getByRole('region', { name: 'Q4 plan' })).toBe(panel);
 });
 
