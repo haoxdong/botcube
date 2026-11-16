@@ -1200,8 +1200,9 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
 
 
 def test_stopping_a_model_before_it_reasons_or_answers_leaves_no_thought(
-    service: _Service, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_timing')
     entered = threading.Event()
     async def unfinished(self: _RecordedBedrockModel, *_args: Any, **_kwargs: Any):
         # The recorded first metadata frame carries neither summary nor answer.
@@ -1220,6 +1221,9 @@ def test_stopping_a_model_before_it_reasons_or_answers_leaves_no_thought(
         assert acknowledgement.status_code == 200
         events = running.result(timeout=10)
     assert events[-1]['code'] == 'TURN_STOPPED'
+    timings = [json.loads(record.message) for record in caplog.records
+               if record.name == 'botcube_harness_deepagents.turn_timing']
+    assert sorted((line['runId'], line['status']) for line in timings) == [('run-0', 'finished'), ('run-0', 'stopped')]
     types = [event['type'] for event in events]
     assert 'TEXT_MESSAGE_START' not in types and not [kind for kind in types if kind.startswith('REASONING')]
 
@@ -1919,10 +1923,11 @@ def test_on_agentcore_the_turn_credential_exchange_overlaps_the_agent_build(
 
 
 def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     from botcube_harness_deepagents.memory import agentcore
 
+    caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_timing')
     preparing, release = threading.Event(), threading.Event()
     turn_memory = agentcore.turn_memory
     exchanges: list[str] = []
@@ -1948,6 +1953,10 @@ def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
     assert earlier[-1]['code'] == 'TURN_STOPPED'
     assert later[-1]['type'] == 'RUN_FINISHED'
     assert service.recorder.heard == [['later']]
+
+    timings = [json.loads(record.message) for record in caplog.records
+               if record.name == 'botcube_harness_deepagents.turn_timing']
+    assert sorted(line['status'] for line in timings) == ['finished', 'stopped']
 
 
 def test_on_agentcore_an_older_turns_late_worker_leaves_memory_signing_as_the_newer_turn(

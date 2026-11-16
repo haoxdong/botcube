@@ -1337,7 +1337,8 @@ async def _invocation_frames(
     run_input: RunAgentInput, context: _RequestContext, encoder: EventEncoder, timing: turn_timing.TurnTiming,
 ) -> AsyncGenerator[str, None]:
     error: RunErrorEvent | None = None
-    failed = finished = False
+    stream_error: RunErrorEvent | None = None
+    finished = False
     calls = FailedCalls()
     reply = _OpenReply()
     observe = reply.watching(lambda event: None)
@@ -1351,12 +1352,11 @@ async def _invocation_frames(
             try:
                 async for event in _events_with_response_check(run_input, context):
                     observe(event)
-                    frame = encoder.encode(event)
-                    if _is_assistant_text(event):
-                        timing.text()
-                    failed |= event.type == EventType.RUN_ERROR
+                    frame = _timed_frame(event, encoder, timing)
+                    if isinstance(event, RunErrorEvent):
+                        stream_error = event
                     yield frame
-                finished = not failed
+                finished = stream_error is None
             except (
                 MissingUserIdError,
                 InvalidTemporaryChatError,
@@ -1380,7 +1380,23 @@ async def _invocation_frames(
         _record_failed_calls(calls, responded=finished)
         if finished and not timing.warmup:
             turn_output.retain(reply.text, environment)
-        timing.finish('finished' if finished else 'failed')
+        failure = error or stream_error
+        timing.finish(_invocation_status(finished, failure))
+
+
+def _timed_frame(event: Any, encoder: EventEncoder, timing: turn_timing.TurnTiming) -> str:
+    frame = encoder.encode(event)
+    if _is_assistant_text(event):
+        timing.text()
+    return frame
+
+
+def _invocation_status(finished: bool, error: RunErrorEvent | None) -> Literal['finished', 'failed', 'stopped']:
+    if finished:
+        return 'finished'
+    if error is not None and error.code == 'TURN_STOPPED':
+        return 'stopped'
+    return 'failed'
 
 
 def _record_failed_calls(calls: FailedCalls, *, responded: bool) -> None:

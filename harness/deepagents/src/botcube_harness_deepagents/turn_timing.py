@@ -242,7 +242,7 @@ class TurnTiming(BaseCallbackHandler):
         if self.first_token is None:
             self.first_token = self.last_token
 
-    def record(self, end: float, status: Literal['finished', 'failed']) -> dict[str, Any]:
+    def record(self, end: float, status: Literal['finished', 'failed', 'stopped']) -> dict[str, Any]:
         last = self.last_token if self.last_token is not None else end
 
         def ms(seconds: float) -> float:
@@ -301,7 +301,7 @@ class TurnTiming(BaseCallbackHandler):
             fields['loopBlock'] = {'ms': ms(self._block[0]), 'stack': self._block[1]}
         return fields
 
-    def finish(self, status: Literal['finished', 'failed']) -> None:
+    def finish(self, status: Literal['finished', 'failed', 'stopped']) -> None:
         """Log the Turn's line, once."""
         if not self._logged:
             self._logged = True

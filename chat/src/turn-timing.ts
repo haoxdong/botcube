@@ -23,7 +23,7 @@ export class TurnTiming {
   private invokeSpan: Span | undefined;
   private invokeContext: Context | undefined;
   private readonly chatMs: Partial<Record<TurnStage, number>> = {};
-  private runFinished = false;
+  private status: 'finished' | 'failed' | 'stopped' = 'failed';
   private logged = false;
 
   constructor(private readonly receipt: number, private readonly runId: string, private readonly sessionId: string,
@@ -72,16 +72,16 @@ export class TurnTiming {
       this.chatMs.lastToken = this.offset(performance.now());
     }
     for (const event of events) {
-      if (event.type === EventType.RUN_FINISHED) this.runFinished = runFinishedOutcome(event) === 'success';
+      if (event.type === EventType.RUN_FINISHED) this.status = runFinishedOutcome(event) === 'success' ? 'finished' : 'failed';
+      if (event.type === EventType.RUN_ERROR) this.status = event.code === 'TURN_STOPPED' ? 'stopped' : 'failed';
     }
   }
 
-  /** Log the Turn once: finished when its RUN_FINISHED was relayed, else failed, or gone when the client went away. */
   finish(status?: 'gone'): void {
     if (this.logged) return;
     this.logged = true;
     this.mark('end');
-    const outcome = status ?? (this.runFinished ? 'finished' : 'failed');
+    const outcome = status ?? this.status;
     this.span.setAttribute('turn.status', outcome);
     if (this.model !== undefined) this.span.setAttribute('model', this.model);
     if (outcome === 'failed') {
@@ -93,7 +93,7 @@ export class TurnTiming {
     this.tracedTurnFinished?.();
     const chatMs = Object.fromEntries(STAGES.flatMap((stage) => this.chatMs[stage] === undefined ? [] : [[stage, this.chatMs[stage]]]));
     console.info(JSON.stringify({ event: 'chat_turn_timing', runId: this.runId, sessionId: this.sessionId, userAgent: this.userAgent, model: this.model,
-      status: status ?? (this.runFinished ? 'finished' : 'failed'),
+      status: outcome,
       e2eMs: this.chatMs.lastToken ?? this.chatMs.end, chatMs }));
   }
 }

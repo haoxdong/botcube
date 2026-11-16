@@ -183,3 +183,22 @@ it('does not start an exporter unless OTLP traces are explicitly enabled', () =>
   expect(startChatTracing({})).toBeUndefined();
   expect(startChatTracing({ OTEL_TRACES_EXPORTER: 'none' })).toBeUndefined();
 });
+
+
+it.each([
+  ['TURN_STOPPED', 'stopped', SpanStatusCode.UNSET],
+  ['INTERNAL_ERROR', 'failed', SpanStatusCode.ERROR],
+] as const)('records %s in timing and spans without counting intentional stops as failures', async (code, status, spanStatus) => {
+  const timing = new TurnTiming(performance.now(), 'terminal', 'session');
+  const body = `data: ${JSON.stringify({ type: 'RUN_ERROR', code, message: 'The Turn ended' })}\n\n`;
+  const response = await relayTurn({ label: 'Test', invoke: async () => new Response(body) }, { ...turn, timing });
+  expect(await response.text()).toBe(body);
+  const exported = await spans();
+  expect(exported).toHaveLength(2);
+  expect(exported.map((span) => span.status.code)).toEqual([spanStatus, spanStatus]);
+  expect(defined(exported.find((span) => span.name === 'Chat Turn'), 'Chat Turn root').attributes['turn.status']).toBe(status);
+  const records = vi.mocked(console.info).mock.calls.map(([line]) => String(line))
+    .filter((line) => line.startsWith('{"event":"chat_turn_timing"'));
+  expect(records).toHaveLength(1);
+  expect(JSON.parse(defined(records[0], 'Turn timing record'))).toMatchObject({ status });
+});
