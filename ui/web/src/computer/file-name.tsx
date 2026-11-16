@@ -1,5 +1,6 @@
 import { prepareWithSegments, walkLineRanges } from '@chenglou/pretext';
 import { useLayoutEffect, useRef } from 'react';
+import { resize } from 'framer-motion';
 
 /** A name's last characters, kept whole while its start gives way to an ellipsis, as Finder cuts a name: `rates…cap.md`. */
 const TAIL = 6;
@@ -96,14 +97,12 @@ export function FileName({ name }: { name: string }) {
     fit();
     // Fitted again as the cell's box changes, as when the page's font loads, though not as the observer first reports.
     let size = `${cell.clientWidth}×${cell.clientHeight}`;
-    const observer = new ResizeObserver(() => {
+    return resize([cell], () => {
       const now = `${cell.clientWidth}×${cell.clientHeight}`;
       if (now === size) return;
       size = now;
       fit();
     });
-    observer.observe(cell);
-    return () => observer.disconnect();
   }, [name]);
   return <span ref={view} className="agent-computer-file-name" />;
 }
