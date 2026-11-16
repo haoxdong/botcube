@@ -11,8 +11,8 @@ import { PreviewChatService } from '../lib/preview-chat-service.js';
 import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
 import { repositoryRoot, caPath } from './origin-fixture.js';
 
-function synth(parked: boolean) {
-  const app = new App();
+function synth(parked: boolean, context: Record<string, unknown> = {}) {
+  const app = new App({ context });
   const env = { account: '123456789012', region: 'us-east-1' };
   const subnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
   const storage = new ChatStorageStack(app, 'Storage', { env });
@@ -87,4 +87,42 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
       Resource: Match.anyValue(), Condition: { ArnLike: { 'elasticfilesystem:AccessPointArn': Match.anyValue() } },
     }] },
   });
+});
+
+
+test('pool uses one API resource, omits serving-role management, and alarms at 80%', () => {
+  const template = synth(false, { filesAccessPointMode: 'pool', filesAccessPointPoolSize: 5 });
+  template.resourceCountIs('AWS::EFS::AccessPoint', 1);
+  expect(Object.values(template.findResources('AWS::CloudFormation::CustomResource')).filter(resource => resource.Properties.Count !== undefined)).toHaveLength(1);
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Count: 5, ManifestKey: 'slots-5.json' });
+  const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter(policy =>
+    /ChatServiceTaskTaskRole|FilesMountRole/.test(JSON.stringify(policy.Properties.Roles)));
+  expect(JSON.stringify(policies)).not.toContain('elasticfilesystem:CreateAccessPoint');
+  expect(JSON.stringify(policies)).not.toContain('elasticfilesystem:DeleteAccessPoint');
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    Threshold: 4, ComparisonOperator: 'GreaterThanOrEqualToThreshold', EvaluationPeriods: 1,
+    TreatMissingData: 'ignore', AlarmActions: Match.anyValue(),
+  });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({
+      Environment: Match.arrayWith([{ Name: 'BOTCUBE_FILES_POOL_MANIFEST', Value: Match.anyValue() }]),
+    })]),
+  });
+});
+
+test('defaults to 1000 deploy-time slots with the capacity alarm at 800', () => {
+  const template = synth(false, { filesAccessPointMode: 'pool' });
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Count: 1000 });
+  template.resourceCountIs('AWS::EFS::AccessPoint', 1);
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', { Threshold: 800 });
+});
+
+test('allows pool capacity above the former CloudFormation resource limit', () => {
+  const template = synth(false, { filesAccessPointMode: 'pool', filesAccessPointPoolSize: 9999 });
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Count: 9999 });
+  template.resourceCountIs('AWS::EFS::AccessPoint', 1);
+});
+
+test.each([0, -1, 10000, 1.5, 'bad'])('rejects invalid Files pool size %s', size => {
+  expect(() => synth(false, { filesAccessPointMode: 'pool', filesAccessPointPoolSize: size })).toThrow('filesAccessPointPoolSize');
 });

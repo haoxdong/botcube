@@ -1,3 +1,5 @@
+import { filesCleanupClaim, type FilesCleanupClaim } from './files-cleanup-worker.js';
+import { claimFilesPoolSlot } from './files-pool-lease.js';
 import { SCHEDULED_EXECUTION_KEY, scheduledSessionKey } from './scheduled-execution.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
@@ -339,6 +341,48 @@ export class AccountResources {
   async pendingFilesCleanup(): Promise<string[]> {
     const items = await this.query({ KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)', ExpressionAttributeValues: { ':pk': 'FILES_CLEANUP', ':prefix': 'acct_' } });
     return items.filter((item) => (item.notBefore as number) <= Date.now()).map((item) => item.sk as string);
+  }
+
+  async claimFilesPoolSlot(userId: string, accessPointArn: string, directory: string): Promise<boolean> {
+    return claimFilesPoolSlot(this, userId, accessPointArn, directory);
+  }
+
+  async releaseFilesPoolSlot(userId: string, accessPointArn: string, directory: string): Promise<void> {
+    const slot = await this.get('FILES_POOL', directory);
+    if (slot === undefined || slot.userId !== userId) return;
+    await this.call('TransactWriteItems', new TransactWriteCommand({
+      TransactItems: [
+        { Delete: { TableName: this.tableName, Key: key('FILES_POOL', directory), ConditionExpression: 'userId = :user', ExpressionAttributeValues: { ':user': userId } } },
+        { Delete: { TableName: this.tableName, Key: key(`FILES_EFS#${userId}`), ConditionExpression: 'accessPointArn = :arn', ExpressionAttributeValues: { ':arn': accessPointArn } } },
+      ],
+    }));
+  }
+
+  async filesCleanupClaim(userId: string): Promise<FilesCleanupClaim | null> {
+    const item = await this.get('FILES_POOL_CLEANUP', userId);
+    return item === undefined ? null : filesCleanupClaim.parse(item);
+  }
+
+  async claimFilesCleanup(userId: string, claim: FilesCleanupClaim = { token: 'local', cluster: 'local', taskArn: 'local', createdAt: Date.now() }, previousToken?: string): Promise<boolean> {
+    try {
+      await this.call('PutItem', new PutCommand({
+        TableName: this.tableName, Item: { ...key('FILES_POOL_CLEANUP', userId), ...claim },
+        ConditionExpression: previousToken === undefined ? 'attribute_not_exists(pk)' : '#token = :previous',
+        ...(previousToken === undefined ? {} : { ExpressionAttributeNames: { '#token': 'token' }, ExpressionAttributeValues: { ':previous': previousToken } }),
+      }));
+      return true;
+    } catch (error) {
+      if (error instanceof AccountStoreError && error.cause instanceof ConditionalCheckFailedException) return false;
+      throw error;
+    }
+  }
+
+  async releaseFilesCleanup(userId: string, token = 'local'): Promise<void> {
+    await this.call('DeleteItem', new DeleteCommand({ TableName: this.tableName, Key: key('FILES_POOL_CLEANUP', userId), ConditionExpression: '#token = :token', ExpressionAttributeNames: { '#token': 'token' }, ExpressionAttributeValues: { ':token': token } }));
+  }
+
+  async filesPoolUsage(): Promise<number> {
+    return (await this.query({ KeyConditionExpression: 'pk = :pk', ExpressionAttributeValues: { ':pk': 'FILES_POOL' } })).length;
   }
 
   async filesAccessPoint(accountId: string): Promise<string | null> {

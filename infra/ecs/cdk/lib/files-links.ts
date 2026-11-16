@@ -1,4 +1,7 @@
+import { FilesAccessPointPool } from './files-access-point-pool.js';
 import * as path from 'node:path';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import { CfnOutput, Duration } from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as efs from 'aws-cdk-lib/aws-efs';
@@ -77,16 +80,21 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
     resources: [storage.filesEfs.attrArn],
     conditions: { StringEquals: { 'elasticfilesystem:AccessPointArn': accounts.attrArn } },
   }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['elasticfilesystem:CreateAccessPoint'],
-    resources: [storage.filesEfs.attrArn],
-  }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['elasticfilesystem:DeleteAccessPoint'],
-    resources: [origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' })],
-  }));
-  // EFS DescribeAccessPoints does not support resource-level permissions.
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['elasticfilesystem:DescribeAccessPoints'], resources: ['*'] }));
+  const mode: unknown = origin.node.tryGetContext('filesAccessPointMode') ?? 'runtime';
+  if (mode !== 'runtime' && mode !== 'pool') throw new Error('filesAccessPointMode must be runtime or pool');
+  if (mode === 'pool') {
+    addFilesPool(origin, chat, storage, cubeRoot);
+  } else {
+    chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
+      actions: ['elasticfilesystem:CreateAccessPoint'], resources: [storage.filesEfs.attrArn],
+    }));
+    chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
+      actions: ['elasticfilesystem:DeleteAccessPoint'],
+      resources: [origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' })],
+    }));
+    // EFS DescribeAccessPoints does not support resource-level permissions.
+    chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['elasticfilesystem:DescribeAccessPoints'], resources: ['*'] }));
+  }
   const mount = new iam.Role(origin, 'FilesMountRole', {
     assumedBy: chat.task.taskRole,
     maxSessionDuration: Duration.hours(1),
@@ -110,4 +118,27 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
   chat.service.node.addDependency(accounts, chat.task.taskRole);
   new CfnOutput(origin, 'FilesLinksUrl', { value: url.url });
   new CfnOutput(origin, 'FilesSigningKeyArn', { value: key.secretArn });
+}
+
+function addFilesPool(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, cubeRoot: string) {
+  const count = Number(origin.node.tryGetContext('filesAccessPointPoolSize') ?? 1000);
+  if (!Number.isSafeInteger(count) || count < 1 || count > 9999) throw new Error('filesAccessPointPoolSize must be an integer from 1 to 9999; the shared mount uses one access point of EFS’s 10000-point quota');
+  const pool = new FilesAccessPointPool(origin, 'FilesPool', {
+    fileSystemId: storage.filesEfs.ref, fileSystemArn: storage.filesEfs.attrArn, capacity: count, source: path.join(cubeRoot, 'infra/ecs/files-pool'), alertsTopic: chat.alertsTopic,
+  });
+  pool.bucket.grantRead(chat.task.taskRole);
+  chat.container.addEnvironment('BOTCUBE_FILES_POOL_MANIFEST', JSON.stringify(pool.manifest));
+  chat.service.node.addDependency(pool.ready);
+  const metric = new logs.MetricFilter(origin, 'FilesPoolUsage', {
+    logGroup: chat.logGroup,
+    filterPattern: logs.FilterPattern.exists('$.filesPoolUsed'),
+    metricNamespace: 'BotCube/Files', metricName: `${origin.stackName}-PoolUsed`, metricValue: '$.filesPoolUsed',
+  }).metric({ statistic: 'Maximum', period: Duration.minutes(5) });
+  const alarm = new cloudwatch.Alarm(origin, 'FilesPoolCapacity', {
+    metric, threshold: Math.ceil(count * 0.8), evaluationPeriods: 1,
+    comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    treatMissingData: cloudwatch.TreatMissingData.IGNORE,
+    alarmDescription: 'At least 80% of Files pool slots are leased to Users or quarantined for cleanup. Increase filesAccessPointPoolSize.',
+  });
+  alarm.addAlarmAction(new actions.SnsAction(chat.alertsTopic));
 }

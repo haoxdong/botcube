@@ -3,7 +3,7 @@ import { configDefaults, defineConfig } from 'vitest/config';
 import { TEST_AWS_ENV } from './chat/test/fakes/credentials.js';
 
 const at = (path: string) => fileURLToPath(new URL(path, import.meta.url));
-const node = { pool: 'forks', env: { TZ: 'UTC' } } as const;
+const node = { root: at('.'), pool: 'forks', env: { TZ: 'UTC' } } as const;
 const liveView = 'ui/web/node_modules/bedrock-agentcore/dist/src/tools/browser/live-view/nice-dcv-web-client-sdk';
 const libreofficeTests = ['ui/web/src/app/sheet-libreoffice.test.ts', 'ui/web/src/app/sheet-import-openpyxl.test.ts'];
 const uiWebMarkdown = ['ui/web/src/app/markdown.test.tsx'];
@@ -35,9 +35,9 @@ export default defineConfig({
   test: {
     pool: 'forks',
     maxWorkers: '100%',
-    globalSetup: ['./vitest.global-setup.ts'],
+    globalSetup: [at('vitest.global-setup.ts')],
     projects: [
-      { extends: './chat/test/parity/vitest.config.ts', test: { name: 'parity', sequence: { groupOrder: 1 } } },
+      { extends: at('chat/test/parity/vitest.config.ts'), test: { name: 'parity', sequence: { groupOrder: 1 } } },
       {
         resolve: { alias: [{ find: /^botcube-chat$/, replacement: at('chat/src/index.ts') }] },
         test: {
@@ -53,7 +53,7 @@ export default defineConfig({
         test: {
           ...node,
           name: 'node',
-          include: ['tests/**/*.test.ts', 'templates/always-on/chat/src/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts'],
+          include: ['tests/**/*.test.ts', 'templates/always-on/chat/src/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts', 'infra/ecs/files-pool/**/*.test.ts'],
         },
       },
       { test: { ...node, name: 'integration-libreoffice', include: libreofficeTests, testTimeout: 30_000 } },

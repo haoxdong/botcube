@@ -1,3 +1,4 @@
+import type { FilesCleanupClaim } from './files-cleanup-worker.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactSave, SavedArtifact } from './artifact-save.js';
 import { HttpError } from './cartridge.js';
@@ -38,6 +39,12 @@ export interface FilesMountBinding {
 
 /** Where an account's Files access point is kept once created. */
 export interface FilesRecords {
+  claimFilesPoolSlot(userId: string, accessPointArn: string, directory: string): Promise<boolean>;
+  releaseFilesPoolSlot(userId: string, accessPointArn: string, directory: string): Promise<void>;
+  filesPoolUsage(): Promise<number>;
+  filesCleanupClaim(userId: string): Promise<FilesCleanupClaim | null>;
+  claimFilesCleanup(userId: string, claim?: FilesCleanupClaim, previousToken?: string): Promise<boolean>;
+  releaseFilesCleanup(userId: string, token?: string): Promise<void>;
   filesRetirement(accountId: string): Promise<{ destinationAccountId: string | null; lastCredentialExpiresAt: number } | null>;
   retireFiles(accountId: string, destinationAccountId: string | null, notBefore: number): Promise<void>;
   scheduleFilesCleanup(accountId: string, notBefore: number, lastCredentialExpiresAt: number): Promise<void>;

@@ -113,6 +113,8 @@ function validateChatService(props: PreviewChatServiceProps): void {
 /** Deploy the Chat Service with the provided origin or adopter-owned ingress. */
 export class PreviewChatService extends Construct {
   readonly cluster: ecs.Cluster;
+  readonly alertsTopic: sns.ITopic;
+  readonly logGroup: logs.ILogGroup;
   readonly network: ec2.SecurityGroup;
   readonly task: ecs.FargateTaskDefinition;
   readonly container: ecs.ContainerDefinition;
@@ -170,7 +172,7 @@ export class PreviewChatService extends Construct {
       resources: [origin.formatArn({ service: 'ecs', resource: 'task', resourceName: `${props.clusterName}/*` })],
       conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } },
     }));
-    const logGroup = new logs.LogGroup(this, 'Logs', { logGroupName: props.logGroupName ?? `/${props.clusterName}/chat-service-preview`, retention: logs.RetentionDays.ONE_MONTH });
+    const logGroup = this.logGroup = new logs.LogGroup(this, 'Logs', { logGroupName: props.logGroupName ?? `/${props.clusterName}/chat-service-preview`, retention: logs.RetentionDays.ONE_MONTH });
     this.container = task.addContainer('chat-service', {
       image: props.image,
       portMappings: [{ containerPort: port }],
@@ -312,7 +314,7 @@ export class PreviewChatService extends Construct {
       securityGroups: [ingress, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,
       circuitBreaker: { rollback: true }, healthCheckGracePeriod: Duration.seconds(props.healthGraceSeconds ?? 60),
     });
-    const topic = sns.Topic.fromTopicArn(this, 'Alerts', origin.formatArn({ service: 'sns', resource: props.alertsTopicName }));
+    const topic = this.alertsTopic = sns.Topic.fromTopicArn(this, 'Alerts', origin.formatArn({ service: 'sns', resource: props.alertsTopicName }));
     const period = Duration.seconds(props.alarmPeriodSeconds ?? 60);
     // Availability alarms (the `-preview-` set the Smoke Test checks) by default.
     const alarm = (suffix: keyof NonNullable<PreviewChatServiceProps['alarmNames']>, metric: cloudwatch.IMetric, missing: cloudwatch.TreatMissingData, threshold = 0, comparisonOperator = cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,

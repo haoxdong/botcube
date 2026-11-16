@@ -29,6 +29,8 @@
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "^4.1.12",
     "esbuild": "^0.28.2",
-    "jsdom": "28.1.0"
+    "jsdom": "28.1.0",
+    "@aws-sdk/client-efs": "^3.1162.0",
+    "@aws-sdk/client-sqs": "^3.1161.0"
   }
 }
