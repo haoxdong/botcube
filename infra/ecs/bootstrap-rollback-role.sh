@@ -5,6 +5,11 @@ if [[ "${1:-}" == '--profile' ]]; then
   export AWS_PROFILE="${2:?profile required}"
   shift 2
 fi
+POLICY_OUTPUT=''
+if [[ "${1:-}" == '--policy-file' ]]; then
+  POLICY_OUTPUT="${2:?policy output required}"
+  shift 2
+fi
 test "$#" -eq 0
 read -r ACCOUNT REGION CLUSTER ROLE TASK_FAMILY POLICY_NAME < <(node -e '
 const x = require(process.argv[1]).aws;
@@ -75,5 +80,9 @@ cat > "$POLICY" <<EOF
   ]
 }
 EOF
-aws iam put-role-policy --role-name "$ROLE" --policy-name "$POLICY_NAME" --policy-document "file://$POLICY"
+if [[ -n "$POLICY_OUTPUT" ]]; then
+  cp "$POLICY" "$POLICY_OUTPUT"
+  exit 0
+fi
+node "$(dirname "$0")/managed-deploy-policies.mjs" rollback "$POLICY"
 printf 'Added scoped rollback exercise policy to %s\n' "$ROLE"

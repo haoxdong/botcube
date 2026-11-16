@@ -349,10 +349,7 @@ fi
 aws iam update-role \
   --role-name "$ROLE_NAME" \
   --max-session-duration 7200
-aws iam put-role-policy \
-  --role-name "$ROLE_NAME" \
-  --policy-name "$POLICY_NAME" \
-  --policy-document "file://$ROLE_POLICY"
+node "$SCRIPT_DIR/managed-deploy-policies.mjs" deploy "$ROLE_POLICY"
 
 # Production starts Live. Only park and unpark change the stored state afterwards
 # (docs/runbooks/production-parking.md), so never overwrite it here.
