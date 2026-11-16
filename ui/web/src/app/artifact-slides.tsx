@@ -93,7 +93,7 @@ function DeckFrame({ title, folder, files, errors = [], runs, frame }: { title: 
       <Presence>{errors.map((error) => (
         <motionElement.p key={error} {...presenceMotion} role="alert" className="artifact-refused">{error}</motionElement.p>
       ))}</Presence>
-      <iframe ref={frame} title={title} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" src={SLIDES_PAGE} className="artifact-frame" />
+      <iframe ref={frame} title={title} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" src={SLIDES_PAGE} className="artifact-frame artifact-deck" />
       <Presence>{deck.stripped.length > 0 && (
         <motionElement.ul {...presenceMotion} aria-label="Not shown: outside the slide format" className="artifact-stripped">
           {deck.stripped.map((item) => <li key={item}>{item}</li>)}

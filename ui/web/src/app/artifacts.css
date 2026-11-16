@@ -113,6 +113,11 @@
   background: var(--color-white);
 }
 
+/* A deck's slides sit on the panel itself, with no canvas of their own under them. */
+.artifact-frame.artifact-deck {
+  background: transparent;
+}
+
 .sheet.artifact-sheet {
   display: flex;
   flex-direction: column;
