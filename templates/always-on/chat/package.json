@@ -8,7 +8,7 @@
   "dependencies": {
     "@ag-ui/client": "1.0.3",
     "botcube-chat": "workspace:*",
-    "hono": "^4.13.14"
+    "hono": "^4.13.17"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"
