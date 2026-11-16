@@ -18,10 +18,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 from uuid import UUID
 
-from ag_ui_langgraph.utils import (
-    resolve_encrypted_reasoning_content,
-    resolve_reasoning_content,
-)
+from ag_ui_langgraph.utils import resolve_encrypted_reasoning_content
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,
@@ -41,7 +38,7 @@ from langchain_core.tracers.context import register_configure_hook
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from .conversation import MESSAGE_TIMES, reasoning_texts
+from .conversation import MESSAGE_TIMES, reasoning_blocks, reasoning_texts
 
 _Message = TypeVar('_Message', bound=BaseMessage)
 _clock: ContextVar[_ModelClock | None] = ContextVar('message_times_clock', default=None)
@@ -63,7 +60,7 @@ class _ModelClock(BaseCallbackHandler):
         self.model_id: str | None = None
         self.started: int | None = None
         self.reasoning: list[list[int]] = []
-        self.reasoning_index: int | None = None
+        self.reasoning_index: int | str | None = None
         self.tool_calls: dict[str, int] = {}
 
     def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], *, run_id: UUID, **kwargs: Any) -> None:
@@ -82,9 +79,9 @@ class _ModelClock(BaseCallbackHandler):
         if not isinstance(chunk, ChatGenerationChunk) or not isinstance(chunk.message, AIMessageChunk):
             raise TypeError(f'A chat model streams agent message chunks, not {type(chunk).__name__}')
         message, at = chunk.message, now()
-        reasoning = resolve_reasoning_content(message)
+        reasoning = next(iter(reasoning_blocks(message)), None)
         if reasoning:
-            if reasoning['text']:
+            if reasoning.get('reasoning'):
                 self._open_reasoning(reasoning.get('index', 0), at)
             return
         if resolve_encrypted_reasoning_content(message):
@@ -98,7 +95,7 @@ class _ModelClock(BaseCallbackHandler):
             if call['id']:
                 self.tool_calls.setdefault(call['id'], at)
 
-    def _open_reasoning(self, index: int, at: int) -> None:
+    def _open_reasoning(self, index: int | str, at: int) -> None:
         if self.reasoning_index == index:
             return
         self._close(at)

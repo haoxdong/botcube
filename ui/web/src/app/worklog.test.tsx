@@ -1047,3 +1047,19 @@ describe("a Worklog's step times", () => {
   });
 });
 
+it('shows every summary part and opens the last multi-sentence thought intact', async () => {
+  const last = '**Verify the final result**\n\nThe second part belongs to the next item. Its final sentence must survive replay.';
+  render(<StepsChat messages={[
+    { id: 'multipart-u', role: 'user', content: 'Compare the financing paths', ...stamp(0, 0) },
+    { id: 'multipart-r0', role: 'reasoning', content: '**Compare funding paths**\n\nThe first item has a complete summary. Discount every dated equity cash flow.', ...stamp(0, 1) },
+    { id: 'multipart-r1', role: 'reasoning', content: '**Check the tax branch**\n\nThe next item restarts its summary index at zero. Keep this whole paragraph.', ...stamp(1, 2) },
+    { id: 'multipart-r2', role: 'reasoning', content: last, ...stamp(2, 3) },
+    { id: 'multipart-a', role: 'assistant', content: 'hello', ...stamp(3, 4) },
+  ]} />);
+  fireEvent.click(head());
+  expect(screen.getByRole('button', { name: /^Thought Compare funding paths/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: /^Thought Check the tax branch/ })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /^Thought Verify the final result/ }));
+  const dialog = await screen.findByRole('dialog');
+  expect(dialog.querySelector('.step-section-text')?.textContent).toBe(last);
+});

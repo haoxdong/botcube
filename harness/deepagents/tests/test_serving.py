@@ -70,6 +70,7 @@ from botcube_harness_deepagents import (
     session_api,
     session_memory,
 )
+from botcube_harness_deepagents.conversation import reasoning_blocks
 from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
@@ -1177,8 +1178,8 @@ def test_a_recorded_bedrock_thought_spans_its_first_words_to_public_output_and_a
         tick += 10
         token(clock, *args, **kwargs)
         chunk = kwargs['chunk'].message
-        reasoning = message_times.resolve_reasoning_content(chunk)
-        if reasoning and reasoning['text'] and not words:
+        reasoning = next(iter(reasoning_blocks(chunk)), None)
+        if reasoning and reasoning.get('reasoning') and not words:
             words.append(tick)
         if (chunk.text or chunk.tool_call_chunks) and not reasoning and clock not in seen:
             seen.add(clock)
@@ -3351,3 +3352,26 @@ def test_unreachable_efs_finishes_plain_answers_and_bounds_file_tool_errors(
         assert 'deadline' in failed[-1]['message']
     finally:
         release.set()
+
+@pytest.mark.integration
+def test_a_plan_turn_keeps_every_part_when_reasoning_items_restart_the_summary_index(service: _Service) -> None:
+    expected = [
+        '**Compare funding paths**\n\nThe first item has a complete summary. Discount every dated equity cash flow.',
+        '**Check the tax branch**\n\nThe next item restarts its summary index at zero. Keep this whole paragraph.',
+        '**Verify the final result**\n\nThe second part belongs to the next item. Its final sentence must survive replay.',
+    ]
+    with serving_relay() as relay:
+        relay.reply = RelayReply(body=(Path(__file__).parent / 'fixtures' / 'openai-multi-item-reasoning-stream.sse').read_bytes())
+        events = service.turn('Say exactly: hello', model='openai-plan:gpt-6.1-sol', relay=relay.url)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    streamed = {}
+    for event in events:
+        if event['type'] == 'REASONING_MESSAGE_CONTENT':
+            key = event['messageId']
+            streamed[key] = streamed.get(key, '') + event['delta']
+    assert list(streamed.values()) == expected
+    replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
+    thoughts = [message for message in replay if message['role'] == 'reasoning']
+    assert [message['content'] for message in thoughts] == expected
+    assert [message['id'] for message in thoughts] == list(streamed)

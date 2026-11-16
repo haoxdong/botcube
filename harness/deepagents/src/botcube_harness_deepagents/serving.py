@@ -44,7 +44,6 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
-from ag_ui_langgraph.utils import resolve_reasoning_content
 from botcube_cartridge import HarnessDefinition, InvocationAuth, ModelRelay
 from deepagents.backends import LocalShellBackend
 from deepagents.middleware._utils import append_to_system_message
@@ -56,6 +55,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_config
@@ -83,7 +83,7 @@ from .agent_documents import (
     pop_agent_documents,
 )
 from .artifact import artifact_tools, artifacts_enabled
-from .conversation import conversation
+from .conversation import conversation, reasoning_blocks
 from .files import (
     FilesBindingError,
     excluded_paths,
@@ -328,8 +328,7 @@ def _error_code(error: Exception) -> str:
 @dataclass
 class _Thinking:
     block: int = 0
-    index: int | None = None
-    # A thought opens at its first words: a model that waits, or reasons and returns no summary, shows none.
+    index: int | str | None = None
     open: bool = False
 
 
@@ -417,9 +416,9 @@ class _SessionAgent(LangGraphAgent):
         return [self._dispatch_event(ReasoningMessageEndEvent(message_id=message_id)),
                 self._dispatch_event(ReasoningEndEvent(message_id=message_id))]
 
-    def _reasoning_chunk(self, lane: str, thought: _Thinking, reasoning: Any) -> list[Any]:
+    def _reasoning_chunk(self, lane: str, thought: _Thinking, reasoning: ReasoningContentBlock) -> list[Any]:
         events = []
-        if reasoning['text']:
+        if text := reasoning.get('reasoning'):
             index = reasoning.get('index', 0)
             if thought.open and thought.index != index:
                 events.extend(self._thought_end(lane, thought))
@@ -429,13 +428,13 @@ class _SessionAgent(LangGraphAgent):
                 thought.open = True
             thought.index = index
             events.append(self._dispatch_event(ReasoningMessageContentEvent(
-                message_id=f'{lane}-reasoning-{thought.block}', delta=reasoning['text'])))
+                message_id=f'{lane}-reasoning-{thought.block}', delta=text)))
         return events
 
     def _thought_chunk(self, event: Any, lane: str, thought: _Thinking | None, chunk: Any) -> list[Any] | None:
         if thought is None or chunk is None:
             return None
-        reasoning = resolve_reasoning_content(chunk)
+        reasoning = next(iter(reasoning_blocks(chunk)), None)
         if reasoning is not None:
             return self._reasoning_chunk(lane, thought, reasoning)
         if not chunk.text and not chunk.tool_call_chunks:

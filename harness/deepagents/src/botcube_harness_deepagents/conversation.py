@@ -7,6 +7,7 @@ from typing import Any
 from ag_ui.core import Message, ReasoningMessage
 from ag_ui_langgraph.utils import langchain_messages_to_agui
 from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages.content import ReasoningContentBlock
 
 # The additional_kwargs key a scheduled run's post keeps its run card under; history replays it as `metadata.scheduledRun`.
 SCHEDULED_RUN = 'scheduled_run'
@@ -31,10 +32,14 @@ def conversation(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     ]
 
 
+def reasoning_blocks(message: AIMessage) -> list[ReasoningContentBlock]:
+    return [block for block in message.content_blocks if block['type'] == 'reasoning']
+
+
 def reasoning_texts(message: BaseMessage) -> list[str]:
     """The text of each reasoning block an AI message replays as its own reasoning message."""
-    blocks = message.content_blocks if isinstance(message, AIMessage) else []
-    return [text for block in blocks if block['type'] == 'reasoning' and (text := block.get('reasoning'))]
+    blocks = reasoning_blocks(message) if isinstance(message, AIMessage) else []
+    return [text for block in blocks if (text := block.get('reasoning'))]
 
 
 def _replayed(message: BaseMessage) -> list[Message]:
