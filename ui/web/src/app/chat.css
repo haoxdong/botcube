@@ -386,6 +386,11 @@
   }
 }
 
+/* Math at its text's size, not KaTeX's default 1.21 times it, which at a phone's width split formulas over lines. */
+.copilotKitAssistantMessage [class*="cpk:prose"] .katex {
+  font-size: inherit;
+}
+
 /* GFM `---:` reaches the cell as an inline `text-align: right`; such columns are figures, kept on one line. */
 .copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td):is([style*="text-align: right"], [style*="text-align:right"], [align="right"]) {
   text-align: right;
