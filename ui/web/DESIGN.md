@@ -68,21 +68,25 @@ fields, menus, grouped lists; `xl` 20 bubbles, the composer, sheets, file cards;
 iPhone's rounded screen corner; `pill` buttons, pills, tabs. The desktop chat stage meets no rounded corner and stays
 square.
 
-**Motion**: calm and continuous, as iOS moves: nothing snaps, jumps or shifts under the reader. Two durations, one
-curve, one loop, locked by `design-system.test.ts`:
+**Motion**: calm and continuous, as iOS moves: nothing snaps, jumps or shifts under the reader. Two visual settling
+targets, one spring configuration and one ambient loop, locked by `design-system.test.ts` and `motion-tokens.test.ts`:
 
-| Token            | Value                            | Job                                                                                                                                |
-| ---------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `--motion-quick` | 150ms                            | What changes in place: hover and press, a menu or chip fading in or out                                                            |
-| `--motion-move`  | 300ms                            | What moves or resizes: sidebar, panels, sheets, expanding a Worklog, the composer growing, the Computer zooming, a thread arriving |
-| `--ease`         | `cubic-bezier(0.32, 0.72, 0, 1)` | Every transition: iOS's sheet curve, fast out of the gate, settling softly                                                         |
-| `--motion-loop`  | 1.6s                             | The one ambient loop: the Worklog shimmer, a loading pulse, Marq's bob                                                             |
+| Token            | Value                            | Job                                                                                                                     |
+| ---------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--motion-quick` | 150ms                            | The spring's visual settling target for what changes in place, including fades                                          |
+| `--motion-move`  | 300ms                            | The spring's visual settling target for what moves or changes size, including panels, sheets, Worklogs and the composer |
+| `--ease`         | `cubic-bezier(0.32, 0.72, 0, 1)` | Existing CSS transitions awaiting migration and independent review                                                      |
+| `--motion-loop`  | 1.6s                             | The one ambient loop: the Worklog shimmer, a loading pulse, Marq's bob                                                  |
 
-- Animate `transform` and `opacity`; a height that opens (a Worklog, a step, the composer) animates its own height
-  while the rest of the column follows, never a jump. Whatever enters fades in; whatever leaves fades out before it
-  unmounts.
-- A finger drives motion with none of its own; on release the surface settles with `--motion-move` and `--ease`. A tap
-  plays the same settle.
+- `motionTokens()` converts the quick and move targets to seconds for Motion's `type: "spring"`, `visualDuration`
+  and `bounce: 0`. These are visual settling targets rather than fixed timers. Motion springs do not read `--ease`.
+- Animate only `transform` and `opacity`. Commit size and position endpoints once and let Motion layout project
+  between them. Never animate `height`, `width`, `flex-grow` or scroll each frame. An entering element fades in;
+  an exiting element remains mounted and inert until its fade completes. Each moving element has one animation owner.
+- Interrupted motion must preserve position and velocity. Current Motion 14.9 time-defined springs ignore inherited
+  velocity, and its layout projection starts at zero velocity. That remains a requirement gap in the current migration,
+  rather than a promise supplied by `visualDuration` and `bounce` alone.
+- A finger drives motion directly; on release the surface settles with the shared move spring. A tap uses the same settle.
 - New content keeps the reading position still.
 - Full motion always, Reduce Motion or not: BotCube has one experience, the full one (the maintainer, 2026-11-03).
   `design-system.test.ts` fails on any `prefers-reduced-motion`, `reducedMotion` or `useReducedMotion` in UI sources.
