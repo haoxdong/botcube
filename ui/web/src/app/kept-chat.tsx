@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement, resize } from "framer-motion";
 import { Presence, presenceMotion } from "./collapse";
 
 import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
@@ -124,9 +124,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
       content.style.paddingBottom = `${element.offsetHeight + 32}px`;
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return resize([element], measure);
   },
   // Stryker disable next-line ArrayDeclaration: any constant dependency list measures from mount on
   []);
@@ -142,9 +140,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
       element.scrollTop = element.scrollHeight - element.clientHeight - 1;
     };
     toEnd();
-    const observer = new ResizeObserver(toEnd);
-    observer.observe(content);
-    return () => observer.disconnect();
+    return resize([content], toEnd);
   },
   // Stryker disable next-line ArrayDeclaration: any constant dependency list scrolls from mount on
   []);
@@ -162,9 +158,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
     const element = scroller.current;
     // Stryker disable next-line ConditionalExpression: the ref holds the scroller once mounted
     if (element === null) return undefined;
-    const observer = new ResizeObserver(() => growUntilOverflow.current());
-    observer.observe(element);
-    return () => observer.disconnect();
+    return resize([element], () => growUntilOverflow.current());
   },
   // Stryker disable next-line ArrayDeclaration: any constant dependency list observes from mount on
   []);

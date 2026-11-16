@@ -13,18 +13,22 @@ const messages: Message[] = [
 ];
 
 // Like a ResizeObserver: each observer reports when a test says its element resized.
-const observed = new Map<Element, ResizeObserverCallback>();
-const resize = (element: Element) => act(() => observed.get(element)?.([], {} as ResizeObserver));
+const observed = new Map<Element, { callback: ResizeObserverCallback; instance: ResizeObserver }>();
+const resize = (element: Element) => act(() => {
+  const subscription = observed.get(element);
+  subscription?.callback([{ target: element, contentRect: element.getBoundingClientRect(), borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [] }], subscription.instance);
+});
 
 beforeEach(async () => {
   observed.clear();
   vi.stubGlobal('ResizeObserver', class {
     constructor(private readonly callback: ResizeObserverCallback) {}
     observe(element: Element) {
-      observed.set(element, this.callback);
+      observed.set(element, { callback: this.callback, instance: this });
     }
+    unobserve(element: Element) { if (observed.get(element)?.instance === this) observed.delete(element); }
     disconnect() {
-      for (const [element, callback] of observed) if (callback === this.callback) observed.delete(element);
+      for (const [element, subscription] of observed) if (subscription.instance === this) observed.delete(element);
     }
   });
   const formatted = await act(async () => {
@@ -189,9 +193,11 @@ it('shows the composer at rest, with nothing in it to use', () => {
   expect(within(composer).getByRole('button', { name: 'Add photos & files', hidden: true })).toBeInTheDocument();
 });
 
-it("ends the messages the composer's height plus 32px above the bottom, as the composer resizes", () => {
+it("keeps the composer's room while it resizes after another saved chat unmounts", () => {
   const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120);
+  const first = renderKept();
   const { content } = renderKept();
+  first.view.unmount();
   expect(content.style.paddingBottom).toBe('152px');
 
   height.mockReturnValue(160);

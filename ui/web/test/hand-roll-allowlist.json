@@ -40,7 +40,6 @@
   "app/kept-chat.tsx": {
     "reason": "use-stick-to-bottom defers resize following by a frame; saved history must stay at its end on every paint.",
     "counts": {
-      "ResizeObserver": 3,
       "scroll-write": 1
     }
   },
