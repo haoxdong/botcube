@@ -394,8 +394,8 @@ it("keeps the chat's version open and says why when Files can't say whether a ne
 });
 
 it.each([
-  ['doc', 'Doc', 'file-text'], ['slides', 'Slides', 'presentation'], ['sheet', 'Sheet', 'table-2'],
-  ['email', 'Email', 'mail'], [null, 'Page', 'app-window'],
+  ['doc', 'Doc', 'file-text'], ['slides', 'Slides', 'monitor'], ['sheet', 'Sheet', 'table-2'],
+  ['email', 'Email', 'mail'], [null, 'Page', 'globe'],
 ])('shows the %s Artifact with a type icon and Type word', async (type, label, icon) => {
   render(<Chat messages={reply(JSON.stringify({ ...PUBLISHED, type }))} />);
   const card = await screen.findByRole('button', { name: /Q3 revenue by month/ });

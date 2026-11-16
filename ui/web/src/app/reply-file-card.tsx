@@ -3,7 +3,8 @@
 import { Swap, Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "framer-motion";
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { fileExtension, isImageName } from '../components/file-type-icon';
 import { isFigureName } from '../components/plotly-figure';
@@ -11,6 +12,8 @@ import { FileFace, reason } from './composer-files';
 import { ReplyChart } from './reply-chart';
 import { ReplyImage } from './reply-image';
 import { useReplyFile } from './use-reply-file';
+
+export const ReplyFileSlot = createContext<HTMLElement | null | undefined>(undefined);
 
 /**
  * A file in Files that a reply links to on a line of its own, as a card that downloads it: its type's icon, its name
@@ -24,6 +27,7 @@ export function ReplyFileCard({
   path: string;
   children: ReactNode;
 }) {
+  const slot = useContext(ReplyFileSlot);
   const name = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1));
   const label = typeof children === 'string' ? children : name;
   // A Plotly figure shows as the live chart itself, as an embedded one does.
@@ -40,7 +44,9 @@ export function ReplyFileCard({
         <ReplyImage src={path} alt={label} />
       </span>
     );
-  return <FileCard key={path} path={path} name={name} label={label} />;
+  const card = <FileCard key={path} path={path} name={name} label={label} />;
+  if (slot === undefined) return card;
+  return slot === null ? null : createPortal(card, slot, path);
 }
 
 /**
