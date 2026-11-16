@@ -7,7 +7,7 @@ import { m as motionElement } from "framer-motion";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Blocks, MessageCircle, PanelsTopLeftIcon } from "lucide-react";
-import { ModelEffortPicker } from "./model-effort-picker";
+import { ModelSelector } from "./model-selector";
 import { ChatAlerts } from "./chat-alerts";
 import { UserMenu } from "./user-menu";
 import { useAgentWarmup } from "./agent-warmup";
@@ -342,7 +342,7 @@ export default function App({
                 onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)}
               >
                 <div className="chat-model-picker">
-                  <ModelEffortPicker {...picker} />
+                  <ModelSelector {...picker} />
                 </div>
               </ChatThread>
               </TurnStart.Provider>

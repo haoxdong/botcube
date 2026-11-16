@@ -480,7 +480,7 @@ const sideChatAction = async (title: string, action: 'Rename' | 'Delete') => {
   await userEvent.click(screen.getByRole('menuitem', { name: action }));
 };
 const welcome = () => document.querySelector('.welcome-screen');
-const picker = () => present(present(screen.getByText('Deep').closest('.chat-model-picker'), 'the model picker').parentElement, 'the model picker cell');
+const picker = () => present(present(document.querySelector('.chat-model-picker'), 'the model picker').parentElement, 'the model picker cell');
 const warmups = () => fetchMock.mock.calls
   .filter(([url]) => url === 'http://chat.test/warmup')
   .map(([url, init]) => {
@@ -605,7 +605,7 @@ describe('cartridge wiring', () => {
   it("offers the account's models and the harness's effort levels, starting from the first model and Medium", async () => {
     await renderPage();
 
-    const pill = present(screen.getByText('Deep').closest('button'), 'the model pill');
+    const pill = screen.getByRole('button', { name: /^Model Deep/ });
     expect(pill).toHaveTextContent(/^DeepMedium$/);
     expect(kit().properties).toEqual({ model: 'deep', effort: 'medium', sandbox: true });
 
@@ -3152,7 +3152,7 @@ describe('warming a chat as the user composes', () => {
     await openNewSideChat();
     await userEvent.click(present(document.querySelector<HTMLElement>('.mep-pill'), 'model picker'));
     const dropdown = within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'model dropdown'));
-    await userEvent.click(dropdown.getByText('Effort'));
+    await userEvent.click(dropdown.getByRole('button', { name: /^Effort / }));
     await userEvent.click(dropdown.getByText('High'));
     await settle();
 
@@ -7929,7 +7929,7 @@ describe('agent profile', () => {
 
 describe('model and effort picker', () => {
   const pill = () => document.querySelector('.mep-pill') as HTMLElement;
-  const dropdown = () => document.querySelector<HTMLElement>('.mep-dropdown');
+  const dropdown = () => screen.queryByRole('dialog', { name: 'Model and effort' });
   const openDropdown = () => present(dropdown(), 'the picker dropdown');
   const checked = () => [...openDropdown().querySelectorAll('.mep-check')].map((check) => check.closest('button')?.textContent);
 
@@ -8147,7 +8147,7 @@ describe('model and effort picker', () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(within(openDropdown()).getByRole('button', { name: /^Effort / }));
     expect([...openDropdown().querySelectorAll('.mep-option-name')].map((name) => name.textContent)).toEqual([
       'Effort',
       'Low',
@@ -8162,7 +8162,7 @@ describe('model and effort picker', () => {
     expect(pill()).toHaveTextContent(/^DeepHigh$/);
     expect(within(openDropdown()).getByText('Fast')).toBeInTheDocument();
 
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(within(openDropdown()).getByRole('button', { name: /^Effort / }));
     expect(checked()).toEqual(['High']);
     await userEvent.click(present(openDropdown().querySelector('.mep-back'), 'the back button'));
     expect(within(openDropdown()).getByText('Fast')).toBeInTheDocument();
@@ -8172,7 +8172,7 @@ describe('model and effort picker', () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(within(openDropdown()).getByRole('button', { name: /^Effort / }));
     await userEvent.click(present(openDropdown().querySelector('.mep-separator'), 'the separator'));
     expect(dropdown()).not.toBeNull();
     await userEvent.click(present(document.querySelector('.sidebar-recents'), 'the recents'));
@@ -8194,7 +8194,7 @@ describe('model and effort picker', () => {
     expect(pill()).toHaveFocus();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(within(openDropdown()).getByRole('button', { name: /^Effort / }));
     await userEvent.keyboard('{Escape}');
     expect(dropdown()).toBeNull();
     expect(pill()).toHaveFocus();
@@ -8204,7 +8204,7 @@ describe('model and effort picker', () => {
     await renderPage();
 
     await userEvent.click(pill());
-    await userEvent.click(within(openDropdown()).getByText('Effort'));
+    await userEvent.click(within(openDropdown()).getByRole('button', { name: /^Effort / }));
     await userEvent.click(pill());
     await userEvent.click(pill());
 
@@ -8504,7 +8504,7 @@ describe('the model and effort the user last picked', () => {
   async function pick(model: string, effort: string) {
     await userEvent.click(pill());
     await userEvent.click(within(dropdown()).getByText(model));
-    await userEvent.click(within(dropdown()).getByText('Effort'));
+    await userEvent.click(within(dropdown()).getByRole('button', { name: /^Effort / }));
     await userEvent.click(within(dropdown()).getByText(effort));
   }
 
@@ -9872,10 +9872,10 @@ describe('opening admission navigation regressions', () => {
     copilot.openingTurn.mockImplementation(() => new Promise<void>((resolve) => { finishOpening = resolve; }));
     await renderPage();
     await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
-    const otherProvider = screen.queryByRole('button', { name: 'Astra' });
+    const otherProvider = screen.queryByRole('radio', { name: 'Astra' });
     if (otherProvider !== null) await userEvent.click(otherProvider);
     expect(kit().properties.model).toBe('deep');
-    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Astra' })).toBeNull();
     await userEvent.keyboard('{Escape}');
     await act(async () => {
       agent().addMessage({ id: 'opening-reply', role: 'assistant', content: 'Hi Ada' });
@@ -9885,8 +9885,8 @@ describe('opening admission navigation regressions', () => {
     expect(kit().properties.model).toBe('deep');
     expect(copilot.runAgent).toHaveBeenCalledExactlyOnceWith({ agent: agent() });
     await userEvent.click(screen.getByRole('button', { name: /Model Deep/ }));
-    expect(screen.queryByRole('button', { name: 'Astra' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Fast' })).toBeVisible();
+    expect(screen.queryByRole('radio', { name: 'Astra' })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'Fast' })).toBeVisible();
   });
 });
 
