@@ -187,7 +187,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   const open = current ? chosen.open : phase === "working";
   const serverStart = useContext(TurnStart);
   useWorklogClock(running && advanceClock);
-  const timeline = timelineOf(question?.id ?? asked ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock });
+  const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock });
   const total = totalOf(timeline, took);
   const title = (
     <span className="worklog-title" data-live={running || undefined}>

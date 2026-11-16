@@ -54,6 +54,28 @@ afterEach(() => {
 });
 
 describe('a Worklog', () => {
+  it('keeps a days-old reasoning greeting out of the running question clock', () => {
+    vi.useFakeTimers({ now: START });
+    const greeting = [
+      { id: 'greeting-clock-thought', role: 'reasoning', content: 'Prepare a welcome', ...stamp(-259200, -259198) },
+      { id: 'greeting-clock-answer', role: 'assistant', content: 'Welcome', ...stamp(-259198, -259197) },
+    ];
+    const view = render(<Chat messages={greeting} running={false} />);
+    expect(head()).toHaveTextContent(/^Worked for 3s$/);
+
+    const messages = [...greeting,
+      { id: 'greeting-clock-question', role: 'user', content: 'Compare rates' },
+      { id: 'greeting-clock-running', role: 'reasoning', content: 'Compare the markets' },
+    ];
+    view.rerender(<Chat messages={messages} running />);
+    expect(heads()).toHaveLength(2);
+    expect(heads()[1]).toHaveTextContent(/^Working · 0s$/);
+    view.rerender(<Chat messages={[...messages]} running />);
+    act(() => { vi.advanceTimersByTime(4000); });
+    expect(heads()[1]).toHaveTextContent(/^Working · 4s$/);
+    expect(heads()[0]).toHaveTextContent(/^Worked for 3s$/);
+  });
+
   it('owns both the startup Worklog and its first populated Worklog', () => {
     const messages = turn('retained-startup');
     const view = render(<Chat messages={messages.slice(0, 1)} running />);
