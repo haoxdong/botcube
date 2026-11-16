@@ -1012,13 +1012,20 @@ describe("a Worklog's step times", () => {
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(29);
   });
 
-  it("shows a thought's reasoning in its sheet exactly as the provider returned it", async () => {
+  it("renders a thought heading in bold and copies the original provider Markdown", async () => {
     render(<StepsChat messages={timed('plain')} />);
     fireEvent.click(head());
     fireEvent.click(screen.getByRole('button', { name: /^Thought Planning the search/ }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Thought · 9s' });
-    expect(dialog.querySelector('.step-section-text')?.textContent).toBe('**Planning the search**\n\nMinutes first, then the price pull.');
+    const detail = dialog.querySelector('.step-section-text');
+    expect(detail?.querySelector('strong, [data-streamdown="strong"]')).toHaveTextContent('Planning the search');
+    expect(detail).toHaveTextContent('Minutes first, then the price pull.');
+    expect(detail).not.toHaveTextContent('**');
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy reasoning' }));
+    expect(write).toHaveBeenCalledWith('**Planning the search**\n\nMinutes first, then the price pull.');
+    write.mockRestore();
   });
 
   it('keeps its step times once a Turn sent in this tab finishes, before any replay stamps arrive', () => {
@@ -1171,5 +1178,6 @@ it('shows every summary part and opens the last multi-sentence thought intact', 
   expect(screen.getByRole('button', { name: /^Thought Check the tax branch/ })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /^Thought Verify the final result/ }));
   const dialog = await screen.findByRole('dialog');
-  expect(dialog.querySelector('.step-section-text')?.textContent).toBe(last);
+  expect(dialog.querySelector('.step-section-text')).toHaveTextContent('Verify the final result');
+  expect(dialog.querySelector('.step-section-text')).toHaveTextContent('The second part belongs to the next item. Its final sentence must survive replay.');
 });

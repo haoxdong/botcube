@@ -11,10 +11,11 @@ import { useEffect, useState, type CSSProperties } from "react";
 
 import { Sheet } from "../components/ui/sheet";
 import { CodeWords } from "./code-words";
+import KeptMarkdown from "./kept-markdown";
 import { useIsPhone } from "./phone-query";
 import { SHIKI_THEMES } from "./shiki-themes";
 
-type Section = { label: string; text: string; look: "prose" | "shell" | "code"; badge?: string | undefined };
+type Section = { label: string; text: string; look: "prose" | "markdown" | "shell" | "code"; badge?: string | undefined };
 
 const SNAP_POINTS = [0.6, 1];
 
@@ -41,13 +42,12 @@ type StepData = {
   prose: boolean | undefined;
 };
 
-/** A tool call's sheet, or a thought's: its reasoning exactly as the provider returned it, in sans. */
 type StepSheetProps = (StepData | { summary: string }) & { open: boolean; onClose: () => void; title: string };
 
 export function StepSheet(props: StepSheetProps) {
   const { open, onClose, title } = props;
   const phone = useIsPhone();
-  const sections: Section[] = "summary" in props ? [{ label: "Reasoning", text: props.summary, look: "prose" }] : sectionsOf(props);
+  const sections: Section[] = "summary" in props ? [{ label: "Reasoning", text: props.summary, look: "markdown" }] : sectionsOf(props);
   const body = (
     <div className="step-sheet-body">
       {sections.map((section) => <StepSection key={section.label} {...section} />)}
@@ -82,7 +82,11 @@ function StepSection({ label, text, look, badge }: Section) {
         <Presence>{badge && <motionElement.span {...presenceMotion} className="step-section-exit">{badge}</motionElement.span>}</Presence>
         <Copy label={label} text={text} />
       </div>
-      <pre className="step-section-text" data-prose={look === "prose" || undefined}><Swap as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Swap></pre>
+      {look === "markdown" ? (
+        <div className="step-section-text" data-prose><KeptMarkdown text={text} /></div>
+      ) : (
+        <pre className="step-section-text" data-prose={look === "prose" || undefined}><Swap as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Swap></pre>
+      )}
     </section>
   );
 }
