@@ -1421,9 +1421,6 @@ def ping() -> JSONResponse:
     return JSONResponse({'status': 'Healthy'})
 
 
-# Runtime V2 restores each microVM from a snapshot taken at the first healthy /ping, and pays heavily for code the
-# snapshot never ran (2026-11-02: a 10.8 s graph build). So with BOTCUBE_SNAPSHOT_PRIME=1 the first agent build runs
-# before serving, on the plan model, a placeholder relay, synthetic ids and a temporary workspace, then is dropped.
 _SNAPSHOT_MODEL = f'{PLAN_MODEL_PREFIX}gpt-6.1-sol'
 _SNAPSHOT_ID = 'snapshot-prime'
 
@@ -1459,8 +1456,7 @@ def main() -> None:
 
     # `openai.resources` leaves out the Responses resource the plan model's first request imports.
     importlib.import_module('openai.resources.responses')
-    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
-        restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
+    restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     if _cartridge is None:
@@ -1485,8 +1481,7 @@ def main() -> None:
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })
-    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
-        _prime_snapshot()
+    _prime_snapshot()
     process_observation.name_spans(trace.get_tracer_provider())
     process_observation.mark('serve_handoff')
     uvicorn.run(app, host=os.getenv('BOTCUBE_HARNESS_HOST', '0.0.0.0'), port=int(os.getenv('PORT', '8080')))

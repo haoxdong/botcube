@@ -121,17 +121,16 @@ test('the Session API decoder is deployed before a runtime can write its snapsho
   });
 });
 
-test('checkpoint compression stays off until the decoder rollout is verified', () => {
+test('runtime configuration retires the compression parameter and snapshot priming flags', () => {
   const synthesized = template();
 
-  synthesized.hasParameter('CheckpointCompression', {
-    Type: 'String',
-    Default: '0',
-    AllowedValues: ['0', '1'],
-  });
-  synthesized.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
-    EnvironmentVariables: Match.objectLike({ BOTCUBE_COMPRESS_CHECKPOINTS: { Ref: 'CheckpointCompression' } }),
-  });
+  expect(synthesized.toJSON().Parameters ?? {}).not.toHaveProperty('CheckpointCompression');
+  const runtimes = synthesized.findResources('AWS::BedrockAgentCore::Runtime');
+  expect(Object.keys(runtimes).length).toBeGreaterThan(0);
+  for (const runtime of Object.values(runtimes)) {
+    expect(runtime.Properties.EnvironmentVariables).not.toHaveProperty('BOTCUBE_COMPRESS_CHECKPOINTS');
+    expect(runtime.Properties.EnvironmentVariables).not.toHaveProperty('BOTCUBE_SNAPSHOT_PRIME');
+  }
 });
 
 test('a purge fits in one invocation at the per-Session delete rate', () => {

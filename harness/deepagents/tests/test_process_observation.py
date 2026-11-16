@@ -35,8 +35,8 @@ def test_process_observations_join_handoff_health_and_first_handler_without_payl
 
         serving.configure_harness_definition(HarnessDefinition(
             skills=[], agent_name='diagnostic-fixture', system_prompt='',
-            prepare_invocation=forbidden, prepare_root=forbidden, build_shell_env=forbidden,
-            session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
+            prepare_invocation=forbidden, prepare_root=lambda root: None, build_shell_env=lambda environment: {},
+            session_id_env_var='TEST_SESSION_ID', environment_cache_key=lambda environment: (),
         ))
         logging.basicConfig(level=logging.INFO, format='%(message)s')
 
