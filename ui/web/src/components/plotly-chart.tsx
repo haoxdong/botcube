@@ -66,7 +66,35 @@ function afterChartDrag(element: HTMLElement, purge: () => void): () => void {
   };
 }
 
-export function PlotlyChart({ text, title }: { text: string; title: string }) {
+/** Plotly's own height for a figure that names none. */
+const PLOTLY_HEIGHT = 450;
+
+/**
+ * Draws the chart at `drawWidth` (or the width the figure names) and its own height, then scales it down to the
+ * frame's width, as an image would be; plotly.js maps hover and drag through the CSS scale itself. The frame takes
+ * the scaled height, so the text after the chart sits right under it.
+ */
+function scaleToFrame(element: HTMLElement, frame: HTMLElement, figure: Figure, drawWidth: number, signal: AbortSignal) {
+  const width = typeof figure.layout.width === 'number' ? figure.layout.width : drawWidth;
+  const height = typeof figure.layout.height === 'number' ? figure.layout.height : PLOTLY_HEIGHT;
+  element.style.width = `${width}px`;
+  element.style.height = `${height}px`;
+  const fit = () => {
+    const scale = frame.clientWidth / width;
+    element.style.transform = `scale(${scale})`;
+    frame.style.height = `${height * scale}px`;
+  };
+  fit();
+  const observer = new ResizeObserver(fit);
+  observer.observe(frame);
+  signal.addEventListener('abort', () => observer.disconnect());
+}
+
+/**
+ * A Plotly figure as a live chart. With `drawWidth`, Plotly lays the figure out at that width and the chart is scaled
+ * to fit its frame (scaleToFrame); without it, Plotly lays it out at the frame's own size.
+ */
+export function PlotlyChart({ text, title, drawWidth }: { text: string; title: string; drawWidth?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
@@ -80,7 +108,10 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
     const dispose = afterChartDrag(element, () => drawn?.purge(element));
     setFailure(null);
     const drawing = (async () => {
-      drawn = await draw(element, parseFigure(text));
+      const figure = parseFigure(text);
+      if (drawWidth !== undefined && host.parentElement !== null)
+        scaleToFrame(element, host.parentElement, figure, drawWidth, gone.signal);
+      drawn = await draw(element, figure);
     })().catch((cause: unknown) => {
       if (!gone.signal.aborted) setFailure(cause instanceof Error ? cause.message : String(cause));
     });
@@ -89,7 +120,7 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
       element.remove();
       void drawing.then(dispose);
     };
-  }, [text]);
+  }, [text, drawWidth]);
   if (failure !== null)
     return (
       <span className="plotly-chart-failed">
@@ -98,7 +129,7 @@ export function PlotlyChart({ text, title }: { text: string; title: string }) {
       </span>
     );
   return (
-    <div className="plotly-chart-frame" role="figure" aria-label={title}>
+    <div className="plotly-chart-frame" role="figure" aria-label={title} data-scaled={drawWidth === undefined ? undefined : ''}>
       <div ref={box} style={{ display: 'contents' }} />
     </div>
   );

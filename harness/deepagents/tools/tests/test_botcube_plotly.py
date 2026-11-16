@@ -137,13 +137,15 @@ figure.write_json({str(chart)!r})
     layout = json.loads(chart.read_text())['layout']
     theme = layout['template']['layout']
     assert theme['legend']['yref'] == 'container'
-    assert theme['legend']['y'] == 0.97
+    assert theme['legend']['y'] == 0
+    assert theme['legend']['yanchor'] == 'bottom'
     assert 'maxheight' not in theme['legend']
     assert 'entrywidth' not in theme['legend']
     assert theme['legend']['orientation'] == 'h'
     assert theme['shapedefaults']['line']['width'] > 0
     assert theme['shapedefaults']['opacity'] == 1
     assert len(layout['shapes']) == 6
+    assert theme['title']['subtitle']['font']['size'] == 13
     for key in ['xaxis', 'xaxis2', 'xaxis3', 'yaxis', 'yaxis2', 'yaxis3']:
         assert 'automargin' not in layout[key]
         axis_theme = theme['xaxis' if key.startswith('x') else 'yaxis']

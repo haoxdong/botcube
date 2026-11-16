@@ -278,6 +278,16 @@
   width: 100%;
 }
 
+/* A chart drawn at a set width and scaled to its frame (PlotlyChart's drawWidth): its frame clips the unscaled box. */
+.plotly-chart-frame[data-scaled] {
+  overflow: hidden;
+}
+
+.plotly-chart-frame[data-scaled] .plotly-chart {
+  flex: none;
+  transform-origin: 0 0;
+}
+
 /* A quiet box in the chart's place until plotly.js draws it (plotly marks the element js-plotly-plot). */
 .plotly-chart:not(.js-plotly-plot) {
   border-radius: var(--radius-lg);

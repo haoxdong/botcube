@@ -30,11 +30,11 @@ def register() -> None:
         'paper_bgcolor': 'rgba(0,0,0,0)',
         'plot_bgcolor': 'rgba(0,0,0,0)',
         'legend': {
-            'orientation': 'h', 'yref': 'container', 'y': 0.97, 'yanchor': 'top',
+            'orientation': 'h', 'yref': 'container', 'y': 0, 'yanchor': 'bottom',
             'x': 0, 'xanchor': 'left',
             'borderwidth': 16, 'bordercolor': 'rgba(0,0,0,0)',
         },
-        'title': {'automargin': True, 'y': 1, 'yanchor': 'top', 'font': {'size': 13}},
+        'title': {'automargin': True, 'y': 1, 'yanchor': 'top', 'font': {'size': 13}, 'subtitle': {'font': {'size': 13}}},
         'shapedefaults': {'line': {'width': 2}, 'opacity': 1},
         'xaxis': axis,
         'yaxis': axis,

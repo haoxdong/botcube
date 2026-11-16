@@ -19,6 +19,12 @@ export function ReplyVisual(props: ComponentProps<'img'>) {
 }
 
 /**
+ * The width a reply's chart is drawn at before it is scaled to the bubble: about twice a phone bubble's 290px, and
+ * 1.25 times a desktop bubble's 573px, so the chart's text sits under the reply's own.
+ */
+export const replyChartDrawWidth = () => (window.matchMedia('(max-width: 640px)').matches ? 573 : 720);
+
+/**
  * One of the agent's `.plotly.json` files as a live chart across the reply's width, its box there from the first frame
  * at a chart's height; it fetches the file from its short-lived URL in Files.
  */
@@ -48,7 +54,7 @@ export function ReplyChart({ path, label }: { path: string; label: string }) {
         {failure !== null ? (
           <span className="reply-image-error" role="alert">{`${label} could not load: ${failure}`}</span>
         ) : text !== null && 'text' in text ? (
-          <PlotlyChart key={text.text} text={text.text} title={label} />
+          <PlotlyChart key={text.text} text={text.text} title={label} drawWidth={replyChartDrawWidth()} />
         ) : null}
       </Swap>
     </span>
