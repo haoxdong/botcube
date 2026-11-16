@@ -111,11 +111,12 @@ class Cloudflare:
             raise ProviderError('Refusing to touch an unowned Worker route')
         return routes[0] if routes else None
 
-    def upload_parked_worker(self, account: str, origins: list[str], wake_url: str):
+    def upload_parked_worker(self, account: str, origins: list[str], wake_url: str, documents: Mapping[str, object]):
         boundary = uuid.uuid4().hex
         metadata = {'main_module': PARKED_WORKER.name, 'compatibility_date': '2026-09-01',
                     'bindings': [{'type': 'plain_text', 'name': 'ALLOWED_ORIGINS', 'text': json.dumps(origins)},
-                                 {'type': 'plain_text', 'name': 'WAKE_URL', 'text': wake_url}]}
+                                 {'type': 'plain_text', 'name': 'WAKE_URL', 'text': wake_url},
+                                 {'type': 'plain_text', 'name': 'OIDC_DOCUMENTS', 'text': json.dumps(documents)}]}
         parts = [('metadata', '', 'application/json', json.dumps(metadata)),
                  (PARKED_WORKER.name, f'; filename="{PARKED_WORKER.name}"', 'application/javascript+module', PARKED_WORKER.read_text())]
         body = ''.join(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"{filename}\r\nContent-Type: {kind}\r\n\r\n{content}\r\n'
@@ -185,8 +186,30 @@ def delete_parked_worker(cf: Cloudflare, zone: str, account: str, hostnames: lis
             raise
 
 
+def issuer_documents(keys, issuer):
+    if not isinstance(keys, list) or not keys:
+        raise ProviderError('Turn identity keys must be a nonempty key list')
+    public = []
+    for key in keys:
+        if key.get('kty') != 'EC' or key.get('crv') != 'P-256' or not all(isinstance(key.get(field), str) and key[field] for field in ('x', 'y', 'd', 'kid')):
+            raise ProviderError('Turn identity keys must be private P-256 JWKs with a kid')
+        public.append({field: key[field] for field in ('kty', 'crv', 'x', 'y', 'kid')} | {'alg': 'ES256', 'use': 'sig'})
+    if len({key['kid'] for key in public}) != len(public):
+        raise ProviderError('Turn identity keys repeat a kid')
+    return {
+        '/.well-known/openid-configuration': {
+            'issuer': issuer, 'jwks_uri': issuer + '/.well-known/jwks.json',
+            'response_types_supported': ['id_token'], 'subject_types_supported': ['public'],
+            'id_token_signing_alg_values_supported': ['ES256'],
+            'claims_supported': ['iss', 'sub', 'aud', 'iat', 'exp', 'jti', 'https://aws.amazon.com/tags'],
+        },
+        '/.well-known/jwks.json': {'keys': public},
+    }
+
+
 def deploy_parked_worker(cf: Cloudflare, zone: str, account: str, props: Mapping[str, Any]):
-    cf.upload_parked_worker(account, props['Origins'], props['WakeUrl'])
+    documents = issuer_documents(json.loads(cf.secrets.get_secret_value(SecretId=props['TurnIdentityKeysSecret'])['SecretString']), props['Issuer'])
+    cf.upload_parked_worker(account, props['Origins'], props['WakeUrl'], documents)
     for hostname in props['Hostnames']:
         if not cf.owned_route(zone, hostname):
             cf.call(zone + '/workers/routes', 'POST', {'pattern': hostname + '/*', 'script': PARKED_SCRIPT})

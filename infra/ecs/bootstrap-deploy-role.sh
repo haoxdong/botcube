@@ -13,7 +13,7 @@ if [[ "$#" -ne 0 ]]; then
   exit 2
 fi
 
-read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE OIDC_SUBJECT POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK < <(node -e '
+read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SECRET ORIGIN_TOKEN_SECRET ALERTS_TOPIC MEMORY_NAME PARK_STATE OIDC_SUBJECT POLICY_NAME PARKING_FUNCTION SESSION_API RUNTIME_ROLE EGRESS_STACK ORIGIN_STACK HEALTH_STACK TURN_IDENTITY_SECRET < <(node -e '
   const identity = require(process.argv[1]);
   process.stdout.write([
     identity.aws.account,
@@ -34,6 +34,7 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     identity.aws.ecs.privateEgress.stackName,
     identity.aws.ecs.previewOriginStackName,
     identity.aws.ecs.apiHealth.stackName,
+    identity.aws.ecs.chatService.turnIdentityKeysSecretName,
   ].join(" ") + "\n");
 ' "${CARTRIDGE_DEPLOY_ROOT:?}/identity.json")
 
@@ -239,6 +240,11 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
+      "Action": "states:DescribeExecution",
+      "Resource": "arn:aws:states:$AWS_REGION:$AWS_ACCOUNT_ID:execution:$PARKING_FUNCTION-transition:*"
+    },
+    {
+      "Effect": "Allow",
       "Action": "lambda:InvokeFunction",
       "Resource": "arn:aws:lambda:$AWS_REGION:$AWS_ACCOUNT_ID:function:$PARKING_FUNCTION"
     },
@@ -325,6 +331,11 @@ cat > "$ROLE_POLICY" <<EOF
       "Effect": "Allow",
       "Action": ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DescribeSecret"],
       "Resource": "arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:$ORIGIN_TOKEN_SECRET-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:DescribeSecret",
+      "Resource": "arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:$TURN_IDENTITY_SECRET-*"
     },
     {
       "Effect": "Allow",

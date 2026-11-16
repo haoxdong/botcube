@@ -8,7 +8,7 @@ import pytest
 from deploy_script_support import DEPLOY_ECS
 
 
-@pytest.mark.parametrize('state', ['live', 'parked'])
+@pytest.mark.parametrize('state', ['live', 'parked', 'egress', 'credential'])
 def test_deploy_workflow_reads_stored_state(state: str, capsys: pytest.CaptureFixture[str]) -> None:
     ssm = Mock()
     ssm.get_parameter.return_value = {'Parameter': {'Value': state}}
@@ -24,7 +24,7 @@ def test_deploy_workflow_rejects_invalid_stored_state() -> None:
     ssm.get_parameter.return_value = {'Parameter': {'Value': 'invalid'}}
     with patch.object(sys, 'argv', ['transition.py', 'state']), \
             patch.object(boto3, 'client', return_value=ssm), \
-            pytest.raises(SystemExit, match='must be live or parked'):
+            pytest.raises(SystemExit, match='must be parked, egress, credential or live'):
         runpy.run_path(str(DEPLOY_ECS / 'transition.py'), run_name='__main__')
     ssm.put_parameter.assert_not_called()
 

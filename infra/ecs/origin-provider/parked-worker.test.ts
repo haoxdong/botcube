@@ -5,9 +5,19 @@ import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- the Worker is plain JavaScript uploaded as-is by handler.py.
 import worker from './parked-worker.mjs';
 
-const env = { ALLOWED_ORIGINS: JSON.stringify(['https://example.com', 'http://localhost:3001']), WAKE_URL: 'http://127.0.0.1:9/' };
+const documents = { '/.well-known/openid-configuration': { issuer: 'https://api.example.com' }, '/.well-known/jwks.json': { keys: [{ kty: 'EC', kid: 'rotation' }] } };
+const env = { OIDC_DOCUMENTS: JSON.stringify(documents), ALLOWED_ORIGINS: JSON.stringify(['https://example.com', 'http://localhost:3001']), WAKE_URL: 'http://127.0.0.1:9/' };
 
 describe('parked Worker', () => {
+  it.each(Object.entries(documents))('publishes %s while Chat is absent', async (path, document) => {
+    const response = await worker.fetch(new Request(`https://api.example.com${path}`), env);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(document);
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
+    const refused = await worker.fetch(new Request(`https://api.example.com${path}`, { method: 'POST' }), env);
+    expect(refused.status).toBe(503);
+  });
+
   it('answers every request with the parked 503 readable by the web UI', async () => {
     const response = await worker.fetch(new Request('https://api.example.com/account/session', {
       headers: { Origin: 'https://example.com' },
@@ -78,4 +88,11 @@ describe('parked Worker', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ status: 'parked' });
   });
+});
+
+it('serves public-key cache headers without a body for HEAD', async () => {
+  const response = await worker.fetch(new Request('https://api.example.com/.well-known/jwks.json', { method: 'HEAD' }), env);
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe('');
+  expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
 });

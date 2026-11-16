@@ -74,8 +74,12 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
     ...wakePorts({ dynamodb, fetch }),
     async state() {
       const { Parameter } = await ssm.send(new GetParameterCommand({ Name: env('PARK_STATE_PARAMETER') }));
-      if (Parameter?.Value !== 'live' && Parameter?.Value !== 'parked') throw new Error(`Park state is ${JSON.stringify(Parameter?.Value)}, not live or parked`);
+      if (!['parked', 'egress', 'credential', 'live'].includes(Parameter?.Value ?? '')) throw new Error(`Park state is ${JSON.stringify(Parameter?.Value)}, not a production mode`);
       return (await invoke({ op: 'state', stored: Parameter.Value })).state;
+    },
+    async mode(/** @type {string | undefined} */ mode) {
+      if (!['parked', 'egress', 'credential', 'live'].includes(mode ?? '')) throw new Error('Invalid production mode');
+      return invoke({ mode, op: 'start' });
     },
     async originClaimed() {
       try {

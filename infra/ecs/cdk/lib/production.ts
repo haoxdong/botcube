@@ -40,6 +40,7 @@ export const CHAT_SERVICE_ENV = {
 interface OriginInput {
   cloudflareCidrs: string[];
   clientVersion: string;
+  turnIdentityKeysVersion?: string;
   runtimeArn: string;
 }
 
@@ -258,6 +259,8 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     vpcId: identity.aws.credentialService.vpcId,
     publicSubnets: identity.aws.ecs.publicSubnets,
     cloudflareCidrs: input.cloudflareCidrs, clientVersion: input.clientVersion,
+    turnIdentityKeysSecretName: identity.aws.ecs.chatService.turnIdentityKeysSecretName,
+    ...(input.turnIdentityKeysVersion ? { turnIdentityKeysVersion: input.turnIdentityKeysVersion } : {}),
     tokenSecretName: identity.aws.ecs.originTokenSecretName,
     originOwnership: identity.aws.ecs.originOwnership,
     parkedWorkerName: identity.aws.ecs.parkedWorkerName,

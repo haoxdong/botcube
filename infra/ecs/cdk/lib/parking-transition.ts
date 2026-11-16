@@ -17,7 +17,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     functionName: `${ecs.parking.functionName}-transition`,
     runtime: lambda.Runtime.PYTHON_3_12, handler: 'parking_transition.handler',
     timeout: Duration.minutes(15), memorySize: 512,
-    environment: { PYTHONPATH: '/var/task/ecs', CARTRIDGE_DEPLOY_ROOT: '/var/task/cartridge', CARTRIDGE_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
+    environment: { PYTHONPATH: '/var/task/ecs', CARTRIDGE_DEPLOY_ROOT: '/var/task/cartridge', CARTRIDGE_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
       image: lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
@@ -38,7 +38,8 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     stackNames.map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` })));
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `cdk-hnb659fds-cfn-exec-role-${stack.account}-${stack.region}` })]);
   allow(['ssm:GetParameters'], [stack.formatArn({ service: 'ssm', resource: 'parameter/cdk-bootstrap/hnb659fds/version' })]);
-  allow(['ssm:GetParameter', 'ssm:PutParameter'], [stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` })]);
+  allow(['ssm:GetParameter', 'ssm:PutParameter'], [stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` }),
+    stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}/backstop` })]);
   allow(['secretsmanager:GetSecretValue'], [stack.formatArn({ service: 'secretsmanager', resource: `secret:${ecs.originTokenSecretName}-*` })]);
   allow(['ec2:DescribeRouteTables', 'ec2:DescribeNatGateways', 'ec2:DescribeAddresses',
     'elasticloadbalancing:DescribeTargetHealth', 'cloudwatch:DescribeAlarms', 'cloudwatch:GetMetricStatistics', 'sns:ListSubscriptionsByTopic',
@@ -66,16 +67,28 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     .when(sfn.Condition.booleanEquals('$.waiting', false), advance)
     .otherwise(wait));
   wait.next(advance);
-  allow(['states:StartExecution', 'states:ListExecutions'], [stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` })]);
+  allow(['states:StartExecution', 'states:ListExecutions'], ['transition', 'backstop'].map(name => stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-${name}` })));
   const machine = new sfn.StateMachine(stack, 'TransitionStateMachine', {
     stateMachineName: `${ecs.parking.functionName}-transition`,
     definitionBody: sfn.DefinitionBody.fromChainable(advance), timeout: Duration.hours(2),
   });
+  const expire = new tasks.LambdaInvoke(stack, 'ExpirePartialMode', { lambdaFunction: worker, payloadResponseOnly: true });
+  expire.addRetry({ errors: ['TransientServiceError'], interval: Duration.minutes(1), backoffRate: 1, maxAttempts: 120 });
+  const backstop = new sfn.StateMachine(stack, 'PartialModeBackstop', {
+    stateMachineName: `${ecs.parking.functionName}-backstop`,
+    definitionBody: sfn.DefinitionBody.fromChainable(new sfn.Wait(stack, 'PartialModeDeadline', {
+      time: sfn.WaitTime.duration(Duration.hours(1)),
+    }).next(expire)), timeout: Duration.hours(4),
+  });
   const alerts = sns.Topic.fromTopicArn(stack, 'TransitionAlerts', stack.formatArn({ service: 'sns', resource: ecs.alertsTopicName }));
-  for (const metric of [machine.metricFailed(), machine.metricTimedOut(), machine.metricAborted()]) {
+  for (const [metric, backup] of [
+    [machine.metricFailed(), backstop.metricFailed()],
+    [machine.metricTimedOut(), backstop.metricTimedOut()],
+    [machine.metricAborted(), backstop.metricAborted()],
+  ] as const) {
     const alarm = new cloudwatch.Alarm(stack, `Transition${metric.metricName}`, {
-      metric: metric.with({ period: Duration.minutes(1), statistic: 'Sum' }), threshold: 1, evaluationPeriods: 1,
-      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      metric: new cloudwatch.MathExpression({ expression: 'primary + backup', usingMetrics: { primary: metric, backup }, period: Duration.minutes(1) }),
+      threshold: 1, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
     alarm.addAlarmAction(new actions.SnsAction(alerts));
   }

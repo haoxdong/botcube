@@ -101,6 +101,23 @@ def parked_failures(facts: Mapping[str, Any], expected: Mapping[str, str | None]
     return failures + parked_edge_failures(facts)
 
 
+def partial_failures(facts: Mapping[str, Any], expected: Mapping[str, str | None], mode: str):
+    without_network = {**facts, 'natResources': [], 'defaultRoutes': [], 'natGateways': []}
+    services = dict(facts['services'])
+    if mode == 'credential':
+        services.pop('credential-service')
+    without_network['services'] = services
+    failures = parked_failures(without_network, expected)
+    nat = expected['natGatewayId']
+    if not nat or facts['defaultRoutes'] != [{'NatGatewayId': nat, 'State': 'active'}]:
+        failures.append('Egress mode has no active production NAT route')
+    if facts['natGateways'] != [{'NatGatewayId': nat, 'State': 'available', 'AllocationIds': [expected['allocationId']]}]:
+        failures.append('Production NAT is not available on the retained allocation')
+    if mode == 'credential':
+        failures += service_failures({'credential-service': facts['services']['credential-service']}, 1, 1, 'steady at 1 task')
+    return failures
+
+
 def health_failures(health: Mapping[str, list[str]]) -> list[str]:
     failures: list[str] = []
     for name, states in health.items():
@@ -284,7 +301,7 @@ def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, outputs: Mapping[str, 
 
 def main(argv: list[str]):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('state', choices=['parked', 'live'])
+    parser.add_argument('state', choices=['parked', 'egress', 'credential', 'live'])
     parser.add_argument('outputs', help='cdk deploy --outputs-file')
     args = parser.parse_args(argv)
     outputs = json.loads(Path(args.outputs).read_text())
@@ -301,13 +318,13 @@ def main(argv: list[str]):
         'defaultRoutes': routes, 'natGateways': gateways, 'address': address_facts(ec2),
         'services': service_facts(ecs), 'reaper': events.describe_rule(Name=origin['ReaperRuleName'])['State'],
         'healthCheckDisabled': health_check_disabled, 'alarmActions': alarm_actions,
-        'responses': response_facts(args.state == 'parked'),
+        'responses': response_facts(args.state != 'live'),
     }
     expected = {'publicIp': EGRESS['publicIp'], 'allocationId': egress['PrivateNatAllocationId'],
                 'natGatewayId': egress.get('PrivateNatGatewayId')}
-    if args.state == 'parked':
+    if args.state != 'live':
         facts['dns'] = dns_facts()
-        failures = parked_failures(facts, expected)
+        failures = parked_failures(facts, expected) if args.state == 'parked' else partial_failures(facts, expected, args.state)
     else:
         facts['health'] = health_facts(ecs, elb, origin)
         facts['egressIp'] = egress_ip(ecs, logs, origin)

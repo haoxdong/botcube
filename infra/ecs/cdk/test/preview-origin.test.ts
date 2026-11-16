@@ -187,7 +187,7 @@ test('the provider bundle ships the handler and parked Worker without tests or b
       fs.writeFileSync(path.join(dir, file), file);
     }
   };
-  write(path.join(root, 'origin-provider'), [...bundled, 'test_handler.py', 'parked-worker.test.ts', '__pycache__/handler.pyc']);
+  write(path.join(root, 'origin-provider'), [...bundled, 'test_handler.py', 'test_parked_worker.py', 'parked-worker.test.ts', '__pycache__/handler.pyc']);
   write(path.join(root, 'expected'), bundled);
   fs.mkdirSync(path.dirname(path.join(root, props.caPath)), { recursive: true });
   fs.copyFileSync(path.join(props.repositoryRoot, props.caPath), path.join(root, props.caPath));

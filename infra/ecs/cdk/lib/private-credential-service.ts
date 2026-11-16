@@ -194,7 +194,7 @@ export class PrivateCredentialService extends Construct {
     const service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
-      cluster: props.cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'credential-service', desiredCount: parkState(this).number(props.desiredCount ?? 1, 0),
+      cluster: props.cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'credential-service', desiredCount: parkState(this).credentialNumber(props.desiredCount ?? 1, 0),
       ...(props.subnets ? { vpcSubnets: props.subnets } : {}),
       assignPublicIp: false,
       securityGroups: [network, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,

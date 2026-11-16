@@ -42,6 +42,8 @@ export interface PreviewOriginProps extends StackProps {
   publicSubnets: { id: string; availabilityZone: string }[];
   cloudflareCidrs: string[];
   clientVersion: string;
+  turnIdentityKeysSecretName?: string;
+  turnIdentityKeysVersion?: string;
   tokenSecretName: string;
   clientSecretName: string;
   caPath: string;
@@ -99,7 +101,7 @@ export class PreviewOriginStack extends Stack {
     const token = secrets.Secret.fromSecretNameV2(this, 'CloudflareToken', props.tokenSecretName);
     const client = secrets.Secret.fromSecretNameV2(this, 'OriginClient', props.clientSecretName);
     const providerCode = lambda.Code.fromAsset(props.originProviderPath, {
-      exclude: ['__pycache__', 'test_handler.py', 'parked-worker.test.ts'],
+      exclude: ['__pycache__', 'test_*.py', 'parked-worker.test.ts'],
     });
     const providerHandler = (handler: 'on_event' | 'is_complete') => {
       const names = props.providerNames?.[handler];
@@ -111,6 +113,7 @@ export class PreviewOriginStack extends Stack {
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
+      if (props.turnIdentityKeysSecretName) secrets.Secret.fromSecretNameV2(this, `TurnIdentityKeys-${handler}`, props.turnIdentityKeysSecretName).grantRead(fn);
       token.grantRead(fn);
       client.grantRead(fn);
       fn.addToRolePolicy(new iam.PolicyStatement({ actions: ['acm:RequestCertificate'], resources: ['*'] }));
@@ -143,7 +146,7 @@ export class PreviewOriginStack extends Stack {
     {
       // Answers every request with 503 {"status":"parked"}; unpark deletes it after the ALB serves again.
       const worker = resource('ParkedWorker', {
-        Kind: 'ParkedWorker', Hostnames: [props.production.hostname, props.hostname], Origins: props.corsOrigins, WakeUrl: props.wakeUrl,
+        Kind: 'ParkedWorker', Issuer: `https://${props.production.hostname}`, TurnIdentityKeysSecret: props.turnIdentityKeysSecretName, KeyVersion: props.turnIdentityKeysVersion, Hostnames: [props.production.hostname, props.hostname], Origins: props.corsOrigins, WakeUrl: props.wakeUrl,
         Script: createHash('sha256').update(fs.readFileSync(path.join(props.originProviderPath, 'parked-worker.mjs'))).digest('hex'),
       });
       (worker.node.defaultChild as CfnResource).cfnOptions.condition = state.parkedCondition;

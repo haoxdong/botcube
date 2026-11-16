@@ -5,22 +5,28 @@ import type { Construct } from 'constructs';
 
 export function parkState(scope: Construct) {
   const stack = Stack.of(scope);
-  const parameter = stack.node.tryFindChild('ParkState') ?? new CfnParameter(stack, 'ParkState', {
-    type: 'String', allowedValues: ['true', 'false'], description: 'Production is Parked when true, Live when false.',
+  const parameter = stack.node.tryFindChild('ProductionMode') ?? new CfnParameter(stack, 'ProductionMode', {
+    type: 'String', allowedValues: ['parked', 'egress', 'credential', 'live'], description: 'Production resource mode.',
   });
-  if (!(parameter instanceof CfnParameter)) throw new Error('ParkState must be a CloudFormation parameter');
-  parameter.overrideLogicalId('parked');
-  const parked = stack.node.tryFindChild('Parked') ?? new CfnCondition(stack, 'Parked', { expression: Fn.conditionEquals(parameter.valueAsString, 'true') });
-  if (!(parked instanceof CfnCondition)) throw new Error('Invalid parking condition');
+  if (!(parameter instanceof CfnParameter)) throw new Error('ProductionMode must be a CloudFormation parameter');
+  parameter.overrideLogicalId('productionMode');
+  const condition = (name: string, expression: import('aws-cdk-lib').ICfnConditionExpression) => {
+    const found = stack.node.tryFindChild(name) ?? new CfnCondition(stack, name, { expression });
+    if (!(found instanceof CfnCondition)) throw new Error(`Invalid ${name} condition`);
+    return found;
+  };
+  const live = condition('Live', Fn.conditionEquals(parameter.valueAsString, 'live'));
+  const parked = condition('Parked', Fn.conditionNot(live));
+  const egress = condition('EgressEnabled', Fn.conditionNot(Fn.conditionEquals(parameter.valueAsString, 'parked')));
+  const credential = condition('CredentialEnabled', Fn.conditionOr(
+    Fn.conditionEquals(parameter.valueAsString, 'credential'), Fn.conditionEquals(parameter.valueAsString, 'live')));
   return {
     parkedCondition: parked,
-    get liveCondition() {
-      const live = stack.node.tryFindChild('Live') ?? new CfnCondition(stack, 'Live', { expression: Fn.conditionNot(parked) });
-      if (!(live instanceof CfnCondition)) throw new Error('Invalid Live condition');
-      return live;
-    },
-    number: (whenLive: number, whenParked: number) => Token.asNumber(Fn.conditionIf(parked.logicalId, whenParked, whenLive)),
-    string: (whenLive: string, whenParked: string) => Token.asString(Fn.conditionIf(parked.logicalId, whenParked, whenLive)),
+    liveCondition: live,
+    egressCondition: egress,
+    credentialNumber: (enabled: number, disabled: number) => Token.asNumber(Fn.conditionIf(credential.logicalId, enabled, disabled)),
+    number: (whenLive: number, whenParked: number) => Token.asNumber(Fn.conditionIf(live.logicalId, whenLive, whenParked)),
+    string: (whenLive: string, whenParked: string) => Token.asString(Fn.conditionIf(live.logicalId, whenLive, whenParked)),
   };
 }
 

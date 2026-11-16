@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { cartridgeIdentity } from '../lib/cartridge.js';
 import { parkingTransition } from '../lib/parking-transition.js';
 
@@ -17,7 +17,14 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
     }
     fs.writeFileSync(path.join(infraRoot, 'identity-defaults.json'), '{}');
     const app = new App({ outdir: path.join(infraRoot, 'ecs/cdk/cdk.out') });
-    parkingTransition(new Stack(app, 'Parking', { env: { account: identity.aws.account, region: identity.aws.region } }), infraRoot, identity);
+    const stack = new Stack(app, 'Parking', { env: { account: identity.aws.account, region: identity.aws.region } });
+    parkingTransition(stack, infraRoot, identity);
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([{
+      Action: ['ssm:GetParameter', 'ssm:PutParameter'], Effect: 'Allow', Resource: stack.resolve([
+        stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` }),
+        stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}/backstop` }),
+      ]),
+    }]) } });
     const outdir = app.synth().directory;
     const asset = fs.readdirSync(outdir).find(name => fs.existsSync(path.join(outdir, name, 'ecs')));
     if (!asset) throw new Error(`No transition asset in ${outdir}`);

@@ -94,6 +94,6 @@ describe('the parking Lambda over DynamoDB and SSM', () => {
     await ssm.send(new PutParameterCommand({ Name: parameter, Value: 'parked', Type: 'String', Overwrite: true }));
     expect(await ports().state()).toBe('parked');
     await ssm.send(new PutParameterCommand({ Name: parameter, Value: 'asleep', Type: 'String', Overwrite: true }));
-    await expect(ports().state()).rejects.toThrow('Park state is "asleep", not live or parked');
+    await expect(ports().state()).rejects.toThrow('Park state is "asleep", not a production mode');
   });
 });

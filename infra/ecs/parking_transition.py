@@ -15,8 +15,12 @@ IDENTITY = load_identity()
 STACKS = {'egress': IDENTITY['aws']['ecs']['privateEgress']['stackName'],
           'origin': IDENTITY['aws']['ecs']['previewOriginStackName'],
           'health': IDENTITY['aws']['ecs']['apiHealth']['stackName']}
-STEPS = {'park': ('health', 'origin', 'capacity', 'egress', 'verify', 'store'),
-         'unpark': ('egress', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store')}
+STEPS = {
+    'parked': ('health', 'origin', 'capacity', 'egress', 'verify', 'store'),
+    'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
+    'credential': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
+    'live': ('egress', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store'),
+}
 SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 
 
@@ -42,35 +46,45 @@ def handler(event, context, **ports):
 def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None):
     import boto3
     cloudformation = cloudformation or boto3.client('cloudformation')
+    if event.get('op') == 'backstop':
+        return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'))
     if event.get('op') == 'state':
         stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=IDENTITY['ssm']['parkState'])['Parameter']['Value']
         return production_state(cloudformation, stored)
-    action = event['action']
+    action = event.get('mode') or {'park': 'parked', 'unpark': 'live'}.get(event.get('action'))
     if action not in STEPS or event.get('op') not in ('start', 'advance'):
         raise ValueError(f'Unknown transition {event}')
     if event['op'] == 'start':
-        return start(action, cloudformation, executions or boto3.client('stepfunctions'))
-    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares)
+        return start(action, cloudformation, executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'))
+    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action)
 
 
 def production_state(cloudformation, stored):
-    if stored not in ('live', 'parked'):
+    if stored not in STEPS:
         raise ValueError(f'Invalid park state {stored}')
-    target = 'true' if stored == 'parked' else 'false'
+    target = stored
     for name in STACKS.values():
         stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
-        value = next((p['ParameterValue'] for p in stack['Parameters'] if p['ParameterKey'] == 'parked'), None)
+        _, value = mode_parameter(stack)
         if value != target or stack['StackStatus'] not in SETTLED:
             return {'state': 'transition incomplete'}
     return {'state': stored}
 
 
-def advance(event, cloudformation, ssm, verify, capacity, refresh, spares):
-    action = event['action']
+def mode_parameter(stack):
+    parameters = {item['ParameterKey']: item['ParameterValue'] for item in stack['Parameters']}
+    if 'productionMode' in parameters:
+        return 'productionMode', parameters['productionMode']
+    if parameters.get('parked') in ('true', 'false'):
+        return 'parked', 'parked' if parameters['parked'] == 'true' else 'live'
+    raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
+
+
+def advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action: str):
     index = event.get('index', 0)
     if index == 0 and not event.get('started'):
-        preflight(cloudformation)
-    target = 'parked' if action == 'park' else 'live'
+        preflight(cloudformation, action)
+    target = action
     step = STEPS[action][index]
     state = {**event, 'startedAt': event.get('startedAt', time.time())}
     if step in STACKS:
@@ -92,16 +106,35 @@ def runtime_snapshot(runtime):
             'lastUpdatedAt': runtime['lastUpdatedAt'].timestamp()}
 
 
-def start(action, cloudformation, executions):
+def start(action, cloudformation, executions, ssm):
     arn = os.environ['TRANSITION_STATE_MACHINE']
     if executions.list_executions(stateMachineArn=arn, statusFilter='RUNNING', maxResults=1)['executions']:
         raise RuntimeError('A production transition is already running')
-    preflight(cloudformation)
-    result = executions.start_execution(stateMachineArn=arn, input=json.dumps({'action': action, 'op': 'advance'}))
+    preflight(cloudformation, action)
+    if action in ('live', 'parked'):
+        ssm.put_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
+    result = executions.start_execution(stateMachineArn=arn, input=json.dumps({'mode': action, 'op': 'advance'}))
+    if action in ('egress', 'credential'):
+        lease = str(time.time_ns())
+        ssm.put_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop', Value=lease, Type='String', Overwrite=True)
+        executions.start_execution(stateMachineArn=os.environ['BACKSTOP_STATE_MACHINE'],
+                                   input=json.dumps({'op': 'backstop', 'lease': lease}))
     return {'executionArn': result['executionArn']}
 
 
-def preflight(cloudformation):
+def backstop(event, ssm, executions):
+    lease = ssm.get_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop')['Parameter']['Value']
+    if lease != event['lease']:
+        return {'expired': False}
+    arn = os.environ['TRANSITION_STATE_MACHINE']
+    running = executions.list_executions(stateMachineArn=arn, statusFilter='RUNNING', maxResults=1)['executions']
+    if running:
+        raise TransientServiceError('Production transition still running at backstop deadline')
+    result = executions.start_execution(stateMachineArn=arn, input=json.dumps({'mode': 'parked', 'op': 'advance'}))
+    return {'executionArn': result['executionArn']}
+
+
+def preflight(cloudformation, target):
     for name in STACKS.values():
         stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
         status = stack['StackStatus']
@@ -109,8 +142,9 @@ def preflight(cloudformation):
             raise RuntimeError(f'{name} is updating: {status}')
         if status not in SETTLED:
             raise RuntimeError(f'{name} is not settled: {status}')
-        if not any(parameter['ParameterKey'] == 'parked' for parameter in stack['Parameters']):
-            raise RuntimeError(f'{name} needs the parameter-flip template deployed from main first')
+        key, _ = mode_parameter(stack)
+        if key == 'parked' and target in ('egress', 'credential'):
+            raise RuntimeError(f'{name} needs the productionMode template before a partial mode')
 
 
 def update_stack(cloudformation, name, target, started):
@@ -121,16 +155,17 @@ def update_stack(cloudformation, name, target, started):
     if status not in SETTLED or (started and status != 'UPDATE_COMPLETE'):
         raise RuntimeError(f'{name} transition failed: {status}')
     parameters = stack['Parameters']
-    parked = next(parameter['ParameterValue'] for parameter in parameters if parameter['ParameterKey'] == 'parked')
-    if parked == ('true' if target == 'parked' else 'false'):
+    key, mode = mode_parameter(stack)
+    value = ('true' if target == 'parked' else 'false') if key == 'parked' else target
+    if mode == target:
         return False
     if started:
-        raise RuntimeError(f'{name} completed without the requested parked parameter')
+        raise RuntimeError(f'{name} completed without the requested productionMode parameter')
     cloudformation.update_stack(
         StackName=name, UsePreviousTemplate=True,
         Parameters=[{'ParameterKey': item['ParameterKey'], **(
-            {'ParameterValue': 'true' if target == 'parked' else 'false'}
-            if item['ParameterKey'] == 'parked' else {'UsePreviousValue': True})} for item in parameters],
+            {'ParameterValue': value}
+            if item['ParameterKey'] == key else {'UsePreviousValue': True})} for item in parameters],
         Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'])
     return True
 
@@ -140,6 +175,9 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
     if step == 'store':
         (ssm or boto3.client('ssm')).put_parameter(
             Name=IDENTITY['ssm']['parkState'], Value=target, Type='String', Overwrite=True)
+        if target in ('live', 'parked'):
+            (ssm or boto3.client('ssm')).put_parameter(
+                Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
     elif step in ('verify', 'origin-proof', 'alarm-proof'):
         (verify or verify_production)(target, **({} if verify else {'cloudformation': cloudformation, 'step': step}))
     elif step == 'capacity':
@@ -193,17 +231,22 @@ def invoke_script(name, arguments):
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=STEPS)
+    parser.add_argument('mode', choices=STEPS)
     args = parser.parse_args()
-    state = {'action': args.action, 'op': 'advance'}
-    deadline = time.monotonic() + 7200
-    while time.monotonic() < deadline:
-        state = handler(state, None)
-        if state['done']:
-            return
-        if state['waiting']:
-            time.sleep(15)
-    raise TimeoutError('Production transition exceeded two hours')
+    import boto3
+    import transition
+    from botocore.waiter import WaiterModel, create_waiter_with_client
+    result = transition.transition(args.mode)
+    model = WaiterModel({'version': 2, 'waiters': {'Transition': {
+        'operation': 'DescribeExecution', 'delay': 60, 'maxAttempts': 125,
+        'acceptors': [
+            {'state': 'success', 'matcher': 'path', 'argument': 'status', 'expected': 'SUCCEEDED'},
+            *[{'state': 'failure', 'matcher': 'path', 'argument': 'status', 'expected': status}
+              for status in ('FAILED', 'ABORTED', 'TIMED_OUT')],
+        ],
+    }}})
+    create_waiter_with_client('Transition', model, boto3.client('stepfunctions')).wait(executionArn=result['executionArn'])
+
 
 
 if __name__ == '__main__':

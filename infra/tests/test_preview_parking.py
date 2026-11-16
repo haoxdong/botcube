@@ -60,6 +60,20 @@ def live() -> dict[str, Any]:
     }
 
 
+class PartialModeVerificationTests(unittest.TestCase):
+    def test_partial_modes_require_nat_without_chat_or_edge(self):
+        for mode in ('egress', 'credential'):
+            facts = parked()
+            active = live()
+            for field in ('natResources', 'defaultRoutes', 'natGateways'):
+                facts[field] = active[field]
+            if mode == 'credential':
+                facts['services']['credential-service'] = active['services']['credential-service']
+            self.assertEqual(verifier['partial_failures'](facts, EXPECTED, mode), [])
+            facts['services']['chat-service-preview'] = active['services']['chat-service-preview']
+            self.assertTrue(verifier['partial_failures'](facts, EXPECTED, mode))
+
+
 class ParkedVerificationTests(unittest.TestCase):
     def test_parked_production_passes(self):
         self.assertEqual(verifier['parked_failures'](parked(), EXPECTED), [])
@@ -239,7 +253,7 @@ class LiveVerificationTests(unittest.TestCase):
 
 class TransitionTests(unittest.TestCase):
     def test_states_map_to_the_cdk_flag(self):
-        self.assertEqual(transition['TARGETS'], {'park': 'parked', 'unpark': 'live'})
+        self.assertEqual(transition['MODES'], ('parked', 'egress', 'credential', 'live'))
 
     def test_stored_state_must_be_live_or_parked(self):
         self.assertEqual(transition['parse_state']('parked'), 'parked')
@@ -564,3 +578,13 @@ class SpareHandoffTests(unittest.TestCase):
         self.assertEqual(self.wait(logs, clock), '::warning::Runtime version 208 handed off no spare microVM in 300 s after READY; '
                          'reporting Live while new chats start fresh microVMs (about 29 s each)')
         self.assertEqual(clock[0], start + 300)
+
+
+def test_cli_park_and_unpark_keep_the_deployed_dispatcher_protocol():
+    with patch('boto3.client') as client:
+        client.return_value.invoke.return_value = {'Payload': BytesIO(b'{"executionArn":"accepted"}')}
+        transition['transition']('parked')
+        assert json.loads(client.return_value.invoke.call_args.kwargs['Payload']) == {'op': 'park'}
+        client.return_value.invoke.return_value = {'Payload': BytesIO(b'{"executionArn":"accepted"}')}
+        transition['transition']('live')
+        assert json.loads(client.return_value.invoke.call_args.kwargs['Payload']) == {'op': 'unpark'}

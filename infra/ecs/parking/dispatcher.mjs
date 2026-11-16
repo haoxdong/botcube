@@ -2,7 +2,7 @@ import { DISPATCH, dispatcherService, PARTITION } from './parking.mjs';
 
 /**
  * @typedef {{ eventName?: string, dynamodb?: { NewImage?: Record<string, { S?: string, N?: string }> } }} StreamRecord
- * @param {{ op?: string, action?: 'park' | 'unpark', Records?: StreamRecord[] }} event
+ * @param {{ op?: string, mode?: string, action?: 'park' | 'unpark', Records?: StreamRecord[] }} event
  */
 export async function dispatch(event, resolved) {
   const service = dispatcherService(resolved);
@@ -18,6 +18,9 @@ export async function dispatch(event, resolved) {
       console.log(JSON.stringify({ dispatched: image.action?.S, at: claim.at }));
     }
     return { dispatched: true };
+  }
+  if (event.op === 'mode') {
+    return resolved.mode(event.mode);
   }
   if (event.op === 'park' || event.op === 'unpark') {
     const execution = await resolved.dispatch(event.op);

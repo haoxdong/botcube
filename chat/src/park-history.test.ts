@@ -20,10 +20,12 @@ describe('the park history', () => {
     const name = `/park-state-${Math.random().toString(36).slice(2)}`;
     const live = await store(name, 'live');
     const parked = await store(name, 'parked');
+    const egress = await store(name, 'egress');
+    const credential = await store(name, 'credential');
     const unparked = await store(name, 'live');
     const history = ssmParkHistory(name, 'BotCube', ssm);
 
-    expect(await Promise.all([live, parked, unparked].map((at) => history.parkedAt(at)))).toEqual([false, true, false]);
+    expect(await Promise.all([live, parked, egress, credential, unparked].map((at) => history.parkedAt(at)))).toEqual([false, true, true, true, false]);
   });
 
   it('pages through more versions than one page holds', async () => {
@@ -45,6 +47,6 @@ describe('the park history', () => {
     const history = ssmParkHistory(name, 'BotCube', ssm);
 
     await expect(history.parkedAt(before)).rejects.toThrow(`${name} keeps no park state from ${before.toISOString()}`);
-    await expect(history.parkedAt(odd)).rejects.toThrow(`${name} held "asleep", not live or parked`);
+    await expect(history.parkedAt(odd)).rejects.toThrow(`${name} held "asleep", not a production mode`);
   });
 });

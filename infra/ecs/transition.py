@@ -9,12 +9,12 @@ from deploy_identity import load_identity, required
 
 IDENTITY = load_identity()
 PARAMETER = IDENTITY['ssm']['parkState']
-TARGETS = {'park': 'parked', 'unpark': 'live'}
+MODES = ('parked', 'egress', 'credential', 'live')
 
 
 def parse_state(value: str):
-    if value not in TARGETS.values():
-        raise SystemExit(f'Stored park state {PARAMETER} must be live or parked, got {value!r}')
+    if value not in MODES:
+        raise SystemExit(f'Stored park state {PARAMETER} must be parked, egress, credential or live, got {value!r}')
     return value
 
 
@@ -44,7 +44,7 @@ def session_api_capacity(target: str, autoscaling: Any = None, functions: Any = 
     found = autoscaling.describe_scalable_targets(ServiceNamespace='lambda', ResourceIds=[resource], ScalableDimension=SESSION_API_CAPACITY)['ScalableTargets']
     if not found:
         raise RuntimeError(f'{resource} has no scalable target; deploy the AgentCore stack')
-    parked = target == 'parked'
+    parked = target != 'live'
     if not parked:
         provision_alias(functions, function, alias, found[0]['MinCapacity'], pause, timeout)
     autoscaling.register_scalable_target(ServiceNamespace='lambda', ResourceId=resource, ScalableDimension=SESSION_API_CAPACITY, SuspendedState={
@@ -187,23 +187,27 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
         pause(10)
 
 
-def transition(action: str):
+def transition(mode: str):
     import boto3
+    event = {'op': {'parked': 'park', 'live': 'unpark'}[mode]} if mode in ('parked', 'live') else {'op': 'mode', 'mode': mode}
     response = boto3.client('lambda').invoke(
         FunctionName=IDENTITY['aws']['ecs']['parking']['functionName'],
-        InvocationType='RequestResponse', Payload=json.dumps({'op': action}).encode())
+        InvocationType='RequestResponse', Payload=json.dumps(event).encode())
     payload = response['Payload'].read().decode()
     if response.get('FunctionError'):
-        raise RuntimeError(f'{action} refused: {payload}')
+        raise RuntimeError(f'{mode} refused: {payload}')
     print(payload, flush=True)
+    return json.loads(payload)
 
 
 
 def main(argv: list[str]):
     if argv == ['state']:
         print(stored_state())
-    elif len(argv) == 1 and argv[0] in TARGETS:
-        transition(argv[0])
+    elif argv in (['park'], ['unpark']):
+        transition('parked' if argv[0] == 'park' else 'live')
+    elif len(argv) == 2 and argv[0] == 'mode' and argv[1] in MODES:
+        transition(argv[1])
     else:
         raise SystemExit(__doc__)
 

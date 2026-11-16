@@ -21,7 +21,7 @@ export class PrivateEgressStack extends Stack {
     address.applyRemovalPolicy(RemovalPolicy.RETAIN);
     new CfnOutput(this, 'PrivateNatPublicIp', { value: address.ref });
     new CfnOutput(this, 'PrivateNatAllocationId', { value: address.attrAllocationId });
-    const { liveCondition: live } = parkState(this);
+    const { egressCondition: live } = parkState(this);
     const gateway = new ec2.CfnNatGateway(this, 'PrivateNatGateway', {
       allocationId: address.attrAllocationId,
       subnetId: props.natGateway.publicSubnetId,

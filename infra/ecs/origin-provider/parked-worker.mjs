@@ -4,9 +4,16 @@
 export default {
   /**
    * @param {Request} request
-   * @param {{ ALLOWED_ORIGINS: string, WAKE_URL: string }} env
+   * @param {{ ALLOWED_ORIGINS: string, WAKE_URL: string, OIDC_DOCUMENTS: string }} env
    */
   async fetch(request, env) {
+    const path = new URL(request.url).pathname;
+    if ((request.method === 'GET' || request.method === 'HEAD') && (path === '/.well-known/openid-configuration' || path === '/.well-known/jwks.json')) {
+      const documents = JSON.parse(env.OIDC_DOCUMENTS);
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify(documents[path]), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
+      });
+    }
     const headers = new Headers({ 'Cache-Control': 'no-store', Vary: 'Origin' });
     const origin = request.headers.get('Origin');
     if (origin && JSON.parse(env.ALLOWED_ORIGINS).includes(origin)) {

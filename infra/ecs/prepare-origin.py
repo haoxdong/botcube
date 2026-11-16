@@ -70,6 +70,7 @@ if defaults:
         raise SystemExit('Preview NAT Gateway is not available in the configured VPC')
     nat_state = nat['State']
 Path(os.environ['PREVIEW_ORIGIN_INPUT']).write_text(json.dumps({
+    'turnIdentityKeysVersion': next(version for version, stages in aws('secretsmanager', 'describe-secret', '--secret-id', origin['chatService']['turnIdentityKeysSecretName'])['VersionIdsToStages'].items() if 'AWSCURRENT' in stages),
     'cloudflareCidrs': cidrs, 'clientVersion': client['VersionId'], 'runtimeArn': runtime_arn,
     'network': {'routeTableId': egress['routeTableId'], 'subnetIds': sorted(associated - {None}),
                 'defaultRoute': defaults[0] if defaults else None, 'natGatewayState': nat_state},

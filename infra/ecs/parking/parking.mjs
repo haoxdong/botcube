@@ -20,7 +20,7 @@ export const DISPATCH = 'DISPATCH#';
  *   requestDispatch(action: Action, claim: Claim): Promise<void>,
  * }} WakePorts
  * @typedef {WakePorts & {
- *   state(): Promise<'live' | 'parked' | 'transition incomplete'>,
+ *   state(): Promise<'live' | 'parked' | 'egress' | 'credential' | 'transition incomplete'>,
  *   originClaimed(): Promise<boolean>,
  *   heartbeats(): Promise<Heartbeat[]>,
  *   forget(instances: string[]): Promise<void>,

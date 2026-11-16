@@ -20,7 +20,7 @@ def test_unpark_starts_egress_with_previous_template_and_preserves_other_paramet
     assert result['waiting'] is True
     assert cloudformation.updates == [{
         'StackName': 'bot-cube-private-egress', 'UsePreviousTemplate': True,
-        'Parameters': [{'ParameterKey': 'parked', 'ParameterValue': 'false'},
+        'Parameters': [{'ParameterKey': 'productionMode', 'ParameterValue': 'live'},
                        {'ParameterKey': 'image', 'UsePreviousValue': True}],
         'Capabilities': ['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
     }]
@@ -32,7 +32,7 @@ class CloudFormation:
 
     def describe_stacks(self, *, StackName):
         return {'Stacks': [{'StackStatus': 'UPDATE_COMPLETE', 'Parameters': [
-            {'ParameterKey': 'parked', 'ParameterValue': 'true'},
+            {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'},
             {'ParameterKey': 'image', 'ParameterValue': 'unchanged'},
         ]}]}
 
@@ -63,7 +63,7 @@ class Production(CloudFormation):
     def __init__(self, parked):
         super().__init__()
         self.stacks = {name: {'StackStatus': 'UPDATE_COMPLETE', 'Parameters': [
-            {'ParameterKey': 'parked', 'ParameterValue': 'true' if parked else 'false'}]}
+            {'ParameterKey': 'productionMode', 'ParameterValue': 'parked' if parked else 'live'}]}
             for name in ('bot-cube-private-egress', 'bot-cube-preview-origin', 'bot-cube-api-health')}
         self.effects = []
         self.stored = 'parked' if parked else 'live'
@@ -83,6 +83,8 @@ class Production(CloudFormation):
         return {'Parameter': {'Value': self.stored}}
 
     def put_parameter(self, **request):
+        if request['Name'].endswith('/backstop'):
+            return
         self.stored = request['Value']
         self.effects.append('store ' + self.stored)
 
@@ -105,7 +107,7 @@ class Production(CloudFormation):
                               capacity=self.capacity, refresh=self.refresh, spares=self.spares)
 
     def complete(self, module, action):
-        state = {'action': action, 'op': 'advance'}
+        state = {'mode': action, 'op': 'advance'} if action in module.STEPS else {'action': action, 'op': 'advance'}
         for _ in range(30):
             state = json.loads(json.dumps(self.advance(module, state)))
             for stack in self.stacks.values():
@@ -161,27 +163,6 @@ def test_failed_verification_keeps_previous_stored_state_and_can_be_retried():
     assert len(world.updates) == 3
 
 
-@pytest.mark.parametrize(('action', 'parked', 'verification_count'), [('unpark', True, 3), ('park', False, 1)])
-def test_cli_sleeps_only_for_pending_stacks_and_keeps_every_verifier(monkeypatch, action, parked, verification_count):
-    import sys
-    module, world, sleeps = load(), Production(parked), []
-    operate = module.handler
-    monkeypatch.setattr(sys, 'argv', ['parking_transition.py', action])
-    monkeypatch.setattr(module, 'handler', lambda state, context: operate(
-        state, context, cloudformation=world, ssm=world, verify=world.verify,
-        capacity=world.capacity, refresh=world.refresh, spares=world.spares))
-
-    def settle(seconds):
-        sleeps.append(seconds)
-        for stack in world.stacks.values():
-            stack['StackStatus'] = 'UPDATE_COMPLETE'
-
-    monkeypatch.setattr(module.time, 'sleep', settle)
-    module.main()
-    assert sleeps == [15, 15, 15]
-    assert world.effects.count('verify ' + ('parked' if action == 'park' else 'live')) == verification_count
-    assert world.effects[-1] == 'store ' + ('parked' if action == 'park' else 'live')
-
 
 class Executions:
     def __init__(self, running=False):
@@ -198,32 +179,34 @@ class Executions:
 
 def test_start_refuses_a_running_transition_before_any_effect(monkeypatch):
     monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
     executions = Executions(running=True)
     with pytest.raises(RuntimeError, match='already running'):
         load().handler({'action': 'unpark', 'op': 'start'}, None,
-                       cloudformation=Production(True), executions=executions)
+                       cloudformation=Production(True), executions=executions, ssm=Production(True))
     assert executions.started == []
 
 
 def test_start_refuses_busy_cloudformation_synchronously_without_losing_the_wake(monkeypatch):
     monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
     world, executions = Production(True), Executions()
     world.stacks['bot-cube-preview-origin']['StackStatus'] = 'UPDATE_IN_PROGRESS'
     with pytest.raises(RuntimeError, match='updating'):
         load().handler({'action': 'unpark', 'op': 'start'}, None,
-                       cloudformation=world, executions=executions)
+                       cloudformation=world, executions=executions, ssm=world)
     assert executions.started == []
     assert world.effects == []
 
 
 def test_start_accepts_a_settled_transition_for_durable_execution(monkeypatch):
     monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
     world, executions = Production(True), Executions()
     result = load().handler({'action': 'unpark', 'op': 'start'}, None,
-                            cloudformation=world, executions=executions)
+                            cloudformation=world, executions=executions, ssm=world)
     assert result == {'executionArn': 'new'}
-    assert executions.started == [{'stateMachineArn': 'state-machine',
-                                   'input': '{"action": "unpark", "op": "advance"}'}]
+    assert executions.started == [ {'stateMachineArn': 'state-machine', 'input': '{"mode": "live", "op": "advance"}'}]
     assert world.effects == []
 
 
@@ -274,3 +257,140 @@ def test_cloudflare_service_failures_during_verification_reach_the_retry_policy(
         world.complete(load(), 'unpark')
     assert type(result.value).__name__ == 'TransientServiceError'
     assert world.stored == 'parked'
+
+
+def test_four_mode_sequence_preserves_resources_and_never_refreshes_production_for_egress():
+    world, module = Production(True), load()
+    for mode in ('egress', 'credential', 'live', 'parked'):
+        world.complete(module, mode)
+        assert world.stored == mode
+        assert module.production_state(world, mode) == {'state': mode}
+    assert world.effects.count('refresh') == 1
+    assert world.effects.count('spares') == 1
+
+
+def test_backstop_returns_partial_mode_to_parked_and_ignores_a_superseded_lease(monkeypatch):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    world, executions, module = Production(True), Executions(), load()
+    world.stored = 'lease-1'
+    assert module.backstop({'lease': 'lease-1'}, world, executions) == {'executionArn': 'new'}
+    assert json.loads(executions.started[0]['input']) == {'mode': 'parked', 'op': 'advance'}
+    world.stored = 'none'
+    assert module.backstop({'lease': 'lease-1'}, world, executions) == {'expired': False}
+    assert len(executions.started) == 1
+
+
+def test_backstop_waits_for_an_inflight_transition_instead_of_overlapping_it(monkeypatch):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    world, executions, module = Production(True), Executions(running=True), load()
+    world.stored = 'lease-1'
+    with pytest.raises(module.TransientServiceError):
+        module.backstop({'lease': 'lease-1'}, world, executions)
+    assert executions.started == []
+
+
+def test_workflow_entrypoint_uses_deployed_dispatcher_and_native_waiter_without_lambda_environment(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import boto3
+    import botocore.waiter
+    import transition
+    requests, waits = [], []
+    monkeypatch.delenv('TRANSITION_STATE_MACHINE', raising=False)
+    monkeypatch.delenv('BACKSTOP_STATE_MACHINE', raising=False)
+    monkeypatch.setattr(sys, 'argv', ['parking_transition.py', 'egress'])
+    monkeypatch.setattr(transition, 'transition', lambda mode: requests.append(mode) or {'executionArn': 'execution-1'})
+    monkeypatch.setattr(boto3, 'client', lambda service: service)
+    monkeypatch.setattr(botocore.waiter, 'create_waiter_with_client',
+                        lambda *args: SimpleNamespace(wait=lambda **kw: waits.append(kw)))
+    load().main()
+    assert requests == ['egress']
+    assert waits == [{'executionArn': 'execution-1'}]
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_legacy_live_stacks_remain_parkable_after_partial_template_deploy(mixed):
+    world, module = Production(False), load()
+    for index, stack in enumerate(world.stacks.values()):
+        if not mixed or index != 0:
+            stack['Parameters'] = [{'ParameterKey': 'parked', 'ParameterValue': 'false'}]
+    assert module.production_state(world, 'live') == {'state': 'live'}
+    world.complete(module, 'parked')
+    assert world.stored == 'parked'
+    assert module.production_state(world, 'parked') == {'state': 'parked'}
+    assert all(module.mode_parameter(stack)[1] == 'parked' for stack in world.stacks.values())
+
+
+@pytest.mark.parametrize('target', ['live', 'parked'])
+def test_nonpartial_start_never_arms_a_backstop(monkeypatch, target):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
+    world, executions = Production(True), Executions()
+    load().start(target, world, executions, world)
+    assert [item['stateMachineArn'] for item in executions.started] == ['state-machine']
+
+
+def test_rejected_transition_start_cannot_arm_a_live_production_backstop(monkeypatch):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
+    world, executions = Production(False), Executions()
+    def refused(**request):
+        executions.started.append(request)
+        if request['stateMachineArn'] == 'state-machine':
+            raise RuntimeError('start refused')
+        return {'executionArn': 'backstop'}
+    executions.start_execution = refused
+    with pytest.raises(RuntimeError, match='start refused'):
+        load().start('egress', world, executions, world)
+    assert [item['stateMachineArn'] for item in executions.started] == ['state-machine']
+
+
+@pytest.mark.parametrize('target', ['egress', 'credential'])
+def test_partial_backstop_is_started_only_after_accepted_transition(monkeypatch, target):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
+    world, executions = Production(True), Executions()
+    load().start(target, world, executions, world)
+    assert [item['stateMachineArn'] for item in executions.started] == ['state-machine', 'backstop-machine']
+
+
+def test_partial_mode_refuses_legacy_templates_before_any_transition(monkeypatch):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    world, executions = Production(False), Executions()
+    world.stacks['bot-cube-api-health']['Parameters'] = [{'ParameterKey': 'parked', 'ParameterValue': 'false'}]
+    with pytest.raises(RuntimeError, match='productionMode template'):
+        load().start('egress', world, executions, world)
+    assert executions.started == []
+    assert world.effects == []
+
+
+@pytest.mark.parametrize('target', ['live', 'parked'])
+@pytest.mark.parametrize('rejected', [False, True])
+def test_nonpartial_start_invalidates_existing_egress_lease_even_if_transition_fails(monkeypatch, target, rejected):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    monkeypatch.setenv('BACKSTOP_STATE_MACHINE', 'backstop-machine')
+    world, executions, module = Production(True), Executions(), load()
+    lease = {'value': 'none'}
+    def put(**request):
+        lease['value'] = request['Value']
+    world.put_parameter = put
+    world.get_parameter = lambda **request: {'Parameter': {'Value': lease['value']}}
+    module.start('egress', world, executions, world)
+    old_lease = lease['value']
+    original = executions.start_execution
+    def start(**request):
+        if request['stateMachineArn'] == 'state-machine' and rejected:
+            raise RuntimeError('execution rejected')
+        return original(**request)
+    executions.start_execution = start
+    if rejected:
+        with pytest.raises(RuntimeError, match='execution rejected'):
+            module.start(target, world, executions, world)
+    else:
+        module.start(target, world, executions, world)
+        # The accepted execution later fails, so no final store invalidates the lease.
+    assert lease['value'] == 'none'
+    before = list(executions.started)
+    assert module.backstop({'lease': old_lease}, world, executions) == {'expired': False}
+    assert executions.started == before

@@ -1,18 +1,20 @@
 import { Template } from 'aws-cdk-lib/assertions';
 import type { Stack } from 'aws-cdk-lib';
 
-export function parkingTemplate(stack: Stack, parked = false): Template {
+export function parkingTemplate(stack: Stack, mode: boolean | 'parked' | 'egress' | 'credential' | 'live' = false): Template {
+  const parked = typeof mode === 'boolean' ? mode : mode !== 'live';
+  const conditions = { Parked: parked, Live: !parked, EgressEnabled: typeof mode === 'boolean' ? !mode : mode !== 'parked', CredentialEnabled: typeof mode === 'boolean' ? !mode : mode === 'credential' || mode === 'live' };
   const template = Template.fromStack(stack).toJSON();
   for (const section of ['Resources', 'Outputs']) {
     template[section] = Object.fromEntries(Object.entries(template[section] ?? {}).filter(([, resource]) => {
       const condition = (resource as { Condition?: string }).Condition;
-      return condition === undefined || (condition === 'Parked' ? parked : !parked);
+      return condition === undefined || conditions[condition as keyof typeof conditions];
     }).map(([key, resource]) => {
       const { Condition: _, ...rest } = resource as Record<string, unknown>;
       return [key, rest];
     }));
   }
-  const resolved = Object.fromEntries(Object.entries(template).map(([key, value]) => [key, resolveValue(value, parked)]));
+  const resolved = Object.fromEntries(Object.entries(template).map(([key, value]) => [key, resolveValue(value, conditions)]));
   const resources = resolved.Resources as Record<string, { DependsOn?: string[] }>;
   const known = new Set([...Object.keys(resources), ...Object.keys(template.Parameters ?? {})]);
   const expectKnown = (id: string) => { if (!known.has(id)) throw new Error(`Dangling CloudFormation reference ${id}, parked=${parked}`); };
@@ -24,20 +26,20 @@ export function parkingTemplate(stack: Stack, parked = false): Template {
   return Template.fromJSON(resolved);
 }
 
-function resolveValue(value: unknown, parked: boolean): unknown {
-  if (Array.isArray(value)) return value.map(item => resolveValue(item, parked));
+function resolveValue(value: unknown, conditions: Record<string, boolean>): unknown {
+  if (Array.isArray(value)) return value.map(item => resolveValue(item, conditions));
   if (value === null || typeof value !== 'object') return value;
   const record = value as Record<string, unknown>;
   if ('Fn::If' in record) {
     const [condition, yes, no] = record['Fn::If'] as [string, unknown, unknown];
-    if (condition !== 'Parked' && condition !== 'Live') return record;
-    return resolveValue((condition === 'Parked' ? parked : !parked) ? yes : no, parked);
+    if (!(condition in conditions)) return record;
+    return resolveValue(conditions[condition] ? yes : no, conditions);
   }
   if ('Fn::Join' in record && Array.isArray(record['Fn::Join'])) {
     const [delimiter, parts] = record['Fn::Join'] as [string, unknown[]];
-    if (delimiter === '') return { 'Fn::Join': ['', joinStrings(parts.map(part => resolveValue(part, parked)))] };
+    if (delimiter === '') return { 'Fn::Join': ['', joinStrings(parts.map(part => resolveValue(part, conditions)))] };
   }
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, resolveValue(item, parked)])
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, resolveValue(item, conditions)])
     .filter(([, item]) => !(item && typeof item === 'object' && 'Ref' in item && item.Ref === 'AWS::NoValue')));
 }
 

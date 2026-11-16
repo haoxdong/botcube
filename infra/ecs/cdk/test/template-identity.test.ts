@@ -49,7 +49,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   });
   for (const id of ['PrivateEgress', 'PreviewOrigin', 'ApiHealth']) {
     const template = Template.fromStack(app.node.findChild(id) as Stack).toJSON();
-    expect(template.Parameters.parked).toEqual({ Type: 'String', AllowedValues: ['true', 'false'], Description: 'Production is Parked when true, Live when false.' });
+    expect(template.Parameters.productionMode).toEqual({ Type: 'String', AllowedValues: ['parked', 'egress', 'credential', 'live'], Description: 'Production resource mode.' });
   }
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
   expect(Object.keys(origin.findResources('AWS::IAM::Policy', {
@@ -120,8 +120,19 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
   expect(rolesAllowed('secretsmanager:GetSecretValue')).toEqual(['TransitionServiceRole', 'dispatcherServiceRole']);
   parking.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({ Action: 'ssm:GetParameters', Resource: Match.objectLike({ 'Fn::Join': Match.anyValue() }) })]) } });
   for (const metric of ['ExecutionsFailed', 'ExecutionsTimedOut', 'ExecutionsAborted']) {
-    parking.hasResourceProperties('AWS::CloudWatch::Alarm', { MetricName: metric, Threshold: 1, EvaluationPeriods: 1, AlarmActions: [{ 'Fn::Join': Match.anyValue() }] });
+    parking.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      Metrics: Match.arrayWith([
+        Match.objectLike({ Expression: 'primary + backup' }),
+        ...['TransitionStateMachine', 'PartialModeBackstop'].map(prefix => Match.objectLike({
+          MetricStat: Match.objectLike({ Metric: Match.objectLike({ MetricName: metric,
+            Dimensions: [{ Name: 'StateMachineArn', Value: { Ref: Match.stringLikeRegexp(`^${prefix}`) } }],
+          }) }),
+        })),
+      ]),
+      Threshold: 1, EvaluationPeriods: 1, AlarmActions: [{ 'Fn::Join': Match.anyValue() }],
+    });
   }
+  parking.resourceCountIs('AWS::CloudWatch::Alarm', 3);
   const machine = Object.values(parking.findResources('AWS::StepFunctions::StateMachine'))[0];
   expect(JSON.stringify(machine)).toContain('TransientServiceError');
   expect(JSON.stringify(machine)).toContain('MaxAttempts\\\":3');
@@ -180,4 +191,34 @@ test('composition rejects competing chat table names before creating resources',
     repositoryRoot: '/unused', deployRoot: '/unused', identity,
     chatTableName: 'legacy-chat', storage: { tableName: 'configured-chat' },
   })).toThrow('Choose chatTableName or storage.tableName, not both');
+});
+
+test.each([
+  ['parked', 0, 0, 0],
+  ['egress', 1, 0, 0],
+  ['credential', 1, 1, 0],
+  ['live', 1, 1, 1],
+] as const)('production resource table in %s mode', (mode, nat, credentials, chat) => {
+  const { root, deployRoot, app } = fixture();
+  defineProduction(app, {
+    repositoryRoot: root, deployRoot, identity,
+    origin: {
+      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', turnIdentityKeysVersion: 'key-revision', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      commit: 'local-fixture',
+    },
+  });
+  const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, mode);
+  const egress = parkingTemplate(app.node.findChild('PrivateEgress') as Stack, mode);
+  egress.resourceCountIs('AWS::EC2::NatGateway', nat);
+  egress.resourceCountIs('AWS::EC2::Route', nat);
+  origin.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', chat);
+  origin.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', chat);
+  const services = Object.values(origin.findResources('AWS::ECS::Service')).map(resource => resource.Properties);
+  expect(services.find(service => service.ServiceName === 'chat-service-preview').DesiredCount).toBe(chat);
+  expect(services.find(service => service.ServiceName === 'credential-service').DesiredCount).toBe(credentials);
+  if (!chat) origin.hasResourceProperties('AWS::CloudFormation::CustomResource', {
+    Kind: 'ParkedWorker', KeyVersion: 'key-revision', TurnIdentityKeysSecret: identity.aws.ecs.chatService.turnIdentityKeysSecretName,
+  });
+  parkingTemplate(app.node.findChild('ApiHealth') as Stack, mode).hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: Boolean(chat) });
 });

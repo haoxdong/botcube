@@ -28,8 +28,8 @@ export function ssmParkHistory(
       const before = (await versions()).flatMap(({ LastModifiedDate: at, Value: value }) => (at !== undefined && at <= time ? [{ at, value }] : []));
       const latest = before.reduce<(typeof before)[number] | undefined>((last, version) => (last !== undefined && last.at > version.at ? last : version), undefined);
       if (latest === undefined) throw new Error(`${parameter} keeps no park state from ${time.toISOString()}`);
-      if (latest.value !== 'parked' && latest.value !== 'live') throw new Error(`${parameter} held ${JSON.stringify(latest.value)}, not live or parked`);
-      return latest.value === 'parked';
+      if (!['parked', 'egress', 'credential', 'live'].includes(latest.value ?? '')) throw new Error(`${parameter} held ${JSON.stringify(latest.value)}, not a production mode`);
+      return latest.value !== 'live';
     },
   };
 }
