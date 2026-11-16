@@ -3,7 +3,7 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { AnimatePresence, domMax, LazyMotion, MotionConfig, m as motionElement, useIsPresent, type HTMLMotionProps, type Transition } from "framer-motion";
-import { useId, useRef, useState, type ComponentProps } from "react";
+import { cloneElement, useId, useRef, useState, type ComponentProps } from "react";
 import { webUiPlugin } from "@cartridge-ui";
 
 import { presenceMotion, useInstant } from "./collapse";
@@ -47,7 +47,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
             </svg></motionElement.span>
           </PopoverPrimitive.Trigger>
         </div>
-        <PopoverPrimitive.Portal><PopoverPrimitive.Positioner className="standard-popup-positioner" side="top" align="end" sideOffset={8} anchor={() => trigger.current?.closest(".copilotKitInput") ?? trigger.current} render={(positionerProps) => <motionElement.div {...positionerProps} layoutRoot layout={!instant} data-framer-portal-id={pickerId} transformTemplate={() => positionerProps.style?.transform ?? "none"}><PopoverPrimitive.Popup ref={popup} initialFocus={popup} finalFocus={trigger} render={<motionElement.div layoutAnchor={{ x: 1, y: 1 }} layout={!instant && positionerProps.style?.opacity !== 0} style={{ originX: 1, originY: 1 }} initial={instant ? false : { opacity: 0 }} animate={{ opacity: open ? 1 : 0 }} transition={transition} onAnimationComplete={() => { if (!open) actions.current?.unmount(); }} />} aria-label="Model and effort" className="mep-dropdown mep-spring standard-popup">
+        <PopoverPrimitive.Portal><PopoverPrimitive.Positioner className="standard-popup-positioner" side="top" align="end" sideOffset={8} anchor={() => trigger.current?.closest(".copilotKitInput") ?? trigger.current} render={(positionerProps) => cloneElement(<motionElement.div layoutRoot layout={!instant} data-framer-portal-id={pickerId} transformTemplate={() => positionerProps.style?.transform ?? "none"} />, positionerProps, <PopoverPrimitive.Popup ref={popup} initialFocus={popup} finalFocus={trigger} render={<motionElement.div layoutAnchor={{ x: 1, y: 1 }} layout={!instant && positionerProps.style?.opacity !== 0} style={{ originX: 1, originY: 1 }} initial={instant ? false : { opacity: 0 }} animate={{ opacity: open ? 1 : 0 }} transition={transition} onAnimationComplete={() => { if (!open) actions.current?.unmount(); }} />} aria-label="Model and effort" className="mep-dropdown mep-spring standard-popup">
               <AnimatePresence mode="popLayout" initial={false}>
                 {payload === "effort" ? <PickerPage key="effort" {...presenceMotion} transition={transition}>
                   <PopoverPrimitive.Trigger id={`${pickerId}-back`} payload="main" className="mep-option mep-back" aria-label="Back to models">
@@ -76,7 +76,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
                   </PopoverPrimitive.Trigger>
                 </PickerPage>}
               </AnimatePresence>
-        </PopoverPrimitive.Popup></motionElement.div>} /></PopoverPrimitive.Portal>
+        </PopoverPrimitive.Popup>)} /></PopoverPrimitive.Portal>
       </>}
     </PopoverPrimitive.Root></MotionConfig></LazyMotion>
   );

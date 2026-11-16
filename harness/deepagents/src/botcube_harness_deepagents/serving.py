@@ -343,9 +343,12 @@ class _SessionAgent(LangGraphAgent):
         self._thinking: dict[str, _Thinking] = {}
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
+        self._asked = None
         try:
             async with aclosing(super()._handle_stream_events(input)) as events:
                 async for event in events:
+                    if event.type == EventType.RUN_STARTED and self._asked is not None:
+                        event.timestamp = self._asked
                     if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                         for closed in self._close_thoughts():
                             yield closed

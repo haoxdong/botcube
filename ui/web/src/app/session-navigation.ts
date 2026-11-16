@@ -457,7 +457,13 @@ export function useSessionNavigation({
   useEffect(() => {
     let completedRun: string | undefined;
     const subscription = agent.subscribe({
-      onRunStartedEvent: ({ event }) => { completedRun = undefined; setServerTurn({ runId: event.runId }); },
+      onRunStartedEvent: ({ event }) => {
+        completedRun = undefined;
+        setServerTurn((previous) => ({
+          runId: event.runId,
+          runningSince: typeof event.timestamp === "number" ? new Date(event.timestamp).toISOString() : previous?.runId === event.runId ? previous.runningSince : undefined,
+        }));
+      },
       onRunFinishedEvent: ({ input }) => { completedRun = input.runId; setServerTurn(null); },
       // A run error ends the Turn on the server too.
       onRunErrorEvent: ({ input }) => { completedRun = input.runId; setServerTurn(null); },

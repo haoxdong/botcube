@@ -2601,6 +2601,39 @@ describe('Main Chat', () => {
     expect(screen.queryByTestId('copilot-loading-cursor')).toBeNull();
   });
 
+  it('uses the admitted Turn origin when RUN_STARTED arrives after a delay', async () => {
+    const accepted = Date.parse('2026-11-16T12:00:00Z');
+    vi.useFakeTimers({ now: accepted + 1500 });
+    copilot.rows = true;
+    copilot.running = true;
+    const view = await renderPage();
+    const current = agent();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test' && init?.method === 'POST'
+        ? new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } }), { headers: { 'content-type': 'text/event-stream' } })
+        : chatService(url, init),
+    );
+    let turn!: Promise<unknown>;
+    await act(async () => {
+      current.addMessage({ id: 'admitted-origin-question', role: 'user', content: 'Compare rates' });
+      turn = current.runAgent({ runId: 'admitted-origin-run' }).catch(() => undefined);
+    });
+    const emit = async (event: Record<string, unknown>) => {
+      stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      await settle();
+      view.rerender(<Page />);
+      await settle();
+    };
+    try {
+      await emit({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'admitted-origin-run', timestamp: accepted });
+      expect(document.querySelector('.worklog-title')).toHaveTextContent(/^Working · 2s$/);
+    } finally {
+      await emit({ type: 'RUN_FINISHED', threadId: current.threadId, runId: 'admitted-origin-run' });
+      await act(async () => { stream.close(); await turn; });
+    }
+  });
+
   // The cursor stood for the model's first ~7 s on a Main Turn: from RUN_STARTED, the Worklog's head says it works.
   describe('once the run starts', () => {
     const question: Message = { id: 'started-question', role: 'user', content: 'What moved the 10y?' };

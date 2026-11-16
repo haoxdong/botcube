@@ -1238,8 +1238,10 @@ def test_a_reopened_bedrock_turn_times_its_reasoning_tools_and_answer(
 
 
 def test_a_reopened_question_keeps_when_its_turn_started(service: _Service) -> None:
-    service.turn('hello', turnStartedAt='2026-11-03T21:00:00.250Z')
-    service.turn('again')
+    first_events = service.turn('hello', turnStartedAt='2026-11-03T21:00:00.250Z')
+    next_events = service.turn('again')
+    assert next(event for event in first_events if event['type'] == 'RUN_STARTED')['timestamp'] == 1793739600250
+    assert 'timestamp' not in next(event for event in next_events if event['type'] == 'RUN_STARTED')
 
     replay = asyncio.run(session_api.get_session('user-1', 'thread-1'))
     [first, second] = [message for message in replay if message['role'] == 'user']

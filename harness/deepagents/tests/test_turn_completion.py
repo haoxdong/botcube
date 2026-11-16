@@ -57,6 +57,18 @@ def _input(run_id: str = 'run') -> RunAgentInput:
     return RunAgentInput(thread_id='session', run_id=run_id, messages=[], tools=[], context=[], state={}, forwarded_props={})
 
 
+def test_run_started_carries_the_accepted_turn_origin() -> None:
+    async def exercise() -> None:
+        request = _input()
+        assert request.forwarded_props is not None
+        request.forwarded_props['turn_started_at'] = '2026-11-16T12:00:00Z'
+        events = [event async for event in _agent().run(request)]
+        [started] = [event for event in events if event.type == EventType.RUN_STARTED]
+        assert started.timestamp == 1794830400000
+
+    asyncio.run(exercise())
+
+
 def test_finished_run_does_not_build_the_whole_session_messages_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     async def unexpected_snapshot(self: Any, config: Any):
         raise AssertionError('A finished Turn rebuilt its whole Session snapshot')
