@@ -3,6 +3,7 @@ import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
 import type { HttpAgent, Message } from '@ag-ui/client';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import * as motion from 'framer-motion';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import type { ButtonHTMLAttributes, ComponentType, HTMLAttributes, ReactElement, ReactNode } from 'react';
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
@@ -10,6 +11,11 @@ import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFi
 
 import type { AuthUiState, AuxiliaryPanelHostProps, WebUiPlugin } from '../cartridge/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
+
+vi.mock('framer-motion', async (importOriginal) => {
+  const original = await importOriginal<typeof import('framer-motion')>();
+  return { ...original, resize: vi.fn(original.resize) };
+});
 
 // The CopilotKit boundary: fakes that record what the page hands CopilotKit and render a chat input
 // shaped like CopilotChat's (a textarea and a send cell), whose send cell a test can hold back.
@@ -2261,9 +2267,8 @@ describe('Main Chat', () => {
     };
     const rows = () => [...document.querySelectorAll('[data-message-row]')].map((row) => row.getAttribute('data-message-row'));
     const scrollView = () => screen.getByTestId('copilot-scroll-view');
-    // Like a ResizeObserver: the list reports each time the rows in it grow.
-    const resized: ResizeObserverCallback[] = [];
-    const grow = () => act(async () => { for (const callback of [...resized]) callback([], {} as ResizeObserver); });
+    const resized = new Set<() => void>();
+    const grow = () => act(async () => { for (const notify of [...resized]) notify(); });
     // Each row 100px tall unless `height` says otherwise, laid out from the list's top, in a scroll view 300px tall: the
     // row being read moves down by the rows joining above it. An app zoomed by `zoom` shows them `zoom` times as tall.
     const layOut = (height: (row: string | null) => number = () => 100, zoom = 1) => {
@@ -2284,20 +2289,16 @@ describe('Main Chat', () => {
 
     beforeEach(() => {
       observed.length = 0;
-      resized.length = 0;
-      vi.stubGlobal(
-        'ResizeObserver',
-        class {
-          constructor(private readonly callback: ResizeObserverCallback) {}
-          observe() {
-            resized.push(this.callback);
-          }
-          unobserve() {}
-          disconnect() {
-            resized.splice(0, resized.length, ...resized.filter((callback) => callback !== this.callback));
-          }
-        },
-      );
+      resized.clear();
+      vi.spyOn(motion, 'resize').mockImplementation((target, callback) => {
+        assert(Array.isArray(target));
+        assert(callback);
+        const notify = () => {
+          for (const element of target) callback(element, { width: element.clientWidth, height: element.clientHeight });
+        };
+        resized.add(notify);
+        return () => { resized.delete(notify); };
+      });
       stubIntersectionObserver();
       copilot.rows = true;
       service.mainChat = {

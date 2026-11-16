@@ -1,3 +1,4 @@
+import { resize } from "framer-motion";
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 import { zoomOf } from "@/lib/utils";
@@ -96,7 +97,7 @@ export function holdReading(read: ReadRow, list: Element, events: EventTarget): 
     const now = rowRead(list, read.scroller, before);
     if (now !== null) Object.assign(read, now);
   };
-  const observer = new ResizeObserver(() => {
+  const stop = resize([list], () => {
     if (scrolledTo) moveTo(laid);
     keepInPlace(read);
     kept = read.scroller.scrollTop;
@@ -109,10 +110,9 @@ export function holdReading(read: ReadRow, list: Element, events: EventTarget): 
     if (height() === held) moveTo();
     else scrolledTo = true;
   };
-  observer.observe(list);
   events.addEventListener("scroll", scrolled);
   return () => {
-    observer.disconnect();
+    stop();
     events.removeEventListener("scroll", scrolled);
   };
 }
