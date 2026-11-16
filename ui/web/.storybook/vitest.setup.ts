@@ -14,6 +14,7 @@ declare module 'vitest' {
     screenshotDirectory: string;
     screen: 'phone' | 'desktop';
     renderingProfile: string;
+    renderingTrace: boolean;
   }
 }
 
@@ -22,6 +23,8 @@ declare module 'vitest/browser' {
     emulateMedia: (reducedMotion: 'reduce' | 'no-preference') => Promise<void>;
     prepareRendering: () => Promise<RenderingProof>;
     recordRendering: (record: RenderingRecord) => Promise<void>;
+    startRenderingTrace: (story: string) => Promise<void>;
+    finishRenderingTrace: () => Promise<void>;
   }
 }
 
@@ -33,16 +36,26 @@ beforeEach(async (context) => {
   if (inject('renderingProfile')) {
     configure({ asyncUtilTimeout: 60000 });
     renderingProof = await commands.prepareRendering();
+    if (inject('renderingTrace')) {
+      await commands.startRenderingTrace(context.task.name);
+      performance.mark('rendering-story-start');
+    }
     startFrameSampling(nativeFrame);
   }
 });
 
 afterEach(async (context) => {
   if (inject('renderingProfile') && renderingProof) {
-    const timing = frameTimings(stopFrameSampling());
-    await commands.recordRendering({ ...renderingProof, story: context.task.name, state: context.task.result?.state ?? 'unknown', timing });
-    renderingProof = undefined;
-    if (timing.frames < 2) throw new Error('Rendering sample has fewer than two frames');
+    try {
+      if (inject('renderingTrace')) performance.mark('rendering-story-end');
+      const samples = stopFrameSampling();
+      const timing = frameTimings(samples);
+      await commands.recordRendering({ ...renderingProof, story: context.task.name, state: context.task.result?.state ?? 'unknown', timing });
+      if (timing.frames < 2) throw new Error('Rendering sample has fewer than two frames');
+    } finally {
+      renderingProof = undefined;
+      if (inject('renderingTrace')) await commands.finishRenderingTrace();
+    }
   }
   if (REDUCE_MOTION.test(context.task.name)) await commands.emulateMedia('no-preference');
 });

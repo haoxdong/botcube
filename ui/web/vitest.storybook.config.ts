@@ -8,6 +8,7 @@ import type { FramePath, ShownElement } from './.storybook/frames';
 import type { ScriptSource } from './.storybook/script-hosts';
 import { viewports } from './.storybook/viewports.js';
 import { renderingProfile, prepareRendering, recordRendering } from '../../../scripts/web-checks/rendering-profile.mjs';
+import { startNativeTrace } from '../../../scripts/web-checks/native-trace.mjs';
 
 type DriverPage = BrowserCommandContext['page'];
 type DriverFrame = ReturnType<DriverPage['mainFrame']>;
@@ -49,6 +50,10 @@ async function titled(frame: DriverFrame, name: string, path: readonly string[])
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
 const profile = process.env.UI_RENDERING_PROFILE ?? '';
 const renderingDirectory = process.env.UI_RENDERING_OUTPUT ?? path.resolve('../../../.tmp/rendering');
+const traceStories = process.env.UI_RENDERING_TRACE_STORIES;
+const traceMatcher = traceStories ? new RegExp(traceStories) : undefined;
+let finishTrace: (() => Promise<string>) | undefined;
+if (traceMatcher && !profile) throw new Error('UI_RENDERING_TRACE_STORIES requires UI_RENDERING_PROFILE');
 if (screen !== 'phone' && screen !== 'desktop')
   throw new Error(`Unknown Storybook viewport ${screen}`);
 
@@ -74,6 +79,7 @@ export default defineConfig({
       screenshotDirectory: process.env.STORYBOOK_SCREENSHOT_DIR ?? '',
       screen,
       renderingProfile: profile,
+      renderingTrace: Boolean(traceMatcher),
     },
     browser: {
       enabled: true,
@@ -87,6 +93,19 @@ export default defineConfig({
       // A story named `…-reduce-motion` runs with the OS's Reduce Motion on (vitest.setup.ts), to prove BotCube still
       // moves in full.
       commands: {
+        startRenderingTrace: async (context, story: string) => {
+          if (!traceMatcher?.test(story)) return;
+          if (finishTrace) throw new Error('A native rendering trace is already active');
+          finishTrace = await startNativeTrace(context.page, path.join(renderingDirectory, profile, screen, `${encodeURIComponent(story)}.trace.json.gz`));
+        },
+        finishRenderingTrace: async () => {
+          const finish = finishTrace;
+          try {
+            if (finish) console.info('Native Chrome trace:', await finish());
+          } finally {
+            finishTrace = undefined;
+          }
+        },
         prepareRendering: async (context) => {
           if (context.provider.name !== 'playwright') throw new Error('Rendering profiles need Playwright');
           return prepareRendering(context.page, profile);
