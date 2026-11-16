@@ -82,18 +82,18 @@ function StepSection({ label, text, look, heading, badge }: Section) {
         <Presence>{badge && <motionElement.span {...presenceMotion} className="step-section-exit">{badge}</motionElement.span>}</Presence>
         <Copy label={label} text={text} />
       </div>
-      {look === "markdown" ? (
+      <Swap state={look}>{look === "markdown" ? (
         <div className="step-section-text" data-prose>
-          {heading === undefined ? <KeptMarkdown text={text} /> : (
+          <Swap state={heading ?? ""}>{heading === undefined ? <KeptMarkdown text={text} /> : (
             <div className="space-y-4 whitespace-normal">
               <p><strong className="font-semibold">{heading}</strong></p>
               <KeptMarkdown text={text.slice(heading.length + 4)} />
             </div>
-          )}
+          )}</Swap>
         </div>
       ) : (
         <pre className="step-section-text" data-prose={look === "prose" || undefined}><Swap as="span" state={look}>{look === "prose" ? text : look === "shell" ? <Shell text={text} /> : <CodeWords text={text} />}</Swap></pre>
-      )}
+      )}</Swap>
     </section>
   );
 }
