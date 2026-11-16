@@ -4,15 +4,13 @@ Consistent, clean, quiet, the way Apple designs: a screen looks like the platfor
 ChatGPT's Mac app on a desktop) and keeps only what is essential. The system shrinks over time, never grows: each
 colour, size and weight has one job, and a new one must first merge or drop another.
 
-The values live in `:root` of `src/app/tokens.css`, which `globals.css` imports first, with the why in its comments. `src/app/design-system.test.ts`
-locks the set below: a colour, size, weight, line-height, radius or shadow outside it fails the build. Mockups live
-on the Design canvas (https://claude.ai/artifact/L1AfVQ3SBtUs86FfBrXER6).
+The values live in `:root` of `src/app/tokens.css`, with the why in its comments. `src/app/design-system.test.ts`
+locks the set below and keeps this file pruned (its names, its paths, its size). Stylelint (`pnpm lint`) keeps raw
+values out of components; each exception carries an inline disable with its reason and is listed under Exceptions
+first. Mockups live on the Design canvas (https://claude.ai/artifact/L1AfVQ3SBtUs86FfBrXER6).
 
 Components are plain CSS on these tokens. Tailwind's `@theme inline` and shadcn's colour names map onto them; there
 is no dark theme, and a palette that `shadcn add` writes into `globals.css` is deleted.
-
-`pnpm lint` enforces this with Stylelint (`stylelint.config.mjs`); each exception carries an inline disable with its
-reason, and a new one is added here first.
 
 ## Colour
 
@@ -33,15 +31,16 @@ against Muse and dots, which each use two fill greys and two text greys.
 | `green`      | green-9   | Connected; a spreadsheet's file label                                             |
 
 - A hover takes the next grey up: `fill` on white, `line` on a fill.
-- A status shows in its text colour on `fill`; there are no soft tints.
+- A status shows in its text colour on `fill`, never a soft tint; only an Artifact's card is tinted (Components).
 - Light and shade, black and white at a fixed opacity: `--scrim` under sheets and overlays, `--frost` for glass.
 - The agent's colours (`--agent-body`, `-outline`, `-deep`, `-deepest`, from Marq's avatar) are for its
   illustrations only: the Soul and Memory cards and the Computer's desktop. A cartridge `theme` may bring its own.
 
 ## Type
 
-The system font (SF Pro on Apple) and `--font-code` (Menlo, at 0.9em of the text beside it). Four sizes, each its
-desktop size in `:root` and iOS's text style in the 640px query; name the role, never a pixel size.
+The system font (SF Pro on Apple) and `--font-code` (Menlo, at `--font-code-size`, 0.9em of the text beside it).
+Four sizes, each its desktop size in `:root` and iOS's text style in the 640px query; name the role, never a pixel
+size.
 
 | Token   | Desktop | Phone (iOS)      | Job                                                               |
 | ------- | ------- | ---------------- | ----------------------------------------------------------------- |
@@ -56,8 +55,6 @@ desktop size in `:root` and iOS's text style in the 640px query; name the role, 
   welcome, a file's text).
 - One tracking: `--tracking-caps` 0.04em, for uppercase labels only.
 
-Code font: `--font-code`, at `--font-code-size` (0.9 of the text beside it) inline and in the Worklog.
-
 ## Shape
 
 **Shadows**, two: `rest` for a white surface on the page (the composer, a file card, the header's capsule on hover);
@@ -69,24 +66,22 @@ iPhone's rounded screen corner; `pill` buttons, pills, tabs. The desktop chat st
 square.
 
 **Motion**: calm and continuous, as iOS moves: nothing snaps, jumps or shifts under the reader. Two visual settling
-targets, one spring configuration and one ambient loop, locked by `design-system.test.ts` and `motion-tokens.test.ts`:
+targets, one spring configuration and one ambient loop, also locked by `src/app/motion-tokens.test.ts`:
 
-| Token            | Value                            | Job                                                                                                                     |
-| ---------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `--motion-quick` | 150ms                            | The spring's visual settling target for what changes in place, including fades                                          |
-| `--motion-move`  | 300ms                            | The spring's visual settling target for what moves or changes size, including panels, sheets, Worklogs and the composer |
-| `--ease`         | `cubic-bezier(0.32, 0.72, 0, 1)` | Existing CSS transitions awaiting migration and independent review                                                      |
-| `--motion-loop`  | 1.6s                             | The one ambient loop: the Worklog shimmer, a loading pulse, Marq's bob                                                  |
+| Token            | Value                            | Job                                                                     |
+| ---------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| `--motion-quick` | 150ms                            | Settling target for what changes in place, fades included               |
+| `--motion-move`  | 300ms                            | Settling target for what moves or resizes: panels, sheets, the composer |
+| `--ease`         | `cubic-bezier(0.32, 0.72, 0, 1)` | CSS transitions not yet moved to the spring                             |
+| `--motion-loop`  | 1.6s                             | The one ambient loop: the Worklog shimmer, a loading pulse, Marq's bob  |
 
 - `motionTokens()` converts the quick and move targets to seconds for Motion's `type: "spring"`, `visualDuration`
-  and `bounce: 0`. These are visual settling targets rather than fixed timers. Motion springs do not read `--ease`.
-- Animate only `transform` and `opacity`. Commit size and position endpoints once and let Motion layout project
-  between them. Never animate `height`, `width`, `flex-grow` or scroll each frame. An entering element fades in;
-  an exiting element remains mounted and inert until its fade completes. Each moving element has one animation owner.
-- Interrupted motion must preserve position and velocity. Current Motion 14.9 time-defined springs ignore inherited
-  velocity, and its layout projection starts at zero velocity. That remains a requirement gap in the current migration,
-  rather than a promise supplied by `visualDuration` and `bounce` alone.
-- A finger drives motion directly; on release the surface settles with the shared move spring. A tap uses the same settle.
+  and `bounce: 0`.
+- Animate only `transform` and `opacity`: commit size and position endpoints once and let Motion layout project
+  between them. An entering element fades in; an exiting element stays mounted and inert until its fade completes.
+  Each moving element has one animation owner.
+- Interrupted motion keeps its position and velocity.
+- A finger drives motion directly; on release, and on a tap, the surface settles with the move spring.
 - New content keeps the reading position still.
 - Full motion always, Reduce Motion or not: BotCube has one experience, the full one (the maintainer, 2026-11-03).
   `design-system.test.ts` fails on any `prefers-reduced-motion`, `reducedMotion` or `useReducedMotion` in UI sources.
@@ -96,27 +91,32 @@ sections sit 24–28px apart, rows 4–12px.
 
 ## Charts
 
-Plotly, from its built-in `simple_white`, with no gridlines. Axis lines and short ticks are `line`; labels are `text-muted` in the system font at 13px. Series take Radix step 9 in the order blue, orange, green, red, violet, teal, amber, pink; red and green keep their plain meaning, as for a stock's move. Long titles wrap; the source sits in the subtitle.
+Plotly, from its built-in `simple_white`, with no gridlines. Axis lines and short ticks are `line`; labels are
+`text-muted` in the system font at 13px. Series take Radix step 9 in the order blue, orange, green, red, violet,
+teal, amber, pink; red and green keep their plain meaning, as for a stock's move. Long titles wrap; the source sits
+in the subtitle.
 
 ## Components
 
 All but the File page and Close are React components in `src/components/ui/` over one CSS rule each; a cartridge
-imports them from `botcube-ui-web/ui`. Behaviour is pinned by `globals.test.tsx` and the Storybook play tests.
+imports them from `botcube-ui-web/ui`. Behaviour is pinned by `src/app/globals.test.tsx` and the Storybook play
+tests.
 
 - **Bubbles**: up to 90% of the column, `xl`, `text` on `bubble` for the user and on `white` in `rest` for Marq, both on
   `canvas`. Notes inside a Turn wear none. A table in Marq's reply sits flat, only row lines, as wide as its
   content.
-  - A wrapped bubble hugs its widest line, measured with Pretext (`bubble-width.ts`). One reply is one bubble: tables,
-    code and diagrams stay inside it, and anything wider than the bubble scrolls sideways within it.
+  - A wrapped bubble hugs its widest line, measured with Pretext (`src/app/bubble-width.ts`). One reply is one
+    bubble: tables, code, diagrams and the reply's Artifacts stay inside it, and anything wider than the bubble
+    scrolls sideways within it.
   - One line is an exact pill, twice `xl` tall (40px): the padding is `xl` less half a line, 16px at the sides.
   - Bubbles in a row from one sender, nothing between them, stack 4px apart; where two meet, the sender's side is `sm`.
 - **Chat header**: Marq centred over the scrolling messages, his name in a frosted capsule; "is working" in `small`
   `text-muted` while he bobs behind a laptop lid (Muse, Fig 11 of the
   [Muse and dots north star](../../../docs/northstars/muse-dots-and-grok-bot-for-always-on.md)). Messages fade under it
-  on a desktop and run under iOS Safari's own fade on a phone.
-- **Safe zones**: on an iPhone the chat runs edge to edge, under the status bar at the top and on past the composer
-  under Safari's toolbar and the home indicator at the bottom, both under Safari's own blur. No band of its own at
-  either edge.
+  on a desktop.
+- **Safe zones**: on an iPhone the chat runs edge to edge: under Marq, the menu and the status bar at the top, and on
+  past the composer under Safari's toolbar and the home indicator at the bottom, both under Safari's own blur. No band
+  of its own at either edge (kept, 2026-11-16).
 - **Composer**: white in `rest`, `float` on focus, its only focus mark. ChatGPT's one row on a desktop, the text
   across the top once it wraps, the picker always shown. On a phone, one row at rest: the text with Send, no model
   picker. Tapping it opens two rows even when empty: the text over the picker and Send, with 44px targets (the Claude
@@ -136,6 +136,11 @@ imports them from `botcube-ui-web/ui`. Behaviour is pinned by `globals.test.tsx`
 - **Files**: a file is its type's icon from react-file-icon, a folded page with a label in its type's colour (`red`
   PDF and deck, `green` sheet, `blue` document, `text-muted` the rest), the same in Files, the composer, a sent
   message and a reply's card. An image is its own thumbnail, ChatGPT's square one in the composer and once sent.
+- **Artifacts**: a card tinted in its Type's Radix step 3 with step 11 ink (Doc blue, Sheet green, Slides red, Email
+  amber, Page violet), the only soft tints, with the Type's icon and word, so a Sheet never reads as an `.xlsx`
+  File, which stays white. In a reply, the words come first, then the Artifact
+  cards at equal width, then Files. The Artifacts tab is one row per Artifact, newest first. A deck sits on its
+  panel's background, each slide at its own size.
 - **Worklog**: a Turn's work under one head, "Working · 9s"; one grey shimmer sweeps the live line, never colour.
 - **Agent files**: Soul and Memory cards side by side in the agent's colours (Muse Fig 16), white type at 4.5:1;
   an opened file is an iOS Settings grouped list.
@@ -147,4 +152,4 @@ Each is a real-world object the system doesn't draw, and the lock test names eac
 - Marq's avatar is an illustration in the agent's colours.
 - The Computer's simulated desktop scales with its screen (`cqw`); Chrome's dock icon keeps Google's colours.
 - The composer's text stays 16px on a touch tablet, so iOS doesn't zoom into it.
-- Code blocks take Shiki's `github-light` syntax colours: code is a real-world object the system doesn't draw.
+- Code blocks take Shiki's `github-light` syntax colours.

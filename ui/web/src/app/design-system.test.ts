@@ -1,5 +1,5 @@
 // A new colour, size, radius, shadow, duration or curve fails here; to add one, first merge or drop another (DESIGN.md).
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,4 +142,30 @@ it('styles every story with each stylesheet the app loads', () => {
   const stories = stylesheets('ui/web/.storybook/preview.ts');
 
   expect(stylesheets('ui/web/src/app/layout.tsx').filter((sheet) => !stories.includes(sheet))).toEqual([]);
+});
+
+// DESIGN.md stays pruned: it names only live tokens and files, says each thing once, and shrinks rather than grows.
+describe('DESIGN.md', () => {
+  const design = read('ui/web/DESIGN.md');
+  /** Its byte budget: to add a line, first cut as much, as the system it describes does. */
+  const BUDGET = 11_800;
+
+  it('names only tokens that tokens.css defines', () => {
+    const named = [...design.matchAll(/`(--[a-z][a-z0-9-]*)`/g)].flatMap(([, token]) => token ?? []);
+    expect(named.filter((token) => !tokens.includes(token))).toEqual([]);
+  });
+
+  it('points only at files that exist', () => {
+    const files = [...design.matchAll(/`(src\/[^`\s]+\.[a-z]+)`/g)].flatMap(([, file]) => file === undefined ? [] : [`ui/web/${file}`]);
+    expect(files.filter((file) => !existsSync(path.join(cube, file)))).toEqual([]);
+  });
+
+  it('says each sentence once', () => {
+    const sentences = design.replace(/\s+/g, ' ').split(/(?<=[.:;])\s/).map((s) => s.trim()).filter((s) => s.length >= 40);
+    expect(sentences.filter((s, i) => sentences.indexOf(s) !== i)).toEqual([]);
+  });
+
+  it(`stays within ${BUDGET} bytes`, () => {
+    expect(Buffer.byteLength(design)).toBeLessThanOrEqual(BUDGET);
+  });
 });
