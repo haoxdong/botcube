@@ -1,3 +1,4 @@
+import type { Message } from '@ag-ui/client';
 import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider } from '@copilotkit/react-core/v2';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
@@ -31,7 +32,7 @@ const MESSAGES = [
   { id: 't', role: 'tool' as const, toolCallId: 'c', content: JSON.stringify(PUBLISHED) },
 ];
 
-function Chat({ messages = MESSAGES }: { messages?: object[] }) {
+function Chat({ messages = MESSAGES }: { messages?: Message[] }) {
   return (
     <CopilotKitProvider>
       <CopilotChatConfigurationProvider threadId="thread">

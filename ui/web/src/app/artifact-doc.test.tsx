@@ -1,3 +1,4 @@
+import type { Message } from '@ag-ui/client';
 // ProseMirror asks the DOM where the caret is; jsdom answers with the stubs below, happy-dom can't.
 // @vitest-environment jsdom
 import { HttpAgent } from '@ag-ui/client';
@@ -104,7 +105,7 @@ async function openDoc() {
     { id: `t-${call}`, role: 'tool' as const, toolCallId: call, content: JSON.stringify(artifact) },
   ];
   const first = [{ id: 'u', role: 'user' as const, content: 'Write the Q4 plan' }, ...published('c', PUBLISHED)];
-  const chat = (messages: object[]) => (
+  const chat = (messages: Message[]) => (
     <CopilotKitProvider>
       <CopilotChatConfigurationProvider threadId="thread">
         <ArtifactLayout agent={IDLE}><div className="app-chat"><CopilotChatMessageView messages={messages} isRunning={false} /></div></ArtifactLayout>

@@ -22,6 +22,8 @@ allowBuilds:
 
 # BrowserLiveView hands out its DCV connection, for Take-over by touch.
 patchedDependencies:
+  '@copilotkit/react-core@1.83.0': patches/@copilotkit__react-core@1.83.0.patch
+  streamdown@2.7.0: patches/streamdown@2.7.0.patch
   bedrock-agentcore@0.4.5: patches/bedrock-agentcore@0.4.5.patch
 
 overrides:
