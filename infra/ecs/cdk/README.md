@@ -47,7 +47,7 @@ pool when deploying:
 
 ```sh
 corepack pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
-  -c filesAccessPointMode=pool -c filesAccessPointPoolSize=1000 \
+  -c filesAccessPointMode=pool -c filesAccessPointPoolSize=100 \
   -c 'webLatencyMoments=["first-response","tool-result"]'
 ```
 
@@ -62,7 +62,7 @@ The serving roles cannot manage access points. Chat Service refreshes the
 private S3 manifest for new User leases, so added slots need no task restart.
 Each STS session policy still permits exactly one access point.
 
-Pool capacity defaults to 1,000, with the usage alarm at 800. A User keeps
+Pool capacity defaults to 100, with the usage alarm at 80. A User keeps
 their slot for life, including idle periods. Retirement retains the lease for
 credential expiry and the existing 24-hour cleanup grace. Cleanup wipes the
 directory again before reuse. Exhaustion returns HTTP 503 with an instruction

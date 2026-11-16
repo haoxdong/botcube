@@ -121,7 +121,7 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
 }
 
 function addFilesPool(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, cubeRoot: string) {
-  const count = Number(origin.node.tryGetContext('filesAccessPointPoolSize') ?? 1000);
+  const count = Number(origin.node.tryGetContext('filesAccessPointPoolSize') ?? 100);
   if (!Number.isSafeInteger(count) || count < 1 || count > 9999) throw new Error('filesAccessPointPoolSize must be an integer from 1 to 9999; the shared mount uses one access point of EFS’s 10000-point quota');
   const pool = new FilesAccessPointPool(origin, 'FilesPool', {
     fileSystemId: storage.filesEfs.ref, fileSystemArn: storage.filesEfs.attrArn, capacity: count, source: path.join(cubeRoot, 'infra/ecs/files-pool'), alertsTopic: chat.alertsTopic,

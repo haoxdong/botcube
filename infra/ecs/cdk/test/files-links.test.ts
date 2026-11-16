@@ -110,11 +110,11 @@ test('pool uses one API resource, omits serving-role management, and alarms at 8
   });
 });
 
-test('defaults to 1000 deploy-time slots with the capacity alarm at 800', () => {
+test('defaults to 100 deploy-time slots with the capacity alarm at 80', () => {
   const template = synth(false, { filesAccessPointMode: 'pool' });
-  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Count: 1000 });
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Count: 100 });
   template.resourceCountIs('AWS::EFS::AccessPoint', 1);
-  template.hasResourceProperties('AWS::CloudWatch::Alarm', { Threshold: 800 });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', { Threshold: 80 });
 });
 
 test('allows pool capacity above the former CloudFormation resource limit', () => {
