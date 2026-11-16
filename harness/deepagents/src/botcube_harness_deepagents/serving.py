@@ -1135,7 +1135,8 @@ class _SessionTurns:
             if not task.cancelled() and isinstance(failure := task.exception(), Exception):
                 log.error('Harness Turn feed failed run_id=%s code=%s', turn.run_id, getattr(failure, 'code', 'INTERNAL_ERROR'),
                           exc_info=(type(failure), failure, failure.__traceback__))
-                self._flush_failures[session] = failure
+                if not isinstance(failure, TurnFeedError):
+                    self._flush_failures[session] = failure
 
         self._feeds[session] = task = asyncio.create_task(feed())
         task.add_done_callback(fed)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -13,6 +15,7 @@ import pytest
 from botocore.awsrequest import AWSResponse, HTTPHeaders
 from botocore.credentials import Credentials
 from botocore.stub import Stubber
+from langchain_core.messages import HumanMessage
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
 )
@@ -21,7 +24,11 @@ from agentcore_fake import USER_MEMORY_ROLE_ARN, FakeSts, turn_identity
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import purge as purge_module
 from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
-from botcube_harness_deepagents.turn_memory import TurnMemoryMiddleware
+from botcube_harness_deepagents.turn_memory import (
+    TurnFeedError,
+    TurnMemoryMiddleware,
+    feed_turn,
+)
 
 MEMORY_ID = 'memory_1-0123456789'
 
@@ -332,3 +339,34 @@ class _Body:
 
     def stream(self) -> Iterator[bytes]:
         yield self._content
+
+
+@pytest.mark.parametrize('exhausted', [False, True])
+def test_turn_feed_retries_throttled_create_event_with_the_same_token(
+    microvm: FakeSts, exhausted: bool,
+) -> None:
+    _, store = agentcore.turn_memory(
+        MEMORY_ID, turn_identity(), region_name='us-west-2', run_id='run-feed', turn=agentcore.next_turn(),
+    )
+    requests: list[dict[str, Any]] = []
+
+    def answer(request: Any, **_: Any) -> Any:
+        requests.append(json.loads(request.body))
+        if exhausted or len(requests) == 1:
+            headers = HTTPHeaders()
+            headers['x-amzn-errortype'] = 'ThrottlingException'
+            return AWSResponse(request.url, 429, headers, _Body(b'{"message": "Busy"}'))
+        return AWSResponse(request.url, 200, HTTPHeaders(), _Body(b'{"event": {"eventId": "fed"}}'))
+
+    store.client.meta.events.register('before-send.bedrock-agentcore.CreateEvent', answer)
+    feed = feed_turn(store, ('user-1', 'thread-1'), [HumanMessage(content='hello')])
+    if exhausted:
+        with pytest.raises(TurnFeedError, match='ThrottlingException'):
+            asyncio.run(feed)
+    else:
+        asyncio.run(feed)
+
+    assert len(requests) == 2
+    assert requests[0] == requests[1]
+    assert requests[0]['clientToken']
+    assert requests[0]['payload'] == [{'conversational': {'content': {'text': 'hello'}, 'role': 'USER'}}]

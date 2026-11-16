@@ -32,6 +32,7 @@ import boto3
 import pytest
 import uvicorn
 from botcube_cartridge import HarnessDefinition
+from botocore.exceptions import ClientError
 from deepagents.middleware.filesystem import EXECUTE_TOOL_DESCRIPTION
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
 from fastapi.testclient import TestClient
@@ -2472,7 +2473,7 @@ def test_on_agentcore_the_response_finishes_before_the_turn_feed(
     assert _fed_events(agentcore_memory, 'actor-1', 'thread-b') == [[('USER', 'hello')], [('ASSISTANT', 'Echo: hello')]]
 
 
-def test_on_agentcore_a_failed_turn_feed_is_logged_and_fails_the_next_turn(
+def test_on_agentcore_a_throttled_turn_feed_preserves_the_answer_and_the_next_turn(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2480,7 +2481,7 @@ def test_on_agentcore_a_failed_turn_feed_is_logged_and_fails_the_next_turn(
 
     def failing(**params: Any) -> dict[str, Any]:
         if any('conversational' in item for item in params['payload']):
-            raise RuntimeError('Memory unavailable')
+            raise ClientError({'Error': {'Code': 'ThrottlingException', 'Message': 'Busy'}}, 'CreateEvent')
         return create_event(**params)
 
     monkeypatch.setattr(agentcore_memory, 'create_event', failing)
@@ -2493,10 +2494,13 @@ def test_on_agentcore_a_failed_turn_feed_is_logged_and_fails_the_next_turn(
     [logged] = [record for record in caplog.records if record.getMessage().startswith('Harness Turn feed failed')]
     assert logged.levelno == logging.ERROR
     assert 'code=TURN_FEED_FAILED' in logged.getMessage()
-    [run_error] = [event for event in service.turn('again', thread='thread-b', actor='actor-1', user='user-1', memory=True)
-                   if event['type'] == 'RUN_ERROR']
-    assert run_error == {'type': 'RUN_ERROR', 'code': 'TURN_FEED_FAILED',
-                         'message': 'The Turn could not be fed to Memory: Memory unavailable'}
+    assert any(event.get('delta') == 'Echo: hello' for event in first)
+    monkeypatch.setattr(agentcore_memory, 'create_event', create_event)
+    following = service.turn('again', thread='thread-b', actor='actor-1', user='user-1', memory=True)
+    service.fed()
+    assert following[-1]['type'] == 'RUN_FINISHED'
+    assert not any(event['type'] == 'RUN_ERROR' for event in following)
+    assert any(event.get('delta') == 'Echo: again' for event in following)
 
 
 def test_on_agentcore_a_failed_memory_load_fails_the_sessions_first_turn_and_the_next_turn_loads_again(
