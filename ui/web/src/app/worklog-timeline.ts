@@ -15,10 +15,10 @@ type TurnTiming = { start: number; ended?: number | undefined; observed: Record<
 const TIMINGS_KEY = "botcube.worklog-turns";
 let timings: Map<string, TurnTiming> | undefined;
 
-function timingOf(id: string, start: number, running: boolean) {
+function timingOf(id: string, start: number, running: boolean, advanceClock: boolean) {
   timings ??= new Map(withStorage(() => JSON.parse(sessionStorage.getItem(TIMINGS_KEY) ?? "[]") as [string, TurnTiming][]) ?? []);
   const kept = timings.get(id);
-  if (kept || !running) return kept;
+  if (kept || !running || !advanceClock) return advanceClock ? kept : kept && structuredClone(kept);
   const current: TurnTiming = { start, observed: {}, allocations: {} };
   timings.set(id, current);
   const oldest = timings.keys().next().value;
@@ -102,6 +102,16 @@ function stepsOf(turn: readonly TimelineMessage[], startId: string, running: boo
   return [{ id: startId, kind: "start", ended: first?.began }, ...work, ...answered];
 }
 
+function saveObservedTiming(kept: TurnTiming | undefined, advanceClock: boolean) {
+  if (kept && advanceClock) withStorage(() => sessionStorage.setItem(TIMINGS_KEY, JSON.stringify([...timings ?? []])));
+}
+
+function knownTimeOf(kept: TurnTiming | undefined, turn: readonly TimelineMessage[] | undefined, fallback: number) {
+  const start = kept?.start ?? startOf(turn ?? []) ?? fallback;
+  const retained = Math.max(0, ...Object.values(kept?.allocations ?? {}).map((allocation) => Object.values(allocation).reduce((sum, value) => sum + value, 0)));
+  return Math.max(start + retained * 1000, kept?.ended ?? start, ...(turn ?? []).flatMap((message) => stampsOf(message)?.[1] ?? []));
+}
+
 function finishedEndOf(turn: readonly TimelineMessage[] | undefined, running: boolean) {
   const last = turn?.at(-1);
   return !running && last?.role === "assistant" && !last.toolCalls?.length && hasText(last) ? stampsOf(last)?.[1] : undefined;
@@ -111,13 +121,14 @@ function finishedEndOf(turn: readonly TimelineMessage[] | undefined, running: bo
  * Allocates rounded Turn time in message order. Retains displayed allocations in this tab across replay and reload.
  * Untimed when a finished step lacks an end.
  */
-export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefined, question: TimelineMessage | undefined, running: boolean, serverStart: string | undefined, viewId = id) {
-  const now = Date.now();
+export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefined, question: TimelineMessage | undefined, running: boolean, serverStart: string | undefined, { viewId = id, advanceClock = true }: { viewId?: string; advanceClock?: boolean } = {}) {
+  const liveNow = Date.now();
   const sent = (question && stampsOf(question)?.[0]) ?? (running && serverStart !== undefined ? Date.parse(serverStart) : undefined);
   const origin = sent ?? startOf(turn ?? []);
-  const kept = timingOf(question?.id ?? id, origin ?? now, running);
+  const kept = timingOf(question?.id ?? id, origin ?? liveNow, running, advanceClock);
   if (kept && origin !== undefined) kept.start = Math.min(kept.start, origin);
   const start = kept?.start ?? origin;
+  const now = advanceClock ? liveNow : knownTimeOf(kept, turn, origin ?? liveNow);
   if (start === undefined) return undefined;
   const recordedEnd = finishedEndOf(turn, running);
   const finishedAt = recordedEnd ?? now;
@@ -129,7 +140,7 @@ export function timelineOf(id: string, turn: readonly TimelineMessage[] | undefi
   const allocation = allocationFor(kept, viewId, steps);
   const timed = retainSeconds(stepSeconds(start, steps, now, running, kept, recordedEnd), allocation);
   const shown = timed.each.get(startId) ? steps : steps.filter((step) => step.id !== startId);
-  if (kept) withStorage(() => sessionStorage.setItem(TIMINGS_KEY, JSON.stringify([...timings ?? []])));
+  saveObservedTiming(kept, advanceClock);
   return { ...timed, steps: shown };
 }
 

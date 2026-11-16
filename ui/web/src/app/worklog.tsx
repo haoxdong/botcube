@@ -64,7 +64,7 @@ function messageIdOf(row: ReactElement): string {
  * counts it as one and a renamed message keeps its Worklog's clock. A Worklog runs while the run is its Turn's, and its
  * time is its Turn's, answer included.
  */
-export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, cardSteps = true }: { started?: boolean; cardSteps?: boolean } = {}): ReactElement[] {
+export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, cardSteps = true, advanceClock = true }: { started?: boolean; cardSteps?: boolean; advanceClock?: boolean } = {}): ReactElement[] {
   const { parts, cards } = partsOf(messages, isRunning);
   const lastQuestion = messages.findLastIndex(({ role }) => role === "user");
   const asked = messages[lastQuestion]?.id;
@@ -84,7 +84,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const turn = messages.slice(first, next < 0 ? undefined : next);
       const question = messages.findLast((m, i) => i < first && m.role === "user");
       out.push(
-        <Worklog key={id} id={id} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
+        <Worklog key={id} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && first > lastQuestion} expanding={isRunning && first > lastQuestion && !answering} asked={asked}>
           {work}
         </Worklog>,
       );
@@ -112,7 +112,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   }
   fold();
   if (isRunning && started && latest?.role === "user") {
-    out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} running asked={latest.id} />);
+    out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} advanceClock={advanceClock} running asked={latest.id} />);
   }
   return out;
 }
@@ -166,7 +166,7 @@ const StepTimes = createContext<ReadonlyMap<string, number> | null>(null);
  * until work resumes, an answer starts, the run ends or the user asks again (`asked`, their latest message's id).
  * Live, it times the Turn itself, carrying on the clock of the head its Turn showed under `asked` before any row, else from its first replayed step (`startedAt`), as after a reload mid-Turn; replayed, its messages' stamps (`took`). With no rows it has nothing to open.
  */
-export function Worklog({ id, turn, question, took, startedAt, running, expanding = running, asked, children }: {
+export function Worklog({ id, turn, question, took, startedAt, running, expanding = running, asked, children, advanceClock = true }: {
   id: string;
   turn?: readonly TurnMessage[] | undefined;
   question?: TurnMessage | undefined;
@@ -174,6 +174,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   startedAt?: number | undefined;
   running: boolean;
   expanding?: boolean | undefined;
+  advanceClock?: boolean | undefined;
   asked: string | undefined;
   children?: ReactNode;
 }) {
@@ -183,8 +184,8 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   if (chosen && !current) setChosen(null);
   const open = current ? chosen.open : phase === "working";
   const serverStart = useContext(TurnStart);
-  useWorklogClock(running);
-  const timeline = timelineOf(question?.id ?? asked ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), id);
+  useWorklogClock(running && advanceClock);
+  const timeline = timelineOf(question?.id ?? asked ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock });
   const total = totalOf(timeline, took);
   const title = (
     <span className="worklog-title" data-live={running || undefined}>

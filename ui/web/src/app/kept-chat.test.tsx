@@ -439,3 +439,34 @@ it('shows saved running history with mixed card calls before CopilotKit mounts',
   expect(screen.getByText('Chart ready')).toBeVisible();
   expect(screen.getByText('Loading controls')).toBeVisible();
 });
+
+it('keeps the last observed clock while saved running history awaits replay', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => { vi.useRealTimers(); });
+  const start = Date.parse('2026-11-16T02:00:00Z');
+  const stamp = (from: number, to: number) => ({ metadata: { started_at: start + from * 1000, ended_at: start + to * 1000 } });
+  const question = { id: 'opening-clock-u', role: 'user' as const, content: 'Compare rates', ...stamp(0, 0) };
+  const tool = { id: 'opening-clock-a', role: 'assistant' as const, content: 'Researching rates', toolCalls: [{ id: 'opening-clock-c', type: 'function' as const, function: { name: 'execute', arguments: '{"command":"rates"}' } }], ...stamp(0, 0) };
+  vi.setSystemTime(start + 2000);
+  const live = await import('./worklog');
+  const view = render(<live.Worklog id={tool.id} asked={question.id} question={question} turn={[tool]} running>
+    <live.ToolStep id="opening-clock-c" name="execute" params={{ command: 'rates' }} status="running" output={undefined} />
+  </live.Worklog>);
+  expect(screen.getByRole('button', { name: /^Working/ })).toHaveTextContent('Working · 2s');
+  view.unmount();
+  const savedTiming = sessionStorage.getItem('botcube.worklog-turns');
+  vi.setSystemTime(start + 3341000);
+  vi.resetModules();
+  const { KeptChat: LoadingKeptChat } = await import('./kept-chat');
+  const loading = render(<LoadingKeptChat messages={[question, tool]} running disclaimer="Loading controls" />);
+  expect.soft(loading.container.querySelector('.worklog-title')).toHaveTextContent('Working · 2s');
+  expect.soft(sessionStorage.getItem('botcube.worklog-turns')).toBe(savedTiming);
+  loading.unmount();
+  const restored = await import('./worklog');
+  const result = { id: 'opening-clock-t', role: 'tool' as const, toolCallId: 'opening-clock-c', content: 'Compared', ...stamp(0, 0.2) };
+  const answer = { id: 'opening-clock-answer', role: 'assistant' as const, content: 'Rates compared', ...stamp(0.2, 49) };
+  render(<restored.Worklog id={tool.id} asked={question.id} question={question} turn={[tool, result, answer]} running={false}>
+    <restored.ToolStep id="opening-clock-c" name="execute" params={{ command: 'rates' }} status="complete" output="Compared" />
+  </restored.Worklog>);
+  expect.soft(screen.getByRole('button', { name: /^Worked/ })).toHaveTextContent(/^Worked for 49s/);
+});
