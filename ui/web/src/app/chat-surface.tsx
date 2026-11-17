@@ -30,6 +30,7 @@ import MarkdownRenderer from "./markdown-renderer";
 import { ReplyTurnRunning } from "./reply-turn";
 import { useComposerSizing } from "./composer-layout-height";
 import { useComposerOpen } from "./composer-open";
+import { keepArtifactReading } from "./artifact-reading";
 import { holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
 import { OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
@@ -369,7 +370,7 @@ function finishEntrances(list: Element) {
 
 const messageList = (list: HTMLDivElement | null) => {
   if (list !== null) finishEntrances(list);
-  const stops = [fitBubbles(list), keepLateBoxes(list), markBubbleEnds(list)];
+  const stops = [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list), markBubbleEnds(list)];
   return () => stops.forEach((stop) => stop?.());
 };
 

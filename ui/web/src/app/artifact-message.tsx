@@ -2,7 +2,7 @@ import { CopilotChatAssistantMessage, type CopilotChatAssistantMessageProps } fr
 import { useContext, useState, type ReactNode } from "react";
 
 import { ArtifactCard } from "./artifact-panel";
-import { AnswerCards, type Published } from "./artifact-published";
+import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
 
 import MarkdownRenderer from "./markdown-renderer";
 import { ReplyFileSlot } from "./reply-file-card";
@@ -12,6 +12,7 @@ const MARKDOWN = ({ content }: { content: string }) => <MarkdownRenderer content
 /** One bubble: the answer's words, then the cards of the Artifacts its Turn published, then its Files. */
 export function ArtifactMessage(props: CopilotChatAssistantMessageProps) {
   const cards = useContext(AnswerCards);
+  const turn = useContext(AnswerTurn);
   if (cards.length === 0 && !props.message.toolCalls?.some(({ function: call }) => call.name === "Artifact")) {
     return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN} />;
   }
@@ -19,7 +20,7 @@ export function ArtifactMessage(props: CopilotChatAssistantMessageProps) {
     {({ markdownRenderer, toolCallsView, toolbar, toolbarVisible }) => (
       <div className="copilotKitMessage copilotKitAssistantMessage" data-message-id={props.message.id}>
         <div className="cpk:prose">
-          <div className="artifact-reply-bubble [&>.chat-markdown:not(:empty)]:mb-4">
+          <div data-artifact-turn={turn.id} data-artifact-stage={turn.stage} data-artifact-answer={props.message.toolCalls?.length ? undefined : ""} className="artifact-reply-bubble [&>.chat-markdown:not(:empty)]:mb-4">
             <ArtifactReply markdown={markdownRenderer} tools={toolCallsView} cards={cards} />
           </div>
         </div>

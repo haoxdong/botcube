@@ -25,3 +25,5 @@ export function publishedOf(result: string): Published | null {
 
 /** The Artifacts a Turn published, shown in its answer's bubble under the words. */
 export const AnswerCards = createContext<readonly Published[]>([]);
+
+export const AnswerTurn = createContext({ id: "", stage: "" });

@@ -211,7 +211,7 @@ export function ArtifactCard({ artifact }: { artifact: Published }) {
   const { shown, open, seen } = usePanel();
   useEffect(() => seen(artifact), [seen, artifact]);
   return (
-    <button type="button" className={`sent-file artifact-card ${typeOf(artifact.type).tint}`} data-open={(shown !== null && shown.artifact.id === artifact.id) || undefined}
+    <button type="button" data-artifact-id={artifact.id} className={`sent-file artifact-card ${typeOf(artifact.type).tint}`} data-open={(shown !== null && shown.artifact.id === artifact.id) || undefined}
       onClick={() => open({ id: artifact.id, full: false })}>
       <ArtifactFace artifact={artifact} />
     </button>

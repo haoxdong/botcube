@@ -12,7 +12,7 @@ import { argumentOf, lookOf } from "./worklog-tools";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
-import { AnswerCards, type Published } from "./artifact-published";
+import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
 import { CLOCKS_KEPT, spanOf, startOf, useWorklogClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
 
@@ -78,6 +78,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   let work: ReactElement[] = [];
   let shown: ReactElement[] = [];
   let firstMessage: string | undefined;
+  let turnKey = messages[0]?.id ?? "";
   const steps: Steps = { turn: messages, lastQuestion, isRunning, rendering, summarized: new Set<string>() };
   const fold = () => {
     const [row] = work;
@@ -103,6 +104,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
     const message = messages.find((candidate) => candidate.id === messageId);
     if (message?.role === "user" || message?.metadata?.scheduledRun !== undefined) {
       fold();
+      turnKey = message.id;
       out.push(row);
     } else if (parts.get(messageId) === "work") {
       firstMessage ??= messageId;
@@ -111,7 +113,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const summary = stepsOf(row, message, SHOWN_CALLS, steps);
       if (summary.length > 0) firstMessage ??= messageId;
       work.push(...summary);
-      shown.push(...shownRow(row, message, parts.get(messageId), cards.get(messageId)));
+      shown.push(...shownRow(row, message, parts.get(messageId), cards.get(messageId), { id: turnKey, stage: turnKey === asked ? latest?.id ?? turnKey : turnKey }));
     }
   }
   fold();
@@ -137,10 +139,10 @@ function workRow(row: ReactElement, message: TurnMessage | undefined, steps: Ste
 }
 
 /** A shown row: a card shows without its ToolStep, and an answer shows the cards of the Artifacts its Turn published; a card the answer shows has no row. */
-function shownRow(row: ReactElement, message: TurnMessage | undefined, part: Part | undefined, answerCards: readonly Published[] | undefined): ReactElement[] {
+function shownRow(row: ReactElement, message: TurnMessage | undefined, part: Part | undefined, answerCards: readonly Published[] | undefined, turn: { id: string; stage: string }): ReactElement[] {
   if (part === "card") return [];
   const card = <CardOnly.Provider key={row.key} value={Boolean(message?.toolCalls?.some((call) => SHOWN_CALLS.has(call.function.name)))}>{row}</CardOnly.Provider>;
-  return [answerCards === undefined ? card : <AnswerCards.Provider key={row.key} value={answerCards}>{card}</AnswerCards.Provider>];
+  return [answerCards === undefined ? card : <AnswerTurn.Provider key={row.key} value={turn}><AnswerCards.Provider value={answerCards}>{card}</AnswerCards.Provider></AnswerTurn.Provider>];
 }
 
 function CallSteps({ message, turn, running, rendering }: { message: TurnMessage; turn: readonly TurnMessage[]; running: boolean; rendering: WorklogRendering }) {
@@ -197,9 +199,9 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   const start = stepOf(timeline, "start");
   const answer = stepOf(timeline, "answer");
   const diagnosticView = timeline?.steps.find(step => step.kind !== "start")?.id ?? id;
-  if (children === undefined) return <div className="worklog"><div className="worklog-head">{title}</div></div>;
+  if (children === undefined) return <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id}><div className="worklog-head">{title}</div></div>;
   return (
-    <div className="worklog" data-open={open || undefined}>
+    <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined}>
       <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, phase, asked })}>
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
