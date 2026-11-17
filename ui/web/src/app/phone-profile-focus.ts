@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 
 /**
  * The phone's Agent Profile covers the chat, which goes inert under it: the profile takes the keyboard's focus at its
@@ -28,21 +28,11 @@ export function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, cl
     };
   }, []);
   useEffect(() => {
-    if (!open) return undefined;
-    opened.current = true;
-    const focusClose = () => {
-      const close = profileRef.current?.querySelector<HTMLElement>(".agent-profile-close");
-      close?.focus({ focusVisible: keyboard.current });
-      return close !== undefined && close !== null;
-    };
-    if (focusClose()) return undefined;
-    // A fresh page's chat portals the profile in after it opens, so its Close takes focus as it mounts.
-    const mounted = new MutationObserver(() => {
-      if (focusClose()) mounted.disconnect();
-    });
-    mounted.observe(document.body, { childList: true, subtree: true });
-    return () => mounted.disconnect();
-  }, [open, profileRef]);
+    if (open) opened.current = true;
+  }, [open]);
+  const closeRef = useCallback((button: HTMLButtonElement | null) => {
+    if (open) button?.focus({ focusVisible: keyboard.current });
+  }, [open]);
   useEffect(() => {
     if (!open) return undefined;
     const handleKey = (e: KeyboardEvent) => {
@@ -59,4 +49,5 @@ export function usePhoneProfileFocus({ open, expanded, profileRef, openerRef, cl
     const left = focused === null || focused === document.body || profileRef.current?.contains(focused) === true;
     if (left && opener?.isConnected && !opener.disabled) opener.focus({ focusVisible: keyboard.current });
   }, [expanded, openerRef, profileRef]);
+  return { closeRef };
 }

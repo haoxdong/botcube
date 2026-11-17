@@ -657,6 +657,7 @@ export function AgentProfile({
   isAccountCurrent,
   tabs = {},
   ref,
+  closeRef,
 }: {
   open?: boolean;
   chatServiceUrl: string;
@@ -675,6 +676,7 @@ export function AgentProfile({
   tabs?: Partial<Record<AgentProfileTab, ComponentType>> | undefined;
   /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
   ref?: Ref<HTMLDivElement> | undefined;
+  closeRef?: Ref<HTMLButtonElement> | undefined;
 }) {
   // A bot with an Agent Computer opens on it; one without, on its Activity. Each opening starts there again.
   const firstTab: AgentProfileTab = computer === undefined ? "Activity" : "Computer";
@@ -707,7 +709,7 @@ export function AgentProfile({
     <div ref={ref} className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open}>
       <div className="agent-profile-header">
         <div className="agent-profile-identity">
-          <button className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
+          <button ref={closeRef} className="header-btn agent-profile-close" onClick={onClose} aria-label="Close agent profile">
             <X size={20} aria-hidden />
           </button>
           <Presence>

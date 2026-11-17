@@ -142,7 +142,7 @@ export default function App({
   }, [profileSwipe.visible]);
   const profileVisible = profileSwipe.visible || profileKept;
   const agentProfileOpenerRef = useRef<HTMLButtonElement>(null);
-  usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });
+  const { closeRef: agentProfileCloseRef } = usePhoneProfileFocus({ open: profileSwipe.open, expanded: agentProfileOpen, profileRef: agentProfileRef, openerRef: agentProfileOpenerRef, close: profileSwipe.close });
   const agentName = agentProfile?.name ?? UI_CONFIG.agentName;
   const [agentDocumentsRevision, setAgentDocumentsRevision] = useState(0);
 
@@ -371,6 +371,7 @@ export default function App({
         <AgentProfile
           key={accountId}
           ref={agentProfileRef}
+          closeRef={agentProfileCloseRef}
           open={profileSwipe.visible}
           chatServiceUrl={CHAT_SERVICE_URL}
           profile={agentProfile}
