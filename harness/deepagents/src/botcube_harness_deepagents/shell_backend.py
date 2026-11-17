@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any, cast
 
@@ -120,6 +121,13 @@ def _strip_stdin(command: str) -> tuple[str, list[str]]:
     return command, literals
 
 
+def _strip_words(text: str, words: list[str]) -> str:
+    """`text` with each of `words` redacted where it stands as a whole shell word, such as a short password a `set -x` trace echoes."""
+    for word in sorted(words, key=len, reverse=True):
+        text = re.sub(rf'(?<![^\s\'"=]){re.escape(word)}(?![^\s\'"])', '[redacted]', text)
+    return text
+
+
 def _err(error: Exception) -> ExecuteResponse:
     return ExecuteResponse(output=f'Error executing command ({type(error).__name__}): {error}', exit_code=1)
 
@@ -169,12 +177,13 @@ class WorkerShellBackend(LocalShellBackend):
         kept_command, stdin = _strip_stdin(command)
         echoed_stdin = [literal for literal in stdin if len(literal) >= MIN_LITERAL_SECRET]
         literals = sorted(environment_secrets(self._env) + cookie_secrets(command) + echoed_stdin, key=len, reverse=True)
+        output = _strip_words(strip_secrets(response.output, literals), [literal for literal in stdin if len(literal) < MIN_LITERAL_SECRET])
         log.info(json.dumps({
             'event': 'harness_shell_output',
             'command': strip_secrets(kept_command, literals),
             'exitCode': response.exit_code,
             'truncated': response.truncated,
-            'output': strip_secrets(response.output, literals),
+            'output': output,
             'traceId': format(context.trace_id, '032x') if context.is_valid else None,
             'spanId': format(context.span_id, '016x') if context.is_valid else None,
         }, separators=(',', ':')))
@@ -182,7 +191,7 @@ class WorkerShellBackend(LocalShellBackend):
     def _execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         if not command or not isinstance(command, str):
             return ExecuteResponse(output='Error: Command must be a non-empty string.', exit_code=1)
-        name = self._command_name(command)
+        name = self._command_name(command, environment_secrets(self._env))
         if name is not None:
             trace.get_current_span().set_attribute('botcube.command.name', name)
         effective_timeout = timeout if timeout is not None else self._default_timeout
@@ -224,13 +233,13 @@ class WorkerShellBackend(LocalShellBackend):
         }
 
     @staticmethod
-    def _command_name(command: str) -> str | None:
+    def _command_name(command: str, secrets: Collection[str] = ()) -> str | None:
         """`<program> <subcommand>` for one simple command, such as `samplecli reports`, or None.
 
-        The program is the first word's basename; the subcommand is the first later word that is not a flag,
-        kept only when it looks like a subcommand (lowercase letters, digits, dashes), so paths, URLs and
-        quoted text never reach the span. A compound command, an environment prefix, a substitution or
-        invalid syntax gets no label. A flag's value read as the subcommand (`cli --profile prod x`) is accepted.
+        The program is the first word's basename; the subcommand is the word right after it, kept only when
+        it looks like a subcommand (lowercase letters, digits, dashes) and is not one of `secrets`, so paths,
+        URLs, quoted text and flag values (`curl --oauth2-bearer <token>`) never reach the span. A compound
+        command, an environment prefix, a substitution or invalid syntax gets no label.
         """
         if any(marker in command for marker in ('\n', '`', '$(')):
             return None
@@ -247,8 +256,8 @@ class WorkerShellBackend(LocalShellBackend):
         program = words[0].rsplit('/', 1)[-1]
         if '=' in words[0] or not _PROGRAM.fullmatch(program):
             return None
-        subcommand = next((word for word in words[1:] if not word.startswith('-')), None)
-        return f'{program} {subcommand}' if subcommand and _SUBCOMMAND.fullmatch(subcommand) else program
+        subcommand = words[1] if len(words) > 1 else ''
+        return f'{program} {subcommand}' if _SUBCOMMAND.fullmatch(subcommand) and subcommand not in secrets else program
 
     def _execution_response(self, stdout: str, stderr: str, exit_code: int, *, overflow: bool = False) -> ExecuteResponse:
         output_parts = [stdout] if stdout else []

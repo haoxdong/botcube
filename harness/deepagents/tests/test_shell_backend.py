@@ -328,7 +328,10 @@ def test_a_quoted_cookie_header_is_stripped_from_the_kept_command_and_output(
 @pytest.mark.parametrize(('command', 'label'), [
     ('samplecli reports search private-query --limit 1', 'samplecli reports'),
     ('  samplecli\tdata   view private-id', 'samplecli data'),
-    ('/opt/tools/bin/samplecli --json auth status', 'samplecli auth'),
+    ('/opt/tools/bin/samplecli auth status --json', 'samplecli auth'),
+    ('samplecli --json auth status', 'samplecli'),
+    ('curl --oauth2-bearer sensitive-token https://example.test', 'curl'),
+    ('samplecli env-token-secret-7', 'samplecli'),
     ('ls -la', 'ls'),
     ('cat /private/path.txt', 'cat'),
     ('printf "private words"', 'printf'),
@@ -343,7 +346,7 @@ def test_a_quoted_cookie_header_is_stripped_from_the_kept_command_and_output(
 def test_every_command_span_is_labelled_with_its_program_and_first_subcommand(
     tmp_path: Path, command: str, label: str | None,
 ) -> None:
-    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, timeout=5)
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, timeout=5, env={'APP_AUTH_TOKEN': 'env-token-secret-7'})
     with TracerProvider().get_tracer(__name__).start_as_current_span('execute_tool shell') as span:
         backend.execute(command)
 
@@ -382,6 +385,32 @@ def test_stdin_echoed_back_is_stripped_from_the_kept_output(tmp_path: Path, capl
 
     assert result.output == 'opaque-stdin-42y\n'
     assert record['output'] == '[redacted]y\n'
+
+
+@pytest.mark.integration
+def test_a_short_stdin_password_a_shell_trace_echoes_is_stripped_from_the_kept_output(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'):
+        result = backend.execute("set -x; printf '%s' 'abc123' | wc -c; echo abc1234")
+    [record] = [json.loads(message) for message in caplog.messages]
+
+    assert 'abc123' in result.output
+    assert 'abc123' not in record['output'].replace('abc1234', '')
+    assert 'abc1234' in record['output']
+
+
+@pytest.mark.integration
+def test_a_short_stdin_word_does_not_hide_a_structured_secret_from_redaction(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'):
+        backend.execute("""printf '%s' token | cat; printf '\\n{"token":"opaque-login-42"}\\n'""")
+    [record] = [json.loads(message) for message in caplog.messages]
+
+    assert 'opaque-login-42' not in record['output']
 
 
 @pytest.mark.integration
