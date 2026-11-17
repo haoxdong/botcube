@@ -27,7 +27,7 @@ patchedDependencies:
   bedrock-agentcore@0.4.5: patches/bedrock-agentcore@0.4.5.patch
 
 overrides:
-  next: 16.4.3
+  next: 16.4.5
   '@ag-ui/client': 1.0.2
   '@ag-ui/core': 1.0.2
   '@copilotkit/react-core>streamdown': ^2.7.0

@@ -76,7 +76,7 @@
     "lucide-react": "^0.577.0",
     "marked": "18.0.14",
     "mimetext": "3.0.28",
-    "next": "^16.4.3",
+    "next": "^16.4.5",
     "papaparse": "5.7.0",
     "pdfjs-dist": "^6.4.299",
     "plotly.js-dist-min": "4.1.1",
