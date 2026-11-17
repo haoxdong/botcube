@@ -353,7 +353,7 @@ class _SessionAgent(LangGraphAgent):
                         for closed in self._close_thoughts():
                             yield closed
                     yield event
-                    if event.type == EventType.RUN_FINISHED:
+                    if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                         break
         except Exception as error:
             log.exception('Error during graph streaming')
@@ -449,6 +449,9 @@ class _SessionAgent(LangGraphAgent):
             elif kind == 'on_chat_model_end':
                 self._record_usage(event, getattr(data.get('output'), 'usage_metadata', None), streamed=False)
             return
+        if kind == 'on_chat_model_end' and (error := self._model_completion_error(event)) is not None:
+            yield error
+            return
         lane = event['run_id']
         self._model_lane = lane
         try:
@@ -466,6 +469,24 @@ class _SessionAgent(LangGraphAgent):
                     yield emitted
         finally:
             self._model_lane = None
+
+    def _model_completion_error(self, event: Any) -> RunErrorEvent | None:
+        output = event.get('data', {}).get('output')
+        response = getattr(output, 'response_metadata', {})
+        reason = (response.get('finish_reason') or response.get('stop_reason') or response.get('stopReason')
+                  or (response.get('incomplete_details') or {}).get('reason'))
+        usage = getattr(output, 'usage_metadata', None)
+        self._record_usage(event, usage, streamed=False)
+        log.info('Harness model completed model_run_id=%s finish_reason=%s usage=%s', event['run_id'], reason, usage)
+        if reason not in {'length', 'max_tokens', 'max_output_tokens'}:
+            return None
+        log.warning('Harness model output limit model_run_id=%s finish_reason=%s usage=%s',
+                    event['run_id'], reason, usage)
+        return RunErrorEvent(
+            message='Agent reached the model output limit. Try again with a shorter request or lower reasoning effort.',
+            code='AGENT_OUTPUT_LIMIT',
+            usage=self._collect_run_usage(),
+        )
 
     async def _model_output(self, event: Any, state: Any, lane: str, thought: _Thinking | None) -> AsyncGenerator[Any, None]:
         if event['event'] == 'on_chat_model_start' and (files := current_turn_files()) is not None:

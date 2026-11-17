@@ -106,6 +106,7 @@ class _Documents(TypedDict):
 
 class _Recorder:
     def __init__(self) -> None:
+        self.completion_metadata: dict[str, Any] = {'finish_reason': 'length'}
         self.builds: list[dict[str, Any]] = []
         self.prompts: list[str] = []
         self.tools: list[list[str]] = []
@@ -160,6 +161,10 @@ class _ScriptedModel(BaseChatModel):
             return _call('memory', {'action': 'record', 'content': text.removeprefix('remember: ')}, len(messages))
         if text.startswith('memory: '):
             return _call('memory', json.loads(text.removeprefix('memory: ')), len(messages))
+        if text.startswith('capped: '):
+            reply = _text(text.removeprefix('capped: '))
+            reply.message.response_metadata = self.recorder.completion_metadata
+            return reply
         if text.startswith('say: '):
             return _text(text.removeprefix('say: '))
         if text.startswith('wait: '):
@@ -1073,6 +1078,31 @@ def test_a_turn_that_finishes_without_an_answer_fails(service: _Service, answer:
         # The Turn still spent its model call's tokens.
         'usage': [{'provider': '_scriptedmodel', 'inputTokens': 10, 'outputTokens': 2, 'totalTokens': 12}],
     }
+    assert 'RUN_FINISHED' not in [event['type'] for event in events]
+
+
+@pytest.mark.parametrize('metadata, reason', [
+    ({'finish_reason': 'length'}, 'length'),
+    ({'stop_reason': 'max_tokens'}, 'max_tokens'),
+    ({'stopReason': 'max_tokens'}, 'max_tokens'),
+    ({'status': 'incomplete', 'incomplete_details': {'reason': 'max_output_tokens'}}, 'max_output_tokens'),
+])
+@pytest.mark.parametrize('answer', ['', 'Partial answer'])
+def test_an_output_capped_turn_reports_its_limit(
+    service: _Service, caplog: pytest.LogCaptureFixture, answer: str, metadata: dict[str, Any], reason: str,
+) -> None:
+    service.recorder.completion_metadata = metadata
+    with caplog.at_level(logging.WARNING):
+        events = service.turn(f'capped: {answer}')
+
+    assert events[-1] == {
+        'type': 'RUN_ERROR',
+        'message': 'Agent reached the model output limit. Try again with a shorter request or lower reasoning effort.',
+        'code': 'AGENT_OUTPUT_LIMIT',
+        'usage': [{'provider': '_scriptedmodel', 'inputTokens': 10, 'outputTokens': 2, 'totalTokens': 12}],
+    }
+    assert f'finish_reason={reason}' in caplog.text
+    assert 'output_tokens' in caplog.text
     assert 'RUN_FINISHED' not in [event['type'] for event in events]
 
 
