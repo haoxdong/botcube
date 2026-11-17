@@ -26,7 +26,7 @@ _JSON_VALUE = re.compile(r'("value"\s*:\s*")(?:[^"\\]|\\.)*("?)')
 _USER_INFO = re.compile(r'^(https?://)[^/@\s?#]+@')
 _QUERY_PAIR = re.compile(r'([^=&#]+)=([^&#]*)')
 _QUERY_PAIR_TEXT = re.compile(r'([^=&#]+)=[^&#]*')
-_MIN_LITERAL_SECRET = 8
+MIN_LITERAL_SECRET = 8
 _SHELL_PART = r'''"((?:[^"\\]|\\[\s\S])*)(?:"|$)|'([^']*)(?:'|$)|\\([\s\S])|([^\s'"\\;|&()<>])'''
 _CURL_SECRET_OPTIONS = {'--cookie': '=', '-b': '=', '--user': ':', '-u': ':', '--proxy-user': ':', '-U': ':', '--oauth2-bearer': ''}
 _SHELL_WORD = rf'(?:{_SHELL_PART})+'
@@ -105,7 +105,7 @@ def _strip_secret_arguments(text: str) -> str:
 
 def environment_secrets(env: Mapping[str, str]) -> list[str]:
     """Values of secret-named environment variables, such as an `*_AUTH_TOKEN`, longest first."""
-    values = {value for name, value in env.items() if _SECRET_NAME_RE.search(name) and len(value) >= _MIN_LITERAL_SECRET}
+    values = {value for name, value in env.items() if _SECRET_NAME_RE.search(name) and len(value) >= MIN_LITERAL_SECRET}
     return sorted(values, key=len, reverse=True)
 
 

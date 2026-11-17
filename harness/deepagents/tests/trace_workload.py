@@ -114,7 +114,6 @@ async def exercise_command(command: str, *, sync: bool = False) -> None:
         serving.configure_harness_definition(HarnessDefinition(
             skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
-            shell_command_prefixes=('samplecli reports search', 'samplecli reports dashboard view'),
         ))
         backend = serving._require_cartridge().build_backend({'PATH': root + ':/usr/bin:/bin'})
         model = ToolBindableFakeMessagesModel(responses=[
@@ -210,7 +209,6 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         serving.configure_harness_definition(HarnessDefinition(
             skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
-            shell_command_prefixes=('appcli data eval',),
         ))
         backend = serving._require_cartridge().build_backend({'PATH': root + ':/usr/bin:/bin'})
         model = _CommandModel(command=command, answer_fails=answer_fails)

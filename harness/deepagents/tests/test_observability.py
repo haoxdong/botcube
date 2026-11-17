@@ -139,27 +139,29 @@ def test_invocations_exports_timing_phases_without_content(
         assert phase['events'] == []
 
 
-def test_shell_span_exports_only_the_registered_command_words(
+def test_shell_span_exports_only_the_program_and_subcommand(
     exported_spans_by_session: dict[str, list[dict[str, Any]]],
 ) -> None:
     spans = [span for span in exported_spans_by_session['all'] if span['name'] == 'execute_tool execute']
     assert spans
-    assert spans[0]['attributes']['botcube.command.name'] == 'samplecli reports search'
+    assert spans[0]['attributes']['botcube.command.name'] == 'samplecli reports'
     assert 'private search' not in json.dumps(spans)
 
 
-def test_shell_spans_classify_single_commands_without_labeling_unknown_or_compound_calls(
+def test_shell_spans_label_every_single_command_and_no_compound_call(
     exported_spans_by_session: dict[str, list[dict[str, Any]]],
 ) -> None:
     spans = [span for span in exported_spans_by_session['all'] if span['name'] == 'execute_tool execute']
     assert [span['attributes'].get('botcube.command.name') for span in spans] == [
-        'samplecli reports search',
-        'samplecli reports search',
-        'samplecli reports dashboard view',
-        'samplecli reports search',
-        None, None, None, None, None, None, None, None, None, None,
-        'samplecli reports search',
-        'appcli data eval', None, 'appcli data eval',
+        'samplecli reports',
+        'samplecli reports',
+        'samplecli reports',
+        'samplecli reports',
+        'samplecli reports',
+        'printf',
+        None, None, None, None, None, None, None, None,
+        'samplecli reports',
+        'appcli data', None, 'appcli data',
     ]
     assert all(span['end_time'] > span['start_time'] for span in spans)
     assert 'private-' not in json.dumps(spans)

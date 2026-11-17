@@ -68,6 +68,8 @@ class HarnessDefinition:
     environment_cache_key: EnvironmentCacheKey
     build_shell_env: Callable[[Mapping[str, str]], dict[str, str]] = dict
     system_prompt: str = ''
+    # Ignored: the Harness labels every command span and strips every command's stdin itself.
+    # Kept only until Cartridges stop setting it, then removed.
     shell_command_prefixes: tuple[str, ...] = ()
 
 

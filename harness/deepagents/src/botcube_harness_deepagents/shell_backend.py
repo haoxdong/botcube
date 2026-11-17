@@ -19,6 +19,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from botcube_harness_deepagents._shell_process import Request, Result
 from botcube_harness_deepagents.trace_relay import count_failures_under
 from botcube_harness_deepagents.trace_secrets import (
+    MIN_LITERAL_SECRET,
     cookie_secrets,
     environment_secrets,
     strip_secrets,
@@ -27,6 +28,8 @@ from botcube_harness_deepagents.trace_secrets import (
 log = logging.getLogger(__name__)
 _SHELL_WORD = r"""(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'"\\|;&()<>])+"""
 _SHELL_TOKEN = re.compile(rf'{_SHELL_WORD}|[|;&()<>]+|\n')
+_PROGRAM = re.compile(r'[\w.+-]+')
+_SUBCOMMAND = re.compile(r'[a-z][a-z0-9-]*')
 _SHELL_BOUNDARIES = {'|', '||', '&', '&&', ';', ';;', '(', ')', '<', '>', '>>', '<<', '\n'}
 
 
@@ -34,41 +37,87 @@ def _word(token: re.Match[str]) -> str:
     return shlex.split(token.group())[0]
 
 
-def _password_producer(tokens: list[re.Match[str]], pipe: int, login_prefixes: list[list[str]]) -> list[re.Match[str]]:
-    start, end = pipe, pipe + 1
+def _piped_literals(tokens: list[re.Match[str]]) -> list[re.Match[str]]:
+    """The literal words an `echo` or `printf` just before a pipe writes to the next command's stdin."""
+    start = len(tokens)
     while start > 0 and tokens[start - 1].group() not in _SHELL_BOUNDARIES:
         start -= 1
-    while end < len(tokens) and tokens[end].group() == '\n':
-        end += 1
-    consumer_start = end
-    while end < len(tokens) and tokens[end].group() not in _SHELL_BOUNDARIES:
-        end += 1
-    producer = tokens[start:pipe]
-    consumer = [_word(word) for word in tokens[consumer_start:end]]
+    producer = tokens[start:]
     if not producer or _word(producer[0]) not in ('printf', 'echo'):
         return []
-    return producer if any(consumer[:len(prefix)] == prefix and '--password-stdin' in consumer[len(prefix):] for prefix in login_prefixes) else []
-
-
-def _strip_password_input(command: str, login_prefixes: list[list[str]]) -> tuple[str, list[str]]:
-    tokens = list(_SHELL_TOKEN.finditer(command))
-    redactions: list[re.Match[str]] = []
-    for index, token in enumerate(tokens):
-        producer = _password_producer(tokens, index, login_prefixes) if token.group() == '|' else []
-        if not producer:
-            continue
-        program, inputs = _word(producer[0]), producer[1:]
-        if program == 'printf' and inputs and _word(inputs[0]) in ('%s', '%s\\n', '%b'):
+    program, inputs = _word(producer[0]), producer[1:]
+    if program == 'printf' and inputs and _word(inputs[0]) in ('%s', '%s\\n', '%b'):
+        inputs = inputs[1:]
+    if program == 'echo':
+        while inputs and re.fullmatch(r'-[neE]+', _word(inputs[0])):
             inputs = inputs[1:]
-        if program == 'echo':
-            while inputs and re.fullmatch(r'-[neE]+', _word(inputs[0])):
-                inputs = inputs[1:]
-        redactions.extend(inputs)
-    passwords: list[str] = []
-    for word in reversed(redactions):
-        passwords.extend(filter(None, shlex.split(word.group())))
-        command = command[:word.start()] + "'[redacted]'" + command[word.end():]
-    return command, passwords
+    return inputs
+
+
+def _heredoc_body(command: str, newline: int, delimiter: str) -> tuple[int, int, int]:
+    """Start and end of the here-document body after `newline`, and the end of its terminator line."""
+    strip_tabs, delimiter = delimiter.startswith('-'), delimiter.removeprefix('-')
+    start = line = newline + 1
+    while line <= len(command):
+        end = command.find('\n', line)
+        end = len(command) if end < 0 else end
+        if (command[line:end].lstrip('\t') if strip_tabs else command[line:end]) == delimiter:
+            return start, max(start, line - 1), end
+        line = end + 1
+    return start, len(command), len(command)
+
+
+_Stdin = tuple[int, int, str, str]
+
+
+def _heredoc_bodies(command: str, newline: int, delimiters: list[str]) -> tuple[list[_Stdin], int]:
+    """The bodies of the here-documents opened on the line ending at `newline`, and where scanning resumes."""
+    bodies: list[_Stdin] = []
+    for delimiter in delimiters:
+        start, end, newline = _heredoc_body(command, newline, delimiter)
+        if end > start:
+            bodies.append((start, end, command[start:end], '[redacted]'))
+    return bodies, newline
+
+
+def _redirected_stdin(command: str, token: re.Match[str], heredocs: list[str]) -> tuple[list[_Stdin], int]:
+    """A here-string's word, or a here-document's delimiter added to `heredocs`, and where scanning resumes."""
+    word = _SHELL_TOKEN.search(command, token.end())
+    if word is None or not re.fullmatch(_SHELL_WORD, word.group()):
+        return [], token.end()
+    if token.group() == '<<':
+        heredocs.append(_word(word))
+        return [], word.end()
+    return [(word.start(), word.end(), word.group(), "'[redacted]'")], word.end()
+
+
+def _strip_stdin(command: str) -> tuple[str, list[str]]:
+    """`command` with every literal it writes to a command's stdin replaced, and those literals.
+
+    Covers `echo`/`printf` piped into any command, here-strings and here-documents: any program
+    can read a password from stdin, so no stdin is kept in the Turn's log stream.
+    """
+    tokens: list[re.Match[str]] = []
+    stdin: list[_Stdin] = []
+    heredocs: list[str] = []
+    position = 0
+    while token := _SHELL_TOKEN.search(command, position):
+        position = token.end()
+        found: list[_Stdin] = []
+        if token.group() == '|':
+            found = [(word.start(), word.end(), word.group(), "'[redacted]'") for word in _piped_literals(tokens)]
+        elif token.group() in ('<<', '<<<'):
+            found, position = _redirected_stdin(command, token, heredocs)
+        elif token.group() == '\n' and heredocs:
+            found, position = _heredoc_bodies(command, token.start(), heredocs)
+            heredocs = []
+        stdin.extend(found)
+        tokens.append(token)
+    literals: list[str] = []
+    for start, end, text, replacement in reversed(stdin):
+        literals.extend(filter(None, [text] if replacement == '[redacted]' else shlex.split(text)))
+        command = command[:start] + replacement + command[end:]
+    return command, literals
 
 
 def _err(error: Exception) -> ExecuteResponse:
@@ -102,8 +151,10 @@ class WorkerShellBackend(LocalShellBackend):
     """deepagents' local shell, run in a per-command worker process."""
 
     def __init__(self, *, command_prefixes: tuple[str, ...] = (), trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
+        # `command_prefixes` is accepted and ignored: every command is named and has its stdin stripped
+        # generically. It stays only until Cartridges stop passing `shell_command_prefixes`, then goes.
+        del command_prefixes
         super().__init__(**kwargs)
-        self._command_prefixes = command_prefixes
         self._trace_relay_endpoint = trace_relay_endpoint
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
@@ -115,9 +166,9 @@ class WorkerShellBackend(LocalShellBackend):
     def _keep_output(self, command: str, response: ExecuteResponse) -> None:
         """Keeps the command and its full output in the Turn's log stream, joined to the tool span, secrets stripped (ADR 0085)."""
         context = trace.get_current_span().get_span_context()
-        login_prefixes = [words for prefix in self._command_prefixes if (words := shlex.split(prefix))[-2:] == ['auth', 'login']]
-        kept_command, passwords = _strip_password_input(command, login_prefixes)
-        literals = sorted(environment_secrets(self._env) + cookie_secrets(command) + passwords, key=len, reverse=True)
+        kept_command, stdin = _strip_stdin(command)
+        echoed_stdin = [literal for literal in stdin if len(literal) >= MIN_LITERAL_SECRET]
+        literals = sorted(environment_secrets(self._env) + cookie_secrets(command) + echoed_stdin, key=len, reverse=True)
         log.info(json.dumps({
             'event': 'harness_shell_output',
             'command': strip_secrets(kept_command, literals),
@@ -172,8 +223,16 @@ class WorkerShellBackend(LocalShellBackend):
             'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT': self._trace_relay_endpoint,
         }
 
-    def _command_name(self, command: str) -> str | None:
-        if not self._command_prefixes or any(marker in command for marker in ('\n', '`', '$(')):
+    @staticmethod
+    def _command_name(command: str) -> str | None:
+        """`<program> <subcommand>` for one simple command, such as `samplecli reports`, or None.
+
+        The program is the first word's basename; the subcommand is the first later word that is not a flag,
+        kept only when it looks like a subcommand (lowercase letters, digits, dashes), so paths, URLs and
+        quoted text never reach the span. A compound command, an environment prefix, a substitution or
+        invalid syntax gets no label. A flag's value read as the subcommand (`cli --profile prod x`) is accepted.
+        """
+        if any(marker in command for marker in ('\n', '`', '$(')):
             return None
         lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -183,13 +242,13 @@ class WorkerShellBackend(LocalShellBackend):
         except ValueError:
             # Invalid shell syntax still runs and reports its normal command failure.
             return None
-        if any(word and set(word) <= set(';&|()<>') for word in words):
+        if not words or any(word and set(word) <= set(';&|()<>') for word in words):
             return None
-        for prefix in self._command_prefixes:
-            leading = prefix.split()
-            if words[:len(leading)] == leading:
-                return prefix
-        return None
+        program = words[0].rsplit('/', 1)[-1]
+        if '=' in words[0] or not _PROGRAM.fullmatch(program):
+            return None
+        subcommand = next((word for word in words[1:] if not word.startswith('-')), None)
+        return f'{program} {subcommand}' if subcommand and _SUBCOMMAND.fullmatch(subcommand) else program
 
     def _execution_response(self, stdout: str, stderr: str, exit_code: int, *, overflow: bool = False) -> ExecuteResponse:
         output_parts = [stdout] if stdout else []

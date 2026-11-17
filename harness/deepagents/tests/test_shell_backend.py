@@ -8,11 +8,12 @@ import sys
 import time
 import venv
 from pathlib import Path
+from typing import cast
 
 import pytest
 from deepagents.backends.protocol import ExecuteResponse
 from opentelemetry.instrumentation import auto_instrumentation
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
 from botcube_harness_deepagents.shell_backend import WorkerShellBackend
@@ -134,6 +135,7 @@ def test_large_output_is_bounded_while_the_command_runs(tmp_path: Path) -> None:
 import os
 import resource
 from pathlib import Path
+from typing import cast
 from threading import Event, Thread
 from botcube_harness_deepagents.shell_backend import WorkerShellBackend
 stop = Event()
@@ -323,6 +325,65 @@ def test_a_quoted_cookie_header_is_stripped_from_the_kept_command_and_output(
     assert result.exit_code == record['exitCode'] == exit_code
 
 
+@pytest.mark.parametrize(('command', 'label'), [
+    ('samplecli reports search private-query --limit 1', 'samplecli reports'),
+    ('  samplecli\tdata   view private-id', 'samplecli data'),
+    ('/opt/tools/bin/samplecli --json auth status', 'samplecli auth'),
+    ('ls -la', 'ls'),
+    ('cat /private/path.txt', 'cat'),
+    ('printf "private words"', 'printf'),
+    ("python3 -c 'print(1)'", 'python3'),
+    ('TOKEN=private samplecli api /private', None),
+    ('samplecli api /private | cat', None),
+    ('samplecli api x; true', None),
+    ('samplecli api x\ntrue', None),
+    ('samplecli api $(printf private)', None),
+    ('samplecli api "unterminated', None),
+])
+def test_every_command_span_is_labelled_with_its_program_and_first_subcommand(
+    tmp_path: Path, command: str, label: str | None,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, timeout=5)
+    with TracerProvider().get_tracer(__name__).start_as_current_span('execute_tool shell') as span:
+        backend.execute(command)
+
+    assert (cast(ReadableSpan, span).attributes or {}).get('botcube.command.name') == label
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(('command', 'kept'), [
+    ("printf '%s' 'opaque-stdin-42' | wc -c", "printf '%s' '[redacted]' | wc -c"),
+    ('echo -n opaque-stdin-42 | wc -c', "echo -n '[redacted]' | wc -c"),
+    ("wc -c <<< 'opaque-stdin-42'", "wc -c <<< '[redacted]'"),
+    ("wc -c <<'EOF'\nopaque-stdin-42\nEOF\necho done", "wc -c <<'EOF'\n[redacted]\nEOF\necho done"),
+    ("wc -c <<-EOF\n\topaque-stdin-42\n\tEOF\necho done", "wc -c <<-EOF\n[redacted]\n\tEOF\necho done"),
+    ("cat <<A >/dev/null; wc -c <<B\nfirst-ignored\nA\nopaque-stdin-42\nB", "cat <<A >/dev/null; wc -c <<B\n[redacted]\nA\n[redacted]\nB"),
+], ids=['printf-pipe', 'echo-pipe', 'here-string', 'heredoc', 'indented-heredoc', 'two-heredocs'])
+def test_no_command_stdin_is_kept_in_the_log_stream(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, command: str, kept: str,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'):
+        result = backend.execute(command)
+    [record] = [json.loads(message) for message in caplog.messages]
+
+    assert result.exit_code == 0
+    assert result.output.split()[0] in ('15', '16')
+    assert record['command'] == kept
+    assert record['output'] == result.output
+
+
+@pytest.mark.integration
+def test_stdin_echoed_back_is_stripped_from_the_kept_output(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
+    with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'):
+        result = backend.execute("printf '%s' 'opaque-stdin-42' | cat; echo y | cat")
+    [record] = [json.loads(message) for message in caplog.messages]
+
+    assert result.output == 'opaque-stdin-42y\n'
+    assert record['output'] == '[redacted]y\n'
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(('producer', 'login'), [
     ("printf '%s' 'opaque-login-42'", ' | cli auth login --password-stdin'),
@@ -343,7 +404,7 @@ def test_a_password_stdin_pipeline_keeps_no_password_and_preserves_execution(
         f'exit {exit_code}\n'
     )
     (tmp_path / 'cli').chmod(0o755)
-    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, command_prefixes=('cli auth login',), env={'PATH': f'{tmp_path}:/usr/bin:/bin'})
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, env={'PATH': f'{tmp_path}:/usr/bin:/bin'})
     command = f"{producer}{login}; status=$?; printf '\\nordinary=value'; exit $status"
     with (
         caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'),
@@ -380,7 +441,7 @@ def test_traced_password_stdin_redacts_retained_output(
 ) -> None:
     (tmp_path / 'cli').write_text(f'#!/bin/sh\ncat >/dev/null\nprintf ordinary=value\nexit {exit_code}\n')
     (tmp_path / 'cli').chmod(0o755)
-    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, command_prefixes=('cli auth login',), env={'PATH': f'{tmp_path}:/usr/bin:/bin'})
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, env={'PATH': f'{tmp_path}:/usr/bin:/bin'})
     command = f'set -x; {producer} | cli auth login --password-stdin'
     with (
         caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'),
@@ -401,11 +462,11 @@ def test_traced_password_stdin_redacts_retained_output(
 
 @pytest.mark.integration
 @pytest.mark.parametrize('command', [
-    "printf '%s' 'ordinary=value' | cat",
+    "printf '%s' 'ordinary=value' > kept; cat kept | cat",
     "printf '%s' 'echo ordinary | cli auth login --password-stdin '",
 ])
 def test_an_ordinary_pipeline_keeps_its_command_and_output(tmp_path: Path, caplog: pytest.LogCaptureFixture, command: str) -> None:
-    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, command_prefixes=('cli auth login',))
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
     with caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'):
         result = backend.execute(command)
     [record] = [json.loads(message) for message in caplog.messages]
@@ -424,11 +485,12 @@ def test_an_ordinary_pipeline_keeps_its_command_and_output(tmp_path: Path, caplo
      '{"password": "[redacted]", "dataset": "EDRVOL", "value": "1.25"}', 'private-suffix'),
 ], ids=['python-notation', 'escaped-json-quote'])
 @pytest.mark.parametrize(('redirect', 'exit_code'), [('', 0), ('>&2', 3)], ids=['stdout-success', 'stderr-failure'])
-def test_quoted_credentials_are_stripped_from_kept_command_and_output(
+def test_quoted_credentials_are_stripped_from_kept_output(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, text: str, stripped: str, secret: str, redirect: str, exit_code: int,
 ) -> None:
+    (tmp_path / 'payload').write_text(f'{text}\n')
     backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False)
-    command = f"cat <<'PAYLOAD' {redirect}\n{text}\nPAYLOAD\nexit {exit_code}"
+    command = f'cat payload {redirect}; exit {exit_code}'
     with (
         caplog.at_level(logging.INFO, logger='botcube_harness_deepagents.shell_backend'),
         TracerProvider().get_tracer(__name__).start_as_current_span('execute_tool shell') as span,
@@ -437,7 +499,7 @@ def test_quoted_credentials_are_stripped_from_kept_command_and_output(
     [record] = [json.loads(message) for message in caplog.messages]
     context = span.get_span_context()
 
-    assert record['command'] == f"cat <<'PAYLOAD' {redirect}\n{stripped}\nPAYLOAD\nexit {exit_code}"
+    assert record['command'] == command
     assert record['output'] == (f'[stderr] {stripped}\n\nExit code: 3' if exit_code else f'{stripped}\n')
     assert secret not in json.dumps(record)
     assert result.output == (f'[stderr] {text}\n\nExit code: 3' if exit_code else f'{text}\n')
