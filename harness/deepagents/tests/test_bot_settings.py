@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving, session_api
 from botcube_harness_deepagents.bot_settings import BotSettingsError, load_bot_settings
 from test_serving import _Recorder, _ScriptedModel, _Service, _tool_output
@@ -74,6 +75,19 @@ def test_a_turn_runs_on_the_model_it_names(bot_service: _Service) -> None:
     bot_service.turn('hello', model='opus-4.6')
 
     assert bot_service.recorder.builds[-1]['model'] == 'opus-4.6'
+
+
+def test_a_turn_acts_as_the_actor_its_identity_names(bot_service: _Service) -> None:
+    # A Session filed under an older ID: the acting User is the Turn identity's actor, not the Session's filing ID.
+    bot_service.turn('hello', user='older-filing', turnIdentity=turn_identity('current-actor', 'older-filing'))
+
+    assert [(key.actor_id, key.session_user_id) for key in serving._AGENTS] == [('current-actor', 'older-filing')]
+
+
+def test_a_turn_with_no_identity_acts_as_the_session_user(bot_service: _Service) -> None:
+    bot_service.turn('hello', user='user-1')
+
+    assert [key.actor_id for key in serving._AGENTS] == ['user-1']
 
 
 @pytest.mark.parametrize(

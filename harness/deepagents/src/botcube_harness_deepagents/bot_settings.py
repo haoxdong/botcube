@@ -21,6 +21,8 @@ from botcube_cartridge import (
 )
 from jsonschema import Draft202012Validator, ValidationError
 
+from .memory.agentcore import turn_actor
+
 _SCHEMA = json.loads(Path(__file__).with_name('bot-settings.schema.json').read_text(encoding='utf8'))
 # Where the agent finds the bot's skills, one directory each.
 SKILLS = '/skills/'
@@ -94,14 +96,18 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
 
 
 def _prepare_invocation(input_data: Any) -> InvocationAuth:
-    """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session."""
+    """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
+
+    The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
+    """
     props = input_data.get('forwardedProps', {}) if isinstance(input_data, dict) else input_data.forwarded_props or {}
     session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
     url, token = props.get('credentialServiceUrl'), props.get('credentialServiceInvocationToken')
     if bool(url) != bool(token):
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     relay = openai_model_relay(url, token, session) if url and token and isinstance(session, str) else None
-    return InvocationAuth(actor_id=props.get('sessionUserId'), persistent_memory=True, environment=None, model_relay=relay)
+    actor = turn_actor(props.get('turnIdentity')) or props.get('sessionUserId')
+    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=None, model_relay=relay)
 
 
 def _field(error: ValidationError) -> str:

@@ -51,7 +51,7 @@ from .warm_session import WarmSessionSaver
 __all__ = [
     'MemorySandboxError', 'TurnIdentity', 'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store',
     'finished_snapshot_epoch', 'is_access_denied', 'next_turn', 'opening',
-    'prime_memory_client', 'prime_spare', 'require_turn_identity', 'sts_client', 'turn_memory',
+    'prime_memory_client', 'prime_spare', 'require_turn_identity', 'sts_client', 'turn_actor', 'turn_memory',
 ]
 
 USER_MEMORY_ROLE_ARN = os.getenv('BOTCUBE_USER_MEMORY_ROLE_ARN', '')
@@ -285,6 +285,13 @@ def require_turn_identity(turn_identity: Any) -> TurnIdentity:
             raise TurnIdentityError(f'The Turn credentials lack {", ".join(missing)}')
         return turn_identity
     raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
+
+
+def turn_actor(turn_identity: Any) -> str | None:
+    """The acting User a forwarded Turn identity names, or None when the invocation carries none."""
+    if turn_identity is None:
+        return None
+    return _tags(require_turn_identity(turn_identity))['actorId'][0]
 
 
 def _tags(turn_identity: TurnIdentity) -> dict[str, list[str]]:
