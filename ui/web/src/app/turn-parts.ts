@@ -100,8 +100,8 @@ function shownCallsOf(turn: readonly TurnMessage[], artifacts: ReadonlySet<strin
  * tool call, each its own bubble; a text before a call is a note, unless no text follows the last call: then the Turn's
  * last text that calls no tool is its answer. While the last Turn runs they show only while its latest message is one: a
  * note reads as an answer until its tool call arrives. A proposed schedule and its result show too. An Artifact the
- * Turn published shows as a card: in its last answer's bubble once that answer shows, on its own
- * until then. A refused publish, a list and a read are work: the agent recovers from them, and the Worklog keeps them.
+ * Turn published shows as a card in its last answer's bubble, or grouped under its latest successful publish
+ * until that answer shows. A refused publish, a list and a read are work: the agent recovers from them, and the Worklog keeps them.
  * A scheduled run's card, which the Chat Service posts to the Main Chat with no question before it, is no Turn's work:
  * it ends the Turn before it and shows on its own.
  */
@@ -114,8 +114,13 @@ export function partsOf(messages: readonly TurnMessage[], isRunning: boolean): {
     const answered = !(last && isRunning) || answers.at(-1) === turn.at(-1);
     const artifacts = publishesIn(turn);
     const shownCalls = shownCallsOf(turn, artifacts.shown);
-    const answer = answered ? answers.at(-1) : undefined;
+    const answer = (answered ? answers.at(-1) : undefined)
+      ?? turn.findLast((m) => m.role === "assistant" && m.toolCalls?.some(({ id }) => artifacts.published.has(id)));
     const { moved, folded, cards: answerCards } = answer === undefined ? { moved: new Set<string>(), folded: new Set<string>(), cards: [] } : intoAnswer(turn, artifacts.published);
+    if (answer !== undefined) {
+      moved.delete(answer.id);
+      folded.delete(answer.id);
+    }
     for (const m of turn) {
       const shown = (answered && answers.includes(m)) || (m.toolCalls?.some(({ id }) => shownCalls.has(id)) ?? false) || shownCalls.has(m.toolCallId ?? "");
       parts.set(m.id, moved.has(m.id) ? "card" : shown && !folded.has(m.id) ? "shown" : "work");

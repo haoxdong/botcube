@@ -74,6 +74,20 @@ def test_an_untitled_publish_takes_the_pages_title(tmp_path: Path) -> None:
     assert json.loads(str(call(tmp_path, file_path='/q3.html').content))['title'] == 'Q3 revenue'
 
 
+@pytest.mark.parametrize(('encoded', 'title'), [
+    ('Sales &amp; Trading &#8212; &#x1F4C8; &lt;Q3&gt;', 'Sales & Trading — 📈 <Q3>'),
+    ('Research &amp;amp; Development', 'Research &amp; Development'),
+])
+def test_page_title_decodes_html_entities_once(tmp_path: Path, encoded: str, title: str) -> None:
+    (tmp_path / 'q3.html').write_text(f'<title>{encoded}</title><h1>Q3</h1>')
+
+    published = json.loads(str(call(tmp_path, file_path='/q3.html').content))
+    read = json.loads(str(call(tmp_path, action='read', file_path='/q3.html').content))
+
+    assert published['title'] == title
+    assert read['title'] == title
+
+
 def test_publishing_a_missing_file_fails_with_a_clear_message(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r'No file at /reports/q3\.html\. Write the page there, then publish it\.'):
         call(tmp_path, file_path='/reports/q3.html', title='Q3')

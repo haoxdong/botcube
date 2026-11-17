@@ -10,6 +10,7 @@ found in Files by `find`, see `kept_files`) is recorded in its `<n>.json`.
 
 from __future__ import annotations
 
+import html
 import re
 import shutil
 from collections.abc import Callable
@@ -41,7 +42,7 @@ _TITLE = re.compile(r'<title[^>]*>([^<]*)</title>', re.IGNORECASE)
 
 def _page_title(page: Path) -> str | None:
     found = _TITLE.search(page.read_bytes().decode('utf-8', errors='replace'))
-    return found.group(1).strip() if found else None
+    return html.unescape(found.group(1)).strip() if found else None
 
 
 def _store_page(page: Path, version: Path) -> None:

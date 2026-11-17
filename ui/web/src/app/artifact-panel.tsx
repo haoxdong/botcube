@@ -18,7 +18,7 @@ import { Refusal, useExports } from "./artifact-exports";
 import { readBytes, readFile } from "./artifact-files";
 import { newestInFiles, useNewestInFiles } from "./artifact-newest";
 import { ArtifactFace } from "./artifact-face";
-import { Published, publishedOf } from "./artifact-published";
+import { AnswerCards, Published, publishedOf } from "./artifact-published";
 import { useArtifactRequest, type ArtifactRequest } from "./artifact-request";
 import { TYPES } from "./artifact-types";
 import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
@@ -201,8 +201,9 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
 }
 
 function ArtifactResult({ result }: { result: string }) {
+  const cards = useContext(AnswerCards);
   const artifact = publishedOf(result);
-  if (artifact === null) return null;
+  if (artifact === null || cards.some(({ id }) => id === artifact.id)) return null;
   return <ArtifactCard artifact={artifact} />;
 }
 
