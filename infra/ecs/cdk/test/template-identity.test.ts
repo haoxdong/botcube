@@ -220,5 +220,8 @@ test.each([
   if (!chat) origin.hasResourceProperties('AWS::CloudFormation::CustomResource', {
     Kind: 'ParkedWorker', KeyVersion: 'key-revision', TurnIdentityKeysSecret: identity.aws.ecs.chatService.turnIdentityKeysSecretName,
   });
-  parkingTemplate(app.node.findChild('ApiHealth') as Stack, mode).hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: Boolean(chat) });
+  const health = parkingTemplate(app.node.findChild('ApiHealth') as Stack, mode);
+  health.resourceCountIs('AWS::CloudWatch::Alarm', chat);
+  if (chat) health.hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: true });
+  origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 11 : credentials ? 3 : 0);
 });

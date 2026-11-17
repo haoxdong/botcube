@@ -13,8 +13,16 @@ test.each([true, false])('base health checks remain with paid options removed, p
       RequestInterval: 30, FailureThreshold: 3, MeasureLatency: false,
     },
   });
+  if (parked) { template.resourceCountIs('AWS::CloudWatch::Alarm', 0); return; }
   template.hasResourceProperties('AWS::CloudWatch::Alarm', {
     ActionsEnabled: !parked, Dimensions: [{ Name: 'HealthCheckId', Value: { Ref: 'ApiHealthCheck' } }],
     AlarmActions: Match.anyValue(), OKActions: Match.anyValue(),
   });
+});
+
+test('parked production has no paid health alarm', () => {
+  const template = parkingTemplate(new ApiHealthStack(new App(), 'ParkedHealth', {
+    hostname: 'api.example.com', alarmName: 'health', alertsTopicName: 'alerts',
+  }), true);
+  template.resourceCountIs('AWS::CloudWatch::Alarm', 0);
 });

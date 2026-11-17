@@ -1,6 +1,6 @@
 import { parkState, parkServiceIngress } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
-import { ArnFormat, CfnOutput, Fn, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
+import { ArnFormat, CfnOutput, CfnResource, Duration, Stack, Token } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -319,15 +319,13 @@ export class PreviewChatService extends Construct {
     const period = Duration.seconds(props.alarmPeriodSeconds ?? 60);
     // Availability alarms (the `-preview-` set the Smoke Test checks) by default.
     const alarm = (suffix: keyof NonNullable<PreviewChatServiceProps['alarmNames']>, metric: cloudwatch.IMetric, missing: cloudwatch.TreatMissingData, threshold = 0, comparisonOperator = cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-      { periods = props.alarmEvaluationPeriods ?? 3, alarmName = `${props.clusterName}-preview-${suffix}`, silenceWhenParked = true } = {}) => {
+      { periods = props.alarmEvaluationPeriods ?? 3, alarmName = `${props.clusterName}-preview-${suffix}` } = {}) => {
       const value = new cloudwatch.Alarm(this, suffix, {
         alarmName: props.alarmNames?.[suffix] ?? alarmName, metric, threshold,
-        comparisonOperator,
+        comparisonOperator, actionsEnabled: true,
         evaluationPeriods: periods, datapointsToAlarm: periods, treatMissingData: missing,
       });
-      if (suffix === 'task-deficit') (value.node.defaultChild as cloudwatch.CfnAlarm).addPropertyOverride('TreatMissingData', parkState(this).string('breaching', 'notBreaching'));
-      if (silenceWhenParked) (value.node.defaultChild as cloudwatch.CfnAlarm).addPropertyOverride('ActionsEnabled', Fn.conditionIf(parkState(this).parkedCondition.logicalId, false, true));
-      if (['alb-5xx', 'target-5xx', 'unhealthy-hosts'].includes(suffix)) (value.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
+      (value.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
       value.addAlarmAction(new actions.SnsAction(topic));
       value.addOkAction(new actions.SnsAction(topic));
     };
@@ -337,14 +335,15 @@ export class PreviewChatService extends Construct {
       namespace: 'AWS/ECS', metricName: 'CPUUtilization', statistic: 'SampleCount', period,
       dimensionsMap: { ClusterName: cluster.clusterName, ServiceName: service.serviceName },
     }), cloudwatch.TreatMissingData.BREACHING, 1, cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD);
-    // Each counts logged failures, so it cannot breach at zero tasks and keeps its actions while Parked.
     const failures = (id: string, filter: keyof NonNullable<PreviewChatServiceProps['metricFilterNames']>, suffix: Parameters<typeof alarm>[0], line: string) => {
-      const metric = new logs.MetricFilter(this, id, {
+      const filterResource = new logs.MetricFilter(this, id, {
         ...optionalPhysicalName('filterName', props.metricFilterNames?.[filter]),
         logGroup, filterPattern: logs.FilterPattern.literal(`"${line}"`), metricNamespace: 'BotCube/ChatService', metricName: id, metricValue: '1',
-      }).metric({ statistic: 'Sum', period: Duration.seconds(props.failureAlarmPeriodSeconds ?? 300) });
+      });
+      (filterResource.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
+      const metric = filterResource.metric({ statistic: 'Sum', period: Duration.seconds(props.failureAlarmPeriodSeconds ?? 300) });
       alarm(suffix, metric, cloudwatch.TreatMissingData.NOT_BREACHING, 0, cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-        { periods: 1, alarmName: `${props.clusterName}-${suffix}`, silenceWhenParked: false });
+        { periods: 1, alarmName: `${props.clusterName}-${suffix}` });
     };
     // A purge whose retries ran out leaves the Session fenced with its events stored.
     failures('SessionPurgeFailures', 'sessionPurgeFailures', 'session-purge-failures', 'Session purge failed');

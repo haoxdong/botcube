@@ -28,7 +28,7 @@ def parked() -> dict[str, Any]:
                      for name in ('chat-service-preview', 'credential-service')},
         'reaper': 'DISABLED',
         'healthCheckDisabled': True,
-        'alarmActions': {'bot-cube-api-health': False, 'bot-cube-preview-task-deficit': False},
+        'alarmActions': {},
         'dns': {host: {'type': 'CNAME', 'content': 'parked.invalid', 'proxied': True, 'owned': True}
                 for host in ('api.example.com', 'api-next.example.com')},
         'responses': {host: parked_response() for host in ('api.example.com', 'api-next.example.com')},
@@ -122,14 +122,14 @@ class ParkedVerificationTests(unittest.TestCase):
                 self.assertEqual(verifier['parked_failures'](facts, EXPECTED),
                                  [f'api.example.com does not answer the parked 503 to the web UI: {response}'])
 
-    def test_monitoring_that_would_breach_at_zero_tasks_must_be_off(self):
+    def test_parked_serving_alarms_must_be_absent(self):
         facts = parked()
         facts['healthCheckDisabled'] = False
         facts['alarmActions'] = {'bot-cube-api-health': True, 'bot-cube-preview-task-deficit': False,
                                  'bot-cube-preview-alb-5xx': True}
         self.assertEqual(verifier['parked_failures'](facts, EXPECTED), [
             'API health check is enabled',
-            'alarm actions are not off: bot-cube-api-health on, bot-cube-preview-alb-5xx on'])
+            'alarm actions are not absent: bot-cube-api-health on, bot-cube-preview-alb-5xx on, bot-cube-preview-task-deficit off'])
 
 
 class LiveVerificationTests(unittest.TestCase):

@@ -97,7 +97,7 @@ def parked_failures(facts: Mapping[str, Any], expected: Mapping[str, str | None]
         failures.append(f"reaper schedule is {facts['reaper']}")
     if not facts['healthCheckDisabled']:
         failures.append('API health check is enabled')
-    failures += alarm_failures(facts['alarmActions'], dict.fromkeys(SILENCED_ALARMS, False), 'off')
+    failures += alarm_failures(facts['alarmActions'], {}, 'absent')
     return failures + parked_edge_failures(facts)
 
 

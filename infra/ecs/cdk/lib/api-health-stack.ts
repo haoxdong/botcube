@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cr from 'aws-cdk-lib/custom-resources';
-import { parkState } from './park-state.js';
+import { liveResource, parkState } from './park-state.js';
 import { Construct } from 'constructs';
 
 export interface ApiHealthStackProps extends StackProps {
@@ -54,7 +54,7 @@ export class ApiHealthStack extends Stack {
     const resource = toggle.node.findChild('Resource').node.defaultChild as CfnResource;
     for (const operation of ['Create', 'Update']) resource.addPropertyOverride(operation, Fn.conditionIf(state.parkedCondition.logicalId, call(true), call(false)));
     const alarm = new cloudwatch.Alarm(this, 'ApiHealthAlarm', {
-      alarmName: props.alarmName,
+      alarmName: props.alarmName, actionsEnabled: true,
       alarmDescription: `${props.hostname}/health failing from Route 53 checkers`,
       metric: new cloudwatch.Metric({
         namespace: 'AWS/Route53', metricName: 'HealthCheckStatus', dimensionsMap: { HealthCheckId: check.ref },
@@ -63,13 +63,12 @@ export class ApiHealthStack extends Stack {
       threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
       evaluationPeriods: props.evaluationPeriods ?? 2, treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     });
-    const cfnAlarm = alarm.node.defaultChild as cloudwatch.CfnAlarm;
-    cfnAlarm.addPropertyOverride('ActionsEnabled', Fn.conditionIf(state.parkedCondition.logicalId, false, true));
+    liveResource(this, alarm);
     alarm.applyRemovalPolicy(RemovalPolicy.DESTROY);
     const topic = sns.Topic.fromTopicArn(this, 'Alerts', this.formatArn({ service: 'sns', resource: props.alertsTopicName }));
     alarm.addAlarmAction(new actions.SnsAction(topic));
     alarm.addOkAction(new actions.SnsAction(topic));
     new CfnOutput(this, 'HealthCheckId', { value: check.ref });
-    new CfnOutput(this, 'AlarmName', { value: alarm.alarmName });
+    new CfnOutput(this, 'AlarmName', { value: props.alarmName });
   }
 }

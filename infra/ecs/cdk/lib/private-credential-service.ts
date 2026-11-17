@@ -1,6 +1,6 @@
 import { parkState } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
-import { CfnOutput, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { CfnOutput, CfnResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -213,6 +213,7 @@ export class PrivateCredentialService extends Construct {
       metric: errors.metric({ period: Duration.seconds(props.errorAlarmPeriodSeconds ?? 300), statistic: 'Sum' }),
       threshold: props.errorAlarmThreshold ?? 1, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    const monitoringCondition = parkState(this).credentialCondition;
     const topic = sns.Topic.fromTopicArn(this, 'Alerts', stack.formatArn({ service: 'sns', resource: props.alertsTopicName }));
     alarm.addAlarmAction(new actions.SnsAction(topic));
     alarm.addOkAction(new actions.SnsAction(topic));
@@ -233,6 +234,9 @@ export class PrivateCredentialService extends Construct {
     });
     auditCopyAlarm.addAlarmAction(new actions.SnsAction(topic));
     auditCopyAlarm.addOkAction(new actions.SnsAction(topic));
+    for (const monitor of [errors, planCatalogFailures, alarm, planCatalogAlarm, auditCopyAlarm]) {
+      (monitor.node.defaultChild as CfnResource).cfnOptions.condition = monitoringCondition;
+    }
     for (const [name, value] of Object.entries({
       CredentialServiceUrl: this.url, CredentialServiceName: service.serviceName,
       CredentialTaskDefinitionArn: task.taskDefinitionArn, CredentialTaskRoleArn: task.taskRole.roleArn,
@@ -243,7 +247,7 @@ export class PrivateCredentialService extends Construct {
       CredentialPlanCatalogAlarmName: planCatalogAlarm.alarmName,
       // What the operator command signs Plan Usage ingest tokens with (ADR 0078 decision 5).
       CredentialInvocationSecretArn: this.invocationSecret.secretArn,
-    })) new CfnOutput(stack, name, { value });
+    })) new CfnOutput(stack, name, { value, ...(['CredentialErrorAlarmName', 'CredentialPlanCatalogAlarmName'].includes(name) ? { condition: monitoringCondition } : {}) });
   }
 }
 

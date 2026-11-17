@@ -24,6 +24,7 @@ export function parkState(scope: Construct) {
     parkedCondition: parked,
     liveCondition: live,
     egressCondition: egress,
+    credentialCondition: credential,
     credentialNumber: (enabled: number, disabled: number) => Token.asNumber(Fn.conditionIf(credential.logicalId, enabled, disabled)),
     number: (whenLive: number, whenParked: number) => Token.asNumber(Fn.conditionIf(live.logicalId, whenLive, whenParked)),
     string: (whenLive: string, whenParked: string) => Token.asString(Fn.conditionIf(live.logicalId, whenLive, whenParked)),
