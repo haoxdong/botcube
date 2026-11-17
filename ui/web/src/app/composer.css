@@ -580,6 +580,8 @@ cpk-web-inspector,
 }
 
 .composer-waiting-row:has(> [data-popup-open]) {
+  margin-inline: -10px -4px;
+  padding-inline: 10px 4px;
   border-radius: var(--radius-md);
   background: var(--color-line);
 }
@@ -610,6 +612,11 @@ cpk-web-inspector,
   .composer-waiting-menu .mep-option {
     min-height: 44px;
     height: 44px;
+  }
+
+  .composer-waiting-row:has(> [data-popup-open]) {
+    margin-inline-end: 0;
+    padding-inline-end: 0;
   }
 }
 

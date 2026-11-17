@@ -7,6 +7,7 @@ import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from botcube_harness_deepagents.steering import (
@@ -233,3 +234,60 @@ def test_taking_steering_logs_how_long_each_message_waited(caplog: pytest.LogCap
         pending.take(lambda _event: None)
     records = [json.loads(record.message) for record in caplog.records]
     assert records == [{'event': 'harness_steering_wait', 'messageId': 'm1', 'waitMs': 2500}]
+
+
+def test_steering_resent_after_stop_reaches_the_model_once() -> None:
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    async def run() -> tuple[list[list[BaseMessage]], PendingSteering]:
+        entered, release, thinking = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        @tool
+        async def slow_tool() -> str:
+            """Read the tool result."""
+            entered.set()
+            await release.wait()
+            return 'tool work kept'
+
+        class StoppedModel(SteeringModel):
+            async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: Any = None, **kwargs: Any) -> Any:
+                if len(self.inputs) == 1:
+                    self.inputs.append(messages)
+                    thinking.set()
+                    await asyncio.Event().wait()
+                return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+        model = StoppedModel(inputs=[], responses=[
+            AIMessage('', tool_calls=[{'name': 'slow_tool', 'args': {}, 'id': 'call'}]),
+            AIMessage('answer to send now'),
+        ])
+        graph = create_agent(model, tools=[slow_tool], middleware=[SteeringMiddleware()], checkpointer=InMemorySaver())
+        config: RunnableConfig = {'configurable': {'thread_id': 'thread'}}
+        stopped = PendingSteering()
+        token = active_steering.set((stopped, lambda _event: None))
+        try:
+            work = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('start', id='start')]}, config))
+            await asyncio.wait_for(entered.wait(), 5)
+            stopped.add('steer-x', 'Use the other date')
+            release.set()
+            await asyncio.wait_for(thinking.wait(), 5)
+            work.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await work
+        finally:
+            active_steering.reset(token)
+        resent = PendingSteering()
+        resent.add('steer-x', 'Use the other date')
+        token = active_steering.set((resent, lambda _event: None))
+        try:
+            await asyncio.wait_for(graph.ainvoke({'messages': [HumanMessage('Send now', id='send-now')]}, config), 5)
+        finally:
+            active_steering.reset(token)
+        return model.inputs, resent
+
+    inputs, resent = asyncio.run(run())
+
+    assert resent.consumed == {'steer-x'}
+
+    assert inputs[1][-1].id == 'steer-x'
+    assert [message.id for message in inputs[-1] if isinstance(message, HumanMessage)] == ['start', 'steer-x', 'send-now']
