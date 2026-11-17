@@ -118,6 +118,7 @@ from .snapshot_build import answer_once, prime_process, walk_graph, workspace_at
 from .sse import keep_alive
 from .steering import SteeringMiddleware, active_steering
 from .trace_relay import FailedCalls, counting_failed_calls, harness_trace_relay
+from .turn_lifetime import invocation_deadline, wait_for_turn
 from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
 from .turn_state import (
     AnsweredToolResultsMiddleware,
@@ -442,7 +443,6 @@ class _SessionAgent(LangGraphAgent):
             return
         metadata = event.get('metadata', {})
         if metadata.get('lc_source') == 'summarization':
-            # The summary stays internal, but its model call spent the Turn's tokens.
             data = event.get('data', {})
             if kind == 'on_chat_model_stream':
                 self._record_usage(event, getattr(data.get('chunk'), 'usage_metadata', None), streamed=True)
@@ -993,7 +993,9 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
 
         candidate = forwarded.get('agentSystemPrompt')
         prompt_hash = _served_prompt_hash(candidate)
-        async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, files, context, read_locked)) as events:
+        async with aclosing(_SESSION_TURNS.stream(
+            session, prepare, input_data, files, context, read_locked, invocation_deadline(auth.model_relay),
+        )) as events:
             async for event in events:
                 yield event
                 if prompt_hash is not None and event.type == EventType.RUN_STARTED:
@@ -1105,8 +1107,6 @@ def _preparation_event(
 
 
 class _SessionTurns:
-    """Own replacement, Stop and streaming until each Turn's checkpoints persist."""
-
     def __init__(self) -> None:
         self._turns: dict[tuple[str | None, str | None], _Turn] = {}
         self._locks: dict[tuple[str | None, str | None], asyncio.Lock] = {}
@@ -1170,13 +1170,14 @@ class _SessionTurns:
         files: FilesMount | None,
         context: _RequestContext,
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
+        deadline: float | None = None,
     ) -> AsyncGenerator[Any, None]:
         previous = self._turns.get(session)
         if previous is not None:
             previous.stop()
         self._turns[session] = turn = _Turn(input_data.run_id)
         queue: asyncio.Queue[Any] = asyncio.Queue()
-        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, read_locked))
+        run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, read_locked, deadline))
         def completed(work: asyncio.Task[None]) -> None:
             if not work.cancelled() and (failure := work.exception()) is not None:
                 log.error(
@@ -1193,7 +1194,6 @@ class _SessionTurns:
                     return
             run.result()
         finally:
-            # Stop or a lost client: only the Turn's graph work is cancelled, never its checkpoint writes.
             turn.stop()
 
     async def _run(
@@ -1206,8 +1206,8 @@ class _SessionTurns:
         context: _RequestContext,
         put: Callable[[Any], None],
         read_locked: Callable[[LangGraphAgent], Awaitable[None]] | None = None,
+        deadline: float | None = None,
     ) -> None:
-        """Hold the lock until cancelled checkpoints persist, preventing writes over the next Turn."""
         trace_context = (
             baggage.set_baggage('session.id', context.session_id)
             if context.session_id else otel_context.get_current()
@@ -1246,7 +1246,7 @@ class _SessionTurns:
                 with turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
-                    await asyncio.wait([turn.work])
+                    limited = await wait_for_turn(turn.work, deadline)
                     try:
                         await readiness.settle_prefetch()
                         if not turn.work.cancelled():
@@ -1259,7 +1259,7 @@ class _SessionTurns:
                             await reply.answer_cut_calls(agent, session)
                 if turn.work.cancelled():
                     _settle_finished_reuse(saver, False)
-                    reply.finish_stopped(put)
+                    await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
                 elif completion is not None:
                     put(completion)
                     self._feed(session, turn, feeds)

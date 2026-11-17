@@ -9,9 +9,16 @@ from ag_ui.core import (
     EventType,
     ReasoningEndEvent,
     ReasoningMessageEndEvent,
+    RunAgentInput,
     RunErrorEvent,
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
 )
 from ag_ui_langgraph import LangGraphAgent
+from ag_ui_langgraph.utils import agui_messages_to_langchain
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     ModelRequest,
@@ -63,6 +70,8 @@ class _OpenReply:
     """
 
     def __init__(self) -> None:
+        self.started = False
+        self.open_text = False
         self.message_id = ''
         self.text = ''
         self.started_at = self.ended_at = 0
@@ -74,6 +83,8 @@ class _OpenReply:
 
     def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
         def watched(event: Any) -> None:
+            if event.type == EventType.RUN_STARTED:
+                self.started = True
             if event.type == EventType.REASONING_MESSAGE_START:
                 self.open_thoughts.add(event.message_id)
                 at = message_times.now()
@@ -85,8 +96,11 @@ class _OpenReply:
                     if thought['id'] == event.message_id:
                         thought['ended_at'] = at
             elif event.type == EventType.TEXT_MESSAGE_START:
+                self.open_text = True
                 self.message_id, self.text = event.message_id, ''
                 self.started_at = self.ended_at = message_times.now()
+            elif event.type == EventType.TEXT_MESSAGE_END:
+                self.open_text = False
             elif event.type == EventType.TEXT_MESSAGE_CONTENT:
                 self.text += event.delta
                 self.ended_at = message_times.now()
@@ -100,12 +114,48 @@ class _OpenReply:
 
         return watched
 
-    def finish_stopped(self, put: Callable[[Any], None]) -> None:
+    def _close_messages(self, put: Callable[[Any], None]) -> None:
         for message_id in self.open_thoughts:
             put(ReasoningMessageEndEvent(message_id=message_id))
             put(ReasoningEndEvent(message_id=message_id))
         self.open_thoughts.clear()
+        if self.open_text:
+            put(TextMessageEndEvent(message_id=self.message_id))
+            self.open_text = False
+
+    def finish_stopped(self, put: Callable[[Any], None]) -> None:
+        self._close_messages(put)
         put(_stopped())
+
+    async def finish_cancelled(
+        self, agent: LangGraphAgent, session: tuple[str | None, str | None],
+        input_data: RunAgentInput, put: Callable[[Any], None], *, limited: bool,
+    ) -> None:
+        if limited:
+            await self.finish_limited(agent, session, input_data, put)
+        else:
+            self.finish_stopped(put)
+
+    async def finish_limited(
+        self, agent: LangGraphAgent, session: tuple[str | None, str | None],
+        input_data: RunAgentInput, put: Callable[[Any], None],
+    ) -> None:
+        self._close_messages(put)
+        incoming = [] if self.started else agui_messages_to_langchain(input_data.messages)
+        if not self.started:
+            put(RunStartedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
+        message_id = f'{input_data.run_id}-time-limit'
+        message = AIMessage(
+            'I ran out of time for this Turn. Send another message to continue.', id=message_id,
+        )
+        now = message_times.now()
+        await agent.graph.aupdate_state(_session_config(session), {
+            'messages': [*incoming, message_times.cut(message, now, now, [])],
+        }, as_node='model')
+        put(TextMessageStartEvent(message_id=message_id, role='assistant'))
+        put(TextMessageContentEvent(message_id=message_id, delta=message.text))
+        put(TextMessageEndEvent(message_id=message_id))
+        put(RunFinishedEvent(thread_id=input_data.thread_id, run_id=input_data.run_id))
 
     async def keep(self, agent: LangGraphAgent, session: tuple[str | None, str | None]) -> None:
         """Record the text the user already read as the agent's answer, under its streamed ID."""
