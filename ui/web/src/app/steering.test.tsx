@@ -100,3 +100,114 @@ it('delivers successive steering messages in order outside the storage lock', as
   release();
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
 });
+
+function stored() {
+  return JSON.parse(localStorage.getItem('botcube.steering:account:thread') ?? '[]') as { id: string; content: string }[];
+}
+
+function requests(method: string) {
+  return vi.mocked(fetch).mock.calls.filter(([, init]) => (init?.method ?? 'GET') === method).map(([url, init]) => ({
+    url: typeof url === 'string' ? url : url instanceof URL ? url.href : url.url,
+    body: typeof init?.body === 'string' ? init.body : '',
+  }));
+}
+
+it('lists waiting messages in send order until each is taken', async () => {
+  const { result, agent } = setup();
+  act(() => { result.current.steer('First change'); result.current.steer('Second change'); });
+  await waitFor(() => expect(result.current.waiting.map(({ content }) => content)).toEqual(['First change', 'Second change']));
+  const [first] = result.current.waiting;
+  if (first === undefined) throw new Error('No waiting message');
+  act(() => agent.setMessages([{ ...first, role: 'user' }]));
+  await waitFor(() => expect(result.current.waiting.map(({ content }) => content)).toEqual(['Second change']));
+});
+
+it('withdraws a waiting message so neither this Turn nor the next sends it', async () => {
+  vi.mocked(fetch).mockImplementation(async (_url, init) => Response.json(init?.method === 'DELETE' ? { withdrawn: true } : { accepted: true }));
+  const { result, rerender, submit } = setup();
+  act(() => { result.current.steer('Keep this'); result.current.steer('Withdraw this'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(2));
+  const withdrawn = result.current.waiting[1];
+  if (withdrawn === undefined) throw new Error('No waiting message');
+  let outcome: string | undefined;
+  await act(async () => { outcome = await result.current.withdraw(withdrawn.id); });
+  expect(outcome).toBe('withdrawn');
+  expect(requests('DELETE').map(({ url }) => url)).toEqual([`http://chat.test/threads/thread/steer/${withdrawn.id}`]);
+  expect(result.current.waiting.map(({ content }) => content)).toEqual(['Keep this']);
+  expect(stored().map(({ content }) => content)).toEqual(['Keep this']);
+  rerender({ running: false, ready: true });
+  await waitFor(() => expect(submit).toHaveBeenCalledWith('Keep this'));
+});
+
+it('never delivers a message withdrawn before its turn to be sent', async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  vi.mocked(fetch).mockImplementation(async (_url, init) => {
+    if (init?.method === 'DELETE') return Response.json({ withdrawn: true });
+    if (requests('POST').length === 1) await held;
+    return Response.json({ accepted: true });
+  });
+  const { result } = setup();
+  act(() => { result.current.steer('First instruction'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(1));
+  act(() => { result.current.steer('Second instruction'); });
+  await waitFor(() => expect(result.current.waiting).toHaveLength(2));
+  const second = result.current.waiting[1];
+  if (second === undefined) throw new Error('No waiting message');
+  await act(async () => { await result.current.withdraw(second.id); });
+  await act(async () => { release(); });
+  await act(async () => {});
+  expect(requests('POST').map(({ body }) => JSON.parse(body).content)).toEqual(['First instruction']);
+});
+
+it('keeps a message the Harness took first until its bubble lands', async () => {
+  vi.mocked(fetch).mockImplementation(async (_url, init) => Response.json(init?.method === 'DELETE' ? { withdrawn: false } : { accepted: true }));
+  const { result, agent } = setup();
+  act(() => { result.current.steer('Already taken'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(1));
+  const taken = result.current.waiting[0];
+  if (taken === undefined) throw new Error('No waiting message');
+  let outcome: string | undefined;
+  await act(async () => { outcome = await result.current.withdraw(taken.id); });
+  expect(outcome).toBe('taken');
+  expect(stored().map(({ id }) => id)).toEqual([taken.id]);
+  act(() => agent.setMessages([{ ...taken, role: 'user' }]));
+  await waitFor(() => expect(result.current.waiting).toEqual([]));
+  await waitFor(() => expect(localStorage.getItem('botcube.steering:account:thread')).toBeNull());
+});
+
+it('reports a failed withdrawal and keeps the message waiting', async () => {
+  vi.mocked(fetch).mockImplementation(async (_url, init) => init?.method === 'DELETE' ? new Response(null, { status: 502 }) : Response.json({ accepted: true }));
+  const { result, failed } = setup();
+  act(() => { result.current.steer('Still waiting'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(1));
+  const message = result.current.waiting[0];
+  if (message === undefined) throw new Error('No waiting message');
+  let outcome: string | undefined;
+  await act(async () => { outcome = await result.current.withdraw(message.id); });
+  expect(outcome).toBe('failed');
+  expect(failed).toHaveBeenCalledWith('Withdrawing failed: HTTP 502. Your message is still waiting.');
+  expect(result.current.waiting.map(({ content }) => content)).toEqual(['Still waiting']);
+});
+
+it('leaves a message out of the next Turn when the Turn ends while it is being withdrawn', async () => {
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => { answer = resolve; });
+  vi.mocked(fetch).mockImplementation(async (_url, init) => {
+    if (init?.method !== 'DELETE') return Response.json({ accepted: true });
+    await answered;
+    return Response.json({ withdrawn: true });
+  });
+  const { result, rerender, submit } = setup();
+  act(() => { result.current.steer('Keep this'); result.current.steer('Withdraw this'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(2));
+  const withdrawn = result.current.waiting[1];
+  if (withdrawn === undefined) throw new Error('No waiting message');
+  let outcome: Promise<string> | undefined;
+  act(() => { outcome = result.current.withdraw(withdrawn.id); });
+  rerender({ running: false, ready: true });
+  await waitFor(() => expect(submit).toHaveBeenCalled());
+  answer();
+  await act(async () => { await outcome; });
+  expect(submit).toHaveBeenCalledExactlyOnceWith('Keep this');
+});

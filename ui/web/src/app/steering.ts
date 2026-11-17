@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AbstractAgent } from "@ag-ui/client";
+import { z } from "zod";
 import { messageWithFiles, sentFilesOf } from "./composer-files";
 
 const KEY = "botcube.steering:";
-type PendingMessage = { id: string; content: string };
+export type PendingMessage = { id: string; content: string };
+export type Withdrawal = "withdrawn" | "taken" | "failed";
+const Withdrawn = z.object({ withdrawn: z.boolean() });
 
 function read(key: string): PendingMessage[] {
   return JSON.parse(localStorage.getItem(key) ?? "[]") as PendingMessage[];
@@ -34,6 +37,7 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
   const unsaved = useRef(new Map<string, PendingMessage[]>());
   const delivery = useRef(Promise.resolve());
   const dropped = useRef(0);
+  const withdrawing = useRef(new Set<string>());
 
   useEffect(() => {
     const subscription = agent.subscribe({ onMessagesChanged: () => refresh((value) => value + 1) });
@@ -56,10 +60,13 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
       else localStorage.setItem(key, JSON.stringify(pending));
       unsaved.current.delete(key);
       if (!current.current.running) {
-        const parts = pending.map(({ content }) => sentFilesOf(content));
+        const held = pending.filter(({ id }) => withdrawing.current.has(id));
+        const carried = pending.filter(({ id }) => !withdrawing.current.has(id));
+        const parts = carried.map(({ content }) => sentFilesOf(content));
         const text = messageWithFiles(parts.map((part) => part.text).join("\n\n"), parts.flatMap((part) => part.paths));
-        if (ready && pending.length > 0 && current.current.submit(text)) {
-          localStorage.removeItem(key);
+        if (ready && carried.length > 0 && current.current.submit(text)) {
+          if (held.length === 0) localStorage.removeItem(key);
+          else localStorage.setItem(key, JSON.stringify(held));
         }
         return [];
       }
@@ -69,7 +76,7 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
       const generation = dropped.current;
       delivery.current = pending.reduce((previous, message) => previous.then(async () => {
         if (current.current.key !== key || !current.current.running || dropped.current !== generation) return;
-        if (sending.current.has(message.id)) return;
+        if (sending.current.has(message.id) || withdrawing.current.has(message.id)) return;
         sending.current.add(message.id);
         try {
           const response = await fetch(`${serviceUrl}/threads/${encodeURIComponent(threadId)}/steer`, {
@@ -98,5 +105,36 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
     void navigator.locks.request(key, () => localStorage.removeItem(key))
       .catch((error: unknown) => current.current.failed(`Your follow-ups could not be dropped because browser storage failed: ${String(error)}`));
   };
-  return { steer, drop };
+  const forget = (id: string) => {
+    unsaved.current.set(key, (unsaved.current.get(key) ?? []).filter((message) => message.id !== id));
+    return navigator.locks.request(key, () => {
+      const rest = read(key).filter((message) => message.id !== id);
+      if (rest.length === 0) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(rest));
+    });
+  };
+  const withdraw = async (id: string): Promise<Withdrawal> => {
+    withdrawing.current.add(id);
+    try {
+      const response = await fetch(`${serviceUrl}/threads/${encodeURIComponent(threadId)}/steer/${encodeURIComponent(id)}`, {
+        method: "DELETE", credentials: "include",
+      });
+      if (!response.ok) throw new Error(`Withdrawing failed: HTTP ${response.status}`);
+      const { withdrawn } = Withdrawn.parse(await response.json());
+      if (!withdrawn) return "taken";
+      await forget(id);
+      return "withdrawn";
+    } catch (error) {
+      withdrawing.current.delete(id);
+      failed(`${error instanceof Error ? error.message : String(error)}. Your message is still waiting.`);
+      return "failed";
+    } finally {
+      refresh((value) => value + 1);
+    }
+  };
+  const waiting = running && accountId !== undefined
+    ? [...read(key), ...(unsaved.current.get(key) ?? [])].filter((message, index, all) =>
+      all.findIndex(({ id }) => id === message.id) === index && !agent.messages.some(({ id }) => id === message.id))
+    : [];
+  return { steer, drop, waiting, withdraw };
 }

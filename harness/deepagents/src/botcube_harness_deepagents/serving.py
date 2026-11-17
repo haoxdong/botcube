@@ -867,6 +867,11 @@ async def _invoke_user(input_data: RunAgentInput, context: _RequestContext, forw
         accepted = _SESSION_TURNS.steer((session_user_id, input_data.thread_id), input_data)
         yield CustomEvent(name='STEERING_ACCEPTED', value={'accepted': accepted})
         return
+    if 'withdrawSteering' in forwarded:
+        session_user_id = _require_session_user_id(session_user_id)
+        withdrawn = _SESSION_TURNS.withdraw((session_user_id, input_data.thread_id), forwarded['withdrawSteering'])
+        yield CustomEvent(name='STEERING_WITHDRAWN', value={'withdrawn': withdrawn})
+        return
     if forwarded.get('stop'):
         session_user_id = _require_session_user_id(session_user_id)
         # AgentCore keeps a Turn running after its caller goes away, so the Chat Service stops it by name.
@@ -1133,6 +1138,14 @@ class _SessionTurns:
                 raise ValueError('Steering requires user text messages')
             turn.steering.add(message.id, message.content)
         return True
+
+    def withdraw(self, session: tuple[str | None, str | None], message_id: object) -> bool:
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError('Withdrawing steering requires a message ID')
+        turn = self._turns.get(session)
+        if turn is None or turn.stopped or turn.finished:
+            return True
+        return turn.steering.withdraw(message_id)
 
     def stop(self, session: tuple[str | None, str | None], run_id: str) -> None:
         turn = self._turns.get(session)

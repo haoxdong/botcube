@@ -20,15 +20,23 @@ class PendingSteering:
     def __init__(self) -> None:
         self.messages: dict[str, str] = {}
         self.consumed: set[str] = set()
+        self.withdrawn: set[str] = set()
 
     def add(self, message_id: str, content: str) -> None:
-        if message_id not in self.consumed:
+        if message_id not in self.consumed and message_id not in self.withdrawn:
             self.messages.setdefault(message_id, content)
 
-    def take(self, publish: Callable[[Any], None], message_ids: list[str]) -> list[HumanMessage]:
-        pending = [(message_id, self.messages.pop(message_id)) for message_id in message_ids]
+    def withdraw(self, message_id: str) -> bool:
+        if message_id in self.consumed:
+            return False
+        self.messages.pop(message_id, None)
+        self.withdrawn.add(message_id)
+        return True
+
+    def take(self, publish: Callable[[Any], None]) -> list[HumanMessage]:
+        pending, self.messages = self.messages, {}
         messages = []
-        for message_id, content in pending:
+        for message_id, content in pending.items():
             self.consumed.add(message_id)
             publish(TextMessageStartEvent(message_id=message_id, role='user'))
             publish(TextMessageContentEvent(message_id=message_id, delta=content))
@@ -46,9 +54,10 @@ class SteeringMiddleware(AgentMiddleware):
         if active is None:
             return None
         pending, publish = active
-        message_ids = list(pending.messages)
-        if not message_ids:
+        if not pending.messages:
             return None
         if (files := current_turn_files()) is not None:
             await files.arefresh()
-        return {'messages': pending.take(publish, message_ids)}
+        if not (messages := pending.take(publish)):
+            return None
+        return {'messages': messages}

@@ -3270,6 +3270,51 @@ def test_steering_control_joins_the_running_turn_and_persists_inline(
     assert _sse_events(late.text)[0]['value'] == {'accepted': False}
 
 
+def test_withdraw_control_removes_waiting_steering_until_a_model_step_takes_it(
+    service: _Service, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    steps = [threading.Event(), threading.Event()]
+    release = threading.Event()
+    original = _ScriptedModel._stream
+
+    def held(model: _ScriptedModel, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        yield from original(model, messages, *args, **kwargs)
+        steps[len(model.recorder.heard) - 1].set()
+        assert release.wait(10), 'The test did not release the model'
+        release.clear()
+
+    def control(props: dict[str, Any], message: dict[str, str] | None = None) -> Any:
+        response = service.client.post('/invocations', json={
+            'threadId': 'thread-1', 'runId': 'control', 'messages': [message] if message else [],
+            'tools': [], 'context': [], 'state': {}, 'forwardedProps': {**props, 'sessionUserId': 'user-1'},
+        })
+        return _sse_events(response.text)[0]['value']
+
+    def steer(message_id: str, content: str) -> Any:
+        return control({'steering': True}, {'id': message_id, 'role': 'user', 'content': content})
+
+    monkeypatch.setattr(_ScriptedModel, '_stream', held)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        work = pool.submit(service.turn, 'run: echo work-kept')
+        try:
+            assert steps[0].wait(5)
+            assert steer('dropped', 'Use last year') == {'accepted': True}
+            assert control({'withdrawSteering': 'dropped'}) == {'withdrawn': True}
+            assert steer('dropped', 'Use last year') == {'accepted': True}
+            assert steer('kept', 'Use last month') == {'accepted': True}
+            release.set()
+            assert steps[1].wait(5)
+            assert control({'withdrawSteering': 'kept'}) == {'withdrawn': False}
+        finally:
+            release.set()
+        events = work.result(timeout=10)
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert service.recorder.heard[-1] == ['run: echo work-kept', 'Use last month']
+    starts = [event for event in events if event['type'] == 'TEXT_MESSAGE_START' and event['role'] == 'user']
+    assert [event['messageId'] for event in starts] == ['kept']
+    assert control({'withdrawSteering': 'kept'}) == {'withdrawn': True}
+
+
 def test_plan_default_and_explicit_medium_do_not_share_a_cached_model(service: _Service) -> None:
     with serving_relay() as relay:
         service.turn('Say exactly: hello', model='openai-plan:gpt-6-luna', relay=relay.url)

@@ -133,3 +133,91 @@ def test_mid_turn_attachment_is_readable_without_losing_workspace_edits(
     mounted.write('notes.txt', b'old notes')
     monkeypatch.setattr(FilesMount, 'pull', lambda mount, root, excluded=(): mounted.mount(mount, root, excluded))
     asyncio.run(run(FilesMount.from_binding(binding()), mounted))
+
+
+async def _steer_during_tool(steer: Any, after_tool: Any = None) -> tuple[SteeringModel, list[Any], PendingSteering]:
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    @tool
+    async def slow_tool() -> str:
+        """Read the tool result."""
+        entered.set()
+        await release.wait()
+        return 'tool work kept'
+
+    model = SteeringModel(responses=[
+        AIMessage('', tool_calls=[{'name': 'slow_tool', 'args': {}, 'id': 'call'}]),
+        AIMessage('answer'),
+    ])
+    graph = create_agent(model, tools=[slow_tool], middleware=[SteeringMiddleware()])
+    pending = PendingSteering()
+    events: list[Any] = []
+    token = active_steering.set((pending, events.append))
+    try:
+        work = asyncio.create_task(graph.ainvoke({'messages': [HumanMessage('start')]}))
+        await asyncio.wait_for(entered.wait(), 5)
+        steer(pending)
+        release.set()
+        if after_tool is not None:
+            await after_tool(pending)
+        await asyncio.wait_for(work, 5)
+    finally:
+        active_steering.reset(token)
+    return model, events, pending
+
+
+def _withdraw_after_add(pending: PendingSteering) -> None:
+    pending.add('steer-1', 'Use the other date')
+    assert pending.withdraw('steer-1') is True
+
+
+def _add_after_withdraw(pending: PendingSteering) -> None:
+    assert pending.withdraw('steer-1') is True
+    pending.add('steer-1', 'Use the other date')
+
+
+@pytest.mark.parametrize('steer', [_withdraw_after_add, _add_after_withdraw])
+def test_withdrawn_steering_never_reaches_the_model(steer: Any) -> None:
+    model, events, _ = asyncio.run(_steer_during_tool(steer))
+
+    assert len(model.inputs) == 2
+    assert [(type(message), message.content) for message in model.inputs[1][-1:]] == [(ToolMessage, 'tool work kept')]
+    assert events == []
+
+
+def test_withdraw_during_the_files_refresh_wins_over_the_model_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botcube_harness_deepagents import steering
+
+    refreshing, resume = asyncio.Event(), asyncio.Event()
+
+    class HeldFiles:
+        async def arefresh(self) -> None:
+            refreshing.set()
+            await resume.wait()
+
+    monkeypatch.setattr(steering, 'current_turn_files', HeldFiles)
+
+    async def withdraw_while_refreshing(pending: PendingSteering) -> None:
+        await asyncio.wait_for(refreshing.wait(), 5)
+        assert pending.withdraw('steer-1') is True
+        resume.set()
+
+    model, events, _ = asyncio.run(_steer_during_tool(
+        lambda pending: pending.add('steer-1', 'Use the other date'), withdraw_while_refreshing,
+    ))
+
+    assert len(model.inputs) == 2
+    assert [(type(message), message.content) for message in model.inputs[1][-1:]] == [(ToolMessage, 'tool work kept')]
+    assert events == []
+
+
+def test_steering_taken_by_a_model_step_cannot_be_withdrawn() -> None:
+    model, events, pending = asyncio.run(_steer_during_tool(lambda pending: pending.add('steer-1', 'Use the other date')))
+
+    assert pending.withdraw('steer-1') is False
+    assert [(type(message), message.content) for message in model.inputs[1][-2:]] == [
+        (ToolMessage, 'tool work kept'), (HumanMessage, 'Use the other date'),
+    ]
+    assert [event.type for event in events] == ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']
+    pending.add('steer-1', 'Use the other date')
+    assert pending.messages == {}
