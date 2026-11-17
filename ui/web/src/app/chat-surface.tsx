@@ -50,7 +50,6 @@ import { showsProposalCard } from "./worklog-tools";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
-import { markBubbleEnds } from "./bubble-ends";
 import { useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { SHOWS_WAITING_STEERING, WaitingSteering } from "./waiting-steering";
 import { useAgentRunning } from "./agent-running";
@@ -398,7 +397,7 @@ function finishEntrances(list: Element) {
 
 const messageList = (list: HTMLDivElement | null) => {
   if (list !== null) finishEntrances(list);
-  const stops = [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list), markBubbleEnds(list)];
+  const stops = [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list)];
   return () => stops.forEach((stop) => stop?.());
 };
 

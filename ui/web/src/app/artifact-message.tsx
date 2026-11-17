@@ -9,12 +9,16 @@ import { ReplyFileSlot } from "./reply-file-card";
 
 const MARKDOWN = ({ content }: { content: string }) => <MarkdownRenderer content={content} />;
 
+/** Marq's row ends at a bubble with words in it when no tool row follows the words: chat.css joins the next reply to it. */
+const endsAtBubble = ({ content, toolCalls }: CopilotChatAssistantMessageProps["message"]) =>
+  typeof content === "string" && content.trim() !== "" && !toolCalls?.length;
+
 /** One bubble: the answer's words, then the cards of the Artifacts its Turn published, then its Files. */
 export function ArtifactMessage(props: CopilotChatAssistantMessageProps) {
   const cards = useContext(AnswerCards);
   const turn = useContext(AnswerTurn);
   if (cards.length === 0 && !props.message.toolCalls?.some(({ function: call }) => call.name === "Artifact")) {
-    return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN} />;
+    return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN} data-bubble-ends={endsAtBubble(props.message) ? "" : undefined} />;
   }
   return <CopilotChatAssistantMessage {...props} markdownRenderer={MARKDOWN}>
     {({ markdownRenderer, toolCallsView, toolbar, toolbarVisible }) => (

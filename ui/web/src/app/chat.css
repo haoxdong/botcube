@@ -533,7 +533,7 @@
 
 /* Bubbles in a row from one sender, nothing shown between them, stack 4px apart as one group (Muse): where two meet,
    their corners on the sender's side tighten. Marq's row ends at its bubble when only its hidden toolbar, no tool row,
-   follows it (bubble-ends.ts, as a rule its :has() restyled the list on every streamed word); the user's row starts at
+   follows it (data-bubble-ends, set in render by artifact-message.tsx); the user's row starts at
    its bubble when no file card comes first. */
 .copilotKitMessages > [data-bubble-ends] + .copilotKitAssistantMessage > .cpk\:prose > .chat-markdown:not(:empty) {
   margin-top: 0;
