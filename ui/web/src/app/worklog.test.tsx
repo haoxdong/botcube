@@ -3,6 +3,9 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 
+import { HttpAgent } from '@ag-ui/client';
+import { WorklogAgent } from './worklog-clock';
+
 import type { TurnMessage } from './turn-parts';
 import { ThoughtStep, ToolStep, TurnStart, Worklog, worklogRows } from './worklog';
 
@@ -1522,4 +1525,51 @@ it('keeps authoritative Worklog progress through a twelve-step mid-Turn reload a
   fireEvent.click(head());
   expect(head()).toHaveTextContent(/^Worked for 15s$/);
   expect(stepRows().map(([, time]) => time)).toEqual(displayed);
+});
+
+
+it('keeps the terminal server clock through the completed-message handoff', async () => {
+  vi.useFakeTimers({ now: START });
+  const question = { id: 'terminal-handoff-question', role: 'user', content: 'Compare markets' };
+  const thought = { id: 'terminal-handoff-thought', role: 'reasoning', content: 'Compare the sources' };
+  const clock = { version: 1, question_id: question.id, started_at: START, at: START + 794000, steps: { [thought.id]: { started_at: START, ended_at: START + 794000 } } };
+  const agent = new HttpAgent({ url: 'http://chat.test', initialState: { worklog_clock: clock } });
+  const answer = { id: 'terminal-handoff-answer', role: 'assistant', content: 'Compared the markets' };
+  const show = (running: boolean, answering = !running) => <WorklogAgent.Provider value={agent}><StepsChat messages={answering ? [question, thought, answer] : [question, thought]} running={running} /></WorklogAgent.Provider>;
+  const view = render(show(true));
+  expect(head()).toHaveTextContent(/^Working · 13m 14s$/);
+  expect(stepRows()).toEqual([['Thinking', '13m 14s']]);
+  view.rerender(show(true, true));
+  act(() => { vi.setSystemTime(START + 796000); agent.setState({ worklog_clock: { ...clock, at: START + 795000, ended_at: START + 795000, steps: { ...clock.steps, [answer.id]: { started_at: START + 794000, ended_at: START + 795000 } } } }); });
+  view.rerender(show(false));
+  expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
+  fireEvent.click(head());
+  const displayed = [['Thought', '13m 14s'], ['Answered', '1s']];
+  expect(stepRows()).toEqual(displayed);
+  act(() => { vi.advanceTimersByTime(2000); });
+  expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
+  view.unmount();
+  sessionStorage.clear();
+  vi.resetModules();
+  const fresh = await import('./worklog');
+  const savedQuestion = { ...question, metadata: { ...stamp(0, 0).metadata, worklog_clock: { version: 1 } } };
+  const savedThought = { ...thought, ...stamp(0, 794) };
+  const savedAnswer = { ...answer, ...stamp(794, 795) };
+  render(<fresh.Worklog id={thought.id} asked={question.id} question={savedQuestion} turn={[savedThought, savedAnswer]} running={false}>
+    <fresh.ThoughtStep message={savedThought} />
+  </fresh.Worklog>);
+  fireEvent.click(head());
+  expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
+  expect(stepRows()).toEqual(displayed);
+});
+
+
+it('keeps a saved question independent of another question server clock', () => {
+  const question = { id: 'saved-independent-question', role: 'user', content: 'Compare markets', metadata: { ...stamp(0, 0).metadata, worklog_clock: { version: 1 } } };
+  const thought = { id: 'saved-independent-thought', role: 'reasoning', content: 'Compare', ...stamp(0, 795) };
+  const agent = new HttpAgent({ url: 'http://chat.test', initialState: { worklog_clock: { version: 1, question_id: 'other-question', started_at: START, at: START + 2000000 } } });
+  render(<WorklogAgent.Provider value={agent}><StepsChat messages={[question, thought]} /></WorklogAgent.Provider>);
+  expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
+  act(() => { agent.setState({ worklog_clock: { version: 1, question_id: 'other-question', at: START + 3000000 } }); });
+  expect(head()).toHaveTextContent(/^Worked for 13m 15s$/);
 });

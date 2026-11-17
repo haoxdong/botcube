@@ -188,7 +188,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   if (chosen && !current) setChosen(null);
   const open = current ? chosen.open : phase === "working";
   const serverStart = useContext(TurnStart);
-  const clock = useTurnClock(running, question?.id ?? asked, question?.metadata?.worklog_clock);
+  const clock = useTurnClock(question?.id ?? asked, question?.metadata?.worklog_clock);
   useWorklogClock(running && advanceClock && clock === undefined);
   const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock, clock });
   const total = totalOf(timeline, took);

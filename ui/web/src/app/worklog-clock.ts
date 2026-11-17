@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useRef, useSyncExternalStore } from "react";
 import { EventType, type AbstractAgent, type AgentSubscriber, type BaseEvent, type Message } from "@ag-ui/client";
 import { z } from "zod";
 
@@ -64,24 +64,25 @@ export function clockSubscriber(): AgentSubscriber {
   };
 }
 
-function useServerClock(running: boolean): WorklogClock | undefined {
+function useServerClock(questionId: string | undefined): WorklogClock | undefined {
   const agent = useContext(WorklogAgent);
   const current = useRef<{ agent: AbstractAgent | undefined; value: unknown }>({ agent, value: agent?.state.worklog_clock });
   if (current.current.agent !== agent) current.current = { agent, value: agent?.state.worklog_clock };
   const subscribe = useCallback((notify: () => void) => {
-    if (!agent || !running) return () => undefined;
+    if (!agent) return () => undefined;
     current.current.value = agent.state.worklog_clock;
     const subscription = agent.subscribe({ onStateChanged: ({ state }) => { current.current.value = state.worklog_clock; notify(); } });
     return () => subscription.unsubscribe();
-  }, [agent, running]);
-  const snapshot = useCallback(() => running && agent ? current.current.value : undefined, [agent, running]);
-  const value = useSyncExternalStore(subscribe, snapshot, snapshot);
-  return useMemo(() => clockOf(value), [value]);
+  }, [agent]);
+  const snapshot = useCallback(() => {
+    const clock = agent ? clockOf(current.current.value) : undefined;
+    return clock?.question_id === questionId ? clock : undefined;
+  }, [agent, questionId]);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
-export function useTurnClock(running: boolean, questionId: string | undefined, recorded: unknown): WorklogClock | undefined {
-  const live = useServerClock(running);
-  return live?.question_id === questionId ? live : clockOf(recorded);
+export function useTurnClock(questionId: string | undefined, recorded: unknown): WorklogClock | undefined {
+  return useServerClock(questionId) ?? clockOf(recorded);
 }
 
 /** A replayed message as the clocks read it: its `started_at` and `ended_at` metadata, in epoch ms. */
