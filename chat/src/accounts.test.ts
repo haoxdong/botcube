@@ -16,9 +16,10 @@ class RegisteringStore extends AccountStore {
   }
 }
 
-function app(preferred?: (trusted: string | null) => Promise<string | null>) {
+function app(preferred?: (trusted: string | null) => Promise<string | null>, logoutUrl?: string) {
   const store = new RegisteringStore('chat', { key: 'bot', product: 'Bot' }, memoryDocuments());
   const accounts = accountRoutes({
+    logoutUrl,
     store: () => store,
     cookies: accountCookies('bot'),
     session: (account) => ({ named: account.displayName ?? null }),
@@ -70,6 +71,18 @@ it("acts for the browser's anonymous account, then the signed-in one, until it s
   const logout = await routes.request('/auth/logout', { method: 'POST', headers: { Cookie: session } });
   expect(cookie(logout, 'bot_session')).toBe('bot_session=');
   expect(await (await routes.request('/owner', { headers: { Cookie: `${anonymous}; ${session}` } })).json()).toBe(accountId);
+});
+
+it("sends a signed-out browser to the identity provider's logout URL, so the next sign-in prompts again", async () => {
+  const { store, routes } = app(undefined, 'https://login.example.com/logout?client_id=bot');
+  const { account } = await store.anonymousAccount(undefined);
+  await store.register(account.accountId);
+  const session = `bot_session=${await store.createSession(account.accountId)}`;
+
+  const logout = await routes.request('/auth/logout', { method: 'POST', headers: { Cookie: session } });
+
+  expect(await logout.json()).toEqual({ status: 'ok', logoutUrl: 'https://login.example.com/logout?client_id=bot' });
+  expect(await (await routes.request('/account/session', { headers: { Cookie: session } })).json()).toMatchObject({ authenticated: false });
 });
 
 it("takes the Cartridge's preferred account, keeps its sign-in need and forgets it once deleted", async () => {

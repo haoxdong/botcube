@@ -327,20 +327,18 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
 
   /**
    * A new session for the OIDC user's account. Their first sign-in registers the browser's anonymous
-   * account, keeping its chats, or a new account when the browser has none; with `subjectIsAccountId`, the subject's.
+   * account, keeping its chats, or a new account when the browser has none. The issuer and subject key it, never the email.
    */
-  signInWithOidc(user: OidcUser, browserAccountId: string | undefined, { subjectIsAccountId = false } = {}): Promise<{ accountId: string; sessionToken: string }> {
+  signInWithOidc(user: OidcUser, browserAccountId: string | undefined): Promise<{ accountId: string; sessionToken: string }> {
     return this.mutation(async (lease) => {
       const link = oidcLinkKey(user);
       const linked = await this.get(link);
-      const named = subjectIsAccountId ? await this.loadAccount(user.subject) : null;
-      const existing = (linked && await this.loadAccount(linked.accountId as string)) || (named?.status === 'registered' ? named : null);
+      const existing = linked ? await this.loadAccount(linked.accountId as string) : null;
       if (existing?.deletionOperationId !== undefined) throw new AccountStoreError(`${this.naming.product} account deletion is pending`);
       const operations: Operation[] = [];
       let account = existing;
       if (account === null) {
-        if (named || (subjectIsAccountId && !isAccountId(user.subject))) throw new AccountStoreError('OIDC subject is no registered account');
-        account = await this.registered(browserAccountId, user, subjectIsAccountId ? user.subject : undefined);
+        account = await this.registered(browserAccountId, user);
         operations.push(this.put(this.accountItem(account)));
       }
       if (linked?.accountId !== account.accountId) operations.push(this.put({ ...itemKey(link), accountId: account.accountId }));
@@ -350,12 +348,12 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     });
   }
 
-  private async registered(browserAccountId: string | undefined, { issuer, subject, displayName }: OidcUser, accountId?: string): Promise<A> {
-    const browser = accountId ? null : await this.loadAccount(browserAccountId);
+  private async registered(browserAccountId: string | undefined, { issuer, subject, displayName }: OidcUser): Promise<A> {
+    const browser = await this.loadAccount(browserAccountId);
     const now = nowSeconds();
     const account = browser?.status === 'anonymous' && browser.deletionOperationId === undefined
       ? browser
-      : this.newAccount({ version: 1, accountId: accountId ?? `acct_${token(24)}`, status: 'registered', rateTier: 'authenticated', createdAt: now, updatedAt: now });
+      : this.newAccount({ version: 1, accountId: `acct_${token(24)}`, status: 'registered', rateTier: 'authenticated', createdAt: now, updatedAt: now });
     Object.assign(account, { status: 'registered', rateTier: 'authenticated', oidc: { issuer, subject }, updatedAt: now });
     seedName(account, displayName);
     return account;

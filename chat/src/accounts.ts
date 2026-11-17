@@ -24,6 +24,8 @@ export interface AccountRoutesOptions<A extends Account> {
   signIns: (account: A) => Promise<SignIn[]>;
   /** What else signing out clears, once the session is gone. */
   signedOut?: () => void;
+  /** Where a signed-out browser goes next, so the OIDC provider ends its own session too. */
+  logoutUrl?: string | undefined;
   deleteTestUser?: (accountId: string) => Promise<void>;
 }
 
@@ -32,7 +34,7 @@ export interface AccountRoutesOptions<A extends Account> {
  * registered account its session signed in. Serves `/account/session`,
  * `/account/sign-ins`, `/auth/logout` and the account profile.
  */
-export function accountRoutes<A extends Account>({ store, cookies, session, signIns, signedOut, deleteTestUser }: AccountRoutesOptions<A>) {
+export function accountRoutes<A extends Account>({ store, cookies, session, signIns, signedOut, logoutUrl, deleteTestUser }: AccountRoutesOptions<A>) {
   const naming = () => store().naming;
   const trustedAccountId = (c: Context) => store().sessionAccountId(cookies.sessionToken(c));
   async function operatorAccount(c: Context): Promise<A | null> {
@@ -100,7 +102,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
     if (token) await store().deleteTrustedSession(token);
     signedOut?.();
     clearCookie(c, cookies.session);
-    return c.json({ status: 'ok' });
+    return c.json(logoutUrl === undefined ? { status: 'ok' } : { status: 'ok', logoutUrl });
   });
 
   routes.get('/account/session', async (c) => {

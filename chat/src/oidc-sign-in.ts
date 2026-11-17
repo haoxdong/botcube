@@ -1,16 +1,17 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import * as client from 'openid-client';
 import type { AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
 import { HttpError } from './cartridge.js';
+import { corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
 
 /** The Deployment Config's `oidc` identity section, with its client secret read. */
 interface OidcIdentity {
   issuer: string;
   clientId: string;
   clientSecret: string;
-  subjectIsAccountId?: boolean | undefined;
 }
 
 interface OidcSignInOptions {
@@ -32,6 +33,22 @@ export function oidcClientSecret(env: NodeJS.ProcessEnv): string {
   const secret = env.BOTCUBE_OIDC_CLIENT_SECRET;
   if (!secret) throw new Error('identity.clientSecret: BOTCUBE_OIDC_CLIENT_SECRET is not set; the deploy fills it from the secret this field names');
   return secret;
+}
+
+/** The Deployment Config's `oidc` identity as the Chat Service serves it: the provider's sign-in. */
+export function oidcIdentity(
+  identity: Extract<DeploymentConfig['identity'], { kind: 'oidc' }>,
+  env: NodeJS.ProcessEnv,
+  { store, cookies }: Pick<OidcSignInOptions, 'store' | 'cookies'>,
+): { routes: Hono } {
+  const { routes } = oidcSignIn({
+    identity: { issuer: identity.issuer, clientId: identity.clientId, clientSecret: oidcClientSecret(env) },
+    store,
+    cookies,
+    returnOrigins: corsOriginsFromEnv(env) ?? LOCAL_UI_ORIGINS,
+    publicOrigin: env.BOTCUBE_PUBLIC_ORIGIN,
+  });
+  return { routes };
 }
 
 interface PendingSignIn {
@@ -80,7 +97,6 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
     const { accountId, sessionToken } = await store().signInWithOidc(
       { issuer: claims.iss, subject: claims.sub, displayName: typeof claims.name === 'string' ? claims.name : undefined },
       cookies.accountId(c),
-      { subjectIsAccountId: identity.subjectIsAccountId === true },
     );
     if (replaced) await store().deleteTrustedSession(replaced);
     cookies.setAccount(c, accountId);
