@@ -24,16 +24,29 @@ export function minutesLeft(since: string, now: number): number {
   return Math.min(WAKE_MINUTES, Math.max(1, Math.ceil(WAKE_MINUTES - (now - Date.parse(since)) / 60_000)));
 }
 
-export async function untilLive(chatServiceUrl: string, fetchImpl: typeof fetch = fetch, pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))): Promise<void> {
+type Poll = { fetchImpl?: typeof fetch; pause?: (ms: number, signal?: AbortSignal) => Promise<void>; signal?: AbortSignal; onPoll?: () => Promise<void> };
+
+/** Polls the API until it serves again, calling onPoll after each pause; aborting `signal` ends the loop and its pending pause. */
+export async function untilLive(chatServiceUrl: string, { fetchImpl = fetch, pause = pauseFor, signal, onPoll }: Poll = {}): Promise<void> {
   for (;;) {
+    signal?.throwIfAborted();
     // eslint-disable-next-line no-await-in-loop -- each check waits for the last
-    const answer = await fetchImpl(`${chatServiceUrl}/account/session`, { credentials: "include", cache: "no-store" })
+    const answer = await fetchImpl(`${chatServiceUrl}/account/session`, { credentials: "include", cache: "no-store", signal: signal ?? null })
       .catch((error: unknown) => { if (error instanceof TypeError) return null; throw error; });
     if (answer?.ok) return;
     if (answer && answer.status < 500) throw new Error(`Account session failed: ${answer.status}`);
     // eslint-disable-next-line no-await-in-loop -- polls until unpark finishes
-    await pause(WAKE_POLL_MS);
+    await pause(WAKE_POLL_MS, signal);
+    // eslint-disable-next-line no-await-in-loop -- the caller's check runs between polls
+    await onPoll?.();
   }
+}
+
+function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
 }
 
 export async function wakeLapsed(chatServiceUrl: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {

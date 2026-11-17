@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { LoadFailed } from "./load-state";
-import { minutesLeft, untilLive, wake, WAKE_POLL_MS, wakeLapsed, type WakeState } from "./wake-up";
+import { minutesLeft, untilLive, wake, wakeLapsed, type WakeState } from "./wake-up";
 
 type Shown = WakeState | { state: "checking" } | { state: "failed"; error: string };
 
@@ -23,14 +23,14 @@ export function WakeUpButton({ title, chatServiceUrl }: { title: string; chatSer
   const waking = shown.state === "waking" || shown.state === "live";
   useEffect(() => {
     if (!waking) return undefined;
-    let current = true;
-    const fail = (error: unknown) => { if (current) setShown({ state: "failed", error: error instanceof Error ? error.message : String(error) }); };
-    void untilLive(chatServiceUrl).then(() => { if (current) window.location.reload(); }, fail);
-    const tick = setInterval(() => {
+    const stop = new AbortController();
+    const fail = (error: unknown) => { if (!stop.signal.aborted) setShown({ state: "failed", error: error instanceof Error ? error.message : String(error) }); };
+    const onPoll = async () => {
       setNow(Date.now());
-      void wakeLapsed(chatServiceUrl).then((lapsed) => { if (lapsed) fail(new Error("the wake did not start")); }, fail);
-    }, WAKE_POLL_MS);
-    return () => { current = false; clearInterval(tick); };
+      if (await wakeLapsed(chatServiceUrl)) throw new Error("the wake did not start");
+    };
+    void untilLive(chatServiceUrl, { signal: stop.signal, onPoll }).then(() => { if (!stop.signal.aborted) window.location.reload(); }, fail);
+    return () => stop.abort();
   }, [waking, chatServiceUrl]);
 
   if (shown.state === "checking") return null;

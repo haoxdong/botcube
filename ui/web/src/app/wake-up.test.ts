@@ -43,14 +43,14 @@ describe('Wake up', () => {
       return next ?? answer(200, { accountId: 'account-1' });
     };
 
-    await untilLive(url, fetchImpl, async (ms) => { pauses.push(ms); });
+    await untilLive(url, { fetchImpl, pause: async (ms) => { pauses.push(ms); } });
 
     expect(answers).toEqual([]);
     expect(pauses).toEqual([WAKE_POLL_MS, WAKE_POLL_MS, WAKE_POLL_MS]);
   });
 
   it('fails loud on any other account session answer while waiting', async () => {
-    await expect(untilLive(url, async () => answer(403, { message: 'Forbidden' }), async () => undefined)).rejects.toThrow('Account session failed: 403');
+    await expect(untilLive(url, { fetchImpl: async () => answer(403, { message: 'Forbidden' }), pause: async () => undefined })).rejects.toThrow('Account session failed: 403');
   });
 
   it('notices a wake that lapsed with production still parked, and not one under way or done', async () => {
