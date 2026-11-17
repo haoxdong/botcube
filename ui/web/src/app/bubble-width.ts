@@ -250,9 +250,7 @@ export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
   const fonts = list.ownerDocument.fonts;
   const rows = new Set<Node>();
   let everyRow = false;
-  let frame: number | undefined;
   const fitMarked = () => {
-    frame = undefined;
     // Lines measured in a fallback font take the fallback's widths; the font's load marks every row again.
     if (fonts.status !== "loaded") return;
     const marked = everyRow ? [...list.children] : [...rows].filter((row) => row.parentNode === list);
@@ -260,14 +258,11 @@ export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
     everyRow = false;
     fit(marked.flatMap(bubblesOf));
   };
-  const mark = (row?: Node) => {
-    if (row === undefined) everyRow = true;
-    else rows.add(row);
-    frame ??= requestAnimationFrame(fitMarked);
-  };
+  // Layout already reflects the loaded font, so its lines fit before they paint.
   const loaded = () => {
     clearCache();
-    mark();
+    everyRow = true;
+    fitMarked();
   };
   // Its height changes with every streamed word; only a new width moves where lines wrap.
   let width: number | undefined;
@@ -275,21 +270,19 @@ export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
     if (entry === undefined || entry.contentRect.width === width) return;
     width = entry.contentRect.width;
     everyRow = true;
-    if (frame !== undefined) cancelAnimationFrame(frame);
     fitMarked();
   });
   const changed = new MutationObserver((records) => {
     for (const { target, addedNodes } of records) {
-      if (target === list) addedNodes.forEach((row) => mark(row));
+      if (target === list) addedNodes.forEach((row) => rows.add(row));
       else {
         let row: Node | null = target;
         while (row !== null && row.parentNode !== list) row = row.parentNode;
-        if (row !== null) mark(row);
+        if (row !== null) rows.add(row);
       }
     }
     // New content fits before it paints: a streamed word painted a frame inside the width fit to the words before it,
     // wrapping onto a line of its own, and the reply and all below it jumped a line and back.
-    if (frame !== undefined) cancelAnimationFrame(frame);
     fitMarked();
   });
   resized.observe(list);
@@ -299,7 +292,6 @@ export function fitBubbles(list: HTMLElement | null): (() => void) | undefined {
   everyRow = true;
   fitMarked();
   return () => {
-    if (frame !== undefined) cancelAnimationFrame(frame);
     resized.disconnect();
     changed.disconnect();
     fonts.removeEventListener("loadingdone", loaded);

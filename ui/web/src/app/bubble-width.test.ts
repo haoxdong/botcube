@@ -199,3 +199,19 @@ it('fits the bubbles a list mounts with before it paints, not after its first re
   stop?.();
   list.remove();
 });
+
+it('refits every bubble when a font loads, before the next frame', () => {
+  const list = listOf('Hi Hao, I can pull rates');
+  const stop = fitBubbles(list);
+  const bubble = list.querySelector<HTMLElement>('[class*="cpk:prose"] > div');
+  if (bubble === null) throw new Error('the bubble');
+  // A width fit to the fallback font's lines.
+  bubble.style.width = '123px';
+
+  document.fonts.dispatchEvent(new Event('loadingdone'));
+
+  expect(document.fonts.status).toBe('loaded');
+  expect(bubble.style.width).toBe('');
+  stop?.();
+  list.remove();
+});
