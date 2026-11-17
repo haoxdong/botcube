@@ -39,7 +39,9 @@ describe('the composer box', () => {
       callbacks.forEach((callback) => callback([], {} as ResizeObserver));
     };
     const layout = view.getByLabelText('Ask anything').parentElement as HTMLElement;
-    return { animate, resize, layout };
+    /** Lays the box out `to` tall, as a change no observed box reports would. */
+    const lay = (to: number) => { height = to; };
+    return { animate, resize, layout, lay };
   }
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); document.documentElement.style.removeProperty('--motion-move'); });
 
@@ -76,6 +78,28 @@ describe('the composer box', () => {
     expect(gliding).toHaveLength(1);
     expect(animate).toHaveBeenLastCalledWith(
       [expect.objectContaining({ height: '56px' }), expect.objectContaining({ height: '78px' })],
+      expect.objectContaining({ duration: 300 }),
+    );
+  });
+  // The chips' bar going with its last chip shrinks the box, and no box the observer watches resizes.
+  it('glides as the chips bar comes and goes, which resizes nothing it observes', async () => {
+    document.documentElement.style.setProperty('--motion-move', '300ms');
+    const { animate, layout, lay } = observed();
+    const box = layout.parentElement as HTMLElement;
+    const bar = document.createElement('div');
+    lay(96);
+    box.prepend(bar);
+    await Promise.resolve();
+    expect(animate).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ height: '56px' }), expect.objectContaining({ height: '96px' })],
+      expect.objectContaining({ duration: 300 }),
+    );
+    animate.mock.results.at(-1)?.value.onfinish?.();
+    lay(56);
+    bar.remove();
+    await Promise.resolve();
+    expect(animate).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ height: '96px' }), expect.objectContaining({ height: '56px' })],
       expect.objectContaining({ duration: 300 }),
     );
   });
