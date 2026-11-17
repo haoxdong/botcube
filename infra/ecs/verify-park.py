@@ -13,21 +13,21 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.exceptions import ClientError
-from deploy_identity import SERVICES, load_identity, required
+from deploy_identity import load_identity, required
+from ecs_service_state import service_facts
 
 if TYPE_CHECKING:
     from types_boto3_cloudformation import CloudFormationClient
     from types_boto3_cloudwatch import CloudWatchClient
     from types_boto3_ec2 import EC2Client
     from types_boto3_ecs import ECSClient
-    from types_boto3_ecs.type_defs import DeploymentTypeDef
     from types_boto3_elbv2 import ElasticLoadBalancingv2Client
     from types_boto3_logs import CloudWatchLogsClient
     from types_boto3_route53 import Route53Client
@@ -177,22 +177,6 @@ def stack_facts(cfn: CloudFormationClient, name: str):
     types = [resource['ResourceType'] for page in cfn.get_paginator('list_stack_resources').paginate(StackName=name)
              for resource in page['StackResourceSummaries'] if resource['ResourceStatus'] != 'DELETE_COMPLETE']
     return status, types
-
-
-def service_facts(ecs: ECSClient) -> dict[str, dict[str, object]]:
-    response = ecs.describe_services(cluster=ECS['cluster'], services=list(SERVICES))
-    if response.get('failures') or len(response['services']) != len(SERVICES):
-        raise RuntimeError('ECS service lookup failed')
-    return {required(service.get('serviceName'), 'ECS service serviceName'): {
-        'desired': required(service.get('desiredCount'), 'ECS service desiredCount'),
-        'running': required(service.get('runningCount'), 'ECS service runningCount'),
-        'pending': required(service.get('pendingCount'), 'ECS service pendingCount'),
-        'rollout': rollout(required(service.get('deployments'), 'ECS service deployments')),
-    } for service in response['services']}
-
-
-def rollout(deployments: Sequence[DeploymentTypeDef]):
-    return deployments[0].get('rolloutState') if len(deployments) == 1 else f'{len(deployments)} deployments'
 
 
 def address_facts(ec2: EC2Client):

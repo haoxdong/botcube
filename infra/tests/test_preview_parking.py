@@ -588,3 +588,63 @@ def test_cli_park_and_unpark_keep_the_deployed_dispatcher_protocol():
         client.return_value.invoke.return_value = {'Payload': BytesIO(b'{"executionArn":"accepted"}')}
         transition['transition']('live')
         assert json.loads(client.return_value.invoke.call_args.kwargs['Payload']) == {'op': 'unpark'}
+
+
+class SettledServiceTests(unittest.TestCase):
+    def test_running_task_waits_for_completed_rollout(self):
+        import boto3
+        from botocore.stub import Stubber
+
+        ecs = boto3.client('ecs', region_name='us-east-1', aws_access_key_id='testing', aws_secret_access_key='testing')
+        completed = {'services': [
+            {'serviceName': name, 'desiredCount': 1, 'runningCount': 1, 'pendingCount': 0,
+             'deployments': [{'rolloutState': 'COMPLETED'}]}
+            for name in ('chat-service-preview', 'credential-service')]}
+        progressing = json.loads(json.dumps(completed))
+        progressing['services'][0]['deployments'][0]['rolloutState'] = 'IN_PROGRESS'
+        with Stubber(ecs) as stub, patch('botocore.waiter.time.sleep') as sleep:
+            stub.add_response('describe_services', progressing)
+            stub.add_response('describe_services', progressing)
+            stub.add_response('describe_services', completed)
+            stub.add_response('describe_services', completed)
+            facts = verifier['service_facts'](ecs)
+            self.assertEqual(facts, live()['services'])
+            sleep.assert_called_once_with(15)
+            stub.assert_no_pending_responses()
+
+    def test_rollout_that_never_completes_times_out(self):
+        import boto3
+        from botocore.exceptions import WaiterError
+        from botocore.stub import Stubber
+
+        ecs = boto3.client('ecs', region_name='us-east-1', aws_access_key_id='testing', aws_secret_access_key='testing')
+        progressing = {'services': [
+            {'serviceName': name, 'desiredCount': 1, 'runningCount': 1, 'pendingCount': 0,
+             'deployments': [{'rolloutState': 'IN_PROGRESS'}]}
+            for name in ('chat-service-preview', 'credential-service')]}
+        with Stubber(ecs) as stub, patch('botocore.waiter.time.sleep') as sleep:
+            stub.add_response('describe_services', progressing)
+            stub.add_response('describe_services', progressing)
+            stub.add_response('describe_services', progressing)
+            with self.assertRaises(WaiterError):
+                verifier['service_facts'](ecs, timeout=15)
+            sleep.assert_called_once_with(15)
+            stub.assert_no_pending_responses()
+
+    def test_failed_rollout_is_terminal(self):
+        import boto3
+        from botocore.exceptions import WaiterError
+        from botocore.stub import Stubber
+
+        ecs = boto3.client('ecs', region_name='us-east-1', aws_access_key_id='testing', aws_secret_access_key='testing')
+        failed = {'services': [
+            {'serviceName': name, 'desiredCount': 1, 'runningCount': 1, 'pendingCount': 0,
+             'deployments': [{'rolloutState': 'FAILED'}]}
+            for name in ('chat-service-preview', 'credential-service')]}
+        with Stubber(ecs) as stub, patch('botocore.waiter.time.sleep') as sleep:
+            stub.add_response('describe_services', failed)
+            stub.add_response('describe_services', failed)
+            with self.assertRaises(WaiterError):
+                verifier['service_facts'](ecs)
+            sleep.assert_not_called()
+            stub.assert_no_pending_responses()

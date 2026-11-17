@@ -15,6 +15,11 @@ IDENTITY = load_identity()
 STACKS = {'egress': IDENTITY['aws']['ecs']['privateEgress']['stackName'],
           'origin': IDENTITY['aws']['ecs']['previewOriginStackName'],
           'health': IDENTITY['aws']['ecs']['apiHealth']['stackName']}
+EFFECTIVE_MODES = {
+    STACKS['health']: {'parked': 'parked', 'egress': 'parked', 'credential': 'parked', 'live': 'live'},
+    STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'},
+    STACKS['origin']: {'parked': 'parked', 'egress': 'parked', 'credential': 'credential', 'live': 'live'},
+}
 STEPS = {
     'parked': ('health', 'origin', 'capacity', 'egress', 'verify', 'store'),
     'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
@@ -66,7 +71,7 @@ def production_state(cloudformation, stored):
     for name in STACKS.values():
         stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
         _, value = mode_parameter(stack)
-        if value != target or stack['StackStatus'] not in SETTLED:
+        if EFFECTIVE_MODES[name][value] != EFFECTIVE_MODES[name][target] or stack['StackStatus'] not in SETTLED:
             return {'state': 'transition incomplete'}
     return {'state': stored}
 
@@ -157,7 +162,7 @@ def update_stack(cloudformation, name, target, started):
     parameters = stack['Parameters']
     key, mode = mode_parameter(stack)
     value = ('true' if target == 'parked' else 'false') if key == 'parked' else target
-    if mode == target:
+    if EFFECTIVE_MODES[name][mode] == EFFECTIVE_MODES[name][target]:
         return False
     if started:
         raise RuntimeError(f'{name} completed without the requested productionMode parameter')

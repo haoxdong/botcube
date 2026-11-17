@@ -394,3 +394,55 @@ def test_nonpartial_start_invalidates_existing_egress_lease_even_if_transition_f
     before = list(executions.started)
     assert module.backstop({'lease': old_lease}, world, executions) == {'expired': False}
     assert executions.started == before
+
+
+def test_parked_to_egress_verifies_equivalent_api_health_without_an_update():
+    from botocore.exceptions import ClientError
+
+    world, module = Production(True), load()
+    update = world.update_stack
+
+    def update_with_cloudformation_noop(**request):
+        if request['StackName'] == 'bot-cube-api-health':
+            raise ClientError({'Error': {'Code': 'ValidationError',
+                                        'Message': 'No updates are to be performed.'}}, 'UpdateStack')
+        return update(**request)
+
+    world.update_stack = update_with_cloudformation_noop
+    result = world.complete(module, 'egress')
+    assert result['done'] is True
+    assert world.stored == 'egress'
+    assert world.stacks['bot-cube-api-health']['Parameters'] == [
+        {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'}]
+    assert world.effects[-2:] == ['verify egress', 'store egress']
+    assert module.production_state(world, 'egress') == {'state': 'egress'}
+    world.stacks['bot-cube-api-health']['Parameters'] = [
+        {'ParameterKey': 'productionMode', 'ParameterValue': 'live'}]
+    assert module.production_state(world, 'egress') == {'state': 'transition incomplete'}
+
+
+def test_equivalent_stack_parameters_do_not_skip_effective_resource_verification():
+    world, module = Production(True), load()
+
+    def unhealthy(target):
+        raise RuntimeError('API health actions are enabled below Live')
+
+    world.verify = unhealthy
+    with pytest.raises(RuntimeError, match='API health actions'):
+        world.complete(module, 'egress')
+    assert world.stored == 'parked'
+
+
+@pytest.mark.parametrize('message', ['No updates are to be performed.', 'Invalid template'])
+def test_validation_errors_for_different_effective_configuration_still_fail(message):
+    from botocore.exceptions import ClientError
+
+    world, module = Production(True), load()
+
+    def rejected(**request):
+        raise ClientError({'Error': {'Code': 'ValidationError', 'Message': message}}, 'UpdateStack')
+
+    world.update_stack = rejected
+    with pytest.raises(ClientError, match=message):
+        world.complete(module, 'live')
+    assert world.stored == 'parked'
