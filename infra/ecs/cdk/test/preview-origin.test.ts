@@ -232,3 +232,14 @@ test('adopters name origin resources and both provider handlers without naming C
     template.hasResourceProperties('AWS::IAM::Role', { RoleName: roleName });
   }
 });
+
+test('an additional service hostname gets certificates, origin auth, DNS and parked routing', () => {
+  const stack = new PreviewOriginStack(new App(), 'AdditionalHost', { ...props, additionalHostnames: ['gateway.example.com'] });
+  const template = parkingTemplate(stack);
+  for (const kind of ['Certificate', 'Aop', 'Dns']) {
+    template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: kind, Hostname: 'gateway.example.com' });
+  }
+  template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ HOSTNAMES: 'preview.example.com,api.example.com,gateway.example.com' }) } });
+  const parked = parkingTemplate(new PreviewOriginStack(new App(), 'ParkedAdditionalHost', { ...props, additionalHostnames: ['gateway.example.com'] }), true);
+  parked.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker', Hostnames: ['api.example.com', 'preview.example.com', 'gateway.example.com'] });
+});

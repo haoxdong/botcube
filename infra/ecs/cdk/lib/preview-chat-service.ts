@@ -90,6 +90,7 @@ export interface PreviewChatServiceProps {
   clusterName: string;
   alertsTopicName: string;
   hostnames: string[];
+  rawHostnames?: string[];
   corsOrigins: string[];
   runtimeArn?: string;
   /** The session API function the AgentCore stack deploys (ADR 0067 §5). */
@@ -429,8 +430,9 @@ function attachIngress(scope: Construct, service: ecs.FargateService, target: el
   }) : alb.listener;
   if (providedOrigin?.alb) providedOrigin.alb.loadBalancer.setAttribute('idle_timeout.timeout_seconds', String(props.loadBalancerIdleSeconds ?? 3600));
   service.attachToApplicationTargetGroup(target);
+  const forwardHostnames = [...props.hostnames, ...(props.rawHostnames ?? [])];
   // The Agent Computer CDP channel is for the harness only, which reaches it over
-  // Cloud Map; the public listener answers it 404 before forwarding anything.
+  // Cloud Map; Chat Service hostnames answer it 404 before forwarding anything.
   // Priorities 5 and 10 never collide with the forward rule's former 1 mid-update.
   if (props.ingress) {
     new elb.ApplicationListenerRule(scope, 'AgentComputerCdp', {
@@ -440,15 +442,15 @@ function attachIngress(scope: Construct, service: ecs.FargateService, target: el
     });
     new elb.ApplicationListenerRule(scope, 'ChatService', {
       listener, priority: props.ingress.chatRulePriority,
-      conditions: [elb.ListenerCondition.hostHeaders(props.hostnames)], targetGroups: [target],
+      conditions: [elb.ListenerCondition.hostHeaders(forwardHostnames)], targetGroups: [target],
     });
   } else {
     listener.addAction('AgentComputerCdp', {
-      priority: 5, conditions: [elb.ListenerCondition.pathPatterns(['/agent-computer/cdp*'])],
+      priority: 5, conditions: [elb.ListenerCondition.hostHeaders(props.hostnames), elb.ListenerCondition.pathPatterns(['/agent-computer/cdp*'])],
       action: elb.ListenerAction.fixedResponse(404, { contentType: 'text/plain', messageBody: 'Not Found\n' }),
     });
     listener.addTargetGroups('ChatService', {
-      priority: 10, conditions: [elb.ListenerCondition.hostHeaders(props.hostnames)], targetGroups: [target],
+      priority: 10, conditions: [elb.ListenerCondition.hostHeaders(forwardHostnames)], targetGroups: [target],
     });
   }
 }

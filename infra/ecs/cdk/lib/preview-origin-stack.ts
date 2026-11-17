@@ -38,6 +38,7 @@ export interface PreviewOriginProps extends StackProps {
   hostname: string;
   /** Production Chat Service hostname, served by this origin. */
   production: { hostname: string };
+  additionalHostnames?: string[];
   vpcId: string;
   publicSubnets: { id: string; availabilityZone: string }[];
   cloudflareCidrs: string[];
@@ -109,7 +110,7 @@ export class PreviewOriginStack extends Stack {
         ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
-        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname].join(',') },
+        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.additionalHostnames ?? [])].join(',') },
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
@@ -133,6 +134,11 @@ export class PreviewOriginStack extends Stack {
     const productionCertificate = resource('ProductionCertificate', { Kind: 'Certificate', Hostname: props.production.hostname });
     const aop = resource('PreviewAop', { Kind: 'Aop', Hostname: props.hostname, ClientVersion: props.clientVersion });
     const productionAop = resource('ProductionAop', { Kind: 'Aop', Hostname: props.production.hostname, ClientVersion: props.clientVersion, CertId: aop.ref });
+    const additional = (props.additionalHostnames ?? []).map((hostname, index) => ({
+      hostname,
+      certificate: resource(`AdditionalCertificate${index}`, { Kind: 'Certificate', Hostname: hostname }),
+      aop: resource(`AdditionalAop${index}`, { Kind: 'Aop', Hostname: hostname, ClientVersion: props.clientVersion, CertId: aop.ref }),
+    }));
     new CfnOutput(this, 'SecurityGroupId', { value: securityGroup.securityGroupId });
     new CfnOutput(this, 'ConnectionLogsBucket', { value: connectionLogs.bucketName });
     new CfnOutput(this, 'ClientCertificateId', { value: aop.ref });
@@ -146,7 +152,7 @@ export class PreviewOriginStack extends Stack {
     {
       // Answers every request with 503 {"status":"parked"}; unpark deletes it after the ALB serves again.
       const worker = resource('ParkedWorker', {
-        Kind: 'ParkedWorker', Issuer: `https://${props.production.hostname}`, TurnIdentityKeysSecret: props.turnIdentityKeysSecretName, KeyVersion: props.turnIdentityKeysVersion, Hostnames: [props.production.hostname, props.hostname], Origins: props.corsOrigins, WakeUrl: props.wakeUrl,
+        Kind: 'ParkedWorker', Issuer: `https://${props.production.hostname}`, TurnIdentityKeysSecret: props.turnIdentityKeysSecretName, KeyVersion: props.turnIdentityKeysVersion, Hostnames: [props.production.hostname, props.hostname, ...(props.additionalHostnames ?? [])], Origins: props.corsOrigins, WakeUrl: props.wakeUrl,
         Script: createHash('sha256').update(fs.readFileSync(path.join(props.originProviderPath, 'parked-worker.mjs'))).digest('hex'),
       });
       (worker.node.defaultChild as CfnResource).cfnOptions.condition = state.parkedCondition;
@@ -164,19 +170,21 @@ export class PreviewOriginStack extends Stack {
       certificates: [
         acm.Certificate.fromCertificateArn(this, 'ServerIdentity', certificate.getAttString('Arn')),
         acm.Certificate.fromCertificateArn(this, 'ProductionIdentity', productionCertificate.getAttString('Arn')),
+        ...additional.map(({ certificate }, index) => acm.Certificate.fromCertificateArn(this, `AdditionalIdentity${index}`, certificate.getAttString('Arn'))),
       ],
       sslPolicy: elb.SslPolicy.TLS13_RES,
       mutualAuthentication: { mutualAuthenticationMode: elb.MutualAuthenticationMode.VERIFY, trustStore, ignoreClientCertificateExpiry: false },
       defaultAction: elb.ListenerAction.fixedResponse(503, { contentType: 'text/plain', messageBody: 'Preview Chat Service unavailable\n' }),
     });
-    for (const association of [aop, productionAop]) {
+    for (const association of [aop, productionAop, ...additional.map(host => host.aop)]) {
       (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.liveCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
     }
     const worker = this.node.findChild('ParkedWorker');
     const target = Token.asString(Fn.conditionIf(state.parkedCondition.logicalId, props.parkedDnsTarget, loadBalancer.loadBalancerDnsName));
     const previewDns = dns('PreviewDns', props.hostname, aop, target);
     const productionDns = dns('ProductionDns', props.production.hostname, productionAop, target);
-    for (const record of [previewDns, productionDns]) {
+    const additionalDns = additional.map(({ hostname, aop: association }, index) => dns(`AdditionalDns${index}`, hostname, association, target));
+    for (const record of [previewDns, productionDns, ...additionalDns]) {
       (record.node.defaultChild as CfnResource).addPropertyOverride('Worker', Fn.conditionIf(state.parkedCondition.logicalId, (worker as CustomResource).ref, { Ref: 'AWS::NoValue' }));
     }
     liveResource(this, loadBalancer);

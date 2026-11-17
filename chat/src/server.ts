@@ -144,6 +144,7 @@ export function createChatService(
   const summarizeTurn = bedrockTurnSummarizer(config.turnSummaryModel);
   const turnIdentity = config.turnIdentity === undefined ? null : new TurnIdentity(config.turnIdentity);
   const app = new Hono();
+  if (cartridge.rawRoutes) app.route('/', cartridge.rawRoutes);
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
     const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity, parkHistory: scheduled.parkHistory };

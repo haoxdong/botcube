@@ -54,7 +54,7 @@ export interface DeployIdentity {
       publicSubnets: Subnet[];
     };
   };
-  domains: { chatService: string; chatServicePreview: string; corsOrigins: string[] };
+  domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[]; corsOrigins: string[] };
   ssm: { parkState: string };
   product: { name: string };
   artifacts: { chatService: { reaperCommand: string[] } };
