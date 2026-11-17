@@ -44,6 +44,7 @@ export async function untilLive(chatServiceUrl: string, { fetchImpl = fetch, pau
 
 function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
   });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { minutesLeft, untilLive, wake, wakeLapsed, WAKE_POLL_MS } from './wake-up';
 
 const url = 'https://api.example.com';
@@ -47,6 +47,16 @@ describe('Wake up', () => {
 
     expect(answers).toEqual([]);
     expect(pauses).toEqual([WAKE_POLL_MS, WAKE_POLL_MS, WAKE_POLL_MS]);
+  });
+
+  it('stops at once when aborted while a check is out, without another poll', async () => {
+    const stop = new AbortController();
+    const onPoll = vi.fn(async () => undefined);
+    const fetchImpl = async () => { stop.abort(); return answer(503, { status: 'parked' }); };
+
+    await expect(untilLive(url, { fetchImpl, signal: stop.signal, onPoll })).rejects.toThrow();
+
+    expect(onPoll).not.toHaveBeenCalled();
   });
 
   it('fails loud on any other account session answer while waiting', async () => {
