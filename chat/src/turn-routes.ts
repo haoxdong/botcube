@@ -2,7 +2,7 @@ import type { Hono } from 'hono';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema, RunErrorEventSchema } from '@ag-ui/core/schemas';
 import { agentDocumentEdit, type AgentDocuments } from './agent-documents.js';
-import { HttpError, type ChatServiceCartridge, type Requester, type AgentModel } from './cartridge.js';
+import { HttpError, type ChatServiceCartridge, type Requester, type AgentModel, type AgentDocumentSet } from './cartridge.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
 import { SessionOpeningError, SessionProviderError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
@@ -111,17 +111,17 @@ export function turnRoutes(
     }
   };
 
-  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void) => {
+  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, cartridge.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
     for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...cartridge.credentialProps, ...(cartridge.identityProps ?? [])]) delete forwardedProps[prop];
     const preparing = cartridge.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
       captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
       return payload;
     });
-    const [payload, documents] = await admissionResults([preparing, agentDocuments.get(requester.owner, cartridge.agentDocuments)]);
+    const [payload, loadedDocuments] = await admissionResults([preparing, documents]);
     payload.forwardedProps.model = model.key;
-    payload.forwardedProps.agentIdentity = documents.agentIdentity;
-    payload.forwardedProps.soul = documents.soul;
+    payload.forwardedProps.agentIdentity = loadedDocuments.agentIdentity;
+    payload.forwardedProps.soul = loadedDocuments.soul;
     return payload;
   };
 
@@ -148,6 +148,7 @@ export function turnRoutes(
       timing.model = model.key;
       timing.mark('model');
       await turnQuota?.admit(requester.owner, c.req.header('cf-connecting-ip'), requester.rateTier === 'authenticated');
+      const documents = Promise.allSettled([agentDocuments.get(requester.owner, cartridge.agentDocuments)]);
       const running = { startedAt: new Date().toISOString(), runId: input.runId };
       const request = validatedInput.messages.slice().reverse().find((message) => message.role === 'user');
       let prepared: PreparedTurn;
@@ -163,6 +164,9 @@ export function turnRoutes(
         });
         filingUserId = prepared.session.filing_user_id;
       } catch (error) {
+        void documents.then(([result]) => {
+          if (result.status === 'rejected' && result.reason !== error) console.error('Concurrent Turn preparation failed', result.reason);
+        });
         if (error instanceof SessionOpeningError) throw new HttpError(409, error.message);
         if (error instanceof SessionProviderError) {
           throw new HttpError(
@@ -176,7 +180,10 @@ export function turnRoutes(
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
       let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
       try {
-        const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; });
+        const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; }, documents.then(([result]) => {
+          if (result.status === 'rejected') throw result.reason;
+          return result.value;
+        }));
         timing.mark('payload');
         const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
           actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,

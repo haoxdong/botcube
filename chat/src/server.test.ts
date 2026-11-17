@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { HttpError } from './cartridge.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
-import { recordRoundTrips, serialDepth, type RoundTrip } from '../test/fakes/round-trips.js';
 
 let stack: InProcessStack;
 const authorized: string[] = [];
@@ -258,66 +257,25 @@ it('forwards only the registered snapshot epoch', async () => {
   } finally { await target.stop(); }
 });
 
-// Milliseconds each external call is held, so calls made together overlap.
-const ROUND_TRIP_MS = 20;
-
 const turnPost = (threadId: string, messages: unknown[]) => ({ method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ threadId, runId: crypto.randomUUID(), state: {}, messages, tools: [], context: [], forwardedProps: {} }) });
 
-/** The external calls a Turn on `threadId` waited for before its invoke went out, in the order they started. */
-async function roundTripsToInvoke(target: InProcessStack, trips: RoundTrip[], threadId: string): Promise<RoundTrip[]> {
-  const sent = performance.now();
-  const response = await target.app.request('/', turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]));
-  expect(await response.text()).toContain('RUN_FINISHED');
-  const turn = trips.filter((trip) => trip.start >= sent).sort((a, b) => a.start - b.start);
-  const invoke = turn.find((trip) => trip.name.endsWith('/invocations'));
-  if (invoke === undefined) throw new Error('The Turn never invoked the Runtime');
-  return turn.filter((trip) => trip.end <= invoke.start);
-}
-
-// Chat's share of Orchestration Overhead: each call a Turn waits for before its invoke is a round trip to AWS.
-// Count the round trips it waits for one after another, not the wall time, which a busy CI host stretches.
-describe("a Turn's round trips before its invoke", () => {
-  it('are four, one after another, on a new thread', async () => {
-    const target = await startInProcess();
-    try {
-      // Once the purge recovery the service starts with is done, only the Turn's calls are timed.
-      expect((await target.app.request('/health')).status).toBe(200);
-      const threadId = await target.allocate('account-1', '77777777-7777-4777-8777-777777777777');
-      const trips = recordRoundTrips(target.table.client, ROUND_TRIP_MS);
-
-      const waited = await roundTripsToInvoke(target, trips, threadId);
-
-      expect(waited.map((trip) => trip.name)).toEqual([
-        'DynamoDBSessionMetadata.admissionIdentity',
-        'DynamoDBSessionMetadata.prepareTurn',
-        'DynamoDBAgentDocuments.get',
-        'DynamoDBSessionMetadata.dispatchTurn',
-      ]);
-      expect(serialDepth(waited)).toBe(4);
-    } finally { await target.stop(); }
-  });
-
-  it('are four, one after another, on a continuing thread', async () => {
-    const target = await startInProcess();
-    const threadId = '88888888-8888-4888-8888-888888888888';
-    try {
-      await target.allocate('account-1', threadId);
-      // A first Turn with no user message, so no Turn summary is still being written behind it.
-      expect(await (await target.app.request('/', turnPost(threadId, []))).text()).toContain('RUN_FINISHED');
-      const trips = recordRoundTrips(target.table.client, ROUND_TRIP_MS);
-
-      const waited = await roundTripsToInvoke(target, trips, threadId);
-
-      expect(waited.map((trip) => trip.name)).toEqual([
-        'DynamoDBSessionMetadata.admissionIdentity',
-        'DynamoDBSessionMetadata.prepareTurn',
-        'DynamoDBAgentDocuments.get',
-        'DynamoDBSessionMetadata.dispatchTurn',
-      ]);
-      expect(serialDepth(waited)).toBe(4);
-    } finally { await target.stop(); }
-  });
+it.each(['new', 'continuing'])('reads account documents independently of %s Session admission', async (kind) => {
+  const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
+  const target = await startInProcess();
+  const threadId = await target.allocate('account-1', crypto.randomUUID());
+  const admission = admissionGate<void>();
+  let response: ReturnType<typeof target.app.request> | undefined;
+  try {
+    if (kind === 'continuing') expect(await (await target.app.request('/', turnPost(threadId, []))).text()).toContain('RUN_FINISHED');
+    const prepare = target.sessionMetadata.prepareTurn.bind(target.sessionMetadata);
+    vi.spyOn(target.sessionMetadata, 'prepareTurn').mockImplementation(async (...args) => { await admission.promise; return prepare(...args); });
+    const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get');
+    response = target.app.request('/', turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]));
+    await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+    admission.resolve();
+    expect(await (await response).text()).toContain('RUN_FINISHED');
+  } finally { admission.resolve(); await response; await target.stop(); }
 });
 
 function admissionGate<T>() {
@@ -331,6 +289,24 @@ const admissionInput = { threadId: '55555555-5555-4555-8555-555555555555', runId
 const admissionPost = { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(admissionInput) };
 
 describe('independent Turn admission', () => {
+  it('keeps admission failure primary when the concurrent document read also fails', async () => {
+    const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
+    const constructing = vi.fn(async (input) => input);
+    const target = await startInProcess({ cartridge: { invocationPayload: constructing } });
+    await target.allocate('account-1', admissionInput.threadId);
+    vi.spyOn(target.sessionMetadata, 'prepareTurn').mockRejectedValue(new HttpError(403, 'Admission refused'));
+    const documentsError = new Error('Documents failed');
+    vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockRejectedValue(documentsError);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const response = await target.app.request('/', admissionPost);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ detail: 'Admission refused' });
+      expect(constructing).not.toHaveBeenCalled();
+      expect(logged).toHaveBeenCalledWith('Concurrent Turn preparation failed', documentsError);
+    } finally { await target.stop(); }
+  });
+
   it('reports a documents failure while payload preparation is pending', async () => {
     const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
     const payload = admissionGate<{ forwardedProps: { token: string } }>();

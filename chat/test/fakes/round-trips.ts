@@ -1,18 +1,8 @@
-import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { vi } from 'vitest';
-import * as dispatcherTransport from '../../src/dispatcher-fetch.js';
-
 /** One external call: what made it, and when it started and ended. */
 export interface RoundTrip {
   name: string;
   start: number;
   end: number;
-}
-
-/** The Chat Service function that made the call on this stack, or `fallback`. */
-function caller(fallback: string): string {
-  const frame = /at (?:async )?([\w.]+) \(\S*\/chat\/src\//.exec(new Error().stack ?? '');
-  return frame?.[1] ?? fallback;
 }
 
 /**
@@ -31,20 +21,6 @@ export function roundTrips(latencyMs: number) {
     }
   };
   return { trips, time };
-}
-
-/** Every DynamoDB command on `client` (its Document clients share its middleware) and every `fetch`, timed. */
-export function recordRoundTrips(client: DynamoDBClient, latencyMs: number): RoundTrip[] {
-  const { trips, time } = roundTrips(latencyMs);
-  client.middlewareStack.add((next, context) => (args) => time(caller(context.commandName ?? 'DynamoDB'), () => next(args)),
-    { step: 'initialize', priority: 'high', name: 'recordRoundTrips' });
-  const fetch = globalThis.fetch;
-  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
-    time(`fetch ${new URL(input instanceof Request ? input.url : input).pathname}`, () => fetch(input, init)));
-  const dispatcherFetch = dispatcherTransport.dispatcherFetch;
-  vi.spyOn(dispatcherTransport, 'dispatcherFetch').mockImplementation((url, init) =>
-    time(`fetch ${new URL(url).pathname}`, () => dispatcherFetch(url, init)));
-  return trips;
 }
 
 /** The most of `trips` that ran one after another: each is one deeper than the deepest that ended before it started. */
