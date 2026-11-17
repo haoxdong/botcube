@@ -6,7 +6,6 @@ import { takeOpeningResponse } from "botcube-ui-web/opening-requests";
 
 import { tap } from "rxjs";
 import { clockSubscriber, validateClockEvent } from "botcube-ui-web/worklog-clock";
-import { temporaryChatFetch, type TemporaryChat } from "botcube-ui-web/temporary-chat";
 import {
   EventType,
   HttpAgent,
@@ -292,7 +291,6 @@ class SavedMessagesHttpAgent extends HttpAgent {
     getSnapshot: () => this.stoppedCallIds,
   };
   private readonly savedMessages: Message[];
-  private readonly fullContext: boolean;
   private readonly onStopFailed: (error: Error) => void;
   /** The subscribers the latest run reports to; AG-UI fixes them when the run starts. */
   private runSubscribers: AgentSubscriber[] | undefined;
@@ -304,9 +302,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
     messages,
     fetchImpl,
     onStopFailed,
-    fullContext = false,
   }: {
-    fullContext?: boolean;
     url: string;
     threadId: string;
     messages: readonly Message[];
@@ -315,7 +311,6 @@ class SavedMessagesHttpAgent extends HttpAgent {
   }) {
     super({ url, threadId, fetch: fetchImpl, initialMessages: [...messages] });
     this.savedMessages = [...messages];
-    this.fullContext = fullContext;
     this.onStopFailed = onStopFailed;
     this.subscribe(clockSubscriber());
   }
@@ -400,15 +395,6 @@ class SavedMessagesHttpAgent extends HttpAgent {
    */
   protected override requestInit(input: RunAgentInput): RequestInit {
     const forwardedProps = { ...input.forwardedProps, worklog_clock: 1 };
-    if (this.fullContext) return super.requestInit({
-      ...input,
-      forwardedProps,
-      messages: input.messages.flatMap((message) => {
-        if (message.role !== "assistant" || !message.toolCalls?.some(({ id }) => this.stoppedCallIds.has(id))) return [message];
-        const toolCalls = message.toolCalls.filter(({ id }) => !this.stoppedCallIds.has(id));
-        return message.content || toolCalls.length > 0 ? [{ ...message, toolCalls }] : [];
-      }),
-    });
     let first = input.messages.length;
     while (first > 0 && input.messages[first - 1]?.role === "user") first -= 1;
     const sent = input.messages.slice(first);
@@ -494,23 +480,19 @@ export function buildDirectAgent({
   messages,
   fetchImpl = fetch,
   onStopFailed,
-  temporaryChat,
 }: {
   chatServiceUrl: string;
-  temporaryChat?: TemporaryChat;
   threadId: string;
   messages: readonly Message[];
   fetchImpl?: (url: string, requestInit: RequestInit) => Promise<Response>;
   /** Why a Stop could not stop the Turn on the server. */
   onStopFailed: (error: Error) => void;
 }): HttpAgent {
-  if (temporaryChat !== undefined && temporaryChat.sessionId !== threadId) throw new Error('Temporary chat capability does not match the chat');
   return new SavedMessagesHttpAgent({
     url: chatServiceUrl,
     threadId,
     messages,
-    fetchImpl: temporaryChat === undefined ? credentialsIncludingFetch(fetchImpl) : temporaryChatFetch(chatServiceUrl, temporaryChat, fetchImpl),
-    fullContext: temporaryChat !== undefined,
+    fetchImpl: credentialsIncludingFetch(fetchImpl),
     onStopFailed,
   });
 }

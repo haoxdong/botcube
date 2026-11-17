@@ -41,7 +41,6 @@ export function HeaderName({ name, working }: { name: string; working: boolean }
 export function ChatHeader({ opener, working, ready, chatId, open, picture, emoji, name }: {
   opener: RefObject<HTMLButtonElement | null>;
   working: boolean;
-  /** The account's profile loads: never for a temporary chat. */
   ready: boolean;
   chatId: string | null;
   open: () => void;

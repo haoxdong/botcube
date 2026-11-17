@@ -4,7 +4,7 @@ import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { Hono } from 'hono';
 import { DynamoDBAgentDocuments } from '../src/agent-documents.js';
-import type { AccountHistory, ChatServiceCartridge } from '../src/cartridge.js';
+import type { AccountHistory, CartridgeFactory, ChatServiceCartridge } from '../src/cartridge.js';
 import { createChatService, type ChatServiceConfig } from '../src/server.js';
 import type { SessionApi } from '../src/session-api.js';
 import { DynamoDBSessionMetadata } from '../src/session-metadata.js';
@@ -28,6 +28,8 @@ export interface InProcessOptions {
   invokeSessionApi?: SessionApi;
   /** Overrides of the test Cartridge, which acts for OWNER (or the x-test-owner header's account) and forwards each Turn as sent. */
   cartridge?: Partial<ChatServiceCartridge>;
+  /** A Cartridge built from the account-history hooks, such as a bot's own, in place of the test Cartridge. */
+  cartridgeFactory?: CartridgeFactory;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
@@ -122,7 +124,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const app = createChatService(
     (hooks) => {
       history = hooks;
-      return cartridge;
+      return options.cartridgeFactory?.(hooks) ?? cartridge;
     },
     config,
     options.activity?.observe(sessionMetadata) ?? sessionMetadata,

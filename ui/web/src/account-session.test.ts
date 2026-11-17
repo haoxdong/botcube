@@ -11,12 +11,12 @@ describe('initializeAccountSession', () => {
     fetchImpl: async () => Response.json({ accountId: 'acct-1', authenticated }),
   });
 
-  it.each([false, undefined])('makes a visitor temporary when authenticated is %s', async (authenticated) => {
-    await expect(sessionOf(authenticated)).resolves.toMatchObject({ temporary: true });
+  it.each([false, undefined])('makes a visitor a Guest when authenticated is %s', async (authenticated) => {
+    await expect(sessionOf(authenticated)).resolves.toMatchObject({ guest: true });
   });
 
-  it('keeps a signed-in visitor on stored chats', async () => {
-    await expect(sessionOf(true)).resolves.toMatchObject({ temporary: false });
+  it('makes a signed-in visitor no Guest', async () => {
+    await expect(sessionOf(true)).resolves.toMatchObject({ guest: false });
   });
 
   it('requests the account session with credentials', async () => {
@@ -29,7 +29,7 @@ describe('initializeAccountSession', () => {
     await expect(initializeAccountSession({
       chatServiceUrl: 'http://localhost:8123',
       fetchImpl,
-    })).resolves.toEqual({ status: 'ready', accountId: 'acct-1', account: {accountId: 'acct-1', authenticated: false}, temporary: true });
+    })).resolves.toEqual({ status: 'ready', accountId: 'acct-1', account: {accountId: 'acct-1', authenticated: false}, guest: true });
 
     expect(calls).toEqual([
       [

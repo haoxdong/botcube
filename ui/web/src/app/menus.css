@@ -497,6 +497,13 @@
   margin: 4px 0;
 }
 
+.user-menu-note {
+  margin: 0;
+  padding: 10px 16px 4px;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+
 .user-menu-item {
   appearance: none;
   background: none;

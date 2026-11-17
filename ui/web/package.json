@@ -15,7 +15,6 @@
     "./computer": "./src/computer/index.ts",
     "./account-session": "./src/account-session.ts",
     "./opening-requests": "./src/opening-requests.ts",
-    "./temporary-chat": "./src/temporary-chat.ts",
     "./computer/agent-computer": "./src/computer/agent-computer.tsx",
     "./computer/browser-live-frame": "./src/computer/browser-live-frame.tsx",
     "./computer/browser-live-view-url": "./src/computer/browser-live-view-url.ts",

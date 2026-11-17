@@ -17,8 +17,8 @@ export interface AuthUiState {
   accountId?: string | undefined;
   /** Synchronous account ownership check, including a cookie-changing switch before React renders. */
   isAccountCurrent?: ((accountId: string | undefined) => boolean) | undefined;
-  /** A visitor who is not signed in, whose chat is a temporary chat: never stored, and gone at sign-in. */
-  temporary?: boolean | undefined;
+  /** A Guest: a User this browser alone holds until a Sign-in saves it (ADR 0076). */
+  guest?: boolean | undefined;
   status: AuthStatus;
   error: string | null;
   /** Why the account's state could not load, and a reload (ADR 0030); the account menu shows it in place of signing in. */

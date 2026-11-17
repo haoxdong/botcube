@@ -5486,6 +5486,15 @@ describe('account menu', () => {
     expect(menu()).toBeNull();
   });
 
+  it('tells a Guest that its work lives in this browser until it saves', async () => {
+    await renderPage(auth({ status: 'unauthed', guest: true }));
+
+    await userEvent.click(trigger());
+
+    expect(within(openMenu()).getByRole('note')).toHaveTextContent(/^Your work lives in this browser until you save it\. Sign in to save it\.$/);
+    expect(within(openMenu()).getByRole('button')).toHaveTextContent(/^Sign in$/);
+  });
+
   it('shows the sign-in in progress', async () => {
     await renderPage(auth({ status: 'loading' }));
 
@@ -10108,40 +10117,46 @@ it('does not acknowledge a chat connection without a completed Turn', async () =
   expect(requestsTo('/threads/main-1/read')).toEqual([]);
 });
 
-it("gives a temporary visitor a temporary chat with none of the account's surfaces", async () => {
+it("keeps a Guest's chats as stored Sessions it lists again after a reload", async () => {
   copilot.runAgent.mockImplementation(({ agent: running }) => { void running?.runAgent().catch(() => undefined); });
-  vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const service = present(fetchMock.getMockImplementation(), 'the fake Chat Service');
-  fetchMock.mockImplementation((url, init) => {
-    if (url === 'http://chat.test/temporary-chats') return Promise.resolve(answer(200, { sessionId: 'temporary-1', token: 'temporary-token' }));
-    return url === 'http://chat.test' && init?.method === 'POST' ? new Promise(() => undefined) : service(url, init);
-  });
+  fetchMock.mockImplementation((url, init) => url === 'http://chat.test' && init?.method === 'POST' ? new Promise(() => undefined) : chatService(url, init));
+  service.sideChats = [sideChat('side-1', 'Markets')];
   const session = await initializeAccountSession({
     chatServiceUrl: 'http://chat.test',
-    fetchImpl: async () => Response.json({ accountId: 'visitor-1', authenticated: false }),
+    fetchImpl: async () => Response.json({ accountId: 'guest-1', authenticated: false }),
   });
-  if (session.status !== 'ready') throw new Error('Visitor session is not ready');
-  await renderPage(auth({ status: 'unauthed', temporary: session.temporary }));
-  await openSidebar();
-
-  expect(sidebar().queryByText('Side chats')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Agent profile' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Add photos & files' })).not.toBeInTheDocument();
-  expect(screen.queryByText(/computer for/)).not.toBeInTheDocument();
-
+  if (session.status !== 'ready') throw new Error('Guest session is not ready');
+  const guest = () => auth({ status: 'unauthed', accountId: session.accountId, guest: session.guest });
+  const page = await renderPage(guest());
   await sendMessage('What moved the market?');
 
   const turns = fetchMock.mock.calls.filter(([url, init]) => url === 'http://chat.test' && init?.method === 'POST');
-  expect(turns).toHaveLength(1);
   const [, turn] = present(turns[0], 'the Turn');
-  expect(new Headers(turn?.headers).get('x-botcube-temporary-chat')).toBe('temporary-token');
-  expect(turn?.credentials).toBe('omit');
-  expect(JSON.parse(turn?.body as string)).toMatchObject({ threadId: 'temporary-1' });
-  expect(requests().filter((request) => !request.startsWith('POST /temporary-chats') && request !== 'POST ')).toEqual([]);
-  expect(requestsTo('/warmup')).toEqual([]);
-  expect(requestsTo('/agent')).toEqual([]);
+  expect(turn?.credentials).toBe('include');
+  expect(JSON.parse(turn?.body as string)).toMatchObject({ threadId: 'main-1' });
 
-  await sendMessage('Also add BETA.');
-  expect(await screen.findByText(/a temporary chat takes your next message after it/)).toBeInTheDocument();
-  expect(requestsTo('/threads/temporary-1/steer')).toEqual([]);
+  page.unmount();
+  await renderPage(guest());
+  await openSidebar();
+
+  expect(sidebar().getByText('Markets')).toBeInTheDocument();
+  expect(requestsTo('/main-chat')).toEqual(['GET', 'GET']);
+});
+
+it('tells a Guest by the composer that its work lives in this browser, and signs it in from there', async () => {
+  const state = auth({ status: 'unauthed', guest: true });
+  await renderPage(state);
+
+  const note = await screen.findByRole('note');
+  expect(note).toHaveTextContent(/^Your work lives in this browser until you save it\. Sign in$/);
+  await userEvent.click(within(note).getByRole('button', { name: 'Sign in' }));
+
+  expect(state.login).toHaveBeenCalledOnce();
+});
+
+it('shows a signed-in user no Guest notice', async () => {
+  await renderPage(auth({ status: 'authed' }));
+
+  await screen.findByLabelText('Message');
+  expect(screen.queryByRole('note')).toBeNull();
 });

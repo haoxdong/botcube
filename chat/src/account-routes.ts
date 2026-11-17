@@ -116,7 +116,7 @@ export function accountRoutes(
 
   app.post('/agent/memory', async (c) => {
     const { owner, anonymous } = await cartridge.requester(c);
-    if (anonymous) throw new HttpError(403, 'Sign in to save Memory');
+    if (anonymous) throw new HttpError(403, 'Your work lives in this browser until you save it. Sign in to save it, then save Memory.');
     const text = memoryLine(await c.req.json().catch(() => undefined));
     const { line } = await invokeSessionApi({ operation: 'memory-add', userId: cartridge.filingUserId(owner), text });
     return c.json({ line }, 201);

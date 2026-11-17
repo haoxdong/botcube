@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { Blocks, MessageCircle, PanelsTopLeftIcon } from "lucide-react";
 import { ModelSelector } from "./model-selector";
 import { ChatAlerts } from "./chat-alerts";
-import { UserMenu } from "./user-menu";
+import { GuestNotice, UserMenu } from "./user-menu";
 import { useAgentWarmup } from "./agent-warmup";
 import { ChatHeader, useHeaderWorking } from "./chat-header";
 import { KeptChat } from "./kept-chat";
@@ -26,7 +26,6 @@ import {
   type AgentProfileData,
 } from "./agent-profile";
 import { endOpeningMoment, type HistoryMoment } from "./latency";
-import { useChatSession } from "./temporary-session";
 import { forgetMainChatCopy, withStorage, type StoredMainChatCopy } from "./main-chat-copy";
 import { forgetSteering } from "./steering";
 import { useModelSelection } from "./model-selection";
@@ -45,8 +44,8 @@ import { TurnStart } from "./worklog";
 import { WorklogAgent } from "./worklog-clock";
 import type { ChatStop } from "./chat-surface";
 import { useArtifactWorkspace, useChatSurfaceKey } from "./artifact-request";
+import { useSessionNavigation } from "./session-navigation";
 
-const ArtifactNavigation = motionElement.create(SidebarRow);
 const ChatSurface = lazy(() => import("./chat-surface"));
 const ChatColumn = lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })));
 const ArtifactLibrary = lazy(() => import("./artifact-library").then(({ ArtifactLibrary }) => ({ default: ArtifactLibrary })));
@@ -95,7 +94,6 @@ export default function App({
   const [openedChat, setOpenedChat] = useState<string | null>(null);
   const ready = auth.sessionStatus === "ready";
   const { accountId } = auth;
-  const temporary = auth.temporary === true;
   useEffect(() => setScreen('chat'), [accountId]);
   const {
     current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
@@ -111,8 +109,7 @@ export default function App({
     deleteSideChat: handleDeleteConversation,
     messageSubmitted,
     turnStarting,
-    accountReady,
-  } = useChatSession({ ready, temporary, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
+  } = useSessionNavigation({ ready, accountId, chatServiceUrl: CHAT_SERVICE_URL, agentId: AGENT_ID, opening, reading: !screenOpen && !(isPhone && (agentProfileOpen || sidebarExpanded)) });
   const surfaceKey = useChatSurfaceKey(accountId, activeId, artifactWorkspace);
   const { catalog: models, picker, properties, choiceError } = useModelSelection({
     ready, accountId, activeProvider, showWelcome, chatServiceUrl: CHAT_SERVICE_URL,
@@ -134,7 +131,7 @@ export default function App({
   const agentProfileRef = useRef<HTMLDivElement>(null);
   const profileSwipe = useDrawerSwipe({
     layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile", slides: true,
-    enabled: isPhone && activeId !== null && accountReady && !screenOpen && !sidebarExpanded && !swipe.dragging,
+    enabled: isPhone && activeId !== null && ready && !screenOpen && !sidebarExpanded && !swipe.dragging,
     expanded: agentProfileOpen,
     onExpandedChange: setAgentProfileOpen,
   });
@@ -168,11 +165,11 @@ export default function App({
 
   useEffect(
     () => {
-      if (!accountReady) return;
+      if (!ready) return;
       void refreshAgentProfile();
       return () => { ++agentProfileRequest.current; };
     },
-    [accountReady, accountId],
+    [ready, accountId],
   );
 
   const showMain = (view: 'chat' | 'plugins' | 'artifacts') => {
@@ -180,7 +177,7 @@ export default function App({
     if (isPhone) swipe.close();
   };
 
-  const { error: warmupError, turnStarting: warmupTurnStarting, composing } = useAgentWarmup({ auth, ready: accountReady, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunning, agent });
+  const { error: warmupError, turnStarting: warmupTurnStarting, composing } = useAgentWarmup({ auth, ready, accountId, activeId, activeAccountId, mainChatId, newChat, models, offeredModel, effort, turnRunning, agent });
 
   useEffect(() => {
     const subscription = agent.subscribe({
@@ -197,8 +194,9 @@ export default function App({
   const working = useHeaderWorking(activeId, turnRunsOnServer || agentRunning);
 
   const headerInPane = !isPhone;
+  const composerAccessory = auth.guest === true ? <><GuestNotice onSignIn={auth.login} />{auth.composerAccessory}</> : auth.composerAccessory;
   const chatHeader = (
-    <ChatHeader opener={agentProfileOpenerRef} working={working} ready={accountReady} chatId={activeId} open={profileSwipe.show}
+    <ChatHeader opener={agentProfileOpenerRef} working={working} ready={ready} chatId={activeId} open={profileSwipe.show}
       picture={agentProfile?.picture} emoji={agentProfile?.avatar} name={agentName} />
   );
   const paneHeader = <>{headerInPane && chatHeader}</>;
@@ -206,7 +204,7 @@ export default function App({
   const covered = keptChatShown || (activeId !== null && openAt == null && openedChat !== activeId);
   const keptChat = (
     <div className="kept-chat" role="status" aria-label="Loading chat controls">
-      <KeptChat messages={agent.messages} running={turnRunsOnServer} disclaimer={UI_CONFIG.disclaimer} composerAccessory={auth.composerAccessory} latestShown={keptChatLatestShown} onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)} />
+      <KeptChat messages={agent.messages} running={turnRunsOnServer} disclaimer={UI_CONFIG.disclaimer} composerAccessory={composerAccessory} latestShown={keptChatLatestShown} onOpenRun={({ sideChat, title, messageId }) => void handleSelectConversation({ id: sideChat, title }, messageId)} />
     </div>
   );
 
@@ -259,14 +257,14 @@ export default function App({
               <Blocks className="sidebar-nav-icon" aria-hidden />
               <span className="sidebar-nav-label">Plugins</span>
             </SidebarRow>
-            <Presence>{!temporary && <ArtifactNavigation {...presenceMotion} active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
+            <SidebarRow active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
               <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
               <span className="sidebar-nav-label">Artifacts</span>
-            </ArtifactNavigation>}</Presence>
+            </SidebarRow>
           </nav>
         </div>
 
-        <Presence>{!temporary && <SideChats exit={{ opacity: 0 }} accountId={accountId} activeId={activeId} pluginsOpen={screenOpen} visible={swipe.visible} entries={sideChats} listed={sideChatsListed} error={sideChatsError} rename={renameSideChat} remove={handleDeleteConversation} select={handleSelectConversation} create={handleNewConversation} showChat={() => showMain('chat')} />}</Presence>
+        <SideChats accountId={accountId} activeId={activeId} pluginsOpen={screenOpen} visible={swipe.visible} entries={sideChats} listed={sideChatsListed} error={sideChatsError} rename={renameSideChat} remove={handleDeleteConversation} select={handleSelectConversation} create={handleNewConversation} showChat={() => showMain('chat')} />
 
         <div className="sidebar-bottom">
           <UserMenu
@@ -330,8 +328,7 @@ export default function App({
                 newChat={newChat}
                 startNewChat={readOnly ? () => void handleNewConversation() : null}
                 userName={auth.user?.name}
-                composerAccessory={auth.composerAccessory}
-                temporary={temporary}
+                composerAccessory={composerAccessory}
                 models={models}
                 selectedModel={offeredModel}
                 isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
@@ -369,7 +366,7 @@ export default function App({
         )}
       </main>
       </div>
-      {layoutElement !== null && accountReady && profileVisible && createPortal(
+      {layoutElement !== null && ready && profileVisible && createPortal(
         <AgentProfile
           key={accountId}
           ref={agentProfileRef}

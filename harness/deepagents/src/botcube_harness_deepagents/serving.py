@@ -57,7 +57,6 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_config
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage, trace
@@ -854,12 +853,6 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     if not isinstance(forwarded, dict):
         forwarded = {}
         input_data.forwarded_props = forwarded
-    handler = _invoke_temporary if forwarded.get('temporary') is True else _invoke_user
-    async for event in handler(input_data, context, forwarded):
-        yield event
-
-
-async def _invoke_user(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any]):
     warmup = forwarded.get('warmup')
     session_user_id = forwarded.get('sessionUserId')
     if warmup and not session_user_id:
@@ -900,42 +893,6 @@ async def _invoke_user(input_data: RunAgentInput, context: _RequestContext, forw
     async for event in _invoke_agent(input_data, context, forwarded, auth, session_user_id,
                                    documents, files, warmup, turn_identity):
         yield event
-
-
-class InvalidTemporaryChatError(RuntimeError):
-    code = 'INVALID_TEMPORARY_CHAT'
-
-
-async def _invoke_temporary(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any]):
-    allowed = {'temporary', 'model', 'effort', 'stop', 'opening', 'agentIdentity', 'soul'}
-    if forbidden := forwarded.keys() - allowed:
-        raise InvalidTemporaryChatError(f'Temporary chat cannot carry {", ".join(sorted(forbidden))}')
-    if forwarded.get('opening') is True and input_data.messages:
-        raise InvalidTemporaryChatError('An opening Turn cannot contain messages')
-    session = (None, input_data.thread_id)
-    if forwarded.get('stop') is True:
-        _SESSION_TURNS.stop(session, input_data.run_id)
-        return
-    documents = pop_agent_documents(forwarded)
-
-    def build() -> LangGraphAgent:
-        cartridge = _require_cartridge()
-        graph = build_agent(
-            backend=None, skills=(),
-            model=build_model(model=forwarded.get('model'), effort=forwarded.get('effort'), max_tokens=16000),
-            system_prompt='\n\n'.join(part for part in (AGENT_SYSTEM_PROMPT, cartridge.system_prompt) if part),
-            user_prompt=documents.prompt() if documents is not None else '',
-            middleware=[AnsweredToolResultsMiddleware(), message_times.MessageTimesMiddleware(), _TodayMiddleware()],
-            checkpointer=InMemorySaver(),
-        )
-        return _SessionAgent(name=cartridge.agent_name, graph=graph, config={'recursion_limit': graph.config['recursion_limit']})
-
-    async def prepare() -> tuple[LangGraphAgent, Path]:
-        return await asyncio.to_thread(lambda: (build(), _workspace()))
-
-    async with aclosing(_SESSION_TURNS.stream(session, prepare, input_data, None, context)) as events:
-        async for event in events:
-            yield event
 
 
 def _opening_prompt(input_data: RunAgentInput, invocation_prompt: str) -> str:
@@ -1384,7 +1341,6 @@ async def _invocation_frames(
                 finished = stream_error is None
             except (
                 MissingUserIdError,
-                InvalidTemporaryChatError,
                 AgentDocumentsError,
                 FilesMountError,
                 FilesBindingError,

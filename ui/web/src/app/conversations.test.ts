@@ -201,24 +201,6 @@ describe('Side Chat listing', () => {
   });
 });
 
-it('sends a temporary chat its full browser context and capability without account cookies', async () => {
-  const messages = [
-    { id: 'q1', role: 'user' as const, content: 'First question' },
-    { id: 'a1', role: 'assistant' as const, content: 'First answer' },
-    { id: 'q2', role: 'user' as const, content: 'Follow up' },
-  ];
-  const { calls, fetchImpl } = recordingFetch(() => new Response([
-    'data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}',
-    'data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}',
-  ].join('\n\n') + '\n\n', { headers: { 'content-type': 'text/event-stream' } }));
-  const agent = directAgent({ messages, fetchImpl, temporaryChat: { sessionId: 't1', token: 'temporary-only' } });
-  await agent.runAgent({ runId: 'r1' });
-  expect(JSON.parse(calls[0]?.init?.body as string).messages).toEqual(messages);
-  expect(new Headers(calls[0]?.init?.headers).get('x-botcube-temporary-chat')).toBe('temporary-only');
-  expect(calls[0]?.init).toMatchObject({ credentials: 'omit', redirect: 'error' });
-  expect(() => directAgent({ temporaryChat: { sessionId: 'another-chat', token: 'temporary-only' } })).toThrow('Temporary chat capability does not match the chat');
-});
-
 describe('direct agent saved messages', () => {
   it('keeps messages that arrived before CopilotChat connects', async () => {
     const agent = directAgent({
@@ -419,75 +401,6 @@ describe('a Stop', () => {
     return { stops, started, fetchImpl, finish, admit, emit, fail, close: () => controller.close(), wasAborted: () => aborted, runCount: () => runs };
   }
 
-  it('uses the temporary capability for Stop as well as the Turn', async () => {
-    const service = stoppableTurn([204]);
-    const requests: RequestInit[] = [];
-    const agent = directAgent({ temporaryChat: { sessionId: 't1', token: 'temporary-only' }, fetchImpl: async (url, init) => {
-      requests.push(init);
-      return service.fetchImpl(url, init);
-    } });
-    const run = agent.runAgent({ runId: 'r1' });
-    await service.started;
-    agent.abortRun();
-    await run;
-    expect(requests).toHaveLength(2);
-    for (const request of requests) {
-      expect(new Headers(request.headers).get('x-botcube-temporary-chat')).toBe('temporary-only');
-      expect(request).toMatchObject({ credentials: 'omit', redirect: 'error' });
-    }
-  });
-
-  it.each([
-    [false, '{"command":"partial'],
-    [true, '{"command":"partial'],
-    [true, '{"command":"complete but stopped"}'],
-  ])('replays temporary context after an interrupted tool call, local Stop %s, arguments %s', async (localStop, args) => {
-    const service = stoppableTurn([204]);
-    const requests: RequestInit[] = [];
-    const agent = directAgent({
-      messages: [{ id: 'q1', role: 'user', content: 'Run the command' }],
-      temporaryChat: { sessionId: 't1', token: 'temporary-only' },
-      fetchImpl: async (url, init) => {
-        if (!url.endsWith('/stop')) requests.push(init);
-        return service.fetchImpl(url, init);
-      },
-    });
-    const run = agent.runAgent({ runId: 'r1' });
-    await service.started;
-    service.emit({ type: 'TEXT_MESSAGE_START', messageId: 'answer', role: 'assistant' });
-    service.emit({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: 'I will run it.' });
-    service.emit({ type: 'TEXT_MESSAGE_END', messageId: 'answer' });
-    service.emit({ type: 'TOOL_CALL_START', toolCallId: 'done', toolCallName: 'execute', parentMessageId: 'answer' });
-    service.emit({ type: 'TOOL_CALL_ARGS', toolCallId: 'done', delta: '{"command":"finished"}' });
-    service.emit({ type: 'TOOL_CALL_END', toolCallId: 'done' });
-    service.emit({ type: 'TOOL_CALL_RESULT', toolCallId: 'done', messageId: 'result', role: 'tool', content: 'Actual output.' });
-    service.emit({ type: 'TOOL_CALL_START', toolCallId: 'pending', toolCallName: 'execute', parentMessageId: 'answer' });
-    service.emit({ type: 'TOOL_CALL_ARGS', toolCallId: 'pending', delta: args });
-    service.emit({ type: 'TOOL_CALL_START', toolCallId: 'empty', toolCallName: 'execute', parentMessageId: 'empty-answer' });
-    service.emit({ type: 'TOOL_CALL_ARGS', toolCallId: 'empty', delta: '{' });
-    await vi.waitFor(() => expect(agent.messages).toContainEqual(expect.objectContaining({
-      toolCalls: expect.arrayContaining([expect.objectContaining({ id: 'empty' })]),
-    })));
-    if (localStop) agent.abortRun();
-    else service.fail('TURN_STOPPED');
-    await run;
-    const displayed = structuredClone(agent.messages);
-    agent.addMessage({ id: 'q2', role: 'user', content: 'Continue' });
-    const next = agent.runAgent({ runId: 'r2' });
-    await vi.waitFor(() => expect(service.runCount()).toBe(2));
-    service.finish();
-    await next;
-    const replay = JSON.parse(requests[1]?.body as string).messages;
-    expect(replay).toEqual([
-      { id: 'q1', role: 'user', content: 'Run the command' },
-      { id: 'answer', role: 'assistant', content: 'I will run it.', toolCalls: [
-        { id: 'done', type: 'function', function: { name: 'execute', arguments: '{"command":"finished"}' } },
-      ] },
-      { id: 'result', role: 'tool', toolCallId: 'done', content: 'Actual output.' },
-      { id: 'q2', role: 'user', content: 'Continue' },
-    ]);
-    expect(agent.messages.slice(0, displayed.length)).toEqual(displayed);
-  });
 
   it.each([false, true])('marks only unfinished current calls when TURN_STOPPED arrives, local Stop %s', async (localStop) => {
     let acknowledge!: (status: number) => void;
@@ -789,12 +702,12 @@ it('normalizes the Main Chat through the same list boundary as Side Chats', asyn
   });
 });
 
-it.each([false, true])('advertises the server clock capability with full browser context=%s', async (full) => {
+it('advertises the server clock capability', async () => {
   const { calls, fetchImpl } = recordingFetch(() => new Response([
     'data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}',
     'data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}',
   ].join('\n\n') + '\n\n', { headers: { 'content-type': 'text/event-stream' } }));
-  const agent = directAgent({ fetchImpl, ...(full ? { temporaryChat: { sessionId: 't1', token: 'temporary-only' } } : {}) });
+  const agent = directAgent({ fetchImpl });
   agent.addMessage({ id: 'question', role: 'user', content: 'Compare rates' });
   await agent.runAgent({ runId: 'r1' });
   expect(calls[0]?.init?.body).toContain('"worklog_clock":1');

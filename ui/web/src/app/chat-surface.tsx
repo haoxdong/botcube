@@ -554,7 +554,6 @@ function ChatThread({
   startNewChat,
   userName,
   composerAccessory,
-  temporary,
   models,
   selectedModel,
   isAccountCurrent,
@@ -586,8 +585,6 @@ function ChatThread({
   startNewChat: (() => void) | null;
   userName?: string | undefined;
   composerAccessory?: React.ReactNode;
-  /** A temporary chat has no Files and no steering: both need the account. */
-  temporary: boolean;
     onOpened: () => void;
     openAt?: string | null;
     onOpenRun?: (run: ReachedScheduledRun) => void;
@@ -665,10 +662,6 @@ function ChatThread({
     refreshTimerRef.current = window.setTimeout(onMessageSubmitted, 1000);
   };
   const submitTurn = (message: string, submit: Submit, retry: () => void = () => submitTurn(message, submit)) => {
-    if (runningRef.current && temporary) {
-      setRunError({ message: "Wait for this answer to finish: a temporary chat takes your next message after it." });
-      return false;
-    }
     const sent = runningRef.current ? steer(message) : startTurn(message, submit, retry);
     if (sent && message.trim()) refreshSideChatsOnce();
     return sent;
@@ -769,7 +762,7 @@ function ChatThread({
   []);
 
   return (
-    <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...(temporary ? {} : fileDrop.handlers)}>
+    <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
       <FileDropOverlay open={fileDrop.over} />
       <Presence>{showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
       <ToolCallRenderer agent={agent} />
@@ -780,7 +773,7 @@ function ChatThread({
       <ComposerAccessory.Provider value={composerAccessory}>
       <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
       <Compose.Provider value={compose}>
-      <AttachedFiles.Provider value={temporary ? null : attachedFiles}>
+      <AttachedFiles.Provider value={attachedFiles}>
       <OpenScheduledRun.Provider value={onOpenRun ?? null}>
       <OpensAt.Provider value={opensAt}>
       <ReadOnlyChat.Provider value={startNewChat}>

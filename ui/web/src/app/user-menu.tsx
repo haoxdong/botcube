@@ -14,6 +14,16 @@ import { LoadFailed } from "./load-state";
 import { useIsPhone } from "./phone-query";
 import { Sheet } from "../components/ui/sheet";
 const UI_CONFIG = webUiPlugin.config;
+const GUEST_NOTE = "Your work lives in this browser until you save it.";
+
+export function GuestNotice({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <p className="guest-notice" role="note">
+      {GUEST_NOTE}{" "}
+      <button type="button" className="guest-notice-sign-in" onClick={onSignIn}>{UI_CONFIG.loginLabel}</button>
+    </p>
+  );
+}
 
 /** The account's full and first name: nothing while the user loads, else the user's, else the account label. */
 function accountNames({ user, userLoading }: AuthUiState): { name: string; firstName: string } {
@@ -135,6 +145,10 @@ function AccountItems({ auth, name, onEdit, onLogout, close }: {
           </button>
         </>
       ) : (
+        <>
+        {auth.guest === true && (
+          <p className="user-menu-note" role="note">{GUEST_NOTE} Sign in to save it.</p>
+        )}
         <button
           className="user-menu-item"
           onClick={() => { onLogin(); close(); }}
@@ -147,6 +161,7 @@ function AccountItems({ auth, name, onEdit, onLogout, close }: {
           </svg>
           <span>{authStatus === "loading" ? "Connecting..." : UI_CONFIG.loginLabel}</span>
         </button>
+        </>
       )}</Swap>
     </>
   );

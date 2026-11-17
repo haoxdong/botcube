@@ -91,6 +91,26 @@ div.copilotKitInput {
 .composer-accessory > * {
   pointer-events: auto;
 }
+.composer-accessory:has(.guest-notice) {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.guest-notice {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--color-text-muted);
+}
+.guest-notice-sign-in {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--color-blue);
+  cursor: pointer;
+  font-size: inherit;
+}
 
 /* The files attached with the +: chips inside the composer's box, above its text, wrapping as ChatGPT's do. */
 .copilotKitInput {

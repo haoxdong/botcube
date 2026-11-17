@@ -24,7 +24,7 @@ export interface AgentComputerStream {
   expiresAt: number;
 }
 const LOCK_SECONDS = 60;
-const nowSeconds = () => Math.floor(Date.now() / 1000);
+export const nowSeconds = () => Math.floor(Date.now() / 1000);
 type Item = Record<string, unknown>;
 const key = (pk: string, sk = 'META') => ({ pk, sk });
 /** A conditional lease with renewal, fencing transactions after a takeover. */
@@ -225,14 +225,20 @@ export class AccountResources {
   /** Every page of a strongly consistent Query. */
   protected async query(input: Pick<QueryCommandInput, 'KeyConditionExpression' | 'ExpressionAttributeValues'>): Promise<Item[]> {
     const items: Item[] = [];
-    let ExclusiveStartKey: Item | undefined;
+    for await (const page of this.pages('Query', (ExclusiveStartKey) => new QueryCommand({ ...input, TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey }))) {
+      items.push(...page);
+    }
+    return items;
+  }
+
+  protected async *pages(operation: 'Query' | 'Scan', command: (ExclusiveStartKey: Item | undefined) => { input: object }): AsyncGenerator<Item[]> {
+    let exclusiveStartKey: Item | undefined;
     do {
       // eslint-disable-next-line no-await-in-loop -- DynamoDB pages depend on the previous key
-      const page = await this.call<{ Items?: Item[]; LastEvaluatedKey?: Item }>('Query', new QueryCommand({ ...input, TableName: this.tableName, ConsistentRead: true, ExclusiveStartKey }));
-      items.push(...(page.Items ?? []));
-      ExclusiveStartKey = page.LastEvaluatedKey;
-    } while (ExclusiveStartKey !== undefined);
-    return items;
+      const page = await this.call<{ Items?: Item[]; LastEvaluatedKey?: Item }>(operation, command(exclusiveStartKey));
+      yield page.Items ?? [];
+      exclusiveStartKey = page.LastEvaluatedKey;
+    } while (exclusiveStartKey !== undefined);
   }
 
   protected async get(pk: string, sk = 'META'): Promise<Item | undefined> {

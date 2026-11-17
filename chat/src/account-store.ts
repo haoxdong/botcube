@@ -7,8 +7,9 @@ import {
   QueryCommand,
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { AccountResources, AccountStoreError, OpenAIIdentityTaken, Lease } from './account-resources.js';
+import { AccountStoreError, OpenAIIdentityTaken, Lease } from './account-resources.js';
 import type { AgentModel } from './cartridge.js';
+import { GuestExpiry, type Operation, type PutOperation } from './guest-expiry.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
 
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -30,6 +31,7 @@ export interface Account {
   deletionOperationId?: string;
   /** The profile: seeded from the first login-capable Sign-in, then the user's; its photo is an item of its own. */
   displayName?: string;
+  lastActiveAt?: number;
   /** A scheduled run needed the user to sign in again; cleared when they do. */
   signInNeeded?: boolean;
   /** The OpenAI Sign-in's ChatGPT identity (its ID token's `sub`): the Account has Plan Usage (ADR 0078). */
@@ -53,8 +55,7 @@ export interface AccountDeletionIntent {
 export type TokenRecord = { accountId: string; createdAt: number; expiresAt: number; kind: string } & Record<string, unknown>;
 type SessionRecord = TokenRecord & { lastActivityAt: number; inactivityExpiresAt: number; absoluteExpiresAt: number };
 
-export type Operation = NonNullable<ConstructorParameters<typeof TransactWriteCommand>[0]['TransactItems']>[number];
-export type PutOperation = { Put: NonNullable<Operation['Put']> };
+export type { Operation, PutOperation };
 type Item = Record<string, unknown>;
 
 export const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -77,7 +78,7 @@ export function seedName(account: Account, displayName: string | undefined): boo
   return true;
 }
 
-export class AccountStore<A extends Account = Account> extends AccountResources {
+export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
   private readonly deletion = new AsyncLocalStorage<Lease>();
 
   constructor(
@@ -173,12 +174,13 @@ export class AccountStore<A extends Account = Account> extends AccountResources 
         accountId: `acct_${token(24)}`,
         status: 'anonymous',
         rateTier: 'anonymous',
+        lastActiveAt: now,
         createdAt: now,
         updatedAt: now,
       });
       const operation = this.put(this.accountItem(account));
       operation.Put.ConditionExpression = 'attribute_not_exists(pk)';
-      await this.commit(lease, [operation]);
+      await this.commit(lease, [operation, this.guestActivityPut(account.accountId, now)]);
       return { account, created: true };
     });
   }
@@ -482,22 +484,12 @@ export class AccountStore<A extends Account = Account> extends AccountResources 
   }
 
   async pendingAccountDeletions(): Promise<AccountDeletionIntent[]> {
-    const intents: AccountDeletionIntent[] = [];
-    let exclusiveStartKey: Item | undefined;
-    do {
-      // eslint-disable-next-line no-await-in-loop -- the next page uses the previous page's continuation key
-      const page = await this.call<{ Items?: Item[]; LastEvaluatedKey?: Item }>('Query', new QueryCommand({
-        TableName: this.tableName, ConsistentRead: true,
-        KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
-        ExpressionAttributeValues: { ':pk': 'ACCOUNT_DELETIONS', ':prefix': 'acct_' },
-        ExclusiveStartKey: exclusiveStartKey,
-      }));
-      // eslint-disable-next-line no-await-in-loop -- each page depends on its continuation key
-      const current = await Promise.all((page.Items ?? []).map((item) => this.accountDeletion(String(item.sk))));
-      intents.push(...current.filter((intent): intent is AccountDeletionIntent => intent?.status === 'authorized'));
-      exclusiveStartKey = page.LastEvaluatedKey;
-    } while (exclusiveStartKey !== undefined);
-    return intents;
+    const items = await this.query({
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :prefix)',
+      ExpressionAttributeValues: { ':pk': 'ACCOUNT_DELETIONS', ':prefix': 'acct_' },
+    });
+    const intents = await Promise.all(items.map((item) => this.accountDeletion(String(item.sk))));
+    return intents.filter((intent): intent is AccountDeletionIntent => intent?.status === 'authorized');
   }
 
   completeAccountDeletion(intent: AccountDeletionIntent): Promise<void> {

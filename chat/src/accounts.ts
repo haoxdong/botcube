@@ -68,6 +68,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
       id = account.accountId;
     }
     if (account?.deletionOperationId !== undefined) throw new HttpError(409, 'Account deletion is pending');
+    if (account !== null) await store().recordGuestActivity(account);
     return { owner: id, account };
   }
 
@@ -109,6 +110,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
       ? { account: trusted, created: false }
       : await accounts.anonymousAccount(cookieAccountId);
     if (account.status !== 'test' && (created || cookieAccountId !== account.accountId)) cookies.setAccount(c, account.accountId);
+    if (!created && account.deletionOperationId === undefined) await accounts.recordGuestActivity(account);
     return c.json({
       accountId: account.accountId,
       status: account.status,
@@ -136,8 +138,8 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
 }
 
 /**
- * What changing an account does beyond its Sessions: its Files go with its chats (an Account
- * Claim moves them, ADR 0077), and its Agent Computer stops and is erased.
+ * What erasing an account does beyond its Sessions: its Files go with its chats (ADR 0077), and its
+ * Agent Computer stops and is erased. Saving changes no account (ADR 0076), so nothing moves between them.
  */
 export function accountLifecycle<A extends Account>({
   history,
@@ -151,26 +153,12 @@ export function accountLifecycle<A extends Account>({
   computers: { erase(accountId: string): Promise<void> };
   store: () => AccountStore<A>;
 }) {
-  const accountHistory: AccountHistory = {
-    async transfer(source, destination) {
-      await history.transfer(source, destination);
-      if (files !== null) await files().transfer(source, destination);
-      // The claimed account's Agent Computer does not move: its browsers stop, and its profile and screenshots go.
-      await computers.erase(source);
-    },
-    async delete(accountId) {
-      await history.delete(accountId);
-      if (files !== null) await files().delete(accountId);
-    },
-    owns: (accountId, sessionId) => history.owns(accountId, sessionId),
-    ownsMainChat: (accountId, sessionId) => history.ownsMainChat(accountId, sessionId),
-  };
   return {
-    history: accountHistory,
     /** Erase the account: its Agent Computer, then its Sessions and Files, then the account itself. */
     async deleteAccount(accountId: string): Promise<void> {
       await computers.erase(accountId);
-      await accountHistory.delete(accountId);
+      await history.delete(accountId);
+      if (files !== null) await files().delete(accountId);
       await store().deleteAccount(accountId);
     },
   };

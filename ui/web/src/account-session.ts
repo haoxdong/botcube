@@ -10,7 +10,7 @@ export async function initializeAccountSession({
 }: {
   chatServiceUrl: string;
   fetchImpl?: typeof fetch;
-}): Promise<{ status: "ready"; accountId: string; account: Record<string, unknown>; temporary: boolean } | { status: "parked" }> {
+}): Promise<{ status: "ready"; accountId: string; account: Record<string, unknown>; guest: boolean } | { status: "parked" }> {
   const response = await (takeOpeningResponse(`${chatServiceUrl}/account/session`) ?? fetchImpl(`${chatServiceUrl}/account/session`, {
     credentials: "include",
     cache: "no-store",
@@ -19,7 +19,7 @@ export async function initializeAccountSession({
     const account = (await response.json()) as Record<string, unknown>;
     const { accountId } = account;
     if (typeof accountId !== "string") throw new Error("Account session response is invalid");
-    return { status: "ready", accountId, account, temporary: account.authenticated !== true };
+    return { status: "ready", accountId, account, guest: account.authenticated !== true };
   }
   if (response.status === 503) {
     const body = (await response.json().catch(() => null)) as { status?: unknown } | null;

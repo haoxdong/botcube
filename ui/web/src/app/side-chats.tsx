@@ -2,7 +2,7 @@
 
 import { Swap, Presence, presenceMotion, Collapse } from "./collapse";
 
-import { m as motionElement, type HTMLMotionProps } from "framer-motion";
+import { m as motionElement } from "framer-motion";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { contextMenuKey } from "./context-menu-key";
 import { ContextMenu } from "@base-ui/react/context-menu";
@@ -20,7 +20,7 @@ const MotionChevronRight = motionElement.create(ChevronRight);
 const MotionChevronDown = motionElement.create(ChevronDown);
 type Navigation = ReturnType<typeof useSessionNavigation>;
 const SIDE_CHATS_BATCH = 5;
-export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: sideChats, listed, error: sideChatsError, rename: renameSideChat, remove: handleDeleteConversation, select: handleSelectConversation, create: handleNewConversation, showChat, ...motion }: {
+export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: sideChats, listed, error: sideChatsError, rename: renameSideChat, remove: handleDeleteConversation, select: handleSelectConversation, create: handleNewConversation, showChat }: {
   accountId: AuthUiState["accountId"];
   activeId: string | null;
   pluginsOpen: boolean;
@@ -33,7 +33,7 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
   select: Navigation["selectSideChat"];
   create: Navigation["newSideChat"];
   showChat: () => void;
-} & Partial<Pick<HTMLMotionProps<"div">, "initial" | "animate" | "exit" | "inert">>) {
+}) {
   const sideChatsListId = useId();
   const [sideChatsPreference, setSideChatsPreference] = useState<{ accountId: typeof accountId; collapsed: boolean } | null>(null);
   const sideChatsCollapsed = sideChatsPreference !== null && sideChatsPreference.accountId === accountId
@@ -86,8 +86,7 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
   );
 
   return (
-        // The page's Presence fades the list out as a temporary chat starts; it shows at once, so motion turned off never leaves it transparent.
-        <motionElement.div className="sidebar-recents" {...motion}>
+        <div className="sidebar-recents">
           <div className="sidebar-section-header">
             <button className="sidebar-side-chats-toggle" onClick={toggleSideChats} aria-expanded={!sideChatsCollapsed} aria-controls={sideChatsListId}>
               <span>Side chats</span>
@@ -134,7 +133,7 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
           </motionElement.div>
           )}</Presence>
 
-        </motionElement.div>
+        </div>
 
   );
 }

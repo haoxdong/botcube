@@ -16,6 +16,12 @@ interface Conditional {
 
 const metadata = { $metadata: {} };
 
+const queryKeyConditions: Record<string, (sk: string, values: Values) => boolean> = {
+  'pk = :pk': () => true,
+  'pk = :pk AND begins_with(sk, :prefix)': (sk, values) => sk.startsWith(String(values[':prefix'])),
+  'pk = :pk AND sk <= :cutoff': (sk, values) => sk <= String(values[':cutoff']),
+};
+
 function clause(item: Item | undefined, text: string, values: Values): boolean {
   const exists = /^attribute_(not_)?exists\((\w+)\)$/.exec(text);
   if (exists) return (item?.[required(exists[2], 'an attribute name')] !== undefined) === (exists[1] === undefined);
@@ -78,14 +84,13 @@ export function memoryDocuments(): Pick<DynamoDBDocumentClient, 'send'> & { item
         return single('Update', input);
       case 'QueryCommand': {
         const values = required(input.ExpressionAttributeValues, 'the query values');
-        const prefix = input.KeyConditionExpression === 'pk = :pk' ? '' : String(values[':prefix']);
-        if (input.KeyConditionExpression !== 'pk = :pk' && input.KeyConditionExpression !== 'pk = :pk AND begins_with(sk, :prefix)') {
-          throw new Error(`Unsupported key condition: ${String(input.KeyConditionExpression)}`);
-        }
+        const condition = String(input.KeyConditionExpression);
+        const matches = queryKeyConditions[condition];
+        if (matches === undefined) throw new Error(`Unsupported key condition: ${condition}`);
         // DynamoDB rejects an empty string for a key attribute, so begins_with(sk, '') fails as ValidationException.
-        if (input.KeyConditionExpression !== 'pk = :pk' && prefix === '') throw new Error('The AttributeValue for a key attribute cannot contain an empty string value. Key: sk');
+        if (condition.includes(':prefix') && values[':prefix'] === '') throw new Error('The AttributeValue for a key attribute cannot contain an empty string value. Key: sk');
         const found = [...items.values()]
-          .filter((item) => item.pk === values[':pk'] && String(item.sk).startsWith(prefix))
+          .filter((item) => item.pk === values[':pk'] && matches(String(item.sk), values))
           .sort((a, b) => String(a.sk).localeCompare(String(b.sk)));
         return { ...metadata, Items: structuredClone(found) };
       }

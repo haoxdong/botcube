@@ -24,13 +24,11 @@ import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type
 import { bedrockTurnSummarizer, reportUnsavedTurnSummaries, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
-import { temporaryRoutes } from './temporary-routes.js';
 import { accountRoutes } from './account-routes.js';
 
 const LIVE_VIEW_URL_EXPIRES_SECONDS = 300;
 
 export interface ChatServiceConfig {
-  temporaryChatSecret?: string;
   /** Unset: no per-Turn user identity, and no OIDC discovery. */
   turnIdentity?: TurnIdentityConfig;
   /** Unset: Turns get 503 and warmup is skipped. */
@@ -74,7 +72,6 @@ function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
         ? { localUrl: localSessionApiUrl }
         : null,
     warmupTimeoutMs: 60_000,
-    ...(env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ? { temporaryChatSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET } : {}),
     turnSummaryModel: turnSummaryModelFromEnv(env, region),
     ...(turnIdentity ? { turnIdentity } : {}),
   };
@@ -177,7 +174,6 @@ export function createChatService(
   if (turnIdentity !== null) app.route('/', turnIdentityRoutes(turnIdentity));
   app.route('/', cartridge.routes);
 
-  if (config.temporaryChatSecret !== undefined) temporaryRoutes(app, config.temporaryChatSecret, cartridge, upstream, turnQuota);
 
   turnRoutes(app, cartridge, sessionMetadata, agentDocuments, upstream, config, summarizeTurn, turnIdentity, turnQuota);
 
