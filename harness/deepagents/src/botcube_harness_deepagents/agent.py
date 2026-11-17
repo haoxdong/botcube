@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from pathlib import PurePosixPath
 from typing import Annotated, Any, NotRequired
 
+from botocore.exceptions import BotoCoreError, ClientError
 from deepagents import create_deep_agent
 from deepagents._models import resolve_model
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
@@ -35,9 +36,11 @@ from langchain_core.messages import AnyMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langgraph.constants import CONFIG_KEY_CHECKPOINTER
+from langgraph.errors import GraphBubbleUp
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
+from openai import APIError
 from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
@@ -88,10 +91,7 @@ class _FilesMiddleware(FilesystemMiddleware):
     ) -> ToolMessage | Command[Any]:
         if refused := _version_store_write(request):
             return refused
-        try:
-            return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
-        except _REFUSALS as error:
-            return _artifact_refused(request, error)
+        return super().wrap_tool_call(request, lambda call: LazyFilesMiddleware().wrap_tool_call(call, handler))
 
     async def awrap_tool_call(
         self, request: ToolCallRequest,
@@ -99,22 +99,39 @@ class _FilesMiddleware(FilesystemMiddleware):
     ) -> ToolMessage | Command[Any]:
         if refused := _version_store_write(request):
             return refused
-        try:
-            return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
-        except _REFUSALS as error:
-            return _artifact_refused(request, error)
+        return await super().awrap_tool_call(request, lambda call: LazyFilesMiddleware().awrap_tool_call(call, handler))
 
 
 _FILE_WRITES = frozenset({'write_file', 'edit_file', 'delete'})
 
-# What the Artifact tool raises to refuse a call; anything else is the Harness failing, which ends the Turn.
-_REFUSALS = (ValueError, FileNotFoundError)
+
+class _ToolErrorsMiddleware(AgentMiddleware):
+    def wrap_tool_call(
+        self, request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        try:
+            return handler(request)
+        except GraphBubbleUp:
+            raise
+        except Exception as error:
+            return _tool_error(request, error)
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        try:
+            return await handler(request)
+        except GraphBubbleUp:
+            raise
+        except Exception as error:
+            return _tool_error(request, error)
 
 
-def _artifact_refused(request: ToolCallRequest, error: Exception) -> ToolMessage:
-    """The Artifact tool's refusal as its result, so the agent reads it and fixes the call in the same Turn."""
+def _tool_error(request: ToolCallRequest, error: Exception) -> ToolMessage:
     call = request.tool_call
-    if call['name'] != 'Artifact':
+    if call['name'] == 'task' and not isinstance(error, (APIError, BotoCoreError, ClientError)):
         raise error
     return ToolMessage(content=f'Error: {error}', name=call['name'], tool_call_id=call['id'], status='error')
 
@@ -331,6 +348,7 @@ def build_agent(
         _SchemaSkillsMiddleware(backend=files_backend, sources=resolved_skills, user_prompt=user_prompt),
         _UncheckpointedTasksMiddleware(),
         *(list(middleware) if middleware is not None else []),
+        _ToolErrorsMiddleware(),
     ]
     if store is not None:
         kwargs['store'] = store
@@ -379,7 +397,7 @@ def _subagent_spec(spec: dict[str, Any], backend: Any, skills: list[str]) -> dic
     sources = skills if spec.get('mode') == 'fork' else spec.get('skills')
     if sources is not None and (sources or spec.get('mode') == 'fork'):
         middleware.append(_SchemaSkillsMiddleware(backend=backend, sources=sources))
-    return {**spec, 'middleware': [*middleware, *spec.get('middleware', [])]}
+    return {**spec, 'middleware': [*middleware, *spec.get('middleware', []), _ToolErrorsMiddleware()]}
 
 
 def ask(agent: Any, query: str) -> str:
