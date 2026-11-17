@@ -2,12 +2,14 @@ import { HttpAgent } from '@ag-ui/client';
 import { CopilotChatConfigurationProvider, CopilotChatMessageView, CopilotKitProvider, useAgent } from '@copilotkit/react-core/v2';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ArtifactLayout } from './artifact-panel';
 import { publishedOf } from './artifact-published';
 import recorded from './artifact-live-fill.stream.json';
 import MarkdownRenderer from './markdown-renderer';
+import { PHONE_QUERY } from './phone-query';
 
 const PAGE = '<!doctype html><html><head><title>Q3 revenue</title></head><body><h1>Q3</h1></body></html>';
 const PUBLISHED = {
@@ -54,8 +56,20 @@ function files() {
   vi.stubGlobal('fetch', fetchImpl);
 }
 
-const phone = (matches: boolean) =>
-  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: matches && query === '(max-width: 640px)', media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList);
+function phone(matches: boolean) {
+  let isPhone = matches;
+  const listeners = new Set<() => void>();
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+    get matches() { return isPhone && query === PHONE_QUERY; },
+    media: query,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  }) as unknown as MediaQueryList);
+  return (phoneNow: boolean) => act(() => {
+    isPhone = phoneNow;
+    for (const listener of listeners) listener();
+  });
+}
 
 /**
  * The sandbox page saying it is ready, as `public/artifact-sandbox/index.html` does once it loads; happy-dom loads no
@@ -429,4 +443,30 @@ it('defaults left, moves both ways without remounting, and remembers this Userâ€
   const other = render(<Chat accountId="another-user" />);
   await userEvent.click(await screen.findByRole('button', { name: /Q3 revenue by month/ }));
   expect(other.container.querySelector('.artifact-layout')).toHaveAttribute('data-side', 'left');
+});
+
+it.each([true, false])('keeps the chat mounted, with its draft, when the window crosses the phone breakpoint (from a phone: %s)', async (startsAsPhone) => {
+  const resize = phone(startsAsPhone);
+  const mounted = vi.fn();
+  function Composer() {
+    useEffect(mounted, []);
+    return <textarea aria-label="Ask anything" />;
+  }
+  render(
+    <CopilotKitProvider>
+      <CopilotChatConfigurationProvider threadId="thread">
+        <ArtifactLayout agent={IDLE} accountId="breakpoint-test">
+          <div className="app-chat"><Composer /></div>
+        </ArtifactLayout>
+      </CopilotChatConfigurationProvider>
+    </CopilotKitProvider>,
+  );
+  const box = screen.getByRole('textbox', { name: 'Ask anything' });
+  await userEvent.type(box, 'my draft');
+  resize(!startsAsPhone);
+  expect(screen.getByRole('textbox', { name: 'Ask anything' })).toBe(box);
+  expect(box).toHaveValue('my draft');
+  resize(startsAsPhone);
+  expect(screen.getByRole('textbox', { name: 'Ask anything' })).toHaveValue('my draft');
+  expect(mounted).toHaveBeenCalledTimes(1);
 });

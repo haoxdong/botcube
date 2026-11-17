@@ -119,24 +119,14 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
     },
   }, []);
   const panel = { shown, open, seen, failures };
-  // A phone and a desktop lay the chat out differently, so turning across the breakpoint with an Artifact open
-  // remounts the chat: rare, and the chat reloads its messages as it would on opening.
-  if (phone) {
-    return (
-      <Panel.Provider value={panel}>
-        {header}
-        {children}
-        {kept && (
-          <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
-            <ArtifactView key={pathOf(kept)} shown={kept} heading={<span className="sent-file-kind"><Kind shown={kept} /></span>} />
-          </Sheet>
-        )}
-      </Panel.Provider>
-    );
-  }
   return (
     <Panel.Provider value={panel}>
-      <ArtifactSplit accountId={accountId} shown={shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
+      <ArtifactSplit accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
+      {phone && kept && (
+        <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
+          <ArtifactView key={pathOf(kept)} shown={kept} heading={<span className="sent-file-kind"><Kind shown={kept} /></span>} />
+        </Sheet>
+      )}
     </Panel.Provider>
   );
 }
@@ -184,9 +174,9 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
   }, [isOpen, side]);
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
-      <ResizablePanel id="chat" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
+      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
-      <ResizablePanel id="artifact" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
+      <ResizablePanel id="artifact" className="artifact-side-panel" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {
           if (isOpen && size.asPercentage === 0 && previous?.asPercentage) close();
         }}>

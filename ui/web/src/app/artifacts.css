@@ -435,3 +435,10 @@
 .artifact-view-motion {
   overflow: hidden;
 }
+
+@media (max-width: 640px) {
+  .artifact-layout > .resizable-handle,
+  .artifact-side-panel {
+    display: none !important;
+  }
+}
