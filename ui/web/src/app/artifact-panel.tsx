@@ -185,7 +185,7 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
       <ResizablePanel id="chat" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
-      <ResizableHandle disabled={!isOpen} data-closed={!isOpen || undefined} />
+      <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {
           if (isOpen && size.asPercentage === 0 && previous?.asPercentage) close();
