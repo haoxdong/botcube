@@ -33,6 +33,21 @@ it("defers startup until idle and propagates its classified failure", async () =
   await failed;
 });
 
+it("starts on a timer in a browser without requestIdleCallback, as Safari ships it", async () => {
+  vi.stubGlobal("requestIdleCallback", undefined);
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  try {
+    const started = startRum({ appMonitorId: "test", identityPoolId: "test-pool", region: "us-east-1", release: "0123abcd" });
+    window.dispatchEvent(new Event("load"));
+    expect(sdk.constructed).toEqual([]);
+    await vi.runAllTimersAsync();
+    await started;
+    expect(sdk.constructed).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("collects uncaught errors and failed requests under the build's release", async () => {
   const { started, idle } = startWhenIdle();
   idle();
