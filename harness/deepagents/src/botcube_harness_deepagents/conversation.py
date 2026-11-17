@@ -57,7 +57,9 @@ def _replayed(message: BaseMessage) -> list[Message]:
     if times and times.get('reasoning') and not reasoning:
         reasoning = ['']
     card = message.additional_kwargs.get(SCHEDULED_RUN)
-    metadata = {**(_span(times) if times else {}), **({'scheduledRun': card} if card is not None else {})}
+    metadata = {**(_span(times) if times else {}),
+                **({key: times[key] for key in ('worklog_clock', 'timing_id') if key in times} if times else {}),
+                **({'scheduledRun': card} if card is not None else {})}
     return [
         *(
             ReasoningMessage(
@@ -67,11 +69,27 @@ def _replayed(message: BaseMessage) -> list[Message]:
             for index, text in enumerate(reasoning)
         ),
         *(
-            converted.model_copy(update={'metadata': metadata}) if metadata and converted.role != 'reasoning' else converted
+            _timed_message(converted, times, metadata)
             for converted in langchain_messages_to_agui([message])
             if not reasoning or converted.role != 'reasoning'
         ),
     ]
+
+
+def _timed_message(message: Message, times: dict[str, Any] | None, metadata: dict[str, Any]) -> Message:
+    if not metadata or message.role == 'reasoning':
+        return message
+    projected = message.model_copy(update={'metadata': metadata})
+    if not times or 'timing_id' not in times or projected.role != 'assistant':
+        return projected
+    calls = []
+    for call in projected.tool_calls or []:
+        timing_id = times['tool_timing_ids'][call.id]
+        began = times['started_at'] if timing_id == times['timing_id'] else times['tool_calls'][call.id]
+        calls.append(call.model_copy(update={'metadata': {
+            **(call.metadata or {}), 'timing_id': timing_id, 'worklog_started_at': began,
+        }}))
+    return projected.model_copy(update={'tool_calls': calls or None})
 
 
 def _span(times: dict[str, Any]) -> dict[str, int]:

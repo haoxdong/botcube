@@ -42,6 +42,7 @@ import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
 import { UnreadDot } from "./unread-dot";
 import { TurnStart } from "./worklog";
+import { WorklogAgent } from "./worklog-clock";
 import type { ChatStop } from "./chat-surface";
 import { useArtifactWorkspace, useChatSurfaceKey } from "./artifact-request";
 
@@ -314,6 +315,7 @@ export default function App({
             <Presence>{activeId === null ? noChat : (
             <motionElement.div {...presenceMotion} layout={false} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
+              <WorklogAgent.Provider value={agent}>
               <ChatThread
                 key={activeId}
                 agent={agent}
@@ -345,7 +347,7 @@ export default function App({
                   <ModelSelector {...picker} />
                 </div>
               </ChatThread>
-              </TurnStart.Provider>
+              </WorklogAgent.Provider></TurnStart.Provider>
               {covered && keptChat}
             </motionElement.div>
             )}</Presence>

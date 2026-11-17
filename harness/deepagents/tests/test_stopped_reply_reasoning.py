@@ -49,3 +49,23 @@ def test_a_reply_stopped_after_its_thought_replays_with_that_thought(monkeypatch
     assert [(message['role'], message['id']) for message in replayed] == [('reasoning', 'thought-1'), ('assistant', 'answer-1')]
     assert replayed[0]['metadata'] == {'started_at': 1000, 'ended_at': 1400}
     assert replayed[1]['metadata'] == {'started_at': 1500, 'ended_at': 1600}
+
+
+def test_a_reasoning_only_stop_keeps_the_thought_without_inventing_answer_text(monkeypatch: Any) -> None:
+    from ag_ui.core import ReasoningMessageContentEvent
+
+    clock = iter([1000, 1800])
+    monkeypatch.setattr(message_times, 'now', lambda: next(clock))
+    reply = _OpenReply()
+    watched = reply.watching(lambda _event: None)
+    watched(ReasoningMessageStartEvent(message_id='only-thought', role='reasoning'))
+    watched(ReasoningMessageContentEvent(message_id='only-thought', delta='Compare the bond durations'))
+    watched(ReasoningMessageEndEvent(message_id='only-thought'))
+    graph = _Graph()
+    asyncio.run(reply.keep(cast(Any, SimpleNamespace(graph=graph)), ('user-1', 'thread-1')))
+    replayed = conversation(graph.recorded)
+    assert replayed[0]['role'] == 'reasoning'
+    assert replayed[0]['id'] == 'only-thought'
+    assert replayed[0]['content'] == 'Compare the bond durations'
+    assert replayed[0]['metadata'] == {'started_at': 1000, 'ended_at': 1800}
+    assert replayed[-1]['content'] == ''

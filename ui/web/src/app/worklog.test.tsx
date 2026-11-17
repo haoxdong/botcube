@@ -580,10 +580,10 @@ describe("a Worklog's step times", () => {
     expect(head()).toHaveTextContent(/^Working · 25s$/);
   });
 
-  it('keeps card-separated views from double-counting the same Turn', () => {
+  it.each([false, true])('keeps card-separated views from double-counting the same Turn (canonical=%s)', (canonical) => {
     vi.useFakeTimers({ now: START + 8000 });
     const messages = [
-      { id: 'card-clock-u', role: 'user', content: 'Build a chart and compare rates', ...stamp(0, 0) },
+      { id: `card-clock-u-${canonical}`, role: 'user', content: 'Build a chart and compare rates', metadata: { ...stamp(0, 0).metadata, ...(canonical ? { worklog_clock: { version: 1, at: START + 8000 } } : {}) } },
       { id: 'card-clock-r', role: 'reasoning', content: 'Plan', ...stamp(0, 2) },
       { id: 'card-clock-card', role: 'assistant', content: '', toolCalls: [call('card-clock-artifact', 'Artifact', { description: 'Rates chart' })], ...stamp(2, 2) },
       { id: 'card-clock-card-result', role: 'tool', toolCallId: 'card-clock-artifact', content: PUBLISHED, ...stamp(2, 4) },
@@ -591,7 +591,7 @@ describe("a Worklog's step times", () => {
       { id: 'card-clock-next-result', role: 'tool', toolCallId: 'card-clock-query', content: 'Done', ...stamp(4, 6) },
       { id: 'card-clock-answer', role: 'assistant', content: 'Rates compared.', ...stamp(6, 8) },
     ];
-    render(<StepsChat messages={messages} running />);
+    const view = render(<StepsChat messages={messages} running />);
     expect(heads()).toHaveLength(1);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 8s$/);
     for (const header of heads()) fireEvent.click(header);
@@ -606,6 +606,7 @@ describe("a Worklog's step times", () => {
     expect(screen.queryByTestId('card-card-clock-card')).toBeNull();
     fireEvent.click(head());
     act(() => { vi.advanceTimersByTime(1000); });
+    if (canonical) view.rerender(<StepsChat messages={messages.map(message => message.role === 'user' ? { ...message, metadata: { ...message.metadata, worklog_clock: { version: 1, at: START + 9000 } } } : message)} running />);
     for (const header of heads()) expect(header).toHaveTextContent(/^Working · 9s$/);
   });
 
@@ -1348,4 +1349,177 @@ it('renders a completed Thought heading with a literal internal asterisk in bold
   fireEvent.click(within(dialog).getByRole('button', { name: 'Copy reasoning' }));
   expect(write).toHaveBeenCalledWith(summary);
   write.mockRestore();
+});
+
+it('canonical boundaries keep a completed tool gap stable in a fresh saved view', async () => {
+  vi.useFakeTimers({ now: START });
+  let question = { id: 'gap-u', role: 'user', content: 'Compare markets', metadata: { ...stamp(0, 0).metadata, worklog_clock: { version: 1, at: START } } };
+  const first = { id: 'gap-a1', role: 'assistant', content: '', toolCalls: [call('gap-c1', 'execute', { command: 'first' })], ...stamp(0, 0) };
+  const firstResult = { id: 'gap-t1', role: 'tool', toolCallId: 'gap-c1', content: 'Done', ...stamp(0, 0.2) };
+  const second = { id: 'gap-a2', role: 'assistant', content: '', toolCalls: [call('gap-c2', 'execute', { command: 'second' })], ...stamp(1.8, 1.8) };
+  const secondResult = { id: 'gap-t2', role: 'tool', toolCallId: 'gap-c2', content: 'Done', ...stamp(1.8, 2) };
+  const answer = { id: 'gap-answer', role: 'assistant', content: 'Compared', ...stamp(2, 2) };
+  const view = render(<StepsChat messages={[question, first]} running />);
+  act(() => { vi.advanceTimersByTime(200); });
+  view.rerender(<StepsChat messages={[question, first, firstResult]} running />);
+  act(() => { vi.advanceTimersByTime(800); });
+  question = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1, at: START + 1000 } } };
+  view.rerender(<StepsChat messages={[question, first, firstResult]} running />);
+  expect(stepRows()).toEqual([['Ranfirst', '1s']]);
+  act(() => { vi.advanceTimersByTime(800); });
+  view.rerender(<StepsChat messages={[question, first, firstResult, second]} running />);
+  act(() => { vi.advanceTimersByTime(200); });
+  view.rerender(<StepsChat messages={[question, first, firstResult, second, secondResult, answer]} />);
+  fireEvent.click(head());
+  const clocks = () => stepRows().filter(([label]) => /first|second/.test(label ?? '')).map(([, time]) => time);
+  const displayed = clocks();
+  expect(displayed).toEqual(['2s', '0s']);
+  view.unmount();
+  sessionStorage.clear();
+  vi.resetModules();
+  const fresh = await import('./worklog');
+  render(<fresh.Worklog id={first.id} asked={question.id} question={question} turn={[first, firstResult, second, secondResult, answer]} running={false}>
+    <fresh.ToolStep id="gap-c1" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+    <fresh.ToolStep id="gap-c2" name="execute" params={{ command: 'second' }} status="complete" output="Done" />
+  </fresh.Worklog>);
+  fireEvent.click(head());
+  expect(clocks()).toEqual(displayed);
+});
+
+it('canonical progress keeps delayed delivery allocations in a fresh saved view', async () => {
+  vi.useFakeTimers({ now: START });
+  let question = { id: 'canonical-delivery-u', role: 'user', content: 'Compare markets', metadata: { ...stamp(0, 0).metadata, worklog_clock: { version: 1, at: START } } };
+  const first = { id: 'canonical-delivery-a1', role: 'assistant', content: '', toolCalls: [call('canonical-delivery-c1', 'execute', { command: 'first' })], ...stamp(0, 0) };
+  const firstResult = { id: 'canonical-delivery-t1', role: 'tool', toolCallId: 'canonical-delivery-c1', content: 'Done', ...stamp(0, 0.2) };
+  const second = { id: 'canonical-delivery-a2', role: 'assistant', content: '', toolCalls: [call('canonical-delivery-c2', 'execute', { command: 'second' })], ...stamp(0.2, 0.2) };
+  const secondResult = { id: 'canonical-delivery-t2', role: 'tool', toolCallId: 'canonical-delivery-c2', content: 'Done', ...stamp(0.2, 2) };
+  const answer = { id: 'canonical-delivery-answer', role: 'assistant', content: 'Compared', ...stamp(2, 2) };
+  const view = render(<StepsChat messages={[question, first]} running />);
+  act(() => { vi.advanceTimersByTime(1000); });
+  expect(head()).toHaveTextContent(/^Working · 0s$/);
+  question = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1, at: START + 200 } } };
+  view.rerender(<StepsChat messages={[question, first, firstResult, second]} running />);
+  question = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1, at: START + 1000 } } };
+  view.rerender(<StepsChat messages={[question, first, firstResult, second]} running />);
+  expect(head()).toHaveTextContent(/^Working · 1s$/);
+  expect(stepRows().map(([, time]) => time)).toEqual(['0s', '1s']);
+  question = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1, at: START + 2000 } } };
+  view.rerender(<StepsChat messages={[question, first, firstResult, second, secondResult, answer]} />);
+  expect(head()).toHaveTextContent(/^Worked for 2s$/);
+  fireEvent.click(head());
+  const clocks = () => stepRows().filter(([label]) => /first|second/.test(label ?? '')).map(([, time]) => time);
+  const displayed = clocks();
+  expect(displayed).toEqual(['0s', '2s']);
+  view.unmount();
+  sessionStorage.clear();
+  vi.resetModules();
+  const fresh = await import('./worklog');
+  const savedQuestion = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1 } } };
+  render(<fresh.Worklog id={first.id} asked={question.id} question={savedQuestion} turn={[first, firstResult, second, secondResult, answer]} running={false}>
+    <fresh.ToolStep id="canonical-delivery-c1" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
+    <fresh.ToolStep id="canonical-delivery-c2" name="execute" params={{ command: 'second' }} status="complete" output="Done" />
+  </fresh.Worklog>);
+  fireEvent.click(head());
+  expect(clocks()).toEqual(displayed);
+});
+
+it('canonical boundaries leave overlapping time with the first parallel call', () => {
+  const question = { id: 'canonical-parallel-u', role: 'user', content: 'Compare markets', metadata: { ...stamp(0, 0).metadata, worklog_clock: { version: 1 } } };
+  const tools = { id: 'canonical-parallel-a', role: 'assistant', content: '', toolCalls: [call('canonical-slow', 'execute', { command: 'slow' }), call('canonical-fast', 'execute', { command: 'fast' })], ...stamp(0, 0) };
+  const slow = { id: 'canonical-parallel-slow', role: 'tool', toolCallId: 'canonical-slow', content: 'Done', ...stamp(0, 5) };
+  const fast = { id: 'canonical-parallel-fast', role: 'tool', toolCallId: 'canonical-fast', content: 'Done', ...stamp(0, 2) };
+  const answer = { id: 'canonical-parallel-answer', role: 'assistant', content: 'Compared', ...stamp(5, 5) };
+  render(<StepsChat messages={[question, tools, fast, slow, answer]} />);
+  fireEvent.click(head());
+  expect(stepRows().slice(0, 2)).toEqual([['Ranslow', '5s'], ['Ranfast', '0s']]);
+  expect(head()).toHaveTextContent(/^Worked for 5s$/);
+});
+
+it('keeps a stopped answer clock when its public message id differs from its model timing id', () => {
+  const question = { id: 'cut-clock-question', role: 'user', content: 'Explain duration', metadata: {
+    ...stamp(0, 0).metadata,
+    worklog_clock: { version: 1, question_id: 'cut-clock-question', started_at: START, at: START + 9000, ended_at: START + 9000,
+      steps: { 'cut-thought': { started_at: START, ended_at: START + 1000 }, 'model-clock': { started_at: START + 1000, ended_at: START + 9000 } } },
+  } };
+  const thought = { id: 'cut-thought', role: 'reasoning', content: 'Compare the exposures', ...stamp(0, 1) };
+  const answer = { id: 'provider-cut-answer', role: 'assistant', content: 'Duration measures rate risk.', metadata: { ...stamp(1, 2).metadata, timing_id: 'model-clock' } };
+  render(<StepsChat messages={[question, thought, answer]} />);
+  expect(head()).toHaveTextContent(/^Worked for 9s$/);
+  fireEvent.click(head());
+  expect(stepRows().map(([, time]) => time)).toEqual(['1s', '8s']);
+});
+
+it('keeps the terminal quiet gap on the last completed Thought in fresh history', () => {
+  const question = { id: 'quiet-terminal-question', role: 'user', content: 'Compare exposures', metadata: {
+    ...stamp(0, 0).metadata,
+    worklog_clock: { version: 1, question_id: 'quiet-terminal-question', started_at: START, at: START + 9000, ended_at: START + 9000,
+      steps: { 'quiet-terminal-thought': { started_at: START, ended_at: START + 1000 } } },
+  } };
+  const thought = { id: 'quiet-terminal-thought', role: 'reasoning', content: 'Compare the exposures', ...stamp(0, 1) };
+  render(<StepsChat messages={[question, thought]} />);
+  expect(head()).toHaveTextContent(/^Worked for 9s$/);
+  fireEvent.click(head());
+  expect(stepRows().map(([, time]) => time)).toEqual(['9s']);
+});
+
+const reconnectSpans: readonly [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15]];
+function reconnectTurn(count: number, through: number, saved = false): TurnMessage[] {
+  return reconnectSpans.slice(0, count).flatMap(([began, ended], index) => {
+    const timing = `reconnect-model-${index}`;
+    const calling = { ...call(`reconnect-call-${index}`, 'execute'), metadata: { timing_id: timing, worklog_started_at: START + began * 1000 } };
+    const tool = { id: `${saved ? 'stored' : 'live'}-reconnect-${index}`, role: 'assistant', content: '', toolCalls: [calling], metadata: { ...stamp(began, began).metadata, timing_id: timing } };
+    const result = { id: `reconnect-result-${index}`, role: 'tool', toolCallId: calling.id, content: 'Done', ...stamp(began, ended) };
+    return ended <= through ? [tool, result] : [tool];
+  });
+}
+function reconnectQuestion(through?: number): TurnMessage {
+  const steps = Object.fromEntries(reconnectSpans.slice(0, through === 15 ? 12 : 7).map(([began, ended], index) => [
+    `reconnect-model-${index}`, { started_at: START + began * 1000, ...(ended <= (through ?? 0) ? { ended_at: START + ended * 1000 } : {}) },
+  ]));
+  return { id: 'canonical-reconnect-question', role: 'user', content: 'Compare twelve markets', metadata: { ...stamp(0, 0).metadata,
+    worklog_clock: through === undefined ? { version: 1 } : { version: 1, question_id: 'canonical-reconnect-question', started_at: START, at: START + through * 1000, steps },
+  } };
+}
+function reconnectView(lib: typeof import('./worklog'), question: TurnMessage, turn: TurnMessage[], running: boolean) {
+  return <lib.Worklog id={turn[0]?.id ?? question.id} asked={question.id} question={question} turn={turn} running={running}>
+    {turn.flatMap(message => message.toolCalls ?? []).map(calling => {
+      const complete = turn.some(message => message.role === 'tool' && message.toolCallId === calling.id);
+      return <lib.ToolStep key={calling.id} id={calling.id} name="execute" params={{ command: calling.id }} status={complete ? 'complete' : 'running'} output={complete ? 'Done' : undefined} />;
+    })}
+  </lib.Worklog>;
+}
+it('keeps authoritative Worklog progress through a twelve-step mid-Turn reload and reconnect', async () => {
+  vi.useFakeTimers({ now: START + 9000 });
+  const lib = await import('./worklog');
+  const view = render(reconnectView(lib, reconnectQuestion(9), reconnectTurn(7, 9), true));
+  expect(head()).toHaveTextContent(/^Working · 9s$/);
+  expect(stepRows().map(([, time]) => time)).toEqual(['1s', '1s', '1s', '1s', '1s', '1s', '3s']);
+  const order = () => [...document.querySelectorAll('.worklog-step[data-step-id]')].map(step => step.getAttribute('data-step-id'));
+  const before = order();
+  view.unmount();
+  vi.resetModules();
+  vi.setSystemTime(START + 600000);
+  const reloaded = await import('./worklog');
+  const resumed = render(reconnectView(reloaded, reconnectQuestion(), reconnectTurn(7, 9, true), true));
+  expect(head()).toHaveTextContent(/^Working · 9s$/);
+  expect(stepRows().map(([, time]) => time)).toEqual(['1s', '1s', '1s', '1s', '1s', '1s', '3s']);
+  expect(order()).toEqual(before);
+  resumed.rerender(reconnectView(reloaded, reconnectQuestion(10), reconnectTurn(7, 10, true), true));
+  expect(head()).toHaveTextContent(/^Working · 10s$/);
+  expect(stepRows().map(([, time]) => time)).toEqual(['1s', '1s', '1s', '1s', '1s', '1s', '4s']);
+  expect(order()).toEqual(before);
+  const completed = [...reconnectTurn(12, 15, true), { id: 'reconnect-final-answer', role: 'assistant', content: 'Compared the markets', ...stamp(15, 15) }];
+  resumed.rerender(reconnectView(reloaded, reconnectQuestion(15), completed, false));
+  fireEvent.click(head());
+  const displayed = stepRows().map(([, time]) => time);
+  expect(head()).toHaveTextContent(/^Worked for 15s$/);
+  expect(displayed).toEqual(['1s', '1s', '1s', '1s', '1s', '1s', '4s', '1s', '1s', '1s', '1s', '1s', '0s']);
+  resumed.unmount();
+  sessionStorage.clear();
+  vi.resetModules();
+  const fresh = await import('./worklog');
+  render(reconnectView(fresh, reconnectQuestion(), completed, false));
+  fireEvent.click(head());
+  expect(head()).toHaveTextContent(/^Worked for 15s$/);
+  expect(stepRows().map(([, time]) => time)).toEqual(displayed);
 });

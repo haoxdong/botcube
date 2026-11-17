@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from ag_ui.core import EventType, RunAgentInput, RunErrorEvent
+from ag_ui.core import EventType, RunAgentInput, RunErrorEvent, UserMessage
 from ag_ui_langgraph import LangGraphAgent
 from langchain.agents import AgentState
 from langchain_core.callbacks import AsyncCallbackHandler
@@ -65,6 +65,49 @@ def test_run_started_carries_the_accepted_turn_origin() -> None:
         events = [event async for event in _agent().run(request)]
         [started] = [event for event in events if event.type == EventType.RUN_STARTED]
         assert started.timestamp == 1794830400000
+
+    asyncio.run(exercise())
+
+
+def test_live_clock_freezes_at_the_same_end_as_the_saved_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from langchain.agents import create_agent
+
+    from botcube_harness_deepagents import message_times
+    from botcube_harness_deepagents.conversation import MESSAGE_TIMES
+    from conftest import ToolBindableFakeModel
+
+    at = 1794830400000
+
+    def advancing_clock() -> int:
+        nonlocal at
+        at += 100
+        return at
+
+    monkeypatch.setattr(message_times, 'now', advancing_clock)
+
+    async def exercise() -> None:
+        graph = create_agent(
+            ToolBindableFakeModel(responses=['Done']), tools=[],
+            middleware=[message_times.MessageTimesMiddleware()], checkpointer=MemorySaver(),
+        )
+        agent = serving._SessionAgent(name='test', graph=graph)
+        request = _input()
+        request.messages = [UserMessage(id='canonical-question', content='Compare markets')]
+        assert request.forwarded_props is not None
+        request.forwarded_props['worklog_clock'] = 1
+        request.forwarded_props['turn_started_at'] = '2026-11-16T12:00:00Z'
+        events = [event async for event in agent.run(request)]
+        [started] = [event for event in events if event.type == EventType.RUN_STARTED]
+        assert started.metadata and started.metadata['worklog_clock']['version'] == 1
+        frames = [operation['value'] for event in events if event.type == EventType.STATE_DELTA
+                  for operation in event.model_dump(mode='json')['delta'] if operation.get('path') == '/worklog_clock']
+        assert frames
+        saved = await graph.aget_state({'configurable': {'thread_id': 'session'}})
+        answer = saved.values['messages'][-1]
+        assert frames[-1]['at'] == answer.response_metadata[MESSAGE_TIMES]['ended_at']
+        assert frames[-1]['ended_at'] == frames[-1]['at']
+        assert frames[-1]['question_id'] == 'canonical-question'
+        assert events[-1].type == EventType.RUN_FINISHED
 
     asyncio.run(exercise())
 

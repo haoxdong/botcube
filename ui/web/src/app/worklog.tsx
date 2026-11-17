@@ -13,7 +13,7 @@ import { argumentOf, lookOf } from "./worklog-tools";
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
 import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
-import { CLOCKS_KEPT, spanOf, startOf, useWorklogClock } from "./worklog-clock";
+import { CLOCKS_KEPT, spanOf, startOf, useTurnClock, useWorklogClock } from "./worklog-clock";
 import { seconds, stepOf, timelineOf, totalOf } from "./worklog-timeline";
 
 // A step's sheet loads after first load (web-cold-open-check.mjs), once the page is idle, so a tap need not wait
@@ -188,8 +188,9 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   if (chosen && !current) setChosen(null);
   const open = current ? chosen.open : phase === "working";
   const serverStart = useContext(TurnStart);
-  useWorklogClock(running && advanceClock);
-  const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock });
+  const clock = useTurnClock(running, question?.id ?? asked, question?.metadata?.worklog_clock);
+  useWorklogClock(running && advanceClock && clock === undefined);
+  const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock, clock });
   const total = totalOf(timeline, took);
   const title = (
     <span className="worklog-title" data-live={running || undefined}>

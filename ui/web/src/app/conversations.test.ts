@@ -788,3 +788,14 @@ it('normalizes the Main Chat through the same list boundary as Side Chats', asyn
     threads: [], mainChat: { id: 'main-1', title: 'Untitled conversation', created_at: null, updated_at: null, turn_completed_at: '2026-10-24T09:30:00.000Z' },
   });
 });
+
+it.each([false, true])('advertises the server clock capability with full browser context=%s', async (full) => {
+  const { calls, fetchImpl } = recordingFetch(() => new Response([
+    'data: {"type":"RUN_STARTED","threadId":"t1","runId":"r1"}',
+    'data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}',
+  ].join('\n\n') + '\n\n', { headers: { 'content-type': 'text/event-stream' } }));
+  const agent = directAgent({ fetchImpl, ...(full ? { temporaryChat: { sessionId: 't1', token: 'temporary-only' } } : {}) });
+  agent.addMessage({ id: 'question', role: 'user', content: 'Compare rates' });
+  await agent.runAgent({ runId: 'r1' });
+  expect(calls[0]?.init?.body).toContain('"worklog_clock":1');
+});

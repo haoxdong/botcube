@@ -12,6 +12,7 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple, NoReturn
 from unittest.mock import ANY
@@ -323,7 +324,7 @@ class _ServedSession(NamedTuple):
 
 
 def _serve_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory: _FakeAgentCoreMemory, *, session_id: str = 'session-1'
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory: _FakeAgentCoreMemory, *, session_id: str = 'session-1', canonical: bool = False
 ) -> _ServedSession:
     """Serve the selected public Session through the Harness, recorded in `memory`."""
     from ag_ui.core import RunAgentInput
@@ -364,7 +365,7 @@ def _serve_session(
             'tools': [],
             'context': [],
             'state': {},
-            'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', session_id)},
+            'forwarded_props': {'sessionUserId': 'user-1', 'turnIdentity': turn_identity('user-1', 'user-1', session_id), **({'worklog_clock': 1, 'turn_started_at': datetime.fromtimestamp(serving.message_times.now() / 1000, UTC).isoformat()} if canonical else {})},
         })
         received = [event async for event in serving.invoke(run, context)]
         lock = serving._SESSION_TURNS._locks.get(('user-1', session_id))
@@ -574,6 +575,7 @@ class _StoppedMidReplyModel(_ToolCallingModel):
 
     text_streamed: asyncio.Event | None = None
     then_ls: bool = False
+    failure: asyncio.Event | None = None
 
     async def _astream(
         self, messages: list[BaseMessage], *args: Any, **kwargs: Any
@@ -591,6 +593,9 @@ class _StoppedMidReplyModel(_ToolCallingModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content='', tool_call_chunks=[partial]))
         text_streamed, self.text_streamed = self.text_streamed, None
         text_streamed.set()
+        if self.failure is not None:
+            await self.failure.wait()
+            raise RuntimeError('The model failed while answering')
         await asyncio.Event().wait()
 
 
@@ -1241,3 +1246,63 @@ def retrieved_turn_failure(caplog: pytest.LogCaptureFixture, monkeypatch: pytest
     failures = [record for record in records if record.getMessage().startswith('Harness Turn failed')]
     assert failures
     assert all('code=INTERNAL_ERROR' in record.getMessage() and record.exc_info for record in failures)
+
+
+class _ClockSignals:
+    def __init__(self) -> None:
+        self.public_text = asyncio.Event()
+        self.advanced = asyncio.Event()
+
+    def observe(self, event: Any) -> None:
+        if event.type == 'TEXT_MESSAGE_CONTENT' and event.delta.endswith('rate risk.'):
+            self.public_text.set()
+        if event.type == 'STATE_DELTA':
+            for operation in event.delta:
+                if operation.op == 'add' and operation.path == '/worklog_clock' and operation.value['at'] == 9000:
+                    self.advanced.set()
+
+    def watching(self, put: Callable[[Any], None]) -> Callable[[Any], None]:
+        def received(event: Any) -> None:
+            put(event)
+            self.observe(event)
+        return received
+
+
+@pytest.mark.parametrize('failed', [False, True], ids=['stop', 'error'])
+def test_a_stopped_canonical_turn_keeps_its_terminal_clock_in_fresh_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed: bool) -> None:
+    from botcube_harness_deepagents import message_times, serving
+
+    at = 1000
+    monkeypatch.setattr(message_times, 'now', lambda: at)
+    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory(), canonical=True)
+    model = _StoppedMidReplyModel()
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
+    watching = serving._OpenReply.watching
+
+    async def exercise() -> None:
+        nonlocal at
+        signals = _ClockSignals()
+        monkeypatch.setattr(serving._OpenReply, 'watching', lambda reply, put: signals.watching(watching(reply, put)))
+        model.text_streamed = asyncio.Event()
+        if failed:
+            model.failure = asyncio.Event()
+        running = asyncio.create_task(session.events([{'id': 'clock-question', 'role': 'user', 'content': 'Explain duration'}]))
+        await _await_fixture_admission_or_public_completion(running, signals.public_text)
+        at = 9000
+        await _await_fixture_admission_or_public_completion(running, signals.advanced)
+        if failed:
+            assert model.failure is not None
+            model.failure.set()
+        else:
+            await _stop('run-1')
+        events = await running
+        frames = [operation.value for event in events if event.type == 'STATE_DELTA'
+                  for operation in event.delta if operation.op == 'add' and operation.path == '/worklog_clock']
+        saved = await session.replay()
+        assert saved[0]['metadata']['worklog_clock'] == frames[-1]
+        assert saved[-1]['content'] == 'Duration measures rate risk.'
+        assert saved[-1]['metadata']['timing_id'] in frames[-1]['steps']
+        assert frames[-1]['ended_at'] == 9000
+        assert events[-1].type == 'RUN_ERROR'
+
+    asyncio.run(exercise())

@@ -5,6 +5,7 @@ import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { takeOpeningResponse } from "botcube-ui-web/opening-requests";
 
 import { tap } from "rxjs";
+import { clockSubscriber, validateClockEvent } from "botcube-ui-web/worklog-clock";
 import { temporaryChatFetch, type TemporaryChat } from "botcube-ui-web/temporary-chat";
 import {
   EventType,
@@ -316,6 +317,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
     this.savedMessages = [...messages];
     this.fullContext = fullContext;
     this.onStopFailed = onStopFailed;
+    this.subscribe(clockSubscriber());
   }
 
   /** A Turn runs on after its stream closes, so a Stop also asks the Chat Service to stop it. */
@@ -397,8 +399,10 @@ class SavedMessagesHttpAgent extends HttpAgent {
    * tool calls the client already holds: the Chat Service cannot check what a stream appends to those.
    */
   protected override requestInit(input: RunAgentInput): RequestInit {
+    const forwardedProps = { ...input.forwardedProps, worklog_clock: 1 };
     if (this.fullContext) return super.requestInit({
       ...input,
+      forwardedProps,
       messages: input.messages.flatMap((message) => {
         if (message.role !== "assistant" || !message.toolCalls?.some(({ id }) => this.stoppedCallIds.has(id))) return [message];
         const toolCalls = message.toolCalls.filter(({ id }) => !this.stoppedCallIds.has(id));
@@ -414,7 +418,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
       ...input,
       messages: sent,
       forwardedProps: {
-        ...input.forwardedProps,
+        ...forwardedProps,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         heldMessageIds: held.map(({ id }) => id),
         heldToolCallIds: held.flatMap((message) => (message.role === "assistant" ? message.toolCalls ?? [] : []).map(({ id }) => id)),
@@ -450,6 +454,7 @@ class SavedMessagesHttpAgent extends HttpAgent {
   override run(input: RunAgentInput) {
     const turn = this.turn;
     return super.run(input).pipe(tap((event) => {
+      validateClockEvent(event);
       if (turn && (event.type === EventType.RUN_ERROR || event.type === EventType.RUN_FINISHED)) turn.ended = true;
     }));
   }

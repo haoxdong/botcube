@@ -92,7 +92,7 @@ from .files import (
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
-from .graph_stream import complete_before_root_end
+from .graph_stream import clock_events, complete_before_root_end
 from .lazy_files import TurnFiles, current_turn_files, turn_files
 from .llm import (
     PLAN_MODEL_PREFIX,
@@ -126,6 +126,7 @@ from .turn_state import (
     _session_config,
     _stopped,
     _Turn,
+    _turn_events,
 )
 
 log = logging.getLogger(__name__)
@@ -346,7 +347,9 @@ class _SessionAgent(LangGraphAgent):
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         self._asked = None
         try:
-            async with aclosing(super()._handle_stream_events(input)) as events:
+            source = super()._handle_stream_events(input)
+            timed = clock_events(source, lambda: self._model_lane, canonical=(input.forwarded_props or {}).get('worklog_clock') == 1)
+            async with aclosing(timed) as events:
                 async for event in events:
                     if event.type == EventType.RUN_STARTED and self._asked is not None:
                         event.timestamp = self._asked
@@ -569,6 +572,7 @@ class _SessionAgent(LangGraphAgent):
                 or (isinstance(message, AIMessage) and message.tool_calls and {call['id'] for call in message.tool_calls} <= called)
             )
         ]
+        message_times.resume_clock(merged['messages'])
         return merged
 
 
@@ -1270,10 +1274,12 @@ class _SessionTurns:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
                             await reply.answer_cut_calls(agent, session)
+                            await reply.keep_clock(agent, session, put)
                 if turn.work.cancelled():
                     _settle_finished_reuse(saver, False)
                     await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
                 elif completion is not None:
+                    await reply.keep_failed(completion, agent, session, put)
                     put(completion)
                     self._feed(session, turn, feeds)
                     _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
@@ -1292,21 +1298,6 @@ class _SessionTurns:
 
 
 _SESSION_TURNS = _SessionTurns()
-
-
-async def _turn_events(
-    agent: LangGraphAgent,
-    input_data: RunAgentInput,
-    put: Callable[[Any], None],
-) -> None:
-    async for event in agent.run(input_data):
-        if event.type != EventType.STATE_SNAPSHOT:
-            put(event)
-            if event.type == EventType.RUN_FINISHED:
-                graph_end = getattr(agent, '_graph_ended_at', None)
-                if graph_end is not None:
-                    log.info('Harness Turn graph timing run_id=%s graph_end_to_completion_ms=%.3f snapshot=omitted',
-                             input_data.run_id, (perf_counter() - graph_end) * 1000)
 
 
 def _is_assistant_text(event: Any) -> TypeGuard[TextMessageContentEvent]:

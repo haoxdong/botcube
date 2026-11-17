@@ -2659,6 +2659,47 @@ describe('Main Chat', () => {
     }
   });
 
+  it('uses authoritative Worklog progress through native state events without predicting client time', async () => {
+    const accepted = Date.parse('2026-11-16T12:00:00Z');
+    vi.useFakeTimers({ now: accepted + 1500 });
+    copilot.rows = true;
+    copilot.running = true;
+    const view = await renderPage();
+    const current = agent();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test' && init?.method === 'POST'
+        ? new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller; } }), { headers: { 'content-type': 'text/event-stream' } })
+        : chatService(url, init),
+    );
+    let turn!: Promise<unknown>;
+    await act(async () => {
+      current.addMessage({ id: 'server-progress-question', role: 'user', content: 'Compare rates' });
+      turn = current.runAgent({ runId: 'server-progress-run' }).catch(() => undefined);
+    });
+    const emit = async (event: Record<string, unknown>) => {
+      stream.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
+      await settle();
+      view.rerender(<Page />);
+      await settle();
+    };
+    try {
+      const clock = { version: 1, question_id: 'server-progress-question', started_at: accepted, at: accepted, steps: {} };
+      await emit({ type: 'RUN_STARTED', threadId: current.threadId, runId: 'server-progress-run', timestamp: accepted, metadata: { worklog_clock: clock } });
+      expect(current.state.worklog_clock).toMatchObject({ at: accepted });
+      expect(document.querySelector('.worklog-title')).toHaveTextContent(/^Working · 0s$/);
+      await act(async () => { vi.advanceTimersByTime(10000); });
+      expect(document.querySelector('.worklog-title')).toHaveTextContent(/^Working · 0s$/);
+      await emit({ type: 'STATE_DELTA', delta: [{ op: 'add', path: '/worklog_clock', value: { ...clock, at: accepted + 2000 } }] });
+      expect(document.querySelector('.worklog-title')).toHaveTextContent(/^Working · 2s$/);
+      await act(async () => { vi.advanceTimersByTime(10000); });
+      expect(document.querySelector('.worklog-title')).toHaveTextContent(/^Working · 2s$/);
+    } finally {
+      await emit({ type: 'RUN_FINISHED', threadId: current.threadId, runId: 'server-progress-run' });
+      await act(async () => { stream.close(); await turn; });
+    }
+  });
+
   // The cursor stood for the model's first ~7 s on a Main Turn: from RUN_STARTED, the Worklog's head says it works.
   describe('once the run starts', () => {
     const question: Message = { id: 'started-question', role: 'user', content: 'What moved the 10y?' };
