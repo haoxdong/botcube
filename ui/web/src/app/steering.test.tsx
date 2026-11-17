@@ -172,11 +172,10 @@ it('keeps a message the Harness took first until its bubble lands', async () => 
   expect(outcome).toBe('taken');
   expect(stored().map(({ id }) => id)).toEqual([taken.id]);
   act(() => agent.setMessages([{ ...taken, role: 'user' }]));
-  await waitFor(() => expect(result.current.waiting).toEqual([]));
   await waitFor(() => expect(localStorage.getItem('botcube.steering:account:thread')).toBeNull());
 });
 
-it('reports a failed withdrawal and keeps the message waiting', async () => {
+it('returns a failed withdrawal and keeps the message waiting', async () => {
   vi.mocked(fetch).mockImplementation(async (_url, init) => init?.method === 'DELETE' ? new Response(null, { status: 502 }) : Response.json({ accepted: true }));
   const { result, failed } = setup();
   act(() => { result.current.steer('Still waiting'); });
@@ -186,7 +185,7 @@ it('reports a failed withdrawal and keeps the message waiting', async () => {
   let outcome: string | undefined;
   await act(async () => { outcome = await result.current.withdraw(message.id); });
   expect(outcome).toBe('failed');
-  expect(failed).toHaveBeenCalledWith('Withdrawing failed: HTTP 502. Your message is still waiting.');
+  expect(failed).not.toHaveBeenCalled();
   expect(result.current.waiting.map(({ content }) => content)).toEqual(['Still waiting']);
 });
 
@@ -232,10 +231,22 @@ it('sends one message now and keeps the others steering the new Turn', async () 
   let outcome: string | undefined;
   await act(async () => { outcome = await result.current.sendNow(now.id); });
   expect(outcome).toBe('withdrawn');
-  expect(result.current.waiting.map(({ content }) => content)).toEqual(['Keep steering']);
+  expect(result.current.waiting.map(({ content, now: sending }) => [content, sending])).toEqual([['Keep steering', undefined], ['Do this now', true]]);
   rerender({ running: false, ready: true });
   await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith('Do this now'));
   expect(stored().map(({ content }) => content)).toEqual(['Keep steering']);
   rerender({ running: true, ready: true });
   await waitFor(() => expect(requests('POST').map(({ body }) => JSON.parse(body).content)).toEqual(['Keep steering', 'Do this now', 'Keep steering']));
+});
+
+it('keeps a taken message waiting until its words arrive, then lets the sent row take its place', async () => {
+  const { result, agent } = setup();
+  act(() => { result.current.steer('Taken by the run'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(1));
+  const [taken] = result.current.waiting;
+  if (taken === undefined) throw new Error('No waiting message');
+  act(() => agent.setMessages([{ id: taken.id, role: 'user', content: '' }]));
+  expect(result.current.waiting.map(({ id }) => id)).toEqual([taken.id]);
+  act(() => agent.setMessages([{ id: taken.id, role: 'user', content: 'Taken by the run' }]));
+  await waitFor(() => expect(result.current.waiting).toEqual([]));
 });

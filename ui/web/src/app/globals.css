@@ -9,6 +9,7 @@
 @import "./tokens.css";
 @import "./chat.css";
 @import "./composer.css";
+@import "./waiting-steering.css";
 @import "./markdown.css";
 @import "./shell.css";
 @import "./components.css";

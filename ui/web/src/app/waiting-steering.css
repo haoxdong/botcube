@@ -1,0 +1,134 @@
+.waiting-message-bubble {
+  cursor: default;
+}
+
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) > .cpk\:prose.waiting-message-bubble {
+  border-bottom-right-radius: var(--radius-xl) !important;
+}
+
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage > .cpk\:prose:first-child {
+  border-top-right-radius: var(--radius-xl) !important;
+}
+
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage.copilotKitMessage {
+  margin-top: 10px;
+}
+
+.waiting-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  height: 28px;
+  margin-top: 8px;
+  padding-inline-end: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  line-height: var(--leading);
+}
+
+.waiting-message-swap {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+
+.waiting-message-swap > * {
+  grid-area: 1 / 1;
+}
+
+.waiting-message-send-now {
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.waiting-message-send-now:focus-visible,
+.waiting-message-icon:focus-visible {
+  background: var(--color-fill);
+  outline: 2px solid var(--color-blue);
+  outline-offset: -2px;
+}
+
+.waiting-message-icons {
+  display: flex;
+  gap: 2px;
+  margin-inline-end: calc((17px - 28px) / 2);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.waiting-message-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  outline: none;
+}
+
+.waiting-message-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+@media (hover: hover) {
+  .waiting-message-icon:hover {
+    background: var(--color-fill);
+    color: var(--color-text);
+  }
+}
+
+.waiting-message:is([data-open], :has(.waiting-message-icon:focus-visible)) .waiting-message-icons {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.waiting-message:is([data-open], :has(.waiting-message-icon:focus-visible)) .waiting-message-send-now {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .waiting-message-actions,
+  .waiting-message-send-now,
+  .waiting-message-icon {
+    height: 44px;
+  }
+
+  .waiting-message-actions {
+    margin-top: 2px;
+  }
+
+  .waiting-message-icon {
+    width: 44px;
+  }
+
+  .waiting-message-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .waiting-message-icons {
+    margin-inline-end: calc((20px - 44px) / 2);
+  }
+}
+
+.waiting-message:has(.waiting-message-send-now:focus-visible) .waiting-message-send-now {
+  opacity: 1;
+}
+
+.waiting-message:has(.waiting-message-send-now:focus-visible) .waiting-message-icons {
+  opacity: 0;
+}

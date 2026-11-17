@@ -1,85 +1,174 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { Popover } from "@base-ui/react/popover";
-import { m as motionElement } from "framer-motion";
-import { X } from "lucide-react";
-import { CollapseList, FadeItem, Presence, presenceMotion } from "./collapse";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { LazyMotion, domMax, m } from "framer-motion";
+import { Pencil, X } from "lucide-react";
+import { USER_MESSAGE_CLASS } from "./bubble-width";
+import { Collapse, Fade, Presence, useInstant } from "./collapse";
+import { motionTokens } from "./motion-tokens";
 import { sentFilesOf } from "./composer-files";
-import type { PendingMessage } from "./steering";
+import type { PendingMessage, Withdrawal } from "./steering";
 
 export const SHOWS_WAITING_STEERING = process.env.NEXT_PUBLIC_WAITING_STEERING === "1";
 const SHOWS_SEND_NOW = process.env.NEXT_PUBLIC_SEND_NOW === "1";
 
-function lineOf(content: string): string {
+type Closing = { message: PendingMessage; after: string | null };
+type Row = { message: PendingMessage; shown: boolean };
+
+function textOf(content: string): string {
   const { text, paths } = sentFilesOf(content);
   return text.trim() || paths.map((path) => path.split("/").pop()).join(", ");
 }
 
-function SendNow({ onSendNow }: { onSendNow: (() => void) | undefined }) {
-  if (!onSendNow) return null;
-  return <Popover.Close className="mep-option" onClick={onSendNow}><span className="mep-option-name">Send now</span></Popover.Close>;
+function rowsOf(waiting: PendingMessage[], closing: Map<string, Closing>): Row[] {
+  const rows = waiting.map((message) => ({ message, shown: true }));
+  for (const { message, after } of closing.values()) {
+    if (rows.some((row) => row.message.id === message.id)) continue;
+    const before = after === null ? -1 : rows.findIndex((row) => row.message.id === after);
+    rows.splice(after !== null && before === -1 ? rows.length : before + 1, 0, { message, shown: false });
+  }
+  return rows;
 }
 
-type RowProps = { line: string; onSendNow: (() => void) | undefined; onEdit: () => void };
+const userRowIds = (list: Element | null | undefined) =>
+  new Set([...list?.querySelectorAll<HTMLElement>(".copilotKitUserMessage[data-message-id]") ?? []].map((row) => row.dataset.messageId ?? ""));
 
-function RowButton({ line, onEdit }: RowProps) {
-  return <button type="button" className="composer-waiting-text" title="Edit" onClick={onEdit}>{line}</button>;
+function useArrivesInPlace(waiting: PendingMessage[]) {
+  const listRef = useRef<Element | null>(null);
+  const before = useRef<{ waiting: Set<string>; rows: Set<string> }>({ waiting: new Set(), rows: new Set() });
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const now = { waiting: new Set(waiting.map(({ id }) => id)), rows: userRowIds(list) };
+    const left = [...before.current.waiting].filter((id) => !now.waiting.has(id));
+    for (const id of left.length > 0 ? now.rows : []) {
+      if (before.current.rows.has(id) && !left.includes(id)) continue;
+      const row = list?.querySelector(`.copilotKitUserMessage[data-message-id="${CSS.escape(id)}"]`);
+      for (const animation of row?.getAnimations() ?? []) {
+        if (animation instanceof CSSAnimation && animation.animationName === "messageIn") animation.finish();
+      }
+    }
+    before.current = now;
+  });
+  return (row: HTMLElement | null) => {
+    if (row?.parentElement) listRef.current = row.parentElement;
+  };
 }
 
-function RowMenu({ line, onSendNow, onEdit }: RowProps) {
-  const popup = useRef<HTMLDivElement>(null);
+function useOpenRow(): [string | null, (id: string | null) => void] {
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (open === null) return undefined;
+    const close = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || event.target.closest(`[data-waiting-id="${CSS.escape(open)}"]`) === null) setOpen(null);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  return [open, setOpen];
+}
+
+function WaitingMessage({ message, shown, last, onClosed, list, open, onToggle, onSendNow, onEdit, onCancel, outcome }: {
+  message: PendingMessage;
+  shown: boolean;
+  last: boolean;
+  onClosed: () => void;
+  list: (row: HTMLElement | null) => void;
+  open: boolean;
+  onToggle: () => void;
+  onSendNow: (() => void) | undefined;
+  onEdit: () => void;
+  onCancel: () => void;
+  outcome: Withdrawal | undefined;
+}) {
+  const text = textOf(message.content);
+  const sent = outcome === "taken" || message.now === true;
+  const instant = useInstant();
+  const { move, quick } = motionTokens();
+  const [hovered, setHovered] = useState(false);
+  useEffect(() => {
+    if (!shown && instant) onClosed();
+  }, [shown, instant, onClosed]);
+  const closed = { height: 0, opacity: 0, marginBottom: last ? 0 : -4 };
   return (
-    <Popover.Root>
-      <Popover.Trigger className="composer-waiting-text" nativeButton>{line}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner className="standard-popup-positioner" side="top" align="start" sideOffset={8}>
-          <Popover.Popup ref={popup} initialFocus={(openType) => openType === "keyboard" || popup.current} className="mep-dropdown standard-popup composer-waiting-menu" aria-label={`Waiting message ${line}`}>
-            <SendNow onSendNow={onSendNow} />
-            <Popover.Close className="mep-option" onClick={onEdit}><span className="mep-option-name">Edit</span></Popover.Close>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+    <m.div
+      ref={list}
+      data-copilotkit
+      className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10 waiting-message"
+      data-waiting-id={message.id}
+      data-open={open || hovered ? "" : undefined}
+      onPointerEnter={(event: ReactPointerEvent<HTMLDivElement>) => setHovered(event.pointerType === "mouse")}
+      onPointerLeave={() => setHovered(false)}
+      inert={shown ? undefined : true}
+      style={{ overflow: shown ? undefined : "hidden" }}
+      initial={false}
+      animate={shown || instant ? { opacity: 1 } : closed}
+      transition={{ height: move, marginBottom: move, opacity: quick }}
+      {...(shown || instant ? {} : { onAnimationComplete: onClosed })}
+    >
+      <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
+      <Collapse open={!sent} appear={false}>
+        <div className="waiting-message-actions">
+          <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
+          <span className="waiting-message-swap">
+            <Presence>{onSendNow && (
+              <m.span key="send-now" exit={{ opacity: 0 }}>
+                <button type="button" className="waiting-message-send-now" onClick={onSendNow}>Send now</button>
+              </m.span>
+            )}</Presence>
+            <span className="waiting-message-icons">
+              <button type="button" className="waiting-message-icon" aria-label={`Edit ${text}`} onClick={onEdit}><Pencil aria-hidden="true" /></button>
+              <button type="button" className="waiting-message-icon" aria-label={`Cancel ${text}`} onClick={onCancel}><X aria-hidden="true" /></button>
+            </span>
+          </span>
+        </div>
+      </Collapse>
+    </m.div>
   );
 }
 
-const RowText = SHOWS_SEND_NOW ? RowMenu : RowButton;
-
-export function WaitingSteering({ waiting, onCancel, onEdit, onSendNow }: {
+export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
   waiting: PendingMessage[];
-  onCancel: (message: PendingMessage) => void;
+  withdraw: (id: string) => Promise<Withdrawal>;
+  sendNow: ((id: string) => Promise<Withdrawal>) | undefined;
   onEdit: (message: PendingMessage) => void;
-  onSendNow: ((message: PendingMessage) => void) | undefined;
 }) {
-  const marker = useRef<HTMLSpanElement>(null);
-  const [card, setCard] = useState<Element | null>(null);
-  useLayoutEffect(() => setCard(marker.current?.parentElement?.querySelector(".copilotKitInput") ?? null), []);
+  const list = useArrivesInPlace(waiting);
+  const [open, setOpen] = useOpenRow();
+  const [closing, setClosing] = useState(new Map<string, Closing>());
+  const [outcomes, setOutcomes] = useState(new Map<string, Withdrawal>());
+  const act = async (message: PendingMessage, request: (id: string) => Promise<Withdrawal>, closes: boolean) => {
+    const after = waiting[waiting.findIndex(({ id }) => id === message.id) - 1]?.id ?? null;
+    const outcome = await request(message.id);
+    setOutcomes((now) => new Map(now).set(message.id, outcome));
+    if (outcome !== "withdrawn" || !closes) return outcome;
+    setClosing((now) => new Map(now).set(message.id, { message, after }));
+    return outcome;
+  };
+  const send = SHOWS_SEND_NOW ? sendNow : undefined;
+  const rows = rowsOf(waiting, closing);
+  const closed = (id: string) => () => setClosing((now) => {
+    const next = new Map(now);
+    next.delete(id);
+    return next;
+  });
   return (
-    <>
-      <span ref={marker} hidden />
-      {card && createPortal(
-        <ul className="composer-waiting" aria-label="Waiting messages">
-          <CollapseList>
-            {waiting.map((message) => {
-              const line = lineOf(message.content);
-              return (
-                <FadeItem key={message.id} className="composer-waiting-row">
-                  <RowText line={line} onSendNow={onSendNow && (() => onSendNow(message))} onEdit={() => onEdit(message)} />
-                  <Presence>{SHOWS_SEND_NOW && message.missed && (
-                    <motionElement.span {...presenceMotion} className="composer-waiting-label">After this reply</motionElement.span>
-                  )}</Presence>
-                  <button type="button" className="composer-file-remove" aria-label={`Cancel ${line}`} onClick={() => onCancel(message)}>
-                    <X aria-hidden="true" />
-                  </button>
-                </FadeItem>
-              );
-            })}
-          </CollapseList>
-        </ul>,
-        card,
-      )}
-    </>
+    <LazyMotion features={domMax} strict>
+      {rows.map(({ message, shown }, index) => (
+          <WaitingMessage
+            key={message.id}
+            message={message}
+            shown={shown}
+            last={index === rows.length - 1}
+            onClosed={closed(message.id)}
+            list={list}
+            open={open === message.id}
+            onToggle={() => setOpen(open === message.id ? null : message.id)}
+            onSendNow={send && (() => void act(message, send, false))}
+            onEdit={() => void act(message, withdraw, true).then((outcome) => outcome === "withdrawn" && onEdit(message))}
+            onCancel={() => void act(message, withdraw, true)}
+            outcome={outcomes.get(message.id)}
+          />
+      ))}
+    </LazyMotion>
   );
 }

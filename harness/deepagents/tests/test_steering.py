@@ -6,7 +6,14 @@ from typing import Any
 import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
@@ -14,6 +21,12 @@ from botcube_harness_deepagents.steering import (
     PendingSteering,
     SteeringMiddleware,
     active_steering,
+)
+from test_session_resume import (
+    _FakeAgentCoreMemory,
+    _serve_session,
+    _stop,
+    _ToolCallingModel,
 )
 
 
@@ -291,3 +304,88 @@ def test_steering_resent_after_stop_reaches_the_model_once() -> None:
 
     assert inputs[1][-1].id == 'steer-x'
     assert [message.id for message in inputs[-1] if isinstance(message, HumanMessage)] == ['start', 'steer-x', 'send-now']
+
+
+
+_STEER_ID = 'steer-x'
+_STEERING_TEXT = 'Use the other date'
+
+
+class _StoppedWhileStreamingModel(_ToolCallingModel):
+    """Streams text on the step that takes the steering, then holds until Stop; holds any other step given a hold."""
+
+    inputs: Any = None
+    holds: Any = None
+
+    async def _astream(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
+        self.inputs.append(messages)
+        hold = self.holds.pop(0) if self.holds else None
+        if messages[-1].id == _STEER_ID and len(self.inputs) == 2:
+            yield ChatGenerationChunk(message=AIMessageChunk(content='Duration measures '))
+            yield ChatGenerationChunk(message=AIMessageChunk(content='rate risk.'))
+        if hold is not None:
+            hold[0].set()
+            await hold[1].wait()
+        for chunk in self._stream(messages, *args, **kwargs):
+            yield chunk
+
+
+async def _steer(run_id: str) -> list[Any]:
+    from ag_ui.core import RunAgentInput
+
+    from botcube_harness_deepagents import serving
+
+    control = RunAgentInput.model_validate({
+        'thread_id': 'session-1', 'run_id': run_id, 'messages': [{'id': _STEER_ID, 'role': 'user', 'content': _STEERING_TEXT}],
+        'tools': [], 'context': [], 'state': {}, 'forwarded_props': {'steering': True, 'sessionUserId': 'user-1'},
+    })
+    return [event async for event in serving.invoke(control, serving._RequestContext('agentcore-session-1'))]
+
+
+async def _steer_while_held(hold: tuple[asyncio.Event, asyncio.Event], run_id: str) -> None:
+    await asyncio.wait_for(hold[0].wait(), 5)
+    assert [event.value for event in await _steer(run_id)] == [{'accepted': True}]
+    hold[1].set()
+
+
+async def _stop_mid_text_then_resteer(session: Any, model: _StoppedWhileStreamingModel) -> None:
+    first_step, text_streamed, resent_step = [(asyncio.Event(), asyncio.Event()) for _ in range(3)]
+    model.holds.extend([first_step, text_streamed])
+    running = asyncio.create_task(session.events([{'id': 'user-message-1', 'role': 'user', 'content': 'Explain duration'}]))
+    await _steer_while_held(first_step, 'steer-1')
+    await asyncio.wait_for(text_streamed[0].wait(), 5)
+    assert model.inputs[1][-1].id == _STEER_ID
+    await _stop('run-1')
+    events = await running
+    assert (events[-1].type, events[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
+
+    replayed = await session.replay()
+    assert [message['id'] for message in replayed if message['role'] == 'user'] == ['user-message-1', _STEER_ID]
+    resent = [{key: value for key, value in message.items() if key != 'metadata'} for message in replayed]
+    model.holds.append(resent_step)
+    again = asyncio.create_task(session.events([*resent, {'id': 'user-message-2', 'role': 'user', 'content': 'Again'}]))
+    await _steer_while_held(resent_step, 'steer-2')
+    assert (await again)[-1].type == 'RUN_FINISHED'
+
+
+def _assert_steering_once_in_place(stopped: list[BaseMessage], step: list[BaseMessage]) -> None:
+    assert [message.id for message in step if message.id == _STEER_ID] == [_STEER_ID]
+    assert [message.content for message in step if message.content == _STEERING_TEXT] == [_STEERING_TEXT]
+    assert [(type(message), message.content) for message in step[:len(stopped)]] == [(type(message), message.content) for message in stopped]
+    assert [message.text for message in step if isinstance(message, AIMessage) and message.text] == ['Duration measures rate risk.']
+    ids = [message.id for message in step if message.id]
+    assert len(ids) == len(set(ids))
+
+
+def test_steering_resent_after_stop_mid_text_reaches_the_model_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from botcube_harness_deepagents import serving
+
+    session = _serve_session(tmp_path, monkeypatch, _FakeAgentCoreMemory())
+    model = _StoppedWhileStreamingModel(inputs=[], holds=[])
+    monkeypatch.setattr(serving, 'build_model', lambda **_kwargs: model)
+
+    asyncio.run(asyncio.wait_for(_stop_mid_text_then_resteer(session, model), 10))
+
+    assert len(model.inputs) > 2
+    for step in model.inputs[2:]:
+        _assert_steering_once_in_place(model.inputs[1], step)

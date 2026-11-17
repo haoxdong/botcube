@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { AbstractAgent } from "@ag-ui/client";
+import type { AbstractAgent, Message } from "@ag-ui/client";
 import { z } from "zod";
 import { messageWithFiles, sentFilesOf } from "./composer-files";
 
@@ -29,6 +29,8 @@ function carryOver(pending: PendingMessage[], withdrawing: Set<string>) {
   return { carried, kept, text, sentNow: now.length > 0 };
 }
 
+export const shows = (message: Message) => message.role !== "user" || Boolean(message.content);
+
 export function forgetSteering() {
   for (const key of Object.keys(localStorage)) if (key.startsWith(KEY)) localStorage.removeItem(key);
 }
@@ -53,6 +55,7 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
   const delivery = useRef(Promise.resolve());
   const dropped = useRef(0);
   const withdrawing = useRef(new Set<string>());
+  const nowIds = useRef(new Set<string>());
 
   useEffect(() => {
     const subscription = agent.subscribe({ onMessagesChanged: () => refresh((value) => value + 1) });
@@ -96,7 +99,9 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
     const { carried, kept, text, sentNow } = carryOver(pending, withdrawing.current);
     if (!ready || carried.length === 0 || !current.current.submit(text)) return;
     store(key, kept);
-    if (sentNow) for (const { id } of kept) sending.current.delete(id);
+    if (!sentNow) return;
+    for (const { id } of carried) nowIds.current.delete(id);
+    for (const { id } of kept) sending.current.delete(id);
   }
   async function post(message: PendingMessage) {
     try {
@@ -151,17 +156,20 @@ export function useSteering({ agent, accountId, threadId, running, ready, servic
       return "withdrawn";
     } catch (error) {
       withdrawing.current.delete(id);
-      failed(`${error instanceof Error ? error.message : String(error)}. Your message is still waiting.`);
+      console.error("Withdrawing a waiting message failed", error);
       return "failed";
     } finally {
       refresh((value) => value + 1);
     }
   };
-  const waiting = running && accountId !== undefined
+  const waiting = accountId !== undefined && (running || nowIds.current.size > 0)
     ? [...read(key), ...(unsaved.current.get(key) ?? [])].filter((message, index, all) =>
-      all.findIndex(({ id }) => id === message.id) === index && !message.now && !agent.messages.some(({ id }) => id === message.id))
+      all.findIndex(({ id }) => id === message.id) === index && (running || message.now === true) && !agent.messages.some((sent) => sent.id === message.id && shows(sent)))
     : [];
   const withdraw = (id: string) => withdrawThen(id, forget);
-  const sendNow = (id: string) => withdrawThen(id, (sent) => mark(sent, { now: true }));
+  const sendNow = (id: string) => withdrawThen(id, (sent) => {
+    nowIds.current.add(sent);
+    return mark(sent, { now: true });
+  });
   return { steer, drop, waiting, withdraw, sendNow };
 }

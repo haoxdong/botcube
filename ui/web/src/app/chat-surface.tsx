@@ -50,8 +50,8 @@ import { showsProposalCard } from "./worklog-tools";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
-import { useSteering, type PendingMessage, type Withdrawal } from "./steering";
-import { SHOWS_WAITING_STEERING, WaitingSteering } from "./waiting-steering";
+import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
+import { SHOWS_WAITING_STEERING, WaitingMessages } from "./waiting-steering";
 import { useAgentRunning } from "./agent-running";
 
 const MotionButton = motionElement.create(Button);
@@ -110,6 +110,8 @@ const ComposerStop = createContext<{ current: (() => void) | null } | null>(null
 const ServerTurn = createContext<{ running: boolean; stop: (() => void) | null }>({ running: false, stop: null });
 const SteeringDrop = createContext<{ current: (() => void) | null } | null>(null);
 const SteeringWaiting = createContext<{ waiting: PendingMessage[]; withdraw: (id: string) => Promise<Withdrawal>; sendNow: (id: string) => Promise<Withdrawal> } | null>(null);
+type LentComposer = { edit: (content: string) => void; stopTurn: (() => void) | undefined };
+const WaitingComposer = createContext<{ current: LentComposer | null } | null>(null);
 
 function useDropSteering(): () => void {
   const holder = useContext(SteeringDrop);
@@ -154,24 +156,23 @@ function useComposerActions(submit: Submit | undefined, stop: (() => void) | und
   });
 }
 
-/** The waiting steering stack; the flag and the context are fixed for a page, and its rows own their presence. */
-function ComposerWaiting({ text, onChange, stopTurn }: {
-  text: { current: string };
-  onChange: (value: string) => void;
-  stopTurn: (() => void) | undefined;
-}) {
-  const steering = useContext(SteeringWaiting);
-  if (!SHOWS_WAITING_STEERING || !steering) return null;
-  const edit = async ({ id, content }: PendingMessage) => {
-    if (await steering.withdraw(id) !== "withdrawn") return;
-    onChange(text.current.trim() ? `${content}\n\n${text.current}` : content);
-  };
-  const sendNow = stopTurn && (async ({ id }: PendingMessage) => {
-    if (await steering.sendNow(id) === "withdrawn") stopTurn();
+function useLendComposer(text: { current: string }, onChange: (value: string) => void, stopTurn: (() => void) | undefined) {
+  const holder = useContext(WaitingComposer);
+  useLayoutEffect(() => {
+    if (holder !== null) holder.current = { edit: (content) => onChange(text.current.trim() ? `${content}\n\n${text.current}` : content), stopTurn };
   });
-  return (
-    <WaitingSteering waiting={steering.waiting} onCancel={({ id }) => void steering.withdraw(id)} onEdit={(message) => void edit(message)} onSendNow={sendNow && ((message) => void sendNow(message))} />
-  );
+}
+
+function ThreadWaiting() {
+  const steering = useContext(SteeringWaiting);
+  const composer = useContext(WaitingComposer);
+  if (!SHOWS_WAITING_STEERING || !steering || !composer) return null;
+  const sendNow = async (id: string) => {
+    const outcome = await steering.sendNow(id);
+    if (outcome === "withdrawn") composer.current?.stopTurn?.();
+    return outcome;
+  };
+  return <WaitingMessages waiting={steering.waiting} withdraw={steering.withdraw} sendNow={sendNow} onEdit={({ content }) => composer.current?.edit(content)} />;
 }
 
 function ComposerInput(props: CopilotChatInputProps) {
@@ -201,9 +202,9 @@ function ComposerInput(props: CopilotChatInputProps) {
   const text = useRef("");
   text.current = props.value ?? draft;
   const onChange = (value: string) => { setDraft(value); props.onChange?.(value); compose(); };
+  useLendComposer(text, onChange, stopTurn);
   return (
     <>
-      <ComposerWaiting text={text} onChange={onChange} stopTurn={stopTurn} />
       {attached && <ComposerFilePicker attached={attached} picker={picker} />}
       <Presence>{accessory && (
         <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:sm:px-0">
@@ -482,7 +483,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
   const { running: onServer } = useContext(ServerTurn);
   return (
     <>
-      <CopilotChatMessageView {...props} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
+      <CopilotChatMessageView {...props} {...props.messages && { messages: props.messages.filter(shows) }} assistantMessage={ASSISTANT_MESSAGE_SLOT} userMessage={USER_MESSAGE} reasoningMessage={REASONING_MESSAGE}>
         {({ messageElements, messages, isRunning, interruptElement }) => {
           const last = messages.at(-1);
           return (
@@ -493,6 +494,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="cpk:mt-2"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
               {isRunning && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
+              <ThreadWaiting />
 
             </div>
           );
@@ -725,6 +727,7 @@ function ChatThread({
   const fileDrop = useFileDrop(attachedFiles.add);
 
   const composerStop = useRef<(() => void) | null>(null);
+  const waitingComposer = useRef<LentComposer | null>(null);
 
   const pickerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -772,6 +775,7 @@ function ChatThread({
       <ServerTurn.Provider value={{ running: turnRunsOnServer, stop: stopServerTurn }}>
       <ComposerAccessory.Provider value={composerAccessory}>
       <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
+      <WaitingComposer.Provider value={waitingComposer}>
       <Compose.Provider value={compose}>
       <AttachedFiles.Provider value={attachedFiles}>
       <OpenScheduledRun.Provider value={onOpenRun ?? null}>
@@ -809,6 +813,7 @@ function ChatThread({
       </OpenScheduledRun.Provider>
       </AttachedFiles.Provider>
       </Compose.Provider>
+      </WaitingComposer.Provider>
       </SteeringWaiting.Provider>
       </ComposerAccessory.Provider>
       </ServerTurn.Provider>
