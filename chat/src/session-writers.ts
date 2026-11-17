@@ -20,6 +20,11 @@ export type RegisteredDispatch = (() => Promise<void>) & {
 };
 
 export type RegisteredSessionDispatch = RegisteredDispatch & { readonly session: SessionPurge };
+export interface SessionWriterHolder {
+  token: string;
+  createdAt: string;
+  scheduled: boolean;
+}
 const dispatcherId = `${hostname()}:${process.pid}:${randomUUID()}`;
 
 /**
@@ -37,6 +42,13 @@ type WriterItem = { pk: string; sk: string; dispatcher?: string } & Record<strin
 export class SessionWriters {
   constructor(private readonly tableName: string, private readonly documents: DynamoDBDocumentClient) {}
 
+  async holder(session: SessionPurge, refusedToken?: string): Promise<SessionWriterHolder | undefined> {
+    const token = refusedToken ?? (await this.documents.send(new GetCommand({ TableName: this.tableName, Key: writerControlKey(session), ConsistentRead: true }))).Item?.external_token;
+    if (typeof token !== 'string') return undefined;
+    const { Item } = await this.documents.send(new GetCommand({ TableName: this.tableName, Key: dispatchKey(session, token), ConsistentRead: true }));
+    return { token, createdAt: typeof Item?.created_at === 'string' ? Item.created_at : 'unknown', scheduled: Item?.writer_control === 'session-post' };
+  }
+
   /** The writer's registration and its count on the Session's writer control; a scheduled post holds the control exclusively. */
   registration(session: SessionPurge, token: string, kind: 'runtime' | 'session-post', rejectedCount = 0): [TransactItem, TransactItem] {
     return [
@@ -45,6 +57,7 @@ export class SessionWriters {
         TableName: this.tableName, Key: writerControlKey(session),
         UpdateExpression: kind === 'runtime' ? 'ADD runtime_writers :one' : 'SET external_token = :token',
         ConditionExpression: 'attribute_not_exists(external_token)' + (kind === 'runtime' ? '' : rejectedCount === 0 ? ' AND (attribute_not_exists(runtime_writers) OR runtime_writers = :zero)' : ' AND runtime_writers = :zero'),
+        ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
         ExpressionAttributeValues: kind === 'runtime' ? { ':one': 1 } : { ':token': token, ':zero': rejectedCount },
       } },
     ];

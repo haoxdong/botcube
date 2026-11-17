@@ -177,7 +177,7 @@ describe('a scheduled run', () => {
         tools: [], context: [], state: {}, forwardedProps: { model: 'plan' },
       } });
       expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ detail: 'The previous Turn is still going' });
+      expect(await response.json()).toEqual({ detail: 'Test Bot is still busy. Send your message again in a minute.', code: 'SESSION_BUSY' });
       expect(stack.agentcore.invocationFor(side).payload.messages).toHaveLength(1);
     } finally {
       release();

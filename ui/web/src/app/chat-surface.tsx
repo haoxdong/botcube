@@ -18,6 +18,7 @@ import {
   type CopilotChatMessageViewProps,
 } from "@copilotkit/react-core/v2";
 import { useDefaultRenderTool } from "@copilotkit/react-core/v2";
+import { z } from "zod";
 import type { AbstractAgent } from "@ag-ui/client";
 import { holdEnter, stopOnEscapeNoMenuTook } from "./composer-keys";
 import { runStarted, stoppedHere, toolCancellationStore, type SavedTurnFailure } from "./conversations";
@@ -240,6 +241,7 @@ const RunStarted = createContext(false);
 const OpensAt = createContext<string | null>(null);
 
 const couldNotAnswer = (message: string): TurnFailure => ({ message: `The agent could not answer: ${message}` });
+const busyRefusal = z.object({ code: z.literal("SESSION_BUSY"), detail: z.string() });
 
 function eventsOf(scroller: Element): EventTarget {
   return scroller === document.scrollingElement ? window : scroller;
@@ -608,7 +610,10 @@ function ChatThread({
   const [runError, setRunError] = useState<TurnFailure | null>(null);
   const submittedQuestion = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (savedFailure !== null) setRunError(couldNotAnswer(savedFailure.message));
+    if (savedFailure === null) return;
+    setRunError((previous) => savedFailure.code === "SESSION_BUSY"
+      ? previous?.message === savedFailure.message ? previous : { message: savedFailure.message }
+      : couldNotAnswer(savedFailure.message));
   }, [savedFailure]);
   const accountRef = useRef({ models, isAccountCurrent, selectedModel });
   accountRef.current = { models, isAccountCurrent, selectedModel };
@@ -680,6 +685,18 @@ function ChatThread({
     startMoment("send-acknowledged");
     submittedQuestion.current = message;
     void submit(message);
+    return true;
+  };
+  const showBusyRefusal = (error: Error) => {
+    const parsed = busyRefusal.safeParse("payload" in error ? error.payload : undefined);
+    if (!("status" in error) || error.status !== 409 || !parsed.success) return false;
+    const question = submittedQuestion.current;
+    setRunError({ message: parsed.data.detail, question, ...(question === undefined ? {} : { retry: () => {
+      const submit = composerSubmit.current;
+      if (submit === null) return;
+      const last = agent.messages.at(-1);
+      submitTurn(question, last?.role === "user" && last.content === question ? () => { void copilotkit.runAgent({ agent }); } : submit);
+    } }) });
     return true;
   };
   const steeringDrop = useContext(SteeringDrop);
@@ -776,6 +793,7 @@ function ChatThread({
               // A failed request leaves open whether the service accepted the Turn.
               const status = (error as Error & { status?: unknown }).status;
               const failed = "code" in event && event.code.startsWith("agent_run_failed");
+              if (failed && showBusyRefusal(error)) return;
               const unconfirmed = failed && /^5\d\d$/.test(String(status));
               setRunError({
                 ...(unconfirmed ? { message: `${UI_CONFIG.title} couldn't confirm your message was received. Check this chat before sending it again.` } : couldNotAnswer(error.message)),

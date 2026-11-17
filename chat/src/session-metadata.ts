@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ScheduledRunStore } from './scheduled-run-store.js';
 import { assertContinuable, oneIdSession, type SessionIdentity, type SessionPurge } from './session-identity.js';
-import { REGISTRATION_EXPIRY_MS, SessionWriters, SessionWriterRecoveryError, writerControlKey, type RegisteredDispatch, type RegisteredSessionDispatch } from './session-writers.js';
+import { REGISTRATION_EXPIRY_MS, SessionWriters, SessionWriterRecoveryError, writerControlKey, type RegisteredDispatch, type RegisteredSessionDispatch, type SessionWriterHolder } from './session-writers.js';
 
 import {
   ConditionalCheckFailedException,
@@ -69,8 +69,9 @@ export class SessionDeletedError extends Error {}
 
 export class SessionUnissuedError extends Error {}
 
-/** A Scheduled task's Side Chat already has a Turn going: two Turns never interleave there, so the newcomer is refused. */
-export class SessionBusyError extends Error {}
+export class SessionBusyError extends Error {
+  constructor(message: string, readonly holder?: SessionWriterHolder) { super(message); }
+}
 
 export class SessionConcurrencyError extends Error {}
 
@@ -606,7 +607,7 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
     const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
     const writes = transaction.TransactItems ?? [];
     const controlIndex = writes.findIndex((item) => item.Update?.Key?.pk === writerControlKey(identity.session).pk);
-    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw new SessionBusyError('Session persistence writer is still active');
+    if (reasons?.[controlIndex]?.Code === 'ConditionalCheckFailed') throw new SessionBusyError('Session persistence writer is still active', await this.writers.holder(identity.session, reasons[controlIndex].Item?.external_token?.S));
     if (reasons?.[2]?.Code !== 'ConditionalCheckFailed') return false;
     const current = await this.getSessionItem(identity.dispatchOwner, identity.session.session_id);
     return current !== null && current.snapshot_epoch !== identity.snapshotEpoch;
@@ -754,9 +755,10 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
   }
 
   private async refusedTurnDispatch(error: unknown, owner: string, session: Readonly<SessionPurge>, snapshotEpoch: string | undefined, accepted: boolean, fallback: () => Promise<RegisteredSessionDispatch>): Promise<RegisteredSessionDispatch> {
-    const failed = (index: number) => (error as Partial<TransactionCanceledException>).CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
+    const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
+    const failed = (index: number) => reasons?.[index]?.Code === 'ConditionalCheckFailed';
     if (failed(0)) throw new SessionDeletedError(session.session_id);
-    if (failed(4)) throw new SessionBusyError('Session persistence writer is still active');
+    if (failed(4)) throw new SessionBusyError('Session persistence writer is still active', await this.writers.holder(session, reasons?.[4]?.Item?.external_token?.S));
     if (failed(1)) {
       if (accepted) return fallback();
       throw new SessionClaimError(owner);

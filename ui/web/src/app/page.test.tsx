@@ -1015,6 +1015,30 @@ describe('a failed Turn', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it.each([false, true])('keeps a refused scheduled-post question and resends it in one tap without adding it twice, replay replaced messages %s', async (replaced) => {
+    await renderPage();
+    const question = 'Please keep this exact question.';
+    await sendMessage(question);
+    const detail = 'Pebble is still posting a scheduled task. Send your message again in a minute.';
+    const onError = present(copilot.chat?.onError, 'the chat onError') as (event: { error: Error; code: string }) => void;
+    await act(async () => {
+      onError({ error: Object.assign(new Error('HTTP 409'), { status: 409, payload: { code: 'SESSION_BUSY', detail } }), code: 'agent_run_failed_event' });
+    });
+    if (replaced) {
+      service.mainChat = { id: 'main-1', messages: [], failure: { runId: 'busy-run', code: 'SESSION_BUSY', message: detail } };
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => init?.method === 'POST' && new URL(url).pathname === '/'
+        ? Response.json({ code: 'SESSION_BUSY', detail }, { status: 409 }) : chatService(url, init));
+      await act(async () => { await expect(agent().runAgent({ runId: 'busy-run' })).rejects.toMatchObject({ status: 409 }); });
+      await settle();
+    }
+    expect(screen.getByRole('alert')).toHaveTextContent(detail);
+    expect(present(document.querySelector('.chat-failed-question'), 'the retained question')).toHaveTextContent(question);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(copilot.runAgent).toHaveBeenCalledTimes(2);
+    expect(agent().messages.filter((message) => message.role === 'user' && message.content === question)).toHaveLength(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('keeps a question after a 502 with actionable copy and no resend', async () => {
     await renderPage();
     const question = 'Without using any tools: reply with just the word DELTA.';

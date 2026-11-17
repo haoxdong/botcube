@@ -12,18 +12,14 @@ import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle
 import { forwardTurnIdentity, type TurnIdentity } from './turn-identity.js';
 import { TurnTiming } from './turn-timing.js';
 import type { TurnQuota } from './turn-quota.js';
-import { persistedTurnError, turnErrorDetails, turnCredentials, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
+import { turnErrorDetails, turnCredentials, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type bedrockTurnSummarizer } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
+import { dispatchAfterWriter, preparationFailure, turnAccessError } from './turn-preparation.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
 const BOTCUBE_CREDENTIAL_PROPS = ['temporary', 'agentComputerCdpUrl', 'credentialServiceInvocationToken', 'credentialServiceUrl', 'files'];
-
-function preparationFailure(error: unknown, credentials: readonly string[]): TurnFailure {
-  const message = error instanceof Error ? error.message : String(error);
-  return { code: 'TURN_PREPARATION_FAILED', message: persistedTurnError(turnErrorDetails(message, credentials)) };
-}
 
 async function runError(stream: string, credentials: readonly string[]): Promise<string | null> {
   const events = await readTurnEvents(stream, credentials);
@@ -149,6 +145,7 @@ export function turnRoutes(
       timing.mark('model');
       await turnQuota?.admit(requester.owner, c.req.header('cf-connecting-ip'), requester.rateTier === 'authenticated');
       const documents = Promise.allSettled([agentDocuments.get(requester.owner, cartridge.agentDocuments)]);
+      const accessError = (error: unknown) => turnAccessError(error, documents, cartridge.agentDocuments);
       const running = { startedAt: new Date().toISOString(), runId: input.runId };
       const request = validatedInput.messages.slice().reverse().find((message) => message.role === 'user');
       let prepared: PreparedTurn;
@@ -174,7 +171,7 @@ export function turnRoutes(
             `Model ${JSON.stringify(model.key)} is from ${model.provider}; this Session runs on ${error.provider} models`,
           );
         }
-        throw sessionAccessError(error);
+        throw await accessError(error);
       }
       timing.mark('admitted');
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
@@ -198,7 +195,7 @@ export function turnRoutes(
         timing.mark('liveView');
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
         await warming.until(requester.owner, input.threadId, config.warmupTimeoutMs);
-        const complete = await prepared.dispatch();
+        const complete = await dispatchAfterWriter(prepared, input.threadId, input.runId, c.req.raw.signal);
         forwardSnapshotEpoch(payload.forwardedProps, complete);
         timing.mark('dispatch');
         return await relayTurn({ label: upstream.label, invoke: (body, _sessionId, init) => upstream.invokeRegistered(body, complete.session, complete, init) }, {
@@ -230,12 +227,13 @@ export function turnRoutes(
           active: () => sessionMetadata.turnActive?.(requester.owner, input.threadId, running),
         });
       } catch (error) {
+        const mapped = await accessError(error);
         try {
-          await end(preparationFailure(error, credentials));
+          await end(preparationFailure(mapped, credentials));
         } catch (cleanupError) {
           throw new AggregateError([error, cleanupError], 'Turn preparation failed and its running mark could not be cleared');
         }
-        throw sessionAccessError(error);
+        throw mapped;
       }
     } catch (error) {
       timing.finish();
