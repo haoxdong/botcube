@@ -1,9 +1,10 @@
 """AgentCore Memory under the Session's credentials (ADR 0067 §8).
 
-The Chat Service signs a per-Turn JWT tagged with the Turn's actor, the Session's filing
-actor and the Session. STS ``AssumeRoleWithWebIdentity`` turns it into credentials of the
-Memory role, whose policy reads those tags. A Turn whose JWT carries the tags of credentials
-already held, more than 5 minutes from expiry, reuses them and calls no STS. The microVM's one
+Each Turn's identity names the Turn's actor, the Session's filing actor and the Session. Under the
+``web-identity`` adapter it is a JWT carrying them as tags, which STS ``AssumeRoleWithWebIdentity``
+turns into credentials of the Memory role, whose policy reads those tags. Under ``assume-role`` it
+is credentials the Chat Service already assumed, with a session policy naming them. A Turn whose
+identity names what credentials already held cover, more than 5 minutes from expiry, reuses them and calls no STS. The microVM's one
 ``bedrock-agentcore`` client signs with the newest credentials and serves its checkpointer,
 store, ``memory`` tool, Pending Memory and turn feed, so Turns reuse its open connections. The
 Agent Service's own role holds no Memory permission.
@@ -48,9 +49,9 @@ from .snapshot import FragmentedSnapshotClient
 from .warm_session import WarmSessionSaver
 
 __all__ = [
-    'MemorySandboxError', 'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store',
+    'MemorySandboxError', 'TurnIdentity', 'TurnIdentityError', 'build_checkpointer', 'build_memory_tools', 'build_store',
     'finished_snapshot_epoch', 'is_access_denied', 'next_turn', 'opening',
-    'prime_memory_client', 'prime_spare', 'sts_client', 'turn_memory',
+    'prime_memory_client', 'prime_spare', 'require_turn_identity', 'sts_client', 'turn_memory',
 ]
 
 USER_MEMORY_ROLE_ARN = os.getenv('BOTCUBE_USER_MEMORY_ROLE_ARN', '')
@@ -68,6 +69,12 @@ _AWS_CONFIG = Config(connect_timeout=2, read_timeout=5,
                      max_pool_connections=_MEMORY_CONNECTIONS)
 # A Turn exchanges its JWT again when the credentials held for its tags expire within this.
 _REUSE_MARGIN = timedelta(minutes=5)
+
+
+TurnIdentity = str | dict[str, Any]
+"""A web-identity JWT, or the Chat Service's session-policy credentials with the scope they cover."""
+_SCOPE = ('actorId', 'filingActorId', 'sessionId', 'writesPrefix')
+_ASSUMED_FIELDS = (*_SCOPE, 'turnId', 'accessKeyId', 'secretAccessKey', 'sessionToken', 'expiration')
 
 
 class TurnIdentityError(RuntimeError):
@@ -234,7 +241,7 @@ def next_turn() -> int:
 
 
 def turn_memory(
-    memory_id: str, turn_identity: str, *, region_name: str, run_id: str, turn: int,
+    memory_id: str, turn_identity: TurnIdentity, *, region_name: str, run_id: str, turn: int,
 ) -> tuple[WarmSessionSaver, AgentCoreMemoryStore]:
     """The Turn's checkpointer and store, on the microVM's Memory client, signing with credentials for the Turn's tags.
 
@@ -269,8 +276,21 @@ def turn_memory(
     return WarmSessionSaver(memory_id, store.client), store
 
 
-def _tags(turn_identity: str) -> dict[str, list[str]]:
-    """The session tags the Turn's JWT carries, which STS checks on each exchange."""
+def require_turn_identity(turn_identity: Any) -> TurnIdentity:
+    """The forwarded Turn identity, either shape, or a refusal naming what is missing."""
+    if isinstance(turn_identity, str) and turn_identity:
+        return turn_identity
+    if isinstance(turn_identity, dict):
+        if missing := [field for field in _ASSUMED_FIELDS if not isinstance(turn_identity.get(field), str) or not turn_identity[field]]:
+            raise TurnIdentityError(f'The Turn credentials lack {", ".join(missing)}')
+        return turn_identity
+    raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
+
+
+def _tags(turn_identity: TurnIdentity) -> dict[str, list[str]]:
+    """What the Turn's credentials cover: the JWT's session tags, which STS checks on each exchange, or the assumed scope."""
+    if isinstance(turn_identity, dict):
+        return {key: [turn_identity[key]] for key in _SCOPE}
     return _claims(turn_identity)[_TAGS_CLAIM]['principal_tags']
 
 
@@ -279,14 +299,18 @@ def _claims(turn_identity: str) -> dict[str, Any]:
     return json.loads(base64.urlsafe_b64decode(claims + '=' * (-len(claims) % 4)))
 
 
-def finished_snapshot_epoch(turn_identity: str | None, marker: Any) -> str | None:
+def _turn_id(turn_identity: TurnIdentity) -> Any:
+    return turn_identity['turnId'] if isinstance(turn_identity, dict) else _claims(turn_identity).get('jti')
+
+
+def finished_snapshot_epoch(turn_identity: TurnIdentity | None, marker: Any) -> str | None:
     """Bind registered writer proof to the JWT Chat issued for this invocation."""
     if not isinstance(marker, dict) or not turn_identity:
         return None
     epoch, turn_id = marker.get('epoch'), marker.get('turnId')
     if not isinstance(epoch, str) or not epoch or not isinstance(turn_id, str) or not turn_id:
         return None
-    return epoch if _claims(turn_identity).get('jti') == turn_id else None
+    return epoch if _turn_id(turn_identity) == turn_id else None
 
 
 def _sandbox(tags: dict[str, list[str]]) -> tuple[str, str]:
@@ -300,7 +324,10 @@ def sts_client(region_name: str) -> Any:
     return boto3.client('sts', region_name=region_name, config=_AWS_CONFIG.merge(Config(signature_version=UNSIGNED)))
 
 
-def _turn_credentials(turn_identity: str, *, region_name: str, run_id: str) -> tuple[Credentials, datetime]:
+def _turn_credentials(turn_identity: TurnIdentity, *, region_name: str, run_id: str) -> tuple[Credentials, datetime]:
+    if isinstance(turn_identity, dict):
+        return (Credentials(turn_identity['accessKeyId'], turn_identity['secretAccessKey'], turn_identity['sessionToken']),
+                datetime.fromisoformat(turn_identity['expiration']))
     if not USER_MEMORY_ROLE_ARN:
         raise RuntimeError('AgentCore Memory needs BOTCUBE_USER_MEMORY_ROLE_ARN, the role the Turn identity assumes')
     # AssumeRoleWithWebIdentity is an unsigned call: the JWT is the only credential it takes.

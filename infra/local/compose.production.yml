@@ -2,9 +2,11 @@
 services:
   chat-table-init:
     image: botcube-production-harness
-    build: &production-harness
+    # BotCube's Harness image, with no bot; the harness service builds the example bot FROM it.
+    build:
       context: ../../harness/deepagents
       dockerfile: Dockerfile
+      target: harness
   vault-table-init:
     image: botcube-production-credential
     build: &production-credential
@@ -32,10 +34,11 @@ services:
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/health"]
   harness:
-    image: botcube-production-harness
-    build: *production-harness
+    image: botcube-production-example-bot
+    build:
+      additional_contexts:
+        harness: service:chat-table-init
     environment:
-      BOTCUBE_CARTRIDGE_MODULE: botcube_always_on.harness
       OTEL_TRACES_EXPORTER: console
   session-api:
     image: botcube-production-session-api

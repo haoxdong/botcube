@@ -526,3 +526,22 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ── Agent Profile: Sign-ins tab ── */
+.sign-ins { display: flex; flex-direction: column; gap: 12px; }
+.sign-ins-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sign-in {
+  display: grid;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 12px 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "name status" "user status" "actions actions";
+}
+.sign-in-name { font-weight: var(--weight-semibold); grid-area: name; font-size: var(--font-body); }
+.sign-in-username { color: var(--color-text-muted); font-size: var(--font-small); grid-area: user; }
+.sign-in-status { align-self: start; grid-area: status; }
+.sign-in-actions { display: flex; gap: 8px; grid-area: actions; margin-top: 8px; }
+.sign-in-actions button:disabled { opacity: 0.5; cursor: default; }
+.sign-in-warning,
+.sign-in-error { margin: 0; color: var(--color-red); font-size: var(--font-small); }

@@ -16,9 +16,10 @@ import {
   wakeAgentComputer,
   type AgentComputerState,
   type DockApp,
-  type ShellCommand,
 } from './agent-computer';
 import { FilesApp } from './files-app';
+import { ScreenshotBrowserFrame } from './screenshot-browser-frame';
+import type { ShellCommand } from './terminal';
 
 import { loadLiveView, type BrowserLiveFrameProps } from './browser-live-frame';
 
@@ -61,7 +62,7 @@ export function shellCommands(messages: readonly Message[]): ShellCommand[] {
 }
 
 /** The Computer tab: the open chat's Agent Computer, with Take-over and Stop, its Terminal, and the account's Files. */
-export function ComputerView({ agentName, conversation, shown, activity, onConnectionChange, chatServiceUrl, onRequestError, BrowserFrame }: ComputerViewProps & { chatServiceUrl: string; onRequestError?: (cause: Error) => void; BrowserFrame?: ComponentType<BrowserLiveFrameProps> }) {
+export function ComputerView({ agentName, conversation, shown, activity, onConnectionChange, chatServiceUrl, onRequestError, BrowserFrame }: ComputerViewProps & { chatServiceUrl: string; BrowserFrame?: ComponentType<BrowserLiveFrameProps> }) {
   const { running } = activity;
   let commands: ShellCommand[] = [];
   let terminalError: TerminalArgumentsError | null = null;
@@ -272,7 +273,7 @@ export function ComputerView({ agentName, conversation, shown, activity, onConne
     >
       {({ computer }) => (
         <AgentComputer
-          BrowserFrame={BrowserFrame}
+          BrowserFrame={BrowserFrame ?? (computer.state === "awake" && computer.liveView === "screenshots" ? ScreenshotBrowserFrame : undefined)}
           agentName={agentName}
           active={shown && !checking}
           chatId={conversation.id}

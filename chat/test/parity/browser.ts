@@ -62,9 +62,9 @@ export class Browser {
   }
 
   /** Send one Turn (`POST /`) and return the response. */
-  sendTurn(threadId: string, options: { text?: string; forwardedProps?: object } = {}): Promise<Response> {
+  sendTurn(threadId: string, options: { text?: string; forwardedProps?: object; headers?: Record<string, string> } = {}): Promise<Response> {
     return this.post('/', runAgentInput(threadId, options), {
-      headers: { accept: 'text/event-stream' },
+      headers: { accept: 'text/event-stream', ...options.headers },
     });
   }
 

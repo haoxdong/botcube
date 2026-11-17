@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
-import { TEMPLATE_IDENTITY } from '../../../identity';
+import bot from '../../../../../examples/bot/bot.json';
 
 export const unhandledChatRequests: string[] = [];
 
@@ -41,12 +41,12 @@ const SCREEN = `data:image/svg+xml,${encodeURIComponent(
 export const SESSION = { accountId: 'template-account', signInNeeded: false };
 const ANSWERS: Record<string, unknown> = {
   '/account/session': SESSION,
-  '/account/sign-ins': { signIns: [{ site: 'template-site', status: 'linked' }] },
+  '/account/sign-ins': { signIns: [{ site: 'fake-site', name: 'Template site', status: 'linked' }] },
   '/agent/identity': {
-    name: TEMPLATE_IDENTITY.name,
+    name: bot.agentIdentity.name,
     character: 'A template agent',
     vibe: 'Direct, precise, and calm',
-    avatar: TEMPLATE_IDENTITY.avatar,
+    avatar: bot.agentIdentity.avatar,
   },
   '/agent/soul': { content: 'Lead with the answer, then the evidence behind it.\nBe candid about what you found, what you could not find, and how sure you are.\nRespect the user\'s time: no filler, no flattery.\nLearn how this user likes to work, and adapt to it.' },
   '/agent/memory': { lines: [] },
@@ -58,7 +58,7 @@ const ANSWERS: Record<string, unknown> = {
       { id: 't2', title: 'say hi', updatedAt: ago(3000) },
     ],
   },
-  '/agent': { name: TEMPLATE_IDENTITY.name, avatar: TEMPLATE_IDENTITY.avatar, picture: null, status: 'online' },
+  '/agent': { name: bot.agentIdentity.name, avatar: bot.agentIdentity.avatar, picture: null, status: 'online' },
   '/agent/models': { models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] },
   '/scheduled-tasks': { tasks: [] },
   '/activity': {
@@ -72,7 +72,7 @@ export function reply(path: string, body: unknown, status = 200) {
   );
 }
 
-const AWAKE = { state: 'awake', browserSessionId: 'browser-shot', control: 'agent', screenshot: null };
+const AWAKE = { state: 'awake', browserSessionId: 'browser-shot', control: 'agent', screenshot: null, liveView: 'screenshots' };
 
 /** The awake computer's view: its state, wake, and the browser's image. */
 export const awakeComputer = {

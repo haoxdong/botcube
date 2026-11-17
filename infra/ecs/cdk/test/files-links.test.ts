@@ -26,7 +26,7 @@ function synth(parked: boolean, context: Record<string, unknown> = {}) {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com'], corsOrigins: [],
     runtimeArn: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime',
-    sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'reap.js'], authBrowserId: 'test-browser',
+    sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live',
     chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'),
   });
   const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });

@@ -33,6 +33,9 @@ import { useAgentRunning } from "./agent-running";
 import { ChatLoadState, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";
 import { webUiPlugin } from "@cartridge-ui";
+import { AGENT_THEME, BOT_SETTINGS } from "../bot-settings";
+import { AgentComputerView } from "../computer/agent-computer-view";
+import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../cartridge/index.js";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { SidebarRow } from "@/components/ui/sidebar-row";
@@ -51,7 +54,8 @@ const ChatColumn = lazy(() => import("./artifact-panel").then(({ ArtifactLayout 
 const ArtifactLibrary = lazy(() => import("./artifact-library").then(({ ArtifactLibrary }) => ({ default: ArtifactLibrary })));
 const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
 
-const { config: UI_CONFIG, ComputerView } = webUiPlugin;
+const LiveBrowser = BOT_SETTINGS.agentComputer.liveBrowser ? LiveBrowserPanel : () => null;
+const { config: UI_CONFIG } = webUiPlugin;
 const AGENT_ID = UI_CONFIG.agentId;
 const CHAT_SERVICE_URL = chatServiceUrl();
 
@@ -217,7 +221,7 @@ export default function App({
   }[screen];
 
   return (
-    <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...webUiPlugin.theme, ...swipe.style, ...profileSwipe.style, ...viewportStyle }}>
+    <div ref={layoutRef} className="app-layout" data-sidebar-swiping={swipe.swiping || undefined} data-sidebar-dragging={swipe.dragging || undefined} data-profile-swiping={profileSwipe.swiping || undefined} data-profile-dragging={profileSwipe.dragging || undefined} style={{ ...AGENT_THEME, ...swipe.style, ...profileSwipe.style, ...viewportStyle }}>
       <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`} inert={profileSwipe.open}>
         <div className="sidebar-top">
           <div className="sidebar-brand">
@@ -350,14 +354,7 @@ export default function App({
             )}</Presence>
             </ChatColumn>
             {layoutElement !== null && activeId !== null && createPortal(<>
-              {webUiPlugin.auxiliaryPanels?.map((Panel, index) => (
-                <Panel
-                  key={index}
-                  agentId={AGENT_ID}
-                  conversation={{ id: activeId, service: "chat-service" }}
-                />
-              ))}
-              {webUiPlugin.toolResultRenderers?.map((Renderer, index) => <Renderer key={index} />)}
+              <LiveBrowser agentId={AGENT_ID} conversation={{ id: activeId, service: "chat-service" }} />
               {auth.overlay}
             </>, layoutElement)}
             </>}
@@ -375,9 +372,9 @@ export default function App({
           chatServiceUrl={CHAT_SERVICE_URL}
           profile={agentProfile}
           error={agentProfileError}
-          computer={ComputerView && ((shown) => (
+          computer={BOT_SETTINGS.agentComputer.enabled ? ((shown) => (
             <ChatComputers
-              View={ComputerView}
+              View={AgentComputerView}
               agentId={AGENT_ID}
               agentName={agentName}
               current={activeId === null ? null : { conversation: { id: activeId, service: "chat-service" }, agent }}
@@ -385,8 +382,9 @@ export default function App({
               stop={chatStop?.chatId === activeId ? () => {
                 if (auth.isAccountCurrent?.(accountId) !== false) chatStop.stop();
               } : null}
+              signIns={auth.signIns}
             />
-          ))}
+          )) : undefined}
           onClose={profileSwipe.close}
           revision={agentDocumentsRevision}
           onSaved={() => void refreshAgentProfile()}
@@ -396,7 +394,8 @@ export default function App({
             void handleSelectConversation({ id, title });
           }}
           isAccountCurrent={() => auth.isAccountCurrent?.(accountId) !== false}
-          tabs={webUiPlugin.agentProfileTabs}
+          signIns={auth.signIns}
+          memory={BOT_SETTINGS.memory}
         />,
         layoutElement,
       )}

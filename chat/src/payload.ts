@@ -22,3 +22,26 @@ export async function jsonPayload(c: Context): Promise<Record<string, unknown> |
 export function requireExplicitConfirmation(payload: Record<string, unknown> | null, intent: string): void {
   if (payload?.confirmation !== intent) throw new HttpError(400, `Explicit ${intent} confirmation is required`);
 }
+
+export const isRecord =(value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const dropNulls = (value: unknown) =>
+  isRecord(value) ? Object.fromEntries(Object.entries(value).filter(([, field]) => field !== null)) : value;
+
+/** A run input without the nulls its optional fields may carry, as the AG-UI schema refuses them. */
+export function omitOptionalNulls(body: unknown): unknown {
+  if (!isRecord(body)) return body;
+  const input = dropNulls(body) as Record<string, unknown>;
+  for (const key of ['messages', 'tools', 'context']) {
+    if (Array.isArray(input[key])) input[key] = input[key].map(dropNulls);
+  }
+  if (Array.isArray(input.messages)) {
+    input.messages = input.messages.map((message: unknown) =>
+      isRecord(message) && Array.isArray(message.toolCalls)
+        ? { ...message, toolCalls: message.toolCalls.map(dropNulls) }
+        : message,
+    );
+  }
+  return input;
+}

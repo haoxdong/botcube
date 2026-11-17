@@ -59,3 +59,24 @@ async function browserBundleErrors(source: string): Promise<string[]> {
 it('bundles PptxGenJS, which the Slides PowerPoint Export loads, for the browser', async () => {
   expect(await browserBundleErrors("export const load = () => import('pptxgenjs');")).toEqual([]);
 });
+
+const webpackAliases = (config: Awaited<ReturnType<typeof createConfig>>) =>
+  config.webpack({ resolve: {} }, { isServer: false, webpack: nextWebpack }).resolve?.alias;
+
+it("builds the page with the example bot's settings when its build config names none", async () => {
+  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+
+  const config = await createConfig('phase-production-build');
+
+  expect(config.turbopack?.resolveAlias?.['@bot-settings']).toBe('../../examples/bot/bot.json');
+  expect(webpackAliases(config)).toMatchObject({ '@bot-settings': fileURLToPath(new URL('../../../../examples/bot/bot.json', import.meta.url)) });
+});
+
+it('builds the page with the bot settings its build config names', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'bot-build-config-'));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'build-config.cjs'), "module.exports = () => ({ botSettings: '/bots/quill/bot.json' });");
+  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', path.join(dir, 'build-config.cjs'));
+
+  expect(webpackAliases(await createConfig('phase-production-build'))).toMatchObject({ '@bot-settings': '/bots/quill/bot.json' });
+});

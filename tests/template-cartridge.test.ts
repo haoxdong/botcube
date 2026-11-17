@@ -41,7 +41,7 @@ describe('BotCube template Cartridge', () => {
       'utf8',
     );
 
-    const [base, cartridge] = dockerfile.split('FROM base AS cartridge');
+    const [base, cartridge] = dockerfile.split('FROM base AS harness');
     expect(base).toContain('node install.mjs /opt/browser');
     expect(base).toContain('cp "/opt/browser/$BIN" /usr/local/bin/agent-browser');
     expect(cartridge).not.toContain('/usr/local/bin/agent-browser');

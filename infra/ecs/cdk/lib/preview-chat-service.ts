@@ -7,14 +7,12 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as events from 'aws-cdk-lib/aws-events';
 import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as scheduler from 'aws-cdk-lib/aws-scheduler';
-import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
+import { addScheduledRuns, type ScheduledRunsProps } from './scheduled-runs.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 
 /** Adopters reserve these listener priorities and own all shared ALB attributes. */
@@ -26,25 +24,22 @@ export interface ChatServiceIngress {
   chatRulePriority: number;
 }
 
-export interface PreviewChatServiceProps {
+/** How the Chat Service authenticates to the Harness: the Deployment Config's `harnessAuth` section. */
+type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; audience: string };
+
+export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
-  scheduledRunsQueue?: sqs.IQueue;
+  /** The proxy variables every container gets: the Chat Service and its collector, and a product's own tasks. */
+  proxyEnvironment?: Record<string, string>;
+  /** The OTLP/HTTP traces endpoint the collector sidecar exports to; absent, X-Ray. */
+  otlpEndpoint?: string;
   metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'errors', string>>;
   taskFamily?: string;
-  reaperTaskFamily?: string;
   taskRoleName?: string;
   executionRoleName?: string;
-  reaperTaskRoleName?: string;
-  reaperExecutionRoleName?: string;
-  scheduledRunsQueueName?: string;
-  scheduledRunsFailedQueueName?: string;
-  scheduledRunsRoleName?: string;
-  reaperInvocationRoleName?: string;
   securityGroupName?: string;
-  reaperSecurityGroupName?: string;
   targetGroupName?: string;
-  reaperRuleName?: string;
   alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
   ingress?: ChatServiceIngress;
   vpc?: ec2.IVpc;
@@ -64,25 +59,13 @@ export interface PreviewChatServiceProps {
   alarmPeriodSeconds?: number;
   alarmEvaluationPeriods?: number;
   failureAlarmPeriodSeconds?: number;
-  reaperRetryAttempts?: number;
-  reaperMaxEventAgeSeconds?: number;
   cpu?: number;
   memoryLimitMiB?: number;
   port?: number;
   serviceName?: string;
   logGroupName?: string;
   logStreamPrefix?: string;
-  scheduleGroupName?: string;
-  reaperLogGroupName?: string;
-  reaperLogStreamPrefix?: string;
-  reaperCpu?: number;
-  reaperMemoryLimitMiB?: number;
-  reaperSchedule?: string;
-  reaperLogRetention?: logs.RetentionDays;
   containerStopTimeoutSeconds?: number;
-  scheduledRunVisibilitySeconds?: number;
-  scheduledRunRetentionDays?: number;
-  scheduledRunMaxReceiveCount?: number;
   drainSeconds?: number;
   browserId?: string;
   vpcId: string;
@@ -93,15 +76,14 @@ export interface PreviewChatServiceProps {
   rawHostnames?: string[];
   corsOrigins: string[];
   runtimeArn?: string;
+  /** Absent, SigV4: the task role invokes the Runtime. A JWT bearer needs no Runtime grant. */
+  harnessAuth?: HarnessAuth;
   /** The session API function the AgentCore stack deploys (ADR 0067 §5). */
   sessionApiFunctionName: string;
   /** The session API alias the AgentCore stack keeps initialized. */
   sessionApiAlias: string;
   chatTable: dynamodb.ITable;
   image: ecs.ContainerImage;
-  /** The auth-browser reaper's command, run in the Chat Service image. */
-  reaperCommand: string[];
-  authBrowserId: string;
 }
 
 function validateChatService(props: PreviewChatServiceProps): void {
@@ -109,6 +91,15 @@ function validateChatService(props: PreviewChatServiceProps): void {
   if ((!props.vpc && !props.subnets && props.privateSubnets.length < 2) || (!Token.isUnresolved(props.runtimeArn) && !/^arn:aws:bedrock-agentcore:[^:]+:\d{12}:runtime\/.+$/.test(props.runtimeArn ?? ''))) {
     throw new Error('Preview Chat Service requires private subnets and the deployed AgentCore runtime ARN');
   }
+}
+
+/** Lets the task sign its calls to the AgentCore Runtime, unless the Harness takes a bearer token instead. */
+function grantRuntimeInvocation(task: ecs.FargateTaskDefinition, runtimeArn: string | undefined, harnessAuth: HarnessAuth): void {
+  if (!runtimeArn || harnessAuth.kind !== 'sigv4') return;
+  for (const action of ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:StopRuntimeSession']) task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: [action],
+    resources: [runtimeArn, `${runtimeArn}/runtime-endpoint/*`],
+  }));
 }
 
 /** Deploy the Chat Service with the provided origin or adopter-owned ingress. */
@@ -120,6 +111,8 @@ export class PreviewChatService extends Construct {
   readonly task: ecs.FargateTaskDefinition;
   readonly container: ecs.ContainerDefinition;
   readonly service: ecs.FargateService;
+  /** The private subnets the service runs in, where a product's own tasks run beside it. */
+  readonly privateSubnetIds: string[];
   constructor(scope: Construct, id: string, props: PreviewChatServiceProps) {
     super(scope, id);
     const origin = Stack.of(this);
@@ -136,6 +129,7 @@ export class PreviewChatService extends Construct {
       ? vpc.selectSubnets(props.subnets ?? { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds
       : props.privateSubnets.map(subnet => subnet.id);
     if (selectedSubnets.length === 0) throw new Error('Preview Chat Service requires a non-empty private subnet selection');
+    this.privateSubnetIds = selectedSubnets;
     const cluster = this.cluster = new ecs.Cluster(this, 'Cluster', { vpc, clusterName: props.clusterName, containerInsightsV2: ecs.ContainerInsights.DISABLED });
     const ingress = this.network = new ec2.SecurityGroup(this, 'Ingress', { vpc, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
     allowIngress(ingress, ingressResources.securityGroup, port, Boolean(props.ingress));
@@ -147,14 +141,8 @@ export class PreviewChatService extends Construct {
     });
     nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
     props.chatTable.grantReadWriteData(task.taskRole);
-    if (props.runtimeArn) task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:InvokeAgentRuntime'],
-      resources: [props.runtimeArn, `${props.runtimeArn}/runtime-endpoint/*`],
-    }));
-    if (props.runtimeArn) task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:StopRuntimeSession'],
-      resources: [props.runtimeArn, `${props.runtimeArn}/runtime-endpoint/*`],
-    }));
+    const harnessAuth: HarnessAuth = props.harnessAuth ?? { kind: 'sigv4' };
+    grantRuntimeInvocation(task, props.runtimeArn, harnessAuth);
     // The Chat Service reaches Memory only through the session API; a Turn reaches it with its own tagged credentials.
     // The session API has no public endpoint; this grant is its only caller.
     const sessionApiFunctionArn = origin.formatArn({
@@ -179,6 +167,7 @@ export class PreviewChatService extends Construct {
       portMappings: [{ containerPort: port }],
       environment: {
         ...props.environment,
+        ...props.proxyEnvironment,
         AWS_DEFAULT_REGION: origin.region,
         AGENTCORE_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
@@ -195,6 +184,10 @@ export class PreviewChatService extends Construct {
       // Allow task-stop cleanup before ECS sends SIGKILL.
       stopTimeout: Duration.seconds(props.containerStopTimeoutSeconds ?? 120),
     });
+    // The collector batches the Chat Service's spans and exports them to X-Ray, or to the deployment's own collector.
+    const [exporter, exporterConfig] = props.otlpEndpoint
+      ? ['otlphttp', { traces_endpoint: props.otlpEndpoint }]
+      : ['awsxray', { region: origin.region }];
     const collector = task.addContainer('otel-collector', {
       image: ecs.ContainerImage.fromRegistry('public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0'),
       essential: false,
@@ -202,6 +195,7 @@ export class PreviewChatService extends Construct {
       memoryReservationMiB: 128,
       command: ['--config=env:OTEL_CONFIG'],
       environment: {
+        ...props.proxyEnvironment,
         AWS_REGION: origin.region,
         GOMEMLIMIT: '200MiB',
         OTEL_CONFIG: JSON.stringify({
@@ -210,8 +204,8 @@ export class PreviewChatService extends Construct {
             memory_limiter: { check_interval: '1s', limit_mib: 192, spike_limit_mib: 32 },
             batch: { timeout: '1s', send_batch_size: 64, send_batch_max_size: 128 },
           },
-          exporters: { awsxray: { region: origin.region } },
-          service: { pipelines: { traces: { receivers: ['otlp'], processors: ['memory_limiter', 'batch'], exporters: ['awsxray'] } } },
+          exporters: { [exporter]: exporterConfig },
+          service: { pipelines: { traces: { receivers: ['otlp'], processors: ['memory_limiter', 'batch'], exporters: [exporter] } } },
         }),
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'otel-collector', logGroup }),
@@ -219,93 +213,7 @@ export class PreviewChatService extends Construct {
     });
     this.container.addContainerDependencies({ container: collector, condition: ecs.ContainerDependencyCondition.START });
     task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'], resources: ['*'] }));
-    // Scheduled tasks: each task's schedule sends its run to a queue the Chat Service polls,
-    // since EventBridge Scheduler cannot call the Chat Service directly.
-    const scheduleGroup = props.scheduleGroupName ?? `${props.clusterName}-scheduled-tasks`;
-    new scheduler.CfnScheduleGroup(this, 'ScheduledTasks', { name: scheduleGroup });
-    const runs = props.scheduledRunsQueue ?? new sqs.Queue(this, 'ScheduledRuns', {
-      ...optionalPhysicalName('queueName', props.scheduledRunsQueueName),
-      // Longer than a run's stream, so a run in progress is not delivered twice.
-      visibilityTimeout: Duration.seconds(props.scheduledRunVisibilitySeconds ?? 900),
-      retentionPeriod: Duration.days(props.scheduledRunRetentionDays ?? 14),
-      deadLetterQueue: { queue: new sqs.Queue(this, 'ScheduledRunsFailed', { ...optionalPhysicalName('queueName', props.scheduledRunsFailedQueueName), retentionPeriod: Duration.days(props.scheduledRunRetentionDays ?? 14) }), maxReceiveCount: props.scheduledRunMaxReceiveCount ?? 3 },
-    });
-    const runsRole = new iam.Role(this, 'ScheduledRunsRole', { ...optionalPhysicalName('roleName', props.scheduledRunsRoleName), assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com') });
-    runs.grantSendMessages(runsRole);
-    runs.grantConsumeMessages(task.taskRole);
-    task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule', 'scheduler:GetSchedule'],
-      resources: [origin.formatArn({ service: 'scheduler', resource: 'schedule', resourceName: `${scheduleGroup}/*` })],
-    }));
-    task.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['scheduler:GetScheduleGroup'],
-      resources: [origin.formatArn({ service: 'scheduler', resource: 'schedule-group', resourceName: scheduleGroup })],
-    }));
-    runsRole.grantPassRole(task.taskRole);
-    this.container.addEnvironment('BOTCUBE_SCHEDULE_GROUP', scheduleGroup);
-    this.container.addEnvironment('BOTCUBE_SCHEDULER_ROLE_ARN', runsRole.roleArn);
-    this.container.addEnvironment('BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN', runs.queueArn);
-    this.container.addEnvironment('BOTCUBE_SCHEDULED_RUNS_QUEUE_URL', runs.queueUrl);
-    // Reuse the Chat Service image; the reaper runs its reap command against the login browser.
-    // The reaper needs no serving-role table/runtime permissions.
-    const reaper = new ecs.FargateTaskDefinition(this, 'ReaperTask', {
-      ...optionalPhysicalName('family', props.reaperTaskFamily),
-      cpu: props.reaperCpu ?? 256, memoryLimitMiB: props.reaperMemoryLimitMiB ?? 512,
-      ...(props.executionRole ? { executionRole: props.executionRole } : {}),
-      runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
-    });
-    nameTaskRoles(reaper, props.reaperTaskRoleName, props.reaperExecutionRoleName, props.executionRole);
-    const reaperBrowserId = props.authBrowserId;
-    const reaperBrowserArn = origin.formatArn({
-      service: 'bedrock-agentcore',
-      resource: 'browser-custom', resourceName: reaperBrowserId,
-    });
-    reaper.addToTaskRolePolicy(new iam.PolicyStatement({
-      actions: ['bedrock-agentcore:ListBrowserSessions', 'bedrock-agentcore:StopBrowserSession'],
-      resources: [reaperBrowserArn],
-    }));
-    const reaperLogs = new logs.LogGroup(this, 'ReaperLogs', {
-      logGroupName: props.reaperLogGroupName ?? `/${props.clusterName}/auth-browser-reaper-preview`, retention: props.reaperLogRetention ?? logs.RetentionDays.ONE_WEEK,
-    });
-    reaper.addContainer('reaper', {
-      image: props.image, command: props.reaperCommand,
-      environment: { AWS_DEFAULT_REGION: origin.region, AGENTCORE_REGION: origin.region, AGENTCORE_BROWSER_ID: reaperBrowserId },
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.reaperLogStreamPrefix ?? 'reaper', logGroup: reaperLogs }),
-    });
-    const reaperNetwork = new ec2.SecurityGroup(this, 'ReaperNetwork', { vpc, ...optionalPhysicalName('securityGroupName', props.reaperSecurityGroupName) });
-    const schedulerRole = new iam.Role(this, 'ReaperInvocationRole', {
-      ...optionalPhysicalName('roleName', props.reaperInvocationRoleName),
-      assumedBy: new iam.ServicePrincipal('events.amazonaws.com'),
-    });
-    schedulerRole.addToPolicy(new iam.PolicyStatement({
-      actions: ['ecs:RunTask'], resources: [reaper.taskDefinitionArn],
-      conditions: { ArnEquals: { 'ecs:cluster': cluster.clusterArn } },
-    }));
-    schedulerRole.addToPolicy(new iam.PolicyStatement({
-      actions: ['iam:PassRole'], resources: [reaper.taskRole.roleArn, reaper.obtainExecutionRole().roleArn],
-      conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
-    }));
-    const reaperSchedule = new events.CfnRule(this, 'ReaperSchedule', {
-      ...optionalPhysicalName('name', props.reaperRuleName),
-      scheduleExpression: props.reaperSchedule ?? 'rate(5 minutes)', state: parkState(this).string('ENABLED', 'DISABLED'),
-      description: 'Expire abandoned credential login browser sessions',
-      targets: [{
-        id: 'Reaper', arn: cluster.clusterArn, roleArn: schedulerRole.roleArn,
-        retryPolicy: { maximumRetryAttempts: props.reaperRetryAttempts ?? 0, maximumEventAgeInSeconds: props.reaperMaxEventAgeSeconds ?? 60 },
-        ecsParameters: {
-          taskDefinitionArn: reaper.taskDefinitionArn, launchType: 'FARGATE', taskCount: 1,
-          networkConfiguration: { awsVpcConfiguration: {
-            assignPublicIp: 'DISABLED', subnets: selectedSubnets,
-            securityGroups: [reaperNetwork.securityGroupId],
-          } },
-        },
-      }],
-    });
-    new CfnOutput(outputScope, 'ReaperBrowserId', { value: reaperBrowserId });
-    new CfnOutput(outputScope, 'ReaperTaskDefinitionArn', { value: reaper.taskDefinitionArn });
-    new CfnOutput(outputScope, 'ReaperRuleName', { value: reaperSchedule.ref });
-    new CfnOutput(outputScope, 'ReaperLogGroupName', { value: reaperLogs.logGroupName });
-    new CfnOutput(outputScope, 'ReaperSecurityGroupId', { value: reaperNetwork.securityGroupId });
+    addScheduledRuns(this, origin, task, this.container, props);
     const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.

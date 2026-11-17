@@ -3,7 +3,15 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import { startOpeningRequests } from 'botcube-ui-web/opening-requests';
-import { TemplateAuthProvider, SignInsTab } from './auth-provider';
+import { SignInsTab } from 'botcube-ui-web/sign-ins';
+import type { AuthUiState } from 'botcube-ui-web/cartridge';
+import { TemplateAuthProvider } from './auth-provider';
+
+/** BotCube's built-in Sign-ins tab, driven by the template's sign-in control, as the Agent Profile shows it. */
+function signInsTab(auth: AuthUiState) {
+  if (!auth.signIns) throw new Error('The template provides no Sign-ins control');
+  return <SignInsTab chatServiceUrl="http://local" control={auth.signIns} />;
+}
 
 function button(container: HTMLDivElement): HTMLButtonElement {
   const found = container.querySelector('button');
@@ -20,13 +28,14 @@ it('shows the server link state and links and unlinks from the Sign-ins tab', as
     if (input.endsWith('/start')) return Response.json({ linkId: 'link-1' });
     if (input.endsWith('/sign-in')) linked = true;
     if (input.endsWith('/unlink')) linked = false;
-    if (input.endsWith('/account/sign-ins')) return Response.json({ signIns: [{ status: linked ? 'linked' : 'not_linked' }] });
+    if (input.endsWith('/account/sign-ins')) return Response.json({ signIns: [{ site: 'fake-site', name: 'Template site', status: linked ? 'linked' : 'not_linked' }] });
     return Response.json({ status: linked ? 'linked' : 'not_linked' });
   });
   const container = document.createElement('div');
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{() => <SignInsTab />}</TemplateAuthProvider>));
+    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{signInsTab}</TemplateAuthProvider>));
+    expect(container.textContent).toContain('Template site');
     expect(container.textContent).toContain('Not linked');
     await act(async () => button(container).click());
     expect(container.textContent).toContain('Linked');
@@ -44,9 +53,8 @@ it('shows a failed Sign-ins load after the Account session succeeds', async () =
   const container = document.createElement('div');
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{() => <SignInsTab />}</TemplateAuthProvider>));
+    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{signInsTab}</TemplateAuthProvider>));
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Template sign-in HTTP 503');
-    expect(container.textContent).toContain('Sign-ins unavailable');
   } finally {
     await act(async () => root.unmount());
     vi.unstubAllGlobals();
@@ -153,12 +161,31 @@ it('consumes the boot session response without creating a second anonymous accou
   const container = document.createElement('div');
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{() => <SignInsTab />}</TemplateAuthProvider>));
+    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{signInsTab}</TemplateAuthProvider>));
     expect(container.textContent).toContain('Not linked');
     expect(fetch.mock.calls.filter(([url]) => url.endsWith('/account/session'))).toHaveLength(1);
   } finally {
     await act(async () => root.unmount());
     delete window.__botcubeOpeningRequests;
+    vi.unstubAllGlobals();
+  }
+});
+
+it("signs in through the deployment's OIDC provider when the Chat Service names it, returning to this page", async () => {
+  vi.stubGlobal('fetch', async (input: string) => input.endsWith('/account/session')
+    ? Response.json({ accountId: 'visitor', signInNeeded: false, authenticated: false, signIn: 'oidc' })
+    : Response.json({ signIns: [{ status: 'not_linked' }] }));
+  const assign = vi.fn();
+  vi.stubGlobal('location', { ...window.location, href: 'http://ui.example/chat?x=1', assign });
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{(auth) => <button type="button" onClick={auth.login}>{auth.status}</button>}</TemplateAuthProvider>));
+    expect(button(container).textContent).toBe('unauthed');
+    await act(async () => button(container).click());
+    expect(assign).toHaveBeenCalledWith(`http://local/auth/oidc/login?return_to=${encodeURIComponent('http://ui.example/chat?x=1')}`);
+  } finally {
+    await act(async () => root.unmount());
     vi.unstubAllGlobals();
   }
 });

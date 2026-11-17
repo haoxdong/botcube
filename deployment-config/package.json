@@ -1,0 +1,23 @@
+{
+  "name": "botcube-deployment-config",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "botcube": "./cli.ts"
+  },
+  "exports": {
+    ".": "./schema.ts",
+    "./load": "./load.ts",
+    "./parse": "./parse.ts",
+    "./footprint": "./footprint.ts",
+    "./models": "./models.ts",
+    "./environment": "./environment.ts"
+  },
+  "scripts": {
+    "emit": "node emit.ts",
+    "footprint": "node cli.ts footprint"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}

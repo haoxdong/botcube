@@ -1,33 +1,31 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Globe, Lock } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Lock } from 'lucide-react';
 import { takeOpeningResponse } from 'botcube-ui-web/opening-requests';
-import type { AuthProviderProps } from 'botcube-ui-web/cartridge';
-import { Button, ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle, StatusPill } from 'botcube-ui-web/ui';
+import type { AuthProviderProps, SignInsControl } from 'botcube-ui-web/cartridge';
 
-interface SignInState {
-  status: 'loading' | 'linked' | 'not_linked' | 'error';
-  error: string | null;
-  busy: boolean;
-  signIn: () => void;
-  unlink: () => void;
-}
+type SignInStatus = 'loading' | 'linked' | 'not_linked' | 'error';
 function accountSession(payload: Record<string, unknown>) {
   if (typeof payload.accountId !== 'string' || !payload.accountId || typeof payload.signInNeeded !== 'boolean') {
     throw new Error('Template Account session is malformed');
   }
-  return { accountId: payload.accountId, signInNeeded: payload.signInNeeded };
+  return { accountId: payload.accountId, signInNeeded: payload.signInNeeded, oidc: payload.signIn === 'oidc' ? { authenticated: payload.authenticated === true } : null };
 }
 
-const SignInContext = createContext<SignInState | null>(null);
+/** Sign in with the deployment's OIDC provider: the Chat Service sends the browser there and back to this page. */
+function oidcLogin(chatServiceUrl: string) {
+  window.location.assign(`${chatServiceUrl}/auth/oidc/login?return_to=${encodeURIComponent(window.location.href)}`);
+}
 
 export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderProps) {
-  const [status, setStatus] = useState<SignInState['status']>('loading');
+  const [status, setStatus] = useState<SignInStatus>('loading');
   const [accountId, setAccountId] = useState<string>();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [signInNeeded, setSignInNeeded] = useState(false);
+  const [oidc, setOidc] = useState<{ authenticated: boolean } | null>(null);
+  const [revision, setRevision] = useState(0);
   const signInRevision = useRef(0);
   async function call(path: string, body?: unknown) {
     const response = await ((path === '/account/session' ? takeOpeningResponse(`${chatServiceUrl}${path}`) : null) ?? fetch(`${chatServiceUrl}${path}`, {
@@ -45,6 +43,7 @@ export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderP
     void call('/account/session').then(accountSession).then(async (session) => {
       sessionReady = true;
       if (active) setAccountId(session.accountId);
+      if (active) setOidc(session.oidc);
       if (active) setSignInNeeded(session.signInNeeded);
       const body = await call('/account/sign-ins');
       const signIn: unknown = Array.isArray(body.signIns) ? body.signIns[0] : undefined;
@@ -69,7 +68,10 @@ export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderP
   function action(operation: () => Promise<'linked' | 'not_linked'>) {
     setBusy(true);
     setError(null);
-    void operation().then(setStatus, (cause: Error) => setError(cause.message)).finally(() => setBusy(false));
+    void operation().then((next) => {
+      setStatus(next);
+      setRevision((current) => current + 1);
+    }, (cause: Error) => setError(cause.message)).finally(() => setBusy(false));
   }
   const signIn = () => action(async () => {
     signInRevision.current += 1;
@@ -82,33 +84,20 @@ export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderP
     return 'linked';
   });
   const unlink = () => action(async () => { await call('/account/fake-site-link/unlink', {}); return 'not_linked'; });
-  return <SignInContext.Provider value={{ status, error, busy, signIn, unlink }}>
-    {children({ sessionStatus: accountId ? 'ready' : status === 'error' ? 'error' : 'loading', accountId, status: accountId ? 'authed' : status === 'error' ? 'error' : 'loading', error, login: signIn, relink: signIn, logout: unlink,
+  const logout = () => {
+    void call('/auth/logout', {}).then(() => window.location.reload(), (cause: Error) => setError(cause.message));
+  };
+  const account = oidc === null
+    ? { status: accountId ? 'authed' as const : status === 'error' ? 'error' as const : 'loading' as const, login: signIn, logout: unlink }
+    : { status: oidc.authenticated ? 'authed' as const : 'unauthed' as const, login: () => oidcLogin(chatServiceUrl), logout };
+  // BotCube's Sign-ins tab lists the site from the Chat Service; the template signs in and out with no warning to confirm.
+  const signIns: SignInsControl = { signIn, signOut: unlink, confirmSignOut: unlink, cancelSignOut: () => {}, warning: null, busy, error, revision };
+  return <>
+    {children({ sessionStatus: accountId ? 'ready' : status === 'error' ? 'error' : 'loading', accountId, ...account, error, relink: signIn,
       composerAccessory: signInNeeded ? (
         <button type="button" className="template-sign-in-chip" disabled={busy} onClick={signIn}><Lock aria-hidden="true" />Sign in needed</button>
       ) : undefined,
+      signIns,
     })}
-  </SignInContext.Provider>;
-}
-
-export function SignInsTab() {
-  const state = useContext(SignInContext);
-  if (!state) throw new Error('Template Sign-ins needs its auth provider');
-  const label = state.status === 'linked' ? 'Linked' : state.status === 'not_linked' ? 'Not linked' : state.status === 'loading' ? 'Loading Sign-ins…' : 'Sign-ins unavailable';
-  return <section className="template-sign-ins" aria-label="Sign-ins">
-    <ul className="template-sign-ins-list">
-      <ListRow className="template-sign-in">
-        <ListRowIcon failed={state.status === 'error'}><Globe /></ListRowIcon>
-        <ListRowText>
-          <ListRowTitle>Template site</ListRowTitle>
-          <ListRowDetail>A local stand-in for the site your agent signs in to</ListRowDetail>
-          <Button type="button" className="template-sign-in-action" disabled={state.busy || state.status === 'loading'} onClick={state.status === 'linked' ? state.unlink : state.signIn}>
-            {state.status === 'linked' ? 'Sign out' : 'Sign in'}
-          </Button>
-        </ListRowText>
-        <StatusPill className="template-sign-in-status" role="status" tone={state.status === 'linked' ? 'blue' : state.status === 'error' ? 'danger' : 'neutral'}>{label}</StatusPill>
-      </ListRow>
-    </ul>
-    {state.error && <p className="template-error" role="alert">{state.error}</p>}
-  </section>;
+  </>;
 }

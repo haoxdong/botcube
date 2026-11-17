@@ -12,6 +12,8 @@ type CartridgeBuildConfig = {
   transpilePackages?: string[];
   turbopackAliases?: Record<string, string>;
   webpackAliases?: Record<string, string>;
+  /** The bot settings file the page is built with; the example bot's without one. */
+  botSettings?: string;
 };
 
 const appRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +60,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     });
 
   const cartridgeUi = cartridgeBuildConfig.cartridgeUiEntry ?? cartridgeUiPackage;
+  const botSettings = cartridgeBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.json');
 
   const config: AppConfig = {
     output: 'export',
@@ -83,6 +86,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
             .map(([name, target]) => [name, turbopackTarget(target)]),
         ),
         '@cartridge-ui': turbopackTarget(cartridgeUi),
+        '@bot-settings': turbopackTarget(botSettings),
       },
     },
     // Don't let Next auto-generate AGENTS.md/CLAUDE.md — the repo manages its own.
@@ -108,6 +112,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
         'botcube-ui-web/load-state': path.join(appRoot, 'src/app/load-state.tsx'),
         ...(cartridgeBuildConfig.webpackAliases ?? {}),
         '@cartridge-ui': cartridgeUi,
+        '@bot-settings': botSettings,
       };
       webpackConfig.resolve.extensionAlias = {
         ...(webpackConfig.resolve.extensionAlias ?? {}),

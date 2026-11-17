@@ -98,7 +98,7 @@ function computers() {
   const computer = agentComputers({
     browser: () => fake.browser,
     records: () => store,
-    seed: (accountId, threadId, sessionId) => fake.step('seed', `seed ${accountId} ${threadId} ${sessionId}`),
+    started: (accountId, threadId, sessionId) => fake.step('announce', `announce ${accountId} ${threadId} ${sessionId}`),
     files: () => files,
     idleSeconds: IDLE_SECONDS,
   });
@@ -120,7 +120,7 @@ describe('an Agent Computer', () => {
     const { computer, store, browser, log } = computers();
     const replacement = agentComputers({
       browser: () => browser, records: () => store,
-      seed: async () => {},
+      started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -140,7 +140,7 @@ describe('an Agent Computer', () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     let draining = false;
     agentComputers({
-      browser: () => fakeBrowser().browser, records: () => store, seed: async () => {},
+      browser: () => fakeBrowser().browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS, draining: async () => draining,
     });
@@ -168,7 +168,7 @@ describe('an Agent Computer', () => {
 
     expect(log).toEqual([
       'start null',
-      `seed ${ACCOUNT} chat-1 browser-1`,
+      `announce ${ACCOUNT} chat-1 browser-1`,
       'screenshot browser-1',
       'beforeProfileSave browser-1',
       `createProfile ${ACCOUNT}`,
@@ -224,7 +224,7 @@ describe('an Agent Computer', () => {
 
     expect(log).toEqual([
       `start profile-of-${ACCOUNT}`,
-      `seed ${ACCOUNT} chat-1 browser-2`,
+      `announce ${ACCOUNT} chat-1 browser-2`,
       'screenshot browser-2',
       'beforeProfileSave browser-2',
       `saveProfile profile-of-${ACCOUNT} browser-2`,
@@ -232,13 +232,13 @@ describe('an Agent Computer', () => {
     ]);
   });
 
-  it('stops a browser its Session Credential could not be seeded into, and stays asleep', async () => {
+  it('stops a browser its product service could not prepare, and stays asleep', async () => {
     const { computer, log, failing } = computers();
-    failing.add('seed');
+    failing.add('announce');
 
-    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('seed failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('announce failed');
 
-    expect(log).toEqual(['start null', `seed ${ACCOUNT} chat-1 browser-1`, 'stop browser-1']);
+    expect(log).toEqual(['start null', `announce ${ACCOUNT} chat-1 browser-1`, 'stop browser-1']);
     expect(await computer.state(ACCOUNT, 'chat-1')).toEqual({ state: 'asleep', screenshot: null });
     expect(await computer.use(ACCOUNT, 'browser-1')).toBe(false);
   });
@@ -305,12 +305,12 @@ describe('an Agent Computer', () => {
 
   it('retries a failed start cleanup on account erasure, and fails erasure until the browser stops', async () => {
     const { computer, failing, log } = computers();
-    failing.add('seed');
+    failing.add('announce');
     failing.add('stop');
 
     await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toMatchObject({
-      message: 'seed failed',
-      errors: [{ message: 'seed failed' }, { message: 'stop failed' }],
+      message: 'announce failed',
+      errors: [{ message: 'announce failed' }, { message: 'stop failed' }],
     });
     expect(await computer.use(ACCOUNT, 'browser-1')).toBe(false);
     await expect(computer.erase(ACCOUNT)).rejects.toThrow('stop failed');
@@ -323,10 +323,10 @@ describe('an Agent Computer', () => {
 
   it('revokes only its own failed starts, leaving another account for its own revocation', async () => {
     const { computer, failing, log } = computers();
-    failing.add('seed');
+    failing.add('announce');
     failing.add('stop');
-    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('seed failed');
-    await expect(computer.wake(OTHER_ACCOUNT, 'chat-2')).rejects.toThrow('seed failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('announce failed');
+    await expect(computer.wake(OTHER_ACCOUNT, 'chat-2')).rejects.toThrow('announce failed');
     failing.delete('stop');
 
     await computer.revoke(ACCOUNT);
@@ -339,9 +339,9 @@ describe('an Agent Computer', () => {
 
   it('answers a poll of a Session whose start cleanup failed without retrying the cleanup', async () => {
     const { computer, failing, log } = computers();
-    failing.add('seed');
+    failing.add('announce');
     failing.add('stop');
-    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('seed failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('announce failed');
 
     expect(await computer.state(ACCOUNT, 'chat-1')).toMatchObject({ state: 'asleep' });
     expect(log.filter((entry) => entry === 'stop browser-1')).toHaveLength(1);
@@ -349,29 +349,29 @@ describe('an Agent Computer', () => {
 
   it('stops a browser whose start cleanup failed before a later wake starts afresh', async () => {
     const { computer, failing, log } = computers();
-    failing.add('seed');
+    failing.add('announce');
     failing.add('stop');
-    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('seed failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('announce failed');
 
-    failing.delete('seed');
+    failing.delete('announce');
     await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('stop failed');
     expect(log.filter((entry) => entry.startsWith('start '))).toHaveLength(1);
 
     failing.delete('stop');
     expect(await computer.wake(ACCOUNT, 'chat-1')).toEqual({ state: 'awake', browserSessionId: 'browser-2', control: 'agent', screenshot: null });
-    expect(log.slice(-3)).toEqual(['stop browser-1', 'start null', `seed ${ACCOUNT} chat-1 browser-2`]);
+    expect(log.slice(-3)).toEqual(['stop browser-1', 'start null', `announce ${ACCOUNT} chat-1 browser-2`]);
   });
 
   it('lets another task revoke a failed start whose first cleanup failed', async () => {
     const { computer, browser, store, failing, log } = computers();
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
-    failing.add('seed');
+    failing.add('announce');
     failing.add('stop');
-    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('seed failed');
+    await expect(computer.wake(ACCOUNT, 'chat-1')).rejects.toThrow('announce failed');
     expect(await replacement.use(ACCOUNT, 'browser-1')).toBe(false);
     failing.delete('stop');
     await replacement.revoke(ACCOUNT);
@@ -423,7 +423,7 @@ describe('an Agent Computer', () => {
 
     expect(await state).toEqual({ state: 'asleep', screenshot: 'data:image/jpeg;base64,browser-1' });
     expect(await woken).toEqual({ state: 'awake', browserSessionId: 'browser-2', control: 'agent', screenshot: 'data:image/jpeg;base64,browser-1' });
-    expect(log.slice(-3)).toEqual(['stop browser-1', `start profile-of-${ACCOUNT}`, `seed ${ACCOUNT} chat-1 browser-2`]);
+    expect(log.slice(-3)).toEqual(['stop browser-1', `start profile-of-${ACCOUNT}`, `announce ${ACCOUNT} chat-1 browser-2`]);
   });
 
   it('fails a wake waiting on a sleep that fails, and the next wake starts afresh', async () => {
@@ -857,7 +857,7 @@ describe('Agent Computer handover between Chat tasks', () => {
     takenOver.add('browser-1');
     await computer.sleepAll().slept;
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -872,7 +872,7 @@ describe('Agent Computer handover between Chat tasks', () => {
     await replacement.sleepAll().slept;
   });
 
-  it('stops a seeded browser even when storage becomes unavailable', async () => {
+  it('stops a prepared browser even when storage becomes unavailable', async () => {
     const { browser, log } = fakeBrowser();
     const documents = memoryDocuments();
     let unavailable = false;
@@ -881,7 +881,7 @@ describe('Agent Computer handover between Chat tasks', () => {
       return documents.send(command);
     } });
     const computer = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => { unavailable = true; },
+      browser: () => browser, records: () => store, started: async () => { unavailable = true; },
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -917,7 +917,7 @@ describe('Agent Computer handover between Chat tasks', () => {
     await waking;
     await stopped;
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -935,7 +935,7 @@ describe('Agent Computer handover between Chat tasks', () => {
       accountId: ACCOUNT, threadId: 'chat-1', sessionId: 'browser-1', phase: 'sleeping', idleDeadline: Date.now(),
     }), 'chat-1');
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -953,7 +953,7 @@ describe('Agent Computer handover between Chat tasks', () => {
       accountId: ACCOUNT, threadId: 'chat-1', sessionId: 'browser-1', phase: 'sleeping', idleDeadline: Date.now(),
     }), 'chat-1');
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -966,7 +966,7 @@ describe('Agent Computer handover between Chat tasks', () => {
   it('closes another task’s automation stream before its idle sweep takes a screenshot', async () => {
     const { computer, store, browser, log } = computers();
     const replacement = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -992,7 +992,7 @@ describe('Agent Computer handover between Chat tasks', () => {
     const create = () => {
       const store = new AccountResources('chat', documents);
       return agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -1109,18 +1109,7 @@ const ENV = {
   BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY: ' agent-computer/chrome-policy.json ',
 };
 const FILES = filesOf(ACCOUNT);
-const client = (env: NodeJS.ProcessEnv = ENV) => agentComputerBrowserFromEnv(env, {
-  beforeProfileSave: async (cdp) => {
-    const page = await cdp.attachToPage();
-    const cookies = (await cdp.allCookies(page)).filter(
-      (cookie) => typeof cookie.domain === 'string' && (cookie.domain === 'site.example' || cookie.domain.endsWith('.site.example')),
-    );
-    for (const { name, domain, path } of cookies) {
-      // eslint-disable-next-line no-await-in-loop -- one CDP connection, one command at a time
-      await cdp.send('Network.deleteCookies', { params: { name, domain, path }, sessionId: page });
-    }
-  },
-})();
+const client = (env: NodeJS.ProcessEnv = ENV) => agentComputerBrowserFromEnv(env, { profileOmitsCookieDomains: ['site.example'] })();
 
 describe('the AgentCore browser of Agent Computers', () => {
   beforeEach(() => {
@@ -1142,7 +1131,7 @@ describe('the AgentCore browser of Agent Computers', () => {
     await store.saveAgentComputerScreenshot(ACCOUNT, 'chat-1', 'data:image/jpeg;base64,last-saved');
     const browser = client();
     const create = () => agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -1175,7 +1164,7 @@ describe('the AgentCore browser of Agent Computers', () => {
     const store = new AccountResources('chat', memoryDocuments());
     const browser = client();
     const computer = agentComputers({
-      browser: () => browser, records: () => store, seed: async () => {},
+      browser: () => browser, records: () => store, started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -1318,7 +1307,7 @@ describe('the AgentCore browser of Agent Computers', () => {
     const computer = agentComputers({
       browser: () => browser,
       records: () => store,
-      seed: async () => {},
+      started: async () => {},
       files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
       idleSeconds: IDLE_SECONDS,
     });
@@ -1401,7 +1390,7 @@ describe('the AgentCore browser of Agent Computers', () => {
       const computer = agentComputers({
         browser: () => browser,
         records: () => store,
-        seed: async () => {},
+        started: async () => {},
         files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
         idleSeconds: IDLE_SECONDS,
       });

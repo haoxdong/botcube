@@ -339,7 +339,8 @@ it('retries a failed browser start when the executable becomes available', { tim
   await writeFile(executable, `#!/bin/sh\nexec ${JSON.stringify(testChromiumPath())} "$@"\n`, { mode: 0o755 });
   const retried = await app.request('/agent-computer/wake?thread_id=retry-session', { method: 'POST', ...as() });
   expect(retried.status).toBe(200);
-  expect(await retried.json()).toMatchObject({ state: 'awake', control: 'agent' });
+  // Its screen comes as screenshots, which the page's Computer paints frame by frame.
+  expect(await retried.json()).toMatchObject({ state: 'awake', control: 'agent', liveView: 'screenshots' });
 });
 
 it(

@@ -118,6 +118,7 @@
       "runtimeRole": "bot-cube-runtime",
       "memoryRole": "bot-cube-memory",
       "userMemoryRole": "bot-cube-user-memory",
+      "chatServiceTaskRole": "bot-cube-chat-service",
       "lambdaRole": "bot-cube-container-build-handler",
       "codeBuildRole": "bot-cube-container-build",
       "sessionApiRole": "bot-cube-session-api",

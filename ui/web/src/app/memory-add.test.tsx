@@ -58,3 +58,20 @@ it('keeps a failed addition as a draft and shows an error without a saved line',
   fireEvent.click(within(page).getByRole('button', { name: 'Cancel editing Memory' }));
   expect(within(page).queryByRole('textbox', { name: 'New Memory' })).toBeNull();
 });
+
+// The bot settings' Memory gate. With Memory off, Personalization shows only the Soul, and asks for no Memory.
+it('shows no Memory card and loads no Memory when the bot settings turn Memory off', async () => {
+  const fetchImpl = vi.fn(async (url: string) => {
+    if (url.endsWith('/agent/identity')) return Response.json({ name: 'Ada', character: '', vibe: '', avatar: '' });
+    if (url.endsWith('/agent/soul')) return Response.json({ content: 'Be kind' });
+    return Response.json({ tasks: [] });
+  });
+  vi.stubGlobal('fetch', fetchImpl);
+  render(<AgentProfile chatServiceUrl="http://chat.test" profile={null} error={null} revision={0} memory={false}
+    onClose={() => {}} onSaved={() => {}} onOpenChat={() => {}} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Personalization' }));
+
+  expect(await screen.findByRole('button', { name: 'Open Soul' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Open Memory' })).toBeNull();
+  expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain('http://chat.test/agent/memory');
+});

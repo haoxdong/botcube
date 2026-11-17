@@ -1,14 +1,15 @@
 import type { AgentComputerBrowser, AgentComputerRecords } from './agent-computer-types.js';
 import type { RunningAgentComputer } from './account-resources.js';
 import type { AccountFiles } from './files.js';
+import type { AgentComputerStarted } from './agent-computer-started.js';
 
 export async function startAgentComputer(accountId: string, threadId: string, {
-  records, browser, files, seed, stop, deadline,
+  records, browser, files, started, stop, deadline,
 }: {
   records: () => AgentComputerRecords;
   browser: () => AgentComputerBrowser;
   files: () => AccountFiles;
-  seed: (accountId: string, threadId: string, sessionId: string) => Promise<void>;
+  started: AgentComputerStarted | undefined;
   stop: (record: RunningAgentComputer) => Promise<void>;
   deadline: () => number;
 }): Promise<RunningAgentComputer> {
@@ -21,7 +22,7 @@ export async function startAgentComputer(accountId: string, threadId: string, {
       const { profileId } = await records().agentComputer(accountId);
       record.sessionId = await browser().start(profileId, await files().mount(accountId));
       await records().saveRunningAgentComputer(record);
-      await seed(accountId, threadId, record.sessionId);
+      await started?.(accountId, threadId, record.sessionId);
       record.phase = 'awake';
       record.idleDeadline = deadline();
       await records().saveRunningAgentComputer(record);

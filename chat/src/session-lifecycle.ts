@@ -19,8 +19,9 @@ export const runtimeSessionId = (session: SessionPurge): string => session.sessi
 
 export function forwardSnapshotEpoch(props: Record<string, unknown>, complete: { readonly snapshotEpoch?: string | undefined }): void {
   delete props.sessionSnapshotEpoch;
-  if (complete.snapshotEpoch === undefined || typeof props.turnIdentity !== 'string' || props.turnIdentity === '') return;
-  const turnId = decodeJwt(props.turnIdentity).jti;
+  const identity = props.turnIdentity;
+  if (complete.snapshotEpoch === undefined || identity === '' || (typeof identity !== 'string' && (identity === null || typeof identity !== 'object'))) return;
+  const turnId = typeof identity === 'string' ? decodeJwt(identity).jti : (identity as { turnId?: unknown }).turnId;
   if (typeof turnId === 'string' && turnId !== '') props.sessionSnapshotEpoch = { epoch: complete.snapshotEpoch, turnId };
 }
 

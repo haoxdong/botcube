@@ -141,7 +141,7 @@ async function chatService(localHarnessUrl: string, options: {
   cartridge?: Partial<ChatServiceCartridge>;
   config?: Partial<ChatServiceConfig>;
 } = {}): Promise<string> {
-  const turnSummaryModel = { region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` };
+  const turnSummaryModel = { kind: 'bedrock' as const, region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` };
   const app = createChatService((history) => {
     options.history?.(history);
     return { ...cartridge, ...options.cartridge };

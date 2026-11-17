@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -437,6 +437,7 @@ dependencies = [
     { name = "deepagents" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "langchain" },
     { name = "langchain-aws" },
     { name = "langchain-core" },
@@ -475,6 +476,7 @@ requires-dist = [
     { name = "deepagents", specifier = "==0.7.22" },
     { name = "fastapi", specifier = ">=0.142.2" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain", specifier = ">=1.4.3" },
     { name = "langchain-aws", specifier = ">=1.8.0" },
     { name = "langchain-core", specifier = ">=1.6.7" },

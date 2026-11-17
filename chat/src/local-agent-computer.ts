@@ -17,9 +17,9 @@ interface RunningComputer {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-/** A local computer's state: it has no Take-over and keeps no screenshot. */
+/** A local computer's state: it has no Take-over, keeps no screenshot, and shows its screen as screenshots. */
 type LocalComputerState =
-  | { state: 'awake'; browserSessionId: string; control: 'agent'; screenshot: null }
+  | { state: 'awake'; browserSessionId: string; control: 'agent'; screenshot: null; liveView: 'screenshots' }
   | { state: 'asleep'; screenshot: null };
 
 const ASLEEP: LocalComputerState = { state: 'asleep', screenshot: null };
@@ -143,7 +143,7 @@ export function localAgentComputer({
     }
     if (computer.startup.signal.aborted || running.get(keyOf(computer.owner, computer.threadId)) !== computer)
       return ASLEEP;
-    return { state: 'awake', browserSessionId: computer.browserSessionId, control: 'agent', screenshot: null };
+    return { state: 'awake', browserSessionId: computer.browserSessionId, control: 'agent', screenshot: null, liveView: 'screenshots' };
   };
   const byBrowserSession = (browserSessionId: string) =>
     [...running.values()].find((candidate) => candidate.browserSessionId === browserSessionId);

@@ -1,0 +1,15 @@
+{
+  "$schema": "../../deployment-config/bot-settings.schema.json",
+  "agentIdentity": {
+    "name": "BotCube",
+    "character": "A template agent",
+    "avatar": "🧊"
+  },
+  "models": [{ "key": "echo", "label": "Echo", "provider": "echo" }],
+  "skills": ["skills/computer"],
+  "memory": true,
+  "agentComputer": {
+    "enabled": true,
+    "liveBrowser": true
+  }
+}

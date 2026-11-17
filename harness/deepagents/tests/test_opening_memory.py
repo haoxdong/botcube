@@ -14,7 +14,12 @@ from typing import Any, NoReturn, cast
 
 import pytest
 
-from agentcore_fake import EXCEPTIONS, MEMORY_ID, FakeAgentCoreMemory
+from agentcore_fake import (
+    EXCEPTIONS,
+    MEMORY_ID,
+    FakeAgentCoreMemory,
+    TaggedMemoryClient,
+)
 from botcube_harness_deepagents import memory_document
 from botcube_harness_deepagents.session_memory import SPILLOVER_NOTE as SPILLOVER
 
@@ -280,6 +285,22 @@ def test_legacy_journal_overlays_without_inventing_previous_text(memory: FakeAge
                             'recordId': 'record-Copper telescope', 'text': 'Amber telescope',
                         })}], extractionMode='SKIP')
     assert _open(memory) == 'semantic facts:\n- Amber telescope'
+
+
+def test_deleting_a_line_names_its_records_exact_namespace(memory: FakeAgentCoreMemory) -> None:
+    memory.records.append(_preference('Copper telescope'))
+    memory.records[0]['memoryRecordId'] = '1' * 40
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tags = {'actorId': ACTOR, 'filingActorId': ACTOR, 'sessionId': 'thread-1', 'writesPrefix': 'lgw-0'}
+    client = TaggedMemoryClient(memory, lambda: tags, calls)
+    client.scoped_records_by_id = True
+
+    memory_document.delete_memory_line(cast(Any, client), memory_id=MEMORY_ID, actor_id=ACTOR, record_id='1' * 40)
+
+    assert memory.records == []
+    assert [params.get('namespace') for operation, params in calls if operation == 'delete_memory_record'] == [
+        f'/actors/{ACTOR}/preferences/',
+    ]
 
 
 def test_journal_write_failure_is_not_reported_as_a_success(

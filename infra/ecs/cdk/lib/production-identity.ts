@@ -6,7 +6,8 @@ interface Subnet {
 /** The fields of the Cartridge's deploy identity the ECS app reads. */
 export interface DeployIdentity {
   aws: {
-    iam: { runtimeRole: string };
+    /** `chatServiceTaskRole` names the Chat Service's task role, which the `assume-role` adapter's Memory role trusts. */
+    iam: { runtimeRole: string; userMemoryRole: string; chatServiceTaskRole?: string };
     account: string;
     region: string;
     agentCore: {
@@ -16,12 +17,8 @@ export interface DeployIdentity {
       sessionApiAlias: string;
       /** The Agent Computer's own browser (ADR 0077); its profiles' names start with the prefix. */
       agentComputerBrowser: { name: string; profileNamePrefix: string };
-      privateNatBrowser: {
-        id: string;
-        browserSecurityGroupId: string;
-        extension: { bucket: string; prefix: string; versionId: string };
-        subnets: Subnet[];
-      };
+      /** The fixed-egress private network: its subnets hold the services and browsers; the product's login browser is `id`. */
+      privateNatBrowser: { id: string; subnets: Subnet[] };
     };
     credentialService: { vpcId: string; port: number };
     ecs: {
@@ -39,6 +36,14 @@ export interface DeployIdentity {
         tableName: string;
 
         rpcPath: string;
+        /** Where on the credential service BotCube tells the product of each Agent Computer browser it starts (ADR 0091). */
+        agentComputerStartedPath?: string;
+        /** The host the User's browser reaches the product's service on (ADR 0091). */
+        publicHostname?: string;
+        /** With `publicHostname`: the paths under `rpcPath` the User's browser may reach there. */
+        publicPaths?: string[];
+        /** With `publicHostname`: the partition-key prefixes of the Chat table rows the product's service reads and writes. */
+        chatTableKeyPrefixes?: string[];
       };
       originPullCaCertificate: string;
       originPullClientSecretName: string;
@@ -57,7 +62,6 @@ export interface DeployIdentity {
   domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[]; corsOrigins: string[] };
   ssm: { parkState: string };
   product: { name: string };
-  artifacts: { chatService: { reaperCommand: string[] } };
   /** The repository's immutable GitHub OIDC subject prefix (`gh api repos/<repo>/actions/oidc/customization/sub`). */
   github: { oidcSubjectPrefix: string };
 }

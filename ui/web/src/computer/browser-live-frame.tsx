@@ -72,6 +72,8 @@ export interface BrowserLiveFrameProps {
    */
   onEnded?: () => void;
   recoverOnStall?: boolean;
+  /** Signs the live view of a browser a product's own service started; without it, the Chat Service signs it. */
+  signedUrl?: ((sessionId: string, signal: AbortSignal) => Promise<string>) | undefined;
 }
 
 export function BrowserLiveFrame(props: BrowserLiveFrameProps) {
@@ -113,7 +115,7 @@ function BrowserLiveFrameSession(props: BrowserLiveFrameProps) {
   return <ConnectedLiveFrame {...props} active={active} />;
 }
 
-function ConnectedLiveFrame({ sessionId, expanded = false, interactive = true, remoteWidth = 1280, remoteHeight = 720, page, onConnection, onConnectionChange, onError, onEnded, recoverOnStall = false, active }: BrowserLiveFrameProps & { active: { current: boolean } }) {
+function ConnectedLiveFrame({ sessionId, expanded = false, interactive = true, remoteWidth = 1280, remoteHeight = 720, page, onConnection, onConnectionChange, onError, onEnded, recoverOnStall = false, signedUrl: signUrl, active }: BrowserLiveFrameProps & { active: { current: boolean } }) {
   const mounted = useRef(true);
   const inputConnection = useRef<LiveViewConnection | null>(null);
   const completeTouch = (end: () => void) => {
@@ -128,6 +130,8 @@ function ConnectedLiveFrame({ sessionId, expanded = false, interactive = true, r
   const [live, setLive] = useState(false);
   // Connecting retitles the page after the remote host ("127.0.0.1 - Amazon DCV"); the page keeps its own.
   const pageTitle = useRef('');
+  const signer = useRef(signUrl);
+  signer.current = signUrl;
   const failed = useRef(onError);
   failed.current = onError;
   const shown = useRef(onConnection);
@@ -209,7 +213,7 @@ function ConnectedLiveFrame({ sessionId, expanded = false, interactive = true, r
     const controller = new AbortController();
 
     async function loadSignedUrl() {
-      const url = await fetchBrowserLiveViewSignedUrl(sessionId, { signal: controller.signal });
+      const url = await (signer.current?.(sessionId, controller.signal) ?? fetchBrowserLiveViewSignedUrl(sessionId, { signal: controller.signal }));
       if (!controller.signal.aborted && active.current) setSignedUrl(url);
     }
 

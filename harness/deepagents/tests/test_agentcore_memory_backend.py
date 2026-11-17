@@ -202,6 +202,34 @@ def test_a_continuing_turn_reuses_the_sessions_credentials_and_calls_no_sts(micr
     assert all(client is clients[0][1] for pair in clients for client in pair)
 
 
+def _assumed(actor: str, key: str, *, session: str = 'thread-1') -> dict[str, str]:
+    """Credentials the Chat Service assumed for a Turn with a session policy (the `assume-role` adapter)."""
+    return {
+        'actorId': actor, 'filingActorId': actor, 'sessionId': session, 'writesPrefix': 'lgw-0123456789abcdef0123456789abcdef',
+        'turnId': f'turn-{key}', 'accessKeyId': key, 'secretAccessKey': 'secret', 'sessionToken': f'token-{key}',
+        'expiration': (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    }
+
+
+def test_assumed_turn_credentials_sign_memory_calls_without_sts(microvm: FakeSts) -> None:
+    saver, store = agentcore.turn_memory(MEMORY_ID, _assumed('user-1', 'ASIAUSER1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+    signed = _signed_keys(store)
+    store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/user-1/facts/')
+
+    assert microvm.calls == []
+    assert signed == ['ASIAUSER1']
+    assert agentcore.finished_snapshot_epoch(_assumed('user-1', 'ASIAUSER1'), {'epoch': 'e-1', 'turnId': 'turn-ASIAUSER1'}) == 'e-1'
+    with pytest.raises(agentcore.MemorySandboxError):
+        agentcore.turn_memory(MEMORY_ID, _assumed('user-2', 'ASIAUSER2'), region_name='us-west-2', run_id='run-2', turn=agentcore.next_turn())
+
+
+def test_turn_credentials_missing_a_field_are_refused() -> None:
+    incomplete = {key: value for key, value in _assumed('user-1', 'ASIAUSER1').items() if key != 'sessionToken'}
+
+    with pytest.raises(agentcore.TurnIdentityError, match='The Turn credentials lack sessionToken'):
+        agentcore.require_turn_identity(incomplete)
+
+
 def test_a_turn_exchanges_its_jwt_when_the_held_credentials_expire_within_five_minutes(microvm: FakeSts) -> None:
     # The fake issues credentials that expire with the JWT.
     agentcore.turn_memory(MEMORY_ID, turn_identity(expires_in=299), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())

@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { agentIdentity, memoryLine, soul, type AgentDocuments } from './agent-documents.js';
 import { HttpError, type ChatServiceCartridge } from './cartridge.js';
+import { isRecord } from './payload.js';
 import { picture, pictureUrl } from './pictures.js';
 import { accountModelList, namedModel } from './models.js';
 import { isScheduledInstant } from './schedule-time.js';
@@ -8,9 +9,6 @@ import type { ScheduledTasks, ScheduledTask, ScheduledTaskDefinition, TaskChange
 import type { SessionMetadata } from './session-metadata.js';
 import type { SessionApi } from './session-api.js';
 import { sessionAccessError, type sessionOperations } from './sessions.js';
-
-const isRecord =(value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const TASK_FIELDS = ['title', 'prompt', 'schedule', 'timezone'] as const;
 
@@ -43,6 +41,14 @@ function taskInstant(value: unknown, field: 'startDate' | 'endDate', required: b
   return new Date(value).toISOString();
 }
 
+/** Refuses every Memory route of a bot whose settings turn Memory off. */
+function memoryOff(cartridge: ChatServiceCartridge) {
+  return async (_c: unknown, next: () => Promise<void>) => {
+    if (cartridge.memory === false) throw new HttpError(404, 'Memory is off for this bot');
+    await next();
+  };
+}
+
 export function accountRoutes(
   app: Hono,
   cartridge: ChatServiceCartridge,
@@ -53,6 +59,7 @@ export function accountRoutes(
   scheduledTasks: ScheduledTasks | null,
   online: boolean,
 ) {
+  const memoryGate = memoryOff(cartridge);
   const documentsOf = async (owner: string) => agentDocuments.get(owner, cartridge.agentDocuments);
 
   app.get('/agent', async (c) => {
@@ -107,6 +114,10 @@ export function accountRoutes(
     await agentDocuments.save(owner, { document: 'soul', content: soul(body?.content) });
     return c.body(null, 204);
   });
+
+  // The bot settings' Memory gate: a bot with Memory off has none to read or change.
+  app.use('/agent/memory', memoryGate);
+  app.use('/agent/memory/*', memoryGate);
 
   app.get('/agent/memory', async (c) => {
     const { owner } = await cartridge.requester(c);

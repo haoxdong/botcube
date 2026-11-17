@@ -5,6 +5,7 @@ import { Subject } from 'rxjs';
 import { applyPatch, type Operation } from 'fast-json-patch';
 import { AGENT_DOCUMENT_EDITED } from './agent-documents.js';
 import { LiveViewInjector } from './live-view.js';
+import { isRecord } from './payload.js';
 import type { TurnFailure } from './session-metadata.js';
 import type { Upstream } from './upstream.js';
 
@@ -24,9 +25,7 @@ function reason(error: unknown): string {
 function decoded(text: string): Record<string, unknown> {
   try {
     const value = JSON.parse(text) as unknown;
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : { value };
+    return isRecord(value) ? value : { value };
   } catch {
     return {};
   }
@@ -39,11 +38,13 @@ export function sseFrameData(lines: readonly string[]): string | null {
 }
 
 export function turnCredentials(forwardedProps: Record<string, unknown>, credentialProps: readonly string[]): string[] {
-  const files = forwardedProps.files as Record<string, unknown> | null | undefined;
-  const filesKeys = files !== null && typeof files === 'object' && !Array.isArray(files)
-    ? [files.accessKeyId, files.secretAccessKey, files.sessionToken]
-    : [];
-  const props = [...credentialProps.map((prop) => forwardedProps[prop]), forwardedProps.turnIdentity];
+  const keys = (binding: unknown) => {
+    if (!isRecord(binding)) return [];
+    const { accessKeyId, secretAccessKey, sessionToken } = binding;
+    return [accessKeyId, secretAccessKey, sessionToken];
+  };
+  const filesKeys = [...keys(forwardedProps.files), ...keys(forwardedProps.turnIdentity)];
+  const props = [...credentialProps.map((prop) => forwardedProps[prop]), forwardedProps.turnIdentity, forwardedProps.userToken];
   const queryValues = props.flatMap((value) =>
     typeof value === 'string' && URL.canParse(value) ? [...new URL(value).searchParams.values()] : [],
   );

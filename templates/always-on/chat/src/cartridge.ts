@@ -1,6 +1,5 @@
 import { templateFiles, templateFileContent } from './files.js';
 import { computerFilesRoutes } from 'botcube-chat/computer-files-routes';
-import { TEMPLATE_IDENTITY } from '../../identity.js';
 import { agentDocumentTemplates, HttpError, type CartridgeFactory } from 'botcube-chat';
 import { Hono, type Context } from 'hono';
 import type { AccountStore } from 'botcube-chat/account-store';
@@ -9,6 +8,11 @@ import { templateAccountStore, templateCookies } from './account.js';
 import { siteSignIn } from './sign-in.js';
 import { turnCredentialBinding } from 'botcube-chat/credential-service-token';
 import { localAgentComputer } from 'botcube-chat/local-agent-computer';
+import { loadDeployment } from 'botcube-deployment-config/load';
+import type { DeploymentConfig } from 'botcube-deployment-config';
+import { oidcClientSecret, oidcSignIn } from 'botcube-chat/oidc-sign-in';
+import { corsOriginsFromEnv, LOCAL_UI_ORIGINS } from 'botcube-chat/cors';
+import { templateBot } from './bot.js';
 
 const TEMPLATE_ACTOR_ID = 'template-user';
 
@@ -16,8 +20,11 @@ export function templateCartridgeFactory(
   env: NodeJS.ProcessEnv,
   accountStore: AccountStore = templateAccountStore(env)
 ): CartridgeFactory {
+  const deployment = env.BOTCUBE_DEPLOYMENT_CONFIG ? loadDeployment(env.BOTCUBE_DEPLOYMENT_CONFIG) : null;
+  const bot = deployment?.bot ?? templateBot(env);
+  const store = () => accountStore;
+  const identity = deployment ? identityRoutes(deployment.config.identity, env, store) : new Hono();
   return (history) => {
-    const store = () => accountStore;
     const signIn = siteSignIn({
       serviceUrl: () => env.BOTCUBE_CREDENTIAL_SERVICE_URL ?? '',
       secret: () => env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
@@ -29,6 +36,8 @@ export function templateCartridgeFactory(
       store,
     });
     const accounts = accountRoutes({ store, cookies: templateCookies, signIns: (account) => signIn.signIns(account.accountId),
+      // The web UI's sign-in: the OIDC provider's, under the `oidc` identity adapter.
+      ...(deployment?.config.identity.kind === 'oidc' ? { session: () => ({ signIn: 'oidc' }) } : {}),
       async deleteTestUser(accountId) {
         await history.delete(accountId);
         await accountStore.deleteAccount(accountId);
@@ -46,12 +55,9 @@ export function templateCartridgeFactory(
       startPage: env.TEMPLATE_SITE_URL ? new URL('/login', env.TEMPLATE_SITE_URL).href : undefined,
     });
     return {
-      agentDocuments: agentDocumentTemplates({
-        name: TEMPLATE_IDENTITY.name,
-        character: 'A template agent',
-        avatar: TEMPLATE_IDENTITY.avatar,
-      }),
-      models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+      agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
+      models: bot.models,
+      memory: bot.memory,
       accountModels: async () => [],
       accountModel: async () => undefined,
       routes: new Hono()
@@ -59,12 +65,13 @@ export function templateCartridgeFactory(
         .route('/', computerFilesRoutes({ requester, history, computers: computer, files: (c) => templateFiles(c.req.url) }))
         .route('/', templateFileContent(requester))
         .route('/', accounts.routes)
+        .route('/', identity)
         .route('/', signIn.routes)
         .get('/auth/template', (c) =>
           c.json({ status: 'ready', actorId: TEMPLATE_ACTOR_ID })
         )
         .get('/files/sample.txt', (c) =>
-          c.text(`Hello from ${TEMPLATE_IDENTITY.name}.\n`)
+          c.text(`Hello from ${bot.agentIdentity.name}.\n`)
         ),
       requester,
       filingUserId: (owner) => owner,
@@ -100,6 +107,18 @@ export function templateCartridgeFactory(
       stopSessionComputer: computer.stopThread,
     };
   };
+}
+
+/** How Users sign in under the Deployment Config's identity section: `oidc` adds the provider's sign-in. */
+function identityRoutes(identity: DeploymentConfig['identity'], env: NodeJS.ProcessEnv, store: () => AccountStore): Hono {
+  if (identity.kind === 'botcube-accounts') return new Hono();
+  return oidcSignIn({
+    identity: { issuer: identity.issuer, clientId: identity.clientId, clientSecret: oidcClientSecret(env), subjectIsAccountId: identity.subjectIsAccountId },
+    store,
+    cookies: templateCookies,
+    returnOrigins: corsOriginsFromEnv(env) ?? LOCAL_UI_ORIGINS,
+    publicOrigin: env.BOTCUBE_PUBLIC_ORIGIN,
+  }).routes;
 }
 
 export const templateCartridge: CartridgeFactory = templateCartridgeFactory(process.env);

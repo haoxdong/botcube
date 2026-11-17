@@ -3,7 +3,8 @@ import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { DeleteMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { jwtVerify } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
@@ -482,6 +483,50 @@ describe('a scheduled run', () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
     expect(retire).not.toHaveBeenCalled();
+  });
+
+  it('hands the Harness a signed user token for the owner, as a chat Turn does', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const signed = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
+    const account = owner();
+    try {
+      await signed.sessionMetadata.mainChat(account, `filed-${account}`);
+      const prompt = 'Brief me as myself';
+      signed.agentcore.scriptPrompt(prompt, stream(...text('own', 'Done.')));
+      const response = await signed.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        body: JSON.stringify({ title: 'Own brief', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt }),
+      });
+      await defined(signed.scheduler, 'the stack schedules tasks').fire(((await response.json()) as { id: string }).id);
+      await eventually(() => expect(signed.agentcore.invocations()).not.toHaveLength(0));
+      const input = RunAgentInputSchema.parse(JSON.parse(defined(signed.agentcore.invocations().at(-1), 'scheduled invocation').body));
+      const { payload } = await jwtVerify(String(input.forwardedProps.userToken), publicKey, { issuer: 'https://chat.example.com', audience: 'botcube-user' });
+      expect(payload).toMatchObject({ sub: account, anonymous: false, threadId: input.threadId });
+    } finally {
+      await signed.stop();
+    }
+  });
+
+  it('ends on its own outcome for a bot that names no sign-in its runs may need', async () => {
+    const plain = await startInProcess({ scheduled: true, cartridge: { signInNeeded: undefined } });
+    const account = owner();
+    try {
+      await plain.sessionMetadata.mainChat(account, `filed-${account}`);
+      const prompt = 'Brief me without a sign-in hook';
+      plain.agentcore.scriptPrompt(prompt, stream(...text('plain', 'Sign in to continue')));
+      const response = await plain.app.request('/scheduled-tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': account },
+        body: JSON.stringify({ title: 'Plain brief', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt }),
+      });
+      const { id } = (await response.json()) as { id: string };
+      await defined(plain.scheduler, 'the stack schedules tasks').fire(id);
+      const lastRun = async () => ((await (await plain.app.request('/scheduled-tasks', { headers: { 'x-test-owner': account } })).json()) as {
+        tasks: { id: string; lastRun?: { status: string } }[];
+      }).tasks.find((task) => task.id === id)?.lastRun?.status;
+      await eventually(async () => expect(await lastRun()).toBe('done'));
+    } finally {
+      await plain.stop();
+    }
   });
 
   it('retires a one-off under the claiming account when Account Claim moves it mid-run', async () => {

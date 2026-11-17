@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import Page from 'botcube-ui-web/storybook-page';
 import { animationsSettled } from '../../../../../ui/web/.storybook/animations-settled';
 import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
-import { BrowserView } from '../src/browser-view';
+import { LiveBrowserWindow } from '../../../../../ui/web/src/computer/live-browser-window';
 import { SESSION, awakeComputer, reply } from './chat-service';
 
 const meta = {
@@ -67,16 +67,6 @@ export const Chat: Story = {
     await ready(canvasElement);
     // The shell call is its Turn's work, folded under the Worklog's header: open it.
     await userEvent.click(await within(canvasElement).findByRole('button', { name: /^Worked/ }));
-    await visible(canvasElement, '.template-site-data');
-    // The card sits under its shell call's row, lined up with the row's icon, inside the reply column.
-    const card = box(canvasElement, '.template-site-data');
-    const row = canvasElement.querySelector('.template-site-data')?.previousElementSibling;
-    const icon = row?.querySelector('svg')?.getBoundingClientRect();
-    if (!row || !icon) throw new Error('The data card has no shell call row above it');
-    await near(card.left, icon.left);
-    await expect(card.top).toBeGreaterThanOrEqual(row.getBoundingClientRect().bottom);
-    await expect(card.width).toBeLessThanOrEqual(360);
-    await expect(card.right).toBeLessThanOrEqual(box(canvasElement, '.copilotKitInput').right);
     await noPageScroll(canvasElement);
   }),
 };
@@ -118,7 +108,7 @@ export const SignInNeeded: Story = {
     msw: {
       handlers: {
         '/account/session': reply('/account/session', { ...SESSION, signInNeeded: true }),
-        '/account/sign-ins': reply('/account/sign-ins', { signIns: [{ site: 'template-site', status: 'not_linked' }] }),
+        '/account/sign-ins': reply('/account/sign-ins', { signIns: [{ site: 'fake-site', name: 'Template site', status: 'not_linked' }] }),
       },
     },
   },
@@ -145,14 +135,14 @@ export const ProfileSignIns: Story = {
   name: 'profile-sign-ins',
   play: resting(async ({ canvasElement }) => {
     const panel = await profile(canvasElement, 'Sign-ins');
-    await panel.findByText('Linked', {}, { timeout: 30000 });
+    await panel.findByText('Template site', {}, { timeout: 30000 });
+    await panel.findByText('Linked');
     const tab = canvasElement.ownerDocument.querySelector<HTMLElement>('[role="tabpanel"][aria-label="Sign-ins"]');
     if (!tab) throw new Error('Missing Sign-ins panel');
     const content = tab.getBoundingClientRect().right - parseFloat(getComputedStyle(tab).paddingRight);
-    // The status ends at the panel's edge; the action starts under the site's name.
-    await near(box(tab, '.template-sign-in-status').right, content);
-    await near(box(tab, '.template-sign-in-action').left, box(tab, '.list-row-title').left);
-    await near(box(tab, '.list-row-icon').width, window.innerWidth <= 640 ? 44 : 40);
+    // BotCube's built-in Sign-ins list: the status ends at the panel's edge; the action starts under the site's name.
+    await near(box(tab, '.sign-in-status').right, content);
+    await near(box(tab, '.sign-in-actions').left, box(tab, '.sign-in-name').left);
     await noPageScroll(canvasElement);
   }),
 };
@@ -178,11 +168,11 @@ export const ProfileComputerAwake: Story = {
     await profile(canvasElement, 'Computer');
     const panel = computerPanel(canvasElement);
     const covered = box(panel, '.agent-computer-window');
-    await visible(panel, '.template-screen-image');
+    await visible(panel, '.computer-screen-image');
     // The screen keeps its place and size from its cover to its first frame.
     const live = await computerGeometry(panel);
     await expect([live.left, live.top, live.width, live.height]).toEqual([covered.left, covered.top, covered.width, covered.height]);
-    await near(box(panel, '.template-screen-image').width, box(panel, '.template-screen-glass').width);
+    await near(box(panel, '.computer-screen-image').width, box(panel, '.computer-screen-glass').width);
     await noPageScroll(canvasElement);
   }),
 };
@@ -216,18 +206,18 @@ export const TurnLiveBrowser: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Send' }));
     await canvas.findByText("I opened the template site's sign-in page.", {}, { timeout: 30000 });
     const phone = window.innerWidth <= 640;
-    await visible(canvasElement, phone ? '.template-browser-panel .template-screen-bar' : '.template-browser-panel .template-screen-image');
-    const panel = box(canvasElement, '.template-browser-panel');
+    await visible(canvasElement, phone ? '.live-browser-panel .computer-screen-bar' : '.live-browser-panel .computer-screen-image');
+    const panel = box(canvasElement, '.live-browser-panel');
     // Clear of the composer and the header, inside the window's right gutter.
     await expect(panel.bottom).toBeLessThanOrEqual(box(canvasElement, '.copilotKitInput').top - 8);
     await expect(panel.top).toBeGreaterThanOrEqual(box(canvasElement, '.chat-header').bottom);
     await near(window.innerWidth - panel.right, phone ? 12 : 24);
     if (phone) {
       await near(panel.height, 44);
-      await expect(canvasElement.querySelector('.template-browser-panel .template-screen-glass')).not.toBeVisible();
+      await expect(canvasElement.querySelector('.live-browser-panel .computer-screen-glass')).not.toBeVisible();
     } else {
       await near(panel.width, 288);
-      const glass = box(canvasElement, '.template-browser-panel .template-screen-glass');
+      const glass = box(canvasElement, '.live-browser-panel .computer-screen-glass');
       await near(glass.width / glass.height, 1.6, 0.01);
     }
     await noPageScroll(canvasElement);
@@ -235,7 +225,7 @@ export const TurnLiveBrowser: Story = {
 };
 export const PopOut: Story = {
   name: 'browser-view',
-  render: () => <BrowserView />,
+  render: () => <LiveBrowserWindow agentName="BotCube" />,
   parameters: {
     msw: {
       handlers: {
@@ -254,10 +244,10 @@ export const PopOut: Story = {
     };
   },
   play: resting(async ({ canvasElement }) => {
-    await visible(canvasElement, '.template-screen-image');
+    await visible(canvasElement, '.computer-screen-image');
     // As large as the window allows at 16:10, centred with at least a 24px margin.
-    const screen = box(canvasElement, '.template-screen');
-    const glass = box(canvasElement, '.template-screen-glass');
+    const screen = box(canvasElement, '.computer-screen');
+    const glass = box(canvasElement, '.computer-screen-glass');
     await near(glass.width / glass.height, 1.6, 0.01);
     await near(screen.left, window.innerWidth - screen.right);
     await expect(screen.left).toBeGreaterThanOrEqual(24);

@@ -26,7 +26,7 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'], corsOrigins: ['https://example.com', 'https://web.example.com'],
-    runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', reaperCommand: ['node', 'test-reap-auth-browsers.js'], authBrowserId: 'test_credential_login-1234567890', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
+    runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
   return parkingTemplate(origin, parked);
 }
@@ -241,56 +241,6 @@ test('parked Chat has no paid serving alarms or failure metrics', () => {
   expect(filters.flatMap(filter => filter.Properties.MetricTransformations.map((metric: { MetricName: string }) => metric.MetricName))).not.toContain('FilesMountFailures');
 });
 
-test('reaper schedule uses the service image in private subnets and targets the canonical auth browser', () => {
-  const template = synth();
-  template.hasResourceProperties('AWS::Events::Rule', {
-    ScheduleExpression: 'rate(5 minutes)', State: 'ENABLED',
-    Targets: [Match.objectLike({
-      EcsParameters: Match.objectLike({
-        LaunchType: 'FARGATE', TaskCount: 1,
-        NetworkConfiguration: { AwsVpcConfiguration: {
-          AssignPublicIp: 'DISABLED', Subnets: ['subnet-fixture33333333', 'subnet-fixture44444444'], SecurityGroups: [group(template, 'Origin/ChatService/ReaperNetwork')],
-        } },
-      }),
-    })],
-  });
-  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
-    ContainerDefinitions: [Match.objectLike({
-      Image: 'test-image', Command: ['node', 'test-reap-auth-browsers.js'],
-      Environment: Match.arrayWith([{ Name: 'AGENTCORE_BROWSER_ID', Value: 'test_credential_login-1234567890' }]),
-      LogConfiguration: Match.objectLike({ LogDriver: 'awslogs' }),
-    })],
-  });
-  const policies = Object.entries(template.findResources('AWS::IAM::Policy')).filter(([id]) => id.includes('ReaperTaskTaskRole'));
-  expect(policies).toHaveLength(1);
-  const [policy] = policies;
-  assert(policy);
-  expect(policy[1].Properties.PolicyDocument.Statement).toEqual([expect.objectContaining({
-    Action: ['bedrock-agentcore:ListBrowserSessions', 'bedrock-agentcore:StopBrowserSession'],
-    Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':bedrock-agentcore:us-east-1:123456789012:browser-custom/test_credential_login-1234567890']] },
-  })]);
-});
-
-test('scheduler may run only its revision in its cluster and pass only its task roles', () => {
-  const template = synth();
-  const [ruleResource] = Object.values(template.findResources('AWS::Events::Rule'));
-  assert(ruleResource);
-  const rule = ruleResource.Properties;
-  const target = rule.Targets[0];
-  const policies = Object.entries(template.findResources('AWS::IAM::Policy')).filter(([id]) => id.includes('ReaperInvocationRole'));
-  expect(policies).toHaveLength(1);
-  const [policy] = policies;
-  assert(policy);
-  expect(policy[1].Properties.PolicyDocument.Statement).toEqual([
-    { Action: 'ecs:RunTask', Effect: 'Allow', Resource: target.EcsParameters.TaskDefinitionArn,
-      Condition: { ArnEquals: { 'ecs:cluster': target.Arn } } },
-    { Action: 'iam:PassRole', Effect: 'Allow', Resource: expect.arrayContaining([
-      { 'Fn::GetAtt': [expect.stringContaining('ReaperTaskTaskRole'), 'Arn'] },
-      { 'Fn::GetAtt': [expect.stringContaining('ReaperTaskExecutionRole'), 'Arn'] },
-    ]), Condition: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } } },
-  ]);
-});
-
 /** The resource a logical ID prefix names, with its logical ID. */
 function named(template: Template, prefix: string) {
   const [entry] = Object.entries(template.toJSON().Resources as ReturnType<Template['findResources']>).filter(([key]) => key.startsWith(prefix));
@@ -350,37 +300,6 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
   expect(logs.Properties).toEqual({ LogGroupName: '/test/chat-service-preview', RetentionInDays: 30 });
 });
 
-test('the reaper runs a small Linux x86-64 task that names its browser and keeps a week of logs', () => {
-  const template = synth();
-  const task = named(template, 'ChatServiceReaperTask5').Properties;
-  const logs = named(template, 'ChatServiceReaperLogs');
-  expect(task).toMatchObject({ Cpu: '256', Memory: '512', RuntimePlatform: { CpuArchitecture: 'X86_64', OperatingSystemFamily: 'LINUX' } });
-  expect(task.ContainerDefinitions).toEqual([{
-    Name: 'reaper', Essential: true, Image: 'test-image', Command: ['node', 'test-reap-auth-browsers.js'],
-    Environment: [
-      { Name: 'AWS_DEFAULT_REGION', Value: 'us-east-1' },
-      { Name: 'AGENTCORE_REGION', Value: 'us-east-1' },
-      { Name: 'AGENTCORE_BROWSER_ID', Value: 'test_credential_login-1234567890' },
-    ],
-    LogConfiguration: { LogDriver: 'awslogs', Options: { 'awslogs-group': { Ref: logs.id }, 'awslogs-stream-prefix': 'reaper', 'awslogs-region': 'us-east-1' } },
-  }]);
-  expect(logs.Properties).toEqual({ LogGroupName: '/test/auth-browser-reaper-preview', RetentionInDays: 7 });
-});
-
-test('EventBridge runs the reaper schedule once, never retries and drops events older than a minute', () => {
-  const template = synth();
-  const rule = named(template, 'ChatServiceReaperSchedule').Properties;
-  const role = named(template, 'ChatServiceReaperInvocationRole');
-  expect(rule.Description).toBe('Expire abandoned credential login browser sessions');
-  expect(rule.Targets[0]).toMatchObject({
-    Id: 'Reaper', RetryPolicy: { MaximumEventAgeInSeconds: 60, MaximumRetryAttempts: 0 },
-    RoleArn: { 'Fn::GetAtt': [role.id, 'Arn'] },
-  });
-  expect(role.Properties.AssumeRolePolicyDocument.Statement).toEqual([
-    { Action: 'sts:AssumeRole', Effect: 'Allow', Principal: { Service: 'events.amazonaws.com' } },
-  ]);
-});
-
 test('the service joins the ALB as chat-service-preview on port 8123 after a minute of grace', () => {
   const template = synth();
   const group = 'OriginHttpsChatServiceGroup7CF46779';
@@ -436,15 +355,10 @@ test('the Chat Service task role grants only its data, runtime, session API, liv
   ]);
 });
 
-test('the origin outputs the Chat Service and reaper ids the Smoke Test reads', () => {
+test('the origin outputs the Chat Service ids the Smoke Test reads', () => {
   const template = synth();
   const outputs = template.toJSON().Outputs;
   expect(Object.fromEntries(Object.keys(outputs).slice(7).map(name => [name, outputs[name].Value]))).toEqual({
-    ReaperBrowserId: 'test_credential_login-1234567890',
-    ReaperTaskDefinitionArn: { Ref: named(template, 'ChatServiceReaperTask5').id },
-    ReaperRuleName: { Ref: named(template, 'ChatServiceReaperSchedule').id },
-    ReaperLogGroupName: { Ref: named(template, 'ChatServiceReaperLogs').id },
-    ReaperSecurityGroupId: group(template, 'Origin/ChatService/ReaperNetwork'),
     AlertsTopicArn: alerts,
     ClusterName: { Ref: named(template, 'ChatServiceCluster').id },
     ServiceName: { 'Fn::GetAtt': ['ChatService018D98F5', 'Name'] },
@@ -531,21 +445,19 @@ test('a parameter runtime composes with the default AgentCore Harness', () => {
 test('adopter names reach Chat tasks, roles, queues, ingress and alarms', () => {
   const template = synth(undefined, false, privateSubnets, {
     metricFilterNames: { sessionPurgeFailures: 'adopter-purge-filter', turnSummaryFailures: 'adopter-summary-filter', agentComputerStopSleepFailures: 'adopter-sleep-filter', errors: 'adopter-errors-filter' },
-    taskFamily: 'adopter-chat-task', reaperTaskFamily: 'adopter-reaper-task',
+    taskFamily: 'adopter-chat-task',
     taskRoleName: 'adopter-chat-role', executionRoleName: 'adopter-chat-execution',
-    reaperTaskRoleName: 'adopter-reaper-role', reaperExecutionRoleName: 'adopter-reaper-execution',
     scheduledRunsQueueName: 'adopter-runs', scheduledRunsFailedQueueName: 'adopter-failed',
-    scheduledRunsRoleName: 'adopter-scheduler', reaperInvocationRoleName: 'adopter-reaper-invoke',
-    securityGroupName: 'adopter-chat-network', reaperSecurityGroupName: 'adopter-reaper-network',
-    targetGroupName: 'adopter-chat-target', reaperRuleName: 'adopter-reaper-rule',
+    scheduledRunsRoleName: 'adopter-scheduler',
+    securityGroupName: 'adopter-chat-network',
+    targetGroupName: 'adopter-chat-target',
     alarmNames: { 'task-deficit': 'adopter-deficit', 'alb-5xx': 'adopter-alb-errors', 'session-purge-failures': 'adopter-purge-errors' },
   });
-  for (const Family of ['adopter-chat-task', 'adopter-reaper-task']) template.hasResourceProperties('AWS::ECS::TaskDefinition', { Family });
-  for (const RoleName of ['adopter-chat-role', 'adopter-chat-execution', 'adopter-reaper-role', 'adopter-reaper-execution', 'adopter-scheduler', 'adopter-reaper-invoke']) template.hasResourceProperties('AWS::IAM::Role', { RoleName });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', { Family: 'adopter-chat-task' });
+  for (const RoleName of ['adopter-chat-role', 'adopter-chat-execution', 'adopter-scheduler']) template.hasResourceProperties('AWS::IAM::Role', { RoleName });
   for (const QueueName of ['adopter-runs', 'adopter-failed']) template.hasResourceProperties('AWS::SQS::Queue', { QueueName });
-  for (const GroupName of ['adopter-chat-network', 'adopter-reaper-network']) template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName });
+  template.hasResourceProperties('AWS::EC2::SecurityGroup', { GroupName: 'adopter-chat-network' });
   template.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', { Name: 'adopter-chat-target' });
-  template.hasResourceProperties('AWS::Events::Rule', { Name: 'adopter-reaper-rule' });
   for (const AlarmName of ['adopter-deficit', 'adopter-alb-errors', 'adopter-purge-errors']) template.hasResourceProperties('AWS::CloudWatch::Alarm', { AlarmName });
   for (const FilterName of ['adopter-purge-filter', 'adopter-summary-filter', 'adopter-sleep-filter', 'adopter-errors-filter']) template.hasResourceProperties('AWS::Logs::MetricFilter', { FilterName });
   expect(Object.keys(template.findResources('AWS::ElasticLoadBalancingV2::TargetGroup'))).toEqual(['OriginHttpsChatServiceGroup7CF46779']);

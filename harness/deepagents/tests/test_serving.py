@@ -842,6 +842,16 @@ def test_a_member_gets_the_memory_tool_and_the_same_instructions(service: _Servi
     assert 'memory' in service.recorder.tools[1]
 
 
+def test_a_bot_whose_settings_turn_memory_off_gives_a_member_no_memory(service: _Service) -> None:
+    service.turn('remember: prefers copper', thread='thread-a', memory=True)
+    service.turn('hello', thread='thread-b', memory=True, botMemory=False)
+
+    assert 'memory' not in service.recorder.tools[-1]
+    assert 'prefers copper' not in service.recorder.prompts[-1]
+    graphs = [agent.graph for key, agent in serving._AGENTS.items() if key.conversation_id == 'thread-b']
+    assert graphs and all(graph.store is None for graph in graphs)
+
+
 def test_a_members_memories_reach_their_next_conversation_only(service: _Service) -> None:
     events = service.turn('remember: prefers copper', thread='thread-a', memory=True)
     assert _tool_output(events).startswith('{"status": "success"')

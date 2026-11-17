@@ -176,9 +176,10 @@ class FakeAgentCoreMemory:
         self.deleted_at.append(self.clock)
         return {}
 
-    def _record(self, record_id: str, operation: str) -> dict[str, Any]:
+    def _record(self, record_id: str, operation: str, namespace: str | None = None) -> dict[str, Any]:
+        """A record by ID; a named namespace must be one of the record's own, as AgentCore answers live."""
         for record in self.records:
-            if record['memoryRecordId'] == record_id:
+            if record['memoryRecordId'] == record_id and (namespace is None or namespace in record['namespaces']):
                 return record
         raise EXCEPTIONS.ResourceNotFoundException(
             {'Error': {'Code': 'ResourceNotFoundException', 'Message': 'Memory record not found'}}, operation)
@@ -192,7 +193,7 @@ class FakeAgentCoreMemory:
 
     def delete_memory_record(self, **params: Any) -> dict[str, Any]:
         params = validated('DeleteMemoryRecord', params)
-        self.records.remove(self._record(params['memoryRecordId'], 'DeleteMemoryRecord'))
+        self.records.remove(self._record(params['memoryRecordId'], 'DeleteMemoryRecord', params.get('namespace')))
         return {'memoryRecordId': params['memoryRecordId']}
 
     def get_paginator(self, operation: str) -> Any:
@@ -230,7 +231,7 @@ class FakeAgentCoreMemory:
 
     def get_memory_record(self, **params: Any) -> dict[str, Any]:
         params = validated('GetMemoryRecord', params)
-        return {'memoryRecord': copy.deepcopy(self._record(params['memoryRecordId'], 'GetMemoryRecord'))}
+        return {'memoryRecord': copy.deepcopy(self._record(params['memoryRecordId'], 'GetMemoryRecord', params.get('namespace')))}
 
 
 USER_MEMORY_ROLE_ARN = 'arn:aws:iam::123456789012:role/user-memory'
@@ -308,7 +309,7 @@ def _denied(operation: str, params: dict[str, Any]) -> ClientError:
 
 _EVENT_OPERATIONS = ('create_event', 'get_event', 'list_events', 'delete_event')
 _RECORD_LISTINGS = ('list_memory_records', 'retrieve_memory_records')
-# Neither takes a namespace condition key, so the role allows them unconditioned (ADR 0031).
+# Both evaluate bedrock-agentcore:namespace from the request's namespace; the web-identity role leaves them unconditioned.
 _RECORDS_BY_ID = ('get_memory_record', 'delete_memory_record')
 
 
@@ -318,6 +319,8 @@ class TaggedMemoryClient:
     Each call is evaluated under the credentials it is signed with now, and each allowed call is
     recorded in `calls`, as (operation, params). Each record selector supplies its own IAM
     condition key; ``record_read_selectors`` models separate Allow statements for those keys.
+    ``scoped_records_by_id`` models the `assume-role` session policy, which allows a get or delete by ID
+    only with a namespace under the actor's prefix and refuses one with no namespace.
     """
 
     exceptions = EXCEPTIONS
@@ -328,6 +331,7 @@ class TaggedMemoryClient:
         self._tags = tags
         self.calls = calls
         self.record_read_selectors: tuple[str, ...] = ('namespace', 'namespacePath')
+        self.scoped_records_by_id = False
 
     @property
     def tags(self) -> dict[str, str]:
@@ -344,6 +348,8 @@ class TaggedMemoryClient:
                 str(params.get(selector, '')).startswith(f"/actors/{tags['actorId']}/")
                 for selector in self.record_read_selectors
             )
+        if operation in _RECORDS_BY_ID and self.scoped_records_by_id:
+            return str(params.get('namespace', '')).startswith(f"/actors/{tags['actorId']}/")
         return operation in _RECORDS_BY_ID
 
     def __getattr__(self, operation: str) -> Any:

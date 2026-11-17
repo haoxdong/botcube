@@ -1,20 +1,10 @@
-import { TEMPLATE_IDENTITY } from '../../../identity';
-import { TemplateAuthProvider, SignInsTab } from './auth-provider';
-import { BrowserPanel } from './browser-panel';
-import { BrowserView } from './browser-view';
-import { ComputerView } from './computer-view';
+import { TemplateAuthProvider } from './auth-provider';
 import { config } from './config';
-import { SiteDataResult } from './site-data-result';
 import type { WebUiPlugin } from 'botcube-ui-web/cartridge';
 import './styles.css';
 
+// The template's own sign-in; BotCube builds in the Sign-ins tab, the Agent Computer and its live browser.
 export const webUiPlugin: WebUiPlugin = {
   config,
-  toolResultRenderers: [SiteDataResult],
-  auxiliaryPanels: [BrowserPanel],
-  AuxiliaryView: BrowserView,
-  ComputerView,
   AuthProvider: TemplateAuthProvider,
-  agentProfileTabs: { 'Sign-ins': SignInsTab },
-  theme: { ...TEMPLATE_IDENTITY.theme },
 };

@@ -184,6 +184,13 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   parkingTemplate(app.node.findChild('PrivateEgress') as Stack, parked).resourceCountIs('AWS::EC2::NatGateway', parked ? 0 : 1);
   expect((app.node.findChild('PreviewOrigin') as Stack).stackName).toBe(identity.aws.ecs.previewOriginStackName);
   origin.hasResourceProperties('AWS::BedrockAgentCore::BrowserCustom', { Name: identity.aws.agentCore.agentComputerBrowser.name });
+  // Without a Deployment Config the Chat Service keeps its defaults: none is named.
+  const chatEnvironment = Object.values(origin.findResources('AWS::ECS::TaskDefinition'))
+    .flatMap(({ Properties }) => Properties.ContainerDefinitions as { Name: string; Environment?: { Name: string }[] }[])
+    .filter(({ Name }) => Name === 'chat-service')
+    .flatMap(({ Environment }) => (Environment ?? []).map(({ Name }) => Name));
+  expect(chatEnvironment).toContain('BOTCUBE_PUBLIC_ORIGIN');
+  expect(chatEnvironment).not.toContain('BOTCUBE_DEPLOYMENT_CONFIG');
 });
 
 test('composition rejects competing chat table names before creating resources', () => {

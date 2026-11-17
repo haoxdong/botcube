@@ -6,7 +6,9 @@ import { bedrockTurnSummarizer, recordTurnSummary, turnSummaryModelFromEnv } fro
 vi.mock('./aws.js', () => ({ awsFetch: vi.fn() }));
 beforeEach(() => vi.mocked(awsFetch).mockReset());
 afterEach(() => vi.restoreAllMocks());
-const model = turnSummaryModelFromEnv({}, 'us-east-1');
+const defaultModel = turnSummaryModelFromEnv({}, 'us-east-1');
+if (defaultModel.kind !== 'bedrock') throw new Error('With no models endpoint set, turn summaries run on Bedrock');
+const model = defaultModel;
 const turn = { request: 'PRIVATE_REQUEST', answer: 'PRIVATE_ANSWER' };
 
 // Compatible with the safe Q19 replay: exhausted 200 tokens, title present, no nonempty summary.

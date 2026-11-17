@@ -1,0 +1,51 @@
+import { Duration } from 'aws-cdk-lib';
+import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
+import * as elb from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { parkServiceIngress } from './park-state.js';
+import type { PreviewOriginStack } from './preview-origin-stack.js';
+import type { PrivateCredentialService } from './private-credential-service.js';
+
+/** Below the Chat Service's forward rule (10); a host of its own never matches the Chat Service's hosts. */
+const PUBLIC_RULE_PRIORITY = 7;
+
+export interface CredentialServicePublicRoute {
+  hostname: string;
+  rpcPath: string;
+  port: number;
+  /** The paths under `rpcPath` the User's browser may reach; the service's other routes stay off the listener. */
+  paths: readonly string[];
+  /** The bot's UI origins, which call the service cross-origin with BotCube's signed user token. */
+  corsOrigins: readonly string[];
+  chatTable: ITable;
+  /** The partition-key prefixes of the Chat table rows the service may read and write; none, no access. */
+  chatTableKeyPrefixes: readonly string[];
+}
+
+/** Publish the product's service on its own host through the origin's ALB, its private routes kept off the listener. */
+export function publishCredentialService(origin: PreviewOriginStack, credentials: PrivateCredentialService, route: CredentialServicePublicRoute): void {
+  credentials.container.addEnvironment('BOTCUBE_CORS_ORIGINS', route.corsOrigins.join(','));
+  credentials.container.addEnvironment('BOTCUBE_CHAT_TABLE', route.chatTable.tableName);
+  if (route.chatTableKeyPrefixes.length) credentials.task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [route.chatTable.tableArn],
+    conditions: {
+      'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': route.chatTableKeyPrefixes.map(prefix => `${prefix}*`) },
+      Null: { 'dynamodb:LeadingKeys': 'false' },
+    },
+  }));
+  // The origin has an ALB only while Live.
+  if (!origin.alb) return;
+  const target = new elb.ApplicationTargetGroup(credentials, 'PublicTarget', {
+    vpc: credentials.service.cluster.vpc, port: route.port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
+    healthCheck: { path: '/health', healthyHttpCodes: '200' }, deregistrationDelay: Duration.seconds(30),
+  });
+  credentials.service.attachToApplicationTargetGroup(target);
+  new elb.ApplicationListenerRule(credentials, 'PublicRoute', {
+    listener: origin.alb.listener, priority: PUBLIC_RULE_PRIORITY, targetGroups: [target],
+    conditions: [
+      elb.ListenerCondition.hostHeaders([route.hostname]),
+      elb.ListenerCondition.pathPatterns(route.paths.map(path => `${route.rpcPath}${path}`)),
+    ],
+  });
+  parkServiceIngress(credentials.service, target, origin, credentials.container.containerName, route.port);
+}

@@ -51,26 +51,3 @@ def test_operator_cannot_replace_a_normal_users_connector_with_a_test_copy(vault
     with pytest.raises(ClientError):
         vault.copy_test_connector('owner', 'normal-user', 'site', audit=CredentialAuditRecorder(), request_context={})
     assert vault.load_durable_credential('normal-user', 'site') == 'normal-credential'
-
-
-def test_copy_endpoint_requires_operator_scope_and_never_returns_the_credential(vault: DynamoDbCredentialVault) -> None:
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from botcube_credential_service.invocation import sign_credential_service_invocation
-    from botcube_credential_service.server import InvocationGuard
-    from botcube_credential_service.test_connectors import test_connector_routes
-
-    vault.store_durable_credential('owner', 'site', 'private-credential')
-    app = FastAPI()
-    app.include_router(test_connector_routes(InvocationGuard(lambda: 'operator-secret'), lambda: vault,
-                                             'site', lambda: 'owner', CredentialAuditRecorder()))
-    client = TestClient(app)
-    assert client.post('/auth/test-user-copy').status_code == 401
-    regular = sign_credential_service_invocation('operator-secret', 'test-one', 'run')
-    assert client.post('/auth/test-user-copy', headers={'authorization': 'Bearer ' + regular}).status_code == 401
-    operator = sign_credential_service_invocation('operator-secret', 'test-one', 'run', scope='test_user_copy')
-    response = client.post('/auth/test-user-copy', headers={'authorization': 'Bearer ' + operator})
-    assert response.status_code == 200
-    assert response.json() == {'status': 'stored'}
-    assert vault.load_durable_credential('test-one', 'site') == 'private-credential'

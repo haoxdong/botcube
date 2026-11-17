@@ -24,7 +24,7 @@ describe('Turn summary settlement after RUN_FINISHED', () => {
         output: { message: { content: [{ toolUse: { name: 'turn_summary', input: { title: 'Compared rates', summary: 'Compared the yields' } } }] } },
       });
     }).listen();
-    const stack = await startInProcess({ config: { turnSummaryModel: { region: 'us-east-1', url: model.url } } });
+    const stack = await startInProcess({ config: { turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: model.url } } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     try {

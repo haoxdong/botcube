@@ -2,7 +2,8 @@ import { Hono, type Context } from 'hono';
 import type { AccountCookies } from './account-cookies.js';
 import { clearCookie } from './account-cookies.js';
 import { accountProfileRoutes } from './account-profile.js';
-import type { Account, AccountStore } from './account-store.js';
+import type { Account } from './account-record.js';
+import type { AccountStore } from './account-store.js';
 import { HttpError, type AccountHistory } from './cartridge.js';
 import type { AccountFiles } from './files.js';
 

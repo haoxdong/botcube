@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "The JSON Schema this file follows, for editors.",
+      "type": "string"
+    },
+    "bot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The bot settings file, relative to this file."
+    },
+    "identity": {
+      "default": {
+        "kind": "botcube-accounts"
+      },
+      "description": "How Users sign in.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "botcube-accounts"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "oidc"
+            },
+            "issuer": {
+              "type": "string",
+              "format": "uri",
+              "description": "The provider's issuer URL, where its OpenID configuration is discovered."
+            },
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientSecret": {
+              "type": "object",
+              "properties": {
+                "secretArn": {
+                  "type": "string",
+                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                }
+              },
+              "required": ["secretArn"],
+              "additionalProperties": false,
+              "description": "A Secrets Manager secret, by ARN."
+            },
+            "subjectIsAccountId": {
+              "description": "The provider's subject is the User's account ID (acct_…): a new User's account takes it, and a returning User lands in the account it names.",
+              "type": "boolean"
+            }
+          },
+          "required": ["kind", "issuer", "clientId", "clientSecret"],
+          "additionalProperties": false,
+          "description": "Users sign in with an OpenID Connect provider, by authorization code with PKCE."
+        }
+      ]
+    },
+    "models": {
+      "default": {
+        "kind": "bedrock"
+      },
+      "description": "Where the agent and turn summaries reach their models.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bedrock"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "openai-compatible"
+            },
+            "baseUrl": {
+              "type": "string",
+              "format": "uri",
+              "description": "The endpoint's OpenAI API base URL, such as https://models.example.com/v1."
+            },
+            "apiKey": {
+              "type": "object",
+              "properties": {
+                "secretArn": {
+                  "type": "string",
+                  "pattern": "^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\\d{12}:secret:.+$"
+                }
+              },
+              "required": ["secretArn"],
+              "additionalProperties": false,
+              "description": "The endpoint's API key."
+            },
+            "turnSummaryModel": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The model on the endpoint that summarizes each finished Turn for the Activity."
+            }
+          },
+          "required": ["kind", "baseUrl", "apiKey", "turnSummaryModel"],
+          "additionalProperties": false,
+          "description": "Every model on an OpenAI-compatible endpoint, by its key in the bot settings; Plan Usage models still run through the Credential Service."
+        }
+      ]
+    },
+    "harnessAuth": {
+      "default": {
+        "kind": "sigv4"
+      },
+      "description": "How Chat authenticates to the Harness.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sigv4"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "jwt-bearer"
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `aud` of Chat's tokens, which the Runtime's JWT authorizer allows."
+            }
+          },
+          "required": ["kind", "audience"],
+          "additionalProperties": false,
+          "description": "Chat signs a short-lived bearer token with its Turn identity keys, as the issuer at its public origin; the AgentCore Runtime's JWT authorizer checks it."
+        }
+      ]
+    },
+    "turnCredentials": {
+      "default": {
+        "kind": "web-identity"
+      },
+      "description": "How each Turn gets its User's AWS credentials.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "web-identity"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "assume-role"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false,
+          "description": "The Chat Service assumes the Memory role for each Turn with a session policy naming its User; no OIDC provider or session tags."
+        }
+      ]
+    },
+    "schedules": {
+      "default": {
+        "kind": "eventbridge-scheduler"
+      },
+      "description": "What fires scheduled tasks.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "eventbridge-scheduler"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "table-poller"
+            }
+          },
+          "required": ["kind"],
+          "additionalProperties": false,
+          "description": "The Chat Service polls its own table and sends each due run to the run queue."
+        }
+      ]
+    },
+    "existing": {
+      "type": "object",
+      "properties": {
+        "network": {
+          "type": "object",
+          "properties": {
+            "vpcId": {
+              "type": "string",
+              "pattern": "^vpc-[0-9a-z]+$"
+            },
+            "publicSubnets": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "subnetId": {
+                    "type": "string",
+                    "pattern": "^subnet-[0-9a-z]+$"
+                  },
+                  "availabilityZone": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["subnetId", "availabilityZone"],
+                "additionalProperties": false
+              },
+              "description": "The origin load balancer's subnets."
+            },
+            "privateSubnets": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "subnetId": {
+                    "type": "string",
+                    "pattern": "^subnet-[0-9a-z]+$"
+                  },
+                  "availabilityZone": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cidrBlock": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["subnetId", "availabilityZone", "cidrBlock"],
+                "additionalProperties": false
+              },
+              "description": "The services' and browsers' subnets, which must already reach the internet or the proxy."
+            }
+          },
+          "required": ["vpcId", "publicSubnets", "privateSubnets"],
+          "additionalProperties": false
+        },
+        "kmsKeys": {
+          "type": "object",
+          "properties": {
+            "vault": {
+              "description": "Encrypts the Credential Service's vault.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+            },
+            "sheet": {
+              "description": "Decrypts what the Sign-in Sheet encrypts: an RSA_2048 ENCRYPT_DECRYPT key.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+            },
+            "memory": {
+              "description": "Encrypts the agent's AgentCore Memory.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+            },
+            "images": {
+              "description": "Encrypts the bot's image repository.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "tables": {
+          "type": "object",
+          "properties": {
+            "chat": {
+              "type": "object",
+              "properties": {
+                "tableName": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_.-]{3,255}$"
+                },
+                "streamArn": {
+                  "type": "string",
+                  "pattern": "^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\\d{12}:table\\/([a-zA-Z0-9_.-]+)\\/stream\\/.+$",
+                  "description": "The table's NEW_IMAGE stream, which parking reads."
+                }
+              },
+              "required": ["tableName", "streamArn"],
+              "additionalProperties": false
+            },
+            "vault": {
+              "description": "The Credential Service's vault: partition key accountId, sort key provider.",
+              "type": "object",
+              "properties": {
+                "tableName": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_.-]{3,255}$"
+                }
+              },
+              "required": ["tableName"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "buckets": {
+          "type": "object",
+          "properties": {
+            "connectionLogs": {
+              "description": "The origin load balancer's connection logs.",
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "Resources BotCube imports instead of creating; each one left out, it creates."
+    },
+    "telemetry": {
+      "description": "Where traces go; absent, AWS X-Ray.",
+      "type": "object",
+      "properties": {
+        "otlpEndpoint": {
+          "type": "string",
+          "format": "uri",
+          "description": "The OTLP/HTTP traces endpoint the services export to, such as http://collector:4318/v1/traces."
+        }
+      },
+      "required": ["otlpEndpoint"],
+      "additionalProperties": false
+    },
+    "proxy": {
+      "description": "The proxy outbound traffic goes through; absent, it goes direct.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "The forward proxy outbound HTTP and HTTPS go through, as HTTP_PROXY and HTTPS_PROXY."
+        },
+        "noProxy": {
+          "description": "Hosts and domain suffixes reached directly, as NO_PROXY; loopback and the AWS metadata addresses always are.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["bot"],
+  "additionalProperties": false
+}

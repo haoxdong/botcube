@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ComponentType } from "react";
 import type { AbstractAgent, CustomEvent } from "@ag-ui/client";
-import type { ComputerViewProps, WebUiPlugin } from "../cartridge/index.js";
+import type { ComputerViewProps, SignInsControl } from "../cartridge/index.js";
 
 type CurrentComputer = { conversation: ComputerViewProps["conversation"]; agent: AbstractAgent };
 type Entry = { conversation: CurrentComputer["conversation"]; instance: object; connected: boolean };
@@ -11,15 +11,16 @@ const inactiveActivity: ComputerViewProps["activity"] = {
 };
 const snapshot = (agent: AbstractAgent | null) => agent === null ? null : ({ agent, messages: agent.messages, running: agent.isRunning });
 
-function ChatComputer({ entry, agent, View, agentId, agentName, shown, stop, connectionChanged }: {
+function ChatComputer({ entry, agent, View, agentId, agentName, shown, stop, connectionChanged, onRequestError }: {
   entry: Entry;
   agent: AbstractAgent | null;
-  View: NonNullable<WebUiPlugin["ComputerView"]>;
+  View: ComponentType<ComputerViewProps>;
   agentId: string;
   agentName: string;
   shown: boolean;
   stop: (() => void) | null;
   connectionChanged: (instance: object, connected: boolean) => void;
+  onRequestError?: ComputerViewProps["onRequestError"];
 }) {
   const [activity, setActivity] = useState(() => snapshot(agent));
   const current = activity?.agent === agent ? activity : snapshot(agent);
@@ -41,19 +42,24 @@ function ChatComputer({ entry, agent, View, agentId, agentName, shown, stop, con
   const { instance } = entry;
   const onConnectionChange = useCallback((connected: boolean) => connectionChanged(instance, connected), [connectionChanged, instance]);
   return <View agentId={agentId} agentName={agentName} conversation={entry.conversation} shown={shown}
-    onConnectionChange={onConnectionChange}
+    onConnectionChange={onConnectionChange} onRequestError={onRequestError}
     activity={current === null ? inactiveActivity : { messages: current.messages, running: current.running, stop, subscribeToCustomEvents }} />;
 }
 
 /** Connected computers survive chat navigation within this account until their streams release. */
-export function ChatComputers({ current, View, agentId, agentName, shown, stop }: {
+export function ChatComputers({ current, View, agentId, agentName, shown, stop, signIns }: {
   current: CurrentComputer | null;
-  View: NonNullable<WebUiPlugin["ComputerView"]>;
+  View: ComponentType<ComputerViewProps>;
   agentId: string;
   agentName: string;
   shown: boolean;
   stop: (() => void) | null;
+  /** A request refused for a lapsed sign-in starts the sign-in again. */
+  signIns?: SignInsControl | undefined;
 }) {
+  const onRequestError = (cause: Error) => {
+    if (signIns?.needsSignIn?.(cause)) signIns.signIn();
+  };
   const [entries, setEntries] = useState<Entry[]>([]);
   const selectedId = shown ? current?.conversation.id : undefined;
   const selected = useRef(selectedId);
@@ -75,7 +81,7 @@ export function ChatComputers({ current, View, agentId, agentName, shown, stop }
     const shown = entry.conversation.id === selectedId;
     return <div key={entry.conversation.id} hidden={!shown} inert={!shown} style={{ height: "100%" }}>
       <ChatComputer entry={entry} agent={shown && current ? current.agent : null} View={View} agentId={agentId} agentName={agentName}
-        shown={shown} stop={shown ? stop : null} connectionChanged={connectionChanged} />
+        shown={shown} stop={shown ? stop : null} connectionChanged={connectionChanged} onRequestError={onRequestError} />
     </div>;
   });
 }

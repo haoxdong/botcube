@@ -1,6 +1,7 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { Hono } from 'hono';
-import { SignJWT } from 'jose';
+import { CHAT_SERVICE_SUBJECT, RESERVED_AUDIENCES, TOKEN_AUDIENCES, reservedAudienceError } from 'botcube-deployment-config';
+import { SignJWT, type JWTPayload } from 'jose';
 import { z } from 'zod';
 
 /**
@@ -9,9 +10,9 @@ import { z } from 'zod';
  * filing actor and Session. AgentCore Identity and Gateway take the same token for Connectors.
  */
 
-/** The audience the IAM OIDC provider trusts: STS's own, as EKS service accounts and GitHub Actions use. */
-const TURN_IDENTITY_AUDIENCE = 'sts.amazonaws.com';
 const LIFETIME_SECONDS = 3600;
+/** A service token covers one call: long enough for clock skew, short enough that a leaked one soon dies. */
+const SERVICE_TOKEN_SECONDS = 300;
 const TAGS_CLAIM = 'https://aws.amazon.com/tags';
 const JWKS_PATH = '/.well-known/jwks.json';
 /** IAM's tag value rules: at most 256 letters, digits, spaces and `_.:/=+-@`. */
@@ -64,12 +65,40 @@ function writesPrefix(sessionId: string): string {
   return `lgw-${createHash('sha256').update(sessionId).digest('hex').slice(0, 32)}`;
 }
 
-function tagValue(name: string, value: string): string[] {
+function tagValue(name: string, value: string): string {
   if (!TAG_VALUE.test(value)) throw new Error(`The ${name} ${JSON.stringify(value.slice(0, 64))} is not a valid AWS session tag value`);
-  return [value];
+  return value;
 }
 
-export class TurnIdentity {
+/** What a Turn's Memory credentials may reach. Values keep to IAM's tag value rules, so none is an IAM wildcard or policy variable. */
+export interface TurnScope {
+  actorId: string;
+  filingActorId: string;
+  sessionId: string;
+  writesPrefix: string;
+}
+
+export function turnScope(turn: TurnIdentityClaims): TurnScope {
+  return {
+    actorId: tagValue('actor ID', turn.actorId),
+    filingActorId: tagValue('filing actor ID', turn.filingActorId),
+    sessionId: tagValue('Session ID', turn.sessionId),
+    writesPrefix: writesPrefix(turn.sessionId),
+  };
+}
+
+/** What the Harness receives as `turnIdentity`, and the values a Turn's error text must not show. */
+export interface TurnGrant {
+  forwarded: string | Record<string, string>;
+  secrets: string[];
+}
+
+/** How a Turn gets its User's Memory credentials: the Deployment Config's `turnCredentials` adapter. */
+export interface TurnCredentialSource {
+  grant(turn: TurnIdentityClaims): Promise<TurnGrant>;
+}
+
+export class TurnIdentity implements TurnCredentialSource {
   private readonly issuer: string;
   private readonly signing: { kid: string; key: KeyObject };
   private readonly published: JsonWebKey[];
@@ -84,21 +113,49 @@ export class TurnIdentity {
   async sign(turn: TurnIdentityClaims): Promise<string> {
     const startedAt = Math.floor(Date.parse(turn.startedAt) / 1000);
     if (!Number.isFinite(startedAt)) throw new Error('The Turn start is not a timestamp');
-    const principalTags = {
-      actorId: tagValue('actor ID', turn.actorId),
-      filingActorId: tagValue('filing actor ID', turn.filingActorId),
-      sessionId: tagValue('Session ID', turn.sessionId),
-      writesPrefix: [writesPrefix(turn.sessionId)],
-    };
+    const principalTags = Object.fromEntries(Object.entries(turnScope(turn)).map(([key, value]) => [key, [value]]));
     return await new SignJWT({ [TAGS_CLAIM]: { principal_tags: principalTags } })
       .setProtectedHeader({ alg: 'ES256', kid: this.signing.kid, typ: 'JWT' })
       .setIssuer(this.issuer)
-      .setAudience(TURN_IDENTITY_AUDIENCE)
+      .setAudience(TOKEN_AUDIENCES.turnIdentity)
       .setSubject(turn.actorId)
       .setIssuedAt(startedAt)
       .setExpirationTime(startedAt + LIFETIME_SECONDS)
       .setJti(randomUUID())
       .sign(this.signing.key);
+  }
+
+  /**
+   * Any other token BotCube signs with these keys (the Harness bearer, a product's user token): ES256, `iss` this
+   * issuer, and an audience naming what it is for, so one kind never passes for another. Never STS's audience, so it
+   * buys no Memory credentials.
+   */
+  async signToken(token: { audience: string; subject: string; lifetimeSeconds: number; claims?: JWTPayload }): Promise<string> {
+    if (token.audience === TOKEN_AUDIENCES.turnIdentity) throw new Error(`A service token cannot be for ${TOKEN_AUDIENCES.turnIdentity}`);
+    const issuedAt = Math.floor(Date.now() / 1000);
+    return await new SignJWT(token.claims ?? {})
+      .setProtectedHeader({ alg: 'ES256', kid: this.signing.kid, typ: 'JWT' })
+      .setIssuer(this.issuer)
+      .setAudience(token.audience)
+      .setSubject(token.subject)
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(issuedAt + token.lifetimeSeconds)
+      .setJti(randomUUID())
+      .sign(this.signing.key);
+  }
+
+  /**
+   * A short-lived token naming the Chat Service itself, for a service that trusts this issuer for `audience`: the
+   * Harness's JWT authorizer.
+   */
+  async signServiceToken(audience: string): Promise<string> {
+    if (RESERVED_AUDIENCES.includes(audience)) throw new Error(reservedAudienceError(audience));
+    return await this.signToken({ audience, subject: CHAT_SERVICE_SUBJECT, lifetimeSeconds: SERVICE_TOKEN_SECONDS });
+  }
+
+  async grant(turn: TurnIdentityClaims): Promise<TurnGrant> {
+    const token = await this.sign(turn);
+    return { forwarded: token, secrets: [token] };
   }
 
   /** The OIDC discovery document IAM reads from `<issuer>/.well-known/openid-configuration`. */
@@ -119,15 +176,15 @@ export class TurnIdentity {
 }
 
 /**
- * Hand the Harness this Turn's identity, never one the client sent, and answer it for redaction.
- * A Chat Service without keys forwards none.
+ * Hand the Harness this Turn's identity, never one the client sent, and answer its secrets for redaction.
+ * A Chat Service without a Turn credentials source forwards none.
  */
-export async function forwardTurnIdentity(identity: TurnIdentity | null, forwardedProps: Record<string, unknown>, turn: TurnIdentityClaims): Promise<string | undefined> {
+export async function forwardTurnIdentity(source: TurnCredentialSource | null, forwardedProps: Record<string, unknown>, turn: TurnIdentityClaims): Promise<string[]> {
   delete forwardedProps.turnIdentity;
-  if (identity === null) return undefined;
-  const token = await identity.sign(turn);
-  forwardedProps.turnIdentity = token;
-  return token;
+  if (source === null) return [];
+  const { forwarded, secrets } = await source.grant(turn);
+  forwardedProps.turnIdentity = forwarded;
+  return secrets;
 }
 
 /**

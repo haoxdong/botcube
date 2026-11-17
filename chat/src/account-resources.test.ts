@@ -120,7 +120,7 @@ it('refuses a capped Session before any Browser factory or Files mount', async (
   const computers = agentComputers({ records: () => records,
     browser: () => { throw new Error('Browser must not be constructed'); },
     files: () => { throw new Error('Files must not be mounted'); },
-    seed: async () => {}, idleSeconds: 60 });
+    idleSeconds: 60 });
   await expect(computers.wake('owner', 'smoke')).rejects.toThrow('Browser sessions are denied');
   await expect(records.assertBrowserAllowed('other-owner', 'smoke')).resolves.toBeUndefined();
   await expect(records.assertBrowserAllowed('owner', 'ordinary')).resolves.toBeUndefined();

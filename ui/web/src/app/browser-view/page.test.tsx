@@ -1,25 +1,33 @@
 import { render } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
-import type { WebUiPlugin } from '../../cartridge/index.js';
+vi.mock('@cartridge-ui', () => ({ webUiPlugin: { config: { agentName: 'Quill' } } }));
 
-const plugin = vi.hoisted(() => {
-  const webUiPlugin: Partial<WebUiPlugin> = {};
-  return { webUiPlugin };
-});
-vi.mock('@cartridge-ui', () => plugin);
+const settings = vi.hoisted(() => ({
+  agentIdentity: { name: 'Quill', character: 'A drafting agent' },
+  models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+  agentComputer: { enabled: true, liveBrowser: false },
+}));
+vi.mock('@bot-settings', () => ({ default: settings }));
 
-const { default: BrowserViewPage } = await import('./page');
-
-it('shows the cartridge auxiliary view', () => {
-  plugin.webUiPlugin.AuxiliaryView = () => <p>browser session</p>;
-
-  expect(render(<BrowserViewPage />).container.innerHTML).toBe('<p>browser session</p>');
+afterEach(() => {
+  vi.resetModules();
 });
 
-// BotCube's live browser view is the default, so a Cartridge on AgentCore Browser brings none.
-it("shows BotCube's live browser view when the cartridge has none", () => {
-  delete plugin.webUiPlugin.AuxiliaryView;
+const page = async () => (await import('./page')).default;
+
+// BotCube's live browser view is the default, so a bot on AgentCore Browser shows it.
+it("shows BotCube's live browser view when the bot settings leave the live browser panel off", async () => {
+  settings.agentComputer.liveBrowser = false;
+  const BrowserViewPage = await page();
 
   expect(render(<BrowserViewPage />).container).toHaveTextContent('Missing browser session.');
+});
+
+it("shows the live browser panel's own window when the bot settings switch the panel on", async () => {
+  settings.agentComputer.liveBrowser = true;
+  const BrowserViewPage = await page();
+
+  expect(render(<BrowserViewPage />).container).toHaveTextContent('This window names no browser Session.');
+  expect(document.querySelector('.computer-screen-title')).toHaveTextContent("Quill's computer");
 });

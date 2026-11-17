@@ -23,7 +23,7 @@ it('loads the Scheduled and Activity panels only when their tabs open', async ()
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ name: 'Marq', character: '', vibe: '', avatar: '' })));
   render(<AgentProfile open chatServiceUrl="http://chat.test" profile={null} error={null}
     computer={() => <p>Computer loaded</p>} onClose={() => {}} revision={0}
-    onSaved={() => {}} onOpenChat={() => {}} tabs={{}} />);
+    onSaved={() => {}} onOpenChat={() => {}} />);
   expect(screen.getByText('Computer loaded')).toBeInTheDocument();
   expect(loaded).not.toHaveBeenCalled();
   expect(activityLoaded).not.toHaveBeenCalled();

@@ -148,6 +148,15 @@ test("registers the Chat Service's https origin from identity.json as the Memory
   });
 });
 
+test('under assume-role, refuses a deploy identity that names no Chat Service task role for the Memory role to trust', () => {
+  const config = deployConfig();
+  delete config.identity.aws.iam.chatServiceTaskRole;
+
+  expect(() => addAgentCoreStacks(new App(), config, COMMIT, {}, 'assume-role')).toThrow(
+    'Deploy identity aws.iam.chatServiceTaskRole: required with turnCredentials assume-role'
+  );
+});
+
 test('keeps the runtime on the public network without a runtime network parameter', () => {
   const app = new App();
 

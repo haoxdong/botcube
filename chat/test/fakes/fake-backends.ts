@@ -149,3 +149,75 @@ export class FakeBedrock extends HttpFake {
       .map((request) => JSON.parse(prompt(request)) as { request: string; answer: string });
   }
 }
+
+/** The newest user message, which a fake answers. */
+function lastUserMessage(messages: ChatCompletionsRequest['messages']): ChatCompletionsRequest['messages'][number] | undefined {
+  return [...messages].reverse().find(({ role }) => role === 'user');
+}
+
+/** A chat completions request, as the Harness's agent model and the Chat Service's summary model send one. */
+interface ChatCompletionsRequest {
+  model: string;
+  stream?: boolean;
+  messages: { role: string; content: string | { type: string; text?: string }[] }[];
+  tool_choice?: { type: 'function'; function: { name: string } };
+}
+
+const completionText = (content: ChatCompletionsRequest['messages'][number]['content']) =>
+  typeof content === 'string' ? content : content.map(({ text }) => text ?? '').join('');
+
+/**
+ * An OpenAI-compatible endpoint (the Deployment Config's `openai-compatible` models), at `<url>/v1`: it answers a
+ * forced `turn_summary` with `turnSummary`, and any other request as BotCube's echo model does, streamed when asked.
+ * It accepts only `apiKey` and records every request.
+ */
+export class FakeOpenAICompatible extends HttpFake {
+  turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
+
+  constructor(readonly apiKey: string) {
+    super((request, response) => {
+      if (request.method !== 'POST' || request.path !== '/v1/chat/completions') {
+        sendJson(response, 404, { error: { message: `No route ${request.method} ${request.path}` } });
+        return;
+      }
+      if (request.headers.authorization !== `Bearer ${this.apiKey}`) {
+        sendJson(response, 401, { error: { message: 'Incorrect API key provided' } });
+        return;
+      }
+      const body = JSON.parse(request.body) as ChatCompletionsRequest;
+      const tool = body.tool_choice?.function.name;
+      if (tool !== undefined) {
+        if (this.turnSummary === 'fail') {
+          sendJson(response, 500, { error: { message: `fake ${tool} model failure` } });
+          return;
+        }
+        const call = { id: `${tool}-1`, type: 'function', function: { name: tool, arguments: JSON.stringify(this.turnSummary) } };
+        sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [call] }, finish_reason: 'tool_calls' }] });
+        return;
+      }
+      const asked = lastUserMessage(body.messages);
+      const content = `Echo: ${asked === undefined ? '' : completionText(asked.content)}`;
+      if (!body.stream) {
+        sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
+        return;
+      }
+      const chunk = (delta: unknown, finish: string | null) =>
+        `data: ${JSON.stringify({ id: 'chatcmpl-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(`${chunk({ role: 'assistant', content }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`);
+    });
+  }
+
+  /** The model each request named, in order. */
+  models(): string[] {
+    return this.requests.map((request) => (JSON.parse(request.body) as ChatCompletionsRequest).model);
+  }
+
+  /** The finished Turns sent for a summary, as the summary prompt carries them. */
+  summarizedTurns(): { request: string; answer: string }[] {
+    return this.requests
+      .map((request) => JSON.parse(request.body) as ChatCompletionsRequest)
+      .filter(({ tool_choice }) => tool_choice?.function.name === 'turn_summary')
+      .map(({ messages }) => JSON.parse(completionText(lastUserMessage(messages)?.content ?? '{}')) as { request: string; answer: string });
+  }
+}

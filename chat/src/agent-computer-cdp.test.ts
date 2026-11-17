@@ -202,7 +202,7 @@ function computersFor(browser: AgentComputerBrowser, idleSeconds = 600) {
     transfer: unusedFilesOperation,
     delete: unusedFilesOperation,
   };
-  const computers = agentComputers({ browser: () => browser, records: () => store, seed: async () => {}, files: () => files, idleSeconds });
+  const computers = agentComputers({ browser: () => browser, records: () => store, files: () => files, idleSeconds });
   cleanups.push(() => computers.revoke('acct-1'));
   return computers;
 }

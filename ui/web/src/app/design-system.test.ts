@@ -42,7 +42,7 @@ describe('tokens', () => {
 
 });
 
-it.each([...APP_SHEETS, 'ui/web/src/computer/styles.css', 'ui/web/src/computer/files-menu.css', 'templates/always-on/ui/web/src/styles.css'])('%s keeps to the tokens', (file) => {
+it.each([...APP_SHEETS, 'ui/web/src/computer/styles.css', 'ui/web/src/computer/files-menu.css', 'ui/web/src/computer/live-browser.css', 'templates/always-on/ui/web/src/styles.css'])('%s keeps to the tokens', (file) => {
   expect(offences(rulesOf(read(file), { tokens: file === GLOBALS }), tokens)).toEqual({
     rawColours: [],
     namedColours: [],

@@ -18,7 +18,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -75,6 +75,7 @@ from . import (
 )
 from .actor_identity import ANONYMOUS_ACTOR_ID
 from .agent import build_agent, general_purpose_subagent
+from .agent_computer import with_agent_computer
 from .agent_documents import (
     AgentDocuments,
     AgentDocumentsError,
@@ -82,6 +83,7 @@ from .agent_documents import (
     pop_agent_documents,
 )
 from .artifact import SKILLS_SOURCE, artifact_tool
+from .bot_settings import bot_from_env
 from .conversation import conversation, reasoning_chunk
 from .files import (
     FilesBindingError,
@@ -97,13 +99,14 @@ from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
     build_model,
+    openai_compatible_endpoint,
     resolve_effort,
     resolve_model,
 )
 from .memory import agentcore as agentcore_memory_backend
 from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
-from .memory.agentcore import TurnIdentityError
+from .memory.agentcore import TurnIdentity, TurnIdentityError
 from .memory.agentcore.warm_session import WarmSessionSaver
 from .memory_tools import AGENTCORE_MEMORY_ID, AGENTCORE_REGION
 from .prompt_cache_observability import (
@@ -200,6 +203,7 @@ class HarnessCartridge:
     build_backend: Callable[[dict[str, str]], LocalShellBackend]
     apply_session_id: Callable[[LocalShellBackend, str | None], None]
     environment_cache_key: Callable[[Mapping[str, str] | None], tuple[tuple[str, str], ...]]
+    default_model: str | None = None
 
 
 _cartridge: HarnessCartridge | None = None
@@ -212,7 +216,7 @@ def configure_harness(cartridge: HarnessCartridge) -> None:
     _cartridge = cartridge
 
 
-def configure_harness_definition(definition: HarnessDefinition) -> None:
+def configure_harness_definition(definition: HarnessDefinition, default_model: str | None = None) -> None:
     def build_backend(environment: dict[str, str]) -> WorkerShellBackend:
         root = _workspace()
         definition.prepare_root(root)
@@ -240,6 +244,7 @@ def configure_harness_definition(definition: HarnessDefinition) -> None:
             build_backend=build_backend,
             apply_session_id=apply_session_id,
             environment_cache_key=definition.environment_cache_key,
+            default_model=default_model,
         )
     )
 
@@ -792,7 +797,7 @@ def _agent_and_backend(**kwargs: Any) -> tuple[LangGraphAgent, LocalShellBackend
     return agent, backend
 
 
-async def _turn_memory(turn_identity: str, run_id: str) -> tuple[Any, Any]:
+async def _turn_memory(turn_identity: TurnIdentity, run_id: str) -> tuple[Any, Any]:
     turn = agentcore_memory_backend.next_turn()
     with turn_timing.phase('memory_credentials'):
         return await asyncio.to_thread(
@@ -802,7 +807,7 @@ async def _turn_memory(turn_identity: str, run_id: str) -> tuple[Any, Any]:
 
 
 async def _turn_agent(
-    build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None, run_id: str, persistent_memory: bool,
+    build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None, run_id: str, persistent_memory: bool,
 ) -> tuple[LangGraphAgent, LocalShellBackend]:
     building = asyncio.to_thread(build)
     if not AGENTCORE_MEMORY_ID or turn_identity is None:
@@ -823,21 +828,6 @@ def _apply_environment(backend: LocalShellBackend, environment: Mapping[str, str
     env = backend._env
     for key, value in environment.items():
         env[str(key)] = str(value)
-
-
-def _with_agent_computer(auth: InvocationAuth, forwarded: dict[str, Any], session: tuple[str, str]) -> InvocationAuth:
-    cdp_url = forwarded.pop('agentComputerCdpUrl', None)
-    if cdp_url is None:
-        return auth
-    if not isinstance(cdp_url, str) or not cdp_url:
-        raise RuntimeError('agentComputerCdpUrl must be a non-empty URL')
-    return replace(auth, environment={
-        **(auth.environment or {}),
-        'AGENT_BROWSER_CDP': cdp_url,
-        'AGENT_BROWSER_SESSION': hashlib.sha256(json.dumps(session).encode()).hexdigest()[:32],
-        # agent-browser's daemon outlives its browser; idle expiry follows the Turn token.
-        'AGENT_BROWSER_IDLE_TIMEOUT_MS': str(60 * 60 * 1000),
-    })
 
 
 def _require_session_user_id(session_user_id: str | None) -> str:
@@ -881,15 +871,17 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     with turn_timing.phase('invocation_auth'):
         auth = _require_cartridge().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
+    # The signed user token is the bot's (ADR 0091), never the agent's.
+    forwarded.pop('userToken', None)
     if not auth.actor_id:
         raise MissingUserIdError(
             'Invocation carries no user ID; the Chat Service must forward the account ID'
         )
     session_user_id = _require_session_user_id(session_user_id)
-    auth = _with_agent_computer(auth, forwarded, (session_user_id, input_data.thread_id))
+    auth = with_agent_computer(auth, forwarded, (session_user_id, input_data.thread_id))
     turn_identity = forwarded.pop('turnIdentity', None)
-    if AGENTCORE_MEMORY_ID and not (isinstance(turn_identity, str) and turn_identity):
-        raise TurnIdentityError('Invocation carries no Turn identity; the Chat Service must forward turnIdentity')
+    if AGENTCORE_MEMORY_ID:
+        turn_identity = agentcore_memory_backend.require_turn_identity(turn_identity)
     async for event in _invoke_agent(input_data, context, forwarded, auth, session_user_id,
                                    documents, files, warmup, turn_identity):
         yield event
@@ -916,16 +908,18 @@ def _require_empty_opening_checkpoint(checkpoint: object | None) -> None:
 
 async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, forwarded: dict[str, Any],
                         auth: Any, session_user_id: str, documents: Any,
-                        files: FilesMount | None, warmup: Any, turn_identity: str | None):
+                        files: FilesMount | None, warmup: Any, turn_identity: TurnIdentity | None):
     session = (session_user_id, input_data.thread_id)
-    persistent_memory = auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
+    # The Bot Settings' Memory gate: a bot with Memory off keeps none for anyone.
+    persistent_memory = (auth.persistent_memory and auth.actor_id != ANONYMOUS_ACTOR_ID and 'agentSystemPrompt' not in forwarded
+                         and forwarded.get('botMemory') is not False)
     opening = forwarded.get('opening') is True
     build = partial(
         _agent_and_backend,
         actor_id=auth.actor_id,
         session_user_id=session_user_id,
         persistent_memory=persistent_memory,
-        model=forwarded.get('model'),
+        model=forwarded.get('model') or _require_cartridge().default_model,
         effort=forwarded.get('effort'),
         thread_id=input_data.thread_id,
         invocation_prompt=_opening_prompt(input_data, auth.system_prompt),
@@ -979,7 +973,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
 
 async def _read_turn_checkpoint(
     agent: LangGraphAgent, *, session: tuple[str | None, str | None], opening: bool,
-    actor_id: str, run_id: str, epoch: Any, turn_identity: str | None,
+    actor_id: str, run_id: str, epoch: Any, turn_identity: TurnIdentity | None,
 ) -> None:
     saver = getattr(agent.graph, 'checkpointer', None)
     if isinstance(saver, WarmSessionSaver):
@@ -1002,7 +996,7 @@ def _settle_finished_reuse(saver: Any, finished: bool) -> None:
 
 
 async def _prepare_agent(
-    build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: str | None,
+    build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None,
     run_id: str, persistent_memory: bool, session: tuple[str, str], actor_id: str,
     files: FilesMount | None, reads_history: bool, epoch: Any = None,
 ) -> None:
@@ -1440,9 +1434,13 @@ def main() -> None:
         restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
+    # A models endpoint lacking its key fails startup, not a Turn.
+    openai_compatible_endpoint()
     if _cartridge is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
-        if module_name:
+        if bot := bot_from_env(module_name):
+            configure_harness_definition(*bot)
+        elif module_name:
             configure_harness_from_module(module_name)
         else:
             configure_installed_cartridge()

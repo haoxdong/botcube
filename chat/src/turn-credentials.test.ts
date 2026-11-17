@@ -1,420 +1,120 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../test/fakes/credentials.js';
+import { motoEndpoint } from '../test/fakes/moto.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
+import { assumeRoleTurnCredentials, memorySessionPolicy, SESSION_POLICY_LIMIT } from './turn-credentials.js';
 
-// A Harness older than the Chat Service leaves the Files binding
-// in its forwarded props, which LangGraph merges into the agent's state, so
-// the Turn's STATE_SNAPSHOT carried the Files-sync credentials to the browser.
-const FILES = {
-  bucket: 'files-bucket',
-  prefix: 'accounts/acct-1/',
-  region: 'us-east-1',
-  accessKeyId: 'ASIAFILESSYNCKEY',
-  secretAccessKey: 'files/sync+secret=',
-  sessionToken: 'files-sync/session+token==',
-};
+const ROLE_ARN = 'arn:aws:iam::123456789012:role/bot-cube-user-memory';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({
-    cartridge: {
-      invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, files: FILES } }),
-    },
-  });
+  // STS is moto's: the SDK reads these as it would an ECS task's.
+  vi.stubEnv('AWS_ENDPOINT_URL_STS', motoEndpoint());
+  vi.stubEnv('AWS_REGION', 'us-east-1');
+  vi.stubEnv('AWS_ACCESS_KEY_ID', AWS_ACCESS_KEY_ID);
+  vi.stubEnv('AWS_SECRET_ACCESS_KEY', AWS_SECRET_ACCESS_KEY);
+  stack = await startInProcess({ config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
 });
-afterAll(() => stack.stop());
+afterAll(async () => {
+  await stack.stop();
+  vi.unstubAllEnvs();
+});
 
-async function turn(threadId: string): Promise<string> {
-  await stack.allocate('account-1', threadId);
-  const response = await stack.app.request('/', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ threadId, runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }),
+const asOwner = (owner: string, body: unknown) => stack.app.request('/', {
+  method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': owner }, body: JSON.stringify(body),
+});
+
+async function turn(owner: string, sessionId: string) {
+  const response = await asOwner(owner, {
+    threadId: sessionId, runId: randomUUID(), state: {}, tools: [], context: [],
+    messages: [{ id: randomUUID(), role: 'user', content: 'hello' }], forwardedProps: { turnIdentity: 'client-sent' },
   });
-  expect(response.status).toBe(200);
-  return response.text();
+  return { response, props: stack.agentcore.invocationFor(sessionId).payload.forwardedProps };
 }
 
-describe('a client that claims an identity or credential', () => {
-  it("reaches the Cartridge without BotCube's, the credential or the identity props", async () => {
-    const seen: Record<string, unknown>[] = [];
-    const claimed = await startInProcess({
-      cartridge: {
-        invocationPayload: async (input) => {
-          seen.push(input.forwardedProps as Record<string, unknown>);
-          return { ...input, forwardedProps: { ...(input.forwardedProps as Record<string, unknown>) } };
-        },
-        credentialProps: ['signedToken'],
-        identityProps: ['accountId'],
-      },
+describe('assume-role Turn credentials', () => {
+  it("hands each Turn its own User's credentials, never the client's", async () => {
+    const [first, second] = [`owner-${randomUUID()}`, `owner-${randomUUID()}`];
+    const [firstSession, secondSession] = [randomUUID(), randomUUID()];
+    await stack.sessionMetadata.recordTurn(first, firstSession, { filingUserId: `filed-${first}`, title: 'First', allocation: true });
+    await stack.sessionMetadata.recordTurn(second, secondSession, { filingUserId: `filed-${second}`, title: 'Second', allocation: true });
+
+    const [mine, theirs] = await Promise.all([turn(first, firstSession), turn(second, secondSession)]);
+
+    expect(mine.props.turnIdentity).toEqual({
+      actorId: `filed-${first}`, filingActorId: `filed-${first}`, sessionId: firstSession, writesPrefix: expect.stringMatching(/^lgw-[0-9a-f]{32}$/),
+      turnId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      accessKeyId: expect.any(String), secretAccessKey: expect.any(String), sessionToken: expect.any(String), expiration: expect.any(String),
     });
-    try {
-      await claimed.allocate('account-1', 'credentials-client-claims');
-      const response = await claimed.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          threadId: 'credentials-client-claims', runId: 'run-1', state: {}, messages: [], tools: [], context: [],
-          forwardedProps: {
-            agentComputerCdpUrl: 'ws://spoofed', credentialServiceInvocationToken: 'spoofed', credentialServiceUrl: 'http://spoofed',
-            files: FILES, signedToken: 'spoofed', accountId: 'spoofed', model: 'quick',
-          },
-        }),
-      });
-      await response.text();
-      expect(seen).toEqual([{ model: 'quick' }]);
-    } finally {
-      await claimed.stop();
-    }
-  });
-});
-
-describe("a credential the Cartridge forwards in its own prop", () => {
-  it('never reaches the client', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const signed = await startInProcess({
-      cartridge: {
-        invocationPayload: async (input) => ({ ...input, forwardedProps: { signedToken: 'v1.signed.token' } }),
-        credentialProps: ['signedToken'],
-      },
-    });
-    try {
-      const threadId = await signed.allocate('account-1', 'credentials-cartridge-prop');
-      signed.agentcore.script(threadId, {
-        kind: 'stream',
-        frames: [`data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { signedToken: 'v1.signed.token' } })}`],
-      });
-
-      const response = await signed.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ threadId, runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }),
-      });
-
-      expect(await response.text()).toContain('TURN_CREDENTIALS_IN_STREAM');
-    } finally {
-      await signed.stop();
-    }
-  });
-});
-
-describe('original client history without an upstream input echo', () => {
-  it.each([
-    ['same message ID', 'x', 'private-', 'TURN_CREDENTIALS_IN_STREAM'],
-    ['different message ID', 'other', 'private-', '"delta":"token"'],
-    ['safe history', 'x', 'safe-', '"delta":"token"'],
-  ])('checks %s before relay even when the Cartridge transforms messages', async (_, historyId, prefix, expected) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const history = await startInProcess({ cartridge: {
-      invocationPayload: async (input) => {
-        input.messages.length = 0;
-        return { ...input, forwardedProps: { signedToken: 'private-token' } };
-      },
-      credentialProps: ['signedToken'],
-    } });
-    try {
-      const threadId = await history.allocate('account-1', `history-${historyId}-${prefix}`);
-      history.agentcore.script(threadId, { kind: 'stream', frames: [
-        { type: 'RUN_STARTED', threadId, runId: 'run-1' },
-        { type: 'TEXT_MESSAGE_START', messageId: 'x', role: 'assistant' },
-        { type: 'TEXT_MESSAGE_CONTENT', messageId: 'x', delta: 'token' },
-        { type: 'TEXT_MESSAGE_END', messageId: 'x' },
-      ].map((event) => `data: ${JSON.stringify(event)}`) });
-      const response = await history.app.request('/', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ threadId, runId: 'run-1', state: {}, messages: [{ id: historyId, role: 'assistant', content: prefix }], tools: [], context: [], forwardedProps: {} }),
-      });
-      expect(await response.text()).toContain(expected);
-      expect(history.agentcore.invocationFor(threadId).payload.messages).toEqual([]);
-    } finally {
-      await history.stop();
-    }
-  });
-});
-
-describe('earlier messages the client holds but did not send', () => {
-  const held = { heldMessageIds: ['m1', 'a1'], heldToolCallIds: ['call-1'] };
-  const request = async (threadId: string) => stack.app.request('/', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ threadId: await stack.allocate('account-1', threadId), runId: 'run-1', state: {}, messages: [{ id: 'u2', role: 'user', content: 'And now?' }], tools: [], context: [], forwardedProps: held }),
+    expect(theirs.props.turnIdentity).toMatchObject({ actorId: `filed-${second}`, filingActorId: `filed-${second}`, sessionId: secondSession });
+    const [mineKeys, theirKeys] = [mine, theirs].map(({ props }) => (props.turnIdentity as { sessionToken: string }).sessionToken);
+    expect(mineKeys).not.toBe(theirKeys);
+    expect(mine.props.sessionSnapshotEpoch).toEqual({ epoch: expect.any(String), turnId: (mine.props.turnIdentity as { turnId: string }).turnId });
+    await Promise.all([mine.response.text(), theirs.response.text()]);
   });
 
-  it.each([
-    ['an earlier message', { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm1', delta: 'more' }],
-    ['an earlier message in chunks', { type: 'TEXT_MESSAGE_CHUNK', messageId: 'm1', delta: 'more' }],
-    ['an earlier reasoning message', { type: 'REASONING_MESSAGE_CONTENT', messageId: 'm1', delta: 'more' }],
-    ['an earlier tool call',{ type: 'TOOL_CALL_ARGS', toolCallId: 'call-1', delta: '{}' }],
-    ['an earlier activity', { type: 'ACTIVITY_DELTA', messageId: 'a1', activityType: 'browser', patch: [] }],
-  ])('fails a stream that writes to %s, which the guard cannot check', async (_, event) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `held-${JSON.stringify(event)}`;
-    stack.agentcore.script(threadId, { kind: 'stream', frames: [{ type: 'RUN_STARTED', threadId, runId: 'run-1' }, event].map((frame) => `data: ${JSON.stringify(frame)}`) });
-
-    const body = await (await request(threadId)).text();
-
-    expect(body).toContain('TURN_EARLIER_MESSAGE_IN_STREAM');
-    expect(body).not.toContain(JSON.stringify(event));
-  });
-
-  it('relays a stream that writes only new messages, and keeps the held IDs from the Harness', async () => {
-    const threadId = 'held-new-only';
-    const frames = [
-      { type: 'RUN_STARTED', threadId, runId: 'run-1' },
-      { type: 'TEXT_MESSAGE_START', messageId: 'm2', role: 'assistant' },
-      { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm2', delta: 'Still none.' },
-      { type: 'TEXT_MESSAGE_END', messageId: 'm2' },
-    ].map((frame) => `data: ${JSON.stringify(frame)}`);
-    stack.agentcore.script(threadId, { kind: 'stream', frames });
-
-    const body = await (await request(threadId)).text();
-
-    expect(body).toContain('"delta":"Still none."');
-    expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps).not.toHaveProperty('heldMessageIds');
-    expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps).not.toHaveProperty('heldToolCallIds');
-  });
-
-  // An empty ID would match every event that names no message, so it would fail every Turn.
-  it.each([['not a list', 'm1'], ['an empty ID', ['m1', '']]])('refuses held IDs that are %s', async (_, heldMessageIds) => {
-    const response = await stack.app.request('/', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ threadId: 'held-malformed', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: { heldMessageIds } }),
-    });
-
-    expect(response.status).toBe(422);
-    expect(await response.json()).toEqual({ detail: 'heldMessageIds must be a list of IDs' });
-  });
-});
-
-describe('multipart message credentials on the public Turn route', () => {
-  it.each(['RUN_STARTED', 'MESSAGES_SNAPSHOT'])('withholds client-retained credential parts in %s', async (type) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `multipart-${type}`;
-    const messages = [{ id: 'u', role: 'user', content: [{ type: 'text', text: 'ASIAFILES' }, { type: 'text', text: 'SYNCKEY' }] }];
-    const event = type === 'MESSAGES_SNAPSHOT' ? { type, messages } : { type, threadId, runId: 'run-1', input: { threadId, runId: 'run-1', messages, tools: [], context: [], state: {}, forwardedProps: {} } };
-    stack.agentcore.script(threadId, { kind: 'stream', frames: [`data: ${JSON.stringify(event)}`] });
-    const body = await turn(threadId);
-    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-    expect(body).not.toContain('ASIAFILES');
-  });
-});
-
-describe('JSON Pointer credential segments on the public Turn route', () => {
-  it.each([
-    { op: 'add', path: '/files~1sync+secret=', value: true },
-    { op: 'copy', from: '/files~1sync+secret=', path: '/copied' },
-  ])('withholds decoded credential segments in $op', async (operation) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `pointer-${operation.op}`;
-    stack.agentcore.script(threadId, { kind: 'stream', frames: [`data: ${JSON.stringify({ type: 'STATE_DELTA', delta: [operation] })}`] });
-    expect(await turn(threadId)).toContain('TURN_CREDENTIALS_IN_STREAM');
-  });
-  it.each([
-    { op: 'add', path: '/folder~1name~0draft', value: 'safe' },
-    { op: 'add', path: '/files~01sync+secret=', value: true },
-    { op: 'copy', from: '/folder~1name~0draft', path: '/copied' },
-  ])('preserves normal noncredential pointer escapes in $op', async (operation) => {
-    const threadId = `safe-pointer-${JSON.stringify(operation)}`;
-    const frame = `data: ${JSON.stringify({ type: 'STATE_DELTA', delta: [operation] })}`;
-    stack.agentcore.script(threadId, { kind: 'stream', frames: [frame] });
-    expect(await turn(threadId)).toBe(
-      `${frame}\n\n` +
-        'data: {"type":"RUN_ERROR","message":"AgentCore upstream stream ended before the Turn finished","code":"AGENTCORE_UPSTREAM_STREAM_ERROR"}\n\n',
-    );
-  });
-});
-
-// A tokened CDP URL's token alone authenticates the CDP channel.
-describe("the query token of a credential URL the Cartridge forwards", () => {
-  it('never reaches the client on its own', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const tokened = await startInProcess({
-      cartridge: {
-        invocationPayload: async (input) => ({
-          ...input,
-          forwardedProps: { cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' },
-        }),
-        credentialProps: ['cdpUrl'],
-      },
-    });
-    try {
-      const threadId = await tokened.allocate('account-1', 'credentials-cdp-token');
-      tokened.agentcore.script(threadId, {
-        kind: 'stream',
-        frames: [`data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { token: 'cdp.signed.token' } })}`],
-      });
-
-      const response = await tokened.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ threadId, runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }),
-      });
-
-      const body = await response.text();
-      expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-      expect(body).not.toContain('cdp.signed.token');
-    } finally {
-      await tokened.stop();
-    }
-  });
-});
-
-describe("a Turn's empty Files-sync credential", () => {
-  it('withholds nothing, since it matches every frame', async () => {
-    const empty = await startInProcess({
-      cartridge: {
-        invocationPayload: async (input) => ({
-          ...input,
-          forwardedProps: { ...input.forwardedProps, files: { ...FILES, sessionToken: '' } },
-        }),
-      },
-    });
-    try {
-      const threadId = await empty.allocate('account-1', 'credentials-empty');
-      const frames = ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'];
-      empty.agentcore.script(threadId, { kind: 'stream', frames });
-
-      const response = await empty.app.request('/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ threadId, runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }),
-      });
-
-      expect(await response.text()).toBe(frames.map((frame) => `${frame}\n\n`).join(''));
-    } finally {
-      await empty.stop();
-    }
-  });
-});
-
-describe("a Turn's Files-sync credentials", () => {
-  it.each([
-    ['accessKeyId', FILES.accessKeyId],
-    ['secretAccessKey', FILES.secretAccessKey],
-    ['sessionToken', FILES.sessionToken],
-  ])('never reach the client, even when the Harness streams its %s back', async (field, value) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `credentials-${field}`;
-    stack.agentcore.script(threadId, {
-      kind: 'stream',
-      frames: [
-        'data: {"type":"RUN_STARTED"}',
-        `data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { messages: [], files: { [field]: value } } })}`,
-        'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"m1","delta":"after"}',
-        'data: {"type":"RUN_FINISHED"}',
-      ],
-    });
-
-    const body = await turn(threadId);
-
-    expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps.files).toEqual(FILES);
-    expect(body).toBe(
-      'data: {"type":"RUN_STARTED"}\n\n' +
-        `data: ${JSON.stringify({
-          type: 'RUN_ERROR',
-          message: "The agent's answer carried the Turn's credentials, so it was withheld",
-          code: 'TURN_CREDENTIALS_IN_STREAM',
-        })}\n\n`,
-    );
-  });
-
-  it.each([
-    ['accessKeyId', FILES.accessKeyId],
-    ['secretAccessKey', FILES.secretAccessKey],
-    ['sessionToken', FILES.sessionToken],
-  ])('withholds a %s split across message deltas', async (field, value) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `credentials-split-${field}`;
-    const split = Math.floor(value.length / 2);
-    stack.agentcore.script(threadId, {
-      kind: 'stream',
-      frames: [
-        'data: {"type":"RUN_STARTED"}',
-        ...[value.slice(0, split), value.slice(split)].map((delta) =>
-          `data: ${JSON.stringify({ type: 'TEXT_MESSAGE_CONTENT', messageId: 'm1', delta })}`,
-        ),
-        'data: {"type":"RUN_FINISHED"}',
-      ],
-    });
-
-    const body = await turn(threadId);
-
-    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-    expect(body).not.toContain(value.slice(0, split));
-    expect(body).not.toContain(value.slice(split));
-    expect(body).not.toContain('RUN_FINISHED');
-  });
-
-  it.each([
-    ['accessKeyId', FILES.accessKeyId],
-    ['secretAccessKey', FILES.secretAccessKey],
-    ['sessionToken', FILES.sessionToken],
-  ])('withholds a %s split across tool argument deltas', async (field, value) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `credentials-tool-split-${field}`;
-    const split = Math.floor(value.length / 2);
-    stack.agentcore.script(threadId, {
-      kind: 'stream',
-      frames: [
-        'data: {"type":"TOOL_CALL_START","toolCallId":"t1","toolCallName":"browser"}',
-        ...[`{"command":"${value.slice(0, split)}`, `${value.slice(split)}"}`].map((delta) =>
-          `data: ${JSON.stringify({ type: 'TOOL_CALL_ARGS', toolCallId: 't1', delta })}`,
-        ),
-        'data: {"type":"TOOL_CALL_END","toolCallId":"t1"}',
-      ],
-    });
-
-    const body = await turn(threadId);
-
-    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-    expect(body).not.toContain(value.slice(0, split));
-    expect(body).not.toContain(value.slice(split));
-    expect(body).not.toContain('TOOL_CALL_END');
-  });
-
-  it.each([
-    ['STATE_SNAPSHOT', { type: 'STATE_SNAPSHOT', snapshot: { files: { secretAccessKey: FILES.secretAccessKey } } }],
-    ['RUN_ERROR', { type: 'RUN_ERROR', code: 'X', message: `sync failed for ${FILES.secretAccessKey}` }],
-  ])('withholds decoded credentials in an escaped %s before relay or logging', async (type, event) => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = `credentials-escaped-${type}`;
-    stack.agentcore.script(threadId, {
-      kind: 'stream',
-      frames: [`data: ${JSON.stringify(event).replaceAll('/', '\\/')}`],
-    });
-
-    const body = await turn(threadId);
-
-    expect(logged.mock.calls.flat().map(String).join('\n').includes(FILES.secretAccessKey)).toBe(false);
-    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-    expect(body).not.toContain(JSON.stringify(event).replaceAll('/', '\\/'));
-    expect(body).not.toContain('sync failed');
-  });
-
-  it('are never written to the log, even in a run error the Harness sends', async () => {
-    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const threadId = 'credentials-run-error';
-    stack.agentcore.script(threadId, {
-      kind: 'stream',
-      frames: [
-        'data: {"type":"RUN_STARTED"}',
-        `data: ${JSON.stringify({ type: 'RUN_ERROR', code: 'X', message: `sync failed for ${FILES.secretAccessKey}` })}`,
-      ],
-    });
-
-    const body = await turn(threadId);
-
-    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
-    expect(logged.mock.calls.flat().map(String).join('\n')).not.toContain(FILES.secretAccessKey);
-  });
-
-  it("leave a stream that does not carry them as the Harness sent it", async () => {
-    const threadId = 'credentials-absent';
-    const frames = [
+  it('withholds a stream that carries the credentials', async () => {
+    const owner = `owner-${randomUUID()}`;
+    const sessionId = randomUUID();
+    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: `filed-${owner}`, title: 'Leak', allocation: true });
+    stack.agentcore.script(sessionId, { kind: 'stream', frames: (props) => [
       'data: {"type":"RUN_STARTED"}',
-      `data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { messages: [], files: {} } })}`,
-      'data: {"type":"RUN_FINISHED"}',
-    ];
-    stack.agentcore.script(threadId, { kind: 'stream', frames });
+      `data: ${JSON.stringify({ type: 'RUN_ERROR', message: `signed with ${(props.turnIdentity as { sessionToken: string }).sessionToken}` })}`,
+    ] });
 
-    expect(await turn(threadId)).toBe(frames.map((frame) => `${frame}\n\n`).join(''));
+    const { response, props } = await turn(owner, sessionId);
+
+    const body = await response.text();
+    expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
+    expect(body).not.toContain((props.turnIdentity as { sessionToken: string }).sessionToken);
+  });
+});
+
+describe('the assume-role STS client', () => {
+  afterEach(() => {
+    vi.stubEnv('AWS_REGION', 'us-east-1');
+  });
+
+  it('takes its region from the SDK, failing with none rather than assuming us-east-1', async () => {
+    vi.stubEnv('AWS_REGION', undefined);
+    vi.stubEnv('AWS_DEFAULT_REGION', undefined);
+    vi.stubEnv('AWS_PROFILE', undefined);
+    vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
+    const turn = { actorId: 'filed-a', filingActorId: 'filed-a', sessionId: randomUUID(), startedAt: new Date().toISOString() };
+
+    await expect(assumeRoleTurnCredentials(ROLE_ARN).grant(turn)).rejects.toThrow('Region is missing');
+  });
+});
+
+describe('the Memory session policy', () => {
+  const scope = { actorId: 'filed-a', filingActorId: 'filed-anon-7', sessionId: 'session-1', writesPrefix: 'lgw-3d005e2ccf2461767eb01d780463736c' };
+  it("is the Memory role's statements with the Turn's own values in place of its tags, so another User's actor or record matches none", () => {
+    expect(JSON.parse(memorySessionPolicy(scope))).toEqual({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow', Action: 'bedrock-agentcore:*Event*', Resource: '*',
+          Condition: {
+            StringEquals: { 'bedrock-agentcore:actorId': 'filed-anon-7' },
+            StringLike: { 'bedrock-agentcore:sessionId': ['session-1', 'lgw-3d005e2ccf2461767eb01d780463736c-*'] },
+          },
+        },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*Event*', Resource: '*', Condition: { StringEquals: { 'bedrock-agentcore:actorId': 'filed-a' } } },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecord*', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespace': '/actors/filed-a/*' } } },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecords', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespacePath': '/actors/filed-a/*' } } },
+      ],
+    });
+  });
+
+  it('stays under the STS limit for the longest filing IDs and Session IDs a Turn can carry', () => {
+    // A filing ID is at most 255 characters (filing-user-id.ts); an AgentCore Session ID at most 100.
+    const longest = { actorId: 'a'.repeat(255), filingActorId: 'f'.repeat(255), sessionId: 's'.repeat(100), writesPrefix: scope.writesPrefix };
+
+    expect(memorySessionPolicy(longest).length).toBeLessThanOrEqual(SESSION_POLICY_LIMIT);
+  });
+
+  it('refuses a policy STS would refuse, naming its length', () => {
+    expect(() => memorySessionPolicy({ ...scope, actorId: 'a'.repeat(600) })).toThrow(/^The Turn's Memory session policy is \d+ characters; STS takes at most 2048$/);
   });
 });

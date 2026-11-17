@@ -73,7 +73,7 @@ const config: ChatServiceConfig = {
   browserId: 'custom.browser.v7',
   sessionApi: null,
   warmupTimeoutMs: 10_000,
-  turnSummaryModel: { region: 'us-west-2', url: 'https://bedrock-runtime.us-west-2.amazonaws.com/model/unused/converse' },
+  turnSummaryModel: { kind: 'bedrock', region: 'us-west-2', url: 'https://bedrock-runtime.us-west-2.amazonaws.com/model/unused/converse' },
 };
 
 beforeEach(() => {

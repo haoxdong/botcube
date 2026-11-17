@@ -12,6 +12,7 @@ module.exports = ({ appRoot }) => ({
   previewAnnotations: [path.join(__dirname, 'storybook/preview.ts')],
   aliases: {
     '@cartridge-ui': path.join(__dirname, 'src/index.ts'),
+    '@bot-settings': path.join(__dirname, '../../../../examples/bot/bot.json'),
     'botcube-ui-web/storybook-page': path.join(appRoot, 'src/app/page.tsx'),
     ...dcvAliases,
   },

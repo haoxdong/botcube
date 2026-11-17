@@ -7,7 +7,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
 import { createProductionParking } from './production-parking-stack.js';
-import { ContainerImage, Secret } from 'aws-cdk-lib/aws-ecs';
+import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
@@ -15,11 +15,13 @@ import { Secret as SecretsManagerSecret, type ISecret } from 'aws-cdk-lib/aws-se
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApiHealthStack } from './api-health-stack.js';
 import { ChatStorageStack } from './chat-storage-stack.js';
+import { publishCredentialService } from './credential-service-public-route.js';
 import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
 import { PrivateEgressStack } from './private-egress-stack.js';
+import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
 
 const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
@@ -36,6 +38,12 @@ export const CHAT_SERVICE_ENV = {
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
 
+/** `ModelsDeployment` in botcube/deployment-config/models.ts, which this package cannot import (its rootDir). */
+export interface ModelsDeployment {
+  readonly environment: Readonly<Record<string, string>>;
+  readonly apiKeySecretArn: string;
+}
+
 /** Non-secret deploy inputs written by the Cartridge's `deploy/ecs/prepare-origin.py`. */
 interface OriginInput {
   cloudflareCidrs: string[];
@@ -44,10 +52,22 @@ interface OriginInput {
   runtimeArn: string;
 }
 
+/** The serving origin and BotCube's services in it, beside which a product adds resources of its own. */
+export interface Serving {
+  origin: PreviewOriginStack;
+  chat: PreviewChatService;
+  credentials: PrivateCredentialService;
+  agentComputerBrowser: CfnBrowserCustom;
+  /** The images the services run; a product's own task can run one of them. */
+  images: { chat: ContainerImage; credential: ContainerImage };
+}
+
 export interface ProductionOptions {
+  /** Adds the product's own resources to the serving origin, such as its own login browser (ADR 0091). */
+  serving?: (serving: Serving) => void;
   originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
     'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
-    'securityGroupName' | 'connectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
+    'securityGroupName' | 'connectionLogsBucketName' | 'existingConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
       agentNetworkSecurityGroupName?: string;
       agentComputerSecurityGroupName?: string;
       agentComputerBrowserRoleName?: string;
@@ -62,9 +82,18 @@ export interface ProductionOptions {
   privateSubnets?: ec2.SubnetSelection;
   kmsKey?: kms.IKey;
   permissionsBoundary?: iam.IManagedPolicy;
-  chat?: Partial<Omit<import('./preview-chat-service.js').PreviewChatServiceProps, 'chatTable' | 'image' | 'vpc' | 'subnets' | 'executionRole' | 'permissionsBoundary' | 'browserId'>>;
+  chat?: Partial<Omit<import('./preview-chat-service.js').PreviewChatServiceProps, 'chatTable' | 'image' | 'vpc' | 'subnets' | 'executionRole' | 'permissionsBoundary' | 'browserId'>> & {
+    /** The chat image's Deployment Config path (BOTCUBE_DEPLOYMENT_CONFIG); absent, Chat Service defaults. */
+    deploymentConfig?: string;
+  };
   credentials?: Partial<Omit<import('./private-credential-service.js').PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
   turnSummaryModel?: string;
+  /** The Deployment Config's non-Bedrock `models`, as botcube/deployment-config's `modelsDeployment` gives them. */
+  models?: ModelsDeployment;
+  /** The Deployment Config's `turnCredentials.kind`; absent is the default, `web-identity`. */
+  turnCredentials?: 'web-identity' | 'assume-role';
+  /** An `oidc` Deployment Config's `identity.clientSecret`, which the Chat Service reads as BOTCUBE_OIDC_CLIENT_SECRET. */
+  oidcClientSecret?: { secretArn: string };
   repositoryRoot: string;
   /** The active Cartridge's deploy directory (`CARTRIDGE_DEPLOY_ROOT`). */
   deployRoot: string;
@@ -77,6 +106,15 @@ export interface ProductionOptions {
     /** The checkout's commit, tagged on each task definition for `scripts/dev-status.sh`. */
     commit: string;
   } | undefined;
+}
+
+/** The latency moments BotCube budgets, plus any the Cartridge's own `latency-budgets.json` adds. */
+function latencyMoments(deployRoot: string): string[] {
+  const cartridgeBudgets = path.join(deployRoot, '..', 'latency-budgets.json');
+  return Object.keys({
+    ...JSON.parse(fs.readFileSync(path.join(cubeRoot, 'latency-budgets.json'), 'utf8')).moments,
+    ...(fs.existsSync(cartridgeBudgets) ? JSON.parse(fs.readFileSync(cartridgeBudgets, 'utf8')).moments : {}),
+  });
 }
 
 /** Every stack of the ECS CDK app (ADR 0065). */
@@ -99,11 +137,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
     turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
     ...options.webLatency,
-    moments: options.webLatency?.moments ?? Object.keys({
-      ...JSON.parse(fs.readFileSync(path.join(cubeRoot, 'latency-budgets.json'), 'utf8')).moments,
-      ...(fs.existsSync(path.join(options.deployRoot, '..', 'latency-budgets.json'))
-        ? JSON.parse(fs.readFileSync(path.join(options.deployRoot, '..', 'latency-budgets.json'), 'utf8')).moments : {}),
-    }),
+    moments: options.webLatency?.moments ?? latencyMoments(options.deployRoot),
   });
   if (options.permissionsBoundary) {
     for (const stack of [storage, egress, health, webLatency]) iam.PermissionsBoundary.of(stack).apply(options.permissionsBoundary);
@@ -127,14 +161,13 @@ export function defineProduction(app: App, options: ProductionOptions) {
     runtimeArn: input.runtimeArn,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
     sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
-    reaperCommand: identity.artifacts.chatService.reaperCommand,
-    authBrowserId: identity.aws.agentCore.privateNatBrowser.id,
     // aws-cdk-lib's Table declares `T | undefined` getters where ITable declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
     chatTable: storage.chatTable as ITable,
     image: images.chat,
-    ...options.chat,
+    ...withoutDeploymentConfig(options.chat),
   });
+  addDeploymentConfig(chat.container, options.chat?.deploymentConfig);
   const smokeRuntimeArn = options.chat?.runtimeArn ?? input.runtimeArn;
   new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
     roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
@@ -171,9 +204,12 @@ export function defineProduction(app: App, options: ProductionOptions) {
   chat.container.addEnvironment('BOTCUBE_REPORT_ACTIVITY', 'true');
   chat.container.addEnvironment('BOTCUBE_AUTOMATION_USER_AGENTS', identity.aws.ecs.parking.automationUserAgents.join(','));
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` })] }));
-  chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', `https://${new URL(identity.domains.chatService).hostname}`);
+  const publicOrigin = `https://${new URL(identity.domains.chatService).hostname}`;
+  chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
+  if (options.turnCredentials === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
+  addOidcClientSecret(origin, chat, options.oidcClientSecret);
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.originConfig);
@@ -190,6 +226,14 @@ export function defineProduction(app: App, options: ProductionOptions) {
     ...options.credentials,
   });
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
+  // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
+  credentials.container.addEnvironment('BOTCUBE_ISSUER', publicOrigin);
+  if (credentialConfig.publicHostname !== undefined) publishCredentialService(origin, credentials, {
+    hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,
+    paths: publicPaths(credentialConfig),
+    chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [],
+    corsOrigins: identity.domains.corsOrigins, chatTable: storage.chatTable as ITable,
+  });
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
   for (const task of [chat.task, credentials.task]) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
@@ -200,22 +244,22 @@ export function defineProduction(app: App, options: ProductionOptions) {
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
   chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerCdpUrl, `ws://task-address:${options.chat?.port ?? 8123}/agent-computer/cdp`);
+  if (credentialConfig.agentComputerStartedPath !== undefined) {
+    chat.container.addEnvironment('BOTCUBE_AGENT_COMPUTER_STARTED_URL', `${credentials.url}${credentialConfig.agentComputerStartedPath}`);
+  }
   chat.container.addEnvironment(CREDENTIAL_SERVICE_ENV.url, credentials.url);
   // aws-cdk-lib's Secret declares `T | undefined` getters where ISecret declares `prop?: T`,
   // which exactOptionalPropertyTypes rejects; the construct is its interface.
   chat.container.addSecret(CREDENTIAL_SERVICE_ENV.invocationToken, Secret.fromSecretsManager(credentials.invocationSecret as ISecret));
-  const browser = identity.aws.agentCore.privateNatBrowser;
-  chat.container.addEnvironment('AGENTCORE_BROWSER_ID', browser.id);
-  chat.container.addEnvironment('AGENTCORE_BROWSER_EXTENSION_S3_BUCKET', browser.extension.bucket);
-  chat.container.addEnvironment('AGENTCORE_BROWSER_EXTENSION_S3_PREFIX', browser.extension.prefix);
-  chat.container.addEnvironment('AGENTCORE_BROWSER_EXTENSION_S3_VERSION_ID', browser.extension.versionId);
-  // Credential links run in the login browser; Agent Computers in their own browser.
+  // The product's own resources beside BotCube's, such as a login browser of its own (ADR 0091).
+  options.serving?.({ origin, chat, credentials, agentComputerBrowser: agentComputer.browser, images });
+  // Agent Computers run in their own browser.
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['bedrock-agentcore:GetBrowser', 'bedrock-agentcore:StartBrowserSession',
       'bedrock-agentcore:ListBrowserSessions', 'bedrock-agentcore:GetBrowserSession',
       'bedrock-agentcore:StopBrowserSession', 'bedrock-agentcore:UpdateBrowserStream',
       'bedrock-agentcore:ConnectBrowserAutomationStream', 'bedrock-agentcore:ConnectBrowserLiveViewStream'],
-    resources: [origin.formatArn({ service: 'bedrock-agentcore', resource: 'browser-custom', resourceName: browser.id }), agentComputer.browser.attrBrowserArn],
+    resources: [agentComputer.browser.attrBrowserArn],
   }));
   // Agent Computer browsers wake from, and sleep into, their account's browser profile (ADR 0077); account deletion deletes it.
   // CreateBrowserProfile has no resource type; IAM requires the literal wildcard.
@@ -230,10 +274,16 @@ export function defineProduction(app: App, options: ProductionOptions) {
       agentComputer.browser.attrBrowserArn,
     ],
   }));
-  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['s3:GetObject', 's3:GetObjectVersion'],
-    resources: [`arn:aws:s3:::${browser.extension.bucket}/${browser.extension.prefix}`],
-  }));
+  addTurnSummaryModel(origin, chat, options);
+}
+
+/** Where Turn summaries run: the Deployment Config's OpenAI-compatible endpoint, its API key read from its secret, or Bedrock. */
+function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
+  if (options.models) {
+    for (const [name, value] of Object.entries(options.models.environment)) chat.container.addEnvironment(name, value);
+    chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [options.models.apiKeySecretArn] }));
+    return;
+  }
   const summaryModel = options.turnSummaryModel ?? TURN_SUMMARY_MODEL;
   if (options.turnSummaryModel) chat.container.addEnvironment('BOTCUBE_TURN_SUMMARY_MODEL', `us.${options.turnSummaryModel}`);
   // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.
@@ -256,6 +306,7 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     stackName: identity.aws.ecs.previewOriginStackName,
     hostname: new URL(identity.domains.chatServicePreview).hostname,
     production: { hostname: new URL(identity.domains.chatService).hostname },
+    ...(identity.aws.ecs.credentialService.publicHostname ? { service: { hostname: identity.aws.ecs.credentialService.publicHostname } } : {}),
     additionalHostnames: (identity.domains.rawServiceOrigins ?? []).map(url => new URL(url).hostname),
     repositoryRoot, originProviderPath: path.join(cubeRoot, 'infra/ecs/origin-provider'),
     vpcId: identity.aws.credentialService.vpcId,
@@ -333,6 +384,30 @@ function addAgentComputerBrowser(
   return { browser, network, subnets };
 }
 
+/**
+ * The `assume-role` Turn credentials adapter: the Chat Service assumes the AgentCore stack's Memory role, by name, for
+ * each Turn. Its task role takes the name that role trusts.
+ */
+function assumeUserMemoryRole(origin: PreviewOriginStack, chat: PreviewChatService, { userMemoryRole, chatServiceTaskRole }: DeployIdentity['aws']['iam']) {
+  if (!chatServiceTaskRole) throw new Error('Deploy identity aws.iam.chatServiceTaskRole: required with turnCredentials assume-role');
+  nameTaskRoles(chat.task, chatServiceTaskRole, undefined, undefined);
+  const roleArn = origin.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: userMemoryRole });
+  chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['sts:AssumeRole'], resources: [roleArn] }));
+  chat.container.addEnvironment('BOTCUBE_USER_MEMORY_ROLE_ARN', roleArn);
+}
+
+/** The `oidc` identity adapter's client secret, read by the Chat Service as BOTCUBE_OIDC_CLIENT_SECRET. */
+function publicPaths({ publicPaths: paths }: DeployIdentity['aws']['ecs']['credentialService']): string[] {
+  if (!paths?.length) throw new Error('Deploy identity aws.ecs.credentialService.publicPaths: required with publicHostname');
+  return paths;
+}
+
+function addOidcClientSecret(origin: PreviewOriginStack, chat: PreviewChatService, secret: { secretArn: string } | undefined) {
+  if (secret === undefined) return;
+  const clientSecret = SecretsManagerSecret.fromSecretCompleteArn(origin, 'OidcClientSecret', secret.secretArn);
+  chat.container.addSecret('BOTCUBE_OIDC_CLIENT_SECRET', Secret.fromSecretsManager(clientSecret));
+}
+
 function addFilesPolicy(origin: PreviewOriginStack, chat: PreviewChatService) {
   const policy = new Asset(origin, 'AgentComputerChromePolicy', { path: path.join(cubeRoot, 'infra/agent-computer/chrome-policy.json') });
   policy.grantRead(chat.task.taskRole);
@@ -345,4 +420,14 @@ function createChatStorage(app: App, options: ProductionOptions): ChatStorageSta
   const env = { account: identity.aws.account, region: identity.aws.region };
   if (options.chatTableName !== undefined && options.storage?.tableName !== undefined) throw new Error('Choose chatTableName or storage.tableName, not both');
   return new ChatStorageStack(app, 'ChatStorage', { env, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
+}
+
+/** The Chat Service's props, without the Deployment Config path that addDeploymentConfig sets. */
+function withoutDeploymentConfig({ deploymentConfig: _path, ...chat }: NonNullable<ProductionOptions['chat']> = {}) {
+  return chat;
+}
+
+/** Point the Chat Service at the Deployment Config its image ships; absent, it keeps its defaults. */
+function addDeploymentConfig(container: ContainerDefinition, deploymentConfig: string | undefined) {
+  if (deploymentConfig) container.addEnvironment('BOTCUBE_DEPLOYMENT_CONFIG', deploymentConfig);
 }

@@ -4,9 +4,11 @@ import { m as motionElement } from "framer-motion";
 import { Presence, presenceMotion, Swap } from "./collapse";
 
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, List, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ComponentType, type FormEvent, type ReactNode, type Ref } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 
 import type { AgentProfileTab } from "../cartridge/index.js";
+import type { SignInsControl } from "../cartridge/types";
+import { SignInsTab } from "./sign-ins";
 import { Button } from "../components/ui/button";
 import { Field } from "../components/ui/field";
 import { Avatar } from "./avatar";
@@ -541,10 +543,11 @@ function count(file: "Soul" | "Memory", soul: LoadState<string>, memory: LoadSta
  * The Personalization tab: Soul and Memory as side-by-side cards (Muse Fig 16), each opening its file as a read-only document with Edit;
  * each file loads on its own, so one that fails says why without hiding the other, and they reload whenever `revision` changes.
  */
-function PersonalizationPanel({ chatServiceUrl, revision, onSaved }: { chatServiceUrl: string; revision: number; onSaved: () => void }) {
+function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { chatServiceUrl: string; revision: number; onSaved: () => void; memory: boolean }) {
   const key = `${chatServiceUrl} ${revision}`;
   const soulFile = useLoad(async () => ((await loadDocument(chatServiceUrl, "soul", "Soul")) as { content: string }).content, key);
-  const memoryFile = useLoad(async () => ((await loadDocument(chatServiceUrl, "memory", "Memory")) as { lines: MemoryLine[] }).lines, key);
+  // A bot whose settings turn Memory off has none to load.
+  const memoryFile = useLoad(async () => memory ? ((await loadDocument(chatServiceUrl, "memory", "Memory")) as { lines: MemoryLine[] }).lines : [], key);
   const [open, setOpen] = useState<"Soul" | "Memory" | null>(null);
   const [saved, setSaved] = useState(false);
   const [memoryRecovery, setMemoryRecovery] = useState<{ key: string; lines: MemoryLine[] } | null>(null);
@@ -614,7 +617,7 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved }: { chatServi
         openFile(open)
       ) : (
         <motionElement.div {...presenceMotion} className="agent-file-cards">
-          {(["Soul", "Memory"] as const).map((file) => {
+          {(memory ? (["Soul", "Memory"] as const) : (["Soul"] as const)).map((file) => {
             const { tint, Icon } = FILE_LOOK[file];
             return (
               <button key={file} type="button" className={`agent-file-card ${tint}`} aria-label={`Open ${file}`} onClick={() => show(file)}>
@@ -655,7 +658,8 @@ export function AgentProfile({
   onSaved,
   onOpenChat,
   isAccountCurrent,
-  tabs = {},
+  signIns,
+  memory = true,
   ref,
   closeRef,
 }: {
@@ -673,7 +677,10 @@ export function AgentProfile({
   /** Opens a scheduled task's Side Chat from its sheet. */
   onOpenChat: (id: string, title: string) => void;
   isAccountCurrent?: (() => boolean) | undefined;
-  tabs?: Partial<Record<AgentProfileTab, ComponentType>> | undefined;
+  /** The Sign-ins tab's actions and state, from the page's sign-in provider; without them, the tab has nothing yet. */
+  signIns?: SignInsControl | undefined;
+  /** The bot settings' Memory gate: off, Personalization shows only the Soul. */
+  memory?: boolean | undefined;
   /** The sheet, whose width a phone's swipe measures as the chat slides off it. */
   ref?: Ref<HTMLDivElement> | undefined;
   closeRef?: Ref<HTMLButtonElement> | undefined;
@@ -698,12 +705,10 @@ export function AgentProfile({
   const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
     Activity: <Suspense fallback={<LoadingSkeleton label="Activity" />}><ActivityPanel chatServiceUrl={chatServiceUrl} /></Suspense>,
     Scheduled: <Suspense fallback={<LoadingSkeleton label="Scheduled tasks" />}><ScheduledPanel chatServiceUrl={chatServiceUrl} onOpenChat={onOpenChat} /></Suspense>,
-    Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} />,
+    Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} memory={memory} />,
+    ...(signIns ? { "Sign-ins": <SignInsTab chatServiceUrl={chatServiceUrl} control={signIns} /> } : {}),
   };
-  const panel = (name: AgentProfileTab) => {
-    const Panel = tabs[name];
-    return builtIn[name] ?? (Panel ? <Panel /> : <p className="agent-profile-empty">Nothing here yet.</p>);
-  };
+  const panel = (name: AgentProfileTab) => builtIn[name] ?? <p className="agent-profile-empty">Nothing here yet.</p>;
 
   return (
     <div ref={ref} className="agent-profile" role="dialog" aria-label="Agent profile" hidden={!open}>

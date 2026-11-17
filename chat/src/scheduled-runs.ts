@@ -1,12 +1,13 @@
 import type { ScheduledExecution } from './scheduled-execution.js';
 import { readScheduledRun, type ScheduledRunOutput } from './scheduled-run-output.js';
-import { forwardTurnIdentity, type TurnIdentity } from './turn-identity.js';
+import { forwardTurnIdentity, type TurnCredentialSource } from './turn-identity.js';
+import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import type { RunAgentInput } from '@ag-ui/client';
 import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { AgentDocuments } from './agent-documents.js';
 import type { ParkHistory } from './park-history.js';
-import { HttpError, type ChatServiceCartridge } from './cartridge.js';
+import { botMemory, HttpError, type ChatServiceCartridge } from './cartridge.js';
 import { accountDefaultModel, accountModelList, namedModel } from './models.js';
 import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
 import type { ScheduledRunCard } from './session-api.js';
@@ -19,7 +20,9 @@ import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store
 
 export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   /** Null: the Chat Service has no keys and forwards no Turn identity. */
-  turnIdentity: TurnIdentity | null;
+  turnIdentity: TurnCredentialSource | null;
+  /** The Turn identity keys that sign the owner's user token; absent, none is forwarded. */
+  userTokens?: UserTokenSigner | null | undefined;
   cartridge: ChatServiceCartridge;
   agentDocuments: AgentDocuments;
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire' | 'issueSideChat'>;
@@ -219,6 +222,7 @@ async function runInSideChat(
     const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
+    botMemory(payload.forwardedProps, cartridge);
     payload.forwardedProps.sessionUserId = sessionUserId;
     payload.forwardedProps.turnStartedAt = new Date().toISOString();
     // The prompt may still say how often to run; a run must not propose another task.
@@ -226,6 +230,7 @@ async function runInSideChat(
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
       actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
+    await forwardUserToken(deps.userTokens ?? null, payload.forwardedProps, { ...requester, threadId: sideChat });
     // A scheduled run is a Turn of its Side Chat, so its browser starts as a chat Turn's does (ADR 0077 decision 1).
     cartridge.turnStarting?.(requester, sideChat);
     const current = await deps.scheduledTasks.get(owner, task.id, deliveryContext);
@@ -253,7 +258,7 @@ async function runInSideChat(
       await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
     }
   }
-  const signIn = await cartridge.signInNeeded(owner, [...output.toolResults, ...output.texts]);
+  const signIn = await cartridge.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
   const answer = output.texts.at(-1);
   const turn = { sessionId: sideChat, filingUserId: sessionUserId, messageId };
   if (signIn === null && output.error === null) {

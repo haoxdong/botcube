@@ -1,6 +1,7 @@
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
 import { chatTable } from './config.js';
+import { assumeRoleTurnCredentials } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
 import { WebSocketServer } from 'ws';
@@ -10,29 +11,38 @@ import { awsFetch, presignAwsUrl } from './aws.js';
 import { cspReportRoutes } from './csp-reports.js';
 import { HttpError, type AccountHistory, type CartridgeFactory, type ChatServiceCartridge } from './cartridge.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
-import { cors, LOCAL_UI_ORIGINS } from './cors.js';
+import { cors, corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
 import { sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
 import { sessionLifecycle } from './session-lifecycle.js';
 import { sessionApi, type SessionApi, type SessionApiConfig } from './session-api.js';
 import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetadata, type SessionPurge } from './session-metadata.js';
-import { ScheduledTasks, schedulerConfigFromEnv } from './scheduled-tasks.js';
+import type { ScheduledTasks } from './scheduled-tasks.js';
+import { chatScheduling } from './schedules.js';
+import type { TableSchedules } from './table-schedules.js';
+import { deploymentAdapters, type DeploymentAdapters, type TurnCredentialsAdapter } from './deployment-adapters.js';
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
-import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, sqsRunQueue, type RunQueue } from './scheduled-runs.js';
-import { bedrockTurnSummarizer, reportUnsavedTurnSummaries, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
+import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
+import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
+import { harnessBearer, type HarnessAuth } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
 import { accountRoutes } from './account-routes.js';
+import { userTokenRoutes } from './user-token.js';
 
 const LIVE_VIEW_URL_EXPIRES_SECONDS = 300;
 
 export interface ChatServiceConfig {
-  /** Unset: no per-Turn user identity, and no OIDC discovery. */
+  /** Unset: no per-Turn user identity, no signed user token, and no OIDC discovery. */
   turnIdentity?: TurnIdentityConfig;
+  /** The Deployment Config's `turnCredentials` adapter; unset is `web-identity`, the Turn identity's own token. */
+  turnCredentials?: TurnCredentialsAdapter;
   /** Unset: Turns get 503 and warmup is skipped. */
   agentCore: AgentCoreRuntime | null;
+  /** How Turns authenticate to the Harness; unset is SigV4. */
+  harnessAuth?: HarnessAuth;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
   localHarnessUrl: string | null;
   /** BOTCUBE_CORS_ORIGINS; null keeps the Cartridge's defaults. */
@@ -49,20 +59,15 @@ export interface ChatServiceConfig {
   turnSummaryModel: TurnSummaryModel;
 }
 
-function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
+function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): ChatServiceConfig {
   const { region, endpoint } = agentCoreEndpointFromEnv(env);
-  const origins = env.BOTCUBE_CORS_ORIGINS;
   const localSessionApiUrl = env.BOTCUBE_LOCAL_SESSION_API_URL?.replace(/\/+$/, '');
   const turnIdentity = turnIdentityConfigFromEnv(env);
   return {
     agentCore: env.AGENTCORE_RUNTIME_ARN ? { arn: env.AGENTCORE_RUNTIME_ARN, region, endpoint } : null,
+    harnessAuth: adapters.harnessAuth,
     localHarnessUrl: env.BOTCUBE_LOCAL_HARNESS_URL?.replace(/\/+$/, '') || null,
-    corsOrigins: origins
-      ? origins
-          .split(',')
-          .map((origin) => origin.trim())
-          .filter(Boolean)
-      : null,
+    corsOrigins: corsOriginsFromEnv(env),
     region,
     agentCoreEndpoint: endpoint,
     browserId: env.AGENTCORE_BROWSER_ID || 'aws.browser.v1',
@@ -74,6 +79,7 @@ function configFromEnv(env: NodeJS.ProcessEnv): ChatServiceConfig {
     warmupTimeoutMs: 60_000,
     turnSummaryModel: turnSummaryModelFromEnv(env, region),
     ...(turnIdentity ? { turnIdentity } : {}),
+    turnCredentials: adapters.turnCredentials,
   };
 }
 
@@ -87,13 +93,15 @@ export function createChatService(
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
   invokeSessionApi: SessionApi = sessionApi(config.sessionApi),
-  scheduled: { tasks: ScheduledTasks; queue: RunQueue; draining: () => Promise<boolean>; parkHistory?: ParkHistory | undefined; onClose?: (stop: () => void) => void } | null = null,
+  scheduled: { tasks: ScheduledTasks; queue: RunQueue; poll?: TableSchedules | undefined; draining: () => Promise<boolean>; parkHistory?: ParkHistory | undefined; onClose?: (stop: () => void) => void } | null = null,
   turnQuota: TurnQuota | null = null,
   draining: () => Promise<boolean> = scheduled?.draining ?? (async () => false),
 ): Hono {
   const scheduledTasks = scheduled?.tasks ?? null;
-  const runtime = config.agentCore && agentCoreUpstream(config.agentCore);
-  const upstream = config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl)) : runtime && sessionLifecycle(runtime, runtime.stop);
+  const turnIdentity = config.turnIdentity === undefined ? null : new TurnIdentity(config.turnIdentity);
+  const bearer = harnessBearer(config.harnessAuth ?? { kind: 'sigv4' }, turnIdentity);
+  const runtime = config.agentCore && agentCoreUpstream(config.agentCore, { bearer });
+  const upstream = config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, { bearer })) : runtime && sessionLifecycle(runtime, runtime.stop);
   const purge = purgeQueue(invokeSessionApi, (owner) => cartridge.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     await sessionMetadata.settleExpiredDispatches(session);
@@ -138,21 +146,24 @@ export function createChatService(
   const cartridge = cartridgeFactory(history);
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
-  const summarizeTurn = bedrockTurnSummarizer(config.turnSummaryModel);
-  const turnIdentity = config.turnIdentity === undefined ? null : new TurnIdentity(config.turnIdentity);
+  const summarizeTurn = turnSummarizer(config.turnSummaryModel);
+  const turnCredentials = config.turnCredentials?.kind === 'assume-role' ? assumeRoleTurnCredentials(config.turnCredentials.roleArn) : turnIdentity;
   const app = new Hono();
   if (cartridge.rawRoutes) app.route('/', cartridge.rawRoutes);
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity, parkHistory: scheduled.parkHistory };
-    const stop = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, () => {
-      scheduledRunsUnavailable = true;
-    }, async () => {
+    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
+    const unavailable = () => { scheduledRunsUnavailable = true; };
+    const stopRuns = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, unavailable, async () => {
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
         console.error('Scheduled task retirement failed', { owner, taskId }, error);
       }
     });
-    scheduled.onClose?.(stop);
+    const stopPoll = scheduled.poll?.start(unavailable);
+    scheduled.onClose?.(() => {
+      stopRuns();
+      stopPoll?.();
+    });
   }
 
   app.use(cors(config.corsOrigins ?? cartridge.corsOrigins ?? LOCAL_UI_ORIGINS));
@@ -172,10 +183,11 @@ export function createChatService(
     return c.text('Internal Server Error', 500);
   });
   if (turnIdentity !== null) app.route('/', turnIdentityRoutes(turnIdentity));
+  if (turnIdentity !== null) app.route('/', userTokenRoutes(turnIdentity, (c) => cartridge.requester(c)));
   app.route('/', cartridge.routes);
 
 
-  turnRoutes(app, cartridge, sessionMetadata, agentDocuments, upstream, config, summarizeTurn, turnIdentity, turnQuota);
+  turnRoutes(app, cartridge, sessionMetadata, agentDocuments, upstream, config, summarizeTurn, turnCredentials, turnQuota, turnIdentity);
 
   app.get('/health', async (c) => {
     await initialRecovery;
@@ -246,12 +258,13 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
 
 /** Serve the Chat Service with this Cartridge, configured from the environment, on $PORT. */
 export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.ProcessEnv = process.env): ServerType {
-  const config = configFromEnv(env);
+  const adapters = deploymentAdapters(env);
+  const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
     console.warn('AGENTCORE_RUNTIME_ARN is not set; agent runs (POST /) return 503 and warmup is skipped until it is configured.');
   }
   const table = chatTable(env);
-  const scheduler = schedulerConfigFromEnv(env);
+  const scheduling = chatScheduling(adapters.schedules, env, table);
   const activity = env.BOTCUBE_REPORT_ACTIVITY === 'true' ? new ProductionActivity() : null;
   const metadata = new DynamoDBSessionMetadata(table);
   const draining = ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4);
@@ -263,9 +276,8 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
     activity?.observe(metadata) ?? metadata,
     new DynamoDBAgentDocuments(table),
     sessionApi(config.sessionApi),
-    scheduler && {
-      tasks: new ScheduledTasks(table, scheduler),
-      queue: sqsRunQueue(scheduler.queueUrl),
+    scheduling && {
+      ...scheduling,
       draining,
       parkHistory: parkHistoryFromEnv(env),
       onClose: (stop) => { stopScheduledRuns = stop; },

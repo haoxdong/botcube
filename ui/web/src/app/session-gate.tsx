@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Swap } from "./collapse";
-import { webUiPlugin } from "@cartridge-ui";
+import { AGENT_THEME } from "../bot-settings";
 import type { AuthUiState } from "../cartridge/index.js";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
@@ -29,7 +29,7 @@ export function SessionGate({
 }) {
   if (status === "loading") {
     return (
-      <div className="app-layout" data-session-gate="loading" style={webUiPlugin.theme}>
+      <div className="app-layout" data-session-gate="loading" style={AGENT_THEME}>
         <aside className="sidebar sidebar-collapsed" inert>
           <div className="sidebar-top">
             <div className="sidebar-brand">

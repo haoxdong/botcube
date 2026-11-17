@@ -19,10 +19,12 @@ import {
   SchedulerClient,
   UpdateScheduleCommand,
   ValidationException,
+  type CreateScheduleCommandInput,
 } from '@aws-sdk/client-scheduler';
 import { isScheduledInstant, nextRateTick, nextScheduledRun } from './schedule-time.js';
 import { HttpError } from './cartridge.js';
 import type { ScheduledRunCard } from './session-api.js';
+import type { SchedulerConfig, Schedules } from './scheduler.js';
 
 /** The most tasks one account may schedule, so costs stay bounded until there is data. */
 const SCHEDULED_TASK_CAP = 10;
@@ -87,22 +89,6 @@ export interface ScheduledRunMessage {
   owner: string;
   taskId: string;
   deliveryFence?: string;
-}
-
-/** Where schedules deliver their runs: SCHEDULE_GROUP's schedules send to the queue as the role. */
-export interface SchedulerConfig {
-  group: string;
-  roleArn: string;
-  queueArn: string;
-  queueUrl: string;
-}
-
-export function schedulerConfigFromEnv(env: NodeJS.ProcessEnv): SchedulerConfig | null {
-  const group = env.BOTCUBE_SCHEDULE_GROUP;
-  const roleArn = env.BOTCUBE_SCHEDULER_ROLE_ARN;
-  const queueArn = env.BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN;
-  const queueUrl = env.BOTCUBE_SCHEDULED_RUNS_QUEUE_URL;
-  return group && roleArn && queueArn && queueUrl ? { group, roleArn, queueArn, queueUrl } : null;
 }
 
 const ownerPk = (owner: string) => `SCHEDULED#${owner}`;
@@ -190,7 +176,7 @@ const cancelledOn = (error: unknown, index: number) =>
  */
 export class ScheduledTasks {
   private readonly documents: DynamoDBDocumentClient;
-  private readonly scheduler: SchedulerClient;
+  private readonly scheduler: Schedules;
   private expiryCursor: Record<string, unknown> | undefined;
 
   constructor(
@@ -199,7 +185,7 @@ export class ScheduledTasks {
     // Stryker disable next-line ObjectLiteral: production's clients; tests inject ones pointed at moto
     dynamodb = new DynamoDBClient({ region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1' }),
     // Stryker disable next-line ObjectLiteral: production's clients; tests inject ones pointed at moto
-    scheduler = new SchedulerClient({ region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1' }),
+    scheduler: Schedules = new SchedulerClient({ region: process.env.AWS_DEFAULT_REGION ?? 'us-east-1' }),
   ) {
     this.documents = DynamoDBDocumentClient.from(dynamodb);
     this.scheduler = scheduler;
@@ -653,6 +639,25 @@ export class ScheduledTasks {
 
   }
 
+  /** The schedule each task holds in EventBridge Scheduler, for a deployment moving its schedules into its table. */
+  async existingSchedules(): Promise<CreateScheduleCommandInput[]> {
+    const items: TaskItem[] = [];
+    let start: Record<string, unknown> | undefined;
+    do {
+      // eslint-disable-next-line no-await-in-loop -- one scan page at a time
+      const page = await this.documents.send(new ScanCommand({
+        TableName: this.tableName, ExclusiveStartKey: start, ConsistentRead: true,
+        FilterExpression: 'begins_with(pk, :owner) AND begins_with(sk, :task)',
+        ExpressionAttributeValues: { ':owner': 'SCHEDULED#', ':task': 'TASK#' },
+      }));
+      items.push(...(page.Items ?? []) as TaskItem[]);
+      start = page.LastEvaluatedKey;
+    } while (start !== undefined);
+    return items
+      .filter((item) => item.pending_creation !== true && item.creation_refused !== true && item.mutation?.kind !== 'retire' && !fired(item))
+      .map((item) => this.schedule(item.pk.slice('SCHEDULED#'.length), item, item.schedule_group ?? this.config.group));
+  }
+
   /** Account deletion: every task goes, schedule first. */
   async deleteAll(owner: string): Promise<void> {
     for (const { id } of await this.list(owner)) {
@@ -818,7 +823,7 @@ export class ScheduledTasks {
     }
   }
 
-  private schedule(owner: string, { id, schedule, timezone, startDate: starts, endDate, paused, created_at, deliveryFence }: TaskItem, group = this.config.group) {
+  private schedule(owner: string, { id, schedule, timezone, startDate: starts, endDate, paused, created_at, deliveryFence }: TaskItem, group = this.config.group): CreateScheduleCommandInput {
     const message: ScheduledRunMessage = { owner, taskId: id, ...(deliveryFence === undefined ? {} : { deliveryFence }) };
     const startDate = nextRateTick(schedule, created_at, Date.now(), starts) ?? (starts === undefined ? undefined : new Date(starts));
     // Scheduler's API reference promises no past EndDate, so a schedule past its stop time goes without one, disabled:

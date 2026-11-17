@@ -13,6 +13,8 @@ import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { scaleSessionApi } from './session-api-scaling';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
+import { applyDeploymentSeams, useImageKey, type HarnessAuth, type ModelsDeployment } from './runtime-seams';
+import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
 
 /**
  * Cap (seconds) on a runtime microVM's total lifetime — permanent
@@ -29,36 +31,14 @@ export const RUNTIME_IDLE_TIMEOUT_SECONDS = 300;
  */
 export const SESSION_API_TIMEOUT_SECONDS = 900;
 const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
-/** The audience of the Chat Service's per-Turn JWT: `TURN_IDENTITY_AUDIENCE` in botcube/chat's `turn-identity.ts`. */
-const TURN_IDENTITY_AUDIENCE = 'sts.amazonaws.com';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
 const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
-const RUNTIME_REMOVED_ACTION =
-  /^(bedrock-agentcore:.*Memory.*|bedrock-agentcore:(GetEvent|ListActors|ListEvents|ListSessions|CreateEvent|DeleteEvent|.*ConfigurationBundle.*)|logs:(GetLogEvents|FilterLogEvents|PutResourcePolicy))$/i;
 
 function removeInvalidMemoryAlias(runtime: bedrockagentcore.CfnRuntime, generatedAlias: string): void {
   if (/^[A-Za-z][A-Za-z0-9_]*$/.test(generatedAlias)) return;
   const variables = { ...(runtime.environmentVariables as Record<string, string>) };
   delete variables[generatedAlias];
   runtime.environmentVariables = variables;
-}
-
-/** The Runtime role keeps no Memory access: a Turn reaches Memory only with its tagged credentials (ADR 0067 §8). */
-function restrictRuntimePolicy(stack: Stack, role: iam.IRole): void {
-  if (!(role instanceof iam.Role)) return;
-  const policy = role.node.findChild('DefaultPolicy').node.defaultChild;
-  if (!(policy instanceof iam.CfnPolicy)) throw new Error('Runtime DefaultPolicy must be an IAM CfnPolicy');
-  const document = stack.resolve(policy.policyDocument) as {
-    Version: string;
-    Statement: Array<{ Action: string | string[]; Effect: string; [key: string]: unknown }>;
-  };
-  policy.policyDocument = {
-    ...document,
-    Statement: document.Statement.flatMap(statement => {
-      const actions = [statement.Action].flat().filter(action => !RUNTIME_REMOVED_ACTION.test(action));
-      return actions.length ? [{ ...statement, Action: actions.length === 1 ? actions[0] : actions }] : [];
-    }),
-  };
 }
 
 /**
@@ -118,6 +98,12 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   /** Name for the fallback group created when securityGroups are omitted. */
   runtimeSecurityGroupName?: string;
   kmsKey?: kms.IKey;
+  /** An existing key, by ARN, to encrypt Memory with instead of `kmsKey`. */
+  memoryKeyArn?: string;
+  /** An existing key, by ARN, to encrypt the bot's image repository with instead of the one its construct creates. */
+  imageKeyArn?: string;
+  /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (Deployment Config plain parameters). */
+  runtimeEnvironment?: Record<string, string>;
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
   runtimeIdleTimeoutSeconds?: number;
@@ -139,11 +125,14 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   harnessCodeLocation?: string;
   /** The commit this stack deploys, output as `Commit` for `scripts/dev-status.sh`. */
   commit?: string;
-  /**
-   * The Memory role the Harness assumes with the Chat Service's per-Turn JWT (ADR 0067 §8):
-   * `issuer` is the Chat Service's public origin, registered as an IAM OIDC provider.
-   */
-  userMemoryRole?: { issuer: string; roleName: string };
+  /** The Memory role each Turn's credentials come from (ADR 0067 §8). */
+  userMemoryRole?: UserMemoryRole;
+  /** The Chat Service's public origin, which serves the OIDC discovery for the tokens it signs with its Turn identity keys. */
+  chatServiceIssuer?: string;
+  /** How the Chat Service authenticates to the Runtime, the Deployment Config's `harnessAuth`; absent, SigV4. */
+  harnessAuth?: HarnessAuth;
+  /** The Deployment Config's `models` section off Bedrock, as `modelsDeployment` in botcube/deployment-config gives it; absent, Bedrock. */
+  models?: ModelsDeployment | undefined;
 }
 
 function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
@@ -157,15 +146,18 @@ function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
   }
 }
 
+const memoryKeyArn = (props: AgentCoreStackProps): string | undefined => props.kmsKey?.keyArn ?? props.memoryKeyArn;
+
 function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
-  const { executionRole, kmsKey } = props;
+  const { executionRole } = props;
+  const keyArn = memoryKeyArn(props);
   return {
     ...props.spec,
     runtimes: executionRole
       ? props.spec.runtimes.map(runtime => ({ ...runtime, executionRoleArn: executionRole.roleArn }))
       : props.spec.runtimes,
-    memories: kmsKey
-      ? props.spec.memories.map(memory => ({ ...memory, encryptionKeyArn: kmsKey.keyArn }))
+    memories: keyArn
+      ? props.spec.memories.map(memory => ({ ...memory, encryptionKeyArn: keyArn }))
       : props.spec.memories,
   };
 }
@@ -187,6 +179,7 @@ export class AgentCoreStack extends Stack {
 
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
     if (props.vpc && props.runtimeNetwork) throw new Error('Choose vpc or runtimeNetwork, not both');
+    if (props.kmsKey && props.memoryKeyArn) throw new Error('Choose kmsKey or memoryKeyArn, not both');
     if (!props.vpc && (props.subnets || props.securityGroups))
       throw new Error('subnets and securityGroups require vpc');
     const { physicalIdentity, privateNatBrowser } = props;
@@ -205,6 +198,7 @@ export class AgentCoreStack extends Stack {
 
     this.configureMemories(props);
     this.configureRuntimes(props);
+    if (props.imageKeyArn) useImageKey(this, props.imageKeyArn);
 
     // The Runtime role has no browser access: the agent reaches its Session's Agent
     // Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
@@ -219,13 +213,14 @@ export class AgentCoreStack extends Stack {
 
   private configureMemories(props: AgentCoreStackProps): void {
     const { physicalIdentity } = props;
+    const keyArn = memoryKeyArn(props);
     for (const memory of this.application.memories.values()) {
-      if (props.kmsKey) {
+      if (keyArn) {
         for (const role of memory.node.findAll().filter((child): child is iam.Role => child instanceof iam.Role)) {
           role.addToPrincipalPolicy(
             new iam.PolicyStatement({
               actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
-              resources: [props.kmsKey.keyArn],
+              resources: [keyArn],
             })
           );
         }
@@ -238,7 +233,7 @@ export class AgentCoreStack extends Stack {
       if (props.harnessCodeLocation) {
         this.addSessionApi(props.harnessCodeLocation, memory, physicalIdentity, props);
       }
-      if (props.userMemoryRole) this.addUserMemoryRole(memory.memoryArn, props.userMemoryRole);
+      if (props.userMemoryRole) addUserMemoryRole(this, this.application, memory.memoryArn, props.userMemoryRole);
     }
   }
 
@@ -260,93 +255,32 @@ export class AgentCoreStack extends Stack {
       const storage = props.workspace ?? RUNTIME_SESSION_STORAGE;
       cfnRuntime.filesystemConfigurations = [{ sessionStorage: { mountPath: storage } }];
       env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
+      for (const [name, value] of Object.entries(props.runtimeEnvironment ?? {}))
+        env.runtime.addEnvironmentVariable(name, value);
       configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
       env.runtime.addEnvironmentVariable('BOTCUBE_COMPRESS_CHECKPOINTS', checkpointCompression.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
-      restrictRuntimePolicy(this, env.runtime.role);
-      if (props.vpc) {
-        const subnetIds = props.vpc.selectSubnets(props.subnets).subnetIds;
-        if (!subnetIds.length) throw new Error('Runtime VPC requires at least one subnet');
-        const groups = props.securityGroups ?? [
-          new ec2.SecurityGroup(this, 'RuntimeSecurityGroup', {
-            vpc: props.vpc,
-            ...(props.runtimeSecurityGroupName !== undefined
-              ? { securityGroupName: props.runtimeSecurityGroupName }
-              : {}),
-          }),
-        ];
-        if (!groups.length) throw new Error('Runtime VPC requires at least one security group');
-        cfnRuntime.networkConfiguration = {
-          networkMode: 'VPC',
-          networkModeConfig: { subnets: subnetIds, securityGroups: groups.map(group => group.securityGroupId) },
-        };
-      }
+      applyDeploymentSeams(this, env.runtime, cfnRuntime, props);
+      this.placeRuntimeInVpc(cfnRuntime, props);
     }
   }
 
-  /**
-   * The role a Turn's JWT turns into Memory credentials for one user (ADR 0067 §8). The Chat Service
-   * tags each JWT with the Turn's actor, the Session's filing actor, the Session and its writes prefix.
-   */
-  private addUserMemoryRole(memoryArn: string, config: { issuer: string; roleName: string }): void {
-    const issuer = URL.canParse(config.issuer) ? new URL(config.issuer) : undefined;
-    if (issuer?.protocol !== 'https:' || issuer.port || issuer.origin !== config.issuer) {
-      throw new Error('The Memory role issuer must be an https origin without a port');
-    }
-    const provider = new iam.OidcProviderNative(this, 'TurnIdentityProvider', {
-      url: config.issuer,
-      clientIds: [TURN_IDENTITY_AUDIENCE],
-    });
-    const role = new iam.Role(this, 'UserMemoryRole', {
-      roleName: config.roleName,
-      maxSessionDuration: Duration.hours(1),
-      assumedBy: new iam.WebIdentityPrincipal(provider.oidcProviderArn, {
-        StringEquals: { [`${issuer.host}:aud`]: TURN_IDENTITY_AUDIENCE },
-      }).withSessionTags(),
-    });
-    const tag = (key: string) => `\${aws:PrincipalTag/${key}}`;
-    const events = ['CreateEvent', 'GetEvent', 'ListEvents', 'DeleteEvent'].map(
-      action => `bedrock-agentcore:${action}`
-    );
-    const statements = [
-      // The Session's own checkpoints, and their writes sessions, under its filing ID.
-      new iam.PolicyStatement({
-        sid: 'SessionUnderFilingId',
-        actions: events,
-        conditions: {
-          StringEquals: { 'bedrock-agentcore:actorId': tag('filingActorId') },
-          StringLike: { 'bedrock-agentcore:sessionId': [tag('sessionId'), `${tag('writesPrefix')}-*`] },
-        },
-      }),
-      new iam.PolicyStatement({
-        sid: 'OwnActorEvents',
-        actions: events,
-        conditions: { StringEquals: { 'bedrock-agentcore:actorId': tag('actorId') } },
-      }),
-      new iam.PolicyStatement({
-        sid: 'OwnRecords',
-        actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
-        conditions: { StringLike: { 'bedrock-agentcore:namespace': `/actors/${tag('actorId')}/*` } },
-      }),
-      new iam.PolicyStatement({
-        sid: 'OwnRecordHierarchies',
-        actions: ['bedrock-agentcore:ListMemoryRecords', 'bedrock-agentcore:RetrieveMemoryRecords'],
-        conditions: { StringLike: { 'bedrock-agentcore:namespacePath': `/actors/${tag('actorId')}/*` } },
-      }),
-      // Neither action takes a namespace condition key: an accepted risk (ADR 0031).
-      new iam.PolicyStatement({
-        sid: 'RecordsById',
-        actions: ['bedrock-agentcore:GetMemoryRecord', 'bedrock-agentcore:DeleteMemoryRecord'],
+  /** Put the Runtime in the adopter's VPC, when there is one, on its subnets and security groups. */
+  private placeRuntimeInVpc(cfnRuntime: bedrockagentcore.CfnRuntime, props: AgentCoreStackProps): void {
+    if (!props.vpc) return;
+    const subnetIds = props.vpc.selectSubnets(props.subnets).subnetIds;
+    if (!subnetIds.length) throw new Error('Runtime VPC requires at least one subnet');
+    const groups = props.securityGroups ?? [
+      new ec2.SecurityGroup(this, 'RuntimeSecurityGroup', {
+        vpc: props.vpc,
+        ...(props.runtimeSecurityGroupName !== undefined ? { securityGroupName: props.runtimeSecurityGroupName } : {}),
       }),
     ];
-    for (const statement of statements) {
-      statement.addResources(memoryArn);
-      role.addToPolicy(statement);
-    }
-    for (const env of this.application.environments.values()) {
-      env.runtime.addEnvironmentVariable('BOTCUBE_USER_MEMORY_ROLE_ARN', role.roleArn);
-    }
-    new CfnOutput(this, 'UserMemoryRoleArn', { value: role.roleArn });
+    if (!groups.length) throw new Error('Runtime VPC requires at least one security group');
+    cfnRuntime.networkConfiguration = {
+      networkMode: 'VPC',
+      networkModeConfig: { subnets: subnetIds, securityGroups: groups.map(group => group.securityGroupId) },
+    };
   }
 
   /**

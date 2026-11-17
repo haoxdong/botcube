@@ -3,10 +3,10 @@ import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { http, HttpResponse } from 'msw';
 import Page from 'botcube-ui-web/storybook-page';
 import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
-import { TEMPLATE_IDENTITY } from '../../../identity';
+import { BOT_SETTINGS } from 'botcube-ui-web/bot-settings';
 
 const question = 'Please keep this exact question.';
-const detail = `${TEMPLATE_IDENTITY.name} is still posting a scheduled task. Send your message again in a minute.`;
+const detail = `${BOT_SETTINGS.agentIdentity.name} is still posting a scheduled task. Send your message again in a minute.`;
 const answer = 'The scheduled task finished posting.';
 
 function busyPost() {

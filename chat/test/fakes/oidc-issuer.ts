@@ -1,0 +1,41 @@
+import { OAuth2Server } from 'oauth2-mock-server';
+
+/** The User a stand-in sign-in is for, unless the authorization request names another with `login_hint`. */
+const STAND_IN_USER = 'ada';
+
+/**
+ * A stand-in OpenID Connect provider on this machine (oauth2-mock-server): discovery, JWKS, and an authorization
+ * endpoint that signs the User in at once, as the `login_hint` its request names, and redirects back with a code.
+ */
+export class StandInOidcIssuer {
+  private readonly server = new OAuth2Server();
+  private readonly users = new Map<string, string>();
+
+  async listen(): Promise<this> {
+    await this.server.issuer.keys.generate('RS256');
+    this.server.service.on('beforeAuthorizeRedirect', ({ url }: { url: URL }, req: { url?: string }) => {
+      const code = url.searchParams.get('code');
+      const hint = new URL(req.url ?? '/', 'http://stand-in').searchParams.get('login_hint');
+      if (code !== null) this.users.set(code, hint ?? STAND_IN_USER);
+    });
+    this.server.service.on('beforeTokenSigning', (token: { payload: Record<string, unknown> }, req: { body?: Record<string, unknown> }) => {
+      // Signed twice per code: the access token, then the ID token.
+      const user = typeof req.body?.code === 'string' ? this.users.get(req.body.code) : undefined;
+      if (user !== undefined) Object.assign(token.payload, { sub: user, name: `Stand-in ${user}` });
+    });
+    await this.server.start(0, '127.0.0.1');
+    // oauth2-mock-server names a loopback issuer `localhost`, which can resolve to ::1, where it does not listen.
+    this.server.issuer.url = `http://127.0.0.1:${this.server.address().port}`;
+    return this;
+  }
+
+  get url(): string {
+    const url = this.server.issuer.url;
+    if (url === undefined) throw new Error('The stand-in OIDC issuer is not listening');
+    return url;
+  }
+
+  close(): Promise<void> {
+    return this.server.stop();
+  }
+}

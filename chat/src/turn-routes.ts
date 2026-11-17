@@ -2,24 +2,26 @@ import type { Hono } from 'hono';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema, RunErrorEventSchema } from '@ag-ui/core/schemas';
 import { agentDocumentEdit, type AgentDocuments } from './agent-documents.js';
-import { HttpError, type ChatServiceCartridge, type Requester, type AgentModel, type AgentDocumentSet } from './cartridge.js';
+import { botMemory, HttpError, type ChatServiceCartridge, type Requester, type AgentModel, type AgentDocumentSet } from './cartridge.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
 import { SessionOpeningError, SessionProviderError, SessionUnissuedError, type SessionMetadata, type PreparedTurn, type TurnFailure, type TurnActivity, type SessionPurge } from './session-metadata.js';
 import { assertIdleContinuable, sessionAccessError } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
-import { forwardTurnIdentity, type TurnIdentity } from './turn-identity.js';
+import { forwardTurnIdentity, type TurnCredentialSource } from './turn-identity.js';
+import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import { TurnTiming } from './turn-timing.js';
 import type { TurnQuota } from './turn-quota.js';
 import { turnErrorDetails, turnCredentials, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
-import { recordTurnSummary, turnActivity, type bedrockTurnSummarizer } from './turn-summaries.js';
+import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
+import { isRecord, omitOptionalNulls } from './payload.js';
 import { dispatchAfterWriter, preparationFailure, turnAccessError } from './turn-preparation.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
-const BOTCUBE_CREDENTIAL_PROPS = ['temporary', 'agentComputerCdpUrl', 'credentialServiceInvocationToken', 'credentialServiceUrl', 'files'];
+const BOTCUBE_CREDENTIAL_PROPS = ['temporary', 'agentComputerCdpUrl', 'credentialServiceInvocationToken', 'credentialServiceUrl', 'files', 'userToken'];
 
 async function runError(stream: string, credentials: readonly string[]): Promise<string | null> {
   const events = await readTurnEvents(stream, credentials);
@@ -27,29 +29,6 @@ async function runError(stream: string, credentials: readonly string[]): Promise
   const error = events.find((event) => event.type === 'RUN_ERROR');
   return error === undefined ? null : RunErrorEventSchema.parse(error).message;
 }
-
-const isRecord =(value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const dropNulls = (value: unknown) =>
-  isRecord(value) ? Object.fromEntries(Object.entries(value).filter(([, field]) => field !== null)) : value;
-
-function omitOptionalNulls(body: unknown): unknown {
-  if (!isRecord(body)) return body;
-  const input = dropNulls(body) as Record<string, unknown>;
-  for (const key of ['messages', 'tools', 'context']) {
-    if (Array.isArray(input[key])) input[key] = input[key].map(dropNulls);
-  }
-  if (Array.isArray(input.messages)) {
-    input.messages = input.messages.map((message: unknown) =>
-      isRecord(message) && Array.isArray(message.toolCalls)
-        ? { ...message, toolCalls: message.toolCalls.map(dropNulls) }
-        : message,
-    );
-  }
-  return input;
-}
-
 
 function takeHeldIds(forwardedProps: Record<string, unknown>): HeldIds {
   const ids = (prop: 'heldMessageIds' | 'heldToolCallIds'): string[] => {
@@ -92,9 +71,10 @@ export function turnRoutes(
   agentDocuments: AgentDocuments,
   upstream: ReturnType<typeof sessionLifecycle> | null,
   config: { warmupTimeoutMs: number },
-  summarizeTurn: ReturnType<typeof bedrockTurnSummarizer>,
-  turnIdentity: TurnIdentity | null,
+  summarizeTurn: TurnSummarizer,
+  turnIdentity: TurnCredentialSource | null,
   turnQuota: TurnQuota | null,
+  userTokens: UserTokenSigner | null = null,
 ) {
   const warming = warmingSessions();
 
@@ -118,6 +98,7 @@ export function turnRoutes(
     payload.forwardedProps.model = model.key;
     payload.forwardedProps.agentIdentity = loadedDocuments.agentIdentity;
     payload.forwardedProps.soul = loadedDocuments.soul;
+    botMemory(payload.forwardedProps, cartridge);
     return payload;
   };
 
@@ -185,8 +166,9 @@ export function turnRoutes(
         const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
           actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
         });
+        const userToken = await forwardUserToken(userTokens, payload.forwardedProps, { ...requester, threadId: input.threadId });
         timing.mark('identity');
-        if (identity !== undefined) credentials = [...credentials, identity];
+        credentials = [...credentials, ...identity, ...userToken];
         payload.forwardedProps.sessionUserId = filingUserId;
         Object.assign(payload.forwardedProps, traffic);
         payload.forwardedProps.turnStartedAt = running.startedAt;

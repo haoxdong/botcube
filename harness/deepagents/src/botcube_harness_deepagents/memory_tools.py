@@ -159,6 +159,19 @@ def list_memory_record_summaries(
     return summaries
 
 
+def record_namespace(client: Any, *, memory_id: str, actor_id: str, record_id: str) -> str | None:
+    """The namespace of one of the actor's records, or None when the actor has no such record.
+
+    A get or delete by ID names it: the `assume-role` session policy scopes both by the request's namespace.
+    """
+    for summary in list_memory_record_summaries(
+        client, memory_id=memory_id, namespace=actor_namespace(actor_id), selector='namespacePath',
+    ):
+        if summary['memoryRecordId'] == record_id:
+            return summary['namespaces'][0]
+    return None
+
+
 def memory_tool(actor_id: str) -> BaseTool:
     """The actor's `memory` tool: Strands' AgentCoreMemoryToolProvider tool under ADR 0031's name."""
 
@@ -220,9 +233,9 @@ def memory_tool(actor_id: str) -> BaseTool:
         if action == 'list':
             return _handle_list(store, actor_id)
         if action == 'get':
-            return _handle_get(store, memory_record_id)
+            return _handle_get(store, actor_id, memory_record_id)
         if action == 'delete':
-            return _handle_delete(store, memory_record_id)
+            return _handle_delete(store, actor_id, memory_record_id)
         return _err(f'Unknown action: {action}. Valid: {", ".join(VALID_ACTIONS)}')
 
     return memory
@@ -280,14 +293,18 @@ def _handle_list(store: AgentCoreMemoryStore, actor_id: str) -> MemoryToolResult
     }
 
 
-def _handle_get(store: AgentCoreMemoryStore, memory_record_id: str) -> MemoryToolResult:
+def _handle_get(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: str) -> MemoryToolResult:
     if not memory_record_id:
         return _err('memory_record_id is required for get action.')
 
     try:
+        namespace = record_namespace(store.client, memory_id=store.memory_id, actor_id=actor_id, record_id=memory_record_id)
+        if namespace is None:
+            return _err(f'Failed to get memory record {memory_record_id}.')
         response = store.client.get_memory_record(
             memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
+            namespace=namespace,
         )
     except Exception:
         log.warning('memory get failed', exc_info=True)
@@ -296,14 +313,18 @@ def _handle_get(store: AgentCoreMemoryStore, memory_record_id: str) -> MemoryToo
     return _ok(extract_text(_record_text(response['memoryRecord'])))
 
 
-def _handle_delete(store: AgentCoreMemoryStore, memory_record_id: str) -> MemoryToolResult:
+def _handle_delete(store: AgentCoreMemoryStore, actor_id: str, memory_record_id: str) -> MemoryToolResult:
     if not memory_record_id:
         return _err('memory_record_id is required for delete action.')
 
     try:
+        namespace = record_namespace(store.client, memory_id=store.memory_id, actor_id=actor_id, record_id=memory_record_id)
+        if namespace is None:
+            return _err(f'Failed to delete memory record {memory_record_id}.')
         store.client.delete_memory_record(
             memoryId=store.memory_id,
             memoryRecordId=memory_record_id,
+            namespace=namespace,
         )
     except Exception:
         log.warning('memory delete failed', exc_info=True)

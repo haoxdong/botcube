@@ -8,6 +8,7 @@
   "dependencies": {
     "@ag-ui/client": "1.0.3",
     "botcube-chat": "workspace:*",
+    "botcube-deployment-config": "workspace:*",
     "hono": "^4.13.17"
   },
   "devDependencies": {

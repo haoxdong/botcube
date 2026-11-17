@@ -3,16 +3,20 @@
 import { m as motionElement } from "framer-motion";
 import { Presence, presenceMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
-import { Fragment, useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
 
 import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps } from './browser-live-frame';
 import { failureDetail } from './failure-detail';
 import { FOLDER_ICON } from './files-app';
 import { glide } from '../app/motion';
+import { Terminal, type ShellCommand } from './terminal';
 
-/** The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. */
+/**
+ * The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. An awake
+ * local Agent Computer says its screen comes as `screenshots`, frame by frame; without that, it is a DCV live view.
+ */
 export type AgentComputerState =
-  | { state: 'awake'; browserSessionId: string; control: 'user' | 'agent'; screenshot: string | null }
+  | { state: 'awake'; browserSessionId: string; control: 'user' | 'agent'; screenshot: string | null; liveView?: 'screenshots' }
   | { state: 'starting' | 'asleep'; screenshot: string | null };
 
 interface ChatServiceOptions {
@@ -79,11 +83,6 @@ const DOCK_ICONS: Record<DockApp, ReactNode> = {
   ),
   Files: FOLDER_ICON,
 };
-
-export interface ShellCommand {
-  command: string;
-  output: string;
-}
 
 /**
  * The Agent Computer: a desktop with a dock, framing the agent's live browser or, asleep, its last
@@ -309,38 +308,6 @@ export function AgentComputer({
         <motionElement.div {...presenceMotion} className="agent-computer-touch-slot"><TouchToolbar connection={connection} busy={busy} /></motionElement.div>
       )}</Presence>
       <Presence>{error && <motionElement.p {...presenceMotion} className="agent-computer-error" role="alert">{error}</motionElement.p>}</Presence>
-    </div>
-  );
-}
-
-function Terminal({ commands, error, prompt }: { commands: readonly ShellCommand[]; error: string | null; prompt: string }) {
-  const log = useRef<HTMLDivElement>(null);
-  // It opens at the latest output and follows new output, until the user scrolls up to read; scrolling back down follows again.
-  const following = useRef(true);
-  useLayoutEffect(() => {
-    if (log.current !== null && following.current) log.current.scrollTop = log.current.scrollHeight;
-  }, [commands, error]);
-  if (error !== null) return <p className="agent-computer-error" role="alert">{error}</p>;
-  return (
-    <div
-      ref={log}
-      className="agent-computer-terminal"
-      role="log"
-      aria-label="Terminal"
-      onScroll={({ currentTarget: { scrollHeight, scrollTop, clientHeight } }) => {
-        following.current = scrollHeight - scrollTop - clientHeight < 2;
-      }}
-    >
-      <Presence>{commands.length === 0 ? (
-        <motionElement.div {...presenceMotion} className="agent-computer-terminal-empty">No commands yet</motionElement.div>
-      ) : (
-        commands.map(({ command, output }, index) => (
-          <Fragment key={index}>
-            <div className="agent-computer-terminal-line">{`${prompt} ${command}`}</div>
-            <div className="agent-computer-terminal-output">{output}</div>
-          </Fragment>
-        ))
-      )}</Presence>
     </div>
   );
 }

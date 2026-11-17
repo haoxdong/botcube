@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# BotCube's local Harness image, with no bot: a bot's image builds FROM it (examples/bot/Dockerfile).
 ARG PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.13-slim
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
 FROM ${UV_IMAGE} AS uv
@@ -23,15 +24,8 @@ RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
   uv sync --frozen --no-dev --no-editable
 
-COPY templates/always-on/ /opt/templates/always-on/
-RUN --mount=type=secret,id=build_ca \
-  if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
-  uv pip install --python /opt/harness/.venv/bin/python --no-deps /opt/templates/always-on
-
-COPY harness/deepagents/.tool-dist/ /opt/tools/
-ENV PATH="/opt/tools/bin:/opt/harness/.venv/bin:$PATH"
+ENV PATH="/opt/harness/.venv/bin:$PATH"
 ENV BOTCUBE_MODEL=echo
-ENV BOTCUBE_CARTRIDGE_MODULE=botcube_always_on.harness
 ENV BOTCUBE_CHECKPOINT_PATH=/var/lib/botcube-harness/checkpoints.sqlite3
 EXPOSE 8080
 CMD ["botcube-harness-deepagents"]

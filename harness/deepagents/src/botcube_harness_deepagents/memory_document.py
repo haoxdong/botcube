@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .actor_identity import actor_namespace
-from .memory_tools import extract_text, list_memory_record_summaries
+from .memory_tools import extract_text, list_memory_record_summaries, record_namespace
 from .pending_memory import (
     PENDING_MEMORY_WINDOW,
     pending_memory_session_ids,
@@ -256,5 +256,8 @@ def edit_memory_line(
 def delete_memory_line(client: BedrockAgentCoreClient, *, memory_id: str, actor_id: str, record_id: str) -> None:
     """Delete one line of the actor's Memory, and with it its record."""
     previous_text = _require_line(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
-    client.delete_memory_record(memoryId=memory_id, memoryRecordId=record_id)
+    namespace = record_namespace(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id)
+    if namespace is None:
+        raise MemoryLineNotFoundError(f'Memory has no line {record_id}')
+    client.delete_memory_record(memoryId=memory_id, memoryRecordId=record_id, namespace=namespace)
     _journal_save(client, memory_id=memory_id, actor_id=actor_id, record_id=record_id, previous_text=previous_text, text=None)

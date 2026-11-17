@@ -247,6 +247,21 @@ def test_model_defaults_to_sonnet(monkeypatch: pytest.MonkeyPatch, kwargs_record
     ]
 
 
+def test_an_openai_compatible_turn_with_no_model_fails_instead_of_sending_the_bedrock_default(
+    monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]
+) -> None:
+    from botcube_harness_deepagents import llm
+
+    monkeypatch.setattr(llm, 'openai_compatible_endpoint', lambda: llm.OpenAICompatibleEndpoint(base_url='https://models.example.com/v1', api_key='sk-test'))
+    monkeypatch.setitem(sys.modules, 'langchain_openai', _fake_module('langchain_openai', ChatOpenAI=kwargs_recorder))
+    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
+
+    with pytest.raises(RuntimeError, match='names no model'):
+        llm.build_model()
+
+    assert kwargs_recorder.calls == []
+
+
 def test_model_falls_back_to_converse_for_non_openai(monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]) -> None:
     from botcube_harness_deepagents.agent import build_model
 

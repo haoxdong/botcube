@@ -11,11 +11,24 @@ export interface FinishedTurn {
 
 export type TurnSummarizer = (turn: FinishedTurn) => Promise<TurnSummary>;
 
-/** Where the summary model is called: its Bedrock Converse URL, signed for this region. */
-export interface TurnSummaryModel {
+/** Where the summary model is called on Bedrock: its Converse URL, signed for this region. */
+export interface BedrockSummaryModel {
+  kind: 'bedrock';
   region: string;
   url: string;
 }
+
+/** The summary model on an OpenAI-compatible endpoint (the Deployment Config's `models` section, ADR 0091). */
+export interface OpenAICompatibleSummaryModel {
+  kind: 'openai-compatible';
+  /** The endpoint's chat completions URL. */
+  url: string;
+  model: string;
+  apiKey: () => Promise<string>;
+}
+
+/** Where the summary model is called. */
+export type TurnSummaryModel = BedrockSummaryModel | OpenAICompatibleSummaryModel;
 
 /** The model Turn summaries run on; the production stack's Bedrock grant (`TURN_SUMMARY_MODEL`) names it too. */
 const MODEL_ID = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -25,13 +38,105 @@ const SYSTEM_PROMPT = `You write the activity log entry for one task an AI agent
 You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
+/**
+ * The summary model the environment names: an OpenAI-compatible endpoint when BOTCUBE_MODELS_BASE_URL is set
+ * (the deploy sets it from the Deployment Config's `models` section), else Bedrock. Throws naming a missing variable.
+ */
 export function turnSummaryModelFromEnv(env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
+  const baseUrl = env.BOTCUBE_MODELS_BASE_URL?.replace(/\/+$/, '');
+  const secretArn = env.BOTCUBE_MODELS_API_KEY_SECRET_ARN;
+  if (baseUrl || secretArn) {
+    if (!baseUrl || !secretArn) {
+      throw new Error('An OpenAI-compatible models endpoint needs both BOTCUBE_MODELS_BASE_URL and BOTCUBE_MODELS_API_KEY_SECRET_ARN');
+    }
+    const model = env.BOTCUBE_TURN_SUMMARY_MODEL;
+    if (!model) throw new Error('An OpenAI-compatible models endpoint needs BOTCUBE_TURN_SUMMARY_MODEL, the model Turn summaries run on');
+    return { kind: 'openai-compatible', url: `${baseUrl}/chat/completions`, model, apiKey: secretString(env, secretArn) };
+  }
   const endpoint = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
-  return { region, url: `${endpoint}/model/${encodeURIComponent(env.BOTCUBE_TURN_SUMMARY_MODEL || MODEL_ID)}/converse` };
+  return { kind: 'bedrock', region, url: `${endpoint}/model/${encodeURIComponent(env.BOTCUBE_TURN_SUMMARY_MODEL || MODEL_ID)}/converse` };
+}
+
+/** The summarizer for this summary model. */
+export function turnSummarizer(model: TurnSummaryModel): TurnSummarizer {
+  switch (model.kind) {
+    case 'bedrock': return bedrockTurnSummarizer(model);
+    case 'openai-compatible': return openAICompatibleTurnSummarizer(model);
+  }
+}
+
+/**
+ * A Secrets Manager secret's string, read with the Chat Service's AWS credentials on first use and kept;
+ * a failed read is tried again on the next use.
+ */
+function secretString(env: NodeJS.ProcessEnv, secretArn: string): () => Promise<string> {
+  const region = secretArn.split(':')[3];
+  if (!secretArn.startsWith('arn:') || !region) throw new Error(`BOTCUBE_MODELS_API_KEY_SECRET_ARN is not a secret ARN: ${secretArn}`);
+  const endpoint = (env.AWS_ENDPOINT_URL_SECRETS_MANAGER || `https://secretsmanager.${region}.amazonaws.com`).replace(/\/+$/, '');
+  let reading: Promise<string> | undefined;
+  const read = async () => {
+    const response = await awsFetch('secretsmanager', region, `${endpoint}/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': 'secretsmanager.GetSecretValue' },
+      body: JSON.stringify({ SecretId: secretArn }),
+    });
+    if (!response.ok) throw new Error(`Secrets Manager answered HTTP ${response.status} for the models API key`);
+    const { SecretString } = (await response.json()) as { SecretString?: unknown };
+    if (typeof SecretString !== 'string' || !SecretString) throw new Error('The models API key secret holds no string');
+    return SecretString;
+  };
+  return () => (reading ??= read().catch((error: unknown) => {
+    reading = undefined;
+    throw error;
+  }));
+}
+
+const SUMMARY_PARAMETERS = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'Two to five words naming the task.' },
+    summary: { type: 'string', description: 'One line: what the agent did or found.' },
+  },
+  required: ['title', 'summary'],
+};
+
+type ChatCompletion = { choices?: { message?: { tool_calls?: { function?: { name?: unknown; arguments?: unknown } }[] } }[] };
+
+/** The summary model on an OpenAI-compatible endpoint, answering with the same forced tool as on Bedrock. */
+export function openAICompatibleTurnSummarizer({ url, model, apiKey }: OpenAICompatibleSummaryModel): TurnSummarizer {
+  return async (turn) => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${await apiKey()}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: JSON.stringify(turn) },
+        ],
+        max_tokens: 512,
+        temperature: 0,
+        tools: [{ type: 'function', function: { name: SUMMARY_TOOL, description: "Record the task's activity log entry.", parameters: SUMMARY_PARAMETERS } }],
+        tool_choice: { type: 'function', function: { name: SUMMARY_TOOL } },
+      }),
+    });
+    if (!response.ok) throw new Error(`The summary model answered HTTP ${response.status}`);
+    const body = (await response.json()) as ChatCompletion;
+    const call = body.choices?.[0]?.message?.tool_calls?.find((candidate) => candidate.function?.name === SUMMARY_TOOL)?.function;
+    return summaryInput(typeof call?.arguments === 'string' ? parsedArguments(call.arguments) : undefined);
+  };
+}
+
+function parsedArguments(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The summary model on Bedrock, signed by the Chat Service's AWS credentials. */
-export function bedrockTurnSummarizer({ region, url }: TurnSummaryModel): TurnSummarizer {
+export function bedrockTurnSummarizer({ region, url }: BedrockSummaryModel): TurnSummarizer {
   return async (turn) => {
     const response = await awsFetch('bedrock', region, url, {
       method: 'POST',
@@ -46,16 +151,7 @@ export function bedrockTurnSummarizer({ region, url }: TurnSummaryModel): TurnSu
               toolSpec: {
                 name: SUMMARY_TOOL,
                 description: "Record the task's activity log entry.",
-                inputSchema: {
-                  json: {
-                    type: 'object',
-                    properties: {
-                      title: { type: 'string', description: 'Two to five words naming the task.' },
-                      summary: { type: 'string', description: 'One line: what the agent did or found.' },
-                    },
-                    required: ['title', 'summary'],
-                  },
-                },
+                inputSchema: { json: SUMMARY_PARAMETERS },
               },
             },
           ],
@@ -113,6 +209,10 @@ function summaryFrom(body: unknown): TurnSummary {
     ? (content as { toolUse?: { name?: unknown; input?: unknown } }[]).find(({ toolUse }) => toolUse?.name === SUMMARY_TOOL)
         ?.toolUse?.input
     : undefined;
+  return summaryInput(input);
+}
+
+function summaryInput(input: unknown): TurnSummary {
   const { title, summary } = (input ?? {}) as { title?: unknown; summary?: unknown };
   if (typeof title !== 'string' || !title.trim() || typeof summary !== 'string' || !summary.trim()) {
     throw new Error('The summary model answered without a title and summary');

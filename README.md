@@ -25,18 +25,17 @@ Harness's session API, so it never imports a framework.
 ## Web UI Cartridge contract
 
 The typed contract is exported from `ui/web/src/cartridge/index.ts`. A web UI
-plugin supplies six extension points:
+plugin supplies two extension points:
 
 - `config`: agent ID, Chat Service URL, browser storage key, and user-facing copy
-- `toolResultRenderers`: optional tool-result renderers mounted in the chat
-- `auxiliaryPanels`: optional panel hosts such as a live browser view
-- `AuxiliaryView`: an optional standalone view for a panel pop-out route
-- `AuthProvider`: account/session UI state and any authentication overlay
-- `theme`: optional CSS custom-property values over the shell's tokens
+- `AuthProvider`: account/session UI state, any authentication overlay, and the
+  Sign-ins control that drives the built-in Sign-ins tab
 
 The shell itself ships the rest: the effort levels the harness takes, reply file
 links and composer uploads through the Chat Service's Files routes, the Agent
-Computer's stylesheet, and the Soul and Memory card colours.
+Computer and its live browser panel, the Sign-ins tab, and the Soul and Memory
+card colours. The bot settings (`bot.json`) set the four agent colours, the
+Memory gate, and whether the Agent Computer and its live browser panel show.
 
 The template imports the selected plugin only through `@cartridge-ui`.
 `ui/web/src/cartridge/default.tsx` is the neutral standalone implementation.

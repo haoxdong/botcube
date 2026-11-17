@@ -27,7 +27,10 @@ export interface InProcessOptions {
   existingTable?: string;
   invokeSessionApi?: SessionApi;
   /** Overrides of the test Cartridge, which acts for OWNER (or the x-test-owner header's account) and forwards each Turn as sent. */
-  cartridge?: Partial<ChatServiceCartridge>;
+  cartridge?: Omit<Partial<ChatServiceCartridge>, 'signInNeeded'> & {
+    /** `undefined`: a bot whose runs name no sign-in they may need. */
+    signInNeeded?: ChatServiceCartridge['signInNeeded'] | undefined;
+  };
   /** A Cartridge built from the account-history hooks, such as a bot's own, in place of the test Cartridge. */
   cartridgeFactory?: CartridgeFactory;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
@@ -75,6 +78,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
+  const { signInNeeded, ...overrides } = options.cartridge ?? {};
   const cartridge: ChatServiceCartridge = {
     corsOrigins: [],
     agentDocuments: {
@@ -97,8 +101,10 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     authorizeBrowserLiveView: async () => undefined,
     warmSession: async () => undefined,
     stopSessionComputer: async () => undefined,
-    ...options.cartridge,
+    ...overrides,
   };
+  if (signInNeeded !== undefined) cartridge.signInNeeded = signInNeeded;
+  else if (options.cartridge && 'signInNeeded' in options.cartridge) delete cartridge.signInNeeded;
   const config: ChatServiceConfig = {
     agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agentcore.url },
     localHarnessUrl: null,
@@ -108,7 +114,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     browserId: 'aws.browser.v1',
     sessionApi: { localUrl: sessionApi.url },
     warmupTimeoutMs: 10_000,
-    turnSummaryModel: { region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` },
+    turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` },
     ...options.config,
   };
   const aws = motoAws();

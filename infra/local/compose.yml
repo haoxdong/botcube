@@ -82,11 +82,12 @@ services:
       timeout: 2s
       retries: 30
 
+  # The example bot's image, built FROM the Harness image the session API runs.
   harness:
     build:
-      context: ../..
-      dockerfile: infra/local/harness.Dockerfile
-      args: *harness-build-args
+      context: ../../examples/bot
+      additional_contexts:
+        harness: service:session-api
     environment:
       NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1

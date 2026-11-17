@@ -52,6 +52,35 @@ test('production hostname gets certificate, AOP, and DNS on this origin', () => 
   expect(template.toJSON().Resources[dnsId].DependsOn).toContain(aopId);
   expect(aop.Properties.CertId).toEqual({ Ref: find('Aop', 'preview.example.com')[0] });
 });
+test("the product's service hostname gets certificate, AOP and DNS on this origin, and no parked Worker route", () => {
+  const live = parkingTemplate(new PreviewOriginStack(new App(), 'Service', { ...props, service: { hostname: 'auth.example.com' } }));
+  const resources = Object.entries(live.findResources('AWS::CloudFormation::CustomResource'));
+  const find = (kind: string, hostname: string) => {
+    const found = resources.find(([, r]) => r.Properties.Kind === kind && r.Properties.Hostname === hostname);
+    assert(found, `a ${kind} for ${hostname}`);
+    return found;
+  };
+  expect(resources.filter(([, r]) => r.Properties.Hostname === 'auth.example.com').map(([id, r]) => [id.replace(/[0-9A-F]{8}$/, ''), r.Properties.Kind]).sort())
+    .toEqual([['ServiceAop', 'Aop'], ['ServiceCertificate', 'Certificate'], ['ServiceDns', 'Dns']]);
+  const [dnsId] = find('Dns', 'auth.example.com');
+  const [aopId, aop] = find('Aop', 'auth.example.com');
+  expect(live.toJSON().Resources[dnsId].DependsOn).toContain(aopId);
+  expect(aop.Properties.CertId).toEqual({ Ref: find('Aop', 'preview.example.com')[0] });
+  expect(aop.Properties.ListenerArn).toEqual({ Ref: Object.keys(live.findResources('AWS::ElasticLoadBalancingV2::Listener'))[0] });
+  const [certificateId] = find('Certificate', 'auth.example.com');
+  live.hasResourceProperties('AWS::ElasticLoadBalancingV2::ListenerCertificate', { Certificates: [{ CertificateArn: { 'Fn::GetAtt': [certificateId, 'Arn'] } }] });
+  live.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ HOSTNAMES: 'preview.example.com,api.example.com,auth.example.com' }) } });
+  // A live ParkedWorker refuses a Hostnames update, so the service host gets no parked answer.
+  const parked = parkingTemplate(new PreviewOriginStack(new App(), 'Service', { ...props, service: { hostname: 'auth.example.com' } }), true);
+  const parkedResources = Object.values(parked.findResources('AWS::CloudFormation::CustomResource'));
+  expect(parkedResources.find(r => r.Properties.Kind === 'ParkedWorker')?.Properties.Hostnames).toEqual(['api.example.com', 'preview.example.com']);
+  expect(parkedResources.find(r => r.Properties.Kind === 'Dns' && r.Properties.Hostname === 'auth.example.com')?.Properties.Target).toBe('parked.invalid');
+});
+test('without a service hostname the origin serves only the Chat Service hostnames', () => {
+  const template = parkingTemplate(new PreviewOriginStack(new App(), 'NoService', props));
+  expect(Object.keys(template.findResources('AWS::CloudFormation::CustomResource')).filter(id => id.startsWith('Service'))).toEqual([]);
+  template.resourceCountIs('AWS::ElasticLoadBalancingV2::ListenerCertificate', 1);
+});
 test('the origin ALB is internet-facing in the public subnets behind only the Cloudflare ingress group', () => {
   const template = parkingTemplate(new PreviewOriginStack(new App(), 'TestOrigin', props));
   const [ingress] = Object.keys(template.findResources('AWS::EC2::SecurityGroup'));

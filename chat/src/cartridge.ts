@@ -20,7 +20,7 @@ export interface AgentDocumentSet {
 export interface AgentModel {
   readonly key: string;
   readonly label: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   /** Whose model it is: a Session's Turns all run on its first Turn's provider, so its history never mixes two. */
   readonly provider: string;
 }
@@ -80,6 +80,11 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
    * model neither resolves is refused.
    */
   accountModel(requester: R, key: string): Promise<AgentModel | undefined>;
+  /**
+   * The bot settings' Memory gate (`memory`): false keeps no Memory for anyone. Its routes refuse,
+   * and each Turn tells the Harness (`forwardedProps.botMemory`). On unless false.
+   */
+  readonly memory?: boolean;
   /** The Cartridge's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
   /** Raw HTTP routes run before Chat Service CORS and status normalization. */
@@ -116,9 +121,10 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   /**
    * The sign-in a scheduled run's outputs (its tool results and answers) say
    * the agent needed, recorded on the owner's account so the user is asked for
-   * it; null when the run needed none.
+   * it; null when the run needed none. Absent, a run ends on its own outcome: a bot whose own service refuses a
+   * missing sign-in fails the run with that service's message (ADR 0091).
    */
-  signInNeeded(owner: string, outputs: string[]): Promise<string | null>;
+  signInNeeded?(owner: string, outputs: string[]): Promise<string | null>;
   /**
    * Throw an HttpError unless the request may watch or take over this browser Session;
    * answers the AgentCore browser it runs in when that is not AGENTCORE_BROWSER_ID.
@@ -131,6 +137,12 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   /** The task is stopping: put every awake Agent Computer to sleep before it exits. */
   sleepAgentComputers?(): TaskStopSleep;
   stopSessionComputer?(owner: string, sessionId: string): Promise<void>;
+}
+
+/** Tells a Turn's Harness the bot settings' Memory gate; only the Chat Service sets it, never a client. */
+export function botMemory(forwardedProps: Record<string, unknown>, cartridge: Pick<ChatServiceCartridge, 'memory'>): void {
+  if (cartridge.memory === false) forwardedProps.botMemory = false;
+  else delete forwardedProps.botMemory;
 }
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */

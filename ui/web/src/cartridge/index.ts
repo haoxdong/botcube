@@ -6,6 +6,8 @@ export type {
   AuthUser,
   AuxiliaryPanelHostProps,
   ComputerViewProps,
+  SignIn,
+  SignInsControl,
   WebUiPlugin,
 } from './types.js';
 export { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount, subscribeAttachmentAccount } from './file-account';

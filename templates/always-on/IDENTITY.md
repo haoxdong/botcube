@@ -1,6 +1,6 @@
 # Customize the template identity
 
-Change `name` in `identity.json`, then regenerate the template inputs from the BotCube repository root.
+Change `agentIdentity.name` in the bot settings, `examples/bot/bot.json`, then regenerate the template inputs from the BotCube repository root.
 Install the preparation command's locked dependency first.
 
 ```sh
@@ -8,10 +8,11 @@ npm ci --prefix templates/always-on/deploy
 node templates/always-on/deploy/prepare-identity.mjs
 ```
 
-This updates the UI name, Agent Identity, packaged Harness identity, deployment resource names, and AgentCore project names.
+The UI, the Chat Service and the account store read the name from the bot settings directly.
+This command updates what cannot: the packaged Harness identity, deployment resource names, and AgentCore project names.
 The display name must start with a letter and contain words separated by spaces or hyphens.
-The same input also owns the default avatar and theme.
-Use an emoji for the avatar and existing UI CSS variables for the theme.
+The bot settings also own the avatar (`agentIdentity.avatar`), the four agent colours (`theme`), the Memory gate (`memory`),
+and whether the Agent Computer and its live browser panel show (`agentComputer`).
 
 Set your AWS account, region, network IDs, browser assets, domains, and GitHub bindings in `deploy/identity.json`.
 The preparation command preserves these settings and generates the AWS targets from its account and region.
@@ -31,16 +32,14 @@ The resulting URL downloads a local sample artifact from the Chat Service.
 Unknown files return HTTP 404.
 Replace these template-owned routes to serve your agent's files.
 
-Every web UI plugin slot has a working default in `ui/web/src`, drawn with the app's design tokens:
+The web UI plugin in `ui/web/src` supplies only the template's own config and auth provider, which links the template site.
+BotCube builds in the rest from the bot settings:
 
-- the tool-result renderer shows `template-cli data` items as a card under the shell call;
-- the auxiliary panel floats the live browser over the chat while a Turn drives it, and pops out to the auxiliary view;
+- the live browser panel floats the browser over the chat while a Turn drives it, and pops out to its own window;
 - the Computer tab shows the chat's Agent Computer, wakes it, and names who is driving;
-- the auth provider and Sign-ins tab link the template site.
-
-Restyle them through the theme, or replace a slot's component in `ui/web/src/index.ts`.
-From the public repository root, preview every slot on phone and desktop with
-the template Storybook:
+- the Sign-ins tab lists the template site from the Chat Service, driven by the auth provider.
+  From the public repository root, preview every slot on phone and desktop with
+  the template Storybook:
 
 ```sh
 corepack pnpm storybook

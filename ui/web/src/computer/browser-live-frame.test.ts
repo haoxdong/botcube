@@ -111,6 +111,19 @@ describe('the live view', () => {
     expect(document.title).toBe('Template Bot');
   });
 
+  it("signs the live view where its host says, as a product's own service signs the browsers it starts", async () => {
+    const signedUrl = vi.fn(async (sessionId: string, _signal: AbortSignal) => `https://live.test/product/${sessionId}`);
+    const onConnection = vi.fn();
+    const root = createRoot(document.createElement('div'));
+    roots.push(root);
+
+    await act(async () => root.render(React.createElement(BrowserLiveFrame, { sessionId: 'browser-1', signedUrl, onConnection })));
+    await vi.waitFor(() => expect(onConnection).toHaveBeenCalled());
+
+    expect(signedUrl).toHaveBeenCalledWith('browser-1', expect.any(AbortSignal));
+    expect(presign.urls).toEqual([]);
+  });
+
   it('says why, and tells its host, when the live view cannot start', async () => {
     presign.failure = new Error('Live view URL request failed: 502');
     const onError = vi.fn();

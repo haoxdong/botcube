@@ -72,6 +72,12 @@ export interface PrivateCredentialServiceProps {
   image: ecs.ContainerImage;
   /** The Vault: one Durable Credential per (accountId, provider) (ADR 0078 decision 3). */
   tableName: string;
+  /** An existing vault table to use instead of creating `tableName`. */
+  existingVaultTableName?: string;
+  /** An existing key to encrypt the vault with instead of creating one. */
+  existingVaultKeyArn?: string;
+  /** An existing RSA_2048 ENCRYPT_DECRYPT key for the Sign-in Sheet instead of creating one. */
+  existingSheetKeyArn?: string;
   namespaceName: string;
   alertsTopicName: string;
   port: number;
@@ -82,10 +88,22 @@ export interface PrivateCredentialServiceProps {
   agentComputerBrowserId: string;
 }
 
+/** The length of the invocation token the service generates, refusing options an imported secret owns. */
+function validInvocationTokenLength(props: PrivateCredentialServiceProps): number {
+  if (props.invocationSecret && (props.invocationSecretName !== undefined || props.invocationTokenLength !== undefined)) throw new Error('An imported invocationSecret owns its name and value; omit secret creation options');
+  const invocationTokenLength = props.invocationTokenLength ?? 64;
+  // 32 alphanumeric characters provide about 190 bits of entropy for the owner-only ingest signing key.
+  if (!Number.isInteger(invocationTokenLength) || invocationTokenLength < 32) {
+    throw new Error('invocationTokenLength must be an integer of at least 32 characters');
+  }
+  return invocationTokenLength;
+}
+
 /** Private credential custody, separate from both callers and their roles. */
 export class PrivateCredentialService extends Construct {
   readonly task: ecs.FargateTaskDefinition;
   readonly container: ecs.ContainerDefinition;
+  readonly service: ecs.FargateService;
   readonly url: string;
   readonly invocationSecret: secretsmanager.Secret | secretsmanager.ISecret;
   /** The private DNS namespace the Harness resolves its callees in. */
@@ -93,12 +111,7 @@ export class PrivateCredentialService extends Construct {
 
   constructor(scope: Construct, id: string, props: PrivateCredentialServiceProps) {
     super(scope, id);
-    if (props.invocationSecret && (props.invocationSecretName !== undefined || props.invocationTokenLength !== undefined)) throw new Error('An imported invocationSecret owns its name and value; omit secret creation options');
-    const invocationTokenLength = props.invocationTokenLength ?? 64;
-    // 32 alphanumeric characters provide about 190 bits of entropy for the owner-only ingest signing key.
-    if (!Number.isInteger(invocationTokenLength) || invocationTokenLength < 32) {
-      throw new Error('invocationTokenLength must be an integer of at least 32 characters');
-    }
+    const invocationTokenLength = validInvocationTokenLength(props);
     const stack = Stack.of(this);
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
     const network = new ec2.SecurityGroup(this, 'Network', { vpc: props.cluster.vpc, ...optionalPhysicalName('securityGroupName', props.securityGroupName) });
@@ -111,27 +124,10 @@ export class PrivateCredentialService extends Construct {
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
     nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
-    const key = props.kmsKey ?? new kms.Key(this, 'VaultKey', {
-      enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN,
-    });
-    if (!props.kmsKey) key.addToResourcePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.DENY, principals: [new iam.AnyPrincipal()],
-      actions: ['kms:Decrypt'], resources: ['*'],
-      conditions: { ArnNotEquals: { 'aws:PrincipalArn': task.taskRole.roleArn } },
-    }));
-    if (props.kmsKey) task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], resources: [key.keyArn] }));
-    else key.grant(task.taskRole, 'kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey');
-    const sheetKey = new kms.Key(this, 'SheetKey', {
-      keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
-    sheetKey.addToResourcePolicy(new iam.PolicyStatement({
-      effect: iam.Effect.DENY, principals: [new iam.AnyPrincipal()],
-      actions: ['kms:Decrypt'], resources: ['*'],
-      conditions: { ArnNotEquals: { 'aws:PrincipalArn': task.taskRole.roleArn } },
-    }));
-    sheetKey.grant(task.taskRole, 'kms:GetPublicKey', 'kms:Decrypt');
+    const key = vaultKey(this, props, task);
+    const sheetKey = signInSheetKey(this, props, task);
     const vault = (id: string, tableName: string, sortKey?: string) => {
+      if (props.existingVaultTableName) return dynamodb.Table.fromTableName(this, id, props.existingVaultTableName);
       const table = new dynamodb.Table(this, id, {
         tableName,
         partitionKey: { name: 'accountId', type: dynamodb.AttributeType.STRING },
@@ -191,7 +187,7 @@ export class PrivateCredentialService extends Construct {
     const namespace = this.namespace = new discovery.PrivateDnsNamespace(this, 'Namespace', {
       name: props.namespaceName, vpc: props.cluster.vpc,
     });
-    const service = new ecs.FargateService(this, 'Service', {
+    const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
       // which exactOptionalPropertyTypes rejects; the construct is its interface.
       cluster: props.cluster as ecs.ICluster, taskDefinition: task, serviceName: props.serviceName ?? 'credential-service', desiredCount: parkState(this).credentialNumber(props.desiredCount ?? 1, 0),
@@ -267,4 +263,44 @@ function copyAuditEvents(scope: Construct, source: logs.LogGroup, auditLogGroupN
     filterPattern: logs.FilterPattern.literal('{ $.event = * && $.accountId = * }'),
   });
   return { logGroup, copy, subscription };
+}
+
+/** Only the task may decrypt with a key this construct creates. */
+function denyDecryptToOthers(key: kms.Key, task: ecs.TaskDefinition) {
+  key.addToResourcePolicy(new iam.PolicyStatement({
+    effect: iam.Effect.DENY, principals: [new iam.AnyPrincipal()],
+    actions: ['kms:Decrypt'], resources: ['*'],
+    conditions: { ArnNotEquals: { 'aws:PrincipalArn': task.taskRole.roleArn } },
+  }));
+}
+
+/** The vault's key: the one passed in, an existing one by ARN, or a new one only the task may decrypt with. */
+function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
+  if (props.kmsKey && props.existingVaultKeyArn) throw new Error('Choose kmsKey or existingVaultKeyArn, not both');
+  const importedKey = props.kmsKey ?? (props.existingVaultKeyArn ? kms.Key.fromKeyArn(scope, 'VaultKey', props.existingVaultKeyArn) : undefined);
+  // An imported key's policy is its owner's: the task role is granted the key, and the key's own deny is theirs to keep.
+  if (importedKey) {
+    task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], resources: [importedKey.keyArn] }));
+    return importedKey;
+  }
+  const key = new kms.Key(scope, 'VaultKey', { enableKeyRotation: true, removalPolicy: RemovalPolicy.RETAIN });
+  denyDecryptToOthers(key, task);
+  key.grant(task.taskRole, 'kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey');
+  return key;
+}
+
+/** The Sign-in Sheet's RSA key: an existing one by ARN, or a new one only the task may decrypt with. */
+function signInSheetKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
+  if (props.existingSheetKeyArn) {
+    const imported = kms.Key.fromKeyArn(scope, 'SheetKey', props.existingSheetKeyArn);
+    task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['kms:GetPublicKey', 'kms:Decrypt'], resources: [imported.keyArn] }));
+    return imported;
+  }
+  const sheetKey = new kms.Key(scope, 'SheetKey', {
+    keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
+    removalPolicy: RemovalPolicy.RETAIN,
+  });
+  denyDecryptToOthers(sheetKey, task);
+  sheetKey.grant(task.taskRole, 'kms:GetPublicKey', 'kms:Decrypt');
+  return sheetKey;
 }

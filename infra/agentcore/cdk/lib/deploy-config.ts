@@ -105,6 +105,8 @@ export interface DeployIdentity {
       memoryRole: string;
       /** The role a Turn's JWT turns into Memory credentials for one user (ADR 0067 §8). */
       userMemoryRole: string;
+      /** The Chat Service's task role, the only principal the `assume-role` adapter's Memory role trusts. */
+      chatServiceTaskRole?: string;
       lambdaRole: string;
       codeBuildRole: string;
       sessionApiRole: string;

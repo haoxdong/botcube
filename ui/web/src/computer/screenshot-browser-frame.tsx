@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
-import type { BrowserLiveFrameProps } from 'botcube-ui-web/computer/browser-live-frame';
-import { fetchBrowserLiveViewSignedUrl } from 'botcube-ui-web/computer/browser-live-view-url';
-import { CHAT_SERVICE_URL } from './config';
+import type { BrowserLiveFrameProps } from './browser-live-frame';
+import { fetchBrowserLiveViewSignedUrl } from './browser-live-view-url';
+import { chatServiceUrl } from '../cartridge/chat-service-url';
 import { Screen } from './screen';
 
-/** The local browser supplies screenshots; hosted browsers use BotCube's default DCV transport. */
+const CHAT_SERVICE_URL = chatServiceUrl();
+
+/** BotCube's local Agent Computer supplies screenshots, not a DCV stream: its screen, frame by frame. */
 export function ScreenshotBrowserFrame(props: BrowserLiveFrameProps) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

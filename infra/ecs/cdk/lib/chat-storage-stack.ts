@@ -6,6 +6,8 @@ import { Construct } from 'constructs';
 export interface ChatStorageProps extends StackProps {
   chatTable?: ITable;
   tableName?: string;
+  /** An existing chat table to import instead of creating one; parking reads its NEW_IMAGE stream. */
+  existingChatTable?: { tableName: string; streamArn: string };
 }
 
 /** Durable shared Chat Service storage: the chat table, and every account's Files (ADR 0077). */
@@ -17,7 +19,9 @@ export class ChatStorageStack extends Stack {
   constructor(scope: Construct, id: string, props: ChatStorageProps) {
     super(scope, id, props);
     if (props.chatTable && props.tableName !== undefined) throw new Error('Choose chatTable and tableName separately: an imported table owns its name');
-    this.chatTable = props.chatTable ?? new Table(this, 'ChatTable', {
+    if (props.existingChatTable && (props.chatTable || props.tableName !== undefined)) throw new Error('An existing chat table owns its name; omit chatTable and tableName');
+    const existing = props.existingChatTable;
+    this.chatTable = props.chatTable ?? (existing ? Table.fromTableAttributes(this, 'ChatTable', { tableName: existing.tableName, tableStreamArn: existing.streamArn }) : undefined) ?? new Table(this, 'ChatTable', {
       tableName: props.tableName ?? 'chat',
       partitionKey: { name: 'pk', type: AttributeType.STRING },
       sortKey: { name: 'sk', type: AttributeType.STRING },

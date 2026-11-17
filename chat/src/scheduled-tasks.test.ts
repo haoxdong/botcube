@@ -8,7 +8,8 @@ import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
-import { ScheduledTasks, schedulerConfigFromEnv } from './scheduled-tasks.js';
+import { ScheduledTasks } from './scheduled-tasks.js';
+import { schedulerConfigFromEnv } from './scheduler.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
 import type { AccountHistory } from './cartridge.js';
@@ -1084,7 +1085,7 @@ describe('ScheduledTasks', () => {
         agentCore: runtime ? { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url } : null, localHarnessUrl: null, corsOrigins: null,
         region: 'us-east-1', agentCoreEndpoint: stack.agentcore.url, browserId: 'test',
         sessionApi: { localUrl: stack.sessionApi.url }, warmupTimeoutMs: 10_000,
-        turnSummaryModel: { region: 'us-east-1', url: `${stack.bedrock.url}/model/summary/converse` },
+        turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: `${stack.bedrock.url}/model/summary/converse` },
       },
       new DynamoDBSessionMetadata(table, dynamodb),
       new DynamoDBAgentDocuments(table, dynamodb),
@@ -1314,7 +1315,7 @@ describe('ScheduledTasks', () => {
     const original = new ScheduledTasks(table, runs, dynamodb, realScheduler);
     const { task } = await original.create(account, proposalId, MORNING_BRIEF);
     const send = async () => { throw new Error('Scheduler unavailable'); };
-    const { app } = serviceForTasks(account, new ScheduledTasks(table, runs, dynamodb, { send } as unknown as SchedulerClient));
+    const { app } = serviceForTasks(account, new ScheduledTasks(table, runs, dynamodb, { send }));
 
     const again = await app.request('/scheduled-tasks', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1333,7 +1334,7 @@ describe('ScheduledTasks', () => {
     const original = new ScheduledTasks(table, runs, dynamodb, realScheduler);
     const { task } = await original.create(account, randomUUID(), MORNING_BRIEF);
     const send = vi.fn(async () => { throw new Error('Scheduler unavailable'); });
-    const { app } = serviceForTasks(account, new ScheduledTasks(table, runs, dynamodb, { send } as unknown as SchedulerClient));
+    const { app } = serviceForTasks(account, new ScheduledTasks(table, runs, dynamodb, { send }));
     const edited = await app.request(`/scheduled-tasks/${task.id}`, {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'Updated title', prompt: 'Updated prompt' }),

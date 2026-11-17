@@ -475,6 +475,57 @@ class TestDelete:
         assert result == {'status': 'error', 'content': [{'text': 'memory_record_id is required for delete action.'}]}
 
 
+def _assume_role_store(memory: FakeAgentCoreMemory) -> tuple[AgentCoreMemoryStore, list[tuple[str, dict[str, Any]]]]:
+    """The tool under the `assume-role` Turn credential, whose session policy scopes get and delete by namespace."""
+    calls: list[tuple[str, dict[str, Any]]] = []
+    client = TaggedMemoryClient(memory, lambda: {'actorId': ACTOR}, calls)
+    client.scoped_records_by_id = True
+    store = _store(memory)
+    store.client = cast(Any, client)
+    return store, calls
+
+
+class TestRecordsByIdUnderAssumeRole:
+    def test_get_names_the_records_exact_namespace(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Prefers copper.', SAVED_ID, kind='preferences')
+        store, calls = _assume_role_store(memory)
+
+        result = _invoke('get', store=store, memory_record_id=SAVED_ID, actor_id=ACTOR)
+
+        assert result == {'status': 'success', 'content': [{'text': 'Prefers copper.'}]}
+        assert [params.get('namespace') for operation, params in calls if operation == 'get_memory_record'] == [
+            f'/actors/{ACTOR}/preferences/',
+        ]
+
+    def test_delete_names_the_records_exact_namespace(self, memory: FakeAgentCoreMemory) -> None:
+        _saved(memory, 'Prefers copper.', SAVED_ID, kind='preferences')
+        store, calls = _assume_role_store(memory)
+
+        result = _invoke('delete', store=store, memory_record_id=SAVED_ID, actor_id=ACTOR)
+
+        assert result == {'status': 'success', 'content': [{'text': f'Deleted memory record {SAVED_ID}.'}]}
+        assert memory.records == []
+        assert [params.get('namespace') for operation, params in calls if operation == 'delete_memory_record'] == [
+            f'/actors/{ACTOR}/preferences/',
+        ]
+
+    @pytest.mark.parametrize(('action', 'text'), [
+        ('get', f'Failed to get memory record {SAVED_ID}.'),
+        ('delete', f'Failed to delete memory record {SAVED_ID}.'),
+    ])
+    def test_another_actors_record_is_neither_read_nor_deleted(
+        self, memory: FakeAgentCoreMemory, action: str, text: str,
+    ) -> None:
+        _saved(memory, 'Prefers copper.', SAVED_ID, actor_id=LONGER_ACTOR)
+        store, calls = _assume_role_store(memory)
+
+        result = _invoke(action, store=store, memory_record_id=SAVED_ID, actor_id=ACTOR)
+
+        assert result == {'status': 'error', 'content': [{'text': text}]}
+        assert [operation for operation, _ in calls] == ['list_memory_records']
+        assert [record['memoryRecordId'] for record in memory.records] == [SAVED_ID]
+
+
 class TestRecordWithoutText:
     """A record the tool reports but that carries no text fails loud, naming the record (ADR 0030)."""
 
@@ -563,6 +614,14 @@ def agentcore(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[AgentCoreMemory
         stubber.assert_no_pending_responses()
 
 
+def _stub_actor_listing(stubber: Stubber) -> None:
+    stubber.add_response(
+        'list_memory_records',
+        {'memoryRecordSummaries': [_api_record('Lives in New York.')]},
+        {'memoryId': MEMORY_ID, 'namespacePath': '/actors/botcube_harness_deepagents/', 'maxResults': 100},
+    )
+
+
 class TestAgentCoreMemoryRequests:
     def test_list_pages_through_the_actors_records(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
@@ -636,21 +695,23 @@ class TestAgentCoreMemoryRequests:
             'status': 'error', 'content': [{'text': 'Memory search unavailable.'}],
         }
 
-    def test_get_reads_the_record_by_id(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    def test_get_reads_the_record_by_id_in_its_namespace(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
+        _stub_actor_listing(stubber)
         stubber.add_response(
             'get_memory_record',
             {'memoryRecord': _api_record('Lives in New York.')},
-            {'memoryId': MEMORY_ID, 'memoryRecordId': RECORD_ID},
+            {'memoryId': MEMORY_ID, 'memoryRecordId': RECORD_ID, 'namespace': '/actors/botcube_harness_deepagents/facts/'},
         )
 
         result = _invoke('get', store=store, memory_record_id=RECORD_ID)
 
         assert result == {'status': 'success', 'content': [{'text': 'Lives in New York.'}]}
 
-    def test_delete_deletes_the_record_by_id(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
+    def test_delete_deletes_the_record_by_id_in_its_namespace(self, agentcore: tuple[AgentCoreMemoryStore, Stubber]) -> None:
         store, stubber = agentcore
-        request = {'memoryId': MEMORY_ID, 'memoryRecordId': RECORD_ID}
+        _stub_actor_listing(stubber)
+        request = {'memoryId': MEMORY_ID, 'memoryRecordId': RECORD_ID, 'namespace': '/actors/botcube_harness_deepagents/facts/'}
         stubber.add_response('delete_memory_record', {'memoryRecordId': RECORD_ID}, request)
 
         result = _invoke('delete', store=store, memory_record_id=RECORD_ID)
@@ -675,6 +736,8 @@ class TestAgentCoreMemoryRequests:
         self, agentcore: tuple[AgentCoreMemoryStore, Stubber], caplog: pytest.LogCaptureFixture, action: str, operation: str, kwargs: dict[str, str], message: str, text: str
     ) -> None:
         store, stubber = agentcore
+        if action in ('get', 'delete'):
+            _stub_actor_listing(stubber)
         stubber.add_client_error(operation, 'ThrottledException', 'Rate exceeded')
 
         with caplog.at_level('WARNING', logger='botcube_harness_deepagents.memory_tools'):

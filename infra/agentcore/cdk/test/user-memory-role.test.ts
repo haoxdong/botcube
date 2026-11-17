@@ -3,7 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { setSessionProjectRoot } from '@aws/agentcore-cdk';
 import { resolve } from 'path';
-import { AgentCoreStack } from '../lib/cdk-stack';
+import { AgentCoreStack, type AgentCoreStackProps } from '../lib/cdk-stack';
 import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
 const DEPLOY_ROOT = resolve(__dirname, '../../../../templates/always-on/deploy');
@@ -11,7 +11,7 @@ const SPEC = readProjectSpec(DEPLOY_ROOT);
 const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 setSessionProjectRoot(DEPLOY_ROOT);
 
-function synthesize(userMemoryRole?: { issuer: string; roleName: string }): Template {
+function synthesize(userMemoryRole?: AgentCoreStackProps['userMemoryRole']): Template {
   return Template.fromStack(
     new AgentCoreStack(new cdk.App(), 'UserMemoryRoleStack', {
       env: { account: '123456789012', region: 'us-east-1' },
@@ -158,4 +158,78 @@ test('refuses an issuer that is not an https origin', () => {
       'The Memory role issuer must be an https origin without a port'
     );
   }
+});
+
+describe('under the assume-role Turn credentials adapter', () => {
+  const assumed = synthesize({
+    turnCredentials: 'assume-role',
+    roleName: 'bot-cube-user-memory',
+    chatServiceTaskRole: 'bot-cube-chat-service',
+  });
+  const roleId = () => {
+    const [id] = Object.keys(
+      assumed.findResources('AWS::IAM::Role', { Properties: { RoleName: 'bot-cube-user-memory' } })
+    );
+    assert(id, 'the stack declares the Memory role');
+    return id;
+  };
+
+  test("the Memory role trusts only the Chat Service's task role, by ARN, with no OIDC provider or session tags", () => {
+    assumed.resourceCountIs('AWS::IAM::OIDCProvider', 0);
+    assumed.hasResourceProperties('AWS::IAM::Role', {
+      RoleName: 'bot-cube-user-memory',
+      MaxSessionDuration: 3600,
+      AssumeRolePolicyDocument: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: { AWS: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':iam::123456789012:root']] } },
+            Action: 'sts:AssumeRole',
+            Condition: {
+              ArnEquals: {
+                'aws:PrincipalArn': {
+                  'Fn::Join': [
+                    '',
+                    ['arn:', { Ref: 'AWS::Partition' }, ':iam::123456789012:role/bot-cube-chat-service'],
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  test("the Memory role grants the Memory's event and record actions, which each Turn's session policy narrows", () => {
+    const [memory] = Object.keys(assumed.findResources('AWS::BedrockAgentCore::Memory'));
+    const policies = Object.values(assumed.findResources('AWS::IAM::Policy')).filter(policy =>
+      policy.Properties.Roles.some((role: { Ref: string }) => role.Ref === roleId())
+    );
+
+    expect(policies.flatMap(policy => policy.Properties.PolicyDocument.Statement)).toEqual([
+      {
+        Effect: 'Allow',
+        Action: [
+          'CreateEvent',
+          'GetEvent',
+          'ListEvents',
+          'DeleteEvent',
+          'ListMemoryRecords',
+          'RetrieveMemoryRecords',
+          'GetMemoryRecord',
+          'DeleteMemoryRecord',
+        ].map(action => `bedrock-agentcore:${action}`),
+        Resource: { 'Fn::GetAtt': [memory, 'MemoryArn'] },
+      },
+    ]);
+  });
+
+  test('outputs the Memory role ARN, and gives the Harness no role to assume', () => {
+    assumed.hasOutput('UserMemoryRoleArn', { Value: { 'Fn::GetAtt': [roleId(), 'Arn'] } });
+    for (const runtime of Object.values(assumed.findResources('AWS::BedrockAgentCore::Runtime'))) {
+      expect(runtime.Properties.EnvironmentVariables).not.toHaveProperty('BOTCUBE_USER_MEMORY_ROLE_ARN');
+    }
+  });
 });

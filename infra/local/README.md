@@ -7,6 +7,9 @@ Run `./run.sh -d`, wait for the services, then run `./smoke.sh` and open
 `http://localhost:3001`. No cloud or model-provider credentials are used.
 See [Integrating BotCube](../../INTEGRATING.md) for the configuration reference.
 
+The `harness` service is the example bot's image (`examples/bot/Dockerfile`):
+BotCube's Harness image, the one `session-api` runs, plus the bot's settings and skills.
+
 Set `BOTCUBE_LOCAL_CHAT_PORT` and `BOTCUBE_LOCAL_UI_PORT` to change the host
 ports. The UI uses the selected Chat port unless `NEXT_PUBLIC_CHAT_SERVICE_URL`
 is set. Use the same variables for startup and smoke.

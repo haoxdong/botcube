@@ -19,7 +19,8 @@ export function startChatTracing(env: NodeJS.ProcessEnv = process.env): { shutdo
   if (env.OTEL_TRACES_EXPORTER !== 'otlp') return undefined;
   const sdk = new NodeSDK({
     serviceName: 'botcube-chat',
-    traceExporter: new OTLPTraceExporter(),
+    // The exporter makes its own agent, which reads no proxy variables unless handed them (Deployment Config `proxy`).
+    traceExporter: new OTLPTraceExporter({ httpAgentOptions: { proxyEnv: env } }),
     idGenerator: new AWSXRayIdGenerator(),
     textMapPropagator: new CompositePropagator({ propagators: [new W3CTraceContextPropagator(), new AWSXRayPropagator()] }),
     instrumentations: [],

@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash, randomBytes } from 'node:crypto';
 import { ConditionalCheckFailedException } from '@aws-sdk/client-dynamodb';
 import {
   type DynamoDBDocumentClient,
@@ -9,74 +8,32 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { AccountStoreError, OpenAIIdentityTaken, Lease } from './account-resources.js';
 import type { AgentModel } from './cartridge.js';
-import { GuestExpiry, type Operation, type PutOperation } from './guest-expiry.js';
+import { GuestExpiry } from './guest-expiry.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
+import {
+  type Account,
+  type AccountDeletionIntent,
+  type AccountNaming,
+  isAccountId,
+  type Item,
+  itemKey,
+  nowSeconds,
+  oidcLinkKey,
+  type OidcSubject,
+  type Operation,
+  type PutOperation,
+  seedName,
+  sessionBinding,
+  token,
+  type TokenRecord,
+} from './account-record.js';
 
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const SESSION_INACTIVITY_SECONDS = 60 * 60 * 24 * 30;
 export const SESSION_ABSOLUTE_SECONDS = 60 * 60 * 24 * 365;
 
-/** How a Cartridge names its accounts: `key` names its cookies and session records, `product` its messages. */
-export interface AccountNaming {
-  readonly key: string;
-  readonly product: string;
-}
-
-/** An Account record; its shape is live production data. */
-export interface Account {
-  version: number;
-  accountId: string;
-  status: 'anonymous' | 'registered' | 'test';
-  rateTier: string;
-  deletionOperationId?: string;
-  /** The profile: seeded from the first login-capable Sign-in, then the user's; its photo is an item of its own. */
-  displayName?: string;
-  lastActiveAt?: number;
-  /** A scheduled run needed the user to sign in again; cleared when they do. */
-  signInNeeded?: boolean;
-  /** The OpenAI Sign-in's ChatGPT identity (its ID token's `sub`): the Account has Plan Usage (ADR 0078). */
-  openaiIdentity?: string;
-  /** The plan's models from its catalog's last fetch, which each model listing refreshes; cleared with each OpenAI Sign-in. */
-  planModels?: AgentModel[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-/** Freshly authorized deletion that survives removal of the account and its bearer tokens. */
-export interface AccountDeletionIntent {
-  accountId: string;
-  operationId: string;
-  authorizedAt: number;
-  sessionBinding: string;
-  status: 'authorized' | 'completed';
-}
-
-/** A token item's `record`: a session of kind `naming.key`, or a Cartridge's own kind of token. */
-export type TokenRecord = { accountId: string; createdAt: number; expiresAt: number; kind: string } & Record<string, unknown>;
+type OidcUser = OidcSubject & { displayName?: string | undefined };
 type SessionRecord = TokenRecord & { lastActivityAt: number; inactivityExpiresAt: number; absoluteExpiresAt: number };
-
-export type { Operation, PutOperation };
-type Item = Record<string, unknown>;
-
-export const nowSeconds = () => Math.floor(Date.now() / 1000);
-export const token = (bytes: number) => randomBytes(bytes).toString('base64url');
-export const itemKey = (pk: string, sk = 'META') => ({ pk, sk });
-
-export const isAccountId = (value: string | null | undefined): value is string => {
-  const id = (value ?? '').trim();
-  return id.startsWith('acct_') && id.length >= 10 && id.length <= 128;
-};
-
-/** A token's binding to the session that started it. */
-export const sessionBinding = (sessionToken: string) =>
-  createHash('sha256').update(sessionToken, 'utf8').digest('hex');
-
-/** Seed the profile's name from a Sign-in unless the account has one; answers whether it did. */
-export function seedName(account: Account, displayName: string | undefined): boolean {
-  if (account.displayName !== undefined || !displayName) return false;
-  account.displayName = displayName;
-  return true;
-}
 
 export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
   private readonly deletion = new AsyncLocalStorage<Lease>();
@@ -366,6 +323,42 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
       await this.commit(lease, operations);
       return tokenValue;
     });
+  }
+
+  /**
+   * A new session for the OIDC user's account. Their first sign-in registers the browser's anonymous
+   * account, keeping its chats, or a new account when the browser has none; with `subjectIsAccountId`, the subject's.
+   */
+  signInWithOidc(user: OidcUser, browserAccountId: string | undefined, { subjectIsAccountId = false } = {}): Promise<{ accountId: string; sessionToken: string }> {
+    return this.mutation(async (lease) => {
+      const link = oidcLinkKey(user);
+      const linked = await this.get(link);
+      const named = subjectIsAccountId ? await this.loadAccount(user.subject) : null;
+      const existing = (linked && await this.loadAccount(linked.accountId as string)) || (named?.status === 'registered' ? named : null);
+      if (existing?.deletionOperationId !== undefined) throw new AccountStoreError(`${this.naming.product} account deletion is pending`);
+      const operations: Operation[] = [];
+      let account = existing;
+      if (account === null) {
+        if (named || (subjectIsAccountId && !isAccountId(user.subject))) throw new AccountStoreError('OIDC subject is no registered account');
+        account = await this.registered(browserAccountId, user, subjectIsAccountId ? user.subject : undefined);
+        operations.push(this.put(this.accountItem(account)));
+      }
+      if (linked?.accountId !== account.accountId) operations.push(this.put({ ...itemKey(link), accountId: account.accountId }));
+      const [sessionToken, session] = this.newSession(account.accountId);
+      await this.commit(lease, [...operations, ...session]);
+      return { accountId: account.accountId, sessionToken };
+    });
+  }
+
+  private async registered(browserAccountId: string | undefined, { issuer, subject, displayName }: OidcUser, accountId?: string): Promise<A> {
+    const browser = accountId ? null : await this.loadAccount(browserAccountId);
+    const now = nowSeconds();
+    const account = browser?.status === 'anonymous' && browser.deletionOperationId === undefined
+      ? browser
+      : this.newAccount({ version: 1, accountId: accountId ?? `acct_${token(24)}`, status: 'registered', rateTier: 'authenticated', createdAt: now, updatedAt: now });
+    Object.assign(account, { status: 'registered', rateTier: 'authenticated', oidc: { issuer, subject }, updatedAt: now });
+    seedName(account, displayName);
+    return account;
   }
 
   /** The deletes of the account's session this token names, when it is the account's. */

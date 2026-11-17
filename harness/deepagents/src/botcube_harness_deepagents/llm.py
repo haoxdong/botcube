@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import functools
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +29,9 @@ DEFAULT_EFFORT = 'medium'
 DEFAULT_MAX_TOKENS = 128
 # A model on the account's ChatGPT plan, named by its slug in the plan's catalog (ADR 0078).
 PLAN_MODEL_PREFIX = 'openai-plan:'
+# The Deployment Config's `models` section, as the deploy hands it over: `MODELS_ENV` in botcube/deployment-config.
+MODELS_BASE_URL_ENV = 'BOTCUBE_MODELS_BASE_URL'
+MODELS_API_KEY_SECRET_ENV = 'BOTCUBE_MODELS_API_KEY_SECRET_ARN'
 # The `type` of the classified Plan Usage errors the Credential Service relay answers.
 PLAN_USAGE_ERROR_TYPE = 'plan_usage'
 
@@ -87,6 +92,13 @@ def build_model(
     """
     selected_model = resolve_model(model)
 
+    if not selected_model.startswith(PLAN_MODEL_PREFIX) and (endpoint := openai_compatible_endpoint()) is not None:
+        # Every model but Plan Usage's runs on the endpoint, by its key in the bot settings; the Bedrock default is no key there.
+        key = model or os.environ.get('BOTCUBE_MODEL')
+        if not key:
+            raise RuntimeError('The OpenAI-compatible models endpoint needs a model key, and this Turn names no model and BOTCUBE_MODEL is unset')
+        return _openai_compatible_model(key, endpoint, max_tokens)
+
     if selected_model == 'echo':
         return EchoChatModel()
 
@@ -125,6 +137,49 @@ def build_model(
         # Bedrock's DeepSeek reasons only at "high"; "low" and "medium" are accepted but skip it.
         kwargs['additional_model_request_fields'] = {'reasoning_config': 'high'}
     return ChatBedrockConverse(**kwargs)
+
+
+@dataclass(frozen=True)
+class OpenAICompatibleEndpoint:
+    """The Deployment Config's `models` section on an OpenAI-compatible endpoint (ADR 0091)."""
+
+    base_url: str
+    api_key: str = field(repr=False)
+
+
+@functools.cache
+def openai_compatible_endpoint() -> OpenAICompatibleEndpoint | None:
+    """The endpoint the deploy names in `BOTCUBE_MODELS_*`, its API key read from Secrets Manager once; None on Bedrock."""
+    base_url = os.getenv(MODELS_BASE_URL_ENV, '').strip().rstrip('/')
+    secret_arn = os.getenv(MODELS_API_KEY_SECRET_ENV, '').strip()
+    if not base_url and not secret_arn:
+        return None
+    if not base_url or not secret_arn:
+        raise RuntimeError(f'An OpenAI-compatible models endpoint needs both {MODELS_BASE_URL_ENV} and {MODELS_API_KEY_SECRET_ENV}')
+    parts = secret_arn.split(':')
+    if len(parts) < 7 or parts[2] != 'secretsmanager':
+        raise RuntimeError(f'{MODELS_API_KEY_SECRET_ENV} is not a Secrets Manager secret ARN: {secret_arn}')
+    client = aws_clients.session().client('secretsmanager', region_name=parts[3])
+    api_key = client.get_secret_value(SecretId=secret_arn).get('SecretString')
+    if not api_key:
+        raise RuntimeError(f'The secret {MODELS_API_KEY_SECRET_ENV} names holds no string')
+    return OpenAICompatibleEndpoint(base_url=base_url, api_key=api_key)
+
+
+def _openai_compatible_model(key: str, endpoint: OpenAICompatibleEndpoint, max_tokens: int | None) -> Any:
+    from langchain_openai import ChatOpenAI
+
+    model = ChatOpenAI(
+        model=key,
+        base_url=endpoint.base_url,
+        api_key=endpoint.api_key,
+        max_completion_tokens=DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens,
+        streaming=True,
+        stream_usage=True,
+        use_responses_api=False,
+    )
+    model.root_async_client._client.event_hooks['request'].append(turn_timing.dispatched)
+    return model
 
 
 def _plan_request_headers(kwargs: Mapping[str, Any]) -> dict[str, str]:

@@ -99,7 +99,7 @@ def test_turn_crossing_the_token_limit_finishes_with_a_persisted_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, advance: int,
 ) -> None:
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(
-        skills=(), apply_session_id=lambda *args: None,
+        skills=(), apply_session_id=lambda *args: None, default_model=None,
     ))
 
     async def exercise() -> None:
@@ -163,7 +163,7 @@ def test_an_expired_invocation_keeps_the_user_message_and_streams_a_complete_ans
 ) -> None:
     monkeypatch.setattr('time.time', lambda: EPOCH)
     monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(
-        skills=(), apply_session_id=lambda *args: None,
+        skills=(), apply_session_id=lambda *args: None, default_model=None,
     ))
     graph = build_agent(model=StreamingToolModel(responses=[AIMessage('Unexpected model call')]),
                         backend=None, skills=(), checkpointer=MemorySaver())

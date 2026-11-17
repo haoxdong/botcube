@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, type ReactNode } from 'react';
 
-import { ComputerAsleep, screenFrame } from './computer';
+import { Swap } from '../app/collapse';
+import { ComputerAsleep, screenFrame } from './screenshots';
 
 /** How long the screen waits after a frame before it asks for the next. */
 const FRAME_MS = 1000;
@@ -63,14 +64,16 @@ export function Screen({
 
   const live = url !== null && frame !== null;
   return (
-    <figure className="template-screen" data-live={live || undefined}>
-      <figcaption className="template-screen-bar">
-        <span className="template-screen-lights" aria-hidden="true"><i /><i /><i /></span>
-        <span className="template-screen-title">{title}</span>
+    <figure className="computer-screen" data-live={live || undefined}>
+      <figcaption className="computer-screen-bar">
+        <span className="computer-screen-lights" aria-hidden="true"><i /><i /><i /></span>
+        <span className="computer-screen-title">{title}</span>
         {actions}
       </figcaption>
-      <div className="template-screen-glass">
-        {live ? <img className="template-screen-image" src={frame} alt={`${title}'s screen`} /> : cover}
+      <div className="computer-screen-glass">
+        <Swap state={live ? 'live' : 'cover'} className="computer-screen-face">
+          {live ? <img className="computer-screen-image" src={frame} alt={`${title}'s screen`} /> : cover}
+        </Swap>
       </div>
     </figure>
   );

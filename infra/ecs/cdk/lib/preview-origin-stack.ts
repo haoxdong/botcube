@@ -20,6 +20,8 @@ import { isIP } from 'node:net';
 export interface PreviewOriginProps extends StackProps {
   securityGroupName?: string;
   connectionLogsBucketName?: string;
+  /** An existing bucket for the connection logs instead of creating one; its policy must let the load balancer write. */
+  existingConnectionLogsBucketName?: string;
   trustStoreName?: string;
   loadBalancerName?: string;
   /** Names for our handlers; CDK Provider framework helpers keep generated names. */
@@ -38,6 +40,11 @@ export interface PreviewOriginProps extends StackProps {
   hostname: string;
   /** Production Chat Service hostname, served by this origin. */
   production: { hostname: string };
+  /**
+   * The product's own service hostname (its credential service's public route), served by this origin with its own
+   * certificate, origin pull and DNS. The parked Worker does not answer it: a live Worker refuses a Hostnames update.
+   */
+  service?: { hostname: string };
   additionalHostnames?: string[];
   vpcId: string;
   publicSubnets: { id: string; availabilityZone: string }[];
@@ -60,6 +67,19 @@ export interface PreviewOriginProps extends StackProps {
   wakeUrl: string;
 }
 
+function validateOrigin(props: PreviewOriginProps): void {
+  if (props.publicSubnets.length < 2 || !props.clientVersion || !props.cloudflareCidrs.length) {
+    throw new Error('Preview origin requires two public subnets, client version and Cloudflare ranges');
+  }
+  for (const cidr of props.cloudflareCidrs) {
+    const [address, prefix, extra] = cidr.split('/');
+    const family = address === undefined ? 0 : isIP(address);
+    if (extra !== undefined || !family || !/^\d+$/.test(String(prefix)) || Number(prefix) <= 0 || Number(prefix) > (family === 4 ? 32 : 128)) {
+      throw new Error(`Invalid Cloudflare CIDR: ${cidr}`);
+    }
+  }
+}
+
 export class PreviewOriginStack extends Stack {
   /** Cloudflare-only ingress, kept in both states so its rules don't churn. */
   readonly securityGroup: ec2.SecurityGroup;
@@ -69,16 +89,7 @@ export class PreviewOriginStack extends Stack {
   constructor(scope: Construct, id: string, props: PreviewOriginProps) {
     super(scope, id, props);
     const state = parkState(this);
-    if (props.publicSubnets.length < 2 || !props.clientVersion || !props.cloudflareCidrs.length) {
-      throw new Error('Preview origin requires two public subnets, client version and Cloudflare ranges');
-    }
-    for (const cidr of props.cloudflareCidrs) {
-      const [address, prefix, extra] = cidr.split('/');
-      const family = address === undefined ? 0 : isIP(address);
-      if (extra !== undefined || !family || !/^\d+$/.test(String(prefix)) || Number(prefix) <= 0 || Number(prefix) > (family === 4 ? 32 : 128)) {
-        throw new Error(`Invalid Cloudflare CIDR: ${cidr}`);
-      }
-    }
+    validateOrigin(props);
     const vpc = props.vpc ?? ec2.Vpc.fromVpcAttributes(this, 'Vpc', {
       vpcId: props.vpcId,
       availabilityZones: props.publicSubnets.map(s => s.availabilityZone),
@@ -90,7 +101,8 @@ export class PreviewOriginStack extends Stack {
     }
     // aws-cdk-lib's Bucket declares `T | undefined` getters where IBucket declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
-    const connectionLogs = new s3.Bucket(this, 'ConnectionLogs', {
+    if (props.existingConnectionLogsBucketName && props.connectionLogsBucketName !== undefined) throw new Error('An existing connection logs bucket owns its name; omit connectionLogsBucketName');
+    const connectionLogs = props.existingConnectionLogsBucketName ? s3.Bucket.fromBucketName(this, 'ConnectionLogs', props.existingConnectionLogsBucketName) : new s3.Bucket(this, 'ConnectionLogs', {
       ...optionalPhysicalName('bucketName', props.connectionLogsBucketName),
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED, enforceSSL: true,
@@ -110,7 +122,7 @@ export class PreviewOriginStack extends Stack {
         ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
-        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.additionalHostnames ?? [])].join(',') },
+        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.service ? [props.service.hostname] : []), ...(props.additionalHostnames ?? [])].join(',') },
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
@@ -134,6 +146,11 @@ export class PreviewOriginStack extends Stack {
     const productionCertificate = resource('ProductionCertificate', { Kind: 'Certificate', Hostname: props.production.hostname });
     const aop = resource('PreviewAop', { Kind: 'Aop', Hostname: props.hostname, ClientVersion: props.clientVersion });
     const productionAop = resource('ProductionAop', { Kind: 'Aop', Hostname: props.production.hostname, ClientVersion: props.clientVersion, CertId: aop.ref });
+    const service = props.service && {
+      hostname: props.service.hostname,
+      certificate: resource('ServiceCertificate', { Kind: 'Certificate', Hostname: props.service.hostname }),
+      aop: resource('ServiceAop', { Kind: 'Aop', Hostname: props.service.hostname, ClientVersion: props.clientVersion, CertId: aop.ref }),
+    };
     const additional = (props.additionalHostnames ?? []).map((hostname, index) => ({
       hostname,
       certificate: resource(`AdditionalCertificate${index}`, { Kind: 'Certificate', Hostname: hostname }),
@@ -176,15 +193,17 @@ export class PreviewOriginStack extends Stack {
       mutualAuthentication: { mutualAuthenticationMode: elb.MutualAuthenticationMode.VERIFY, trustStore, ignoreClientCertificateExpiry: false },
       defaultAction: elb.ListenerAction.fixedResponse(503, { contentType: 'text/plain', messageBody: 'Preview Chat Service unavailable\n' }),
     });
-    for (const association of [aop, productionAop, ...additional.map(host => host.aop)]) {
+    if (service) listener.addCertificates('ServiceIdentity', [acm.Certificate.fromCertificateArn(this, 'ServiceCertificateArn', service.certificate.getAttString('Arn'))]);
+    for (const association of [aop, productionAop, ...(service ? [service.aop] : []), ...additional.map(host => host.aop)]) {
       (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.liveCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
     }
     const worker = this.node.findChild('ParkedWorker');
     const target = Token.asString(Fn.conditionIf(state.parkedCondition.logicalId, props.parkedDnsTarget, loadBalancer.loadBalancerDnsName));
     const previewDns = dns('PreviewDns', props.hostname, aop, target);
     const productionDns = dns('ProductionDns', props.production.hostname, productionAop, target);
+    const serviceDns = service ? [dns('ServiceDns', service.hostname, service.aop, target)] : [];
     const additionalDns = additional.map(({ hostname, aop: association }, index) => dns(`AdditionalDns${index}`, hostname, association, target));
-    for (const record of [previewDns, productionDns, ...additionalDns]) {
+    for (const record of [previewDns, productionDns, ...serviceDns, ...additionalDns]) {
       (record.node.defaultChild as CfnResource).addPropertyOverride('Worker', Fn.conditionIf(state.parkedCondition.logicalId, (worker as CustomResource).ref, { Ref: 'AWS::NoValue' }));
     }
     liveResource(this, loadBalancer);

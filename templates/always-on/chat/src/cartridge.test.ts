@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { RunAgentInput } from '@ag-ui/client';
 import { Hono } from 'hono';
 import { HttpError, type AccountHistory } from 'botcube-chat';
@@ -62,4 +65,44 @@ it("replaces a client-supplied CDP endpoint with its own Agent Computer's", asyn
 
 it("opens its Agent Computer on the fake site's login page, which must be a URL", () => {
   expect(() => templateCartridgeFactory({ TEMPLATE_SITE_URL: 'not-a-url' })(history)).toThrow('Invalid URL');
+});
+
+describe('the public example', () => {
+  const deploymentConfig = (bot: unknown) => {
+    const dir = mkdtempSync(join(tmpdir(), 'template-deployment-'));
+    writeFileSync(join(dir, 'bot.json'), JSON.stringify(bot));
+    writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json' }));
+    return join(dir, 'deployment-config.json');
+  };
+
+  it('takes its Agent Identity, Soul and models from the bot settings its Deployment Config names', () => {
+    const cartridge = templateCartridgeFactory({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
+      agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' },
+      soul: 'Write plainly.',
+      models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }],
+    }) })(history);
+
+    expect(cartridge.agentDocuments).toEqual({ agentIdentity: { name: 'Quill', character: 'A drafting agent', vibe: 'Direct, precise, and calm', avatar: '🪶' }, soul: 'Write plainly.' });
+    expect(cartridge.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }]);
+  });
+
+  // The Memory gate is a setting; on unless the bot settings turn it off.
+  it.each([[undefined, true], [false, false]])('takes its Memory gate from the bot settings (memory %j)', (memory, kept) => {
+    const cartridge = templateCartridgeFactory({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
+      agentIdentity: { name: 'Quill', character: 'A drafting agent' },
+      models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+      ...(memory === undefined ? {} : { memory }),
+    }) })(history);
+
+    expect(cartridge.memory).toBe(kept);
+  });
+
+  it('stops before serving when its bot settings are wrong, naming the field', () => {
+    const path = deploymentConfig({ agentIdentity: { name: 'Quill' }, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
+    expect(() => templateCartridgeFactory({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Bot settings ${join(path, '..', 'bot.json')}: agentIdentity.character: `);
+  });
+
+  it('is the example bot when no Deployment Config is named', () => {
+    expect(templateCartridge(history).agentDocuments.agentIdentity).toEqual({ name: 'BotCube', character: 'A template agent', vibe: 'Direct, precise, and calm', avatar: '🧊' });
+  });
 });

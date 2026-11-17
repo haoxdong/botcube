@@ -20,6 +20,7 @@ dependencies = [
   "ag-ui-langgraph>=0.0.46",
   "fastapi>=0.142.2",
   "httpx>=0.28.1",
+  "jsonschema>=4.26.0",
   "websockets>=15.0.1",
   "langgraph>=1.2.14",
   "langgraph-checkpoint-sqlite==3.1.1",

@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { decodeJwt } from 'jose';
+import { decodeJwt, jwtVerify } from 'jose';
 import { defined } from '../test/defined.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
@@ -254,6 +254,31 @@ it('forwards only the registered snapshot epoch', async () => {
     expect(await response.text()).toContain('RUN_FINISHED');
     const forwarded = target.agentcore.invocationFor(threadId).payload.forwardedProps;
     expect(forwarded.sessionSnapshotEpoch).toEqual({ epoch: expect.stringMatching(/^[0-9a-f-]{36}$/), turnId: decodeJwt(forwarded.turnIdentity as string).jti });
+  } finally { await target.stop(); }
+});
+
+it('hands the Harness the signed user token of the requester for the Turn, never one the client sent', async () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const target = await startInProcess({ config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'test-user' }] } } });
+  try {
+    const threadId = await target.allocate('account-1', crypto.randomUUID());
+    const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
+    request.body = JSON.stringify({ ...JSON.parse(request.body), forwardedProps: { userToken: 'client-sent' } });
+    expect(await (await target.app.request('/', request)).text()).toContain('RUN_FINISHED');
+    const { userToken } = target.agentcore.invocationFor(threadId).payload.forwardedProps;
+    const { payload } = await jwtVerify(String(userToken), publicKey, { issuer: 'https://chat.example.com', audience: 'botcube-user' });
+    expect(payload).toMatchObject({ sub: 'account-1', anonymous: false, threadId });
+  } finally { await target.stop(); }
+});
+
+it('forwards no user token without Turn identity keys to sign it', async () => {
+  const target = await startInProcess();
+  try {
+    const threadId = await target.allocate('account-1', crypto.randomUUID());
+    const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
+    request.body = JSON.stringify({ ...JSON.parse(request.body), forwardedProps: { userToken: 'client-sent' } });
+    expect(await (await target.app.request('/', request)).text()).toContain('RUN_FINISHED');
+    expect(target.agentcore.invocationFor(threadId).payload.forwardedProps).not.toHaveProperty('userToken');
   } finally { await target.stop(); }
 });
 

@@ -1,0 +1,73 @@
+{
+  "$schema": "../../deployment-config/deployment-config.schema.json",
+  "bot": "../bot/bot.json",
+  "identity": {
+    "kind": "oidc",
+    "issuer": "https://login.example.com",
+    "clientId": "botcube",
+    "clientSecret": {
+      "secretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret"
+    }
+  },
+  "models": {
+    "kind": "openai-compatible",
+    "baseUrl": "https://models.example.com/v1",
+    "apiKey": {
+      "secretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key"
+    },
+    "turnSummaryModel": "example-summary"
+  },
+  "harnessAuth": { "kind": "jwt-bearer", "audience": "botcube-harness" },
+  "turnCredentials": { "kind": "assume-role" },
+  "schedules": { "kind": "table-poller" },
+  "existing": {
+    "network": {
+      "vpcId": "vpc-fixtureenterprise",
+      "publicSubnets": [
+        {
+          "subnetId": "subnet-fixturepublica",
+          "availabilityZone": "us-east-1a"
+        },
+        {
+          "subnetId": "subnet-fixturepublicb",
+          "availabilityZone": "us-east-1b"
+        }
+      ],
+      "privateSubnets": [
+        {
+          "subnetId": "subnet-fixtureprivatea",
+          "availabilityZone": "us-east-1a",
+          "cidrBlock": "198.51.100.0/24"
+        },
+        {
+          "subnetId": "subnet-fixtureprivateb",
+          "availabilityZone": "us-east-1b",
+          "cidrBlock": "203.0.113.0/24"
+        }
+      ]
+    },
+    "kmsKeys": {
+      "vault": "arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111",
+      "sheet": "arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222",
+      "memory": "arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333",
+      "images": "arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444"
+    },
+    "tables": {
+      "chat": {
+        "tableName": "corp-botcube-chat",
+        "streamArn": "arn:aws:dynamodb:us-east-1:000000000000:table/corp-botcube-chat/stream/2026-01-01T00:00:00.000"
+      },
+      "vault": { "tableName": "corp-botcube-vault" }
+    },
+    "buckets": {
+      "connectionLogs": "corp-botcube-connection-logs"
+    }
+  },
+  "telemetry": {
+    "otlpEndpoint": "http://otel-collector.example.com:4318/v1/traces"
+  },
+  "proxy": {
+    "url": "http://proxy.example.com:3128",
+    "noProxy": [".amazonaws.com"]
+  }
+}

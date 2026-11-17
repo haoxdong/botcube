@@ -504,3 +504,29 @@ it('refuses an anonymous Memory addition before calling the session API', async 
     await anonymous.stop();
   }
 });
+
+// The bot settings' Memory gate. A bot with Memory off keeps none: its routes refuse, and its Turns say so.
+it('refuses Memory and tells each Turn when the bot settings turn Memory off', async () => {
+  const forgetful = await startInProcess({ cartridge: { memory: false } });
+  try {
+    const user = { 'x-test-owner': 'memory-off' };
+    expect((await forgetful.app.request('/agent/memory', { headers: user })).status).toBe(404);
+    const added = await forgetful.app.request('/agent/memory', {
+      method: 'POST', headers: { ...user, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
+    });
+    expect(added.status).toBe(404);
+    expect(await added.json()).toEqual({ detail: 'Memory is off for this bot' });
+    expect(forgetful.sessionApi.events()).toEqual([]);
+
+    await forgetful.allocate('memory-off', 'memory-off-turn');
+    await (await forgetful.app.request('/', {
+      method: 'POST',
+      headers: { ...user, 'content-type': 'application/json' },
+      // A client cannot turn Memory back on.
+      body: JSON.stringify({ threadId: 'memory-off-turn', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: { botMemory: true } }),
+    })).text();
+    expect(forgetful.agentcore.invocationFor('memory-off-turn').payload.forwardedProps.botMemory).toBe(false);
+  } finally {
+    await forgetful.stop();
+  }
+});

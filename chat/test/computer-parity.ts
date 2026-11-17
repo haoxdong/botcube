@@ -46,7 +46,7 @@ export async function computerParity() {
     list: unused, uploadUrl: unused, downloadUrl: unused, remove: unused, rename: unused, saveArtifact: unused,
     recoverCleanup: unused, mountBinding: unused, transfer: unused, delete: unused,
   };
-  const makeComputers = () => agentComputers({ browser: () => browser, records: () => store, seed: async () => {}, files: () => files, idleSeconds: 1 });
+  const makeComputers = () => agentComputers({ browser: () => browser, records: () => store, started: async () => {}, files: () => files, idleSeconds: 1 });
   const computers = makeComputers();
   const routes = new Hono();
   routes.route('/', computerFilesRoutes({

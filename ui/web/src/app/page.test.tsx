@@ -9,7 +9,7 @@ import type { ButtonHTMLAttributes, ComponentType, HTMLAttributes, ReactElement,
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { AuthUiState, AuxiliaryPanelHostProps, WebUiPlugin } from '../cartridge/index.js';
+import type { AuthUiState, AuxiliaryPanelHostProps, ComputerViewProps, WebUiPlugin } from '../cartridge/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
 
 vi.mock('framer-motion', async (importOriginal) => {
@@ -241,6 +241,7 @@ const cartridge = vi.hoisted(() => ({
   authChatServiceUrl: undefined as string | undefined,
   panels: [] as AuxiliaryPanelHostProps[],
   computerMounts: 0,
+  computerRequestError: undefined as ComputerViewProps['onRequestError'],
 }));
 
 vi.mock('@cartridge-ui', () => {
@@ -256,33 +257,45 @@ vi.mock('@cartridge-ui', () => {
       logoutLabel: 'Sign out',
       accountLabel: 'Research Account',
     },
-    toolResultRenderers: [() => <p>tool result renderer</p>],
-    auxiliaryPanels: [
-      (props) => {
-        cartridge.panels.push(props);
-        return <p>panel for {props.conversation.id}</p>;
-      },
-    ],
-    ComputerView: ({ agentId, agentName, conversation, onConnectionChange }) => {
-      useEffect(() => {
-        cartridge.computerMounts += 1;
-        onConnectionChange?.(true);
-      }, []);
-      return (
-        <p>
-          {agentName}: {agentId} computer for {conversation.id}
-        </p>
-      );
-    },
     AuthProvider: ({ chatServiceUrl, children }) => {
       cartridge.authChatServiceUrl = chatServiceUrl;
       return <>{children(cartridge.auth)}</>;
     },
-    agentProfileTabs: { 'Sign-ins': () => <p>the cartridge&apos;s Sign-ins</p> },
-    theme: { '--accent': 'rebeccapurple' },
   };
   return { webUiPlugin };
 });
+
+// The bot settings the page is built with: colours unlike BotCube's own, and the Agent Computer with its live browser.
+vi.mock('@bot-settings', () => ({
+  default: {
+    agentIdentity: { name: 'Ada', character: 'A research agent' },
+    models: [{ key: 'fast', label: 'Fast', provider: 'test' }],
+    theme: { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a2b', agentDeepest: '#4a2810' },
+    agentComputer: { enabled: true, liveBrowser: true },
+  },
+}));
+
+// The built-in Agent Computer and live browser panel, standing in for their Chat Service and browser streams.
+vi.mock('../computer/computer-view', () => ({
+  ComputerView: ({ agentId, agentName, conversation, onConnectionChange, onRequestError }: ComputerViewProps) => {
+    useEffect(() => {
+      cartridge.computerMounts += 1;
+      cartridge.computerRequestError = onRequestError;
+      onConnectionChange?.(true);
+    }, []);
+    return (
+      <p>
+        {agentName}: {agentId} computer for {conversation.id}
+      </p>
+    );
+  },
+}));
+vi.mock('../computer/live-browser-panel', () => ({
+  LiveBrowserPanel: (props: AuxiliaryPanelHostProps) => {
+    cartridge.panels.push(props);
+    return <p>panel for {props.conversation.id}</p>;
+  },
+}));
 
 // The agent's Files: no `/missing.svg`, and an upload only a test that attaches answers.
 vi.mock('./agent-files', () => ({
@@ -426,6 +439,7 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
   const profile = profileService(route, init);
   if (profile !== undefined) return profile;
   if (route === 'GET /activity') return answer(200, { tasks: service.activity });
+  if (route === 'GET /account/sign-ins') return answer(200, { signIns: [{ site: 'example', name: 'Example site', status: 'not_linked', username: null }] });
   if (pathname.startsWith('/agent/memory')) return memoryService(pathname, init);
   if (route === 'PUT /agent/identity') {
     service.agentIdentity = JSON.parse(init?.body as string);
@@ -439,16 +453,22 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
   if (scheduled !== undefined) return scheduled;
   const readState = chatReadState(route, pathname, init);
   if (readState !== undefined) return readState;
+  return threadService(route, pathname, init) ?? answer(204);
+}
+
+/** A Side Chat's rename and a chat's history; undefined for any other route. */
+function threadService(route: string, pathname: string, init?: RequestInit): Response | undefined {
   const thread = /^\/threads\/([^/]+)/.exec(pathname)?.[1];
-  if (route.startsWith('PATCH /threads/') && thread !== undefined) {
+  if (thread === undefined) return undefined;
+  if (route.startsWith('PATCH /threads/')) {
     const { title } = JSON.parse(init?.body as string) as { title: string };
     service.sideChats = service.sideChats.map((entry) => entry.id === thread ? { ...entry, title } : entry);
     return answer(200, present(service.sideChats.find(({ id }) => id === thread), 'the renamed Side Chat'));
   }
-  if (route.startsWith('GET /threads/') && thread !== undefined) {
+  if (route.startsWith('GET /threads/')) {
     return answer(200, { provider: service.providers.get(thread), messages: service.replies.get(thread) ?? [], running: service.running.has(thread), runId: service.runIds.get(thread), ...(service.readOnly.has(thread) ? { readOnly: true } : {}) });
   }
-  return answer(204);
+  return undefined;
 }
 
 /** The paths of the Chat Service requests made so far, warmups and the agent profile left out. */
@@ -622,14 +642,20 @@ describe('cartridge wiring', () => {
     expect(document.body.textContent).not.toMatch(/sonnet/i);
   });
 
-  it('shows the cartridge panels, result renderers, theme and overlay', async () => {
+  it('floats the live browser panel over the open chat, and shows the overlay', async () => {
     await renderPage(auth({ overlay: <p>account overlay</p> }));
 
     expect(screen.getByText('panel for main-1')).toBeInTheDocument();
     expect(cartridge.panels.at(-1)).toEqual({ agentId: 'research-agent', conversation: { id: 'main-1', service: 'chat-service' } });
-    expect(screen.getByText('tool result renderer')).toBeInTheDocument();
     expect(screen.getByText('account overlay')).toBeInTheDocument();
-    expect((document.querySelector('.app-layout') as HTMLElement).style.getPropertyValue('--accent')).toBe('rebeccapurple');
+  });
+
+  it("paints the agent's four colours from the bot settings' theme", async () => {
+    await renderPage(auth());
+
+    const layout = document.querySelector('.app-layout') as HTMLElement;
+    expect(['--agent-body', '--agent-outline', '--agent-deep', '--agent-deepest'].map((token) => layout.style.getPropertyValue(token)))
+      .toEqual(['#f5d0a9', '#d9915a', '#9a5a2b', '#4a2810']);
   });
 
   it("puts the cartridge's composer accessory with the composer, above its text box", async () => {
@@ -5714,14 +5740,30 @@ describe('agent profile', () => {
     expect(profile()).toBeNull();
   });
 
-  it("shows the cartridge's panel in its tab", async () => {
+  it('lists the sites the sign-in provider reports in the built-in Sign-ins tab, and opens its sign-in', async () => {
+    const signIn = vi.fn();
+    await renderPage(auth({
+      signIns: { signIn, signOut: vi.fn(), confirmSignOut: vi.fn(), cancelSignOut: vi.fn(), warning: null, busy: false, error: null, revision: 0 },
+    }));
+    await userEvent.click(avatar());
+
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Sign-ins' }));
+
+    const panel = within(openProfile()).getByRole('tabpanel');
+    expect(panel).toHaveAccessibleName('Sign-ins');
+    expect(await within(panel).findByText('Example site')).toBeInTheDocument();
+    expect(within(panel).getByText('Not linked')).toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Sign in' }));
+    expect(signIn).toHaveBeenCalledOnce();
+  });
+
+  it('has nothing in the Sign-ins tab without a sign-in provider that reports sites', async () => {
     await renderPage();
     await userEvent.click(avatar());
 
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Sign-ins' }));
 
-    expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Sign-ins');
-    expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^the cartridge's Sign-ins$/);
+    expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Nothing here yet\.$/);
   });
 
   it("lists what the agent did under each day, newest first: each task's title, summary and time", async () => {
@@ -7120,13 +7162,30 @@ describe('agent profile', () => {
     expect(await within(sheet).findByText('Scheduled task change failed: 400')).toHaveClass('agent-profile-error');
   });
 
-  it("shows the cartridge's computer for the open chat in the Computer tab, under the agent's name", async () => {
+  it("shows the built-in Agent Computer for the open chat in the Computer tab, under the agent's name", async () => {
     await renderPage();
     await userEvent.click(avatar());
 
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));
 
-    expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Ada Bot: research-agent computer for main-1$/);
+    expect(await within(openProfile()).findByText(/^Ada Bot: research-agent computer for main-1$/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['opens', true, 1],
+    ['does not open', false, 0],
+  ])("%s the sign-in provider's Sign-in Sheet when a Computer request fails and the provider says a sign-in is needed", async (_opens, needed, sheets) => {
+    const signIn = vi.fn();
+    await renderPage(auth({
+      signIns: { signIn, needsSignIn: () => needed, signOut: vi.fn(), confirmSignOut: vi.fn(), cancelSignOut: vi.fn(), warning: null, busy: false, error: null, revision: 0 },
+    }));
+    await userEvent.click(avatar());
+    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));
+    await within(openProfile()).findByText(/computer for main-1$/);
+
+    act(() => cartridge.computerRequestError?.(new Error('Re-link the site to continue')));
+
+    expect(signIn).toHaveBeenCalledTimes(sheets);
   });
 
   it('keeps the computer it opened through other tabs and a close, so coming back shows it at once', async () => {

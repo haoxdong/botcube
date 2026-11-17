@@ -10,6 +10,7 @@ import { BrowserSessions, BrowserSessionEnded } from './browser-sessions.js';
 import type { Cdp } from './cdp.js';
 import type { RunningAgentComputer, AgentComputerStream } from './account-resources.js';
 import type { AccountFiles } from './files.js';
+import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { sweepEvery } from './task-drain.js';
 
@@ -31,7 +32,12 @@ const profileName = (accountId: string, profilePrefix: string) =>
  * The Agent Computer's own AgentCore browser, AGENTCORE_AGENT_COMPUTER_BROWSER_ID: its
  * execution role mounts Files, which the sign-in browser's must not (ADR 0077).
  */
-export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { beforeProfileSave, sessionName = SESSION_NAME, profilePrefix = 'botcube' }: { beforeProfileSave: (cdp: Cdp) => Promise<void>; sessionName?: string; profilePrefix?: string }): () => AgentComputerBrowser {
+export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { profileOmitsCookieDomains, sessionName = SESSION_NAME, profilePrefix = 'botcube' }: {
+  /** The bot settings' `agentComputer.profileOmitsCookieDomains`. */
+  profileOmitsCookieDomains: readonly string[];
+  sessionName?: string;
+  profilePrefix?: string;
+}): () => AgentComputerBrowser {
   return () => {
     const browserId = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim();
     if (!browserId) {
@@ -46,8 +52,22 @@ export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { beforeProf
       );
     }
     const control = (env.AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL || `https://bedrock-agentcore-control.${config.region}.amazonaws.com`).replace(/\/+$/, '');
-    return agentCoreAgentComputerBrowser(new BrowserSessions(config), control, { bucket: policy.bucket, prefix: policy.prefix }, { beforeProfileSave, sessionName, profilePrefix });
+    return agentCoreAgentComputerBrowser(new BrowserSessions(config), control, { bucket: policy.bucket, prefix: policy.prefix }, { profileOmitsCookieDomains, sessionName, profilePrefix });
   };
+}
+
+/**
+ * Delete the cookies of `domains`, subdomains included, so the profile saved next never holds them: a product's own
+ * service may seed them into each new browser it is told of (`agent-computer-started.ts`, ADR 0091).
+ */
+async function forgetCookies(cdp: Cdp, domains: readonly string[]): Promise<void> {
+  const page = await cdp.attachToPage();
+  const omitted = (await cdp.allCookies(page)).filter(({ domain }) =>
+    typeof domain === 'string' && domains.some((omittedDomain) => domain.replace(/^\./, '') === omittedDomain || domain.endsWith(`.${omittedDomain}`)));
+  for (const { name, domain, path } of omitted) {
+    // eslint-disable-next-line no-await-in-loop -- one CDP connection, one command at a time
+    await cdp.send('Network.deleteCookies', { params: { name, domain, path }, sessionId: page });
+  }
 }
 
 function agentCoreAgentComputerBrowser(
@@ -55,7 +75,7 @@ function agentCoreAgentComputerBrowser(
   controlEndpoint: string,
   /** The Chrome policy file (deploy/agent-computer) that downloads into the Files mount. */
   policy: { bucket: string; prefix: string },
-  { beforeProfileSave, sessionName, profilePrefix }: { beforeProfileSave: (cdp: Cdp) => Promise<void>; sessionName: string; profilePrefix: string },
+  { profileOmitsCookieDomains, sessionName, profilePrefix }: { profileOmitsCookieDomains: readonly string[]; sessionName: string; profilePrefix: string },
 ): AgentComputerBrowser {
   const { region, endpoint, browserId } = sessions.config;
 
@@ -91,7 +111,7 @@ function agentCoreAgentComputerBrowser(
         if (typeof data !== 'string' || !data) throw new Error('Agent Computer screenshot returned no image');
         return `data:image/jpeg;base64,${data}`;
       }),
-    beforeProfileSave: (sessionId) => sessions.withBrowser(sessionId, beforeProfileSave),
+    beforeProfileSave: (sessionId) => sessions.withBrowser(sessionId, (cdp) => forgetCookies(cdp, profileOmitsCookieDomains)),
     async createProfile(accountId) {
       const name = profileName(accountId, profilePrefix);
       // The client token is the account's, so a retry after a lost answer gets the same profile.
@@ -144,10 +164,11 @@ function agentCoreAgentComputerBrowser(
  * after saving the profile after the Cartridge cleanup and keeping a last screenshot.
  * Running browsers and idle deadlines live in the shared chat table.
  */
-export function agentComputers({ browser, records, seed, files, idleSeconds, draining = async () => false }: {
+export function agentComputers({ browser, records, started, files, idleSeconds, draining = async () => false }: {
   browser: () => AgentComputerBrowser;
   records: () => AgentComputerRecords;
-  seed: (accountId: string, threadId: string, browserSessionId: string) => Promise<void>;
+  /** Told of each browser started, before the agent may use it (`agent-computer-started.ts`); unset, nothing is. */
+  started?: AgentComputerStarted | undefined;
   files: () => AccountFiles;
   idleSeconds: number;
   draining?: () => Promise<boolean>;
@@ -389,7 +410,7 @@ export function agentComputers({ browser, records, seed, files, idleSeconds, dra
       }
       if (record === null) {
         if (stopping) throw new HttpError(503, 'The Chat Service is stopping: wake the Agent Computer again in a moment');
-        record = await startAgentComputer(accountId, threadId, { records, browser, files, seed, stop, deadline });
+        record = await startAgentComputer(accountId, threadId, { records, browser, files, started, stop, deadline });
       }
       record.idleDeadline = deadline();
       await records().saveRunningAgentComputer(record);

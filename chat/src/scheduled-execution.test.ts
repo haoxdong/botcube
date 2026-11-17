@@ -45,7 +45,6 @@ it('retains an uncertain Browser start and refuses to confirm teardown', async (
   let starts = 0;
   const unused = async () => { throw new Error('not used by this scenario'); };
   const computers = agentComputers({ records: () => records, idleSeconds: 60,
-    seed: async () => {},
     browser: () => ({ browserId: 'browser', start: async () => { starts++; throw new Error('lost Browser receipt'); },
       control: unused, automationStream: unused, screenshot: unused, beforeProfileSave: unused,
       createProfile: unused, saveProfile: unused, deleteProfile: unused, stop: unused, handBack: unused }),
@@ -69,7 +68,7 @@ it('keeps capacity after a stop ACK until a reused Browser actually terminates',
   let requested = false;
   let ended = false;
   const unused = async () => { throw new Error('not used by this scenario'); };
-  const computers = agentComputers({ records: () => records, idleSeconds: 60, seed: unused,
+  const computers = agentComputers({ records: () => records, idleSeconds: 60,
     browser: () => ({ browserId: 'browser', start: unused,
       control: async () => { if (ended) throw new BrowserSessionEnded('terminated'); return 'agent'; },
       stop: async () => { requested = true; }, automationStream: unused, screenshot: unused, beforeProfileSave: unused,
@@ -90,7 +89,7 @@ it('refuses an untagged legacy start without a Browser receipt', async () => {
   await execution.acquire('owner', 'side');
   await documents.send(new PutCommand({ TableName: table, Item: { pk: 'AGENT_COMPUTER_RUNNING', sk: 'owner#side',
     record: { accountId: 'owner', threadId: 'side', sessionId: null, phase: 'starting', idleDeadline: 0 } } }));
-  const computers = agentComputers({ records: () => records, idleSeconds: 60, seed: async () => {},
+  const computers = agentComputers({ records: () => records, idleSeconds: 60,
     browser: () => { throw new Error('unknown receipt cannot be stopped'); }, files: () => { throw new Error('no mount'); } });
   await expect(execution.finish([() => computers.stopThread('owner', 'side')], true)).rejects.toThrow('teardown is unproved');
   await expect(new ScheduledExecution(table, documents).acquire('other', 'next')).rejects.toThrow('occupied');
