@@ -136,6 +136,7 @@ describe('bot settings', () => {
     ['a theme colour that is not #rrggbb', { ...EXAMPLE_BOT, theme: { ...THEME, agentDeep: 'navy' } }, 'theme.agentDeep: Expected a colour as #rrggbb'],
     ['a theme with three of the four colours', { ...EXAMPLE_BOT, theme: { agentBody: '#aabbcc', agentOutline: '#aabbcc', agentDeep: '#aabbcc' } }, 'theme.agentDeepest: '],
     ['a theme reaching past the agent colours', { ...EXAMPLE_BOT, theme: { ...THEME, '--color-blue': '#2563eb' } }, 'theme.--color-blue: Unrecognized key'],
+    ['instructions naming no file', { ...EXAMPLE_BOT, instructions: '' }, 'instructions: '],
     ['a Memory gate that is not a switch', { ...EXAMPLE_BOT, memory: 'on' }, 'memory: '],
     ['a live browser without the Agent Computer', { ...EXAMPLE_BOT, agentComputer: { enabled: false, liveBrowser: true } }, 'agentComputer.liveBrowser: The live browser is part of the Agent Computer'],
     ['a profile-omitted cookie domain that is a URL', { ...EXAMPLE_BOT, agentComputer: { profileOmitsCookieDomains: ['https://site.example'] } }, 'agentComputer.profileOmitsCookieDomains.0: Expected a domain such as example.com'],
@@ -158,6 +159,10 @@ describe('bot settings', () => {
     const { bot } = loadDeployment(configFile({ bot: './bot.json' }, { agentIdentity, models }));
     expect(bot).not.toHaveProperty('theme');
     expect(bot).toMatchObject({ memory: true, agentComputer: { enabled: true, liveBrowser: false, profileOmitsCookieDomains: [] } });
+  });
+
+  it('name a file of bot-wide instructions', () => {
+    expect(loadDeployment(configFile({ bot: './bot.json' }, { ...EXAMPLE_BOT, instructions: 'INSTRUCTIONS.md' })).bot).toMatchObject({ instructions: 'INSTRUCTIONS.md' });
   });
 
   it("name the domains whose cookies the Agent Computer's saved profile omits", () => {

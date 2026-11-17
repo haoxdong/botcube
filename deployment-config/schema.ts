@@ -41,6 +41,11 @@ export const botSettings = z
       avatar: z.string().optional().describe("An emoji; absent, the UI shows the name's initial."),
     }),
     soul: z.string().min(1).optional().describe("The agent's Soul; absent, BotCube's own."),
+    instructions: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("A file of the bot's instructions to every User, relative to this file, joined to the system prompt after BotCube's own; the bot's image copies it beside it."),
     models: z.tuple([model], model).describe('The models a User picks from; the first is the default.'),
     skills: z
       .array(z.string().min(1))

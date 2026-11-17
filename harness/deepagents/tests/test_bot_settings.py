@@ -20,12 +20,14 @@ from test_serving import start as start
 Start = Callable[[], list[tuple[Any, dict[str, Any]]]]
 
 SKILL = '---\nname: greeting\ndescription: Greet the user by name.\n---\n\nSay hello first.\n'
+INSTRUCTIONS = 'Answer every User in French.\n'
 
 
 def _bot(root: Path, **settings: Any) -> Path:
     skill = root / 'skills' / 'greeting'
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text(SKILL)
+    (root / 'INSTRUCTIONS.md').write_text(INSTRUCTIONS)
     path = root / 'bot.json'
     path.write_text(json.dumps({
         'agentIdentity': {'name': 'Cubey', 'character': 'A test bot'},
@@ -37,11 +39,12 @@ def _bot(root: Path, **settings: Any) -> Path:
 
 
 @pytest.fixture
-def bot_service(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Service]:
+def bot_service(request: pytest.FixtureRequest, start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Service]:
     home = tmp_path / 'home'
     home.mkdir()
+    bot = _bot(tmp_path / 'bot', **getattr(request, 'param', {}))
     for name, value in {'HOME': str(home), 'BOTCUBE_CHECKPOINT_PATH': str(tmp_path / 'checkpoints.sqlite3'), 'LANGSMITH_TRACING': 'false',
-                        'BOTCUBE_WORKSPACE': str(tmp_path / 'workspace'), 'BOTCUBE_BOT_SETTINGS': str(_bot(tmp_path / 'bot'))}.items():
+                        'BOTCUBE_WORKSPACE': str(tmp_path / 'workspace'), 'BOTCUBE_BOT_SETTINGS': str(bot)}.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv('BOTCUBE_CARTRIDGE_MODULE')
     for name, value in {'AGENTCORE_MEMORY_ID': '', '_AGENTS': {}, '_BACKENDS': {}, '_BACKEND_BY_AGENT': {}, '_CHECKPOINTER': None,
@@ -71,6 +74,22 @@ def test_the_harness_serves_the_bot_its_settings_describe(bot_service: _Service)
     assert 'Say hello first.' in _tool_output(events)
 
 
+@pytest.mark.parametrize('bot_service', [{'instructions': 'INSTRUCTIONS.md'}], indirect=True)
+def test_the_bots_instructions_follow_botcubes_in_the_system_prompt(bot_service: _Service) -> None:
+    bot_service.turn('hello')
+
+    system = bot_service.recorder.prompts[0]
+    assert system.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\n' + INSTRUCTIONS)
+
+
+def test_a_bot_without_instructions_keeps_botcubes_system_prompt(bot_service: _Service) -> None:
+    bot_service.turn('hello')
+
+    system = bot_service.recorder.prompts[0]
+    assert system.startswith(serving.AGENT_SYSTEM_PROMPT)
+    assert INSTRUCTIONS.strip() not in system
+
+
 def test_a_turn_runs_on_the_model_it_names(bot_service: _Service) -> None:
     bot_service.turn('hello', model='opus-4.6')
 
@@ -97,6 +116,7 @@ def test_a_turn_with_no_identity_acts_as_the_session_user(bot_service: _Service)
         ({'models': []}, 'models'),
         ({'skills': ['skills/missing']}, 'skills.0'),
         ({'skills': ['skills/greeting', 'other/greeting']}, 'skills.1'),
+        ({'instructions': 'MISSING.md'}, 'instructions'),
     ],
 )
 def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

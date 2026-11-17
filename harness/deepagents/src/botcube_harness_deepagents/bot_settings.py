@@ -39,6 +39,8 @@ class BotSettings:
     models: tuple[str, ...]
     # Each skill's directory, holding its SKILL.md.
     skills: tuple[Path, ...]
+    # The bot's instructions to every User, joined to the system prompt after BotCube's own; empty, none.
+    instructions: str = ''
 
 
 def load_bot_settings(path: Path) -> BotSettings:
@@ -57,10 +59,17 @@ def load_bot_settings(path: Path) -> BotSettings:
             raise BotSettingsError(f'{source}: skills.{index}: no SKILL.md in {skill}')
         if (first := [other.name for other in skills].index(skill.name)) != index:
             raise BotSettingsError(f'{source}: skills.{index}: skill "{skill.name}" is already skills.{first}')
+    instructions = ''
+    if 'instructions' in settings:
+        try:
+            instructions = (path.parent / settings['instructions']).read_text(encoding='utf8')
+        except OSError as error:
+            raise BotSettingsError(f'{source}: instructions: {error}') from error
     return BotSettings(
         agent_name=settings['agentIdentity']['name'],
         models=tuple(model['key'] for model in settings['models']),
         skills=skills,
+        instructions=instructions,
     )
 
 
@@ -92,6 +101,7 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
         prepare_root=prepare_root,
         session_id_env_var='BOTCUBE_SESSION_ID',
         environment_cache_key=environment_cache_key(),
+        system_prompt=bot.instructions,
     )
 
 

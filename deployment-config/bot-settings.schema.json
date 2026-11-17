@@ -30,6 +30,11 @@
       "type": "string",
       "minLength": 1
     },
+    "instructions": {
+      "description": "A file of the bot's instructions to every User, relative to this file, joined to the system prompt after BotCube's own; the bot's image copies it beside it.",
+      "type": "string",
+      "minLength": 1
+    },
     "models": {
       "type": "array",
       "prefixItems": [
