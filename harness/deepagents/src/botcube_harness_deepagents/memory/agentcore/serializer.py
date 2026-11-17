@@ -9,9 +9,13 @@ _COMPRESSION_SUFFIX = '+zstd'
 
 
 class CompressedSerializer(JsonPlusSerializer):
+    def __init__(self, *, compress: bool = False) -> None:
+        super().__init__()
+        self.compress = compress
+
     def dumps_typed(self, obj: Any) -> tuple[str, bytes]:
         kind, payload = super().dumps_typed(obj)
-        if len(payload) < 4096:
+        if not self.compress or len(payload) < 4096:
             return kind, payload
         compressed = zstandard.compress(payload, level=1)
         return (kind + _COMPRESSION_SUFFIX, compressed) if len(compressed) < len(payload) else (kind, payload)

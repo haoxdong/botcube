@@ -80,7 +80,7 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         [sys.executable, '-c', program, str(workspace)],
         capture_output=True, text=True, timeout=120, check=False,
         env={**os.environ, 'BOTCUBE_WORKSPACE': str(workspace), 'AGENTCORE_MEMORY_ID': 'snapshot',
-             'BOTCUBE_RESTORE_PRIME': restore_enabled,
+             'BOTCUBE_SNAPSHOT_PRIME': '1', 'BOTCUBE_RESTORE_PRIME': restore_enabled,
              'AWS_ACCESS_KEY_ID': 'snapshot', 'AWS_SECRET_ACCESS_KEY': 'snapshot',
              'AWS_SESSION_TOKEN': 'snapshot', 'AWS_DEFAULT_REGION': 'us-east-1'},
     )

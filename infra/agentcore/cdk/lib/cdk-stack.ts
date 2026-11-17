@@ -1,5 +1,5 @@
 import { AgentCoreApplication, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
-import { CfnOutput, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnParameter, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
@@ -243,6 +243,11 @@ export class AgentCoreStack extends Stack {
   }
 
   private configureRuntimes(props: AgentCoreStackProps): void {
+    const checkpointCompression = new CfnParameter(this, 'CheckpointCompression', {
+      type: 'String',
+      default: '0',
+      allowedValues: ['0', '1'],
+    });
     // Cap each runtime's lifecycle (ADR 0029 defense-in-depth). The
     // agentcore-cdk L3 construct doesn't expose LifecycleConfiguration, so set
     // it on the underlying CfnRuntime (the runtime's default child).
@@ -256,6 +261,7 @@ export class AgentCoreStack extends Stack {
       cfnRuntime.filesystemConfigurations = [{ sessionStorage: { mountPath: storage } }];
       env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
       configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
+      env.runtime.addEnvironmentVariable('BOTCUBE_COMPRESS_CHECKPOINTS', checkpointCompression.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
       restrictRuntimePolicy(this, env.runtime.role);
       if (props.vpc) {

@@ -347,7 +347,6 @@ def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
         '_AGENTS': {},
         '_BACKENDS': {},
         '_BACKEND_BY_AGENT': {},
-        '_MODEL_RELAYS': {},
         '_CHECKPOINTER': None,
         '_STORE': None,
         '_SESSION_TURNS': serving._SessionTurns(),
@@ -2607,7 +2606,7 @@ def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[A
     """Start the service with main(), recording how uvicorn would serve it."""
     served: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, **options: served.append((app, options)))
-    _fresh_state(monkeypatch)
+    monkeypatch.setattr(serving, '_cartridge', None)
     module = ModuleType(CARTRIDGE_MODULE)
     vars(module)['CARTRIDGE'] = _definition([])
     monkeypatch.setitem(sys.modules, CARTRIDGE_MODULE, module)
@@ -2765,6 +2764,7 @@ def test_a_compressed_cold_turn_resumes_tools_and_rejects_a_corrupt_snapshot(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
+    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1')
     install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)

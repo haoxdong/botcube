@@ -186,7 +186,10 @@ test("the template names only its project, runtime and memory: BotCube's default
     codeLocation: HARNESS,
     runtimeVersion: 'PYTHON_3_13',
     protocol: 'AGUI',
-    envVars: expect.arrayContaining([{ name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' }]),
+    envVars: expect.arrayContaining([
+      { name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' },
+      { name: 'BOTCUBE_SNAPSHOT_PRIME', value: '1' },
+    ]),
   });
   expect(fs.existsSync(path.join(HARNESS, 'Dockerfile'))).toBe(true);
   const [memory] = config.spec.memories;

@@ -1475,9 +1475,9 @@ def _prime_snapshot() -> None:
 def main() -> None:
     import uvicorn
 
-    # `openai.resources` leaves out the Responses resource the plan model's first request imports.
     importlib.import_module('openai.resources.responses')
-    restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
+    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
+        restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     if _cartridge is None:
@@ -1502,7 +1502,8 @@ def main() -> None:
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })
-    _prime_snapshot()
+    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
+        _prime_snapshot()
     process_observation.name_spans(trace.get_tracer_provider())
     process_observation.mark('serve_handoff')
     uvicorn.run(app, host=os.getenv('BOTCUBE_HARNESS_HOST', '0.0.0.0'), port=int(os.getenv('PORT', '8080')))

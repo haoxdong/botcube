@@ -460,7 +460,7 @@ class AgentCoreProduction:
             'networkConfiguration': {'networkMode': 'VPC', 'networkModeConfig': {'subnets': ['private-a'], 'securityGroups': ['runtime']}},
             'description': 'runtime', 'protocolConfiguration': {'serverProtocol': 'AGUI'},
             'lifecycleConfiguration': {'idleRuntimeSessionTimeout': 300, 'maxLifetime': 3600},
-            'metadataConfiguration': {'requireMMDSV2': True}, 'environmentVariables': {},
+            'metadataConfiguration': {'requireMMDSV2': True}, 'environmentVariables': {'BOTCUBE_SNAPSHOT_PRIME': '1'},
             'filesystemConfigurations': [{'sessionStorage': {'mountPath': '/mnt/workspace'}}], 'platformVersion': 'V1',
         }
         self.version, self.status, self.fail, self.extra = '204', status, fail, extra or {}

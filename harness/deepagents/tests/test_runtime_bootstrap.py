@@ -27,9 +27,9 @@ def test_first_plan_model_needs_no_sdk_resource_imports_after_runtime_is_ready()
             socket.socket.connect = forbidden
             serving.configure_harness_definition(HarnessDefinition(
                 skills=[], agent_name='bootstrap-test', system_prompt='',
-                prepare_invocation=forbidden, prepare_root=lambda root: None,
-                build_shell_env=lambda environment: {},
-                session_id_env_var='TEST_SESSION_ID', environment_cache_key=lambda environment: (),
+                prepare_invocation=forbidden, prepare_root=forbidden,
+                build_shell_env=forbidden,
+                session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
             ))
 
             class NoLateResources(importlib.abc.MetaPathFinder):
@@ -86,9 +86,9 @@ def test_first_memory_exchange_needs_no_sts_client_build_after_readiness() -> No
             socket.socket.connect = forbidden
             serving.configure_harness_definition(HarnessDefinition(
                 skills=[], agent_name='bootstrap-test', system_prompt='',
-                prepare_invocation=forbidden, prepare_root=lambda root: None,
-                build_shell_env=lambda environment: {},
-                session_id_env_var='TEST_SESSION_ID', environment_cache_key=lambda environment: (),
+                prepare_invocation=forbidden, prepare_root=forbidden,
+                build_shell_env=forbidden,
+                session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
             ))
             building = boto3.client
             ready = False

@@ -19,14 +19,15 @@ from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSession
 CONFIG: RunnableConfig = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
 
 
-@pytest.mark.parametrize('compressible', [False, True])
+@pytest.mark.parametrize('compress', [False, True])
 @pytest.mark.parametrize('writer', ['runtime', 'session-api'])
 def test_a_large_chat_survives_a_cold_resume_and_session_api_replay(
-    monkeypatch: pytest.MonkeyPatch, compressible: bool, writer: str,
+    monkeypatch: pytest.MonkeyPatch, compress: bool, writer: str,
 ) -> None:
     memory = FakeAgentCoreMemory()
+    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1' if compress else '0')
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    content = random.Random(7029).randbytes(8_000_000).hex() if not compressible else 'x' * 7_500_000
+    content = random.Random(7029).randbytes(8_000_000).hex() if compress else 'x' * 7_500_000
     messages = [HumanMessage(content[index:index + 25_000]) for index in range(0, len(content), 25_000)]
     checkpoint = empty_checkpoint()
     checkpoint['channel_values'] = {'messages': messages}
@@ -80,8 +81,9 @@ def test_a_damaged_fragment_fails_instead_of_returning_partial_history(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     checkpoint = empty_checkpoint()
-    checkpoint['channel_values'] = {'messages': [HumanMessage(random.Random(7769).randbytes(200_000).hex())]}
+    checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 200_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
     WarmSessionSaver(MEMORY_ID, memory).put(
         CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
@@ -106,11 +108,12 @@ def test_an_incomplete_snapshot_keeps_the_preceding_checkpoint(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     saver = WarmSessionSaver(MEMORY_ID, memory)
     previous = empty_checkpoint()
     saved = saver.put(CONFIG, previous, {'source': 'loop', 'step': 1, 'parents': {}}, {})
     checkpoint = empty_checkpoint()
-    checkpoint['channel_values'] = {'messages': [HumanMessage(random.Random(7769).randbytes(7_500_000).hex())]}
+    checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 7_500_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
     create = memory.create_event
     fragment_calls = 0
@@ -137,15 +140,16 @@ def test_an_incomplete_snapshot_keeps_the_preceding_checkpoint(
 
 
 @pytest.mark.parametrize('writer', ['runtime', 'session-api'])
-def test_stock_snapshot_saver_reads_unfragmented_compressed_writes(
+def test_stock_snapshot_saver_reads_unfragmented_writes(
     monkeypatch: pytest.MonkeyPatch, writer: str,
 ) -> None:
+    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1')
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
     saver = (WarmSessionSaver(MEMORY_ID, memory) if writer == 'runtime'
              else agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1'))
     checkpoint = empty_checkpoint()
-    checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 70_000)]}
+    checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 7_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
     saver.put(CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'})
     reader = AgentCoreMemorySaver(
@@ -160,8 +164,9 @@ def test_a_fresh_session_api_reader_loads_fragmented_checkpoints(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     checkpoint = empty_checkpoint()
-    checkpoint['channel_values'] = {'messages': [HumanMessage(random.Random(7769).randbytes(200_000).hex())]}
+    checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 200_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
     WarmSessionSaver(MEMORY_ID, memory).put(
         CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
