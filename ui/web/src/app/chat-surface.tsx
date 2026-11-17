@@ -110,7 +110,7 @@ const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
 const ComposerStop = createContext<{ current: (() => void) | null } | null>(null);
 const ServerTurn = createContext<{ running: boolean; stop: (() => void) | null }>({ running: false, stop: null });
 const SteeringDrop = createContext<{ current: (() => void) | null } | null>(null);
-const SteeringWaiting = createContext<{ waiting: PendingMessage[]; withdraw: (id: string) => Promise<Withdrawal> } | null>(null);
+const SteeringWaiting = createContext<{ waiting: PendingMessage[]; withdraw: (id: string) => Promise<Withdrawal>; sendNow: (id: string) => Promise<Withdrawal> } | null>(null);
 
 function useDropSteering(): () => void {
   const holder = useContext(SteeringDrop);
@@ -156,14 +156,23 @@ function useComposerActions(submit: Submit | undefined, stop: (() => void) | und
 }
 
 /** The waiting steering stack; the flag and the context are fixed for a page, and its rows own their presence. */
-function ComposerWaiting({ text, onChange }: { text: { current: string }; onChange: (value: string) => void }) {
+function ComposerWaiting({ text, onChange, stopTurn }: {
+  text: { current: string };
+  onChange: (value: string) => void;
+  stopTurn: (() => void) | undefined;
+}) {
   const steering = useContext(SteeringWaiting);
   if (!SHOWS_WAITING_STEERING || !steering) return null;
   const edit = async ({ id, content }: PendingMessage) => {
     if (await steering.withdraw(id) !== "withdrawn") return;
     onChange(text.current.trim() ? `${content}\n\n${text.current}` : content);
   };
-  return <WaitingSteering waiting={steering.waiting} onCancel={({ id }) => void steering.withdraw(id)} onEdit={(message) => void edit(message)} />;
+  const sendNow = stopTurn && (async ({ id }: PendingMessage) => {
+    if (await steering.sendNow(id) === "withdrawn") stopTurn();
+  });
+  return (
+    <WaitingSteering waiting={steering.waiting} onCancel={({ id }) => void steering.withdraw(id)} onEdit={(message) => void edit(message)} onSendNow={sendNow && ((message) => void sendNow(message))} />
+  );
 }
 
 function ComposerInput(props: CopilotChatInputProps) {
@@ -195,7 +204,7 @@ function ComposerInput(props: CopilotChatInputProps) {
   const onChange = (value: string) => { setDraft(value); props.onChange?.(value); compose(); };
   return (
     <>
-      <ComposerWaiting text={text} onChange={onChange} />
+      <ComposerWaiting text={text} onChange={onChange} stopTurn={stopTurn} />
       {attached && <ComposerFilePicker attached={attached} picker={picker} />}
       <Presence>{accessory && (
         <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:sm:px-0">
@@ -700,7 +709,7 @@ function ChatThread({
     return true;
   };
   const steeringDrop = useContext(SteeringDrop);
-  const { steer, drop: dropSteering, waiting, withdraw } = useSteering({
+  const { steer, drop: dropSteering, waiting, withdraw, sendNow } = useSteering({
     agent, accountId, threadId, running, ready: online && modelsReady(), serviceUrl: CHAT_SERVICE_URL,
     submit: (text) => composerSubmit.current !== null && submitTurn(text, composerSubmit.current),
     failed: (message) => setRunError({ message }),
@@ -770,7 +779,7 @@ function ChatThread({
       <ComposerStop.Provider value={composerStop}>
       <ServerTurn.Provider value={{ running: turnRunsOnServer, stop: stopServerTurn }}>
       <ComposerAccessory.Provider value={composerAccessory}>
-      <SteeringWaiting.Provider value={{ waiting, withdraw }}>
+      <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
       <Compose.Provider value={compose}>
       <AttachedFiles.Provider value={temporary ? null : attachedFiles}>
       <OpenScheduledRun.Provider value={onOpenRun ?? null}>

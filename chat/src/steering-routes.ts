@@ -10,6 +10,11 @@ const steeringMessage = z.object({ id: z.string().min(1), content: z.string().mi
 const steeringReceipt = z.object({ value: z.object({ accepted: z.boolean() }) });
 const withdrawalReceipt = z.object({ value: z.object({ withdrawn: z.boolean() }) });
 
+function missed(sessionId: string, messageId: string) {
+  console.info(JSON.stringify({ event: 'chat_steering_missed', sessionId, messageId }));
+  return { accepted: false };
+}
+
 export function steeringRoutes(
   app: Hono,
   cartridge: ChatServiceCartridge,
@@ -24,7 +29,7 @@ export function steeringRoutes(
     if (!parsed.success) throw new HttpError(422, 'A steering message requires id and content');
     const metadata = await sessionMetadata.get(owner, sessionId);
     if (metadata === null) throw new HttpError(404, 'Session not found');
-    if (metadata.turn_preparing === true) return c.json({ accepted: false });
+    if (metadata.turn_preparing === true) return c.json(missed(sessionId, parsed.data.id));
     assertIdleContinuable(metadata);
     const complete = await sessionMetadata.beginDispatch(owner, sessionId);
     const response = await upstream.invokeRegistered(JSON.stringify({
@@ -38,7 +43,7 @@ export function steeringRoutes(
     const events = await readTurnEvents(text, []);
     const receipt = steeringReceipt.safeParse(events?.find((event) => event.type === 'CUSTOM' && event.name === 'STEERING_ACCEPTED'));
     if (!receipt.success) throw new HttpError(502, 'Harness did not acknowledge steering');
-    return c.json(receipt.data.value);
+    return c.json(receipt.data.value.accepted ? receipt.data.value : missed(sessionId, parsed.data.id));
   });
 
   app.delete('/threads/:id/steer/:messageId', async (c) => {

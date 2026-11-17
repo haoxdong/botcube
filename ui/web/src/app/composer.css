@@ -566,10 +566,51 @@ cpk-web-inspector,
   border-bottom: 1px solid var(--color-line);
 }
 
+.composer-waiting-label {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-small);
+  line-height: var(--leading);
+}
+
 .composer-waiting-row .composer-file-remove {
   align-self: center;
   height: 32px;
   margin-block: 0;
+}
+
+.composer-waiting-row:has(> [data-popup-open]) {
+  border-radius: var(--radius-md);
+  background: var(--color-line);
+}
+
+.composer-waiting-menu {
+  padding: 6px;
+  outline: none;
+}
+
+.composer-waiting-menu .mep-option {
+  border-radius: var(--radius-md);
+  outline: none;
+}
+
+.composer-waiting-menu .mep-option:focus-visible {
+  background: var(--color-fill);
+  outline: 2px solid var(--color-blue);
+  outline-offset: -2px;
+}
+
+@media (max-width: 767px) {
+  .composer-waiting {
+    max-height: calc(3 * 44px + 4px);
+  }
+
+  .composer-waiting-row,
+  .composer-waiting-row .composer-file-remove,
+  .composer-waiting-menu .mep-option {
+    min-height: 44px;
+    height: 44px;
+  }
 }
 
 .composer-waiting-text {

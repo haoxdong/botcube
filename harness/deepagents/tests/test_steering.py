@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -221,3 +222,14 @@ def test_steering_taken_by_a_model_step_cannot_be_withdrawn() -> None:
     assert [event.type for event in events] == ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']
     pending.add('steer-1', 'Use the other date')
     assert pending.messages == {}
+
+
+def test_taking_steering_logs_how_long_each_message_waited(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = iter([10.0, 12.5])
+    monkeypatch.setattr('botcube_harness_deepagents.steering.monotonic', lambda: next(clock))
+    pending = PendingSteering()
+    pending.add('m1', 'Use the close')
+    with caplog.at_level('INFO', logger='botcube_harness_deepagents.steering'):
+        pending.take(lambda _event: None)
+    records = [json.loads(record.message) for record in caplog.records]
+    assert records == [{'event': 'harness_steering_wait', 'messageId': 'm1', 'waitMs': 2500}]

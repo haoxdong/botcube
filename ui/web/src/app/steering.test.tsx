@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { HttpAgent } from '@ag-ui/client';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { useSteering } from './steering';
+import { useSteering, type PendingMessage } from './steering';
 
 beforeEach(() => {
   localStorage.clear();
@@ -102,7 +102,7 @@ it('delivers successive steering messages in order outside the storage lock', as
 });
 
 function stored() {
-  return JSON.parse(localStorage.getItem('botcube.steering:account:thread') ?? '[]') as { id: string; content: string }[];
+  return JSON.parse(localStorage.getItem('botcube.steering:account:thread') ?? '[]') as PendingMessage[];
 }
 
 function requests(method: string) {
@@ -210,4 +210,32 @@ it('leaves a message out of the next Turn when the Turn ends while it is being w
   answer();
   await act(async () => { await outcome; });
   expect(submit).toHaveBeenCalledExactlyOnceWith('Keep this');
+});
+
+it('marks a message the running Turn can no longer take as after this reply', async () => {
+  vi.mocked(fetch).mockImplementation(async () => Response.json({ accepted: false }));
+  const { result, rerender, submit } = setup();
+  act(() => { result.current.steer('Then compare it with last month'); });
+  await waitFor(() => expect(result.current.waiting.map(({ missed }) => missed)).toEqual([true]));
+  expect(stored().map(({ missed }) => missed)).toEqual([true]);
+  rerender({ running: false, ready: true });
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith('Then compare it with last month'));
+});
+
+it('sends one message now and keeps the others steering the new Turn', async () => {
+  vi.mocked(fetch).mockImplementation(async (_url, init) => Response.json(init?.method === 'DELETE' ? { withdrawn: true } : { accepted: true }));
+  const { result, rerender, submit } = setup();
+  act(() => { result.current.steer('Keep steering'); result.current.steer('Do this now'); });
+  await waitFor(() => expect(requests('POST')).toHaveLength(2));
+  const now = result.current.waiting[1];
+  if (now === undefined) throw new Error('No waiting message');
+  let outcome: string | undefined;
+  await act(async () => { outcome = await result.current.sendNow(now.id); });
+  expect(outcome).toBe('withdrawn');
+  expect(result.current.waiting.map(({ content }) => content)).toEqual(['Keep steering']);
+  rerender({ running: false, ready: true });
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith('Do this now'));
+  expect(stored().map(({ content }) => content)).toEqual(['Keep steering']);
+  rerender({ running: true, ready: true });
+  await waitFor(() => expect(requests('POST').map(({ body }) => JSON.parse(body).content)).toEqual(['Keep steering', 'Do this now', 'Keep steering']));
 });
