@@ -19,11 +19,6 @@ from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSession
 CONFIG: RunnableConfig = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
 
 
-@pytest.fixture(autouse=True)
-def enable_fragment_writes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_FRAGMENT_CHECKPOINTS', '1')
-
-
 @pytest.mark.parametrize('compressible', [False, True])
 @pytest.mark.parametrize('writer', ['runtime', 'session-api'])
 def test_a_large_chat_survives_a_cold_resume_and_session_api_replay(
@@ -147,7 +142,6 @@ def test_stock_snapshot_saver_reads_unfragmented_compressed_writes(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    monkeypatch.delenv('BOTCUBE_FRAGMENT_CHECKPOINTS')
     saver = (WarmSessionSaver(MEMORY_ID, memory) if writer == 'runtime'
              else agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1'))
     checkpoint = empty_checkpoint()
@@ -161,7 +155,7 @@ def test_stock_snapshot_saver_reads_unfragmented_compressed_writes(
     assert reader.get_tuple(CONFIG) == saver.get_tuple(CONFIG)
 
 
-def test_disabling_fragment_writes_still_reads_fragmented_checkpoints(
+def test_a_fresh_session_api_reader_loads_fragmented_checkpoints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
@@ -173,7 +167,6 @@ def test_disabling_fragment_writes_still_reads_fragmented_checkpoints(
         CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
     )
     fresh_warm_sessions(monkeypatch)
-    monkeypatch.setenv('BOTCUBE_FRAGMENT_CHECKPOINTS', '0')
 
     loaded = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1').get_tuple(CONFIG)
 

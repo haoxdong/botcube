@@ -39,11 +39,10 @@ class _WriteScope:
 
 
 class FragmentedSnapshotClient(AgentCoreSnapshotClient):
-    def __init__(self, memory_id: str, serializer: EventSerializer, client: Any, *, fragment: bool = False) -> None:
+    def __init__(self, memory_id: str, serializer: EventSerializer, client: Any) -> None:
         self.memory_id = memory_id
         self.serializer = serializer
         self.client = client
-        self._fragment = fragment
         self._scope: ContextVar[_WriteScope] = ContextVar('checkpoint_fragment_scope')
 
     def store_snapshot(self, events: list[EventType], session_id: str, actor_id: str) -> None:
@@ -75,7 +74,7 @@ class FragmentedSnapshotClient(AgentCoreSnapshotClient):
 
     def _fragment_blob(self, blob: str) -> str:
         data = blob.encode()
-        if not self._fragment or len(data) <= _BLOB_BYTES:
+        if len(data) <= _BLOB_BYTES:
             return blob
         scope = self._scope.get()
         fragments = [

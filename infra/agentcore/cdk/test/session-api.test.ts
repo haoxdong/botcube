@@ -138,39 +138,18 @@ test('a purge fits in one invocation at the per-Session delete rate', () => {
   expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);
 });
 
-test('checkpoint fragmentation stays off for both writers until both decoders are deployed', () => {
+test('checkpoint fragmentation needs no rollout parameter or writer environment setting', () => {
   const synthesized = template();
 
-  synthesized.hasParameter('CheckpointFragmentation', {
-    Type: 'String',
-    Default: '0',
-    AllowedValues: ['0', '1'],
-  });
+  expect(synthesized.toJSON().Parameters).not.toHaveProperty('CheckpointFragmentation');
   synthesized.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
-    EnvironmentVariables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: { Ref: 'CheckpointFragmentation' } }),
+    EnvironmentVariables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: Match.absent() }),
   });
   synthesized.hasResourceProperties('AWS::Lambda::Function', {
     FunctionName: IDENTITY.aws.agentCore.sessionApiFunction,
     Environment: {
-      Variables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: { Ref: 'CheckpointFragmentation' } }),
+      Variables: Match.objectLike({ BOTCUBE_FRAGMENT_CHECKPOINTS: Match.absent() }),
     },
-  });
-});
-
-test('changing fragmentation replaces the published version behind the live alias', () => {
-  const synthesized = template();
-  const [alias] = Object.values(
-    synthesized.findResources('AWS::Lambda::Alias', {
-      Properties: { Name: IDENTITY.aws.agentCore.sessionApiAlias },
-    })
-  );
-  assert(alias, 'the Session API declares its live alias');
-  const [versionId] = alias.Properties.FunctionVersion['Fn::GetAtt'];
-  const version = synthesized.findResources('AWS::Lambda::Version')[versionId];
-  assert(version, 'the live alias references a declared Lambda version');
-
-  expect(version.Properties.Description).toEqual({
-    'Fn::Join': ['', ['Checkpoint fragmentation ', { Ref: 'CheckpointFragmentation' }]],
   });
 });
 

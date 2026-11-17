@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import threading
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -198,13 +197,12 @@ class _Confirmed:
 
 
 class _WarmSnapshotClient(FragmentedSnapshotClient):
-    """The stock snapshot client on the Turn's Memory client, holding each snapshot it stores."""
+    """The snapshot client on the Turn's Memory client, holding each snapshot it stores."""
 
     def __init__(self, memory_id: str, serializer: EventSerializer, client: Any) -> None:
         # The Turn's client is already built with its credentials: no second boto3 client.
         super().__init__(
             memory_id, serializer, BedrockAgentCoreClientWithRetry(client),
-            fragment=os.getenv('BOTCUBE_FRAGMENT_CHECKPOINTS') == '1',
         )
         self.kept: tuple[_Snapshot, int] | None = None
         self._stored_events: ContextVar[list[str] | None] = ContextVar('stored_snapshot_events', default=None)

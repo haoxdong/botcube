@@ -92,7 +92,7 @@ def is_access_denied(error: BaseException) -> bool:
 
 
 def build_checkpointer(memory_id: str, *, region_name: str) -> AgentCoreMemorySaver:
-    """The stock saver in snapshot format, as shipped (ADR 0067 decision 9)."""
+    """The stock saver in snapshot format (ADR 0067 decision 9)."""
     # A non-checkpoint head sends the stock saver to a filtered page of full historical snapshots.
     saver = AgentCoreMemorySaver(
         memory_id, checkpoint_format='snapshot', limit=None, max_results=4, region_name=region_name,
@@ -100,7 +100,6 @@ def build_checkpointer(memory_id: str, *, region_name: str) -> AgentCoreMemorySa
     )
     saver.checkpoint_event_client = FragmentedSnapshotClient(
         memory_id, saver.serializer, saver.checkpoint_event_client.client,
-        fragment=os.getenv('BOTCUBE_FRAGMENT_CHECKPOINTS') == '1',
     )
     return saver
 

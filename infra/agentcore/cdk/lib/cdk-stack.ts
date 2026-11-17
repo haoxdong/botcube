@@ -1,5 +1,5 @@
 import { AgentCoreApplication, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
-import { CfnOutput, CfnParameter, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, Duration, Stack, type CfnResource, type StackProps } from 'aws-cdk-lib';
 import * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
@@ -179,16 +179,10 @@ function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
 export class AgentCoreStack extends Stack {
   /** The AgentCore application containing all agent environments */
   public readonly application: AgentCoreApplication;
-  private readonly checkpointFragmentation: CfnParameter;
 
   constructor(scope: Construct, id: string, props: AgentCoreStackProps) {
     const { permissionsBoundary, ...stackProps } = props;
     super(scope, id, stackProps);
-    this.checkpointFragmentation = new CfnParameter(this, 'CheckpointFragmentation', {
-      type: 'String',
-      default: '0',
-      allowedValues: ['0', '1'],
-    });
     validateRuntimeLifecycle(props);
 
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
@@ -262,7 +256,6 @@ export class AgentCoreStack extends Stack {
       cfnRuntime.filesystemConfigurations = [{ sessionStorage: { mountPath: storage } }];
       env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
       configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
-      env.runtime.addEnvironmentVariable('BOTCUBE_FRAGMENT_CHECKPOINTS', this.checkpointFragmentation.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
       restrictRuntimePolicy(this, env.runtime.role);
       if (props.vpc) {
@@ -400,9 +393,6 @@ export class AgentCoreStack extends Stack {
     });
     const sessionApi = new lambda.DockerImageFunction(this, 'SessionApi', {
       functionName: identity.sessionApiFunction,
-      currentVersionOptions: {
-        description: `Checkpoint fragmentation ${this.checkpointFragmentation.valueAsString}`,
-      },
       code: lambda.DockerImageCode.fromImageAsset(codeLocation, {
         file: 'session-api.Dockerfile',
         exclude: ['tools'],
@@ -416,7 +406,6 @@ export class AgentCoreStack extends Stack {
       environment: {
         AGENTCORE_MEMORY_ID: memory.memoryId,
         AGENTCORE_REGION: this.region,
-        BOTCUBE_FRAGMENT_CHECKPOINTS: this.checkpointFragmentation.valueAsString,
       },
     });
     const sessionApiAlias = sessionApi.addAlias(identity.sessionApiAlias);
