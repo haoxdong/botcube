@@ -129,7 +129,7 @@ def config(event: Mapping[str, Any]):
     if any(hostname not in os.environ['HOSTNAMES'].split(',') for hostname in props.get('Hostnames') or [props['Hostname']]):
         raise ProviderError('Only the identity Chat Service hostnames are permitted')
     old = event.get('OldResourceProperties', {})
-    if event['RequestType'] == 'Update' and (props.get('Hostname'), props.get('Hostnames')) != (old.get('Hostname'), old.get('Hostnames')):
+    if event['RequestType'] == 'Update' and props.get('Hostname') != old.get('Hostname'):
         raise ProviderError('Hostname replacement is not supported')
     return props
 
@@ -174,11 +174,15 @@ def aop_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], props: Mappin
     return event.get('PhysicalResourceId')
 
 
-def delete_parked_worker(cf: Cloudflare, zone: str, account: str, hostnames: list[str]):
+def delete_routes(cf: Cloudflare, zone: str, hostnames: Iterable[str]):
     for hostname in hostnames:
         route = cf.owned_route(zone, hostname)
         if route:
             cf.call(zone + '/workers/routes/' + route['id'], 'DELETE')
+
+
+def delete_parked_worker(cf: Cloudflare, zone: str, account: str, hostnames: list[str]):
+    delete_routes(cf, zone, hostnames)
     try:
         cf.call(account + '/workers/scripts/' + PARKED_SCRIPT, 'DELETE')
     except ProviderError as error:
@@ -221,6 +225,8 @@ def parked_worker_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], pro
         delete_parked_worker(cf, zone, account, props['Hostnames'])
     else:
         deploy_parked_worker(cf, zone, account, props)
+        stale = [hostname for hostname in event.get('OldResourceProperties', {}).get('Hostnames', []) if hostname not in props['Hostnames']]
+        delete_routes(cf, zone, stale)
     return PARKED_SCRIPT
 
 

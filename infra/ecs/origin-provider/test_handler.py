@@ -103,6 +103,14 @@ class OriginTests(unittest.TestCase):
                 handler.on_event(event, None)
             cf.assert_not_called()
 
+    def test_single_hostname_change_is_rejected_before_provider_access(self):
+        for kind in ('Certificate', 'Dns', 'Aop'):
+            event = self.event(kind, 'Update')
+            event['OldResourceProperties']['Hostname'] = 'api.example.com'
+            with self.subTest(kind=kind), patch.object(handler, 'Cloudflare') as cf, self.assertRaisesRegex(handler.ProviderError, 'Hostname replacement'):
+                handler.on_event(event, None)
+            cf.assert_not_called()
+
     def test_unowned_dns_is_neither_overwritten_nor_deleted(self):
         cf = handler.Cloudflare.__new__(handler.Cloudflare)
         cf.records = Mock(return_value=[{'id': 'existing', 'comment': None}])

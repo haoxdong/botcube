@@ -99,16 +99,26 @@ class ParkedWorkerTests(unittest.TestCase):
         self.assertEqual(self.run_event(self.event(), handler.is_complete), {'IsComplete': True})
         self.assertEqual(self.calls, [])
 
-    def test_hostname_changes_and_non_identity_hostnames_are_rejected_before_provider_access(self):
+    def test_non_identity_hostnames_are_rejected_before_provider_access(self):
         event = self.event()
         event['ResourceProperties']['Hostnames'] = ['api.example.com', 'www.example.com']
         with self.assertRaisesRegex(handler.ProviderError, 'identity Chat Service hostnames'):
             self.run_event(event)
-        event = self.event('Update')
-        event['OldResourceProperties'] = {**event['ResourceProperties'], 'Hostnames': ['api.example.com']}
-        with self.assertRaisesRegex(handler.ProviderError, 'Hostname replacement'):
-            self.run_event(event)
         self.assertEqual(self.calls, [])
+
+    def test_update_reconciles_routes_in_place_when_hostnames_change(self):
+        added, kept = self.event('Update'), {'id': 'r0', 'pattern': 'api.example.com/*', 'script': 'bot-cube-parked'}
+        added['OldResourceProperties'] = {**added['ResourceProperties'], 'Hostnames': ['api.example.com']}
+        self.routes = [kept]
+        self.assertEqual(self.run_event(added)['PhysicalResourceId'], 'bot-cube-parked')
+        self.assertEqual([call for call in self.calls if call[0] != 'GET'],
+                         [('PUT', 'accounts/a/workers/scripts/bot-cube-parked'), ('POST', 'zones/z/workers/routes')])
+        self.calls, self.routes = [], [kept, {'id': 'r1', 'pattern': 'api-next.example.com/*', 'script': 'bot-cube-parked'}]
+        rolled_back = self.event('Update')
+        rolled_back['ResourceProperties'], rolled_back['OldResourceProperties'] = added['OldResourceProperties'], added['ResourceProperties']
+        self.assertEqual(self.run_event(rolled_back)['PhysicalResourceId'], 'bot-cube-parked')
+        self.assertEqual([call for call in self.calls if call[0] != 'GET'],
+                         [('PUT', 'accounts/a/workers/scripts/bot-cube-parked'), ('DELETE', 'zones/z/workers/routes/r1')])
 
 
 if __name__ == '__main__':
