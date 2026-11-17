@@ -33,8 +33,16 @@ The Chat Service's lookup record for one Session — owner, title, last activity
 _Avoid_: Journal, session history, session index, thread table
 
 **User**:
-A person signed in to a BotCube app through a login-capable Sign-in. Sessions and Sign-ins belong to them. A visitor who has not signed in gets only a temporary chat, which is never stored and never moved to a User at sign-in.
+A person using a BotCube app: a Guest until Saving. Sessions, Sign-ins and Connectors belong to them.
 _Avoid_: account (except a person's account at an outside provider), user account, login, profile, actor, anonymous user
+
+**Guest**:
+A User with no login-capable Sign-in yet, held by one browser. Its Sessions and Connectors are kept like any User's; a Guest never saved is deleted after a period of inactivity.
+_Avoid_: anonymous user, visitor, temporary account, temporary chat
+
+**Saving**:
+Adding a Guest's first login-capable Sign-in. The User stays the same, so nothing moves.
+_Avoid_: upgrade, claim, migration
 
 **User ID**:
 The identifier of one User, and one of the only two identifiers that cross from the app to AgentCore, where it is `actorId`. Every other user-related identifier stays inside the app.
@@ -57,7 +65,7 @@ The user's paid AI plan at a plan provider paying for their model calls, in plac
 _Avoid_: API key, inference credential, bring your own key, Model Subscription
 
 **Connector**:
-A User's link to their account at an outside site, which the agent uses on their behalf, such as Gmail; a User holds many. A Connector never logs the user in; a site provider's login also sets up that site's Connector.
+A User's link to their account at an outside site, which the agent uses on their behalf, such as Gmail; a User holds many, and an outside account links to one User. A Connector never logs the user in; a site provider's login also sets up that site's Connector.
 _Avoid_: Sign-in, integration, plugin
 
 **Durable Credential**:
