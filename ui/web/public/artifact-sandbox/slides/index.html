@@ -15,13 +15,13 @@
   /* No backdrop of its own: the deck sits on the panel it opens in, as a Doc does. */
   html, body { margin: 0; background: transparent; font-family: system-ui, sans-serif; }
   #deck { display: flex; flex-direction: column; gap: 16px; padding: 16px; }
-  .slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; margin: 0; background: #ffffff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.12); }
-  .canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; transform: scale(var(--scale, 0.25)); }
+  .slide { container-type: inline-size; position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; margin: 0; background: #ffffff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.12); }
+  .canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; transform: scale(calc(round(100cqw, 1px) / 1920px)); }
   .canvas iframe { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; }
   .slide[data-state="waiting"] { background: #f4f3ef; }
   .slide[data-state="waiting"] iframe { visibility: hidden; }
   .slide[data-state="waiting"]::after { content: attr(data-label) " · not written yet"; position: absolute; inset: 0; display: grid; place-items: center; color: #6a7179; font-size: 14px; }
-  @media print { html, body { background: none; } #deck { padding: 0; gap: 0; } .slide { break-inside: avoid; box-shadow: none; } }
+  @media print { html, body { background: none; } #deck { padding: 0; gap: 0; } .slide { break-inside: avoid; box-shadow: none; } .canvas { transform: scale(calc((round(100cqw, 1px) - 32px) / 1920px)); } }
 </style>
 </head>
 <body>
@@ -45,7 +45,6 @@
     th { font-weight: 600; } x-shape { display: block; } x-shape[kind="ellipse"] { border-radius: 50%; }`;
   const deck = document.getElementById('deck');
   const shown = new Map();
-  new ResizeObserver(() => document.documentElement.style.setProperty('--scale', String((deck.clientWidth - 32) / 1920))).observe(deck);
 
   const slideDocument = (html) => `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${SLIDE_POLICY}"><style>${SLIDE_CSS}</style></head><body>${html}</body></html>`;
   // The policy goes before anything the page holds, right after its doctype (which keeps it out of quirks mode): the
