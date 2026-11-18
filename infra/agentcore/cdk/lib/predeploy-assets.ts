@@ -26,9 +26,13 @@ function runtimeDockerfilePath(projectRoot: string, runtime: RuntimeSourceSpec):
   return path.resolve(projectRoot, runtime.codeLocation, runtime.dockerfile ?? 'Dockerfile');
 }
 
+// A Dockerfile under .tool-dist/ is one the tool-staging hook writes, so it needs staging before it exists.
+const stagedDockerfile = (runtime: RuntimeSourceSpec) => runtime.dockerfile?.startsWith('.tool-dist/') === true;
+
 function requiresToolStaging(spec: AgentCoreDockerPrerequisiteSpec, projectRoot: string): boolean {
   return (spec.runtimes ?? []).some(runtime => {
     if (runtime.build !== 'Container') return false;
+    if (stagedDockerfile(runtime)) return true;
     const dockerfilePath = runtimeDockerfilePath(projectRoot, runtime);
     if (!fs.existsSync(dockerfilePath)) {
       throw new Error(`AgentCore Container runtime Dockerfile not found at ${dockerfilePath}`);
@@ -64,6 +68,12 @@ export function stageAgentCoreDockerPrerequisites(
   }
 
   run(hookPath, [], { cwd: buildRoot, stdio: 'inherit' });
+  for (const runtime of spec.runtimes ?? []) {
+    const dockerfilePath = runtimeDockerfilePath(projectRoot, runtime);
+    if (runtime.build === 'Container' && stagedDockerfile(runtime) && !fs.existsSync(dockerfilePath)) {
+      throw new Error(`The tool-staging hook did not write the runtime Dockerfile ${dockerfilePath}`);
+    }
+  }
 
   return true;
 }

@@ -254,7 +254,10 @@ test('uploads the locked Cartridge dependencies and their portable links to Code
   const fixture = mkdtempSync(resolve(tmpdir(), 'cartridge-context-'));
   const source = resolve(fixture, 'source');
   const packagePath = '.tool-dist/node_modules/.pnpm/locked-tool@1.2.3/node_modules/locked-tool/package.json';
+  // A bot's own image stages its CLI below .tool-dist/ too.
+  const botPackagePath = '.tool-dist/bot/cli/node_modules/bot-tool/package.json';
   const files = {
+    [botPackagePath]: '{"name":"bot-tool"}',
     Dockerfile: 'FROM scratch\nCOPY .tool-dist/ /opt/tools/\n',
     'session-api.Dockerfile': 'FROM scratch\n',
     '.tool-dist/pnpm-lock.yaml': 'lockfileVersion: "9.0"\npackages:\n  locked-tool@1.2.3: {}\n',
@@ -291,6 +294,7 @@ test('uploads the locked Cartridge dependencies and their portable links to Code
     expect(readFileSync(resolve(app.outdir, asset.assetPath, packagePath), 'utf8')).toBe(
       '{"name":"locked-tool","version":"1.2.3"}'
     );
+    expect(readFileSync(resolve(app.outdir, asset.assetPath, botPackagePath), 'utf8')).toBe('{"name":"bot-tool"}');
     expect(readlinkSync(resolve(app.outdir, asset.assetPath, '.tool-dist/node_modules/locked-tool'))).toBe(
       '.pnpm/locked-tool@1.2.3/node_modules/locked-tool'
     );

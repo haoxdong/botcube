@@ -97,6 +97,40 @@ test('does not inspect non-container runtime Dockerfiles', () => {
   ).toBe(false);
 });
 
+test('runs the hook before reading a Dockerfile the hook writes under .tool-dist/', () => {
+  const { projectRoot, hook } = makeProject();
+  const generated = path.join(projectRoot, sourcePath, '.tool-dist', 'Dockerfile');
+  const calls: string[] = [];
+
+  const staged = stageAgentCoreDockerPrerequisites(
+    { runtimes: [{ build: 'Container', codeLocation: `${sourcePath}/`, dockerfile: '.tool-dist/Dockerfile' }] },
+    projectRoot,
+    command => {
+      calls.push(command);
+      fs.mkdirSync(path.dirname(generated), { recursive: true });
+      fs.writeFileSync(generated, 'FROM scratch\n');
+    },
+    projectRoot,
+    hook
+  );
+
+  expect(staged).toBe(true);
+  expect(calls).toEqual([hook]);
+});
+
+test('fails loudly when the hook does not write the Dockerfile under .tool-dist/', () => {
+  const { projectRoot, hook } = makeProject();
+  expect(() =>
+    stageAgentCoreDockerPrerequisites(
+      { runtimes: [{ build: 'Container', codeLocation: `${sourcePath}/`, dockerfile: '.tool-dist/Dockerfile' }] },
+      projectRoot,
+      () => undefined,
+      projectRoot,
+      hook
+    )
+  ).toThrow(/tool-staging hook did not write the runtime Dockerfile/);
+});
+
 test('fails loudly when a container runtime Dockerfile is missing', () => {
   const { projectRoot, hook } = makeProject();
   expect(() =>
