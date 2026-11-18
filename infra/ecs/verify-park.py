@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ import boto3
 from botocore.exceptions import ClientError
 from deploy_identity import load_identity, required
 from ecs_service_state import service_facts
+from egress_probe import EgressProbe, WakeEgressProof
 
 if TYPE_CHECKING:
     from types_boto3_cloudformation import CloudFormationClient
@@ -258,44 +260,27 @@ def health_facts(ecs: ECSClient, elb: ElasticLoadBalancingv2Client, outputs: Map
             'credential-service': [task.get('healthStatus', 'UNKNOWN') for task in tasks]}
 
 
-def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, outputs: Mapping[str, str]):
-    """Run one reaper-image task in the private subnets and read the public IP it saw."""
-    task = ecs.run_task(
-        cluster=ECS['cluster'], launchType='FARGATE', taskDefinition=outputs['ReaperTaskDefinitionArn'],
-        networkConfiguration={'awsvpcConfiguration': {
-            'subnets': [subnet['id'] for subnet in IDENTITY['aws']['agentCore']['privateNatBrowser']['subnets']],
-            'securityGroups': [outputs['ReaperSecurityGroupId']], 'assignPublicIp': 'DISABLED'}},
-        overrides={'containerOverrides': [{'name': 'reaper', 'command': [
-            'node', '--input-type=module', '-e',
-            "const response = await fetch('https://checkip.amazonaws.com', { signal: AbortSignal.timeout(20000) });"
-            " if (!response.ok) throw new Error(`HTTP ${response.status}`);"
-            " console.log('egress-ip', (await response.text()).trim());"]}]},
-    )
-    if task.get('failures') or len(task['tasks']) != 1:
-        raise RuntimeError('Egress probe task did not start')
-    arn = required(task['tasks'][0].get('taskArn'), 'egress probe task taskArn')
-    ecs.get_waiter('tasks_stopped').wait(cluster=ECS['cluster'], tasks=[arn], WaiterConfig={'Delay': 6, 'MaxAttempts': 50})
-    stopped = ecs.describe_tasks(cluster=ECS['cluster'], tasks=[arn])['tasks'][0]
-    if required(stopped.get('containers'), 'egress probe task containers')[0].get('exitCode') != 0:
-        raise RuntimeError('Egress probe task failed: ' + stopped.get('stoppedReason', 'no reason'))
-    stream = 'reaper/reaper/' + arn.rsplit('/', 1)[1]
+def egress_ip(ecs: ECSClient, logs: CloudWatchLogsClient, ec2: EC2Client, outputs: Mapping[str, Mapping[str, str]]):
+    probe = EgressProbe(ecs=ecs, logs=logs, ec2=ec2)
+    running = probe.start(uuid.uuid4().hex, outputs, time.time())
+    ecs.get_waiter('tasks_stopped').wait(cluster=ECS['cluster'], tasks=[running['taskArn']], WaiterConfig={'Delay': 6, 'MaxAttempts': 50})
     for _ in range(10):
-        events = logs.filter_log_events(logGroupName=outputs['ReaperLogGroupName'], logStreamNames=[stream],
-                                        filterPattern='"egress-ip"')['events']
-        if events:
-            return required(events[-1].get('message'), 'egress probe log event message').split()[-1]
+        result = probe.observe(running)
+        if result is not None:
+            return result['observedIp']
         time.sleep(3)
     raise RuntimeError('Egress probe printed no IP')
 
 
 def owned_egress_facts(facts: dict[str, Any], state: str, outputs: Mapping[str, Mapping[str, str]], cfn: CloudFormationClient,
-                       ec2: EC2Client, ecs: ECSClient, logs: CloudWatchLogsClient) -> dict[str, str | None]:
+                       ec2: EC2Client, ecs: ECSClient, logs: CloudWatchLogsClient, proof: WakeEgressProof | None = None) -> dict[str, str | None]:
     egress = outputs[EGRESS['stackName']]
     facts['stacks']['egress'], egress_types = stack_facts(cfn, EGRESS['stackName'])
     facts['defaultRoutes'], facts['natGateways'] = network_facts(ec2)
     facts.update({'natResources': sorted(NAT_TYPES & set(egress_types)), 'address': address_facts(ec2)})
     if state == 'live':
-        facts['egressIp'] = egress_ip(ecs, logs, outputs[ECS['previewOriginStackName']])
+        facts['egressIp'] = (EgressProbe(ecs=ecs, ec2=ec2, logs=logs).verify(proof['probe'], outputs, proof['attemptId'], proof['startedAt'])
+                             if proof else egress_ip(ecs, logs, ec2, outputs))
     return {'publicIp': EGRESS['publicIp'], 'allocationId': egress['PrivateNatAllocationId'],
             'natGatewayId': egress.get('PrivateNatGatewayId')}
 
@@ -304,7 +289,11 @@ def main(argv: list[str]):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('state', choices=['parked', 'egress', 'credential', 'live'])
     parser.add_argument('outputs', help='cdk deploy --outputs-file')
+    parser.add_argument('--egress-proof', type=Path)
     args = parser.parse_args(argv)
+    if args.egress_proof and args.state != 'live':
+        raise RuntimeError('Retained egress proof is only valid for Live verification')
+    proof = json.loads(args.egress_proof.read_text()) if args.egress_proof else None
     outputs = json.loads(Path(args.outputs).read_text())
     origin = outputs[ECS['previewOriginStackName']]
     cfn, ec2, ecs, elb = boto3.client('cloudformation'), boto3.client('ec2'), boto3.client('ecs'), boto3.client('elbv2')
@@ -318,7 +307,7 @@ def main(argv: list[str]):
         'healthCheckDisabled': health_check_disabled, 'alarmActions': alarm_actions,
         'responses': response_facts(args.state != 'live'),
     }
-    expected = owned_egress_facts(facts, args.state, outputs, cfn, ec2, ecs, logs) if EGRESS else None
+    expected = owned_egress_facts(facts, args.state, outputs, cfn, ec2, ecs, logs, proof) if EGRESS else None
     if args.state != 'live':
         facts['dns'] = dns_facts()
         failures = parked_failures(facts, expected) if args.state == 'parked' else partial_failures(facts, expected, args.state)

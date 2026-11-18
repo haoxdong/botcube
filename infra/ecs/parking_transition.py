@@ -4,12 +4,36 @@ import os
 import runpy
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
 from deploy_identity import load_identity
+from egress_probe import RunningProbe
+
+
+class RuntimeSnapshot(TypedDict):
+    agentRuntimeId: str
+    agentRuntimeVersion: str
+    lastUpdatedAt: float
+
+
+class TransitionState(TypedDict, total=False):
+    mode: str
+    action: str
+    op: str
+    index: int
+    startedAt: float
+    started: bool
+    waiting: bool
+    done: bool
+    attemptId: str
+    probeDrainStartedAt: float
+    runtime: RuntimeSnapshot
+    probe: RunningProbe
 
 IDENTITY = load_identity()
 OWNED_EGRESS = IDENTITY['aws']['ecs'].get('privateEgress')
@@ -21,12 +45,13 @@ EFFECTIVE_MODES = {
     **({STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'}} if OWNED_EGRESS else {}),
     STACKS['origin']: {'parked': 'parked', 'egress': 'parked', 'credential': 'credential', 'live': 'live'},
 }
-STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step != 'egress') for mode, steps in {
-    'parked': ('health', 'origin', 'capacity', 'egress', 'verify', 'store'),
+STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step not in ('egress', 'prepare', 'probe-drain')) for mode, steps in {
+    'parked': ('health', 'origin', 'capacity', 'probe-drain', 'egress', 'verify', 'store'),
     'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
     'credential': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
-    'live': ('egress', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store'),
+    'live': ('prepare', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store'),
 }.items()}
+SPARE_DEADLINE_SECONDS = 285
 SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 
 
@@ -49,7 +74,7 @@ def handler(event, context, **ports):
         raise
 
 
-def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None):
+def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None, probe=None):
     import boto3
     cloudformation = cloudformation or boto3.client('cloudformation')
     if event.get('op') == 'backstop':
@@ -62,7 +87,7 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
         raise ValueError(f'Unknown transition {event}')
     if event['op'] == 'start':
         return start(action, cloudformation, executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'))
-    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action)
+    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe)
 
 
 def production_state(cloudformation, stored):
@@ -71,10 +96,16 @@ def production_state(cloudformation, stored):
     target = stored
     for name in STACKS.values():
         stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
+        if preparation_requested(stack):
+            return {'state': 'transition incomplete'}
         _, value = mode_parameter(stack)
         if EFFECTIVE_MODES[name][value] != EFFECTIVE_MODES[name][target] or stack['StackStatus'] not in SETTLED:
             return {'state': 'transition incomplete'}
     return {'state': stored}
+
+
+def preparation_requested(stack):
+    return any(item['ParameterKey'] == 'prepareOrigin' and item['ParameterValue'] == 'true' for item in stack['Parameters'])
 
 
 def mode_parameter(stack):
@@ -86,30 +117,91 @@ def mode_parameter(stack):
     raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
 
 
-def advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action: str):
+def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe) -> TransitionState:
     index = event.get('index', 0)
-    if index == 0 and not event.get('started'):
+    if index == 0 and 'startedAt' not in event:
         preflight(cloudformation, action)
     target = action
     step = STEPS[action][index]
-    state = {**event, 'startedAt': event.get('startedAt', time.time())}
+    state: TransitionState = {**event, 'startedAt': event.get('startedAt', time.time())}
     if action == 'live' and time.time() - state['startedAt'] > 900:
         raise RuntimeError(f'Live wake exceeded 900 seconds at {step}; inspect the transition and return production to Parked')
+    state, waiting = step_dependencies(state, action, step, cloudformation, probe)
+    if waiting is not None:
+        return {**state, 'waiting': waiting, 'done': False}
     if step in STACKS:
-        waiting = update_stack(cloudformation, STACKS[step], target, event.get('started', False))
+        token = f"{state['attemptId']}-{step}" if action == 'live' and 'attemptId' in state else None
+        waiting = update_stack(cloudformation, STACKS[step], target, event.get('started', False), token=token)
         if waiting:
             return {**state, 'started': True, 'waiting': True, 'done': False}
-    else:
-        runtime = perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares, event.get('runtime'))
+    elif step not in ('prepare', 'probe-drain'):
+        runtime = perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares, state)
         if runtime is not None:
             state['runtime'] = runtime_snapshot(runtime)
     done = index == len(STEPS[action]) - 1
-    result = {**state, 'index': index + 1, 'started': False, 'waiting': False, 'done': done}
+    result: TransitionState = {**state, 'index': index + 1, 'started': False, 'waiting': False, 'done': done}
     print(json.dumps({'action': action, 'step': step, 'seconds': round(time.time() - state['startedAt'], 1), 'done': done}))
     return result
 
 
-def runtime_snapshot(runtime):
+def step_dependencies(state: TransitionState, action, step, cloudformation, probe) -> tuple[TransitionState, bool | None]:
+    if action == 'live' and OWNED_EGRESS:
+        return live_dependencies(state, step, cloudformation, probe)
+    if step == 'probe-drain':
+        from egress_probe import EgressProbe
+        probe = probe or EgressProbe()
+        state.setdefault('probeDrainStartedAt', time.time())
+        if probe.pending(stack_outputs(cloudformation)[STACKS['origin']]):
+            if time.time() - state['probeDrainStartedAt'] > 60:
+                raise RuntimeError('Owned egress probe drain exceeded 60 seconds; inspect stopped tasks before retrying Parked')
+            return state, True
+    return state, None
+
+
+def live_dependencies(state: TransitionState, step, cloudformation, probe) -> tuple[TransitionState, bool | None]:
+    if step == 'prepare':
+        return prepare_live(state, cloudformation, probe)
+    if 'probe' in state and 'observedIp' not in state['probe']:
+        from egress_probe import EgressProbe
+        probe = probe or EgressProbe()
+        observed = probe.observe(state['probe'])
+        if observed is not None:
+            state['probe'] = observed
+    if step == 'origin':
+        origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
+        if preparation_requested(origin) and update_stack(cloudformation, STACKS['origin'], mode_parameter(origin)[1], True, prepare=True):
+            return state, True
+    if step == 'verify' and 'observedIp' not in state.get('probe', {}):
+        return state, True
+    return state, None
+
+
+def stack_outputs(cloudformation):
+    return {name: {item['OutputKey']: item['OutputValue'] for item in
+                   cloudformation.describe_stacks(StackName=name)['Stacks'][0].get('Outputs', [])}
+            for name in STACKS.values()}
+
+
+def prepare_live(state: TransitionState, cloudformation, probe) -> tuple[TransitionState, bool | None]:
+    if 'attemptId' not in state:
+        origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
+        if not any(item['ParameterKey'] == 'prepareOrigin' for item in origin['Parameters']):
+            raise RuntimeError('Deploy the origin preparation parameter before requesting Live')
+        return {**state, 'attemptId': uuid.uuid4().hex}, False
+    token = state['attemptId']
+    waiting = update_stack(cloudformation, STACKS['egress'], 'live', state.get('started', False), token=token + '-egress')
+    origin = cloudformation.describe_stacks(StackName=STACKS['origin'])['Stacks'][0]
+    mode = mode_parameter(origin)[1]
+    if mode != 'live':
+        update_stack(cloudformation, STACKS['origin'], mode, state.get('started', False), prepare=True, token=token + '-prepare')
+    if not waiting and 'probe' not in state:
+        from egress_probe import EgressProbe
+        probe = probe or EgressProbe()
+        state['probe'] = probe.start(token, stack_outputs(cloudformation), state['startedAt'])
+    return {**state, 'started': waiting}, True if waiting else None
+
+
+def runtime_snapshot(runtime) -> RuntimeSnapshot:
     return {'agentRuntimeId': runtime['agentRuntimeId'], 'agentRuntimeVersion': runtime['agentRuntimeVersion'],
             'lastUpdatedAt': runtime['lastUpdatedAt'].timestamp()}
 
@@ -155,30 +247,44 @@ def preflight(cloudformation, target):
             raise RuntimeError(f'{name} needs the productionMode template before a partial mode')
 
 
-def update_stack(cloudformation, name, target, started):
+def desired_stack_parameters(stack, name, target, prepare):
+    key, mode = mode_parameter(stack)
+    value = ('true' if target == 'parked' else 'false') if key == 'parked' else target
+    desired = {key: value}
+    current = {item['ParameterKey']: item['ParameterValue'] for item in stack['Parameters']}
+    if name == STACKS['origin'] and 'prepareOrigin' in current:
+        desired['prepareOrigin'] = str(prepare).lower()
+    elif prepare:
+        raise RuntimeError('Deploy the origin preparation parameter before requesting Live')
+    matches = EFFECTIVE_MODES[name][mode] == EFFECTIVE_MODES[name][target] and all(
+        current[key] == value for key, value in desired.items() if key == 'prepareOrigin')
+    parameters = [{'ParameterKey': item['ParameterKey'], **(
+        {'ParameterValue': desired[item['ParameterKey']]}
+        if item['ParameterKey'] in desired else {'UsePreviousValue': True})} for item in stack['Parameters']]
+    return parameters, matches
+
+
+def update_stack(cloudformation, name, target, started, *, prepare=False, token=None):
     stack = cloudformation.describe_stacks(StackName=name)['Stacks'][0]
     status = stack['StackStatus']
-    if started and status.endswith('_IN_PROGRESS'):
+    parameters, matches = desired_stack_parameters(stack, name, target, prepare)
+    if status.endswith('_IN_PROGRESS') and (started or (token and matches)):
         return True
     if status not in SETTLED or (started and status != 'UPDATE_COMPLETE'):
         raise RuntimeError(f'{name} transition failed: {status}')
-    parameters = stack['Parameters']
-    key, mode = mode_parameter(stack)
-    value = ('true' if target == 'parked' else 'false') if key == 'parked' else target
-    if EFFECTIVE_MODES[name][mode] == EFFECTIVE_MODES[name][target]:
+    if matches:
         return False
     if started:
         raise RuntimeError(f'{name} completed without the requested productionMode parameter')
     cloudformation.update_stack(
         StackName=name, UsePreviousTemplate=True,
-        Parameters=[{'ParameterKey': item['ParameterKey'], **(
-            {'ParameterValue': value}
-            if item['ParameterKey'] == key else {'UsePreviousValue': True})} for item in parameters],
-        Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'])
+        Parameters=parameters,
+        Capabilities=['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
+        **({'ClientRequestToken': token} if token else {}))
     return True
 
 
-def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares, runtime):
+def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares, state: TransitionState):
     import boto3
     if step == 'store':
         (ssm or boto3.client('ssm')).put_parameter(
@@ -187,7 +293,7 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
             (ssm or boto3.client('ssm')).put_parameter(
                 Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
     elif step in ('verify', 'origin-proof', 'alarm-proof'):
-        (verify or verify_production)(target, **({} if verify else {'cloudformation': cloudformation, 'step': step}))
+        (verify or verify_production)(target, **({} if verify else {'cloudformation': cloudformation, 'step': step, 'state': state}))
     elif step == 'capacity':
         if capacity:
             capacity(target)
@@ -204,22 +310,27 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
             spares()
         else:
             import transition
-            transition.await_spare_handoff({**runtime, 'lastUpdatedAt': datetime.fromtimestamp(runtime['lastUpdatedAt'], UTC)})
+            runtime = state['runtime']
+            budget = max(0, min(300, state['startedAt'] + SPARE_DEADLINE_SECONDS - runtime['lastUpdatedAt']))
+            transition.await_spare_handoff({**runtime, 'lastUpdatedAt': datetime.fromtimestamp(runtime['lastUpdatedAt'], UTC)}, timeout=budget)
     return None
 
 
-def verify_production(target, cloudformation, step):
+def verify_production(target, cloudformation, step, state: TransitionState):
     import boto3
     os.environ.setdefault('RUNNER_TEMP', '/tmp')
     secret = boto3.client('secretsmanager').get_secret_value(SecretId=IDENTITY['aws']['ecs']['originTokenSecretName'])
     os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'] = secret['SecretString']
-    outputs = {name: {item['OutputKey']: item['OutputValue'] for item in
-                     cloudformation.describe_stacks(StackName=name)['Stacks'][0].get('Outputs', [])}
-               for name in STACKS.values()}
+    outputs = stack_outputs(cloudformation)
     output_path = Path(os.environ['RUNNER_TEMP']) / 'parking-outputs.json'
     output_path.write_text(json.dumps(outputs))
     if step == 'verify':
-        invoke_script('verify-park', [target, str(output_path)])
+        arguments = [target, str(output_path)]
+        if target == 'live' and OWNED_EGRESS:
+            proof_path = Path(os.environ['RUNNER_TEMP']) / 'wake-egress-proof.json'
+            proof_path.write_text(json.dumps({'attemptId': state['attemptId'], 'startedAt': state['startedAt'], 'probe': state['probe']}))
+            arguments += ['--egress-proof', str(proof_path)]
+        invoke_script('verify-park', arguments)
     elif step == 'origin-proof':
         invoke_script('verify-origin', ['production', str(output_path)])
         invoke_script('verify-origin', ['verify', str(output_path)])

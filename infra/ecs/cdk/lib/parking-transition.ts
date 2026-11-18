@@ -47,7 +47,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     'bedrock-agentcore:ListAgentRuntimes'], ['*']);
   allow(['route53:GetHealthCheck'], ['*']);
   allow(['events:DescribeRule'], [stack.formatArn({ service: 'events', resource: 'rule', resourceName: '*' })]);
-  allow(['ecs:DescribeServices', 'ecs:DescribeTasks', 'ecs:ListTasks', 'ecs:RunTask'], ['*']);
+  allow(['ecs:DescribeServices', 'ecs:DescribeTasks', 'ecs:ListTasks', 'ecs:RunTask', 'ecs:StopTask'], ['*']);
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `${ecs.previewOriginStackName}-ChatServiceReaperTask*` })]);
   allow(['logs:FilterLogEvents'], [stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/${ecs.cluster}/*` }),
     stack.formatArn({ service: 'logs', arnFormat: ArnFormat.COLON_RESOURCE_NAME, resource: 'log-group', resourceName: `/aws/bedrock-agentcore/runtimes/${agentCore.runtime}-*` })]);

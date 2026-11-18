@@ -31,21 +31,36 @@ export function parkState(scope: Construct) {
   };
 }
 
-export function liveResource(scope: Construct, resource: Construct) {
+export function originState(scope: Construct) {
+  const stack = Stack.of(scope);
+  const state = parkState(scope);
+  const parameter = stack.node.tryFindChild('PrepareOrigin') ?? new CfnParameter(stack, 'PrepareOrigin', {
+    type: 'String', allowedValues: ['false', 'true'], default: 'false', description: 'Prepare origin ingress without activating services or the public edge.',
+  });
+  if (!(parameter instanceof CfnParameter)) throw new Error('PrepareOrigin must be a CloudFormation parameter');
+  parameter.overrideLogicalId('prepareOrigin');
+  const infrastructure = stack.node.tryFindChild('OriginInfrastructureEnabled') ?? new CfnCondition(stack, 'OriginInfrastructureEnabled', {
+    expression: Fn.conditionOr(state.liveCondition, Fn.conditionEquals(parameter.valueAsString, 'true')),
+  });
+  if (!(infrastructure instanceof CfnCondition)) throw new Error('Invalid origin infrastructure condition');
+  return { ...state, infrastructureCondition: infrastructure };
+}
+
+export function conditionalResource(scope: Construct, resource: Construct, condition = parkState(scope).liveCondition) {
   const cfn = resource instanceof CfnResource ? resource : resource.node.defaultChild;
   if (!(cfn instanceof CfnResource)) throw new Error(`${resource.node.path} has no CloudFormation resource`);
-  cfn.cfnOptions.condition = parkState(scope).liveCondition;
+  cfn.cfnOptions.condition = condition;
 }
 
 export function parkServiceIngress(service: ecs.FargateService, target: elb.ApplicationTargetGroup, origin: Stack, containerName: string, port: number) {
-  const state = parkState(origin);
+  const state = originState(origin);
   const cfnService = service.node.defaultChild as ecs.CfnService;
   cfnService.node.removeDependency(target.loadBalancerAttached);
-  cfnService.addPropertyOverride('LoadBalancers', Fn.conditionIf(state.parkedCondition.logicalId, [], [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }]));
+  cfnService.addPropertyOverride('LoadBalancers', Fn.conditionIf(state.infrastructureCondition.logicalId, [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }], []));
   for (const resource of origin.node.findAll()) {
     if (resource instanceof elb.CfnListenerRule) {
-      resource.cfnOptions.condition = state.liveCondition;
-      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, state.string(resource.ref, 'parked'));
+      resource.cfnOptions.condition = state.infrastructureCondition;
+      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, Token.asString(Fn.conditionIf(state.infrastructureCondition.logicalId, resource.ref, 'parked')));
     }
   }
 }

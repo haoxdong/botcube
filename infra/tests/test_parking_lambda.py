@@ -5,6 +5,7 @@ import os
 from datetime import UTC, datetime
 from email.message import Message
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
@@ -17,15 +18,18 @@ def test_unpark_starts_egress_with_previous_template_and_preserves_other_paramet
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     cloudformation = CloudFormation()
-    result = module.handler({'action': 'unpark', 'op': 'advance'}, None,
-                            cloudformation=cloudformation)
+    state = module.handler({'action': 'unpark', 'op': 'advance'}, None, cloudformation=cloudformation)
+    assert not cloudformation.updates
+    result = module.handler(state, None, cloudformation=cloudformation)
     assert result['waiting'] is True
-    assert cloudformation.updates == [{
+    assert cloudformation.updates[0] == {
         'StackName': 'bot-cube-private-egress', 'UsePreviousTemplate': True,
         'Parameters': [{'ParameterKey': 'productionMode', 'ParameterValue': 'live'},
                        {'ParameterKey': 'image', 'UsePreviousValue': True}],
         'Capabilities': ['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND'],
-    }]
+        'ClientRequestToken': state['attemptId'] + '-egress',
+    }
+    assert len(cloudformation.updates) == 2
 
 
 class CloudFormation:
@@ -33,10 +37,11 @@ class CloudFormation:
         self.updates = []
 
     def describe_stacks(self, *, StackName):
-        return {'Stacks': [{'StackStatus': 'UPDATE_COMPLETE', 'Parameters': [
-            {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'},
-            {'ParameterKey': 'image', 'ParameterValue': 'unchanged'},
-        ]}]}
+        parameters = [{'ParameterKey': 'productionMode', 'ParameterValue': 'parked'},
+                      {'ParameterKey': 'image', 'ParameterValue': 'unchanged'}]
+        if StackName == 'bot-cube-preview-origin':
+            parameters.append({'ParameterKey': 'prepareOrigin', 'ParameterValue': 'false'})
+        return {'Stacks': [{'StackStatus': 'UPDATE_COMPLETE', 'Parameters': parameters}]}
 
     def update_stack(self, **request):
         self.updates.append(request)
@@ -51,6 +56,30 @@ def load():
     return module
 
 
+def test_prepared_origin_is_not_reported_as_parked():
+    cloudformation = CloudFormation()
+    original = cloudformation.describe_stacks
+
+    def describe(**request):
+        response = original(**request)
+        if request['StackName'] == 'bot-cube-preview-origin':
+            response['Stacks'][0]['Parameters'][-1]['ParameterValue'] = 'true'
+        return response
+
+    cloudformation.describe_stacks = describe
+    assert load().production_state(cloudformation, 'parked') == {'state': 'transition incomplete'}
+
+
+def test_park_clears_origin_preparation_even_when_mode_is_already_parked():
+    world = Production(True)
+    world.stacks['bot-cube-preview-origin']['Parameters'][1]['ParameterValue'] = 'true'
+    world.complete(load(), 'park')
+    assert world.stacks['bot-cube-preview-origin']['Parameters'] == [
+        {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'},
+        {'ParameterKey': 'prepareOrigin', 'ParameterValue': 'false'},
+    ]
+
+
 def test_refuses_before_any_effect_if_any_stack_is_updating():
     cloudformation = CloudFormation()
     original = cloudformation.describe_stacks
@@ -61,14 +90,21 @@ def test_refuses_before_any_effect_if_any_stack_is_updating():
     assert cloudformation.updates == []
 
 
+class DeployedStack(TypedDict):
+    StackStatus: str
+    Parameters: list[dict[str, str]]
+
+
 class Production(CloudFormation):
     def __init__(self, parked):
         super().__init__()
-        self.stacks = {name: {'StackStatus': 'UPDATE_COMPLETE', 'Parameters': [
+        self.stacks: dict[str, DeployedStack] = {name: {'StackStatus': 'UPDATE_COMPLETE', 'Parameters': [
             {'ParameterKey': 'productionMode', 'ParameterValue': 'parked' if parked else 'live'}]}
             for name in ('bot-cube-private-egress', 'bot-cube-preview-origin', 'bot-cube-api-health')}
+        self.stacks['bot-cube-preview-origin']['Parameters'].append({'ParameterKey': 'prepareOrigin', 'ParameterValue': 'false'})
         self.effects = []
         self.stored = 'parked' if parked else 'live'
+        self.probe = Probe(self)
 
     def describe_stacks(self, *, StackName):
         return {'Stacks': [self.stacks[StackName]]}
@@ -106,7 +142,7 @@ class Production(CloudFormation):
 
     def advance(self, module, state):
         return module.handler(state, None, cloudformation=self, ssm=self, verify=self.verify,
-                              capacity=self.capacity, refresh=self.refresh, spares=self.spares)
+                              capacity=self.capacity, refresh=self.refresh, spares=self.spares, probe=self.probe)
 
     def complete(self, module, action):
         state = {'mode': action, 'op': 'advance'} if action in module.STEPS else {'action': action, 'op': 'advance'}
@@ -119,8 +155,37 @@ class Production(CloudFormation):
         raise AssertionError('transition never finished')
 
 
+class Probe:
+    def __init__(self, world):
+        self.stacks, self.starts, self.ready, self.draining = world.stacks, [], True, False
+
+    def start(self, attempt, outputs, started_at):
+        assert self.stacks['bot-cube-private-egress']['StackStatus'] == 'UPDATE_COMPLETE'
+        self.starts.append(attempt)
+        return {'attemptId': attempt, 'startedAt': started_at, 'taskArn': 'probe-fixture'}
+
+    def observe(self, probe):
+        return {**probe, 'observedIp': '192.0.2.1', 'observedAt': probe['startedAt'] + 1} if self.ready else None
+
+    def pending(self, outputs):
+        return self.draining
+
+
+def test_wake_starts_both_stacks_without_waiting_for_nat_completion():
+    world, module = Production(True), load()
+    state = module.handler({'mode': 'live', 'op': 'advance'}, None, cloudformation=world, ssm=world)
+    module.handler(state, None, cloudformation=world, ssm=world)
+    assert {request['StackName'] for request in world.updates} == {'bot-cube-private-egress', 'bot-cube-preview-origin'}
+    assert world.stacks['bot-cube-preview-origin']['Parameters'] == [
+        {'ParameterKey': 'productionMode', 'ParameterValue': 'parked'},
+        {'ParameterKey': 'prepareOrigin', 'ParameterValue': 'true'},
+    ]
+    assert not world.probe.starts
+    assert world.stored == 'parked'
+
+
 @pytest.mark.parametrize(('action', 'parked', 'effects'), [
-    ('unpark', True, ['bot-cube-private-egress', 'capacity live', 'refresh',
+    ('unpark', True, ['bot-cube-private-egress', 'bot-cube-preview-origin', 'capacity live', 'refresh',
                       'bot-cube-preview-origin', 'bot-cube-api-health', 'verify live', 'verify live', 'verify live', 'spares', 'store live']),
     ('park', False, ['bot-cube-api-health', 'bot-cube-preview-origin', 'capacity parked',
                     'bot-cube-private-egress', 'verify parked', 'store parked']),
@@ -135,7 +200,7 @@ def test_poll_waits_for_its_stack_without_starting_another_update():
     world, module = Production(True), load()
     state = world.advance(module, {'action': 'unpark', 'op': 'advance'})
     assert world.advance(module, state)['waiting'] is True
-    assert world.effects == ['bot-cube-private-egress']
+    assert world.effects == ['bot-cube-private-egress', 'bot-cube-preview-origin']
     assert world.stored == 'parked'
 
 
@@ -165,10 +230,11 @@ def test_wake_budget_allows_in_budget_work_and_long_park_drains(monkeypatch, mod
 def test_rollback_fails_without_starting_services_or_publishing_live():
     world, module = Production(True), load()
     state = world.advance(module, {'action': 'unpark', 'op': 'advance'})
+    state = world.advance(module, state)
     world.stacks['bot-cube-private-egress']['StackStatus'] = 'UPDATE_ROLLBACK_COMPLETE'
     with pytest.raises(RuntimeError, match='UPDATE_ROLLBACK_COMPLETE'):
         world.advance(module, state)
-    assert world.effects == ['bot-cube-private-egress']
+    assert world.effects == ['bot-cube-private-egress', 'bot-cube-preview-origin']
     assert world.stored == 'parked'
 
 
@@ -185,7 +251,7 @@ def test_failed_verification_keeps_previous_stored_state_and_can_be_retried():
     world.verify = lambda target: world.effects.append('verify ' + target)
     world.complete(module, 'unpark')
     assert world.stored == 'live'
-    assert len(world.updates) == 3
+    assert len(world.updates) == 4
 
 
 
@@ -250,9 +316,10 @@ def test_transient_cloudformation_failure_is_retryable_without_committing_state(
     world = Production(True)
     def throttled(**request):
         raise ClientError({'Error': {'Code': 'Throttling', 'Message': 'slow down'}}, 'UpdateStack')
+    state = world.advance(load(), {'action': 'unpark', 'op': 'advance'})
     world.update_stack = throttled
     with pytest.raises(Exception, match='slow down') as failure:
-        world.advance(load(), {'action': 'unpark', 'op': 'advance'})
+        world.advance(load(), state)
     assert type(failure.value).__name__ == 'TransientServiceError'
     assert world.stored == 'parked'
 
@@ -506,4 +573,114 @@ def test_partial_modes_without_owned_egress_change_only_the_origin_and_health(mo
     for mode in ('egress', 'credential', 'parked'):
         world.complete(module, mode)
         assert world.stored == mode
+    assert 'bot-cube-private-egress' not in world.effects
+
+
+def settle(world):
+    for stack in world.stacks.values():
+        stack['StackStatus'] = 'UPDATE_COMPLETE'
+
+
+def test_nat_gates_activation_and_pending_probe_gates_live_publication():
+    world, module = Production(True), load()
+    world.probe.ready = False
+    state = world.advance(module, {'mode': 'live', 'op': 'advance'})
+    state = world.advance(module, state)
+    state = world.advance(module, state)
+    assert not world.probe.starts
+    assert 'capacity live' not in world.effects
+    world.stacks['bot-cube-private-egress']['StackStatus'] = 'UPDATE_COMPLETE'
+    state = world.advance(module, state)
+    assert len(world.probe.starts) == 1
+    state = world.advance(module, state)
+    state = world.advance(module, state)
+    state = world.advance(module, state)
+    assert state['waiting']
+    assert world.stacks['bot-cube-preview-origin']['Parameters'][0]['ParameterValue'] == 'parked'
+    world.stacks['bot-cube-preview-origin']['StackStatus'] = 'UPDATE_COMPLETE'
+    state = world.advance(module, state)
+    assert world.stacks['bot-cube-preview-origin']['Parameters'] == [
+        {'ParameterKey': 'productionMode', 'ParameterValue': 'live'},
+        {'ParameterKey': 'prepareOrigin', 'ParameterValue': 'false'},
+    ]
+    for _ in range(12):
+        settle(world)
+        state = world.advance(module, state)
+    assert world.stored == 'parked'
+    assert 'verify live' not in world.effects
+    assert len(world.probe.starts) == 1
+    world.probe.ready = True
+    for _ in range(12):
+        settle(world)
+        state = world.advance(module, state)
+        if state['done']:
+            break
+    assert state['done'] and world.stored == 'live'
+
+
+def test_lost_nat_update_response_does_not_admit_a_second_update():
+    from botocore.exceptions import ClientError
+    world, module = Production(True), load()
+    state = world.advance(module, {'mode': 'live', 'op': 'advance'})
+    original = world.update_stack
+    lost = True
+
+    def update(**request):
+        nonlocal lost
+        result = original(**request)
+        if lost:
+            lost = False
+            raise ClientError({'Error': {'Code': 'InternalError', 'Message': 'lost reply'}}, 'UpdateStack')
+        return result
+
+    world.update_stack = update
+    with pytest.raises(module.TransientServiceError):
+        world.advance(module, state)
+    world.advance(module, state)
+    assert [r['StackName'] for r in world.updates] == ['bot-cube-private-egress', 'bot-cube-preview-origin']
+    assert world.stored == 'parked'
+
+
+def test_park_drains_owned_probe_before_removing_nat():
+    world, module = Production(False), load()
+    world.probe.draining = True
+    state = {'mode': 'parked', 'op': 'advance'}
+    for _ in range(12):
+        state = world.advance(module, state)
+        settle(world)
+    assert 'bot-cube-private-egress' not in world.effects
+    assert world.stored == 'live'
+    world.probe.draining = False
+    for _ in range(12):
+        state = world.advance(module, state)
+        settle(world)
+        if state['done']:
+            break
+    assert state['done'] and world.stored == 'parked'
+
+
+def test_optional_spares_wait_uses_remaining_wake_budget(monkeypatch):
+    import transition
+    world, module = Production(True), load()
+    monkeypatch.setattr(module.time, 'time', lambda: 2000)
+    observed = []
+    monkeypatch.setattr(transition, 'await_spare_handoff', lambda runtime, **kwargs: observed.append(kwargs['timeout']))
+    state = {'mode': 'live', 'op': 'advance', 'index': 8, 'startedAt': 1800,
+             'runtime': {'agentRuntimeId': 'runtime-fixture', 'agentRuntimeVersion': '2', 'lastUpdatedAt': 1900}}
+    module.handler(state, None, cloudformation=world, ssm=world)
+    assert observed == [185]
+
+
+def test_park_probe_drain_fails_loud_after_60_seconds(monkeypatch):
+    world, module = Production(False), load()
+    world.probe.draining = True
+    now = [2000]
+    monkeypatch.setattr(module.time, 'time', lambda: now[0])
+    state = {'mode': 'parked', 'op': 'advance', 'startedAt': 1000,
+             'index': module.STEPS['parked'].index('probe-drain')}
+    state = world.advance(module, state)
+    assert state['waiting']
+    now[0] += 61
+    with pytest.raises(RuntimeError, match='probe drain exceeded 60 seconds'):
+        world.advance(module, state)
     assert 'bot-cube-private-egress' not in world.effects

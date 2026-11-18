@@ -1,4 +1,4 @@
-import { parkState, liveResource } from './park-state.js';
+import { originState, conditionalResource } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -83,12 +83,12 @@ function validateOrigin(props: PreviewOriginProps): void {
 export class PreviewOriginStack extends Stack {
   /** Cloudflare-only ingress, kept in both states so its rules don't churn. */
   readonly securityGroup: ec2.SecurityGroup;
-  /** Present only while Live. */
+  /** Provisioned while Live or preparing ingress. */
   readonly alb?: { loadBalancer: elb.ApplicationLoadBalancer; listener: elb.ApplicationListener };
 
   constructor(scope: Construct, id: string, props: PreviewOriginProps) {
     super(scope, id, props);
-    const state = parkState(this);
+    const state = originState(this);
     validateOrigin(props);
     const vpc = props.vpc ?? ec2.Vpc.fromVpcAttributes(this, 'Vpc', {
       vpcId: props.vpcId,
@@ -195,7 +195,7 @@ export class PreviewOriginStack extends Stack {
     });
     if (service) listener.addCertificates('ServiceIdentity', [acm.Certificate.fromCertificateArn(this, 'ServiceCertificateArn', service.certificate.getAttString('Arn'))]);
     for (const association of [aop, productionAop, ...(service ? [service.aop] : []), ...additional.map(host => host.aop)]) {
-      (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.liveCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
+      (association.node.defaultChild as CfnResource).addPropertyOverride('ListenerArn', Fn.conditionIf(state.infrastructureCondition.logicalId, listener.listenerArn, { Ref: 'AWS::NoValue' }));
     }
     const worker = this.node.findChild('ParkedWorker');
     const target = Token.asString(Fn.conditionIf(state.parkedCondition.logicalId, props.parkedDnsTarget, loadBalancer.loadBalancerDnsName));
@@ -206,7 +206,7 @@ export class PreviewOriginStack extends Stack {
     for (const record of [previewDns, productionDns, ...serviceDns, ...additionalDns]) {
       (record.node.defaultChild as CfnResource).addPropertyOverride('Worker', Fn.conditionIf(state.parkedCondition.logicalId, (worker as CustomResource).ref, { Ref: 'AWS::NoValue' }));
     }
-    liveResource(this, loadBalancer);
+    conditionalResource(this, loadBalancer, state.infrastructureCondition);
     liveListener(this, listener);
     this.alb = { loadBalancer, listener };
     new CfnOutput(this, 'ListenerArn', { value: listener.listenerArn, condition: state.liveCondition });
@@ -216,8 +216,8 @@ export class PreviewOriginStack extends Stack {
 }
 
 function liveListener(scope: Construct, listener: elb.ApplicationListener) {
-  liveResource(scope, listener);
+  conditionalResource(scope, listener, originState(scope).infrastructureCondition);
   for (const resource of listener.node.findAll()) {
-    if (resource instanceof elb.CfnListenerCertificate) liveResource(scope, resource);
+    if (resource instanceof elb.CfnListenerCertificate) conditionalResource(scope, resource, originState(scope).infrastructureCondition);
   }
 }

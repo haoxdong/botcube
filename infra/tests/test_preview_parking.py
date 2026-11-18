@@ -343,14 +343,6 @@ class MissingProviderFieldTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'lacks target TargetHealth'):
             verifier['health_facts'](ecs, elb, {'TargetGroupArn': 'target'})
 
-    def test_a_stopped_egress_probe_without_containers_fails(self):
-        ecs, logs = Mock(), Mock()
-        ecs.run_task.return_value = {'tasks': [{'taskArn': 'arn:task/probe'}]}
-        ecs.describe_tasks.return_value = {'tasks': [{'taskArn': 'arn:task/probe'}]}
-        outputs = {'ReaperTaskDefinitionArn': 'reaper', 'ReaperLogGroupName': 'logs', 'ReaperSecurityGroupId': 'sg-placeholder'}
-        with self.assertRaisesRegex(RuntimeError, 'lacks egress probe task containers'):
-            verifier['egress_ip'](ecs, logs, outputs)
-
     def test_stored_park_state_without_a_value_fails(self):
         ssm = Mock()
         ssm.get_parameter.return_value = {'Parameter': {'Name': 'state'}}

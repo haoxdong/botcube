@@ -13,7 +13,7 @@ import { PreviewOriginStack } from '../lib/preview-origin-stack.js';
 
 const privateSubnets = [{ id: 'subnet-fixture33333333', availabilityZone: 'us-east-1a' }, { id: 'subnet-fixture44444444', availabilityZone: 'us-east-1b' }];
 
-function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', parked = false, subnets = privateSubnets, overrides: Partial<PreviewChatServiceProps> | ((origin: PreviewOriginStack) => Partial<PreviewChatServiceProps>) = {}) {
+function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime', parked = false, subnets = privateSubnets, overrides: Partial<PreviewChatServiceProps> | ((origin: PreviewOriginStack) => Partial<PreviewChatServiceProps>) = {}, prepareOrigin = false) {
   const app = new App();
   const env = { account: '123456789012', region: 'us-east-1' };
   const storage = new ChatStorageStack(app, 'Storage', { env });
@@ -28,8 +28,22 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
     clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'], corsOrigins: ['https://example.com', 'https://web.example.com'],
     runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
-  return parkingTemplate(origin, parked);
+  return parkingTemplate(origin, parked, prepareOrigin);
 }
+
+test('origin preparation attaches ingress at zero capacity and keeps the parked edge', () => {
+  const template = synth(undefined, true, privateSubnets, {}, true);
+  template.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
+  template.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', 1);
+  template.hasResourceProperties('AWS::ECS::Service', {
+    DesiredCount: 0,
+    LoadBalancers: [Match.objectLike({ ContainerName: 'chat-service', ContainerPort: 8123 })],
+  });
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker' });
+  template.hasResourceProperties('AWS::CloudFormation::CustomResource', {
+    Kind: 'Dns', Hostname: 'api.example.com', Target: 'parked.invalid', Worker: Match.anyValue(),
+  });
+});
 
 /** The security group a construct path created, as the template references it. */
 function group(template: Template, path: string) {

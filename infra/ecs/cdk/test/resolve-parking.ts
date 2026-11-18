@@ -1,9 +1,9 @@
 import { Template } from 'aws-cdk-lib/assertions';
 import type { Stack } from 'aws-cdk-lib';
 
-export function parkingTemplate(stack: Stack, mode: boolean | 'parked' | 'egress' | 'credential' | 'live' = false): Template {
+export function parkingTemplate(stack: Stack, mode: boolean | 'parked' | 'egress' | 'credential' | 'live' = false, prepareOrigin = false): Template {
   const parked = typeof mode === 'boolean' ? mode : mode !== 'live';
-  const conditions = { Parked: parked, Live: !parked, EgressEnabled: typeof mode === 'boolean' ? !mode : mode !== 'parked', CredentialEnabled: typeof mode === 'boolean' ? !mode : mode === 'credential' || mode === 'live' };
+  const conditions = { Parked: parked, Live: !parked, OriginInfrastructureEnabled: !parked || prepareOrigin, EgressEnabled: typeof mode === 'boolean' ? !mode : mode !== 'parked', CredentialEnabled: typeof mode === 'boolean' ? !mode : mode === 'credential' || mode === 'live' };
   const template = structuredClone(Template.fromStack(stack).toJSON());
   for (const section of ['Resources', 'Outputs']) {
     template[section] = Object.fromEntries(Object.entries(template[section] ?? {}).filter(([, resource]) => {

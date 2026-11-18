@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cr from 'aws-cdk-lib/custom-resources';
-import { liveResource, parkState } from './park-state.js';
+import { conditionalResource, parkState } from './park-state.js';
 import { Construct } from 'constructs';
 
 export interface ApiHealthStackProps extends StackProps {
@@ -63,7 +63,7 @@ export class ApiHealthStack extends Stack {
       threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
       evaluationPeriods: props.evaluationPeriods ?? 2, treatMissingData: cloudwatch.TreatMissingData.BREACHING,
     });
-    liveResource(this, alarm);
+    conditionalResource(this, alarm);
     alarm.applyRemovalPolicy(RemovalPolicy.DESTROY);
     const topic = sns.Topic.fromTopicArn(this, 'Alerts', this.formatArn({ service: 'sns', resource: props.alertsTopicName }));
     alarm.addAlarmAction(new actions.SnsAction(topic));
