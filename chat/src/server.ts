@@ -189,7 +189,7 @@ export function createChatService(
 
   turnRoutes(app, cartridge, sessionMetadata, agentDocuments, upstream, config, summarizeTurn, turnCredentials, turnQuota, turnIdentity);
 
-  app.get('/health', async (c) => {
+  const checkReadiness = async () => {
     await initialRecovery;
     try {
       await sessionMetadata.checkHealth();
@@ -199,7 +199,15 @@ export function createChatService(
     }
     if (scheduledRunsUnavailable) throw new HttpError(503, 'Scheduled runs are unavailable');
     if (recoveryError !== undefined) throw new HttpError(503, 'Session purge recovery is unavailable');
+  };
+  app.get('/health', async (c) => {
+    await checkReadiness();
     return c.json({ status: 'ok' });
+  });
+  app.on(['GET', 'POST'], '/production/wake', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    await checkReadiness();
+    return c.json({ state: 'live' });
   });
 
   cspReportRoutes(app);

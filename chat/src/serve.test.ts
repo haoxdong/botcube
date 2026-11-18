@@ -151,6 +151,21 @@ describe('the Chat Service served from the environment', () => {
     expect(process.listeners('exit')).toContain(reportUnsavedTurnSummaries);
   });
 
+  it('answers Live wake requests after the parked Worker hands over', async () => {
+    const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
+    const responses = await Promise.all(['GET', 'POST'].map((method) => fetch(`${url}/production/wake`, { method })));
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(responses.map((response) => response.headers.get('Cache-Control'))).toEqual(['no-store', 'no-store']);
+    expect(await Promise.all(responses.map((response) => response.json()))).toEqual([{ state: 'live' }, { state: 'live' }]);
+  });
+
+  it('refuses to report Live while Session Metadata is unavailable', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: `missing-${Math.random().toString(36).slice(2)}` });
+    const responses = await Promise.all(['GET', 'POST'].map((method) => fetch(`${url}/production/wake`, { method })));
+    expect(responses.map((response) => response.status)).toEqual([503, 503]);
+  });
+
   it('keeps Session Metadata in BOTCUBE_CHAT_TABLE', async () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
