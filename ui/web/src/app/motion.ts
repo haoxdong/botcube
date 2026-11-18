@@ -7,11 +7,7 @@ export function moveMs() {
   return Number.isNaN(amount) ? 300 : value.endsWith("ms") ? amount : amount * 1000;
 }
 
-/**
- * Glides `element`'s `size` from its last value to its current one over --motion-move with --ease (DESIGN.md Motion).
- * A glide during one carries on from where that one is: where it started, while it is
- * still pending, as layout doesn't show it until its first frame.
- */
+// Motion persists end styles and hides native pending state; this post-commit glide must preserve intrinsic sizing and interrupted starts.
 export function sizeGlide(element: HTMLElement, size: "width" | "height", frame: Keyframe = {}) {
   let last = element.getBoundingClientRect()[size];
   let running: Animation | null = null;
@@ -37,10 +33,7 @@ export function sizeGlide(element: HTMLElement, size: "width" | "height", frame:
   };
 }
 
-/**
- * Runs `change` as a View Transition, so what it resizes or moves glides into place (globals.css's
- * `::view-transition-*`, DESIGN.md Motion); at once where the browser has none.
- */
+// Motion also waits for native View Transition completion; WebKit can stall it and block taps without a timed skip.
 export function glide(change: () => void) {
   if (typeof document.startViewTransition !== "function") {
     change();
@@ -53,8 +46,6 @@ export function glide(change: () => void) {
   const transition = document.startViewTransition(() => flushSync(change));
   // A toggle while one glides skips the first, rejecting its `ready`; the change itself has still happened.
   transition.ready.catch(() => undefined);
-  // WebKit can leave a transition running once its animations end, and while one runs no tap reaches the page: past
-  // its time, with room for a loaded frame, it is skipped.
   const stuck = setTimeout(() => transition.skipTransition(), moveMs() + 500);
   void transition.finished.finally(() => {
     clearTimeout(stuck);
