@@ -18,6 +18,7 @@ from itertools import pairwise
 from pathlib import Path
 from types import FrameType
 from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.exceptions import ClientError
@@ -146,7 +147,6 @@ def request(client: urllib.request.OpenerDirector, path: str, *, method: str = '
 def parse_event(data: list[str]) -> dict[str, Any]:
     event = json.loads('\n'.join(data))
     require(isinstance(event, dict) and isinstance(event.get('type'), str), 'Malformed agent event')
-    require(event['type'] != 'RUN_ERROR', 'Agent stream reported RUN_ERROR')
     return event
 
 
@@ -162,7 +162,7 @@ class StreamTiming:
         self.calls: dict[str | None, dict[str, Any]] = {}
         timing.update({'requiredObservationSeconds': observation_seconds,
                        'requiredProgressRounds': progress_rounds if observation_seconds else 0,
-                       'eventOffsetsSeconds': self.event_times, 'progressOffsetsSeconds': self.progress_times})
+                       'eventOffsetsSeconds': self.event_times, 'progressOffsetsSeconds': self.progress_times, 'eventTypes': []})
 
     def check_alive(self):
         if not self.observation_seconds:
@@ -177,6 +177,7 @@ class StreamTiming:
         require(not self.observation_seconds or gap <= 60, 'Agent stream exceeded the 60-second event gap')
         require(now - self.started <= 900, 'Agent stream exceeded the 900-second probe deadline')
         self.event_times.append(now - self.started)
+        self.timing['eventTypes'].append(event['type'])
         self.previous = now
         if event['type'] == 'RUN_FINISHED':
             self.timing['terminalSeconds'] = now - self.started
@@ -241,6 +242,7 @@ def read_events(response: http.client.HTTPResponse, *, timing: dict[str, Any] | 
             event = parse_event(data)
             if stream is not None:
                 stream.record(event, time.monotonic())
+            require(event['type'] != 'RUN_ERROR', 'Agent stream reported RUN_ERROR')
             events.append(event)
             data = []
     require(not data, 'Agent stream ended with an incomplete SSE frame')
@@ -338,11 +340,14 @@ def stream_conversation(client: urllib.request.OpenerDirector, req: urllib.reque
                         observation_seconds: float, progress_rounds: int,
                         on_progress: Callable[[], object] | None) -> list[dict[str, Any]]:
     try:
+        timing['requestHost'] = urlsplit(req.full_url).hostname
         timing['requestStartedAt'] = datetime.now(UTC).isoformat()
         timing['requestStarted'] = time.monotonic()
         timing['requestMonotonicSeconds'] = timing['requestStarted']
         with probe_deadline(900), client.open(req, timeout=60 if observation_seconds else 180) as response:
             timing['connectedSeconds'] = time.monotonic() - timing['requestStarted']
+            timing['responseHeaders'] = {name: response.headers[name] for name in (
+                'content-type', 'content-length', 'transfer-encoding', 'connection', 'server', 'cf-ray') if name in response.headers}
             return read_events(response, timing=timing, observation_seconds=observation_seconds, progress_rounds=progress_rounds, on_progress=on_progress)
     except urllib.error.HTTPError as error:
         with error:
@@ -374,6 +379,7 @@ def verify_conversation(*, table: Table, observation_seconds: float = 0, progres
         status, issued = request(clients[0], '/threads', method='POST')
         require(status == 201 and isinstance(issued, dict) and isinstance(issued.get('id'), str), 'The Chat Service did not issue a Session ID')
         thread_id, run_id = issued['id'], str(uuid.uuid4())
+        timing.update({'threadId': thread_id, 'runId': run_id})
         if smoke is not None:
             smoke.bind(owner, thread_id)
         expected = 'preview acceptance ' + uuid.uuid4().hex
