@@ -1,6 +1,6 @@
 // The design system is locked (DESIGN.md): ten colours, four sizes, two weights, two line-heights, six radii, two
-// shadows, two durations, one curve and one loop. These checks find what strays from it; each UI's own test runs them
-// over its stylesheets and components.
+// shadows, two durations, one curve, one loop and seven spacing steps. These checks find what strays from it; each
+// UI's own test runs them over its stylesheets and components.
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import postcss from 'postcss';
@@ -11,6 +11,7 @@ export const LIGHT = ['--scrim', '--frost', '--shadow-rest', '--shadow-float'];
 export const SIZES = ['title', 'body', 'small', 'label'];
 export const RADII = ['sm', 'md', 'lg', 'xl', 'screen', 'pill'];
 export const MOTION = ['--motion-quick', '--motion-move', '--motion-loop', '--ease'];
+export const SPACING = [4, 8, 12, 16, 20, 24, 32];
 
 type Declaration = { property: string; value: string };
 
@@ -23,7 +24,7 @@ function tokenBlock(css: string) {
 }
 
 function declarations(css: string): Declaration[] {
-  return [...css.matchAll(/([a-z-]+)\s*:\s*([^;{}]+);/g)].map(([, property = '', value = '']) => ({ property, value: value.trim() }));
+  return [...css.matchAll(/([a-z0-9-]+)\s*:\s*([^;{}]+);/g)].map(([, property = '', value = '']) => ({ property, value: value.trim() }));
 }
 
 /** The custom properties tokens.css's token block defines, in order. */
@@ -66,7 +67,7 @@ function strays(property: string, item: string) {
   const loop = /\binfinite\b/.test(item) && item.includes('var(--motion-loop)');
   const scrolled = property === 'animation' && !/var\(--motion-|\d+m?s\b/.test(item);
   const bare = item
-    .replace(/var\(--[a-z-]+\)/g, '')
+    .replace(/var\(--[a-z0-9-]+\)/g, '')
     .replace(/(^|[\s,])0m?s\b/g, '$1')
     .replace(loop ? /\b(linear|ease-in-out)\b/g : scrolled ? /\blinear\b/g : /$^/, '');
   return RAW_MOTION.test(bare) || (timed && !property.endsWith('-duration') && !item.includes('var(--ease)'));

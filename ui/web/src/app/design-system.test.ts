@@ -1,11 +1,11 @@
-// A new colour, size, radius, shadow, duration or curve fails here; to add one, first merge or drop another (DESIGN.md).
+// A new colour, size, radius, shadow, duration, curve or spacing step fails here; to add one, first merge or drop another (DESIGN.md).
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { AGENT, COLOURS, LIGHT, MOTION, RADII, SIZES, hoverOffences, hoverIn, offences, rawColoursIn, rawMotionIn, reduceMotionPathsIn, rulesOf, tokensOf } from './design-system';
+import { AGENT, COLOURS, LIGHT, MOTION, RADII, SIZES, SPACING, hoverOffences, hoverIn, offences, rawColoursIn, rawMotionIn, reduceMotionPathsIn, rulesOf, tokensOf } from './design-system';
 
 // The BotCube tree, the published repository's root.
 const cube = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -38,6 +38,10 @@ describe('tokens', () => {
 
   it('defines two durations, one curve and one loop', () => {
     expect(tokens.filter((t) => /^--(motion|ease)/.test(t))).toEqual(MOTION);
+  });
+
+  it('defines seven spacing steps on a 4px grid', () => {
+    expect(tokens.filter((t) => t.startsWith('--space-'))).toEqual(SPACING.map((s) => `--space-${s}`));
   });
 
 });
@@ -148,7 +152,7 @@ it('styles every story with each stylesheet the app loads', () => {
 describe('DESIGN.md', () => {
   const design = read('ui/web/DESIGN.md');
   /** Its byte budget: to add a line, first cut as much, as the system it describes does. */
-  const BUDGET = 11_800;
+  const BUDGET = 11_200;
 
   it('names only tokens that tokens.css defines', () => {
     const named = [...design.matchAll(/`(--[a-z][a-z0-9-]*)`/g)].flatMap(([, token]) => token ?? []);

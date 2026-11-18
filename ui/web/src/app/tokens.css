@@ -82,6 +82,15 @@ body {
   --motion-loop: 1.6s;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 
+  /* Spacing (DESIGN.md): seven steps of a 4px grid, each with its jobs there. */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+
   /* The desktop app's zoom (below): 1 up to a 1760px window. */
   --ui-zoom: 1;
 
