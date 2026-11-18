@@ -118,9 +118,9 @@ by `src/app/globals.test.tsx` and the Storybook play tests.
 - **Chat header:** Marq centred over the scrolling messages in a frosted capsule, "is working" in `small` while he
   bobs (Muse, Fig 11 of the [north star](../../../docs/northstars/muse-dots-and-grok-bot-for-always-on.md)). On an
   iPhone the chat runs edge to edge under the header and Safari's toolbar, with no band of its own.
-- **Composer:** white in `rest`, `float` on focus as its only focus mark. On a desktop, ChatGPT's one row with the
-  picker shown, 12px wider than the text at each side over an opaque `canvas`; on a phone, one row at rest that opens
-  to two with 44px targets (the Claude app), and no disclaimer.
+- **Composer:** white in `rest`; the shape follows the text, never focus. One line is a pill: +, text, send (and the
+  picker on a desktop). More lines or a file put the text over +, picker and send, in `xl`. Focus only lifts it to
+  `float`. A desktop adds 12px each side over `canvas`; a phone has 44px targets, no disclaimer.
 - **Sidebar:** icon then label, the open row a `line` pill; shut by default on a desktop, docked with a hairline seam.
   The phone drawer follows Muse Fig 21.
 - **List row:** a round icon tile and a title over muted lines (Muse Figs 13, 15). **Settings rows:** Codex's Schedule
