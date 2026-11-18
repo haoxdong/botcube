@@ -11,3 +11,13 @@ it("names the enterprise example's OIDC issuer host among its egress hosts", () 
   expect(printed).toContain('  login.example.com\n');
   expect(printed).not.toContain('<identity.issuer host>');
 });
+
+it('lists the resources a Deployment Config runs its OIDC provider on', () => {
+  const { config } = loadDeployment(example('enterprise'));
+  if (config.identity.kind !== 'oidc') throw new Error('The enterprise example signs in with OIDC');
+  const resources = [{ type: 'AWS::Example::Directory', name: 'example-users' }, { type: 'AWS::Example::Mailer', name: 'example.com' }];
+
+  const printed = formatFootprint(footprint({ ...config, identity: { ...config.identity, resources } }));
+
+  expect(printed).toContain('Resources\n  AWS::Example::Directory example-users\n  AWS::Example::Mailer example.com\n');
+});

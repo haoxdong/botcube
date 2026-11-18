@@ -56,9 +56,29 @@
               "additionalProperties": false,
               "description": "A Secrets Manager secret, by ARN."
             },
-            "subjectIsAccountId": {
-              "description": "The provider's subject is the User's account ID (acct_…): a new User's account takes it, and a returning User lands in the account it names.",
-              "type": "boolean"
+            "logoutUrl": {
+              "description": "Where signing out sends the browser, so the provider ends its own session and the next sign-in prompts again; for a provider whose discovery names no end_session_endpoint.",
+              "type": "string",
+              "format": "uri"
+            },
+            "resources": {
+              "description": "The AWS resources the deployment runs the provider on, beside BotCube's own, which the footprint lists.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "pattern": "^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["type", "name"],
+                "additionalProperties": false
+              }
             }
           },
           "required": ["kind", "issuer", "clientId", "clientSecret"],

@@ -88,9 +88,13 @@ const identity = z.discriminatedUnion('kind', [
     issuer: oidcIssuer.describe("The provider's issuer URL, where its OpenID configuration is discovered."),
     clientId: z.string().min(1),
     clientSecret: secretReference,
-    subjectIsAccountId: z.boolean().optional().describe(
-      "The provider's subject is the User's account ID (acct_…): a new User's account takes it, and a returning User lands in the account it names.",
+    logoutUrl: z.url({ protocol: /^https$/ }).optional().describe(
+      "Where signing out sends the browser, so the provider ends its own session and the next sign-in prompts again; for a provider whose discovery names no end_session_endpoint.",
     ),
+    resources: z.array(z.strictObject({
+      type: z.string().regex(/^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$/, 'Expected a CloudFormation resource type such as AWS::Service::Resource'),
+      name: z.string().min(1),
+    })).optional().describe("The AWS resources the deployment runs the provider on, beside BotCube's own, which the footprint lists."),
   }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE.'),
 ]);
 const models = z.discriminatedUnion('kind', [

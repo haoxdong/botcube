@@ -26,12 +26,15 @@ export interface Need {
   /** `<region>` stands for the deployment's Region. */
   readonly egressHosts?: readonly string[];
   readonly images?: readonly string[];
+  readonly resources?: readonly string[];
 }
 
 export interface Footprint {
   readonly iam: Partial<Record<Principal, { actions: string[]; managedPolicies: string[] }>>;
   readonly egressHosts: string[];
   readonly images: string[];
+  /** Resources a section's provider runs on, as `<CloudFormation type> <name>`. */
+  readonly resources: string[];
 }
 
 /** The images BotCube deploys; a bot's own image is built FROM the Harness image and stands in for it. */
@@ -101,7 +104,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
     // Accounts live in the chat table the Chat Service already holds.
     'botcube-accounts': {},
     // The Chat Service discovers the provider and redeems sign-in codes; the deploy reads the client secret.
-    oidc: ({ issuer }) => ({ egressHosts: [new URL(issuer).host] }),
+    oidc: ({ issuer, resources }) => ({ egressHosts: [new URL(issuer).host], resources: (resources ?? []).map(({ type, name }) => `${type} ${name}`) }),
   },
   models: {
     bedrock: {
@@ -163,7 +166,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
   },
 };
 
-/** The IAM actions, egress hosts and images this Deployment Config needs. */
+/** The IAM actions, egress hosts, images and provider resources this Deployment Config needs. */
 export function footprint(config: DeploymentConfig): Footprint {
   const needs = [BUILT_IN, ...(Object.keys(ADAPTERS) as Section[]).map(section => adapter(section, config[section])), plainParameters(config)];
   const iam: Footprint['iam'] = {};
@@ -174,7 +177,12 @@ export function footprint(config: DeploymentConfig): Footprint {
       managedPolicies: sorted(grants.flatMap(grant => grant.managedPolicies ?? [])),
     };
   }
-  return { iam, egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])), images: sorted(needs.flatMap(need => need.images ?? [])) };
+  return {
+    iam,
+    egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])),
+    images: sorted(needs.flatMap(need => need.images ?? [])),
+    resources: sorted(needs.flatMap(need => need.resources ?? [])),
+  };
 }
 
 /** The collector and the proxy are hosts the services reach; imported resources need what created ones would. */
@@ -191,7 +199,7 @@ function adapter(section: Section, config: { kind: string }): Need {
 const sorted = (values: readonly string[]) => [...new Set(values)].sort();
 
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ iam, egressHosts, images }: Footprint): string {
+export function formatFootprint({ iam, egressHosts, images, resources }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
@@ -201,5 +209,6 @@ export function formatFootprint({ iam, egressHosts, images }: Footprint): string
     'IAM actions', ...roles,
     'Egress hosts', ...egressHosts.map(host => `  ${host}`),
     'Images', ...images.map(image => `  ${image}`),
+    'Resources', ...resources.map(resource => `  ${resource}`),
   ].join('\n') + '\n';
 }
