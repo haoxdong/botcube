@@ -19,9 +19,17 @@ const [harden, hardenOptions] = defaultRehypePlugins.harden as [unknown, object]
 
 /**
  * Harden passes an image only at a path, as the agent embeds its files; ReplyImage loads it from Files. It needs an
- * origin to resolve a path against: a reserved one no address can match.
+ * origin to resolve a path against: a reserved one no address can match. A link or image it refuses (a citation to a
+ * ref such as `@s1.c3`, an image at another address) shows as its text alone, without harden's raw "blocked" marker.
  */
-export function replyRehypePlugins(links: { linkBlockPolicy?: "text-only" } = {}): Pluggable[] {
-  const images = { defaultOrigin: "https://reply.invalid", allowedImagePrefixes: ["/"], allowDataImages: false };
-  return Object.values({ ...defaultRehypePlugins, harden: [harden, { ...hardenOptions, ...images, ...links }] as Pluggable });
+export function replyRehypePlugins(): Pluggable[] {
+  const hardened = {
+    ...hardenOptions,
+    defaultOrigin: "https://reply.invalid",
+    allowedImagePrefixes: ["/"],
+    allowDataImages: false,
+    linkBlockPolicy: "text-only",
+    imageBlockPolicy: "text-only",
+  };
+  return Object.values({ ...defaultRehypePlugins, harden: [harden, hardened] as Pluggable });
 }

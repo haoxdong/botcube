@@ -435,6 +435,13 @@ it.each(replySurfaces)('in $surface, loads no image from another address or a da
   expect(view.container.querySelectorAll('img')).toHaveLength(0);
 });
 
+it.each(replySurfaces)('in $surface, shows a refused link or image as its text alone', ({ Reply }) => {
+  const view = render(<Reply text={'See [s1](@s1.c3) and ![outside](https://example.com/p.png).'} />);
+
+  expect(view.container.querySelectorAll('a, img')).toHaveLength(0);
+  expect(view.container).toHaveTextContent(/^See s1 and outside\.$/);
+});
+
 it.each(replySurfaces)("in $surface, still shows the reply's own image and file card", async ({ Reply }) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ url: 'https://files.test/file' })));
   const view = render(<Reply text={'![Chart](/chart.svg)\n\n[Report](/report.csv)'} />);

@@ -1251,7 +1251,8 @@ describe('an assistant reply', () => {
     await renderPage();
     const list = screen.getByTestId('copilot-message-list');
     expect(await within(list).findByRole('link', { name: 'External download' })).toHaveAttribute('href', 'https://example.com/chart.svg');
-    expect(list).toHaveTextContent('[Image blocked: External]');
+    expect(within(list).getByText('External')).toBeInTheDocument();
+    expect(list).not.toHaveTextContent('blocked');
     expect(within(list).queryByRole('img')).toBeNull();
     expect(lookup).not.toHaveBeenCalled();
   });

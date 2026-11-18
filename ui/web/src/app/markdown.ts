@@ -65,8 +65,6 @@ export const tableInProgress = {
  * Streamdown's own plugins for an assistant message, except that:
  * - a line that is only a list marker shows as its text (remarkBareListMarkersAsText);
  * - a single newline is a line break, as in ChatGPT and Claude.ai, not a space (remarkBreaks);
- * - a link harden refuses (a citation to a ref such as `@s1.c3`, which is no URL) shows as its text alone rather than
- *   with harden's raw " [blocked]" marker. Still no link either way;
  * - a diagram draws in DESIGN.md's colours, not mermaid's default theme (diagrams).
  */
 export const MARKDOWN_RENDERER = {
@@ -75,5 +73,5 @@ export const MARKDOWN_RENDERER = {
   shikiTheme: SHIKI_THEMES,
   linkSafety: REPLY_MARKDOWN.linkSafety,
   remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBracketMath, remarkBareListMarkersAsText, remarkBreaks],
-  rehypePlugins: replyRehypePlugins({ linkBlockPolicy: "text-only" }),
+  rehypePlugins: replyRehypePlugins(),
 };
