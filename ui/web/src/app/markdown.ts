@@ -3,22 +3,18 @@ import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import remarkBreaks from "remark-breaks";
 import { SHIKI_THEMES } from "./shiki-themes";
-import { defaultRehypePlugins, defaultRemarkPlugins } from "streamdown";
+import { defaultRemarkPlugins } from "streamdown";
 
 import { ReplyCode } from "./diagram-code";
 import { diagrams } from "./diagram-theme";
 import { remarkBracketMath } from "./remark-bracket-math";
-import { REPLY_MARKDOWN } from "./reply-markdown";
-
-type Pluggable = (typeof defaultRehypePlugins)[string];
+import { REPLY_MARKDOWN, replyRehypePlugins } from "./reply-markdown";
 
 type MarkdownNode = {
   type: string;
   children?: MarkdownNode[];
   position?: { start: { offset?: number }; end: { offset?: number } };
 };
-
-const [harden, hardenOptions] = defaultRehypePlugins.harden as [unknown, object];
 
 /**
  * A top-level list whose items are all bare markers (an answer such as "4." or "2026.") becomes a paragraph of its
@@ -79,8 +75,5 @@ export const MARKDOWN_RENDERER = {
   shikiTheme: SHIKI_THEMES,
   linkSafety: REPLY_MARKDOWN.linkSafety,
   remarkPlugins: [...Object.values(defaultRemarkPlugins), remarkBracketMath, remarkBareListMarkersAsText, remarkBreaks],
-  rehypePlugins: Object.values({
-    ...defaultRehypePlugins,
-    harden: [harden, { ...hardenOptions, linkBlockPolicy: "text-only" }] as Pluggable,
-  }),
+  rehypePlugins: replyRehypePlugins({ linkBlockPolicy: "text-only" }),
 };

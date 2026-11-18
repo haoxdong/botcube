@@ -1245,13 +1245,14 @@ describe('an assistant reply', () => {
     expect(within(list).getAllByRole('link')).toHaveLength(1);
   });
 
-  it('preserves external images and links without a Files lookup', async () => {
+  it('blocks an external image and keeps an external link, without a Files lookup', async () => {
     const lookup = vi.spyOn(agentFiles, 'url');
     copilot.reply = '![External](https://example.com/chart.svg) [External download](https://example.com/chart.svg)';
     await renderPage();
     const list = screen.getByTestId('copilot-message-list');
-    expect(await within(list).findByRole('img', { name: 'External' })).toHaveAttribute('src', 'https://example.com/chart.svg');
-    expect(within(list).getByRole('link', { name: 'External download' })).toHaveAttribute('href', 'https://example.com/chart.svg');
+    expect(await within(list).findByRole('link', { name: 'External download' })).toHaveAttribute('href', 'https://example.com/chart.svg');
+    expect(list).toHaveTextContent('[Image blocked: External]');
+    expect(within(list).queryByRole('img')).toBeNull();
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -1408,28 +1409,6 @@ describe('an assistant reply', () => {
     await settle();
     expect(await within(list).findByRole('alert')).toHaveTextContent('Chart could not load: the browser could not show it');
     expect(within(list).queryByRole('img')).toBeNull();
-  });
-
-  it('keeps an image whose download failed, and names the failure', async () => {
-    copilot.reply = '![logo](https://example.com/logo.png)';
-    await renderPage();
-    const chatService = present(fetchMock.getMockImplementation(), 'the Chat Service');
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (url === 'https://example.com/logo.png' ? Promise.reject(new TypeError('Failed to fetch')) : chatService(url, init)));
-
-    const list = screen.getByTestId('copilot-message-list');
-    await userEvent.click(await within(list).findByTitle('Download image'));
-
-    expect(await within(list).findByRole('alert')).toHaveTextContent('logo could not download: Failed to fetch');
-    expect(within(list).getByRole('img', { name: 'logo' })).toHaveAttribute('src', 'https://example.com/logo.png');
-  });
-
-  it('keeps an image it embeds by a URL as it is', async () => {
-    copilot.reply = '![logo](https://example.com/logo.png)';
-
-    await renderPage();
-
-    const image = await within(screen.getByTestId('copilot-message-list')).findByRole('img', { name: 'logo' });
-    expect(image).toHaveAttribute('src', 'https://example.com/logo.png');
   });
 });
 

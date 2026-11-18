@@ -1,3 +1,4 @@
+import { defaultRehypePlugins } from "streamdown";
 import { InlineCode } from "./code-words";
 import { ReplyFileLink } from "./reply-file-link";
 import { ReplyVisual } from "./reply-chart";
@@ -12,3 +13,15 @@ export const REPLY_MARKDOWN = {
   linkSafety: { enabled: false },
   components: { img: ReplyVisual, a: ReplyFileLink, inlineCode: InlineCode },
 };
+
+type Pluggable = (typeof defaultRehypePlugins)[string];
+const [harden, hardenOptions] = defaultRehypePlugins.harden as [unknown, object];
+
+/**
+ * Harden passes an image only at a path, as the agent embeds its files; ReplyImage loads it from Files. It needs an
+ * origin to resolve a path against: a reserved one no address can match.
+ */
+export function replyRehypePlugins(links: { linkBlockPolicy?: "text-only" } = {}): Pluggable[] {
+  const images = { defaultOrigin: "https://reply.invalid", allowedImagePrefixes: ["/"], allowDataImages: false };
+  return Object.values({ ...defaultRehypePlugins, harden: [harden, { ...hardenOptions, ...images, ...links }] as Pluggable });
+}

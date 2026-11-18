@@ -1,8 +1,9 @@
 import { CopilotChatAssistantMessage } from '@copilotkit/react-core/v2';
 import { render, waitFor } from '@testing-library/react';
 import { Streamdown } from 'streamdown';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
+import FullKeptMarkdown from './kept-streamdown';
 import { MARKDOWN_RENDERER } from './markdown';
 import MarkdownRenderer from './markdown-renderer';
 import { REPLY_MARKDOWN } from './reply-markdown';
@@ -419,4 +420,25 @@ it.each(tables)('never shows $name as raw pipes while it streams', ({ markdown }
 it('shows a finished reply that ends on pipe lines that are no table', () => {
   const view = render(<MarkdownRenderer content={'Options:\n\n| buy | sell |'} />);
   expect(view.container).toHaveTextContent('| buy | sell |');
+});
+
+const replySurfaces = [
+  { surface: 'the chat', Reply: ({ text }: { text: string }) => <MarkdownRenderer content={text} /> },
+  { surface: 'a kept chat', Reply: FullKeptMarkdown },
+];
+
+afterEach(() => vi.unstubAllGlobals());
+
+it.each(replySurfaces)('in $surface, loads no image from another address or a data: URI', ({ Reply }) => {
+  const view = render(<Reply text={'![outside](https://example.com/p.png)\n\n![inline](data:image/png;base64,iVBORw0KGgo=)'} />);
+
+  expect(view.container.querySelectorAll('img')).toHaveLength(0);
+});
+
+it.each(replySurfaces)("in $surface, still shows the reply's own image and file card", async ({ Reply }) => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ url: 'https://files.test/file' })));
+  const view = render(<Reply text={'![Chart](/chart.svg)\n\n[Report](/report.csv)'} />);
+
+  await waitFor(() => expect(view.container.querySelector('img')).toHaveAttribute('src', 'https://files.test/file'));
+  expect(view.container.querySelector('.reply-file')).toHaveTextContent('report.csv');
 });
