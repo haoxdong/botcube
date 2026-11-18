@@ -18,6 +18,7 @@
     "@aws-sdk/client-efs": "^3.1162.0",
     "@aws-sdk/client-s3": "^3.1169.0",
     "@aws-sdk/client-scheduler": "^3.1157.0",
+    "@aws-sdk/client-secrets-manager": "^3.1161.0",
     "@aws-sdk/client-sqs": "^3.1157.0",
     "@aws-sdk/client-ssm": "^3.1161.0",
     "@aws-sdk/client-sts": "^3.1157.0",

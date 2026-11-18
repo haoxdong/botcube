@@ -23,12 +23,14 @@ import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-cred
 import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
+import type { ModelsDeployment, ModelsEnv } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
 
 const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
 const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
 
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
+const TURN_SUMMARY_MODEL_ENV: ModelsEnv['turnSummaryModel'] = 'BOTCUBE_TURN_SUMMARY_MODEL';
 
 /** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
@@ -37,12 +39,6 @@ export const CHAT_SERVICE_ENV = {
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
-
-/** `ModelsDeployment` in botcube/deployment-config/models.ts, which this package cannot import (its rootDir). */
-export interface ModelsDeployment {
-  readonly environment: Readonly<Record<string, string>>;
-  readonly apiKeySecretArn: string;
-}
 
 /** Non-secret deploy inputs written by the Cartridge's `deploy/ecs/prepare-origin.py`. */
 interface OriginInput {
@@ -284,7 +280,7 @@ function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatServic
     return;
   }
   const summaryModel = options.turnSummaryModel ?? TURN_SUMMARY_MODEL;
-  if (options.turnSummaryModel) chat.container.addEnvironment('BOTCUBE_TURN_SUMMARY_MODEL', `us.${options.turnSummaryModel}`);
+  if (options.turnSummaryModel) chat.container.addEnvironment(TURN_SUMMARY_MODEL_ENV, `us.${options.turnSummaryModel}`);
   // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['bedrock:InvokeModel'],

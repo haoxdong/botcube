@@ -13,7 +13,10 @@ import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { scaleSessionApi } from './session-api-scaling';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
-import { applyDeploymentSeams, useImageKey, type HarnessAuth, type ModelsDeployment } from './runtime-seams';
+import { applyDeploymentSeams, useImageKey } from './runtime-seams';
+import type { HarnessAuth, ModelsDeployment } from '../../../../deployment-config/seams.js' with {
+  'resolution-mode': 'import',
+};
 import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
 
 /**

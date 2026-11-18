@@ -1,11 +1,17 @@
 import { generateKeyPairSync, randomUUID, type JsonWebKey } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from 'vitest';
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from 'jose';
+import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { HarnessAuth } from 'botcube-deployment-config/seams';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { harnessBearer } from './harness-auth.js';
 import { TurnIdentity } from './turn-identity.js';
 
 const ISSUER = 'https://chat.example.com';
+
+it("shares the Deployment Config's harnessAuth with the CDK as the schema reads it", () => {
+  expectTypeOf<HarnessAuth>().toEqualTypeOf<DeploymentConfig['harnessAuth']>();
+});
 const key: JsonWebKey = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'key-1' };
 
 describe('a Chat Service on the jwt-bearer Harness auth', () => {

@@ -1,6 +1,6 @@
 import { deploymentConfig, type DeploymentConfig } from 'botcube-deployment-config';
 import { loadDeployment } from 'botcube-deployment-config/load';
-import type { HarnessAuth } from './harness-auth.js';
+import type { HarnessAuth } from 'botcube-deployment-config/seams';
 
 const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
 

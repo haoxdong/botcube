@@ -14,6 +14,7 @@ import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
 import { addScheduledRuns, type ScheduledRunsProps } from './scheduled-runs.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
+import type { HarnessAuth } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
 
 /** Adopters reserve these listener priorities and own all shared ALB attributes. */
 export interface ChatServiceIngress {
@@ -23,9 +24,6 @@ export interface ChatServiceIngress {
   cdpRulePriority: number;
   chatRulePriority: number;
 }
-
-/** How the Chat Service authenticates to the Harness: the Deployment Config's `harnessAuth` section. */
-type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; audience: string };
 
 export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** Additional Cartridge configuration; framework-owned environment keys take precedence. */

@@ -11,6 +11,7 @@
     "./parse": "./parse.ts",
     "./footprint": "./footprint.ts",
     "./models": "./models.ts",
+    "./seams": "./seams.d.ts",
     "./environment": "./environment.ts"
   },
   "scripts": {

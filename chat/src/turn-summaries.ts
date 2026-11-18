@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { MODELS_ENV } from 'botcube-deployment-config/models';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
 import { SessionDeletedError, type TurnActivity, type TurnSummary } from './session-metadata.js';
@@ -39,22 +41,22 @@ You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
 /**
- * The summary model the environment names: an OpenAI-compatible endpoint when BOTCUBE_MODELS_BASE_URL is set
- * (the deploy sets it from the Deployment Config's `models` section), else Bedrock. Throws naming a missing variable.
+ * The summary model the environment names: an OpenAI-compatible endpoint when the deploy sets the Deployment Config's
+ * `models` section (`MODELS_ENV`), else Bedrock. Throws naming a missing variable.
  */
 export function turnSummaryModelFromEnv(env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
-  const baseUrl = env.BOTCUBE_MODELS_BASE_URL?.replace(/\/+$/, '');
-  const secretArn = env.BOTCUBE_MODELS_API_KEY_SECRET_ARN;
+  const baseUrl = env[MODELS_ENV.baseUrl]?.replace(/\/+$/, '');
+  const secretArn = env[MODELS_ENV.apiKeySecretArn];
+  const model = env[MODELS_ENV.turnSummaryModel];
   if (baseUrl || secretArn) {
     if (!baseUrl || !secretArn) {
-      throw new Error('An OpenAI-compatible models endpoint needs both BOTCUBE_MODELS_BASE_URL and BOTCUBE_MODELS_API_KEY_SECRET_ARN');
+      throw new Error(`An OpenAI-compatible models endpoint needs both ${MODELS_ENV.baseUrl} and ${MODELS_ENV.apiKeySecretArn}`);
     }
-    const model = env.BOTCUBE_TURN_SUMMARY_MODEL;
-    if (!model) throw new Error('An OpenAI-compatible models endpoint needs BOTCUBE_TURN_SUMMARY_MODEL, the model Turn summaries run on');
+    if (!model) throw new Error(`An OpenAI-compatible models endpoint needs ${MODELS_ENV.turnSummaryModel}, the model Turn summaries run on`);
     return { kind: 'openai-compatible', url: `${baseUrl}/chat/completions`, model, apiKey: secretString(env, secretArn) };
   }
   const endpoint = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
-  return { kind: 'bedrock', region, url: `${endpoint}/model/${encodeURIComponent(env.BOTCUBE_TURN_SUMMARY_MODEL || MODEL_ID)}/converse` };
+  return { kind: 'bedrock', region, url: `${endpoint}/model/${encodeURIComponent(model || MODEL_ID)}/converse` };
 }
 
 /** The summarizer for this summary model. */
@@ -66,24 +68,23 @@ export function turnSummarizer(model: TurnSummaryModel): TurnSummarizer {
 }
 
 /**
- * A Secrets Manager secret's string, read with the Chat Service's AWS credentials on first use and kept;
- * a failed read is tried again on the next use.
+ * A Secrets Manager secret's string, read in the secret's own region with the Chat Service's AWS credentials on first
+ * use and kept; a failed read is tried again on the next use.
  */
 function secretString(env: NodeJS.ProcessEnv, secretArn: string): () => Promise<string> {
   const region = secretArn.split(':')[3];
-  if (!secretArn.startsWith('arn:') || !region) throw new Error(`BOTCUBE_MODELS_API_KEY_SECRET_ARN is not a secret ARN: ${secretArn}`);
-  const endpoint = (env.AWS_ENDPOINT_URL_SECRETS_MANAGER || `https://secretsmanager.${region}.amazonaws.com`).replace(/\/+$/, '');
+  if (!region) throw new Error(`${MODELS_ENV.apiKeySecretArn} is not a secret ARN: ${secretArn}`);
+  const endpoint = env.AWS_ENDPOINT_URL_SECRETS_MANAGER;
   let reading: Promise<string> | undefined;
   const read = async () => {
-    const response = await awsFetch('secretsmanager', region, `${endpoint}/`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-amz-json-1.1', 'x-amz-target': 'secretsmanager.GetSecretValue' },
-      body: JSON.stringify({ SecretId: secretArn }),
-    });
-    if (!response.ok) throw new Error(`Secrets Manager answered HTTP ${response.status} for the models API key`);
-    const { SecretString } = (await response.json()) as { SecretString?: unknown };
-    if (typeof SecretString !== 'string' || !SecretString) throw new Error('The models API key secret holds no string');
-    return SecretString;
+    const client = new SecretsManagerClient({ region, ...(endpoint ? { endpoint } : {}) });
+    try {
+      const { SecretString } = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
+      if (!SecretString) throw new Error('The models API key secret holds no string');
+      return SecretString;
+    } finally {
+      client.destroy();
+    }
   };
   return () => (reading ??= read().catch((error: unknown) => {
     reading = undefined;

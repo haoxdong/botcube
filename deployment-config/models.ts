@@ -1,4 +1,5 @@
 import type { DeploymentConfig } from './schema.js';
+import type { ModelsDeployment, ModelsEnv } from './seams.js';
 
 /**
  * The environment the Chat Service and the Harness read the `models` section from: the deploy sets it from the
@@ -11,14 +12,7 @@ export const MODELS_ENV = {
   apiKeySecretArn: 'BOTCUBE_MODELS_API_KEY_SECRET_ARN',
   /** The model each finished Turn is summarized on. */
   turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL',
-} as const;
-
-/** What the deploy gives the Chat Service and the Harness for a `models` section off Bedrock: the CDK's `models` option. */
-export interface ModelsDeployment {
-  readonly environment: Readonly<Record<string, string>>;
-  /** The secret both processes are granted to read. */
-  readonly apiKeySecretArn: string;
-}
+} as const satisfies ModelsEnv;
 
 /** How this `models` section is deployed; undefined on Bedrock, the default. */
 export function modelsDeployment(models: DeploymentConfig['models']): ModelsDeployment | undefined {

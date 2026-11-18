@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadDeployment } from './load.js';
+import { DeploymentConfigError } from './parse.js';
 
 const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/deployment-config.json`, import.meta.url));
 
@@ -124,6 +125,18 @@ describe('a Deployment Config', () => {
   it('stops when its bot settings file is missing', () => {
     const path = configFile({ bot: './absent.json' });
     expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: bot: no file at ${join(path, '..', 'absent.json')}`);
+  });
+
+  it('stops when there is no file at its path, naming the path', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'deployment-config-')), 'absent.json');
+    expect(() => loadDeployment(path)).toThrow(new DeploymentConfigError(`Deployment Config ${path}: no file`));
+  });
+
+  it('stops when its file is not JSON, naming the path', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'deployment-config-')), 'deployment-config.json');
+    writeFileSync(path, '{ "bot": ');
+    expect(() => loadDeployment(path)).toThrow(DeploymentConfigError);
+    expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: not JSON: `);
   });
 });
 

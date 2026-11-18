@@ -64,18 +64,22 @@ class WarmupFailure extends Error {
   }
 }
 
-export function turnRoutes(
-  app: Hono,
-  cartridge: ChatServiceCartridge,
-  sessionMetadata: SessionMetadata,
-  agentDocuments: AgentDocuments,
-  upstream: ReturnType<typeof sessionLifecycle> | null,
-  config: { warmupTimeoutMs: number },
-  summarizeTurn: TurnSummarizer,
-  turnIdentity: TurnCredentialSource | null,
-  turnQuota: TurnQuota | null,
-  userTokens: UserTokenSigner | null = null,
-) {
+interface TurnRoutesOptions {
+  cartridge: ChatServiceCartridge;
+  stores: { sessionMetadata: SessionMetadata; agentDocuments: AgentDocuments };
+  harness: { upstream: ReturnType<typeof sessionLifecycle> | null; warmupTimeoutMs: number };
+  turns: {
+    summarizeTurn: TurnSummarizer;
+    turnQuota: TurnQuota | null;
+    turnCredentials: TurnCredentialSource | null;
+    userTokens: UserTokenSigner | null;
+  };
+}
+
+export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: TurnRoutesOptions) {
+  const { sessionMetadata, agentDocuments } = stores;
+  const { upstream, warmupTimeoutMs } = harness;
+  const { summarizeTurn, turnQuota, turnCredentials: credentialSource, userTokens } = turns;
   const warming = warmingSessions();
 
   const requireCandidatePrompts = (forwardedProps: Record<string, unknown> | undefined, requester: Requester) => {
@@ -163,7 +167,7 @@ export function turnRoutes(
           return result.value;
         }));
         timing.mark('payload');
-        const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
+        const identity = await forwardTurnIdentity(credentialSource, payload.forwardedProps, {
           actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
         });
         const userToken = await forwardUserToken(userTokens, payload.forwardedProps, { ...requester, threadId: input.threadId, startedAt: running.startedAt });
@@ -178,7 +182,7 @@ export function turnRoutes(
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
         timing.mark('warmupWaitStart');
         try {
-          await warming.until(requester.owner, input.threadId, config.warmupTimeoutMs);
+          await warming.until(requester.owner, input.threadId, warmupTimeoutMs);
         } finally {
           timing.mark('warmupWaitEnd');
         }
@@ -315,13 +319,13 @@ export function turnRoutes(
     }
     const warmAgent = async () => {
       try {
-        const init = { signal: AbortSignal.timeout(config.warmupTimeoutMs) };
+        const init = { signal: AbortSignal.timeout(warmupTimeoutMs) };
         const complete = namedSession === undefined ? Object.assign(async () => undefined, { session: undefined, snapshotEpoch: undefined })
           : await sessionMetadata.beginDispatch(namedSession.owner, namedSession.session.session_id, namedSession.session.filing_user_id);
         mark('dispatch');
         if (complete.session !== undefined) input.forwardedProps.sessionUserId = complete.session.filing_user_id;
         if (namedSession !== undefined) {
-          await forwardTurnIdentity(turnIdentity, input.forwardedProps, {
+          await forwardTurnIdentity(credentialSource, input.forwardedProps, {
             actorId: namedSession.accountActorId, filingActorId: input.forwardedProps.sessionUserId as string,
             sessionId: input.threadId, startedAt: new Date().toISOString(),
           }).catch(async (error: unknown) => {

@@ -15,7 +15,8 @@ registerHooks({
 });
 
 const { footprint, formatFootprint } = await import('./footprint.ts');
-const { DeploymentConfigError, loadDeployment } = await import('./load.ts');
+const { loadDeployment } = await import('./load.ts');
+const { DeploymentConfigError } = await import('./parse.ts');
 
 const [command, path, ...rest] = process.argv.slice(2);
 if (command !== 'footprint' || !path || rest.length) {

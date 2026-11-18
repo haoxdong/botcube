@@ -6,8 +6,10 @@ import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { CreateSecretCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { loadDeployment } from '../../../deployment-config/load.js';
-import { modelsDeployment } from '../../../deployment-config/models.js';
+import { MODELS_ENV, modelsDeployment } from '../../../deployment-config/models.js';
+import { proxyEnvironment } from '../../../deployment-config/environment.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
+import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
 import { startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
 import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
@@ -46,6 +48,8 @@ export interface LocalStack {
   readonly scheduler?: SchedulerView;
   /** The Harness as the Chat Service reaches it: behind the Runtime's JWT authorizer when the Harness auth is a bearer. */
   readonly harnessUrl: string;
+  /** The stand-ins for a Deployment Config's proxy and traces collector, when it names a proxy. */
+  readonly egress: EgressStandIns | undefined;
   browser(): Browser;
   logs(): string;
   stop(): Promise<void>;
@@ -97,9 +101,10 @@ export async function startLocalStack(options: {
   const models = deployment.config.models;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
   const harnessAuth = deployment.config.harnessAuth;
+  const egress = await egressStandIns(deployment.config);
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
-    await Promise.all([...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close()]);
+    await Promise.all([...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close()]);
     await rm(home, { recursive: true, force: true });
   };
   try {
@@ -107,15 +112,15 @@ export async function startLocalStack(options: {
     const modelsEnv = {
       ...modelsDeployment(models)?.environment,
       ...(openAICompatible ? {
-        BOTCUBE_MODELS_BASE_URL: `${openAICompatible.url}/v1`,
-        BOTCUBE_MODELS_API_KEY_SECRET_ARN: await createSecret(dynamodbEndpoint, `models-api-key-${table}`, openAICompatible.apiKey),
+        [MODELS_ENV.baseUrl]: `${openAICompatible.url}/v1`,
+        [MODELS_ENV.apiKeySecretArn]: await createSecret(dynamodbEndpoint, `models-api-key-${table}`, openAICompatible.apiKey),
         AWS_ENDPOINT_URL_SECRETS_MANAGER: dynamodbEndpoint,
         AWS_ACCESS_KEY_ID,
         AWS_SECRET_ACCESS_KEY,
         AWS_EC2_METADATA_DISABLED: 'true',
       } : {}),
     };
-    Object.assign(pythonEnv, modelsEnv, options.harnessEnv);
+    Object.assign(pythonEnv, egress?.environment, modelsEnv, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -166,6 +171,7 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
         BOTCUBE_DEPLOYMENT_CONFIG: deploymentPath,
+        ...egress?.chatEnvironment,
         ...modelsEnv,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
@@ -180,11 +186,37 @@ export async function startLocalStack(options: {
       harnessProcess = await startProcess(required(harnessOptions, 'Harness start options'));
       processes.push(harnessProcess);
     };
-    return { url, bedrock, ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
+    return { url, bedrock, ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
   } catch (error) {
     await stopAll();
     throw error;
   }
+}
+
+interface EgressStandIns {
+  readonly proxy: FakeForwardProxy;
+  readonly collector: FakeOtlpCollector | undefined;
+  readonly environment: Record<string, string>;
+  readonly chatEnvironment: Record<string, string>;
+}
+
+/** The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector, and the environment the deploy derives. */
+async function egressStandIns(config: DeploymentConfig | undefined): Promise<EgressStandIns | undefined> {
+  const proxy = config?.proxy;
+  if (proxy === undefined) return undefined;
+  const otlpEndpoint = config?.telemetry?.otlpEndpoint;
+  const telemetry = otlpEndpoint === undefined ? undefined : { otlpEndpoint, collector: await new FakeOtlpCollector().listen() };
+  const standIn = await new FakeForwardProxy(telemetry ? { [new URL(telemetry.otlpEndpoint).host]: telemetry.collector.url } : {}).listen();
+  const environment = {
+    ...proxyEnvironment({ proxy: { ...proxy, url: standIn.url } }),
+    ...(telemetry ? { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: telemetry.otlpEndpoint } : {}),
+  };
+  return {
+    proxy: standIn,
+    collector: telemetry?.collector,
+    environment,
+    chatEnvironment: { ...environment, ...(telemetry ? { OTEL_TRACES_EXPORTER: 'otlp' } : {}) },
+  };
 }
 
 /** A secret in moto's Secrets Manager holding `value`, by its ARN. */

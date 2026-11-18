@@ -4,6 +4,9 @@ import type * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import type { HarnessAuth, ModelsDeployment } from '../../../../deployment-config/seams.js' with {
+  'resolution-mode': 'import',
+};
 
 const RUNTIME_REMOVED_ACTION =
   /^(bedrock-agentcore:.*Memory.*|bedrock-agentcore:(GetEvent|ListActors|ListEvents|ListSessions|CreateEvent|DeleteEvent|.*ConfigurationBundle.*)|logs:(GetLogEvents|FilterLogEvents|PutResourcePolicy))$/i;
@@ -45,12 +48,6 @@ function jwtAuthorizer(
   };
 }
 
-/** `ModelsDeployment` in botcube/deployment-config/models.ts, which this package cannot import (its rootDir). */
-export interface ModelsDeployment {
-  readonly environment: Readonly<Record<string, string>>;
-  readonly apiKeySecretArn: string;
-}
-
 /** The agent's models run on the Deployment Config's OpenAI-compatible endpoint, its API key read from its secret. */
 type AgentCoreRuntime =
   ReturnType<AgentCoreApplication['environments']['values']> extends Iterator<infer E>
@@ -67,12 +64,10 @@ function applyModelsEndpoint(runtime: AgentCoreRuntime, models: ModelsDeployment
 }
 
 /**
- * How the Chat Service authenticates to the Runtime, the Deployment Config's `harnessAuth`. Absent, SigV4. A JWT
- * bearer is checked against the Chat Service's OIDC discovery at `chatServiceIssuer`, whatever the Turn credentials adapter.
+ * The Deployment Config's wiring on one Runtime: where its models run and who may invoke it. Absent, `harnessAuth` is
+ * SigV4; a JWT bearer is checked against the Chat Service's OIDC discovery at `chatServiceIssuer`, whatever the Turn
+ * credentials adapter.
  */
-export type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; audience: string };
-
-/** The Deployment Config's wiring on one Runtime: where its models run and who may invoke it. */
 export function applyDeploymentSeams(
   stack: Stack,
   runtime: AgentCoreRuntime,

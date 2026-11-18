@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { HarnessAuth, TokenAudiences } from './seams.js';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
 // Every object is strict, so an unknown key fails startup instead of being ignored.
@@ -73,7 +74,7 @@ export const secretReference = z
   .describe('A Secrets Manager secret, by ARN.');
 
 // Each section lists its adapters, the open default first; a missing section is the default.
-const defaultKind = <Kind extends string>(kind: Kind) => z.strictObject({ kind: z.literal(kind) });
+const kindOnly = <Kind extends string>(kind: Kind) => z.strictObject({ kind: z.literal(kind) });
 
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost']);
 const oidcIssuer = z.url().refine((issuer) => {
@@ -82,7 +83,7 @@ const oidcIssuer = z.url().refine((issuer) => {
 }, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
 const identity = z.discriminatedUnion('kind', [
-  defaultKind('botcube-accounts'),
+  kindOnly('botcube-accounts'),
   z.strictObject({
     kind: z.literal('oidc'),
     issuer: oidcIssuer.describe("The provider's issuer URL, where its OpenID configuration is discovered."),
@@ -98,7 +99,7 @@ const identity = z.discriminatedUnion('kind', [
   }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE.'),
 ]);
 const models = z.discriminatedUnion('kind', [
-  defaultKind('bedrock'),
+  kindOnly('bedrock'),
   z.strictObject({
     kind: z.literal('openai-compatible'),
     baseUrl: z.url({ protocol: /^https$/ }).describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
@@ -107,12 +108,7 @@ const models = z.discriminatedUnion('kind', [
   }).describe("Every model on an OpenAI-compatible endpoint, by its key in the bot settings; Plan Usage models still run through the Credential Service."),
 ]);
 /** The audience of each kind of token BotCube's Chat Service signs; botcube/chat signs with these. */
-export const TOKEN_AUDIENCES = {
-  /** The Turn identity's, which STS exchanges for Memory credentials: STS's own, as EKS and GitHub Actions use. */
-  turnIdentity: 'sts.amazonaws.com',
-  /** The signed user token's: a product's own service accepts a token only with it. */
-  user: 'botcube-user',
-} as const;
+export const TOKEN_AUDIENCES = { turnIdentity: 'sts.amazonaws.com', user: 'botcube-user' } as const satisfies TokenAudiences;
 /** The subject of the Chat Service's own service tokens, such as the Harness bearer. */
 export const CHAT_SERVICE_SUBJECT = 'botcube-chat-service';
 /**
@@ -123,7 +119,7 @@ export const RESERVED_AUDIENCES: readonly string[] = [...Object.values(TOKEN_AUD
 export const reservedAudienceError = (audience: string) =>
   `The Harness audience ${audience} is reserved for another kind of BotCube token`;
 const harnessAuth = z.discriminatedUnion('kind', [
-  defaultKind('sigv4'),
+  kindOnly('sigv4'),
   z.strictObject({
     kind: z.literal('jwt-bearer'),
     audience: z.string().min(1)
@@ -131,12 +127,15 @@ const harnessAuth = z.discriminatedUnion('kind', [
       .describe("The `aud` of Chat's tokens, which the Runtime's JWT authorizer allows."),
   }).describe("Chat signs a short-lived bearer token with its Turn identity keys, as the issuer at its public origin; the AgentCore Runtime's JWT authorizer checks it."),
 ]);
+/** Fails to compile when the schema and the `HarnessAuth` seam drift apart. */
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+true satisfies Same<z.infer<typeof harnessAuth>, HarnessAuth>;
 const turnCredentials = z.discriminatedUnion('kind', [
-  defaultKind('web-identity'),
-  defaultKind('assume-role').describe('The Chat Service assumes the Memory role for each Turn with a session policy naming its User; no OIDC provider or session tags.'),
+  kindOnly('web-identity'),
+  kindOnly('assume-role').describe('The Chat Service assumes the Memory role for each Turn with a session policy naming its User; no OIDC provider or session tags.'),
 ]);
 const schedules = z.discriminatedUnion('kind', [
-  defaultKind('eventbridge-scheduler'),
+  kindOnly('eventbridge-scheduler'),
   z.strictObject({ kind: z.literal('table-poller') }).describe('The Chat Service polls its own table and sends each due run to the run queue.'),
 ]);
 

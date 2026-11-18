@@ -26,7 +26,8 @@ import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
 import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
-import { harnessBearer, type HarnessAuth } from './harness-auth.js';
+import type { HarnessAuth } from 'botcube-deployment-config/seams';
+import { harnessBearer } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
 import { accountRoutes } from './account-routes.js';
@@ -186,7 +187,12 @@ export function createChatService(
   app.route('/', cartridge.routes);
 
 
-  turnRoutes(app, cartridge, sessionMetadata, agentDocuments, upstream, config, summarizeTurn, turnCredentials, turnQuota, turnIdentity);
+  turnRoutes(app, {
+    cartridge,
+    stores: { sessionMetadata, agentDocuments },
+    harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
+    turns: { summarizeTurn, turnQuota, turnCredentials, userTokens: turnIdentity },
+  });
 
   const checkReadiness = async () => {
     await initialRecovery;

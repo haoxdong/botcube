@@ -5,9 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
-import { proxyEnvironment } from '../../../deployment-config/environment.js';
 import { loadDeployment } from '../../../deployment-config/load.js';
-import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
 import { PUBLIC_ORIGIN, startLocalStack, type LocalStack } from './local-stack.js';
@@ -67,7 +65,11 @@ describe('the public and the enterprise example', () => {
   });
 });
 
-it('fires a scheduled task on time in the enterprise example, from the table poller into the run queue', { timeout: 120_000 }, async () => {
+const wallClock = (instant: Date, timeZone: string) => new Intl.DateTimeFormat('sv-SE', {
+  timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+}).format(instant).replace(' ', 'T');
+
+it.each(['UTC', 'Asia/Kolkata'])('fires a scheduled task on time in %s in the enterprise example, from the table poller into the run queue', { timeout: 120_000 }, async (timezone) => {
   const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET }, scheduling: true });
   stacks.push(stack);
   const browser = stack.browser();
@@ -80,7 +82,7 @@ it('fires a scheduled task on time in the enterprise example, from the table pol
   // The poller reads due schedules every 10 s, so a run starts at most that late.
   const due = new Date(Math.ceil((Date.now() + 15_000) / 1000) * 1000);
   const task = await browser.post('/scheduled-tasks', {
-    title: 'Morning brief', prompt: 'Brief me', schedule: `at(${due.toISOString().slice(0, 19)})`, timezone: 'UTC', proposalId: 'enterprise-schedule',
+    title: 'Morning brief', prompt: 'Brief me', schedule: `at(${wallClock(due, timezone)})`, timezone, proposalId: `enterprise-schedule-${timezone}`,
   });
   expect(task.status).toBe(201);
   expect(await mainChatReplay()).not.toContain('Scheduled task "Morning brief"');
@@ -122,37 +124,19 @@ it('stops the enterprise example without its OIDC client secret, naming the fiel
 
 it("sends the enterprise example's traces to its collector through its proxy", { timeout: 120_000 }, async () => {
   const path = deploymentConfig('enterprise');
-  const { telemetry, proxy } = loadDeployment(path).config;
-  const collectorHost = new URL(required(telemetry, 'enterprise telemetry').otlpEndpoint).host;
-  const collector = await new FakeOtlpCollector().listen();
-  // The corporate proxy, offline: it carries requests for the collector's host to the stand-in collector.
-  const corporateProxy = await new FakeForwardProxy({ [collectorHost]: collector.url }).listen();
-  try {
-    // What the deploy gives the processes (the ECS Chat Service exports through its collector sidecar; here, directly).
-    const plain = proxyEnvironment({ proxy: { ...required(proxy, 'enterprise proxy'), url: corporateProxy.url } });
-    const stack = await startLocalStack({
-      deploymentConfig: path,
-      harnessEnv: plain,
-      chatEnv: {
-        BOTCUBE_OIDC_CLIENT_SECRET,
-        ...plain,
-        OTEL_TRACES_EXPORTER: 'otlp',
-        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: required(telemetry, 'enterprise telemetry').otlpEndpoint,
-        OTEL_BSP_SCHEDULE_DELAY: '100',
-      },
-    });
-    stacks.push(stack);
-    const browser = stack.browser();
-    await browser.openAccountSession();
-    const turn = await browser.sendTurn(await browser.newSideChat(), { text: 'Hello, who are you?' });
-    expect(sseFrames(await turn.text()).map(frameData).some(({ type }) => type === 'RUN_FINISHED')).toBe(true);
+  const collectorHost = new URL(required(loadDeployment(path).config.telemetry, 'enterprise telemetry').otlpEndpoint).host;
+  const stack = await startLocalStack({ deploymentConfig: path, chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET, OTEL_BSP_SCHEDULE_DELAY: '100' } });
+  stacks.push(stack);
+  const { proxy, collector } = required(stack.egress, "the enterprise example's proxy");
+  const browser = stack.browser();
+  await browser.openAccountSession();
+  const turn = await browser.sendTurn(await browser.newSideChat(), { text: 'Hello, who are you?' });
+  expect(sseFrames(await turn.text()).map(frameData).some(({ type }) => type === 'RUN_FINISHED')).toBe(true);
 
-    await collector.waitForRequests(() => collector.received('Chat Turn'));
-    expect(collector.received('botcube-chat')).toBe(true);
-    expect(new Set(corporateProxy.hosts())).toEqual(new Set([collectorHost]));
-  } finally {
-    await Promise.all([collector.close(), corporateProxy.close()]);
-  }
+  const traces = required(collector, "the enterprise example's collector");
+  await traces.waitForRequests(() => traces.received('Chat Turn'));
+  expect(traces.received('botcube-chat')).toBe(true);
+  expect(new Set(proxy.hosts())).toEqual(new Set([collectorHost]));
 });
 
 it('stops startup on a Deployment Config with an unknown adapter, naming the field', { timeout: 60_000 }, async () => {
