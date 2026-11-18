@@ -1192,14 +1192,14 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         }
         // On a phone, the Muse/dots north star's Fig 21 drawer
         if (width === 440) {
-          expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('12px');
-          expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('12px');
+          expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('10px');
+          expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('10px');
           expect(styleOf(container, '.sidebar-section-header').paddingBottom).toBe('0px');
           expect(styleOf(container, '.sidebar-brand').padding).toBe('0px 20px');
           expect(styleOf(container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
           expect(styleOf(container, '.user-menu-trigger').height).toBe('44px');
           expect(styleOf(container, '.user-menu-trigger').padding).toBe('0px');
-          expect(styleOf(container, '.user-menu-trigger').gap).toBe('12px');
+          expect(styleOf(container, '.user-menu-trigger').gap).toBe('13px');
         }
       } finally {
         unmount();
@@ -1562,23 +1562,23 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     try {
       expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f0f0f0');
       expect(zero(styleOf(open.container, '.sidebar-main').gap)).toBe('0px');
-      expect(styleOf(open.container, '.sidebar-main').padding).toBe('calc(20px * 2) 8px 12px');
-      expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('12px 20px 0px');
+      expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
+      expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');
       // happy-dom keeps :root's custom properties from their first read, whatever the viewport since, so this reads
       // the sheet: the label still takes the phone's 13px `label` role, tracked, in capitals.
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*(\/\*[^*]*\*\/\s*)?:root \{[^}]*--font-label: 0\.8125rem;/);
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*\.sidebar-side-chats-toggle \{\s*font-size: var\(--font-label\);\s*letter-spacing: var\(--tracking-caps\);/);
       expect(styleOf(open.container, '.sidebar-side-chats-toggle').textTransform).toBe('uppercase');
-      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 8px');
+      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 10px');
       expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
       expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#e8e8e8');
       const nav = styleOf(open.container, '.sidebar-nav-item');
       expect({ top: nav.paddingTop, margin: nav.margin }).toEqual({ top: '8px', margin: '2px 0px' });
       const row = styleOf(open.container, '.sidebar-item-btn');
-      expect({ top: zero(row.paddingTop), left: row.paddingLeft }).toEqual({ top: '0px', left: '12px' });
+      expect({ top: zero(row.paddingTop), left: row.paddingLeft }).toEqual({ top: '0px', left: '10px' });
       // Touch opens a row's menu with a long-press, so the phone's rows show no actions button.
       expect(styleOf(open.container, '.sidebar-item-more').clipPath).toBe('inset(50%)');
-      expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('12px');
+      expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('13px');
     } finally {
       open.unmount();
     }

@@ -172,9 +172,10 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
     if (!isOpen) panel.collapse();
     else if (panel.isCollapsed()) panel.resize(OPEN_SIZE);
   }, [isOpen, side]);
+  // Motion's `layout` measures on every render; the chat column glides only for the Artifact panel.
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
-      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
+      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" layoutDependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" className="artifact-side-panel" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {

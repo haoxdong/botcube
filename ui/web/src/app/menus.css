@@ -147,6 +147,7 @@
     transition: none;
   }
 
+  /* stylelint-disable declaration-property-value-allowed-list -- Fig 21's measured insets, through its nav rows */
   /* Fig 21's drawer, from the safe area's top: a 44px title row, rows from 82px (Fig 21's gap from its title to
      its TABS label, which we leave out) at a 44px pitch, a divider 10px below them, then the Side chats header and
      its rows at the same pitch; content 20px from each side. */
@@ -157,16 +158,16 @@
 
   .sidebar-expanded .sidebar-nav {
     gap: 0;
-    padding: calc(var(--space-20) * 2) var(--space-8) var(--space-12);
+    padding: 38px 10px 10px;
   }
 
   .sidebar-expanded .sidebar-section-header {
-    padding: var(--space-12) var(--space-20) 0;
+    padding: 10px var(--space-20) 0;
   }
 
   /* Rows across the nav pills' width, text 20px from the edge; a row's ⋯ under the + control */
   .sidebar-list {
-    padding: 0 var(--space-8);
+    padding: 0 10px;
   }
 
   .sidebar-item {
@@ -174,11 +175,11 @@
   }
 
   .sidebar-item-btn {
-    padding: 0 var(--space-12);
+    padding: 0 10px;
   }
 
   .sidebar-show-more {
-    padding-left: var(--space-12);
+    padding-left: 10px;
   }
 
   .sidebar-item-name {
@@ -186,9 +187,10 @@
   }
 
   .sidebar-expanded .sidebar-nav-item {
-    gap: var(--space-16);
-    padding: var(--space-8) var(--space-12);
+    gap: 18px;
+    padding: var(--space-8) 10px;
   }
+  /* stylelint-enable declaration-property-value-allowed-list */
 
   .sidebar-expanded .sidebar-nav-icon {
     width: calc(var(--spacing) * 6);
@@ -420,7 +422,8 @@
 @media (max-width: 640px) {
   .sidebar-expanded .user-menu-trigger {
     height: 44px;
-    gap: var(--space-12);
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- Fig 21: the name on the labels' 62px edge */
+    gap: 13px;
     padding: 0;
   }
 }
