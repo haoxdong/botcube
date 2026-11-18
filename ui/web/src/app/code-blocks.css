@@ -101,7 +101,19 @@
   outline: none;
 }
 
-.diagram-fullscreen-popup > [data-streamdown="mermaid-block"] {
+.diagram-fullscreen-css {
+  position: fixed;
+  inset: 0;
+  z-index: 600;
+  transition: opacity var(--motion-quick) var(--ease);
+}
+
+.diagram-fullscreen-css[data-ending-style] {
+  opacity: 0;
+}
+
+.diagram-fullscreen-popup > [data-streamdown="mermaid-block"],
+.diagram-fullscreen-content > [data-streamdown="mermaid-block"] {
   display: contents;
 }
 
