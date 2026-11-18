@@ -95,10 +95,10 @@ body {
   --ui-zoom: 1;
 
   /* Sidebar spacing */
-  --sidebar-pad-x: 8px;
-  --sidebar-pad-y: 4px;
-  --sidebar-pad-bottom: 4px;
-  --sidebar-btn-pad: 8px 10px;
+  --sidebar-pad-x: var(--space-8);
+  --sidebar-pad-y: var(--space-4);
+  --sidebar-pad-bottom: var(--space-4);
+  --sidebar-btn-pad: var(--space-8) var(--space-12);
 }
 
 /* shadcn's colour names, read from our tokens, for Tailwind's classes (@theme below) and CopilotKit v2's (`cpk:`, its
@@ -160,8 +160,8 @@ body {
   min-height: 100vh;
   display: grid;
   place-content: center;
-  gap: 0.75rem;
-  padding: 1.5rem;
+  gap: var(--space-12);
+  padding: var(--space-24);
   background: var(--color-white);
   text-align: center;
 }
