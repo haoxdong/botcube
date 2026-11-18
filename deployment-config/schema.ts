@@ -51,6 +51,10 @@ export const botSettings = z
       .array(z.string().min(1))
       .optional()
       .describe("Skill directories, relative to this file, each holding a SKILL.md; the bot's image copies them beside it."),
+    userTokenInShell: z
+      .boolean()
+      .optional()
+      .describe("Whether the agent's shell holds the Turn's signed user token as BOTCUBE_USER_TOKEN, for the bot's CLIs to call its own service as the User; absent, it does not. Only for a bot with its own service."),
     ...webUiSettings,
   })
   .superRefine(({ models, agentComputer }, context) => {

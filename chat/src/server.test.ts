@@ -257,7 +257,7 @@ it('forwards only the registered snapshot epoch', async () => {
   } finally { await target.stop(); }
 });
 
-it('hands the Harness the signed user token of the requester for the Turn, never one the client sent', async () => {
+it('hands the Harness the signed user token of the requester for the Turn, never one the client sent, expiring with the Turn', async () => {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const target = await startInProcess({ config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'test-user' }] } } });
   try {
@@ -265,9 +265,11 @@ it('hands the Harness the signed user token of the requester for the Turn, never
     const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
     request.body = JSON.stringify({ ...JSON.parse(request.body), forwardedProps: { userToken: 'client-sent' } });
     expect(await (await target.app.request('/', request)).text()).toContain('RUN_FINISHED');
-    const { userToken } = target.agentcore.invocationFor(threadId).payload.forwardedProps;
+    const { userToken, turnIdentity, turnStartedAt } = target.agentcore.invocationFor(threadId).payload.forwardedProps;
     const { payload } = await jwtVerify(String(userToken), publicKey, { issuer: 'https://chat.example.com', audience: 'botcube-user' });
-    expect(payload).toMatchObject({ sub: 'account-1', anonymous: false, threadId });
+    const turnEnds = Math.floor(Date.parse(String(turnStartedAt)) / 1000) + 3600;
+    expect(payload).toMatchObject({ sub: 'account-1', anonymous: false, threadId, exp: turnEnds });
+    expect(decodeJwt(String(turnIdentity)).exp).toBe(turnEnds);
   } finally { await target.stop(); }
 });
 

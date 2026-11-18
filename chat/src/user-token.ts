@@ -1,11 +1,9 @@
 import { TOKEN_AUDIENCES } from 'botcube-deployment-config';
 import { Hono, type Context } from 'hono';
-import type { TurnIdentity } from './turn-identity.js';
+import { turnEnds, type TurnIdentity } from './turn-identity.js';
 
 export const USER_TOKEN_AUDIENCE = TOKEN_AUDIENCES.user;
 const USER_TOKEN_SECONDS = 600;
-// A Turn's own lifetime, as its Turn identity token has (turn-identity.ts).
-const TURN_USER_TOKEN_SECONDS = 3600;
 
 /** The user token's signer: the Turn identity keys. */
 export type UserTokenSigner = Pick<TurnIdentity, 'signToken'>;
@@ -29,15 +27,19 @@ export function userTokenRoutes(issuer: Pick<TurnIdentity, 'signToken'>, request
 /**
  * Hand the Harness the Turn's signed user token as `forwardedProps.userToken`, never one the client sent, and answer it
  * for redaction. The bot's own tools call the product's service with it as the User (ADR 0091); `threadId` names the
- * Turn's Session for that service's audit. A Chat Service without Turn identity keys forwards none.
+ * Turn's Session for that service's audit. It expires at the Turn's timeout, measured from `startedAt`, as the Turn
+ * identity does. A Chat Service without Turn identity keys forwards none.
  */
 export async function forwardUserToken(
-  signer: UserTokenSigner | null, forwardedProps: Record<string, unknown>, user: { owner: string; anonymous?: boolean | undefined; threadId: string },
+  signer: UserTokenSigner | null, forwardedProps: Record<string, unknown>,
+  user: { owner: string; anonymous?: boolean | undefined; threadId: string; startedAt: string },
 ): Promise<string[]> {
   delete forwardedProps.userToken;
   if (signer === null) return [];
+  const lifetimeSeconds = turnEnds(user.startedAt) - Math.floor(Date.now() / 1000);
+  if (lifetimeSeconds <= 0) throw new Error(`The Turn that started at ${user.startedAt} has ended`);
   const token = await signer.signToken({
-    audience: USER_TOKEN_AUDIENCE, subject: user.owner, lifetimeSeconds: TURN_USER_TOKEN_SECONDS,
+    audience: USER_TOKEN_AUDIENCE, subject: user.owner, lifetimeSeconds,
     claims: { anonymous: user.anonymous === true, threadId: user.threadId },
   });
   forwardedProps.userToken = token;

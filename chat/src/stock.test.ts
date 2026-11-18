@@ -54,6 +54,13 @@ describe('the stock Chat Service', () => {
     expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Bot settings ${join(path, '..', 'bot.json')}: agentIdentity.character: `);
   });
 
+  it('stops before serving a bot that wants the user token in its shell when there are no Turn identity keys to sign it', () => {
+    const path = deploymentConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }], userTokenInShell: true });
+
+    expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
+    expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path, BOTCUBE_TURN_IDENTITY_KEYS: '[]' })).not.toThrow();
+  });
+
   it('offers only the bot settings\' models, with no account models', async () => {
     const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE })(history);
 

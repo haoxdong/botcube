@@ -10,6 +10,7 @@ import os
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -29,6 +30,7 @@ _RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES'
 _SCHEMA = json.loads(Path(__file__).with_name('bot-settings.schema.json').read_text(encoding='utf8'))
 # Where the agent finds the bot's skills, one directory each.
 SKILLS = '/skills/'
+USER_TOKEN_ENV = 'BOTCUBE_USER_TOKEN'
 
 
 class BotSettingsError(RuntimeError):
@@ -42,6 +44,7 @@ class BotSettings:
     models: tuple[str, ...]
     # Each skill's directory, holding its SKILL.md.
     skills: tuple[Path, ...]
+    user_token_in_shell: bool
     # The bot's instructions to every User, joined to the system prompt after BotCube's own; empty, none.
     instructions: str = ''
 
@@ -72,6 +75,7 @@ def load_bot_settings(path: Path) -> BotSettings:
         agent_name=settings['agentIdentity']['name'],
         models=tuple(model['key'] for model in settings['models']),
         skills=skills,
+        user_token_in_shell=settings.get('userTokenInShell', False),
         instructions=instructions,
     )
 
@@ -100,15 +104,15 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
     return HarnessDefinition(
         skills=(SKILLS,) if bot.skills else (),
         agent_name=bot.agent_name,
-        prepare_invocation=_prepare_invocation,
+        prepare_invocation=partial(_prepare_invocation, user_token_in_shell=bot.user_token_in_shell),
         prepare_root=prepare_root,
         session_id_env_var='BOTCUBE_SESSION_ID',
-        environment_cache_key=environment_cache_key(_RESOURCE_ATTRIBUTES),
+        environment_cache_key=environment_cache_key(USER_TOKEN_ENV, _RESOURCE_ATTRIBUTES),
         system_prompt=bot.instructions,
     )
 
 
-def _prepare_invocation(input_data: Any) -> InvocationAuth:
+def _prepare_invocation(input_data: Any, *, user_token_in_shell: bool) -> InvocationAuth:
     """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
 
     The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
@@ -121,8 +125,11 @@ def _prepare_invocation(input_data: Any) -> InvocationAuth:
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     relay = openai_model_relay(url, token, session) if url and token and isinstance(session, str) else None
     actor = turn_actor(props.get('turnIdentity')) or props.get('sessionUserId')
-    environment = _span_resource(actor, props.get('traffic'))
-    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=environment, model_relay=relay)
+    environment = {
+        **(_span_resource(actor, props.get('traffic')) or {}),
+        **({USER_TOKEN_ENV: props.get('userToken') or ''} if user_token_in_shell else {}),
+    }
+    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=environment or None, model_relay=relay)
 
 
 def _span_resource(actor: Any, traffic: Any) -> dict[str, str] | None:

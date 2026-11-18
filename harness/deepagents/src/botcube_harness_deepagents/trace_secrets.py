@@ -160,11 +160,17 @@ def _strip_cookie_values(text: str) -> str:
     return ''.join(parts) + text[cursor:]
 
 
-def strip_secrets(text: str, literals: Iterable[str] = ()) -> str:
-    """`text` with cookies, `Authorization` headers, tokens, session ids and signed URLs replaced by `[redacted]` (ADR 0085)."""
+def strip_literals(text: str, literals: Iterable[str]) -> str:
+    """`text` with each literal replaced by `[redacted]`, as it is or split across the shell's `[stderr] ` lines."""
     for literal in literals:
         text = text.replace(literal, REDACTED)
         text = text.replace(literal.replace('\n', '\n[stderr] '), REDACTED)
+    return text
+
+
+def strip_secrets(text: str, literals: Iterable[str] = ()) -> str:
+    """`text` with cookies, `Authorization` headers, tokens, session ids and signed URLs replaced by `[redacted]` (ADR 0085)."""
+    text = strip_literals(text, literals)
     text = _strip_secret_arguments(text)
     text = _URL.sub(_strip_url, text)
     text = _QUOTED_COOKIE_HEADER.sub(lambda match: f'{match.group(1)}{match.group(2)}{REDACTED}{match.group(1)}', text)

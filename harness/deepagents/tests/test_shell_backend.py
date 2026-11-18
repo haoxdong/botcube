@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from opentelemetry.instrumentation import auto_instrumentation
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF
 
+from botcube_harness_deepagents.bot_settings import USER_TOKEN_ENV
 from botcube_harness_deepagents.shell_backend import WorkerShellBackend
 
 
@@ -733,3 +735,49 @@ def test_real_curl_insecure_bundles_strip_retained_credentials(
     assert 'opaque-private-auth' not in record['command']
     assert '[redacted]' in record['command']
     assert record['command'].endswith(' --version')
+
+
+_USER_TOKEN = f'eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.{hashlib.sha256(b"user-1").hexdigest()}'
+
+
+def _holding_user_token(tmp_path: Path) -> WorkerShellBackend:
+    return WorkerShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False, env={USER_TOKEN_ENV: _USER_TOKEN})
+
+
+@pytest.mark.parametrize('command', ['env', 'env >&2; exit 3', "cat /proc/self/environ | tr '\\0' '\\n'"])
+def test_a_command_printing_its_environment_shows_the_user_token_redacted(tmp_path: Path, command: str) -> None:
+    result = _holding_user_token(tmp_path).execute(command)
+
+    assert f'{USER_TOKEN_ENV}=[redacted]' in result.output
+    assert _USER_TOKEN not in result.output
+
+
+def test_a_file_holding_the_environment_reads_and_greps_with_the_user_token_redacted(tmp_path: Path) -> None:
+    backend = _holding_user_token(tmp_path)
+    backend.execute('env > environment.txt')
+
+    read = backend.read('/environment.txt')
+    grep = backend.grep(USER_TOKEN_ENV, '/')
+
+    assert read.file_data is not None
+    assert f'{USER_TOKEN_ENV}=[redacted]' in read.file_data['content']
+    assert [match['text'] for match in grep.matches or []] == [f'{USER_TOKEN_ENV}=[redacted]']
+    assert _USER_TOKEN not in repr((read, grep))
+
+
+def test_a_file_holding_an_earlier_turn_s_user_token_stays_redacted_after_the_token_rotates(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    backend = _holding_user_token(tmp_path)
+    backend.execute('env > environment.txt')
+    backend._env[USER_TOKEN_ENV] = f'{_USER_TOKEN[:-8]}rotated1'  # the next Turn's token, as serving applies it
+
+    caplog.set_level(logging.INFO)
+    read = backend.read('/environment.txt')
+    grep = backend.grep(USER_TOKEN_ENV, '/')
+    shown = backend.execute('cat environment.txt')
+
+    assert read.file_data is not None
+    assert f'{USER_TOKEN_ENV}=[redacted]' in read.file_data['content']
+    assert f'{USER_TOKEN_ENV}=[redacted]' in shown.output
+    assert _USER_TOKEN not in repr((read, grep, shown.output, caplog.text))

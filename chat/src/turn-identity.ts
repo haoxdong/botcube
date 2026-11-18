@@ -10,7 +10,7 @@ import { z } from 'zod';
  * filing actor and Session. AgentCore Identity and Gateway take the same token for Connectors.
  */
 
-const LIFETIME_SECONDS = 3600;
+const TURN_LIFETIME_SECONDS = 3600;
 /** A service token covers one call: long enough for clock skew, short enough that a leaked one soon dies. */
 const SERVICE_TOKEN_SECONDS = 300;
 const TAGS_CLAIM = 'https://aws.amazon.com/tags';
@@ -58,6 +58,16 @@ export function turnIdentityConfigFromEnv(env: NodeJS.ProcessEnv): TurnIdentityC
   if (!keys.success) throw new Error(KEYS_ERROR);
   if (new Set(keys.data.map((key) => key.kid)).size !== keys.data.length) throw new Error('BOTCUBE_TURN_IDENTITY_KEYS repeats a kid');
   return { issuer: origin, keys: keys.data };
+}
+
+function turnStart(startedAt: string): number {
+  const seconds = Math.floor(Date.parse(startedAt) / 1000);
+  if (!Number.isFinite(seconds)) throw new Error('The Turn start is not a timestamp');
+  return seconds;
+}
+
+export function turnEnds(startedAt: string): number {
+  return turnStart(startedAt) + TURN_LIFETIME_SECONDS;
 }
 
 /** The snapshot checkpointer's writes-session prefix for a Session, without its trailing dash. */
@@ -111,16 +121,14 @@ export class TurnIdentity implements TurnCredentialSource {
   }
 
   async sign(turn: TurnIdentityClaims): Promise<string> {
-    const startedAt = Math.floor(Date.parse(turn.startedAt) / 1000);
-    if (!Number.isFinite(startedAt)) throw new Error('The Turn start is not a timestamp');
     const principalTags = Object.fromEntries(Object.entries(turnScope(turn)).map(([key, value]) => [key, [value]]));
     return await new SignJWT({ [TAGS_CLAIM]: { principal_tags: principalTags } })
       .setProtectedHeader({ alg: 'ES256', kid: this.signing.kid, typ: 'JWT' })
       .setIssuer(this.issuer)
       .setAudience(TOKEN_AUDIENCES.turnIdentity)
       .setSubject(turn.actorId)
-      .setIssuedAt(startedAt)
-      .setExpirationTime(startedAt + LIFETIME_SECONDS)
+      .setIssuedAt(turnStart(turn.startedAt))
+      .setExpirationTime(turnEnds(turn.startedAt))
       .setJti(randomUUID())
       .sign(this.signing.key);
   }

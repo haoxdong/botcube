@@ -98,6 +98,10 @@
         "minLength": 1
       }
     },
+    "userTokenInShell": {
+      "description": "Whether the agent's shell holds the Turn's signed user token as BOTCUBE_USER_TOKEN, for the bot's CLIs to call its own service as the User; absent, it does not. Only for a bot with its own service.",
+      "type": "boolean"
+    },
     "theme": {
       "description": "The agent's four colours, for its illustrations; absent, BotCube's own. The avatar is the Agent Identity's.",
       "type": "object",

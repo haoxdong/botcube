@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Iterator
@@ -96,6 +97,57 @@ def test_a_turn_runs_on_the_model_it_names(bot_service: _Service) -> None:
     assert bot_service.recorder.builds[-1]['model'] == 'opus-4.6'
 
 
+def _signed(subject: str) -> str:
+    return f'eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ7{subject}In0.{hashlib.sha256(subject.encode()).hexdigest()}'
+
+
+def _shell_reading(token: str) -> str:
+    return f'{hashlib.sha256(token.encode()).hexdigest()}  -'
+
+
+_PRINT_ENVIRONMENT = 'run: env; printf %s "$BOTCUBE_USER_TOKEN" | sha256sum'
+
+
+@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
+def test_an_opted_in_bot_s_shell_holds_the_turn_s_user_token_which_the_model_and_transcript_never_see(
+    bot_service: _Service, caplog: pytest.LogCaptureFixture,
+) -> None:
+    token = _signed('user-1')
+
+    events = bot_service.turn(_PRINT_ENVIRONMENT, userToken=token)
+
+    output = _tool_output(events)
+    assert _shell_reading(token) in output
+    assert 'BOTCUBE_USER_TOKEN=[redacted]' in output
+    seen = json.dumps([events, bot_service.recorder.prompts, bot_service.recorder.heard])
+    assert token not in seen
+    assert 'harness_shell_output' in caplog.text
+    assert token not in caplog.text
+
+
+@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
+def test_each_turn_s_shell_holds_that_turn_s_user_token(bot_service: _Service) -> None:
+    bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('first'))
+
+    events = bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('second'))
+
+    assert _shell_reading(_signed('second')) in _tool_output(events)
+
+
+@pytest.mark.parametrize('bot_service', [{'userTokenInShell': True}], indirect=True)
+def test_a_turn_without_a_user_token_leaves_none_from_an_earlier_turn_in_the_shell(bot_service: _Service) -> None:
+    bot_service.turn(_PRINT_ENVIRONMENT, userToken=_signed('first'))
+
+    events = bot_service.turn('run: printf "[%s]" "$BOTCUBE_USER_TOKEN"')
+
+    assert _tool_output(events).startswith('[]')
+
+
+@pytest.mark.parametrize('bot_service', [{}, {'userTokenInShell': False}], indirect=True)
+def test_a_bot_keeps_the_user_token_out_of_its_shell_unless_it_opts_in(bot_service: _Service) -> None:
+    events = bot_service.turn('run: printenv BOTCUBE_USER_TOKEN || echo absent', userToken=_signed('user-1'))
+
+    assert _tool_output(events).startswith('absent\n')
 def test_a_turn_acts_as_the_actor_its_identity_names(bot_service: _Service) -> None:
     # A Session filed under an older ID: the acting User is the Turn identity's actor, not the Session's filing ID.
     bot_service.turn('hello', user='older-filing', turnIdentity=turn_identity('current-actor', 'older-filing'))
@@ -140,6 +192,7 @@ def test_a_traffic_change_reaches_the_cached_agent_without_a_rebuild(bot_service
         ({'models': []}, 'models'),
         ({'skills': ['skills/missing']}, 'skills.0'),
         ({'skills': ['skills/greeting', 'other/greeting']}, 'skills.1'),
+        ({'userTokenInShell': 'yes'}, 'userTokenInShell'),
         ({'instructions': 'MISSING.md'}, 'instructions'),
     ],
 )

@@ -4,7 +4,7 @@ import { DeleteMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
-import { jwtVerify } from 'jose';
+import { decodeJwt, jwtVerify } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
@@ -485,7 +485,7 @@ describe('a scheduled run', () => {
     expect(retire).not.toHaveBeenCalled();
   });
 
-  it('hands the Harness a signed user token for the owner, as a chat Turn does', async () => {
+  it('hands the Harness a signed user token for the owner that expires with the run, as a chat Turn does', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const signed = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
     const account = owner();
@@ -502,6 +502,7 @@ describe('a scheduled run', () => {
       const input = RunAgentInputSchema.parse(JSON.parse(defined(signed.agentcore.invocations().at(-1), 'scheduled invocation').body));
       const { payload } = await jwtVerify(String(input.forwardedProps.userToken), publicKey, { issuer: 'https://chat.example.com', audience: 'botcube-user' });
       expect(payload).toMatchObject({ sub: account, anonymous: false, threadId: input.threadId });
+      expect(payload.exp).toBe(decodeJwt(String(input.forwardedProps.turnIdentity)).exp);
     } finally {
       await signed.stop();
     }

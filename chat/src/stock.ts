@@ -36,6 +36,9 @@ export interface StockOptions {
 /** BotCube's own Chat Service, composed from the Deployment Config and the bot settings it names (ADR 0091). */
 export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): CartridgeFactory {
   const { config, bot } = deployment(env);
+  if (bot.userTokenInShell === true && env.BOTCUBE_TURN_IDENTITY_KEYS === undefined) {
+    throw new Error('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
+  }
   const accountStore = options.accountStore ?? stockAccountStore(env);
   const store = () => accountStore;
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;

@@ -873,7 +873,8 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
     with turn_timing.phase('invocation_auth'):
         auth = _require_cartridge().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
-    # The signed user token is the bot's (ADR 0091), never the agent's.
+    # Only an opted-in bot's shell holds the user token, for its CLIs to call its own service as the User (ADR 0091):
+    # minted per Turn, user-token audience, redacted from tool output, never in the model's context.
     forwarded.pop('userToken', None)
     if not auth.actor_id:
         raise MissingUserIdError(

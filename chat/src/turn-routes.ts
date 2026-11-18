@@ -166,7 +166,7 @@ export function turnRoutes(
         const identity = await forwardTurnIdentity(turnIdentity, payload.forwardedProps, {
           actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
         });
-        const userToken = await forwardUserToken(userTokens, payload.forwardedProps, { ...requester, threadId: input.threadId });
+        const userToken = await forwardUserToken(userTokens, payload.forwardedProps, { ...requester, threadId: input.threadId, startedAt: running.startedAt });
         timing.mark('identity');
         credentials = [...credentials, ...identity, ...userToken];
         payload.forwardedProps.sessionUserId = filingUserId;
