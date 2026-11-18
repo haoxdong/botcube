@@ -139,6 +139,29 @@ def test_poll_waits_for_its_stack_without_starting_another_update():
     assert world.stored == 'parked'
 
 
+def test_stuck_live_wake_fails_before_waiting_indefinitely(monkeypatch):
+    world, module = Production(True), load()
+    monkeypatch.setattr(module.time, 'time', lambda: 2000)
+    world.stacks['bot-cube-preview-origin']['StackStatus'] = 'UPDATE_IN_PROGRESS'
+    state = {'mode': 'live', 'op': 'advance', 'index': 3, 'started': True, 'startedAt': 1099}
+    with pytest.raises(RuntimeError, match='Live wake exceeded 900 seconds at origin'):
+        world.advance(module, state)
+    assert world.stored == 'parked'
+    assert world.effects == []
+
+
+@pytest.mark.parametrize(('mode', 'started_at'), [('live', 1100), ('parked', 1000)])
+def test_wake_budget_allows_in_budget_work_and_long_park_drains(monkeypatch, mode, started_at):
+    world, module = Production(True), load()
+    monkeypatch.setattr(module.time, 'time', lambda: 2000)
+    world.stacks['bot-cube-preview-origin']['StackStatus'] = 'UPDATE_IN_PROGRESS'
+    index = 3 if mode == 'live' else 1
+    state = {'mode': mode, 'op': 'advance', 'index': index, 'started': True, 'startedAt': started_at}
+    assert world.advance(module, state)['waiting'] is True
+    assert world.effects == []
+    assert world.stored == 'parked'
+
+
 def test_rollback_fails_without_starting_services_or_publishing_live():
     world, module = Production(True), load()
     state = world.advance(module, {'action': 'unpark', 'op': 'advance'})

@@ -93,6 +93,8 @@ def advance(event, cloudformation, ssm, verify, capacity, refresh, spares, actio
     target = action
     step = STEPS[action][index]
     state = {**event, 'startedAt': event.get('startedAt', time.time())}
+    if action == 'live' and time.time() - state['startedAt'] > 900:
+        raise RuntimeError(f'Live wake exceeded 900 seconds at {step}; inspect the transition and return production to Parked')
     if step in STACKS:
         waiting = update_stack(cloudformation, STACKS[step], target, event.get('started', False))
         if waiting:
