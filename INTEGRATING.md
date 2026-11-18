@@ -44,7 +44,7 @@ images:
 
 ```bash
 bash templates/always-on/deploy/stage-tools.sh
-docker build -f templates/always-on/chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
+docker build -f chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
 docker build -f templates/always-on/deploy/credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
 docker build -f harness/deepagents/Dockerfile -t harness harness/deepagents
 docker build -f harness/deepagents/session-api.Dockerfile -t session-api harness/deepagents
@@ -99,7 +99,7 @@ Import `HarnessDefinition`, `InvocationAuth`, and `ModelRelay` from the shared
 dependency of your Cartridge. The template and product Cartridge use the same
 definitions; keep sign-in, skills, and model policy in your own Cartridge.
 
-Use [the template Chat Cartridge](templates/always-on/chat/src/cartridge.ts) to supply request identity, Session ownership, invocation policy, routes, and browser authorization. Its [entry point](templates/always-on/chat/src/main.ts) calls `serveChatService` with the Cartridge factory.
+The [stock Chat Service](chat/src/stock.ts) needs no Chat Cartridge: it composes itself from the Deployment Config that `BOTCUBE_DEPLOYMENT_CONFIG` names and the bot settings it points to.
 
 Use [the template UI plugin](templates/always-on/ui/web/src/index.ts) to supply copy, Chat Service URL, auth UI, views, and theme through the [typed UI contract](ui/web/src/cartridge/types.ts). Bind the plugin with `CARTRIDGE_UI_PACKAGE` at build time.
 
@@ -349,7 +349,7 @@ The [staging hook](templates/always-on/deploy/stage-tools.sh) packages the Cartr
 
 ### Bind site Sign-in to an Account
 
-The [Chat Cartridge](templates/always-on/chat/src/cartridge.ts) composes the [Account policy](templates/always-on/chat/src/account.ts) and [Sign-in routes](templates/always-on/chat/src/sign-in.ts). Local browsers receive opaque Account session cookies that expire after a day and reset when Chat Service restarts.
+The stock Chat Service lists no site Sign-ins; a product's own service links its sites. Local browsers receive opaque Account session cookies that expire after a day and reset when Chat Service restarts.
 
 The [fake site](templates/always-on/src/botcube_always_on/fake_site.py) issues a Durable Credential after a button click. The [site provider](templates/always-on/src/botcube_always_on/site_provider.py), registered by the [Credential Service entry point](templates/always-on/src/botcube_always_on/credential_service.py), captures and stores it in the encrypted Vault. Configure that service and the Chat Service as described in the template README.
 

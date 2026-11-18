@@ -2,6 +2,9 @@
   "name": "botcube-chat",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire as __chatCreateRequire}from'node:module';const require=__chatCreateRequire(import.meta.url);\" --outdir=dist"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*.ts"

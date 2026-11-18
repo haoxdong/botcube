@@ -97,7 +97,7 @@ of the same three slots.
 
 A Cartridge's Chat Service half is a TypeScript package whose entry point passes a
 `CartridgeFactory` (`chat/src/cartridge.ts`) to `serveChatService`; a bundler
-binds it at build time (`templates/always-on/chat/` is the template). The Chat Service mounts
+binds it at build time (the [stock Chat Service](chat/src/stock.ts) needs none). The Chat Service mounts
 the Cartridge's routes, delegates request identity, Session ownership, filing IDs,
 invocation-payload policy and live-view authorization, hands the Cartridge its
 account-history hooks, and keeps Session Metadata private. The generic Chat Service

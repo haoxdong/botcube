@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, it } from 'vitest';
+import { afterAll, afterEach, expect, it, inject } from 'vitest';
 import { resolve } from 'node:path';
 import { testChromiumPath } from '../chromium.js';
 import { frameData, sseFrames } from './browser.js';
@@ -39,7 +39,7 @@ it('tears down scheduled Browsers after success, failed site access and recovery
   stack = await startLocalStack({
     scheduling: true,
     harnessCommand: `${bin}/python ${resolve('chat/test/parity/template-model.py')}`,
-    chatServiceCommand: `node ${resolve('templates/always-on/chat/dist/main.js')}`,
+    chatServiceCommand: inject('fakeSiteServiceCommand'),
     chatEnv: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), BOTCUBE_CHROMIUM_DIAGNOSTICS: '1', TEMPLATE_SITE_URL: siteUrl, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-secret' },
     harnessEnv: {
       // The fake site's CLI reads the binding only the template Cartridge hands it, for now.
@@ -49,7 +49,6 @@ it('tears down scheduled Browsers after success, failed site access and recovery
     },
   });
   const browser = stack.browser();
-  expect((await browser.get('/auth/template')).status).toBe(200);
   expect((await browser.get('/account/session')).status).toBe(200);
   const start = await (await browser.post('/account/fake-site-link/start', {})).json();
   expect((await browser.post('/account/fake-site-link/sign-in', start)).status).toBe(200);

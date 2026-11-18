@@ -19,7 +19,7 @@ import type { DeploymentConfig } from '../../../deployment-config/schema.js';
 export const PUBLIC_ORIGIN = 'https://chat.example.test';
 
 /**
- * The template Cartridge's environment: it holds the Harness (and, for now, the template Harness half).
+ * The template Python environment: it holds the Harness (and, for now, the template Harness half).
  * The services start from their console scripts' entry points, as the Harness image does, so
  * each module runs under its own name rather than as `__main__`.
  */
@@ -31,8 +31,11 @@ const HARNESS_COMMAND =
 
 const EXAMPLE_BOT = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
 
-const CHAT_SERVICE_COMMAND =
-  `node ${fileURLToPath(new URL('../../../templates/always-on/chat/dist/main.js', import.meta.url))}`;
+/** The stock Chat Service, as its image runs it. */
+const CHAT_SERVICE_COMMAND = `node ${fileURLToPath(new URL('../../dist/main.js', import.meta.url))}`;
+
+/** The Deployment Config the stack deploys unless given one: the public example's. */
+const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../../examples/public/deployment-config.json', import.meta.url));
 
 export interface LocalStack {
   readonly url: string;
@@ -60,18 +63,18 @@ export async function startLocalStack(options: {
   harnessEnv?: NodeJS.ProcessEnv;
   chatEnv?: NodeJS.ProcessEnv;
   scheduling?: boolean;
-  /** A Deployment Config the stack deploys, its External Services replaced by their offline stand-ins. */
+  /** The Deployment Config the stack deploys, its External Services replaced by their offline stand-ins; the public example's unless given. */
   deploymentConfig?: string;
 } = {}): Promise<LocalStack> {
   const dynamodbEndpoint = motoEndpoint();
   // Startup stops on a bad Deployment Config before any process starts, naming the field, as the Chat Service's does.
-  const deploymentPath = options.deploymentConfig ?? options.chatEnv?.BOTCUBE_DEPLOYMENT_CONFIG;
-  const deployment = deploymentPath === undefined ? undefined : loadDeployment(deploymentPath);
+  const deploymentPath = options.deploymentConfig ?? options.chatEnv?.BOTCUBE_DEPLOYMENT_CONFIG ?? PUBLIC_EXAMPLE;
+  const deployment = loadDeployment(deploymentPath);
   const home = await mkdtemp('/tmp/bc-');
   const table = `chat-${Math.random().toString(36).slice(2)}`;
   await createChatTable(dynamodbEndpoint, table);
   // The table poller needs its run queue to start, as the CDK always gives it one (`scheduled-runs.ts` in botcube/infra/ecs/cdk).
-  const scheduledRuns = options.scheduling || deployment?.config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
+  const scheduledRuns = options.scheduling || deployment.config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
   const pythonEnv = {
     PATH: process.env.PATH,
     HOME: home,
@@ -91,9 +94,9 @@ export async function startLocalStack(options: {
   };
   const processes: RunningProcess[] = [];
   const bedrock = await new FakeBedrock().listen();
-  const models = deployment?.config.models;
-  const openAICompatible = models?.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
-  const harnessAuth = deployment?.config.harnessAuth;
+  const models = deployment.config.models;
+  const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
+  const harnessAuth = deployment.config.harnessAuth;
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
     await Promise.all([...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close()]);
@@ -101,7 +104,7 @@ export async function startLocalStack(options: {
   };
   try {
     // The models endpoint's stand-in, its API key in moto's Secrets Manager, for both the Chat Service and the Harness.
-    const modelsEnv = models === undefined ? {} : {
+    const modelsEnv = {
       ...modelsDeployment(models)?.environment,
       ...(openAICompatible ? {
         BOTCUBE_MODELS_BASE_URL: `${openAICompatible.url}/v1`,
@@ -132,7 +135,7 @@ export async function startLocalStack(options: {
       }).then((running) => { harnessProcess = running; processes.push(running); return new URL(running.url).origin; }),
       start(`${BIN}/botcube-session-api`, pythonEnv, '/ping', 'Uvicorn running on http://0.0.0.0:'),
     ]);
-    if (harnessAuth?.kind === 'jwt-bearer') authorizer = await new FakeJwtAuthorizer(harness, harnessAuth.audience).listen();
+    if (harnessAuth.kind === 'jwt-bearer') authorizer = await new FakeJwtAuthorizer(harness, harnessAuth.audience).listen();
     const harnessUrl = authorizer?.url ?? harness;
     const url = await start(
       options.chatServiceCommand ?? CHAT_SERVICE_COMMAND,
@@ -162,9 +165,9 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: scheduledRuns.queueArn,
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
-        ...(options.deploymentConfig === undefined ? {} : { BOTCUBE_DEPLOYMENT_CONFIG: options.deploymentConfig }),
+        BOTCUBE_DEPLOYMENT_CONFIG: deploymentPath,
         ...modelsEnv,
-        ...turnCredentialsEnv(deployment?.config, dynamodbEndpoint),
+        ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
       },
       '/',
@@ -196,7 +199,7 @@ async function createSecret(endpoint: string, name: string, value: string): Prom
 }
 
 /** What the CDK hands the Chat Service for the Deployment Config's Turn credentials adapter, with moto as STS. */
-function turnCredentialsEnv(config: DeploymentConfig | undefined, sts: string): NodeJS.ProcessEnv {
-  if (config?.turnCredentials.kind !== 'assume-role') return {};
+function turnCredentialsEnv(config: DeploymentConfig, sts: string): NodeJS.ProcessEnv {
+  if (config.turnCredentials.kind !== 'assume-role') return {};
   return { AWS_ENDPOINT_URL_STS: sts, BOTCUBE_USER_MEMORY_ROLE_ARN: 'arn:aws:iam::123456789012:role/bot-cube-user-memory' };
 }

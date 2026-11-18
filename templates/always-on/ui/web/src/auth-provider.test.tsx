@@ -61,6 +61,21 @@ it('shows a failed Sign-ins load after the Account session succeeds', async () =
   }
 });
 
+it('shows no failure when the Chat Service lists no Sign-ins', async () => {
+  vi.stubGlobal('fetch', async (input: string) => input.endsWith('/account/session')
+    ? Response.json({ accountId: 'template-account', signInNeeded: false })
+    : Response.json({ signIns: [] }));
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<TemplateAuthProvider chatServiceUrl="http://local">{signInsTab}</TemplateAuthProvider>));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
 it('shows the scheduled sign-in chip and clears it after linking', async () => {
   vi.stubGlobal('fetch', async (input: string) => {
     if (input.endsWith('/account/session')) return Response.json({ accountId: 'template-account', signInNeeded: true });

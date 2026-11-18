@@ -19,10 +19,11 @@ services:
   chat-service:
     image: botcube-production-chat
     build:
-      dockerfile: templates/always-on/chat/Dockerfile
+      dockerfile: chat/Dockerfile
       args:
         BOTCUBE_ROOT: .
     environment:
+      BOTCUBE_DEPLOYMENT_CONFIG: /opt/chat-service/examples/public/deployment-config.json
       BOTCUBE_LOCAL_HARNESS_URL: http://harness:8080
       BOTCUBE_LOCAL_SESSION_API_URL: http://session-api:8081
       BOTCUBE_CREDENTIAL_SERVICE_URL: http://credential-service:8081

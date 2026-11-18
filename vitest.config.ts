@@ -54,7 +54,7 @@ export default defineConfig({
         test: {
           ...node,
           name: 'node',
-          include: ['tests/**/*.test.ts', 'templates/always-on/chat/src/**/*.test.ts', 'deployment-config/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts', 'infra/ecs/files-pool/**/*.test.ts'],
+          include: ['tests/**/*.test.ts', 'deployment-config/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts', 'infra/ecs/files-pool/**/*.test.ts'],
         },
       },
       { test: { ...node, name: 'integration-libreoffice', include: libreofficeTests, testTimeout: 30_000 } },

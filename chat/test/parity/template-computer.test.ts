@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi, inject } from 'vitest';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -32,7 +32,7 @@ it(
       listening: `Template site listening on :${port}`,
     }));
     stack = await startLocalStack({
-      chatServiceCommand: `node ${resolve('templates/always-on/chat/dist/main.js')}`,
+      chatServiceCommand: inject('fakeSiteServiceCommand'),
       chatEnv: {
         TEMPLATE_SITE_URL: new URL(site.url).origin,
         BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
@@ -99,7 +99,7 @@ it(
       listening: `Template site listening on :${port}`,
     }));
     stack = await startLocalStack({
-      chatServiceCommand: `node ${resolve('templates/always-on/chat/dist/main.js')}`,
+      chatServiceCommand: inject('fakeSiteServiceCommand'),
       harnessCommand: `${bin}/python ${resolve('chat/test/parity/template-computer-model.py')}`,
       harnessEnv: { PATH: `${resolve('harness/deepagents/.tool-dist/bin')}:${resolve('chat/node_modules/.bin')}:${process.env.PATH ?? ''}` },
       chatEnv: {

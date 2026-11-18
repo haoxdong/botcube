@@ -10,6 +10,19 @@ import { repositoryImageProps } from './repository-image.js';
 /** Where a Cartridge keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
 export const CARTRIDGE_ECS_APP = 'ecs/cdk';
 
+/**
+ * The preview origin's Chat Service image. A Cartridge holding its own Chat Service in `chat/` beside `deploy/` builds
+ * that; any other deploy root runs the stock Chat Service, on the public example's Deployment Config its image ships.
+ */
+export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; deploymentConfig?: string } {
+  const own = path.join(deployRoot, '../chat/Dockerfile');
+  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own) };
+  return {
+    file: path.relative(repositoryRoot, path.resolve(projectDir(__dirname), '../../../chat/Dockerfile')),
+    deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json',
+  };
+}
+
 /** HEAD, marked `-dirty` when tracked files differ from it, so a deploy never claims a commit it did not ship. */
 function checkoutCommit(root: string): string {
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
@@ -22,16 +35,18 @@ export function productionApp(product: Pick<ProductionOptions, 'serving'> = {}):
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = cartridgeDeployRoot();
   const identity = cartridgeIdentity(deployRoot);
-  // A Cartridge holds its Chat Service half in `chat/` beside `deploy/`.
   const cartridgeFile = (file: string) => path.relative(repositoryRoot, path.join(deployRoot, file));
   let origin;
+  let chat;
   if (app.node.tryGetContext('previewOrigin')) {
     const inputPath = process.env.PREVIEW_ORIGIN_INPUT;
     if (!inputPath) throw new Error('PREVIEW_ORIGIN_INPUT is required');
+    const chatImage = productionChatImage(repositoryRoot, deployRoot);
+    if (chatImage.deploymentConfig) chat = { deploymentConfig: chatImage.deploymentConfig };
     origin = {
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
       images: {
-        chat: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, cartridgeFile('../chat/Dockerfile'))),
+        chat: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, chatImage.file)),
         credential: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, cartridgeFile('credential-service/Dockerfile'))),
       },
       commit: checkoutCommit(repositoryRoot),
@@ -47,6 +62,6 @@ export function productionApp(product: Pick<ProductionOptions, 'serving'> = {}):
     }
     webLatency = { moments };
   }
-  defineProduction(app, { repositoryRoot, deployRoot, identity, origin, ...(webLatency ? { webLatency } : {}), ...product });
+  defineProduction(app, { repositoryRoot, deployRoot, identity, origin, ...(chat ? { chat } : {}), ...(webLatency ? { webLatency } : {}), ...product });
   return app;
 }

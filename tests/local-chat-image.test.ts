@@ -8,11 +8,11 @@ import { expect, it } from 'vitest';
 
 const botcube = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-const esbuild = createRequire(join(botcube, 'templates/always-on/chat/package.json')).resolve('esbuild/bin/esbuild');
+const esbuild = createRequire(join(botcube, 'chat/package.json')).resolve('esbuild/bin/esbuild');
 
 it('builds a local Chat Service image bundle that Node can load', () => {
   const dockerfile = readFileSync(join(botcube, 'infra/local/chat.Dockerfile'), 'utf8');
-  const command = /^RUN templates\/always-on\/chat\/node_modules\/\.bin\/esbuild ([\s\S]*?--outfile=dist\/main\.js)$/m.exec(dockerfile)?.[1];
+  const command = /^RUN chat\/node_modules\/\.bin\/esbuild ([\s\S]*?--outfile=dist\/main\.js)$/m.exec(dockerfile)?.[1];
   expect(command, 'the image bundles the Chat Service with esbuild').toBeDefined();
   const directory = mkdtempSync(join(tmpdir(), 'local-chat-image-'));
   try {

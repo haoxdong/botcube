@@ -2,7 +2,8 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterAll, expect, it, vi } from 'vitest';
 import { serveChatService } from '../src/server.js';
-import { templateCartridgeFactory } from '../../templates/always-on/chat/src/cartridge.js';
+import { fileURLToPath } from 'node:url';
+import { stockChatService } from '../src/stock.js';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
@@ -16,7 +17,7 @@ afterAll(async () => {
   }, Promise.resolve());
 });
 
-it('serves the neutral template over HTTP with persisted thread metadata and classified runtime failures', async () => {
+it('serves the stock Chat Service over HTTP with persisted thread metadata and classified runtime failures', async () => {
   const agent = await new FakeAgentCore().listen();
   const sessions = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
@@ -32,26 +33,26 @@ it('serves the neutral template over HTTP with persisted thread metadata and cla
     AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
     BOTCUBE_CHAT_TABLE: table,
     BOTCUBE_LOCAL_SESSION_API_URL: sessions.url,
+    BOTCUBE_DEPLOYMENT_CONFIG: fileURLToPath(new URL('../../examples/public/deployment-config.json', import.meta.url)),
   };
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
   cleanup.push(async () => {
     vi.unstubAllEnvs();
   });
   const taskStops = process.listenerCount('SIGTERM');
-  const server = serveChatService(templateCartridgeFactory(env), env);
+  const server = serveChatService(stockChatService(env), env);
   cleanup.push(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect(process.listenerCount('SIGTERM')).toBe(taskStops);
   });
   await once(server, 'listening');
-  // Stopping the task puts the template's Agent Computers to sleep.
+  // Stopping the task puts its Agent Computers to sleep.
   expect(process.listenerCount('SIGTERM')).toBe(taskStops + 1);
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   expect((await fetch(`${url}/health`)).status).toBe(200);
-  expect(await (await fetch(`${url}/auth/template`)).json()).toEqual({ status: 'ready', actorId: 'template-user' });
   const account = await fetch(`${url}/account/session`);
   const cookie = account.headers.get('set-cookie')?.split(';')[0];
-  if (!cookie) throw new Error('Template account cookie missing');
+  if (!cookie) throw new Error('Account cookie missing');
   const request = (threadId: string) => fetch(url, {
     method: 'POST', headers: { 'content-type': 'application/json', cookie },
     body: JSON.stringify({ threadId, runId: 'smoke-run', state: {}, messages: [{ id: 'message-1', role: 'user', content: 'Hello' }], tools: [], context: [], forwardedProps: {} }),

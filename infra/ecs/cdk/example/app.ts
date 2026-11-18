@@ -16,7 +16,7 @@ import { defineProduction, type ProductionOptions } from '../lib/production.js';
 /** The examples' deploy names and AgentCore spec, still in the Always On deploy directory until it moves under them. */
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../templates/always-on/deploy');
 /** The examples' chat image, and the examples directory whose files it ships under its WORKDIR. */
-const CHAT_DOCKERFILE = path.resolve(__dirname, '../../../../templates/always-on/chat/Dockerfile');
+const CHAT_DOCKERFILE = path.resolve(__dirname, '../../../../chat/Dockerfile');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
 export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
 

@@ -46,6 +46,10 @@ export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderP
       if (active) setOidc(session.oidc);
       if (active) setSignInNeeded(session.signInNeeded);
       const body = await call('/account/sign-ins');
+      if (Array.isArray(body.signIns) && body.signIns.length === 0) {
+        if (active) setStatus('not_linked');
+        return;
+      }
       const signIn: unknown = Array.isArray(body.signIns) ? body.signIns[0] : undefined;
       if (typeof signIn !== 'object' || signIn === null || !('status' in signIn) || (signIn.status !== 'linked' && signIn.status !== 'not_linked')) {
         throw new Error('Template Sign-ins returned malformed state');

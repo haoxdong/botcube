@@ -443,25 +443,6 @@ importers:
         specifier: npm:@typescript/typescript6@^6.0.2
         version: '@typescript/typescript6@6.0.2'
 
-  templates/always-on/chat:
-    dependencies:
-      '@ag-ui/client':
-        specifier: 1.0.2
-        version: 1.0.2
-      botcube-chat:
-        specifier: workspace:*
-        version: link:../../../chat
-      botcube-deployment-config:
-        specifier: workspace:*
-        version: link:../../../deployment-config
-      hono:
-        specifier: ^4.13.17
-        version: 4.13.17
-    devDependencies:
-      esbuild:
-        specifier: ^0.28.2
-        version: 0.28.2
-
   templates/always-on/ui/web:
     dependencies:
       '@ag-ui/client':

@@ -18,16 +18,13 @@ it('keeps package and local HttpError identical under the relocated native Chat 
   cpSync(resolve(botcube, 'chat/src/cartridge.ts'), join(chat, 'src/cartridge.ts'));
   writeFileSync(join(chat, 'src/index.ts'), "export { HttpError } from './cartridge.js';\n");
   symlinkSync(resolve('node_modules'), join(sandbox, 'node_modules'), 'dir');
-  const templateChat = join(sandbox, 'templates/always-on/chat');
-  mkdirSync(join(templateChat, 'src'), { recursive: true });
-  symlinkSync(resolve(resolve(botcube, 'templates/always-on/chat/node_modules')), join(templateChat, 'node_modules'), 'dir');
-  const importer = join(templateChat, 'src/identity.ts');
+  const importer = join(chat, 'src/identity.ts');
   writeFileSync(importer, "export { HttpError } from 'botcube-chat';\n");
   const server = await createViteServer({ configFile: join(chat, 'vitest.config.ts'), server: { middlewareMode: true } });
   try {
     expect(server.config.root).toBe(sandbox);
     const entry = await server.pluginContainer.resolveId('botcube-chat', importer);
-    if (!entry) throw new Error('botcube-chat did not resolve from the template importer');
+    if (!entry) throw new Error('botcube-chat did not resolve from its importer');
     const bare = await server.ssrLoadModule(join(dirname(entry.id), 'cartridge.ts')) as { HttpError: typeof HttpError };
     const local = await server.ssrLoadModule(join(chat, 'src/cartridge.ts')) as { HttpError: typeof HttpError };
     expect(bare.HttpError).toBe(local.HttpError);

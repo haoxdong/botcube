@@ -9,11 +9,11 @@
   "scripts": {
     "test:chat": "vitest run --config vitest.chat.config.ts",
     "test:chat:unit": "vitest run --config chat/vitest.config.ts",
-    "build": "sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-always-on-chat build'",
+    "build": "sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-chat build'",
     "build:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
     "test:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
     "screenshots:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
-    "pretest:chat": "sh -c 'uv sync --directory templates/always-on --frozen --quiet && pnpm --filter botcube-always-on-chat build && templates/always-on/deploy/stage-tools.sh'",
+    "pretest:chat": "sh -c 'uv sync --directory templates/always-on --frozen --quiet && pnpm --filter botcube-chat build && templates/always-on/deploy/stage-tools.sh'",
     "pretest:chat:unit": "sh -c 'uv sync --directory templates/always-on --frozen --quiet'",
     "storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
   },

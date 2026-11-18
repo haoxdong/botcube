@@ -14,21 +14,20 @@ COPY ${BOTCUBE_ROOT}/examples/enterprise/deployment-config.json examples/enterpr
 COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json examples/public/deployment-config.json
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
-COPY ${BOTCUBE_ROOT}/templates/always-on/chat/ templates/always-on/chat/
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
   npm install --global pnpm@12.10.1 && \
-  pnpm install --frozen-lockfile --ignore-scripts --filter botcube-always-on-chat...
+  pnpm install --frozen-lockfile --ignore-scripts --filter botcube-chat...
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
-  pnpm --filter botcube-always-on-chat build
+  pnpm --filter botcube-chat build
 
 FROM ${NODE_IMAGE}
 # The local Agent Computer finds this Chromium on PATH, as /usr/bin/chromium.
 RUN apt-get update && apt-get install -y --no-install-recommends chromium \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/chat-service
-COPY --from=build /workspace/botcube/templates/always-on/chat/dist/ dist/
+COPY --from=build /workspace/botcube/chat/dist/ dist/
 COPY --from=build /workspace/botcube/examples/ examples/
 ENV PORT=8123
 EXPOSE 8123

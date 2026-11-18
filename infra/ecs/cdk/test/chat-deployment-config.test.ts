@@ -9,7 +9,7 @@ import { synthesizeExample, synthesizeExampleAt } from './example-fixture.js';
 
 interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
 
-const DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../templates/always-on/chat/Dockerfile'), 'utf8').split('\n');
+const DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../chat/Dockerfile'), 'utf8').split('\n');
 
 function chatEnvironment(app: App): Record<string, unknown> {
   const origin = app.node.findChild('PreviewOrigin') as Stack;
