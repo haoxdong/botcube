@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { Swap } from "./collapse";
 
 /** A load from the Chat Service: in flight, answered, or failed with why. */

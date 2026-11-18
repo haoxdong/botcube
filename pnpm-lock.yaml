@@ -574,7 +574,7 @@ importers:
         version: 3.2.1
       bedrock-agentcore:
         specifier: ^0.4.5
-        version: 0.4.5(patch_hash=ceb1c4bf0f995838f206eb50040f4d891158402531ed30aa62242258b5c1af9d)(express@5.2.1(supports-color@7.2.0))(playwright@1.63.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        version: 0.4.5(patch_hash=ceb1c4bf0f995838f206eb50040f4d891158402531ed30aa62242258b5c1af9d)(ai@7.0.173(zod@4.6.7))(express@5.2.1(supports-color@7.2.0))(playwright@1.63.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       botcube-artifact-check:
         specifier: workspace:*
         version: link:../../harness/deepagents/artifact-check
@@ -584,6 +584,9 @@ importers:
       buffer:
         specifier: 6.0.3
         version: 6.0.3
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -804,6 +807,22 @@ packages:
 
   '@ag-ui/proto@1.0.2':
     resolution: {integrity: sha512-uIp6TkQdos03Bkjl01Z46cK/D7QAKNO26RYIIX1WfxNy4penVatU0b/TFTjVrOtwSnp5mtl8Rpzkiiu9cZHwlg==}
+
+  '@ai-sdk/gateway@4.0.146':
+    resolution: {integrity: sha512-rJ5NQSyjnpo6HSBEYc9Ff6k1EROUuB7KeAfHYVbVDsk68ynY0Eb8JeWflZKXlT6NhYgqyCiBDxE5blXWACXMKQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider-utils@5.0.81':
+    resolution: {integrity: sha512-pfvvdQ3d1WxdBuug/mnGEP6E48cPokwD8dMBnsFeeAUp0/rb/H2aj0f3mwOiY62gu/Cu5GO44e+SE5nDHyBWMA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/provider@4.0.38':
+    resolution: {integrity: sha512-GElz70UUCuDFFyD6m6aQJFgRY0HEABQzB5otzgkrisYaF5mnss7o0upAmbBTSD6KWiM9h7lZm1ls2c7xzHR8CA==}
+    engines: {node: '>=22'}
 
   '@alloc/quick-lru@5.3.0':
     resolution: {integrity: sha512-U4+70Pc5ZS9osnCBCE5Jha/ciHM+Yp+CNMNC/7HvYbNRk1Ldd+f7qO65W5qfhu/TCv+/ozljlXXe9Nj8419DMA==}
@@ -4714,6 +4733,10 @@ packages:
     peerDependencies:
       react: '>= 16.8.0'
 
+  '@vercel/oidc@3.2.0':
+    resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
+    engines: {node: '>= 20'}
+
   '@vitest/browser-playwright@4.1.12':
     resolution: {integrity: sha512-bU/TcyiBwFUijaIltxKXxgpQmLu9njO/t6G9wiD2LjSFX6SfmyUOf+pOJ8N26KsvhFOHWfVdzNS6P62ab/ONlA==}
     peerDependencies:
@@ -4786,6 +4809,9 @@ packages:
       react:
         optional: true
 
+  '@workflow/serde@4.1.0':
+    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
+
   '@xstate/fsm@1.6.5':
     resolution: {integrity: sha512-b5o1I6aLNeYlU/3CPlj/Z91ybk1gUsKT+5NAJI+2W4UjvS5KLG28K9v5UvNoFVjHV8PajVZ00RH3vnjyQO7ZAw==}
 
@@ -4819,6 +4845,12 @@ packages:
     resolution: {integrity: sha512-XJtBouE5+gGUKyZU1COSmnxU6MKIlmLE2oEyHzl0ohLVOhuRjx9kqQ9vOqxiiW/Gbvi4JPF4Oz777Mn3FGiHAA==}
     engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
     hasBin: true
+
+  ai@7.0.173:
+    resolution: {integrity: sha512-dLea37zT1h7cjkUsBprU4Rq35HJqhtHHaq1jTAXjHQoyfpeswpgCrhjZJWdWc10gjEAxmz114py7iLGQ3xIMxw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   ajv-formats@2.1.1:
     resolution: {integrity: sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==}
@@ -6797,6 +6829,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  json-schema@0.4.0:
+    resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
   json5@2.2.3:
     resolution: {integrity: sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==}
@@ -9458,6 +9493,28 @@ snapshots:
       '@bufbuild/protobuf': 2.16.0
       '@protobuf-ts/protoc': 2.11.1
       zod: 3.25.76
+
+  '@ai-sdk/gateway@4.0.146(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.38
+      '@ai-sdk/provider-utils': 5.0.81(zod@4.6.7)
+      '@vercel/oidc': 3.2.0
+      zod: 4.6.7
+    optional: true
+
+  '@ai-sdk/provider-utils@5.0.81(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.38
+      '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
+      eventsource-parser: 3.1.1
+      zod: 4.6.7
+    optional: true
+
+  '@ai-sdk/provider@4.0.38':
+    dependencies:
+      json-schema: 0.4.0
+    optional: true
 
   '@alloc/quick-lru@5.3.0': {}
 
@@ -14078,6 +14135,9 @@ snapshots:
       '@use-gesture/core': 10.3.1
       react: 19.3.1
 
+  '@vercel/oidc@3.2.0':
+    optional: true
+
   '@vitest/browser-playwright@4.1.12(msw@2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2))(playwright@1.63.0)(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(yaml@2.9.1))(vitest@4.1.12)':
     dependencies:
       '@vitest/browser': 4.1.12(msw@2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2))(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(yaml@2.9.1))(vitest@4.1.12)
@@ -14194,6 +14254,9 @@ snapshots:
     optionalDependencies:
       react: 19.3.1
 
+  '@workflow/serde@4.1.0':
+    optional: true
+
   '@xstate/fsm@1.6.5': {}
 
   '@zeit/schemas@2.36.0': {}
@@ -14218,6 +14281,14 @@ snapshots:
   agent-base@7.1.4: {}
 
   agent-browser@0.41.0: {}
+
+  ai@7.0.173(zod@4.6.7):
+    dependencies:
+      '@ai-sdk/gateway': 4.0.146(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.38
+      '@ai-sdk/provider-utils': 5.0.81(zod@4.6.7)
+      zod: 4.6.7
+    optional: true
 
   ajv-formats@2.1.1:
     dependencies:
@@ -14444,7 +14515,7 @@ snapshots:
 
   basic-auth@3.1.0: {}
 
-  bedrock-agentcore@0.4.5(patch_hash=ceb1c4bf0f995838f206eb50040f4d891158402531ed30aa62242258b5c1af9d)(express@5.2.1(supports-color@7.2.0))(playwright@1.63.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  bedrock-agentcore@0.4.5(patch_hash=ceb1c4bf0f995838f206eb50040f4d891158402531ed30aa62242258b5c1af9d)(ai@7.0.173(zod@4.6.7))(express@5.2.1(supports-color@7.2.0))(playwright@1.63.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       '@aws-crypto/sha256-js': 5.2.0
       '@aws-sdk/client-bedrock-agentcore': 3.1149.0
@@ -14465,6 +14536,7 @@ snapshots:
       ws: 8.22.0
       zod: 4.6.7
     optionalDependencies:
+      ai: 7.0.173(zod@4.6.7)
       express: 5.2.1(supports-color@7.2.0)
       playwright: 1.63.0
       react: 19.3.1
@@ -16544,6 +16616,9 @@ snapshots:
   json-schema-typed@7.0.3: {}
 
   json-schema-typed@8.0.2: {}
+
+  json-schema@0.4.0:
+    optional: true
 
   json5@2.2.3: {}
 

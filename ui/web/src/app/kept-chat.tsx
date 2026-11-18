@@ -5,7 +5,8 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
-import { ArrowUp, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
+import { Composer } from "./composer";
 import { SentFileCards, sentFilesOf } from "./composer-files";
 import { ThoughtStep, worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
@@ -101,6 +102,8 @@ function questionAtOrBefore(messages: readonly Message[], index: number): number
   return Math.max(0, messages.findLastIndex((message, i) => i <= index && message.role === "user"));
 }
 
+const ignore = () => {};
+
 export function KeptChat({ messages, running = false, disclaimer, composerAccessory, latestShown, onOpenRun }: { messages: Message[]; running?: boolean; disclaimer: string; composerAccessory?: ReactNode; latestShown?: RefObject<number>; onOpenRun?: (run: ReachedScheduledRun) => void }) {
   const kept = messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT);
   if (needsMarkdown(kept)) readMarkdown();
@@ -184,31 +187,23 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
         </div>
         <div ref={composer} className="kept-chat-composer cpk:absolute cpk:bottom-0 cpk:left-0 cpk:right-0 cpk:z-20 cpk:pointer-events-none">
           <Presence>{composerAccessory && (
-            <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:sm:px-0">
+            <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
               <div className="composer-accessory">{composerAccessory}</div>
             </motionElement.div>
           )}</Presence>
-          <div data-copilotkit className="cpk:pointer-events-none cpk:relative cpk:z-20 composer-can-attach" style={{ paddingBottom: "var(--copilotkit-license-banner-offset, 0px)" }}>
-            <div className="cpk:max-w-3xl cpk:mx-auto cpk:py-0 cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-4 cpk:pointer-events-auto">
-              <div inert aria-hidden style={{ visibility: "visible" }} className="copilotKitInput cpk:flex cpk:w-full cpk:flex-col cpk:items-center cpk:justify-center cpk:cursor-text cpk:overflow-visible cpk:bg-clip-padding cpk:contain-inline-size cpk:rounded-[28px]" data-layout="compact">
-                <div className="cpk:grid cpk:w-full cpk:gap-x-3 cpk:gap-y-3 cpk:px-3 cpk:py-2 cpk:grid-cols-[auto_minmax(0,1fr)_auto] cpk:items-center" data-layout="compact">
-                  <div className="cpk:flex cpk:items-center cpk:row-start-1 cpk:col-start-1">
-                    <button type="button" data-testid="copilot-add-menu-button" aria-label="Add photos & files"><Plus size={20} aria-hidden /></button>
-                  </div>
-                  <div className="cpk:relative cpk:flex cpk:min-w-0 cpk:flex-col cpk:min-h-[50px] cpk:justify-center cpk:col-start-2 cpk:row-start-1">
-                    <textarea data-testid="copilot-chat-textarea" placeholder="Ask anything" readOnly rows={1} className="cpk:bg-transparent cpk:outline-none cpk:antialiased cpk:font-regular cpk:text-[16px] cpk:w-full cpk:py-3 cpk:pr-5" style={{ overflow: "auto", resize: "none", maxHeight: 106 }} />
-                  </div>
-                  <div className="cpk:flex cpk:items-center cpk:justify-end cpk:gap-2 cpk:col-start-3 cpk:row-start-1">
-                    <div className="cpk:mr-[10px]">
-                      <button type="button" data-testid="copilot-send-button" aria-label="Send" disabled className="cpk:inline-flex cpk:items-center cpk:justify-center cpk:shrink-0 cpk:rounded-full cpk:h-9 cpk:w-9 cpk:disabled:opacity-50">
-                        <ArrowUp className="cpk:size-[18px]" aria-hidden />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="chat-disclaimer cpk:text-center cpk:py-3 cpk:px-4 cpk:max-w-3xl cpk:mx-auto">{disclaimer}</div>
+          <div inert aria-hidden>
+            <Composer
+              value=""
+              onChange={ignore}
+              onSend={ignore}
+              onStop={undefined}
+              running={false}
+              canSend={false}
+              hasFiles={false}
+              addMenu={<button type="button" className="composer-add" data-testid="copilot-add-menu-button" aria-label="Add photos & files"><Plus size={20} aria-hidden /></button>}
+              disclaimer={disclaimer}
+              replica
+            />
           </div>
         </div>
       </div>

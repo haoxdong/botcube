@@ -3,8 +3,7 @@
 import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./collapse";
 
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
 import { RotateCw, X } from "lucide-react";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../cartridge/file-account";
@@ -387,27 +386,19 @@ export function ComposerFileChips({ files, onRetry, onRemove }: { files: Compose
   );
 }
 
-export function ComposerFilePicker({ attached, picker }: { attached: ComposerFiles; picker: RefObject<HTMLInputElement | null> }) {
-  const [box, setBox] = useState<Element | null>(null);
-  useLayoutEffect(() => setBox(picker.current?.parentElement?.querySelector(".copilotKitInput") ?? null), [picker]);
+/** The file picker the composer's + opens, hidden. */
+export function ComposerFilePicker({ picker, add }: { picker: RefObject<HTMLInputElement | null>; add: ComposerFiles["add"] }) {
   return (
-    <>
-      <input
-        ref={picker}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          attached.add([...(event.currentTarget.files ?? [])]);
-          // The same file can be picked again, as after removing it.
-          event.currentTarget.value = "";
-        }}
-      />
-      {/* Mounted while empty, so the last chip fades out before its list leaves. */}
-      {box && createPortal(
-        <ComposerFileChips files={attached.files} onRetry={attached.retry} onRemove={attached.remove} />,
-        box,
-      )}
-    </>
+    <input
+      ref={picker}
+      type="file"
+      multiple
+      hidden
+      onChange={(event) => {
+        add([...(event.currentTarget.files ?? [])]);
+        // The same file can be picked again, as after removing it.
+        event.currentTarget.value = "";
+      }}
+    />
   );
 }

@@ -12,11 +12,6 @@
   display: flow-root;
 }
 
-/* The composer's content keeps its size while its box glides to a new height (composer-layout-height.ts). */
-.copilotKitInput > * {
-  flex-shrink: 0;
-}
-
 /* Desktop: toggling the docked sidebar is a View Transition (motion.ts's glide). The chat stage glides to its new
    width, its snapshots unscaled and centred as its column is, so words never stretch; the sidebar slides in from the
    left edge and back out. Every View Transition runs on --motion-move and --ease. */

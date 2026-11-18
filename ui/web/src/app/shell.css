@@ -80,7 +80,7 @@
   visibility: visible;
 }
 
-.app-chat-opening > .chat-wrapper:has(.copilotKitInput.picker-ready) ~ .kept-chat .kept-chat-composer {
+.app-chat-opening > .chat-wrapper:has(.chat-composer) ~ .kept-chat .kept-chat-composer {
   opacity: 0;
 }
 
@@ -161,8 +161,7 @@
   }
 }
 
-.mep-pill:focus-visible,
-.copilotKitInput > [data-layout] button:focus-visible {
+.mep-pill:focus-visible {
   outline: 2px solid var(--color-text) !important;
   outline-offset: 2px;
 }

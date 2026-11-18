@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { LoadFailed } from "./load-state";
 import { minutesLeft, untilLive, wake, wakeLapsed, type WakeState } from "./wake-up";
 

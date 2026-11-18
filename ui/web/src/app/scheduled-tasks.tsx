@@ -7,7 +7,7 @@ import { m as motionElement } from "motion/react";
 
 import { CalendarClock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { Sheet } from "../components/ui/sheet";
 import { StatusPill } from "../components/ui/status-pill";

@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import type { AuthUiState, AuthUser } from "../cartridge/index.js";
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { Field } from "../components/ui/field";
 import { PictureField } from "./picture-field";
 import { Fade } from "./collapse";

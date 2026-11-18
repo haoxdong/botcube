@@ -51,7 +51,7 @@ async function checkServerTurnChat(context, base, chatService, sideChat) {
     });
     await page.goto(url.href);
     const chat = page.locator('.app-chat:not(.app-chat-opening)');
-    await chat.locator('.copilotKitInput.picker-ready').waitFor();
+    await chat.locator('.chat-composer').waitFor();
     const title = chat.locator('.worklog-title').last();
     const preparing = await title.textContent();
     assert.match(preparing ?? '', /^Working/, 'a server Turn without a Stop runId must read Working');
@@ -84,7 +84,7 @@ async function checkServerTurnChat(context, base, chatService, sideChat) {
     running = true;
     stoppable = false;
     await page.reload();
-    await chat.locator('.copilotKitInput.picker-ready').waitFor();
+    await chat.locator('.chat-composer').waitFor();
     assert.match(await title.textContent() ?? '', /^Working/, 'a running Turn with no saved steps needs a live Worklog');
     return null;
   } finally {

@@ -6,7 +6,7 @@ import { Presence, presenceMotion } from "./collapse";
 import { Clock } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { RUN_STATUS, type ScheduledRun } from "./scheduled-task";
 import { StatusPill } from "../components/ui/status-pill";
 

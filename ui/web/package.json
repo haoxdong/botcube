@@ -69,6 +69,7 @@
     "botcube-artifact-check": "workspace:*",
     "botcube-deployment-config": "workspace:*",
     "buffer": "6.0.3",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.5.2",
     "cronstrue": "^3.38.0",

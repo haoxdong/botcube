@@ -6,7 +6,7 @@ import { Presence, presenceMotion, Collapse, Swap } from "./collapse";
 import { webUiPlugin } from "@cartridge-ui";
 import { ChevronDown } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { StatusPill } from "../components/ui/status-pill";
 import type { AgentModel } from "./conversations";
 import { DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, stopInstant, unitOf, wallWords, zoneName, type Weekday } from "./schedule";

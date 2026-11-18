@@ -72,7 +72,7 @@ afterEach(async (context) => {
 
 afterEach(async (context) => {
   if (!/^composer-shadow(?:-focused)?$/.test(context.task.name) || context.task.result?.state === 'fail') return;
-  const input = document.querySelector('.copilotKitInput');
+  const input = document.querySelector('.chat-composer');
   if (!input) throw new Error('Composer missing');
   await animationsSettled(document);
   const box = input.getBoundingClientRect();

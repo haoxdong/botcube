@@ -11,29 +11,30 @@ import { Fade } from "./collapse";
 
 // The ways files reach the composer besides pasting into its text: its + menu, and dropping them on the chat.
 
-function NoAddMenuButton() {
-  return null;
-}
-
 /**
  * The composer's + and its menu, as ChatGPT's: a white popover over the composer's left edge whose items open the file
- * picker, Add photos for images and Add files for any file. CopilotKit's own menu draws no icons.
+ * picker, Add photos for images and Add files for any file.
  */
-function AddMenu({ disabled, onAddFile }: { disabled?: boolean | undefined; onAddFile?: ((accept?: string) => void) | undefined }) {
+export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null> }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const addFile = (accept = "") => {
+    if (!picker.current) return;
+    picker.current.accept = accept;
+    picker.current.click();
+  };
   return (
     <Menu.Root>
-      <Menu.Trigger ref={trigger} data-testid="copilot-add-menu-button" aria-label="Add photos & files" disabled={disabled ?? false}>
+      <Menu.Trigger ref={trigger} data-testid="copilot-add-menu-button" className="composer-add" aria-label="Add photos & files">
         <Plus size={20} aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>
-        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".copilotKitInput") ?? null} side="top" align="start" sideOffset={() => 8 * zoomOf(trigger.current)}>
+        <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".chat-composer") ?? null} side="top" align="start" sideOffset={() => 8 * zoomOf(trigger.current)}>
           <Menu.Popup className="add-menu">
-            <Menu.Item className="add-menu-item" onClick={() => onAddFile?.("image/*")}>
+            <Menu.Item className="add-menu-item" onClick={() => addFile("image/*")}>
               <Paperclip size={20} aria-hidden />
               Add photos
             </Menu.Item>
-            <Menu.Item className="add-menu-item" onClick={() => onAddFile?.()}>
+            <Menu.Item className="add-menu-item" onClick={() => addFile()}>
               <FilePlusCorner size={20} aria-hidden />
               Add files
             </Menu.Item>
@@ -42,20 +43,6 @@ function AddMenu({ disabled, onAddFile }: { disabled?: boolean | undefined; onAd
       </Menu.Portal>
     </Menu.Root>
   );
-}
-
-/**
- * The + slot: with files to attach, our menu, whose items open the file picker for the types they name, and any file
- * from CopilotKit's slash menu; none with nothing to add.
- */
-export function addMenuSlot(attached: ComposerFiles | null, picker: RefObject<HTMLInputElement | null>) {
-  if (!attached) return { addMenuButton: NoAddMenuButton };
-  const onAddFile = (accept = "") => {
-    if (!picker.current) return;
-    picker.current.accept = accept;
-    picker.current.click();
-  };
-  return { addMenuButton: AddMenu, onAddFile };
 }
 
 /** A drop's files, without its folders, which arrive as files too and only their entries tell apart. */

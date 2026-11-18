@@ -3,7 +3,7 @@
 import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "./collapse";
 
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { Avatar, resizedPicture } from "./avatar";
 
 const MotionButton = motionElement.create(Button);

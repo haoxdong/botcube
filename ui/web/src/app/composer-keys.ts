@@ -13,6 +13,14 @@ export function holdEnter(held: boolean, isRunning: boolean, sendFiles?: () => v
   };
 }
 
+export function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if (event.key !== "Enter" || event.shiftKey || composing(event)) return;
+  event.preventDefault();
+  const form = event.currentTarget.form;
+  if (form?.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled) return;
+  form?.requestSubmit();
+}
+
 export function stopOnEscapeNoMenuTook(stop: RefObject<(() => void) | null>) {
   return (event: KeyboardEvent) => {
     if (event.key !== "Escape" || event.defaultPrevented || composing(event) || stop.current === null) return;

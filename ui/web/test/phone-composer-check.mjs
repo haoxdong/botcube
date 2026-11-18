@@ -32,7 +32,7 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
   };
   const read = () => page.evaluate(() => {
     const overlay = document.querySelector('[data-testid="copilot-input-overlay"]');
-    const input = overlay?.querySelector('[data-testid="copilot-chat-input"]');
+    const input = overlay?.querySelector('.chat-composer');
     const wrapper = overlay?.querySelector('[data-copilotkit]');
     if (!overlay || !input || !wrapper || !visualViewport) throw new Error('Phone composer needs its input, wrapper and visual viewport');
     const pill = document.querySelector('.chat-header-name');

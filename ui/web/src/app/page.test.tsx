@@ -130,7 +130,7 @@ vi.mock('@copilotkit/react-core/v2', async () => {
                       if (isRunning) onStop?.();
                       else {
                         // Like CopilotChatInput's send: the draft, trimmed, unless it is blank.
-                        const draft = event.currentTarget.closest('.copilotKitInput')?.querySelector('textarea')?.value.trim();
+                        const draft = event.currentTarget.closest('.chat-composer')?.querySelector('textarea')?.value.trim();
                         if (draft) onSubmitMessage?.(draft);
                       }
                     }} {...sendButton}><svg data-icon={isRunning ? 'square' : 'arrow-up'} /></button>}
@@ -663,7 +663,7 @@ describe('cartridge wiring', () => {
     await renderPage(auth({ composerAccessory: <button type="button">🔒 Sign in</button> }));
 
     const accessory = screen.getByRole('button', { name: '🔒 Sign in' });
-    const textBox = present(screen.getByLabelText('Message').closest('.copilotKitInput'), 'the composer text box');
+    const textBox = present(screen.getByLabelText('Message').closest('.chat-composer'), 'the composer text box');
     expect(accessory.closest('[data-testid="copilot-input-overlay"]')).not.toBeNull();
     expect(textBox.contains(accessory)).toBe(false);
     expect(accessory.compareDocumentPosition(textBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -674,11 +674,11 @@ describe('cartridge wiring', () => {
     await renderPage(auth({ composerAccessory: <button type="button">🔒 Sign in</button> }));
 
     const box = present(screen.getByRole('button', { name: '🔒 Sign in' }).closest('.composer-accessory'), 'the accessory box');
-    const textBox = present(screen.getByLabelText('Message').closest('.copilotKitInput'), 'the composer text box');
-    // The column's width and side padding; `.composer-accessory` sizes itself in it as `.copilotKitInput` does.
+    const textBox = present(screen.getByLabelText('Message').closest('.chat-composer'), 'the composer text box');
+    // The column's width and side padding; `.composer-accessory` sizes itself in it as `.chat-composer` does.
     const column = (element: Element) =>
-      [...(element.parentElement?.classList ?? [])].filter((name) => /^cpk:(sm:)?(max-w|mx|px)-/.test(name));
-    expect(column(box)).toEqual(['cpk:max-w-3xl', 'cpk:mx-auto', 'cpk:px-4', 'cpk:sm:px-0']);
+      [...(element.parentElement?.classList ?? [])].filter((name) => /^cpk:(@3xl:)?(max-w|mx|px)-/.test(name));
+    expect(column(box)).toEqual(['cpk:max-w-3xl', 'cpk:mx-auto', 'cpk:px-4', 'cpk:@3xl:px-0']);
     expect(column(box)).toEqual(column(textBox));
   });
 
@@ -803,7 +803,7 @@ describe('sending a message', () => {
     copilot.running = true;
     await renderPage();
 
-    expect(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
   });
 
   // The send-acknowledged moment runs from the send to the running cursor.
@@ -828,7 +828,7 @@ describe('sending a message', () => {
     if (how === 'Enter') await sendMessage('  What moved rates?  ');
     else {
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: '  What moved rates?  ' } });
-      fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Send' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
       await settle();
     }
     expect(welcome()).toBeNull();
@@ -3019,7 +3019,7 @@ describe('a scheduled post to the open Main Chat', () => {
   it('keeps the draft in the composer', async () => {
     await renderPage();
     const textarea = screen.getByLabelText<HTMLTextAreaElement>('Message');
-    textarea.value = 'half-written question';
+    fireEvent.change(textarea, { target: { value: 'half-written question' } });
     service.mainChat = { id: 'main-1', messages: [post] };
 
     await userComesBack();
@@ -3684,7 +3684,7 @@ describe('a Turn that runs on the server after a reload', () => {
     service.mainChat = { id: 'main-1', messages: [question], running: true, runId: 'run-on' };
     await renderPage();
 
-    fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await settle();
 
     expect(stopsSent()).toEqual([{ runId: 'run-on' }]);
@@ -3701,7 +3701,7 @@ describe('a Turn that runs on the server after a reload', () => {
     await sendMessage('Also add BETA.');
     expect(requestsTo('/threads/main-1/steer')).toEqual(['POST']);
 
-    if (how === 'Stop') fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' }));
+    if (how === 'Stop') fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     else fireEvent.keyDown(screen.getByLabelText('Message'), { key: 'Escape' });
     await settle();
     expect(stopsSent()).toEqual([{ runId: 'run-on' }]);
@@ -3765,12 +3765,12 @@ describe('a Turn that runs on the server after a reload', () => {
     service.failing.set('POST /threads/main-1/stop', 503);
     await renderPage();
 
-    fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await settle();
 
     expect(screen.getByRole('alert')).toHaveTextContent(/^The Turn could not be stopped: Failed to stop the Turn: 503$/);
     service.failing.delete('POST /threads/main-1/stop');
-    fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await settle();
     expect(stopsSent()).toEqual([{ runId: 'run-on' }, { runId: 'run-on' }]);
     expect(screen.queryByRole('alert')).toBeNull();
@@ -3946,7 +3946,7 @@ describe('a Turn that runs on the server after a reload', () => {
     await renderPage();
     const { runId, answerLoad } = await sendDroppedTurn();
     if (stops) {
-      fireEvent.click(within(screen.getByTestId('send-cell')).getByRole('button', { name: 'Stop' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
       await settle();
       expect(stopsSent()).toEqual([{ runId }]);
     }
@@ -8089,63 +8089,8 @@ describe('model and effort picker', () => {
   it('sits in the chat input beside Send', async () => {
     await renderPage();
 
-    const cell = screen.getByTestId('send-cell');
-    expect(cell.firstElementChild).toBe(picker());
-    expect(picker().style.visibility).toBe('');
-    expect(picker().style.position).toBe('');
-    expect(document.querySelector('.copilotKitInput')).toHaveClass('picker-ready');
-  });
-
-  it('waits hidden until the chat input renders Send', async () => {
-    copilot.sendCellShown = false;
-    await renderPage();
-    expect(picker().style.visibility).toBe('hidden');
-    expect(picker().style.position).toBe('absolute');
-    expect(document.querySelector('.copilotKitInput')).not.toHaveClass('picker-ready');
-
-    await act(async () => {
-      present(document.querySelector('.chat-wrapper'), 'the chat wrapper').append(document.createElement('span'));
-    });
-    await act(async () => {
-      copilot.sendCellShown = true;
-      copilot.listeners.forEach((listener) => listener());
-    });
-
-    expect(screen.getByTestId('send-cell').firstElementChild).toBe(picker());
-    expect(picker().style.visibility).toBe('');
-    expect(document.querySelector('.copilotKitInput')).toHaveClass('picker-ready');
-  });
-
-  it('stops waiting for Send once the chat unmounts', async () => {
-    copilot.sendCellShown = false;
-    const view = await renderPage();
-    const wrapper = present(document.querySelector('.chat-wrapper'), 'the chat wrapper');
-    const waiting = picker();
-
-    view.unmount();
-    const lateCell = document.createElement('div');
-    lateCell.className = 'cpk:col-start-3';
-    await act(async () => {
-      wrapper.append(lateCell);
-    });
-
-    expect(lateCell.contains(waiting)).toBe(false);
-  });
-
-  it('hands the picker back to the chat when the chat unmounts after placing it', async () => {
-    copilot.sendCellShown = false;
-    const view = await renderPage();
-    const wrapper = present(document.querySelector('.chat-wrapper'), 'the chat wrapper');
-    await act(async () => {
-      copilot.sendCellShown = true;
-      copilot.listeners.forEach((listener) => listener());
-    });
-    const placed = picker();
-    expect(screen.getByTestId('send-cell').firstElementChild).toBe(placed);
-
-    view.unmount();
-
-    expect(placed.parentElement).toBe(wrapper);
+    expect(picker()).toHaveClass('composer-end');
+    expect(picker().lastElementChild).toBe(screen.getByRole('button', { name: 'Send' }));
   });
 
   it('opens by keyboard with its full model and reasoning name', async () => {
@@ -8512,9 +8457,7 @@ describe('model and effort picker', () => {
       function SendBeforeModelsEffect({ accountId }: { accountId: string }) {
         useLayoutEffect(() => {
           if (accountId !== 'acct-linked') return;
-          const textarea = screen.getByLabelText<HTMLTextAreaElement>('Message');
-          textarea.value = 'What is 2+2? One word.';
-          fireEvent.keyDown(textarea, { key: 'Enter' });
+          fireEvent.keyDown(screen.getByLabelText<HTMLTextAreaElement>('Message'), { key: 'Enter' });
         }, [accountId]);
         return null;
       }
@@ -8524,6 +8467,7 @@ describe('model and effort picker', () => {
         composerAccessory: <SendBeforeModelsEffect accountId={accountId} />,
       });
       const view = await renderPage(state(currentAccount));
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'What is 2+2? One word.' } });
       currentAccount = 'acct-linked';
       service.models = [plan];
       cartridge.auth = state(currentAccount);
@@ -9672,7 +9616,7 @@ describe('attaching files', () => {
       uploads.push({ name: file.name, resolve, reject });
     }));
   });
-  const chips = () => [...document.querySelectorAll('.copilotKitInput .composer-file')].map((chip) => chip.textContent);
+  const chips = () => [...document.querySelectorAll('.chat-composer .composer-file')].map((chip) => chip.textContent);
   const attach = async (...names: string[]) => {
     const picker = present(document.querySelector<HTMLInputElement>('input[type="file"]'), 'the file picker');
     await userEvent.upload(picker, names.map((name) => new File(['data'], name)));

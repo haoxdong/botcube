@@ -7,32 +7,6 @@ export function moveMs() {
   return Number.isNaN(amount) ? 300 : value.endsWith("ms") ? amount : amount * 1000;
 }
 
-// Motion persists end styles and hides native pending state; this post-commit glide must preserve intrinsic sizing and interrupted starts.
-export function sizeGlide(element: HTMLElement, size: "width" | "height", frame: Keyframe = {}) {
-  let last = element.getBoundingClientRect()[size];
-  let running: Animation | null = null;
-  let start = last;
-  return {
-    /** `align` overrides `frame` for this glide only. */
-    glide(align: Keyframe = {}) {
-      const from = running === null ? last : running.pending ? start : element.getBoundingClientRect()[size];
-      running?.cancel();
-      running = null;
-      const to = element.getBoundingClientRect()[size];
-      last = to;
-      const duration = moveMs();
-      if (Math.abs(to - from) < 1) return;
-      const ease = getComputedStyle(document.documentElement).getPropertyValue("--ease").trim();
-      const animation = element.animate([{ ...frame, ...align, [size]: `${from}px` }, { ...frame, ...align, [size]: `${to}px` }], { duration, easing: ease || "ease" });
-      running = animation;
-      start = from;
-      animation.finished.catch(() => undefined);
-      animation.onfinish = () => { if (running === animation) running = null; };
-    },
-    stop() { running?.cancel(); },
-  };
-}
-
 // Motion also waits for native View Transition completion; WebKit can stall it and block taps without a timed skip.
 export function glide(change: () => void) {
   if (typeof document.startViewTransition !== "function") {

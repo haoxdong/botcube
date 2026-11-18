@@ -27,8 +27,6 @@ import { agentFiles } from "./agent-files";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
 import { OpenScheduledRun, type ReachedScheduledRun } from "./scheduled-run-card";
 import { ReplyTurnRunning } from "./reply-turn";
-import { useComposerSizing } from "./composer-layout-height";
-import { useComposerOpen } from "./composer-open";
 import { keepArtifactReading } from "./artifact-reading";
 import { NATIVE_READING, ReadingState } from "./native-reading";
 import { keepInPlace, holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
@@ -40,10 +38,11 @@ import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-botto
 import { webUiPlugin } from "@cartridge-ui";
 import { AssistantMessage, USER_MESSAGE } from "./reading-message";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
-import { Button } from "@/components/ui/button";
-import { cn, zoomOf } from "@/lib/utils";
-import { ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
-import { FileDropOverlay, addMenuSlot, useFileDrop } from "./composer-attach";
+import { Button } from "@/components/pill-button";
+import { zoomOf } from "@/lib/utils";
+import { ComposerFileChips, ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
+import { AddMenu, FileDropOverlay, useFileDrop } from "./composer-attach";
+import { Composer } from "./composer";
 import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
 import { showsProposalCard } from "./worklog-tools";
 import { fitBubbles } from "./bubble-width";
@@ -104,6 +103,7 @@ function ToolCallRenderer({ agent }: { agent: AbstractAgent }) {
 type Submit = NonNullable<CopilotChatInputProps["onSubmitMessage"]>;
 
 const ComposerAccessory = createContext<React.ReactNode>(null);
+const ComposerPicker = createContext<{ picker: ReactNode; autoFocus: boolean }>({ picker: null, autoFocus: false });
 const SubmitTurn = createContext<((message: string, submit: Submit, retry?: () => void) => boolean) | null>(null);
 const ComposerSubmit = createContext<{ current: Submit | null } | null>(null);
 const ComposerStop = createContext<{ current: (() => void) | null } | null>(null);
@@ -137,16 +137,6 @@ function sendWithFiles(message: string, attachedRef: RefObject<ComposerFiles | n
   if (submitTurn(messageWithFiles(message, paths), submit, () => sendWithFiles(message, attachedRef, submitTurn, submit))) attached.clear();
 }
 
-/** CopilotChatInput's send button becomes an unnamed, icon-only Stop while the agent runs. */
-function sendButtonSlot(mode: CopilotChatInputProps["mode"], isRunning: boolean, held: boolean, sendFiles?: () => void) {
-  if (mode === "transcribe") return {};
-  return { sendButton: { "aria-label": isRunning ? "Stop" : "Send", ...(!isRunning && sendFiles ? { disabled: held, onClick: sendFiles } : held && !isRunning ? { disabled: true } : {}) } };
-}
-
-function useComposerKeyboard() {
-  return useIsPhone() ? { keyboardHeight: 0, bottomAnchored: false } : {};
-}
-
 function useComposerActions(submit: Submit | undefined, stop: (() => void) | undefined, running: boolean, mode: CopilotChatInputProps["mode"]) {
   const composerSubmit = useContext(ComposerSubmit);
   const composerStop = useContext(ComposerStop);
@@ -176,8 +166,8 @@ function ThreadWaiting() {
 }
 
 function ComposerInput(props: CopilotChatInputProps) {
-  const keyboard = useComposerKeyboard();
   const accessory = useContext(ComposerAccessory);
+  const { picker: modelPicker, autoFocus } = useContext(ComposerPicker);
   const submitTurn = useContext(SubmitTurn);
   const { stop: stopServerTurn } = useContext(ServerTurn);
   const dropSteering = useDropSteering();
@@ -188,7 +178,8 @@ function ComposerInput(props: CopilotChatInputProps) {
   const held = attached?.sendable === false;
   const submit = props.onSubmitMessage;
   const [draft, setDraft] = useState(props.value ?? "");
-  const fileOnly = !((props.value ?? draft).trim()) && (attached?.files.length ?? 0) > 0;
+  const value = props.value ?? draft;
+  const fileOnly = !value.trim() && (attached?.files.length ?? 0) > 0;
   const sendFiles = fileOnly && submit && submitTurn ? () => sendWithFiles("", attachedRef, submitTurn, submit) : undefined;
   const stopsServerTurn = !props.isRunning && stopServerTurn !== null;
   const isRunning = props.isRunning || stopsServerTurn;
@@ -200,29 +191,43 @@ function ComposerInput(props: CopilotChatInputProps) {
   useComposerActions(submit, stop, isRunning, props.mode);
   const compose = useContext(Compose);
   const text = useRef("");
-  text.current = props.value ?? draft;
-  const onChange = (value: string) => { setDraft(value); props.onChange?.(value); compose(); };
+  text.current = value;
+  const onChange = (next: string) => { setDraft(next); props.onChange?.(next); compose(); };
   useLendComposer(text, onChange, stopTurn);
+  const send = () => {
+    if (sendFiles) {
+      sendFiles();
+      return;
+    }
+    const trimmed = value.trim();
+    if (!trimmed || !submit) return;
+    if (submitTurn) sendWithFiles(trimmed, attachedRef, submitTurn, submit);
+    else submit(trimmed);
+    onChange("");
+  };
   return (
     <>
-      {attached && <ComposerFilePicker attached={attached} picker={picker} />}
+      {attached && <ComposerFilePicker picker={picker} add={attached.add} />}
       <Presence>{accessory && (
-        <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:sm:px-0">
+        <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">
           <div className="composer-accessory">{accessory}</div>
         </motionElement.div>
       )}</Presence>
-      <CopilotChatInput
-        {...props}
-        {...keyboard}
-        className={cn(props.className, attached && "composer-can-attach")}
-        isRunning={isRunning}
+      <Composer
+        value={value}
         onChange={onChange}
-        disclaimer="chat-disclaimer"
-        {...addMenuSlot(attached, picker)}
-        textArea={{ onKeyDownCapture: holdEnter(held, isRunning, sendFiles), ...(attached ? { onPaste: attachPastedImages(attached.add) } : {}) }}
-        {...(stop ? { onStop: stop } : {})}
-        {...(submit && submitTurn ? { onSubmitMessage: (message: string) => sendWithFiles(message, attachedRef, submitTurn, submit) } : {})}
-        {...sendButtonSlot(props.mode, isRunning, held, sendFiles)}
+        onSend={send}
+        onStop={stop}
+        running={isRunning}
+        canSend={!held && (sendFiles !== undefined || (value.trim() !== "" && submit !== undefined))}
+        hasFiles={(attached?.files.length ?? 0) > 0}
+        autoFocus={autoFocus}
+        addMenu={attached && <AddMenu picker={picker} />}
+        files={attached && <ComposerFileChips files={attached.files} onRetry={attached.retry} onRemove={attached.remove} />}
+        picker={modelPicker}
+        disclaimer={UI_CONFIG.disclaimer}
+        onKeyDownCapture={holdEnter(held, isRunning, sendFiles)}
+        onPaste={attached ? attachPastedImages(attached.add) : undefined}
       />
     </>
   );
@@ -584,8 +589,6 @@ function ChatThread({
   const refreshTimerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  useComposerSizing(wrapperRef);
-  useComposerOpen(wrapperRef);
   const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -715,40 +718,6 @@ function ChatThread({
   const composerStop = useRef<(() => void) | null>(null);
   const waitingComposer = useRef<LentComposer | null>(null);
 
-  const pickerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const picker = pickerRef.current;
-    const wrapper = wrapperRef.current;
-    if (!picker || !wrapper) return;
-
-    const transplant = () => {
-      const sendCell = wrapper.querySelector<HTMLElement>('[class*="cpk:col-start-3"]');
-      if (sendCell && !sendCell.contains(picker)) {
-        sendCell.insertBefore(picker, sendCell.firstChild);
-        picker.style.visibility = "";
-        picker.style.position = "";
-        sendCell.closest(".copilotKitInput")?.classList.add("picker-ready");
-        if (newChat && showWelcome) wrapper.querySelector('textarea')?.focus();
-        // Stryker disable next-line BooleanLiteral: a needless observer finds the picker placed and never moves it
-        return true;
-      }
-      return false;
-    };
-
-    if (transplant()) return;
-
-    const observer = new MutationObserver(() => {
-      if (transplant()) observer.disconnect();
-    });
-    observer.observe(wrapper, { childList: true, subtree: true });
-
-    return () => {
-      observer.disconnect();
-      wrapper.appendChild(picker);
-    };
-  },
-  // Stryker disable next-line ArrayDeclaration: any constant dependency list places the picker once, on mount
-  []);
 
   return (
     <div className="chat-wrapper" data-native-reading={NATIVE_READING ? "" : undefined} ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
@@ -760,6 +729,7 @@ function ChatThread({
       <ComposerStop.Provider value={composerStop}>
       <ServerTurn.Provider value={{ running: turnRunsOnServer, stop: stopServerTurn }}>
       <ComposerAccessory.Provider value={composerAccessory}>
+      <ComposerPicker.Provider value={{ picker: children, autoFocus: newChat && showWelcome }}>
       <SteeringWaiting.Provider value={{ waiting, withdraw, sendNow }}>
       <WaitingComposer.Provider value={waitingComposer}>
       <Compose.Provider value={compose}>
@@ -801,12 +771,12 @@ function ChatThread({
       </Compose.Provider>
       </WaitingComposer.Provider>
       </SteeringWaiting.Provider>
+      </ComposerPicker.Provider>
       </ComposerAccessory.Provider>
       </ServerTurn.Provider>
       </ComposerStop.Provider>
       </ComposerSubmit.Provider>
       </SubmitTurn.Provider>
-      <div ref={pickerRef} style={{ position: "absolute", visibility: "hidden" }}>{children}</div>
     </div>
   );
 }

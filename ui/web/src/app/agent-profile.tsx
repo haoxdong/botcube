@@ -9,7 +9,7 @@ import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, typ
 import type { AgentProfileTab } from "../cartridge/index.js";
 import type { SignInsControl } from "../cartridge/types";
 import { SignInsTab } from "./sign-ins";
-import { Button } from "../components/ui/button";
+import { Button } from "../components/pill-button";
 import { Field } from "../components/ui/field";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";

@@ -26,7 +26,7 @@ export async function checkModelPicker(page, base, name, chatService) {
   if (!viewport) throw new Error('Model picker viewport missing');
   await page.setViewportSize({ width: viewport.width > 767 ? 1280 : viewport.width, height: 633 });
   await page.goto(base);
-  if (viewport.width <= 767) await page.locator('.copilotKitInput.picker-ready textarea').click();
+  if (viewport.width <= 767) await page.locator('.chat-composer textarea:not([readonly])').click();
   const pill = page.locator('.chat-model-picker .mep-pill');
   await pill.waitFor();
   await pill.click();
@@ -82,7 +82,7 @@ export async function checkModelPicker(page, base, name, chatService) {
 async function checkPickerBounds(page, dropdown, name) {
   const bounds = await dropdown.evaluate((node) => {
     const { top, bottom, left, right } = node.getBoundingClientRect();
-    return { top, bottom, left, right, width: right - left, composerWidth: document.querySelector(".copilotKitInput")?.getBoundingClientRect().width, viewportHeight: innerHeight, viewportWidth: innerWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, overflowY: getComputedStyle(node).overflowY };
+    return { top, bottom, left, right, width: right - left, composerWidth: document.querySelector(".chat-composer")?.getBoundingClientRect().width, viewportHeight: innerHeight, viewportWidth: innerWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight, overflowY: getComputedStyle(node).overflowY };
   });
   process.stdout.write(`${name} model picker ${JSON.stringify(bounds)}\n`);
   if (process.env.LAYOUT_SCREENSHOTS) {

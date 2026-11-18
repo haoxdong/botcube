@@ -182,12 +182,9 @@ it('shows the disclaimer and the composer accessory where the composer will be',
 it('shows the composer at rest, with nothing in it to use', () => {
   renderKept();
 
-  const composer = document.querySelector<HTMLElement>('.copilotKitInput');
-  if (composer === null) throw new Error('no composer');
-  expect(composer).toHaveAttribute('inert');
+  const composer = document.querySelector<HTMLElement>('.chat-composer')?.closest<HTMLElement>('[inert]');
+  if (!composer) throw new Error('no inert composer');
   expect(composer).toHaveAttribute('aria-hidden', 'true');
-  // globals.css hides a composer until its model picker is placed; this one has none.
-  expect(composer.style.visibility).toBe('visible');
   expect(within(composer).getByPlaceholderText('Ask anything')).toHaveAttribute('readonly');
   expect(within(composer).getByRole('button', { name: 'Send', hidden: true })).toBeDisabled();
   expect(within(composer).getByRole('button', { name: 'Add photos & files', hidden: true })).toBeInTheDocument();

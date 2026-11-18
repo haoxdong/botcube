@@ -215,11 +215,11 @@ it("lets the chat's grey page show between the bubbles, through CopilotKit's own
 // On a desktop the composer frames the column, 12px past the messages' text at each side, and nothing scrolled shows
 // under it: the canvas is opaque behind its disclaimer and up behind its lower half. A phone keeps both.
 it("widens a desktop's composer past the messages and keeps scrolled replies from showing under it", () => {
-  const desktop = sheet.match(/@media \(min-width: 768px\) \{\n {2}\.copilotKitInput,\n {2}\.composer-accessory \{[\s\S]*?\n\}/)?.[0] ?? '';
+  const desktop = sheet.match(/@media \(min-width: 768px\) \{\n {2}\.chat-composer,\n {2}\.composer-accessory \{[\s\S]*?\n\}/)?.[0] ?? '';
   expect(desktop).toMatch(/width: calc\(min\(720px, 100%\) - 1\.5rem\) !important;/);
   expect(desktop).toMatch(/\.app-chat \.chat-disclaimer \{\s*position: relative;\s*background: var\(--color-canvas\);/);
   expect(desktop).toMatch(/\.app-chat \.chat-disclaimer::before \{[^}]*z-index: -1;[^}]*inset: -26px 0 100%;[^}]*background: var\(--color-canvas\);/);
-  expect(sheet).toMatch(/\.copilotKitInput \{\n {2}margin: 0 auto !important;\n {2}width: calc\(min\(720px, 100%\) - 3rem\) !important;/);
+  expect(sheet).toMatch(/\.chat-composer \{\n {2}margin: 0 auto;\n {2}width: calc\(min\(720px, 100%\) - 3rem\);/);
 });
 
 // happy-dom misreads the `:has()` that picks the rest of a group, Marq's included; the chat-in-a-row story checks them.
@@ -259,16 +259,47 @@ it("shows a sent message's files as white cards above its blue bubble, each with
   message.remove();
 });
 
+// The composer as composer.tsx renders it: a form round a stock InputGroup, `.composer-box`, whose two addons hold the
+// + and the picker and Send, the text between them. `data-layout` is the composer's own: `expanded` once the text
+// takes more than one line.
+const composerMarkup = (layoutName: 'compact' | 'expanded', text = '') => `<form class="chat-composer" data-layout="${layoutName}">
+    <div data-slot="input-group" role="group" class="composer-box">
+      <div data-slot="input-group-addon" role="group" data-align="inline-start" class="composer-start"><button type="button" class="composer-add" data-testid="copilot-add-menu-button" aria-label="Add photos &amp; files">+</button></div>
+      <textarea data-slot="input-group-control" class="composer-text${text === '' ? ' placeholder-shown' : ''}" data-testid="copilot-chat-textarea" aria-label="Message" placeholder="Ask anything" rows="1"></textarea>
+      <div data-slot="input-group-addon" role="group" data-align="inline-end" class="composer-end"><div class="chat-model-picker"><div class="mep">
+        <button type="button" class="mep-pill"><span class="mep-pill-model">Model</span><span class="mep-pill-effort">Medium</span></button><div class="mep-dropdown"></div>
+      </div></div><button type="submit" class="composer-send" data-testid="copilot-send-button" aria-label="Send" disabled>Send</button></div>
+    </div>
+  </form>`;
+
+const composer = (layoutName: 'compact' | 'expanded', text = '') => {
+  const host = document.createElement('div');
+  host.innerHTML = composerMarkup(layoutName, text);
+  const textarea = host.querySelector('textarea');
+  if (textarea === null) throw new Error('no textarea');
+  textarea.value = text;
+  document.body.append(host);
+  return host;
+};
+
+// Where the + and the text and the controls stand in the composer's one flex row, which wraps the text across the top
+// once it takes two lines.
+const placement = (host: ParentNode) => {
+  const text = styleOf(host, '.composer-text');
+  return {
+    wrap: styleOf(host, '.composer-box').flexWrap,
+    add: styleOf(host, '.composer-start').order,
+    text: [text.order, text.flex],
+    controls: styleOf(host, '.composer-end').order,
+  };
+};
+
 // focus anywhere in the composer, on the model pill or an empty text box, turned send dark with nothing to send.
 it('shows the send button grey at rest and while the empty composer has focus, and dark once it can send', () => {
-  const input = document.createElement('div');
-  input.className = 'copilotKitInput';
-  input.innerHTML =
-    '<textarea></textarea><div><button class="mep-pill">Model</button><button type="button" data-testid="copilot-send-button" disabled>Send</button></div>';
-  document.body.append(input);
+  const host = composer('compact');
   try {
-    const [textarea, pill, send] = ['textarea', '.mep-pill', 'button[type="button"]'].map((selector) => {
-      const element = input.querySelector<HTMLElement>(selector);
+    const [textarea, pill, send] = ['.composer-text', '.mep-pill', '.composer-send'].map((selector) => {
+      const element = host.querySelector<HTMLElement>(selector);
       if (element === null) throw new Error(`no ${selector}`);
       return element;
     });
@@ -284,22 +315,22 @@ it('shows the send button grey at rest and while the empty composer has focus, a
     send.removeAttribute('disabled');
     expect(getComputedStyle(send).backgroundColor).toBe('#202020');
   } finally {
-    input.remove();
+    host.remove();
   }
 });
 
 it("lifts the composer on a clear border in the resting shadow, on a desktop and a phone alike", () => {
   // A fresh composer per viewport, as happy-dom keeps an element's computed style. happy-dom matches no
   // `:focus-within`, so this reads the composer at rest.
-  const composer = (width: number) => {
+  const lift = (width: number) => {
     happyDOM.setViewport({ width, height: 844 });
-    const input = document.createElement('div');
-    input.className = 'copilotKitInput';
-    input.innerHTML = '<span class="pseudo-before"></span><span class="pseudo-after"></span>';
-    document.body.append(input);
-    const { backgroundColor, borderTopColor, boxShadow } = getComputedStyle(input);
-    const resting = styleOf(input, '.pseudo-before');
-    const lifted = styleOf(input, '.pseudo-after');
+    const host = composer('compact');
+    const box = host.querySelector('.composer-box');
+    if (box === null) throw new Error('no input group');
+    box.insertAdjacentHTML('afterbegin', '<span class="pseudo-before"></span><span class="pseudo-after"></span>');
+    const { backgroundColor, borderTopColor, boxShadow } = getComputedStyle(box);
+    const resting = styleOf(box, ':scope > .pseudo-before');
+    const lifted = styleOf(box, ':scope > .pseudo-after');
     const appearance = {
       fill: backgroundColor,
       border: borderTopColor,
@@ -307,7 +338,7 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
       resting: { shadow: resting.boxShadow, opacity: resting.opacity },
       lifted: { shadow: lifted.boxShadow, opacity: lifted.opacity },
     };
-    input.remove();
+    host.remove();
     return appearance;
   };
 
@@ -319,17 +350,20 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
       resting: { shadow: '0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)', opacity: '1' },
       lifted: { shadow: '0 4px 20px rgba(0, 0, 0, 0.15)', opacity: '0' },
     };
-    expect(composer(1024)).toEqual(resting);
-    expect(composer(440)).toEqual(resting);
+    expect(lift(1024)).toEqual(resting);
+    expect(lift(440)).toEqual(resting);
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
+  // Focus only crossfades the resting shadow to the floating one: no other composer rule keys on it.
+  expect(sheet).toMatch(/\.chat-composer > \.composer-box:focus-within::before \{\s*opacity: 0;\s*\}\s*\.chat-composer > \.composer-box:focus-within::after \{\s*opacity: 1;\s*\}/);
+  expect(sheet).not.toMatch(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus-within(?!::(before|after))/);
 });
 
 it("gives the composer's placeholder the muted text, and every scrollbar, CopilotKit's too, the line grey's thumb", () => {
   const input = document.createElement('div');
-  input.className = 'copilotKitInput';
-  input.innerHTML = '<textarea><span class="pseudo-placeholder"></span></textarea>';
+  input.className = 'chat-composer';
+  input.innerHTML = '<textarea class="composer-text"><span class="pseudo-placeholder"></span></textarea>';
   document.body.append(input);
   try {
     expect(styleOf(input, '.pseudo-placeholder').color).toBe('#646464');
@@ -344,105 +378,88 @@ it("gives the composer's placeholder the muted text, and every scrollbar, Copilo
 
 // The text is the `body` size and the picker `small`, whose phone sizes start at 640px.
 const composerSizes = [[440, '17px', '15px'], [641, '14px', '13px'], [767, '14px', '13px'], [768, '14px', '13px'], [1440, '14px', '13px']] as const;
-// CopilotKit lays a phone's out `expanded` always, a desktop's once its text takes two lines. A phone's is measured
-// open, its two rows; at rest it is one (see below).
+// The composer lays itself out `expanded` once its text takes more than one line, on a phone as on a desktop.
 const composerCases = composerSizes.flatMap(([width, textSize, pickerSize]) =>
-  (width < 768
-    ? [['empty', '', 'expanded'], ['one-line', 'What moved US rates?', 'expanded']] as const
-    : [['empty', '', 'compact'], ['one-line', 'What moved US rates?', 'compact'], ['two-line', 'What moved US rates?\nAnd why?', 'expanded']] as const
-  ).map(([draft, text, layoutName]) => ({ width, textSize, pickerSize, draft, text, layoutName })),
+  ([['empty', '', 'compact'], ['one-line', 'What moved US rates?', 'compact'], ['two-line', 'What moved US rates?\nAnd why?', 'expanded']] as const)
+    .map(([draft, text, layoutName]) => ({ width, textSize, pickerSize, draft, text, layoutName })),
 );
 // Paddings read top, right, bottom, left.
 const composerLayouts = {
-  phone: { rows: 'minmax(44px, auto) 44px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '0px', '0px', '0px'], padding: ['0px', 'calc(16px - 1px)', '0px', 'calc(16px - 1px)'], columnGap: undefined, target: '44px' },
-  // ChatGPT's desktop composer: 36px controls in a 52px row, inside 7px of padding and the 1px border.
-  compact: { rows: 'auto', textColumn: '1', controlsRow: '1', textPadding: ['8px', '0px', '8px', '0px'], padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', target: '36px' },
+  // A phone's one line: + | text | Send in an exact pill, 44px targets, the text 16px inside the box's outer edge and
+  // centred on the 44px row, and no picker in the row.
+  'phone-compact': { wrap: 'nowrap', radius: '9999px', align: 'flex-end', padding: ['0px', 'calc(16px - 1px)', '0px', 'calc(16px - 1px)'], columnGap: '0', text: ['0', '1 1 0px'], textPadding: ['calc((44px - 1lh) / 2)', '0px', 'calc((44px - 1lh) / 2)', '0px'], textMarginTop: '0px', textHeight: '44px', picker: false, target: '44px' },
+  // A phone's two lines: the text across the top over the row of +, picker and Send, in xl corners.
+  'phone-expanded': { wrap: 'wrap', radius: '20px', align: 'flex-end', padding: ['0px', 'calc(16px - 1px)', '0px', 'calc(16px - 1px)'], columnGap: '0', text: ['-2', '1 0 100%'], textPadding: ['0px', '0px', '0px', '0px'], textMarginTop: '8px', textHeight: '36px', picker: true, target: '44px' },
+  // ChatGPT's desktop composer: 36px controls in a 52px pill, inside 7px of padding and the 1px border, the picker in
+  // the row.
+  compact: { wrap: 'nowrap', radius: '9999px', align: 'center', padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', text: ['0', '1 1 0px'], textPadding: ['8px', '0px', '8px', '0px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
   // Two lines on a desktop, ChatGPT's pattern: the text across the top, its left edge on the +'s glyph, over the 36px
-  // row of controls.
-  expanded: { rows: 'auto 36px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '8px', '8px', '8px'], padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', target: '36px' },
+  // row of controls, in xl corners.
+  expanded: { wrap: 'wrap', radius: '20px', align: 'center', padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', text: ['-2', '1 0 100%'], textPadding: ['8px', '8px', '8px', '8px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
 } as const;
 
-it.each(composerCases)('keeps phone text above right controls, and desktop text beside them until it takes two lines ($width px, $draft draft)', ({ width, textSize, pickerSize, text, layoutName }) => {
+it.each(composerCases)("keeps the composer's text in a pill between its + and its controls on one line, the picker in the row only on a desktop, and over a row of them once it takes two lines ($width px, $draft draft)", ({ width, textSize, pickerSize, text, layoutName }) => {
   try {
     happyDOM.setViewport({ width, height: 844 });
     // The type roles are the root's tokens, whose kept style a changed attribute drops.
     document.documentElement.dataset.width = String(width);
-    const input = document.createElement('div');
-    input.className = 'copilotKitInput';
-    input.toggleAttribute('data-open', width < 768);
-    input.innerHTML = `<div class="cpk:grid" data-layout="${layoutName}">
-      <div class="cpk:col-start-1"></div>
-      <div class="cpk:col-span-3"><textarea placeholder="Ask anything"></textarea></div>
-      <div class="cpk:col-start-3"><div class="chat-model-picker"><div class="mep">
-        <button class="mep-pill"><span class="mep-pill-model">Model</span><span class="mep-pill-effort">Medium</span></button><div class="mep-dropdown"></div>
-      </div></div><button type="button" data-testid="copilot-send-button">Send</button></div>
-    </div>`;
-    const textarea = input.querySelector('textarea');
-    if (textarea === null) throw new Error('no textarea');
-    textarea.value = text;
-    textarea.classList.toggle('placeholder-shown', text === '');
-    document.body.append(input);
-    const expected = composerLayouts[width < 768 ? 'phone' : layoutName];
+    const host = composer(layoutName, text);
+    const expected = composerLayouts[width < 768 ? (`phone-${layoutName}` as const) : layoutName];
 
-    const layout = styleOf(input, '[data-layout]');
-    expect(layout.gridTemplateRows).toBe(expected.rows);
-    expect([layout.paddingTop, layout.paddingRight, layout.paddingBottom, layout.paddingLeft]).toEqual(expected.padding);
-    if (expected.columnGap !== undefined) expect(layout.columnGap).toBe(expected.columnGap);
-    const textStyle = styleOf(input, 'textarea');
+    const box = styleOf(host, '.composer-box');
+    expect([box.display, box.flexWrap, box.justifyContent, box.alignItems]).toEqual(['flex', expected.wrap, 'space-between', expected.align]);
+    expect(box.borderRadius).toBe(expected.radius);
+    expect([box.paddingTop, box.paddingRight, box.paddingBottom, box.paddingLeft]).toEqual(expected.padding);
+    expect(box.columnGap).toBe(expected.columnGap);
+    expect(box.position).toBe('relative');
+    expect(placement(host)).toEqual({ wrap: expected.wrap, add: '-1', text: expected.text, controls: '1' });
+    const textStyle = styleOf(host, '.composer-text');
     expect([textStyle.paddingTop, textStyle.paddingRight, textStyle.paddingBottom, textStyle.paddingLeft]).toEqual(expected.textPadding);
-    expect(styleOf(input, '[class*="col-start-1"]').display).toBe('none');
-    expect(styleOf(input, '[class*="col-span-3"]').gridColumn).toBe(expected.textColumn);
-    expect(styleOf(input, '[class*="col-span-3"]').gridRow).toBe('1');
-    expect(styleOf(input, '[class*="col-start-3"]').gridRow).toBe(expected.controlsRow);
+    expect(textStyle.marginTop || '0px').toBe(expected.textMarginTop);
+    expect(textStyle.minHeight).toBe(expected.textHeight);
     expect(textStyle.fontSize).toBe(textSize);
-    // The text sits on the page's line at every width, over CopilotKit's `leading-relaxed`.
+    // The text sits on the page's line at every width.
     expect(textStyle.lineHeight).toBe('1.3');
-    expect(styleOf(input, '.mep-pill').fontSize).toBe(pickerSize);
-    expect(styleOf(input, '.mep-pill-effort').display).not.toBe('none');
-    expect(styleOf(input, '.mep-pill').minHeight).toBe(expected.target);
-    expect(styleOf(input, '[data-testid="copilot-send-button"]').width).toBe(expected.target);
-    expect(styleOf(input, '[data-testid="copilot-send-button"]').height).toBe(expected.target);
-    expect(getComputedStyle(input).position).toBe('relative');
-    expect(styleOf(input, '.mep').position).toBe('static');
-    expect(styleOf(input, '.mep-dropdown').bottom).toBe('calc(100% + 8px)');
+    expect(styleOf(host, '.composer-add').width).toBe(expected.target);
+    expect(styleOf(host, '.composer-send').width).toBe(expected.target);
+    expect(styleOf(host, '.composer-send').height).toBe(expected.target);
+    if (expected.picker) {
+      expect(styleOf(host, '.chat-model-picker').display).not.toBe('none');
+      expect(styleOf(host, '.mep-pill').fontSize).toBe(pickerSize);
+      expect(styleOf(host, '.mep-pill-effort').display).not.toBe('none');
+      expect(styleOf(host, '.mep-pill').minHeight).toBe(expected.target);
+    } else {
+      expect(styleOf(host, '.chat-model-picker').display).toBe('none');
+    }
+    expect(styleOf(host, '.mep').position).toBe('static');
+    expect(styleOf(host, '.mep-dropdown').bottom).toBe('calc(100% + 8px)');
+    host.remove();
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
     delete document.documentElement.dataset.width;
-    document.querySelectorAll('.copilotKitInput').forEach((input) => input.remove());
   }
 });
 
-// Like the Claude app's, a phone's composer rests on one row, the + | the text | Send, its picker out of the row and out
-// of sight but still rendered for its width glide, until its text is tapped.
-it.each([440, 767])("rests a phone's composer on one row with no picker until it opens (%i px)", (width) => {
+// Like the Claude app's, a phone's composer is one row while its text fits it, the + | the text | Send, with no
+// picker; text that takes two lines goes across the top, over the + at the left and the picker and Send at the right.
+it.each([440, 767])("rests a phone's one-line composer on one row with no picker, and puts the picker beside Send under two lines (%i px)", (width) => {
   try {
     happyDOM.setViewport({ width, height: 844 });
-    // A fresh composer per state, as happy-dom keeps an element's computed style.
-    const cells = (open: boolean) => {
-      const host = document.createElement('div');
-      host.className = 'composer-can-attach';
-      host.innerHTML = `<div class="copilotKitInput picker-ready"${open ? ' data-open' : ''}><div class="cpk:grid" data-layout="expanded">
-        <div class="cpk:col-start-1"><button data-testid="copilot-add-menu-button">+</button></div>
-        <div class="cpk:col-span-3"><textarea></textarea></div>
-        <div class="cpk:col-start-3"><div class="chat-model-picker"><button class="mep-pill">Model</button></div>
-        <button type="button" data-testid="copilot-send-button">Send</button></div>
-      </div></div>`;
-      document.body.append(host);
-      const cell = (selector: string) => [styleOf(host, selector).gridColumn, styleOf(host, selector).gridRow];
-      const picker = styleOf(host, '.chat-model-picker');
-      const read = {
-        rows: styleOf(host, '[data-layout]').gridTemplateRows,
-        add: cell('[class*="col-start-1"]'),
-        text: cell('[class*="col-span-3"]'),
-        controls: cell('[class*="col-start-3"]'),
-        picker: [picker.visibility || 'visible', picker.display],
+    // A fresh composer per layout, as happy-dom keeps an element's computed style.
+    const read = (layoutName: 'compact' | 'expanded') => {
+      const host = composer(layoutName, layoutName === 'compact' ? 'What moved US rates?' : 'What moved US rates?\nAnd why?');
+      const result = {
+        ...placement(host),
+        picker: styleOf(host, '.chat-model-picker').display,
+        // The +'s 20px glyph on the text's left edge, Send's 32px circle 7px inside the border.
+        edges: [styleOf(host, '.composer-start').marginLeft, styleOf(host, '.composer-end').marginRight],
       };
       host.remove();
-      return read;
+      return result;
     };
 
-    expect(cells(false)).toEqual({ rows: 'minmax(44px, auto)', add: ['1', '1'], text: ['2', '1'], controls: ['3', '1'], picker: ['hidden', 'block'] });
-    expect(cells(true)).toEqual({ rows: 'minmax(44px, auto) 44px', add: ['1', '2'], text: ['1 / -1', '1'], controls: ['3', '2'], picker: ['visible', 'block'] });
+    expect(read('compact')).toEqual({ wrap: 'nowrap', add: '-1', text: ['0', '1 1 0px'], controls: '1', picker: 'none', edges: ['calc(-1 * 12px)', 'calc(-1 * 16px + 2px)'] });
+    expect(read('expanded')).toEqual({ wrap: 'wrap', add: '-1', text: ['-2', '1 0 100%'], controls: '1', picker: expect.not.stringMatching(/^none$/), edges: ['calc(-1 * 12px)', 'calc(-1 * 16px + 2px)'] });
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
@@ -452,28 +469,18 @@ it("puts a desktop's + under two lines of text, at the left of the controls' row
   try {
     happyDOM.setViewport({ width: 1440, height: 844 });
     for (const [layoutName, cells] of [
-      ['compact', { add: ['1', '1'], text: ['2', '1'], controls: ['3', '1'] }],
-      ['expanded', { add: ['1', '2'], text: ['1 / -1', '1'], controls: ['3', '2'] }],
+      ['compact', { wrap: 'nowrap', add: '-1', text: ['0', '1 1 0px'], controls: '1' }],
+      ['expanded', { wrap: 'wrap', add: '-1', text: ['-2', '1 0 100%'], controls: '1' }],
     ] as const) {
-      const input = document.createElement('div');
-      input.className = 'copilotKitInput';
-      const host = document.createElement('div');
-      host.className = 'composer-can-attach';
-      host.append(input);
-      input.innerHTML = `<div class="cpk:grid" data-layout="${layoutName}">
-        <div class="cpk:col-start-1"><button type="button" data-testid="copilot-add-menu-button">+</button></div>
-        <div class="cpk:col-span-3"><textarea></textarea></div>
-        <div class="cpk:col-start-3"><button type="button" data-testid="copilot-send-button">Send</button></div>
-      </div>`;
-      document.body.append(host);
-      const place = (selector: string) => [styleOf(input, selector).gridColumn, styleOf(input, selector).gridRow];
-      expect({ add: place('[class*="col-start-1"]'), text: place('[class*="col-span-3"]'), controls: place('[class*="col-start-3"]') }).toEqual(cells);
-      expect(styleOf(input, '[data-testid="copilot-add-menu-button"]').width).toBe('36px');
+      const host = composer(layoutName);
+      expect(placement(host)).toEqual(cells);
+      // The row's ends: the + at its left, the controls at its right.
+      expect(styleOf(host, '.composer-box').justifyContent).toBe('space-between');
+      expect(styleOf(host, '.composer-add').width).toBe('36px');
       host.remove();
     }
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
-    document.querySelectorAll('.copilotKitInput').forEach((input) => input.remove());
   }
 });
 
@@ -485,12 +492,9 @@ it("keeps the composer's text at 16px on a touch tablet, the desktop's 14px with
     happyDOM.setViewport({ width, height: 1024 });
     happyDOM.settings.navigator.maxTouchPoints = maxTouchPoints;
     document.documentElement.dataset.width = `${width}-${maxTouchPoints}`;
-    const input = document.createElement('div');
-    input.className = 'copilotKitInput';
-    input.innerHTML = '<textarea></textarea>';
-    document.body.append(input);
-    const { fontSize } = styleOf(input, 'textarea');
-    input.remove();
+    const host = composer('compact');
+    const { fontSize } = styleOf(host, '.composer-text');
+    host.remove();
     return fontSize;
   };
 
@@ -631,15 +635,15 @@ it("lines the composer and its accessory up with the messages' column, the grey 
 
   // A desktop's messages' column: 720px at most, less its 1.5rem side padding, in CopilotKit's 768px column.
   // happy-dom leaves calc() and min() unresolved, so this reads the sheet.
-  expect(sheet).toMatch(/\n\.copilotKitInput \{[^}]*\n {2}width: calc\(min\(720px, 100%\) - 3rem\) !important;/);
+  expect(sheet).toMatch(/\n\.chat-composer \{[^}]*\n {2}width: calc\(min\(720px, 100%\) - 3rem\);/);
   expect(sheet).toMatch(/\n\.composer-accessory \{[^}]*\n {2}width: calc\(min\(720px, 100%\) - 3rem\);/);
-  expect(box('copilotKitInput').maxWidth).toBe('');
+  expect(box('chat-composer').maxWidth).toBe('');
   expect(box('composer-accessory').maxWidth).toBe('');
   happyDOM.setViewport({ width: 390, height: 844 });
   try {
     // A phone's messages' column drops its side padding, and the composer reaches 4px into CopilotKit's 1rem gutter,
     // 12px from the screen's edges like ChatGPT Work's; its accessory shares its left edge.
-    for (const className of ['copilotKitInput', 'composer-accessory']) {
+    for (const className of ['chat-composer', 'composer-accessory']) {
       expect(box(className).width).toBe('calc(100% + 8px)');
       expect(box(className).marginLeft).toBe('calc(-1 * 4px)');
       expect(box(className).marginRight).toBe('calc(-1 * 4px)');
@@ -1603,7 +1607,7 @@ function keptChat() {
   return (
     <div className="kept-chat">
       <div className="chat-wrapper">
-        <div className="kept-chat-composer"><div className="cpk:pointer-events-auto"><div className="copilotKitInput" /></div></div>
+        <div className="kept-chat-composer"><div className="cpk:pointer-events-auto"><form className="chat-composer" data-layout="compact" /></div></div>
       </div>
     </div>
   );
@@ -1617,19 +1621,20 @@ it('shows the kept composer while a loading chat has no composer of its own yet'
     fallback.unmount();
   }
 
-  const placingPicker = render(
+  // The opening chat lays its messages out under the kept view before its composer mounts; the kept one stands in.
+  const noComposerYet = render(
     <div className="app-chat app-chat-opening">
       <div className="chat-wrapper">
-        <div data-testid="copilot-input-overlay"><div className="copilotKitInput"><textarea /></div></div>
+        <div data-testid="copilot-message-list" />
+        <div data-testid="copilot-input-overlay" />
       </div>
       {keptChat()}
     </div>,
   );
   try {
-    expect(styleOf(placingPicker.container, '.app-chat-opening > .chat-wrapper .copilotKitInput').visibility).toBe('hidden');
-    expect(styleOf(placingPicker.container, '.kept-chat-composer').opacity).not.toBe('0');
+    expect(styleOf(noComposerYet.container, '.kept-chat-composer').opacity).not.toBe('0');
   } finally {
-    placingPicker.unmount();
+    noComposerYet.unmount();
   }
 });
 
@@ -1638,7 +1643,7 @@ it('shows the kept composer\'s + where the chat\'s own composer shows it, so the
     happyDOM.setViewport({ width, height: 844 });
     const { container, unmount } = render(<KeptChat messages={[]} disclaimer="" />);
     try {
-      expect(styleOf(container, '.kept-chat-composer .copilotKitInput > [data-layout] > :first-child').display).not.toBe('none');
+      expect(styleOf(container, '.kept-chat-composer .chat-composer > :first-child').display).not.toBe('none');
     } finally {
       unmount();
     }
@@ -1662,7 +1667,7 @@ it('keeps the opening chat\'s composer shown over its kept view, so the draft ca
     <div className="app-chat app-chat-opening">
       <div className="chat-wrapper">
         <div data-testid="copilot-message-list" />
-        <div data-testid="copilot-input-overlay"><div className="copilotKitInput picker-ready"><textarea /></div></div>
+        <div data-testid="copilot-input-overlay"><form className="chat-composer" data-layout="compact"><textarea className="composer-text" /></form></div>
       </div>
       {keptChat()}
     </div>,
@@ -1672,7 +1677,7 @@ it('keeps the opening chat\'s composer shown over its kept view, so the draft ca
     expect(styleOf(container, '.app-chat-opening > .chat-wrapper [data-testid="copilot-message-list"]').visibility).toBe('hidden');
     expect(styleOf(container, '.app-chat-opening > .chat-wrapper textarea').visibility).toBe('visible');
     expect(styleOf(container, '.kept-chat-composer').opacity).toBe('0');
-    expect(styleOf(container, '.kept-chat-composer .copilotKitInput').pointerEvents).toBe('none');
+    expect(styleOf(container, '.kept-chat-composer .chat-composer').pointerEvents).toBe('none');
   } finally {
     unmount();
   }
@@ -1710,7 +1715,7 @@ it("shows the kept view's reply image without waiting to fade it in", () => {
 // a desktop's press shows the fill. A press fills them everywhere; on touch the fill also holds while the
 // control's menu is open, as under a resting mouse, and a mouse with its pointer away keeps them clear.
 it.each([
-  ['the +', '<button data-testid="copilot-add-menu-button">+</button>', '[data-testid="copilot-add-menu-button"]'],
+  ['the +', '<button type="button" class="composer-add" data-testid="copilot-add-menu-button">+</button>', '.composer-add'],
   ['the model picker', '<div class="chat-model-picker"><button class="mep-pill">Model</button></div>', '.mep-pill'],
 ])('fills %s on press and, on touch, while its menu is open', (_name, html, selector) => {
   // happy-dom matches no :hover or :active, so a copy of the sheet marking those states with classes stands in for it.
@@ -1719,8 +1724,8 @@ it.each([
   style.replaceWith(states);
   const fill = (maxTouchPoints: number, state: string, open = false) => {
     happyDOM.settings.navigator.maxTouchPoints = maxTouchPoints;
-    const input = document.createElement('div');
-    input.className = 'copilotKitInput';
+    const input = document.createElement('form');
+    input.className = 'chat-composer';
     input.innerHTML = html;
     const control = input.querySelector(selector);
     if (control === null) throw new Error(`no ${selector}`);
@@ -1754,22 +1759,23 @@ it.each([[440, true], [767, true], [768, false], [1440, false]] as const)('keeps
   try {
     happyDOM.setViewport({ width, height: 844 });
     const host = document.createElement('div');
-    host.innerHTML = `<div class="copilotKitInput picker-ready"><div data-layout="compact">
-      <div><button data-testid="copilot-add-menu-button">+</button></div><div><textarea></textarea></div>
-      <div><div class="chat-model-picker"><button class="mep-pill">Model</button></div></div>
-    </div></div><div class="chat-disclaimer">AI can make mistakes.</div>`;
+    // Two lines, so a phone shows its picker too.
+    host.innerHTML = `${composerMarkup('expanded', 'What moved US rates?\nAnd why?')}<div class="chat-disclaimer">AI can make mistakes.</div>`;
     document.body.append(host);
-    const add = styleOf(host, '[data-testid="copilot-add-menu-button"]');
+    const add = styleOf(host, '.composer-add');
+    const send = styleOf(host, '.composer-send');
     const pill = styleOf(host, '.mep-pill');
     const read = {
       disclaimer: styleOf(host, '.chat-disclaimer').display,
       add: [add.borderTopWidth, add.borderLeftWidth, add.backgroundClip],
+      send: [send.borderTopWidth, send.borderLeftWidth, send.backgroundClip],
       pill: [pill.borderTopWidth, pill.borderBottomWidth],
     };
     host.remove();
+    const notPhone = [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^padding-box$/)];
     expect(read).toEqual(phone
-      ? { disclaimer: 'none', add: ['6px', '6px', 'padding-box'], pill: ['6px', '6px'] }
-      : { disclaimer: 'block', add: [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^padding-box$/)], pill: [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/)] });
+      ? { disclaimer: 'none', add: ['6px', '6px', 'padding-box'], send: ['6px', '6px', 'padding-box'], pill: ['6px', '6px'] }
+      : { disclaimer: 'block', add: notPhone, send: notPhone, pill: [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/)] });
     // happy-dom lets the pill's later `background` shorthand reset its clip; the sheet keeps it, over the press's fill.
     expect(sheet).toMatch(/@media \(max-width: 767px\) \{[^@]*\.chat-model-picker \.mep-pill \{\s*border-top: 6px solid transparent;\s*border-bottom: 6px solid transparent;\s*background-clip: padding-box !important;/);
   } finally {

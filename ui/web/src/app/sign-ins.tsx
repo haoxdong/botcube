@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { failureDetail } from '../computer/failure-detail';
 import { Collapse, Fade, Swap } from './collapse';
 import { LoadingSkeleton } from './load-state';
-import { Button } from '../components/ui/button';
+import { Button } from '../components/pill-button';
 import { StatusPill } from '../components/ui/status-pill';
 import type { SignIn, SignInsControl } from '../cartridge/types';
 

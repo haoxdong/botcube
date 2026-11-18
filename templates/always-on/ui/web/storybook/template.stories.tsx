@@ -48,7 +48,7 @@ async function computerGeometry(panel: HTMLElement) {
 async function ready(root: HTMLElement) {
   const message = await within(root).findByText('What is on the template site?', {}, { timeout: 30000 });
   await waitFor(() => expect(message).toBeVisible());
-  await visible(root, '.copilotKitInput textarea');
+  await visible(root, '.chat-composer textarea:not([readonly])');
 }
 async function profile(root: HTMLElement, tab: string) {
   await ready(root);
@@ -116,7 +116,7 @@ export const SignInNeeded: Story = {
     await ready(canvasElement);
     const chip = await within(canvasElement).findByRole('button', { name: /Sign in needed/ }, { timeout: 30000 });
     const chipBox = chip.getBoundingClientRect();
-    const composer = box(canvasElement, '.copilotKitInput');
+    const composer = box(canvasElement, '.chat-composer');
     // Above the composer, on its left edge, a finger's target on a phone.
     await near(chipBox.left, composer.left);
     await expect(chipBox.bottom).toBeLessThanOrEqual(composer.top);
@@ -209,7 +209,7 @@ export const TurnLiveBrowser: Story = {
     await visible(canvasElement, phone ? '.live-browser-panel .computer-screen-bar' : '.live-browser-panel .computer-screen-image');
     const panel = box(canvasElement, '.live-browser-panel');
     // Clear of the composer and the header, inside the window's right gutter.
-    await expect(panel.bottom).toBeLessThanOrEqual(box(canvasElement, '.copilotKitInput').top - 8);
+    await expect(panel.bottom).toBeLessThanOrEqual(box(canvasElement, '.chat-composer').top - 8);
     await expect(panel.top).toBeGreaterThanOrEqual(box(canvasElement, '.chat-header').bottom);
     await near(window.innerWidth - panel.right, phone ? 12 : 24);
     if (phone) {
