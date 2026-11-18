@@ -109,6 +109,30 @@ def test_a_turn_with_no_identity_acts_as_the_session_user(bot_service: _Service)
     assert [key.actor_id for key in serving._AGENTS] == ['user-1']
 
 
+_RESOURCE = 'run: printenv OTEL_RESOURCE_ATTRIBUTES'
+
+
+def test_shell_commands_carry_the_acting_user_and_the_traffic_marker(bot_service: _Service) -> None:
+    # The OpenTelemetry resource-attribute format percent-encodes values, so a separator in the ID stays inside it.
+    events = bot_service.turn(_RESOURCE, turnIdentity=turn_identity('user one,2', 'user-1'), traffic='test')
+
+    assert _tool_output(events) == 'enduser.id=user%20one%2C2,botcube.traffic=test\n\n[Command succeeded with exit code 0]'
+
+
+def test_a_turn_with_no_traffic_marker_carries_only_the_user(bot_service: _Service) -> None:
+    events = bot_service.turn(_RESOURCE, user='user-1')
+
+    assert _tool_output(events) == 'enduser.id=user-1\n\n[Command succeeded with exit code 0]'
+
+
+def test_a_traffic_change_reaches_the_cached_agent_without_a_rebuild(bot_service: _Service) -> None:
+    bot_service.turn(_RESOURCE, traffic='test')
+    events = bot_service.turn(_RESOURCE, traffic='real')
+
+    assert _tool_output(events) == 'enduser.id=user-1,botcube.traffic=real\n\n[Command succeeded with exit code 0]'
+    assert len(serving._AGENTS) == 1
+
+
 @pytest.mark.parametrize(
     ('settings', 'field'),
     [

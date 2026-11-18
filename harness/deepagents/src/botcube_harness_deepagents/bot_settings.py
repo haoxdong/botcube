@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from botcube_cartridge import (
     HarnessDefinition,
@@ -23,6 +24,8 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from .memory.agentcore import turn_actor
 
+# The shell variable OpenTelemetry SDKs read resource attributes from, so a CLI's spans name the Turn's User and traffic.
+_RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES'
 _SCHEMA = json.loads(Path(__file__).with_name('bot-settings.schema.json').read_text(encoding='utf8'))
 # Where the agent finds the bot's skills, one directory each.
 SKILLS = '/skills/'
@@ -100,7 +103,7 @@ def bot_definition(bot: BotSettings) -> HarnessDefinition:
         prepare_invocation=_prepare_invocation,
         prepare_root=prepare_root,
         session_id_env_var='BOTCUBE_SESSION_ID',
-        environment_cache_key=environment_cache_key(),
+        environment_cache_key=environment_cache_key(_RESOURCE_ATTRIBUTES),
         system_prompt=bot.instructions,
     )
 
@@ -109,6 +112,7 @@ def _prepare_invocation(input_data: Any) -> InvocationAuth:
     """The Turn's User, with Memory, and the Credential Service's model relay when Chat bound one for the Session.
 
     The User is the Turn identity's actor; the Session's filing ID differs for a Session filed under an older ID.
+    The shell names the User and Chat's traffic marker to the spans of any CLI the agent runs.
     """
     props = input_data.get('forwardedProps', {}) if isinstance(input_data, dict) else input_data.forwarded_props or {}
     session = input_data.get('threadId') if isinstance(input_data, dict) else input_data.thread_id
@@ -117,7 +121,15 @@ def _prepare_invocation(input_data: Any) -> InvocationAuth:
         raise ValueError('The Credential Service binding needs both its URL and its invocation token')
     relay = openai_model_relay(url, token, session) if url and token and isinstance(session, str) else None
     actor = turn_actor(props.get('turnIdentity')) or props.get('sessionUserId')
-    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=None, model_relay=relay)
+    environment = _span_resource(actor, props.get('traffic'))
+    return InvocationAuth(actor_id=actor, persistent_memory=True, environment=environment, model_relay=relay)
+
+
+def _span_resource(actor: Any, traffic: Any) -> dict[str, str] | None:
+    """The OpenTelemetry resource attributes, values percent-encoded as the environment format requires."""
+    attributes = {'enduser.id': actor, 'botcube.traffic': traffic}
+    encoded = ','.join(f'{key}={quote(str(value), safe="")}' for key, value in attributes.items() if value is not None)
+    return {_RESOURCE_ATTRIBUTES: encoded} if encoded else None
 
 
 def _field(error: ValidationError) -> str:
