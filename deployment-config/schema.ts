@@ -151,7 +151,8 @@ const existing = z
           .min(2)
           .describe("The services' and browsers' subnets, which must already reach the internet or the proxy."),
       })
-      .optional(),
+      .optional()
+      .describe("A network that brings its own egress: BotCube creates, routes and parks no NAT in it, so the deploy identity names no aws.ecs.privateEgress."),
     kmsKeys: z
       .strictObject({
         vault: kmsKeyArn.optional().describe("Encrypts the Credential Service's vault."),

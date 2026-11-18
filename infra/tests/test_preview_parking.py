@@ -1,12 +1,15 @@
 """Park/unpark verification names every mismatch and records per-step timings and Credential Service start."""
 import json
+import os
 import runpy
+import tempfile
 import unittest
 import urllib.error
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from email.message import Message
 from io import BytesIO
+from pathlib import Path
 from typing import Any, TypedDict
 from unittest.mock import MagicMock, Mock, patch
 
@@ -130,6 +133,42 @@ class ParkedVerificationTests(unittest.TestCase):
         self.assertEqual(verifier['parked_failures'](facts, EXPECTED), [
             'API health check is enabled',
             'alarm actions are not absent: bot-cube-api-health on, bot-cube-preview-alb-5xx on, bot-cube-preview-task-deficit off'])
+
+
+NAT_FACTS = ('natResources', 'defaultRoutes', 'natGateways', 'address', 'egressIp')
+
+
+class WithoutOwnedEgressVerificationTests(unittest.TestCase):
+    """An existing network brings its own egress, so verification never looks for BotCube's NAT."""
+
+    def setUp(self):
+        identity = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+        del identity['aws']['ecs']['privateEgress']
+        root = Path(tempfile.mkdtemp())
+        (root / 'identity.json').write_text(json.dumps(identity))
+        with patch.dict(os.environ, {'CARTRIDGE_DEPLOY_ROOT': str(root)}):
+            self.verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
+
+    @staticmethod
+    def without_nat(facts: dict[str, Any]) -> dict[str, Any]:
+        return {**{key: value for key, value in facts.items() if key not in NAT_FACTS}, 'stacks': {'origin': 'UPDATE_COMPLETE'}}
+
+    def test_parked_and_partial_modes_pass_without_a_nat(self):
+        self.assertEqual(self.verifier['parked_failures'](self.without_nat(parked()), None), [])
+        for mode in ('egress', 'credential'):
+            with self.subTest(mode=mode):
+                facts = self.without_nat(parked())
+                if mode == 'credential':
+                    facts['services']['credential-service'] = live()['services']['credential-service']
+                self.assertEqual(self.verifier['partial_failures'](facts, None, mode), [])
+
+    def test_live_passes_without_a_nat_or_a_fixed_egress_address(self):
+        self.assertEqual(self.verifier['live_failures'](self.without_nat(live()), None), [])
+
+    def test_still_names_every_other_mismatch(self):
+        facts = self.without_nat(parked())
+        facts['reaper'] = 'ENABLED'
+        self.assertEqual(self.verifier['parked_failures'](facts, None), ['reaper schedule is ENABLED'])
 
 
 class LiveVerificationTests(unittest.TestCase):

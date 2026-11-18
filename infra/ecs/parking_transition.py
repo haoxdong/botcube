@@ -12,20 +12,21 @@ from botocore.exceptions import ClientError
 from deploy_identity import load_identity
 
 IDENTITY = load_identity()
-STACKS = {'egress': IDENTITY['aws']['ecs']['privateEgress']['stackName'],
+OWNED_EGRESS = IDENTITY['aws']['ecs'].get('privateEgress')
+STACKS = {**({'egress': OWNED_EGRESS['stackName']} if OWNED_EGRESS else {}),
           'origin': IDENTITY['aws']['ecs']['previewOriginStackName'],
           'health': IDENTITY['aws']['ecs']['apiHealth']['stackName']}
 EFFECTIVE_MODES = {
     STACKS['health']: {'parked': 'parked', 'egress': 'parked', 'credential': 'parked', 'live': 'live'},
-    STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'},
+    **({STACKS['egress']: {'parked': 'parked', 'egress': 'egress', 'credential': 'egress', 'live': 'egress'}} if OWNED_EGRESS else {}),
     STACKS['origin']: {'parked': 'parked', 'egress': 'parked', 'credential': 'credential', 'live': 'live'},
 }
-STEPS = {
+STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step != 'egress') for mode, steps in {
     'parked': ('health', 'origin', 'capacity', 'egress', 'verify', 'store'),
     'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
     'credential': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
     'live': ('egress', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store'),
-}
+}.items()}
 SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 
 

@@ -33,7 +33,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     logGroup: new logs.LogGroup(stack, 'TransitionLogs', { retention: logs.RetentionDays.ONE_MONTH }),
   });
   const allow = (actions: string[], resources: string[]) => worker.addToRolePolicy(new iam.PolicyStatement({ actions, resources }));
-  const stackNames = [ecs.privateEgress.stackName, ecs.previewOriginStackName, ecs.apiHealth.stackName];
+  const stackNames = [...(ecs.privateEgress ? [ecs.privateEgress.stackName] : []), ecs.previewOriginStackName, ecs.apiHealth.stackName];
   allow(['cloudformation:DescribeStacks', 'cloudformation:DescribeStackResources', 'cloudformation:ListStackResources', 'cloudformation:UpdateStack'],
     stackNames.map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` })));
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `cdk-hnb659fds-cfn-exec-role-${stack.account}-${stack.region}` })]);

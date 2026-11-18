@@ -1,7 +1,10 @@
 // Test seam 2 (ADR 0091): the enterprise example deploys into the network, keys, tables and buckets its Deployment Config
 // names, sends traces to its collector and reaches the internet through its proxy; the expected values are its file's.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
+import type { DeployIdentity } from '../lib/production-identity.js';
 import { synthesizeExample } from './example-fixture.js';
 
 interface Resource { Type: string; Properties: Record<string, unknown> }
@@ -50,6 +53,26 @@ test('refers only to what each stack defines, once the created resources are gon
   const dangling = templates.flatMap(template => references(template.Resources)
     .filter(id => !(id in template.Resources) && !(id in (template.Parameters ?? {}))));
   expect(dangling).toEqual([]);
+});
+
+const TEMPLATE_EGRESS = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../templates/always-on/deploy/identity.json'), 'utf8')) as DeployIdentity)
+  .aws.ecs.privateEgress;
+
+test("leaves egress to the existing network: no NAT, route or Elastic IP, and none of the template's NAT subnet or route table", () => {
+  const egress = ['AWS::EC2::NatGateway', 'AWS::EC2::Route', 'AWS::EC2::EIP'];
+  expect(resources.filter(({ Type }) => egress.includes(Type)).map(({ Type }) => Type)).toEqual([]);
+  const named = JSON.stringify(templates);
+  expect([TEMPLATE_EGRESS?.natGateway.publicSubnetId, TEMPLATE_EGRESS?.routeTableId].filter(id => !id || named.includes(id))).toEqual([]);
+});
+
+test('fails when its deploy identity also names a NAT, naming both fields', async () => {
+  const withNat = (identity: DeployIdentity) => ({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, privateEgress: TEMPLATE_EGRESS } } });
+  await expect(synthesizeExample('enterprise', withNat)).rejects.toThrow('existing.network, aws.ecs.privateEgress: ');
+});
+
+test('without an existing network, fails when its deploy identity names no NAT, naming both fields', async () => {
+  const withoutNat = ({ aws: { ecs: { privateEgress: _, ...ecs }, ...aws }, ...identity }: DeployIdentity) => ({ ...identity, aws: { ...aws, ecs } });
+  await expect(synthesizeExample('public', withoutNat)).rejects.toThrow('existing.network, aws.ecs.privateEgress: ');
 });
 
 test('runs in the existing network', () => {

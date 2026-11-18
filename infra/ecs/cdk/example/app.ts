@@ -20,6 +20,10 @@ const CHAT_DOCKERFILE = path.resolve(__dirname, '../../../../templates/always-on
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
 export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
 
+const EXAMPLE_IDENTITIES: Readonly<Partial<Record<string, (identity: DeployIdentity) => DeployIdentity>>> = {
+  'enterprise/deployment-config.json': ({ aws: { ecs: { privateEgress: _, ...ecs }, ...aws }, ...identity }) => ({ ...identity, aws: { ...aws, ecs } }),
+};
+
 interface ExampleOptions {
   repositoryRoot: string;
   /** The checkout's commit the stacks deploy. */
@@ -35,14 +39,15 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const { config } = loadDeployment(configPath);
   const deploymentConfig = imageDeploymentConfig(configPath, config.bot);
   const network = config.existing?.network;
-  const identity = inNetwork((options.identity ?? (same => same))(cartridgeIdentity(EXAMPLE_DEPLOY_ROOT)), network);
+  const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
+  const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(cartridgeIdentity(EXAMPLE_DEPLOY_ROOT))), network);
   const environment = proxyEnvironment(config);
   const otlpEndpoint = config.telemetry?.otlpEndpoint;
   const { kmsKeys, tables, buckets } = config.existing ?? {};
   const seams = seamWiring(config);
   defineProduction(app, {
     ...seams.production,
-    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity,
+    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, existingNetwork: network !== undefined,
     origin: options.origin?.(identity),
     ...(tables?.chat ? { storage: { existingChatTable: tables.chat } } : {}),
     ...(buckets?.connectionLogs ? { originConfig: { existingConnectionLogsBucketName: buckets.connectionLogs } } : {}),

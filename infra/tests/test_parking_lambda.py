@@ -1,8 +1,10 @@
 """The production parking Lambda changes deployed parameters without a checkout."""
 import importlib.util
 import json
+import os
 from datetime import UTC, datetime
 from email.message import Message
+from pathlib import Path
 
 import pytest
 
@@ -446,3 +448,39 @@ def test_validation_errors_for_different_effective_configuration_still_fail(mess
     with pytest.raises(ClientError, match=message):
         world.complete(module, 'live')
     assert world.stored == 'parked'
+
+
+class OwnNetwork(Production):
+    """A deployment in an existing network, which brings its own egress: it has no egress stack to describe or update."""
+
+    def __init__(self, parked):
+        super().__init__(parked)
+        del self.stacks['bot-cube-private-egress']
+
+
+def load_without_owned_egress(monkeypatch, tmp_path):
+    identity = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+    del identity['aws']['ecs']['privateEgress']
+    (tmp_path / 'identity.json').write_text(json.dumps(identity))
+    monkeypatch.setenv('CARTRIDGE_DEPLOY_ROOT', str(tmp_path))
+    return load()
+
+
+@pytest.mark.parametrize(('action', 'parked', 'effects'), [
+    ('unpark', True, ['capacity live', 'refresh', 'bot-cube-preview-origin', 'bot-cube-api-health',
+                      'verify live', 'verify live', 'verify live', 'spares', 'store live']),
+    ('park', False, ['bot-cube-api-health', 'bot-cube-preview-origin', 'capacity parked', 'verify parked', 'store parked']),
+])
+def test_a_deployment_without_owned_egress_parks_and_unparks_without_a_nat(monkeypatch, tmp_path, action, parked, effects):
+    world, module = OwnNetwork(parked), load_without_owned_egress(monkeypatch, tmp_path)
+    assert world.complete(module, action)['done'] is True
+    assert world.effects == effects
+    assert module.production_state(world, world.stored) == {'state': world.stored}
+
+
+def test_partial_modes_without_owned_egress_change_only_the_origin_and_health(monkeypatch, tmp_path):
+    world, module = OwnNetwork(True), load_without_owned_egress(monkeypatch, tmp_path)
+    for mode in ('egress', 'credential', 'parked'):
+        world.complete(module, mode)
+        assert world.stored == mode
+    assert 'bot-cube-private-egress' not in world.effects

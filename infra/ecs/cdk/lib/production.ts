@@ -20,7 +20,7 @@ import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
 import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
-import { PrivateEgressStack } from './private-egress-stack.js';
+import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
 
@@ -99,6 +99,8 @@ export interface ProductionOptions {
   deployRoot: string;
   /** The Cartridge's deploy identity, as `cartridgeIdentity` reads it. */
   identity: DeployIdentity;
+  /** The Deployment Config names `existing.network`, which brings its own egress in place of the identity's `privateEgress`. */
+  existingNetwork?: boolean;
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
     input: OriginInput;
@@ -122,10 +124,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   const storage = createChatStorage(app, options);
-  const egressConfig = identity.aws.ecs.privateEgress;
-  const egress = new PrivateEgressStack(app, 'PrivateEgress', {
-    env, stackName: egressConfig.stackName, natGateway: egressConfig.natGateway, routeTableId: egressConfig.routeTableId,
-  });
+  const egress = ownedEgress(app, identity, options.existingNetwork ?? false, options.permissionsBoundary);
   const health = new ApiHealthStack(app, 'ApiHealth', {
     env, stackName: identity.aws.ecs.apiHealth.stackName, alarmName: identity.aws.ecs.apiHealth.alarmName,
     hostname: new URL(identity.domains.chatService).hostname, alertsTopicName: identity.aws.ecs.alertsTopicName,
@@ -140,7 +139,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     moments: options.webLatency?.moments ?? latencyMoments(options.deployRoot),
   });
   if (options.permissionsBoundary) {
-    for (const stack of [storage, egress, health, webLatency]) iam.PermissionsBoundary.of(stack).apply(options.permissionsBoundary);
+    for (const stack of [storage, health, webLatency]) iam.PermissionsBoundary.of(stack).apply(options.permissionsBoundary);
   }
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
@@ -296,7 +295,7 @@ function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatServic
   }));
 }
 
-function createServingOrigin(app: App, options: ProductionOptions, input: OriginInput, health: ApiHealthStack, egress: PrivateEgressStack, wakeUrl: string) {
+function createServingOrigin(app: App, options: ProductionOptions, input: OriginInput, health: ApiHealthStack, egress: PrivateEgressStack | undefined, wakeUrl: string) {
   const { identity, repositoryRoot } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   const origin = new PreviewOriginStack(app, 'PreviewOrigin', {
@@ -325,7 +324,7 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     ...options.originConfig,
   });
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(origin).apply(options.permissionsBoundary);
-  origin.addDependency(egress);
+  if (egress) origin.addDependency(egress);
   health.addDependency(origin);
   return origin;
 }
