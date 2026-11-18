@@ -4,7 +4,7 @@ import type { Stack } from 'aws-cdk-lib';
 export function parkingTemplate(stack: Stack, mode: boolean | 'parked' | 'egress' | 'credential' | 'live' = false): Template {
   const parked = typeof mode === 'boolean' ? mode : mode !== 'live';
   const conditions = { Parked: parked, Live: !parked, EgressEnabled: typeof mode === 'boolean' ? !mode : mode !== 'parked', CredentialEnabled: typeof mode === 'boolean' ? !mode : mode === 'credential' || mode === 'live' };
-  const template = Template.fromStack(stack).toJSON();
+  const template = structuredClone(Template.fromStack(stack).toJSON());
   for (const section of ['Resources', 'Outputs']) {
     template[section] = Object.fromEntries(Object.entries(template[section] ?? {}).filter(([, resource]) => {
       const condition = (resource as { Condition?: string }).Condition;
