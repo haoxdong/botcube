@@ -52,6 +52,12 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
     expect(template.Parameters.productionMode).toEqual({ Type: 'String', AllowedValues: ['parked', 'egress', 'credential', 'live'], Description: 'Production resource mode.' });
   }
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
+  const services = origin.findResources('AWS::ECS::Service');
+  const credential = Object.keys(services).find((id) => id.startsWith('CredentialService'));
+  const chat = Object.entries(services).find(([id]) => id.startsWith('ChatService'))?.[1];
+  expect(credential).toBeDefined();
+  expect(chat?.DependsOn).toContain(credential);
+
   expect(Object.keys(origin.findResources('AWS::IAM::Policy', {
     Properties: { Roles: [identity.aws.ecs.deployRoleName] },
   }))).toHaveLength(0);
