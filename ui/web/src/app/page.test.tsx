@@ -2833,7 +2833,7 @@ describe('Main Chat', () => {
     await userEvent.click(sidebar().getByRole('button', { name: 'Apps' }));
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Apps' })).toBeVisible();
-    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Plugins', 'Connectors', 'Terminal apps', 'Skills']);
+    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Plugins', 'Connectors (MCP)', 'Terminal apps (CLI)', 'Skills']);
     expect(screen.getAllByText('Coming soon')).toHaveLength(4);
     expect(sidebar().getByRole('button', { name: 'Apps' })).toHaveClass('sidebar-nav-item-active');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).not.toHaveClass('sidebar-nav-item-active');
