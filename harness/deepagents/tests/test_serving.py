@@ -441,6 +441,24 @@ def test_a_turn_without_a_thread_id_is_the_default_conversation(service: _Servic
     assert [entry['thread_id'] for entry in _cache_usage(caplog)] == ['default']
 
 
+def test_invocation_first_body_stamps_join_success_and_stream_error_to_runtime_sessions(
+    service: _Service, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=serving.__name__)
+
+    succeeded = service.turn('hello', session='runtime-one')
+    failed = service.turn('say: ', session='runtime-two')
+    assert succeeded[-1]['type'] == 'RUN_FINISHED'
+    assert failed[-1]['type'] == 'RUN_ERROR'
+    stamps = [json.loads(record.message) for record in caplog.records
+              if record.message.startswith('{"event":"harness_response_first_body"')]
+    assert [(stamp['runId'], stamp['runtimeSessionId']) for stamp in stamps] == [
+        ('run-0', 'runtime-one'), ('run-1', 'runtime-two'),
+    ]
+    assert all(set(stamp) == {'event', 'runId', 'runtimeSessionId', 'atUnixNs'} for stamp in stamps)
+    assert all(isinstance(stamp['atUnixNs'], int) and stamp['atUnixNs'] > 0 for stamp in stamps)
+
+
 def test_the_agent_is_built_once_per_conversation_and_reused(service: _Service) -> None:
     service.turn('one')
     service.turn('two')

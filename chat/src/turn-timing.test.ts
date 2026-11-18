@@ -100,3 +100,15 @@ it('counts chunk tokens in first and last token timing', () => {
     e2eMs: 50, chatMs: { firstToken: 50, lastToken: 50, end: 100 },
   });
 });
+
+it('keeps the exact warmup-await interval separate from later dispatch work', () => {
+  clock();
+  const timing = new TurnTiming(100, 'run', 'session');
+  now = 125; timing.mark('warmupWaitStart');
+  now = 175; timing.mark('warmupWaitEnd');
+  now = 225; timing.mark('dispatch');
+  now = 300; timing.finish();
+  expect(JSON.parse(lines()[0] ?? '{}')).toMatchObject({
+    chatMs: { warmupWaitStart: 25, warmupWaitEnd: 75, dispatch: 125, end: 200 },
+  });
+});

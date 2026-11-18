@@ -71,6 +71,7 @@ describe('POST /warmup', () => {
   });
 
   it('holds a Turn sent while its chat is still warming until the warmup ends, instead of failing it SESSION_BUSY', async () => {
+    const timingLog = vi.spyOn(console, 'info');
     await stack.allocate('account-1', 'warm-then-send');
     let release = () => {};
     const hold = new Promise<void>((resolve) => { release = resolve; });
@@ -90,6 +91,13 @@ describe('POST /warmup', () => {
     expect(answer).toContain('RUN_FINISHED');
     expect((await warming).status).toBe(200);
     expect(stack.agentcore.invocations().filter(({ body }) => body.includes('warm-then-send'))).toHaveLength(2);
+    const logged = timingLog.mock.calls.map(([line]) => String(line))
+      .filter((line) => line.startsWith('{"event":"chat_turn_timing"'))
+      .map((line) => JSON.parse(line) as { runId: string; chatMs: Record<string, number> })
+      .find((line) => line.runId === 'instant-send');
+    expect(logged?.chatMs).toMatchObject({ warmupWaitStart: expect.any(Number), warmupWaitEnd: expect.any(Number) });
+    expect(logged?.chatMs.warmupWaitEnd).toBeGreaterThanOrEqual(logged?.chatMs.warmupWaitStart ?? Infinity);
+    expect(logged?.chatMs.dispatch).toBeGreaterThanOrEqual(logged?.chatMs.warmupWaitEnd ?? Infinity);
   });
 
   it('does not hold a Turn for a warmup that was refused', async () => {

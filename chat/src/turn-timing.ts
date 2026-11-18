@@ -4,7 +4,7 @@ import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Context, type Span 
 import { EventType } from '@ag-ui/client';
 
 /** Chat's stages of a Turn, in the order they are reached. */
-const STAGES = ['requester', 'model', 'admitted', 'payload', 'identity', 'liveView', 'dispatch', 'invoke', 'firstFrame', 'firstToken', 'lastToken', 'end'] as const;
+const STAGES = ['requester', 'model', 'admitted', 'payload', 'identity', 'liveView', 'warmupWaitStart', 'warmupWaitEnd', 'dispatch', 'invoke', 'firstFrame', 'firstToken', 'lastToken', 'end'] as const;
 type TurnStage = (typeof STAGES)[number];
 
 const token = ({ type, delta }: Record<string, unknown>): boolean =>

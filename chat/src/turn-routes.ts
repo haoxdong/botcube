@@ -176,7 +176,12 @@ export function turnRoutes(
         const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
         timing.mark('liveView');
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
-        await warming.until(requester.owner, input.threadId, config.warmupTimeoutMs);
+        timing.mark('warmupWaitStart');
+        try {
+          await warming.until(requester.owner, input.threadId, config.warmupTimeoutMs);
+        } finally {
+          timing.mark('warmupWaitEnd');
+        }
         const complete = await dispatchAfterWriter(prepared, input.threadId, input.runId, c.req.raw.signal);
         forwardSnapshotEpoch(payload.forwardedProps, complete);
         timing.mark('dispatch');

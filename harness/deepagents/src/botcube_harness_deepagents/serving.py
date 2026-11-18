@@ -12,6 +12,7 @@ import tempfile
 import threading
 from collections.abc import (
     AsyncGenerator,
+    AsyncIterable,
     Awaitable,
     Callable,
     Mapping,
@@ -22,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time_ns
 from typing import Any, Literal, NamedTuple, TypeGuard, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -62,6 +63,7 @@ from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage, trace
 from opentelemetry import context as otel_context
 from pydantic import TypeAdapter
+from starlette.types import Message as ASGIMessage
 from starlette.types import Receive, Scope, Send
 
 from . import (
@@ -1268,6 +1270,30 @@ async def _events_with_response_check(run_input: RunAgentInput, context: _Reques
         yield event
 
 
+class _InvocationResponse(StreamingResponse):
+    """Stamp the first nonempty ASGI send attempt; transport delivery is unobserved."""
+
+    def __init__(self, content: AsyncIterable[str | bytes], *, run_id: str,
+                 runtime_session_id: str | None, media_type: str) -> None:
+        super().__init__(content, media_type=media_type)
+        self.run_id = run_id
+        self.runtime_session_id = runtime_session_id
+
+    async def stream_response(self, send: Send) -> None:
+        first = True
+
+        async def observed_send(message: ASGIMessage) -> None:
+            nonlocal first
+            if first and message['type'] == 'http.response.body' and message.get('body'):
+                first = False
+                log.info(json.dumps({'event': 'harness_response_first_body', 'runId': self.run_id,
+                                     'runtimeSessionId': self.runtime_session_id, 'atUnixNs': time_ns()},
+                                    separators=(',', ':')))
+            await send(message)
+
+        await super().stream_response(observed_send)
+
+
 @app.post('/invocations')
 async def invocations(request: Request) -> Any:
     """Parse RunAgentInput → run the agent → stream AG-UI events as SSE.
@@ -1304,8 +1330,9 @@ async def invocations(request: Request) -> Any:
         run_input.run_id, run_input.thread_id, forwarded.get('model'), warmup=warmup, receipt=receipt,
     )
 
-    return StreamingResponse(
-        keep_alive(_invocation_frames(run_input, context, encoder, timing), _KEEPALIVE_SECONDS), media_type=encoder.get_content_type(),
+    return _InvocationResponse(
+        keep_alive(_invocation_frames(run_input, context, encoder, timing), _KEEPALIVE_SECONDS),
+        run_id=run_input.run_id, runtime_session_id=context.session_id, media_type=encoder.get_content_type(),
     )
 
 

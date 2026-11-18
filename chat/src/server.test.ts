@@ -222,8 +222,8 @@ it('logs one chat_turn_timing line for a relayed Turn, timed to its last token',
     expect(timings[0]).not.toContain('private');
     const timing = JSON.parse(timings[0] ?? '{}');
     expect(timing).toEqual({ event: 'chat_turn_timing', runId, sessionId, model: expect.any(String), status: 'finished', e2eMs: 140,
-      chatMs: { requester: 20, model: 20, admitted: 60, payload: 90, identity: 90, liveView: 90, dispatch: 90, invoke: 90, firstFrame: 140, firstToken: 140, lastToken: 140, end: 140 } });
-    expect(Object.keys(timing.chatMs)).toEqual(['requester', 'model', 'admitted', 'payload', 'identity', 'liveView', 'dispatch', 'invoke', 'firstFrame', 'firstToken', 'lastToken', 'end']);
+      chatMs: { requester: 20, model: 20, admitted: 60, payload: 90, identity: 90, liveView: 90, warmupWaitStart: 90, warmupWaitEnd: 90, dispatch: 90, invoke: 90, firstFrame: 140, firstToken: 140, lastToken: 140, end: 140 } });
+    expect(Object.keys(timing.chatMs)).toEqual(['requester', 'model', 'admitted', 'payload', 'identity', 'liveView', 'warmupWaitStart', 'warmupWaitEnd', 'dispatch', 'invoke', 'firstFrame', 'firstToken', 'lastToken', 'end']);
   } finally { await target.stop(); }
 });
 
