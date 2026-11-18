@@ -73,7 +73,6 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   clusterName: string;
   alertsTopicName: string;
   hostnames: string[];
-  rawHostnames?: string[];
   corsOrigins: string[];
   runtimeArn?: string;
   /** Absent, SigV4: the task role invokes the Runtime. A JWT bearer needs no Runtime grant. */
@@ -337,7 +336,7 @@ function attachIngress(scope: Construct, service: ecs.FargateService, target: el
   }) : alb.listener;
   if (providedOrigin?.alb) providedOrigin.alb.loadBalancer.setAttribute('idle_timeout.timeout_seconds', String(props.loadBalancerIdleSeconds ?? 3600));
   service.attachToApplicationTargetGroup(target);
-  const forwardHostnames = [...props.hostnames, ...(props.rawHostnames ?? [])];
+  const forwardHostnames = props.hostnames;
   // The Agent Computer CDP channel is for the harness only, which reaches it over
   // Cloud Map; Chat Service hostnames answer it 404 before forwarding anything.
   // Priorities 5 and 10 never collide with the forward rule's former 1 mid-update.

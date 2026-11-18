@@ -483,12 +483,3 @@ test('imported Chat resources own their names and queue redrive settings', () =>
     scheduledRunsQueue: sqs.Queue.fromQueueArn(origin, 'OwnedQueue', 'arn:aws:sqs:us-east-1:123456789012:owned-runs'), scheduledRunsFailedQueueName: 'replacement',
   }))).toThrow('imported scheduledRunsQueue owns its name and redrive settings');
 });
-
-test('a raw HTTP hostname forwards even paths private to the Chat Service', () => {
-  const template = synth(undefined, false, privateSubnets, { rawHostnames: ['gateway.example.com'] });
-  const rules = Object.values(template.findResources('AWS::ElasticLoadBalancingV2::ListenerRule')).map(rule => rule.Properties);
-  const cdp = rules.find(rule => JSON.stringify(rule.Conditions).includes('/agent-computer/cdp'));
-  expect(cdp.Conditions).toContainEqual({ Field: 'host-header', HostHeaderConfig: { Values: ['preview.example.com', 'api.example.com'] } });
-  const forward = rules.find(rule => rule.Actions[0].Type === 'forward');
-  expect(forward.Conditions).toEqual([{ Field: 'host-header', HostHeaderConfig: { Values: ['preview.example.com', 'api.example.com', 'gateway.example.com'] } }]);
-});

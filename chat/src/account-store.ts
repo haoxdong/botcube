@@ -384,6 +384,10 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
    * token is deleted.
    */
   async sessionAccount(sessionToken: string | undefined): Promise<A | null> {
+    return (await this.liveSession(sessionToken))?.account ?? null;
+  }
+
+  async liveSession(sessionToken: string | undefined): Promise<{ account: A; expiresAt: number } | null> {
     const tokenValue = (sessionToken ?? '').trim();
     if (!tokenValue.startsWith('sess_')) return null;
     let record = await this.session(tokenValue);
@@ -412,7 +416,7 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     // token item only while it is still live, so a sign-out between the read and the slide stays signed out.
     // The index goes first: cleanup reads its expiry, and must never see a live session as expired.
     const [tokenItem, index] = this.tokenItems(tokenValue, session);
-    return (await this.replaceLive(index)) && (await this.replaceLive(tokenItem)) ? account : null;
+    return (await this.replaceLive(index)) && (await this.replaceLive(tokenItem)) ? { account, expiresAt: session.expiresAt } : null;
   }
 
   /** The registered account ID a live session token belongs to. */

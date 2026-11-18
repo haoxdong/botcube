@@ -15,7 +15,7 @@ import { Secret as SecretsManagerSecret, type ISecret } from 'aws-cdk-lib/aws-se
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { ApiHealthStack } from './api-health-stack.js';
 import { ChatStorageStack } from './chat-storage-stack.js';
-import { publishCredentialService } from './credential-service-public-route.js';
+import { publishCredentialService, rawServiceHostname } from './credential-service-public-route.js';
 import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
@@ -155,7 +155,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     clusterName: identity.aws.ecs.cluster,
     alertsTopicName: identity.aws.ecs.alertsTopicName,
     hostnames: [identity.domains.chatServicePreview, identity.domains.chatService].map(url => new URL(url).hostname),
-    rawHostnames: (identity.domains.rawServiceOrigins ?? []).map(url => new URL(url).hostname),
     corsOrigins: identity.domains.corsOrigins,
     runtimeArn: input.runtimeArn,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
@@ -227,10 +226,11 @@ export function defineProduction(app: App, options: ProductionOptions) {
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
   credentials.container.addEnvironment('BOTCUBE_ISSUER', publicOrigin);
+  const rawHostname = rawServiceHostname(identity);
   if (credentialConfig.publicHostname !== undefined) publishCredentialService(origin, credentials, {
     hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,
     paths: publicPaths(credentialConfig),
-    chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [],
+    chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [], rawHostname,
     corsOrigins: identity.domains.corsOrigins, chatTable: storage.chatTable as ITable,
   });
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.

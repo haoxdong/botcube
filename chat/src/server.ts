@@ -149,7 +149,6 @@ export function createChatService(
   const summarizeTurn = turnSummarizer(config.turnSummaryModel);
   const turnCredentials = config.turnCredentials?.kind === 'assume-role' ? assumeRoleTurnCredentials(config.turnCredentials.roleArn) : turnIdentity;
   const app = new Hono();
-  if (cartridge.rawRoutes) app.route('/', cartridge.rawRoutes);
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
     const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };

@@ -87,8 +87,6 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   readonly memory?: boolean;
   /** The Cartridge's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
-  /** Raw HTTP routes run before Chat Service CORS and status normalization. */
-  readonly rawRoutes?: Hono;
   /**
    * Resolve the request's account; throws an HttpError when the request has none
    * the Chat Service may act for. Only the Chat Service resolves identity (ADR 0068 §4).
