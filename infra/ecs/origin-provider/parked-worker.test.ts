@@ -18,8 +18,9 @@ describe('parked Worker', () => {
     expect(refused.status).toBe(503);
   });
 
-  it('answers every request with the parked 503 readable by the web UI', async () => {
-    const response = await worker.fetch(new Request('https://api.example.com/account/session', {
+  it.each(['/account/session', '/agent/models', '/files/download-url?name=example.json', '/main-chat', '/threads'])(
+    'answers %s with the shared parked response', async (path) => {
+    const response = await worker.fetch(new Request(`https://api.example.com${path}`, {
       headers: { Origin: 'https://example.com' },
     }), env);
 
