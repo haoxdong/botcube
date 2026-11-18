@@ -40,22 +40,24 @@ frame strip at 390 and 1440 px beside today's.
 
 ## Spacing
 
-Seven steps, each a space token named by its px; 2 and 6 only nudge inside one row. A gap is set by what the two
-things are to each other, never by which element happens to sit above, so a new row between them takes the same gap.
+Seven steps; 2 and 6 only nudge inside a row. Four rules set every gap, in order:
 
-| Step | Job                                                                               |
-| ---- | --------------------------------------------------------------------------------- |
-| 4    | Bubbles in a row from one sender; a note under its bubble ("Send now", a time)    |
-| 8    | Icon to its label; a heading to its text in a reply; menu and sidebar rows        |
-| 12   | A question to its answer; one waiting message to the next; blocks in a reply      |
-| 16   | A table, code block or card clear of the text around it; a desktop's side padding |
-| 20   | A phone's side padding; a heading clear of the text above it                      |
-| 24   | Sections of a screen or sheet; the desktop chat column's side padding             |
-| 32   | One Turn to the next: Marq's reply, or its Worklog, to the user's next message    |
+1. **The reference first.** Where ChatGPT, Claude or the platform shows the gap, copy it.
+2. **Closer means together.** A gap between groups is at least twice the gap inside them, measured between what shows.
+3. **The smallest step that passes** rule 2, where the reference is silent.
+4. **By relation, not by neighbour:** a new row between two things changes nothing.
+
+| Level            | Steps | For example                                                     |
+| ---------------- | ----- | --------------------------------------------------------------- |
+| Inside a row     | 2–8   | Icon to its label; menu and sidebar rows                        |
+| Inside a group   | 4–12  | Bubbles from one sender; "Send now" under its bubble            |
+| Between items    | 12–16 | A question to its answer; blocks, tables and cards in a reply   |
+| Between groups   | 24–32 | One waiting message to the next (24); one Turn to the next (32) |
+| Between sections | 24    | Parts of a screen or sheet                                      |
+
+Side padding: 20 on a phone; 16 on a desktop, 24 for the chat column.
 
 ## Colour
-
-Radix Colors' pure `gray` for the greys, Radix steps for blue, red and green.
 
 | Token        | Value     | Job                                                                     |
 | ------------ | --------- | ----------------------------------------------------------------------- |
@@ -97,7 +99,7 @@ size is its desktop size in `:root` and iOS's text style in the 640px query; nam
   (menus, sheets, the focused composer, the phone's chat card).
 - **Radius:** `sm` inline code and small marks; `md` icon buttons, menu items; `lg` fields, menus, grouped lists;
   `xl` bubbles, the composer, sheets, file cards; `screen` a panel that reaches an iPhone's screen corner; `pill`
-  buttons, pills, tabs. The desktop chat stage meets no rounded corner and stays square.
+  buttons, pills, tabs.
 
 ## Components
 
