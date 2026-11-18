@@ -8,7 +8,7 @@ import type { RunAgentInput } from '@ag-ui/client';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { StandInOidcIssuer } from '../test/fakes/oidc-issuer.js';
@@ -20,6 +20,13 @@ import { directoryOf } from './files-shared.js';
 import { serveChatService } from './server.js';
 import { HttpError, type AccountHistory } from './cartridge.js';
 import { stockAccountStore, stockChatService } from './stock.js';
+
+/** How often a Chat looked for a local Chromium. */
+const chromium = vi.hoisted(() => ({ lookups: 0 }));
+vi.mock('./local-chromium.js', async (original) => {
+  const actual = await original<typeof import('./local-chromium.js')>();
+  return { ...actual, findChromium: (env: NodeJS.ProcessEnv) => { chromium.lookups += 1; return actual.findChromium(env); } };
+});
 
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false, owns: async () => true };
 
@@ -121,6 +128,44 @@ describe('the stock Chat Service', () => {
     const files = await route.request('/files', { headers: { Cookie: cookie } });
     expect(files.status).toBe(503);
     expect(await files.json()).toEqual({ detail: expect.stringContaining('Files on EFS are not configured') });
+  });
+});
+
+describe("the stock Chat Service's Agent Computer", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('prepares a Session in the managed AgentCore browser when one is configured, never looking for Chromium', async () => {
+    vi.stubEnv('AWS_ACCESS_KEY_ID', 'AKIDEXAMPLE');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'secret');
+    vi.stubEnv('AWS_SESSION_TOKEN', '');
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      requests.push(String(url));
+      return Response.json({ streams: { automationStream: { streamEndpoint: 'wss://stream.test/awake', streamStatus: 'ENABLED' } } });
+    });
+    const env = {
+      BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      PATH: '',
+      AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
+      AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'agent-computer-browser',
+      BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET: 'policy-bucket',
+      BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY: 'agent-computer/chrome-policy.json',
+    };
+    const accountStore = stockAccountStore(env, memoryDocuments());
+    // The Session's computer is awake in AgentCore already, so preparing it asks AgentCore who drives it.
+    await accountStore.withAgentComputerLease('acct_owner', () => accountStore.saveRunningAgentComputer({
+      accountId: 'acct_owner', threadId: 'session-1', sessionId: 'browser-1', phase: 'awake', idleDeadline: Date.now() + 60_000,
+    }), 'session-1');
+    const service = stockChatService(env, { accountStore })(history);
+
+    await service.warmSession({ owner: 'acct_owner' }, 'session-1');
+
+    await vi.waitFor(() => expect(requests).toContain('http://agentcore.test/browsers/agent-computer-browser/sessions/get?sessionId=browser-1'));
+    expect(chromium.lookups).toBe(0);
+    await service.sleepAgentComputers?.().slept;
   });
 });
 

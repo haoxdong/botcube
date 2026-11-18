@@ -6,12 +6,13 @@ import { accountDeletions } from './account-deletions.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
-import { HttpError, type CartridgeFactory } from './cartridge.js';
+import { HttpError, type CartridgeFactory, type Requester } from './cartridge.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { localAgentComputer } from './local-agent-computer.js';
+import { managedAgentComputer } from './managed-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
 import { planModels } from './plan-models.js';
 import { serveChatService } from './server.js';
@@ -53,7 +54,7 @@ export const stockAccountStore = (env: NodeJS.ProcessEnv, documents?: Pick<Dynam
 
 export interface StockOptions {
   accountStore?: AccountStore;
-  /** The page each Agent Computer opens on; blank unless given. */
+  /** The page each local Agent Computer opens on; blank unless given. */
   startPage?: string;
 }
 
@@ -84,11 +85,14 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       ...(identity === null ? {} : { session: () => ({ signIn: 'oidc' }) }),
       deleteTestUser: (accountId) => lifecycle.deleteAccount(accountId),
     });
-    const requester = async (c: Context) => {
+    const requester = async (c: Context): Promise<Requester> => {
       const { owner, account } = await accounts.owner(c);
       return { owner, anonymous: account?.status === 'anonymous' };
     };
-    const computer = localAgentComputer({ history, requester, env, startPage: options.startPage });
+    // The managed AgentCore browser when the deploy names one; a local Chromium only when it names none.
+    const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
+      ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains })
+      : localAgentComputer({ history, requester, env, startPage: options.startPage });
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({ store, deleteAccount: lifecycle.deleteAccount });
     return {
@@ -124,7 +128,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       authorizeBrowserLiveView: computer.authorizeBrowserLiveView,
       warmSession: computer.warmSession,
       turnStarting: computer.turnStarting,
-      browserLiveView: computer.browserLiveView,
+      ...('browserLiveView' in computer ? { browserLiveView: computer.browserLiveView } : {}),
       sleepAgentComputers: computer.sleepAll,
       stopSessionComputer: computer.stopThread,
     };
