@@ -12,6 +12,7 @@ import { turnCredentialBinding } from './credential-service-token.js';
 import { accountFilesFromEnv } from './files.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
+import { planModels } from './plan-models.js';
 import { serveChatService } from './server.js';
 
 const ACCOUNT_KEY = 'template';
@@ -43,6 +44,12 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const store = () => accountStore;
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
   const files = accountFilesFromEnv(env, store);
+  const plan = planModels({
+    credentialServiceUrl: env.BOTCUBE_CREDENTIAL_SERVICE_URL,
+    invocationSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
+    ownerAccountId: env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined,
+    store,
+  });
   return (history) => {
     const accounts = accountRoutes({ store, cookies, signIns: async () => [],
       ...(identity === null ? {} : { session: () => ({ signIn: 'oidc' }) }),
@@ -60,11 +67,12 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: bot.models,
       memory: bot.memory,
-      accountModels: async () => [],
-      accountModel: async () => undefined,
+      accountModels: ({ owner }, options) => plan.accountModels(owner, options),
+      accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()
         .route('/', computer.routes)
         .route('/', computerFilesRoutes({ requester, history, computers: computer, files: () => files() }))
+        .route('/account/plan-usage/openai', plan.routes)
         .route('/', accounts.routes)
         .route('/', identity?.routes ?? new Hono()),
       requester,
@@ -75,7 +83,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         forwardedProps: {
           ...input.forwardedProps,
           ...(env.BOTCUBE_CREDENTIAL_SERVICE_URL
-            ? turnCredentialBinding(env.BOTCUBE_CREDENTIAL_SERVICE_URL, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', requester.owner, input.threadId, model)
+            ? turnCredentialBinding(env.BOTCUBE_CREDENTIAL_SERVICE_URL, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', requester.owner, input.threadId, model,
+              await plan.planAccountId(requester.owner, model))
             : {}),
           ...(await computer.forwardedProps(requester.owner, input.threadId)),
         },
