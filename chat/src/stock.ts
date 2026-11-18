@@ -5,10 +5,10 @@ import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
 import { accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
-import type { CartridgeFactory } from './cartridge.js';
+import { HttpError, type CartridgeFactory } from './cartridge.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
-import { turnCredentialBinding } from './credential-service-token.js';
+import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
 import { accountFilesFromEnv } from './files.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
@@ -17,6 +17,27 @@ import { serveChatService } from './server.js';
 
 const ACCOUNT_KEY = 'template';
 const cookies = accountCookies(ACCOUNT_KEY);
+const ACCOUNT_DELETION_SESSION = 'account-deletion';
+const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
+
+/** Revoke every credential the Credential Service holds for the account, at every provider. */
+async function revokeAccountCredentials(url: string, secret: string, accountId: string): Promise<void> {
+  const token = signCredentialServiceInvocation(secret, accountId, ACCOUNT_DELETION_SESSION, { scope: 'credential_revocation' });
+  const response = await fetch(`${new URL(url).origin}/account/revoke`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'x-botcube-account-id': accountId,
+      'x-botcube-session-id': ACCOUNT_DELETION_SESSION,
+      'content-type': 'application/json',
+    },
+    body: '{}',
+    signal: AbortSignal.timeout(CREDENTIAL_SERVICE_TIMEOUT_MS),
+  }).catch((error: unknown) => {
+    throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
+  });
+  if (!response.ok) throw new HttpError(503, `Credential Service account revoke failed with HTTP ${response.status}`);
+}
 
 function deployment(env: NodeJS.ProcessEnv) {
   const path = env.BOTCUBE_DEPLOYMENT_CONFIG;
@@ -54,6 +75,9 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     const accounts = accountRoutes({ store, cookies, signIns: async () => [],
       ...(identity === null ? {} : { session: () => ({ signIn: 'oidc' }) }),
       async deleteTestUser(accountId) {
+        if (env.BOTCUBE_CREDENTIAL_SERVICE_URL) {
+          await revokeAccountCredentials(env.BOTCUBE_CREDENTIAL_SERVICE_URL, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', accountId);
+        }
         await history.delete(accountId);
         await accountStore.deleteAccount(accountId);
       },

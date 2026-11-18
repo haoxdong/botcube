@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunAgentInput } from '@ag-ui/client';
-import { PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
-import { motoEndpoint } from '../test/fakes/moto.js';
+import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } from './credential-service-token.js';
@@ -279,6 +280,71 @@ describe("the stock Chat Service's Plan Usage", () => {
       expect([signedOut.status, await signedOut.json()]).toEqual([200, { status: 'removed' }]);
       expect(vault.has(owner)).toBe(false);
       expect(await models()).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("the stock Chat Service's account deletion", () => {
+  const SECRET = 'invocation-secret';
+  // The Credential Service's Vault: the accounts it holds credentials for, and those whose revoke it refuses.
+  const vault = new Set<string>();
+  const refusing = new Set<string>();
+  const credentialService = new HttpFake((request, response) => {
+    const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
+    if (invocation === null || request.headers['x-botcube-account-id'] !== invocation.accountId) {
+      return sendJson(response, 401, { detail: 'Invalid Credential Service invocation token' });
+    }
+    if (`${request.method} ${request.path}` !== 'POST /account/revoke' || invocation.scope !== 'credential_revocation') {
+      return sendJson(response, 404, { detail: 'Not Found' });
+    }
+    if (refusing.has(invocation.accountId)) return sendJson(response, 500, { detail: 'Vault unavailable' });
+    vault.delete(invocation.accountId);
+    sendJson(response, 200, { status: 'revoked' });
+  });
+  beforeAll(async () => { await credentialService.listen(); });
+  afterAll(async () => { await credentialService.close(); });
+
+  it("revokes a Test User's credentials at the Credential Service before erasing it, and keeps it when the revoke fails", async () => {
+    const endpoint = motoEndpoint();
+    const table = `stock-delete-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(endpoint, table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+    const env = {
+      PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
+    };
+    const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
+    const testUser = async (accountId: string) => {
+      const token = `test_${accountId}`;
+      await documents.send(new PutCommand({ TableName: table, Item: { pk: `ACCOUNT#${accountId}`, sk: 'META',
+        record: { version: 1, accountId, status: 'test', rateTier: 'test', createdAt: 1, updatedAt: 1 } } }));
+      await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${token}`, sk: 'META',
+        record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
+      vault.add(accountId);
+      return token;
+    };
+    const deleted = await testUser('acct_stock_delete_revoked');
+    const refused = await testUser('acct_stock_delete_refused');
+    refusing.add('acct_stock_delete_refused');
+    const store = stockAccountStore(env);
+    const server = serveChatService(stockChatService(env), env);
+    try {
+      await once(server, 'listening');
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const deleteTestUser = (token: string) => fetch(`${url}/operator/test-user`, { method: 'DELETE', headers: { 'x-botcube-test-user': token } });
+
+      expect((await deleteTestUser(deleted)).status).toBe(204);
+      expect(vault.has('acct_stock_delete_revoked')).toBe(false);
+      expect(await store.loadAccount('acct_stock_delete_revoked')).toBeNull();
+
+      const failed = await deleteTestUser(refused);
+      expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service account revoke failed with HTTP 500' }]);
+      expect(vault.has('acct_stock_delete_refused')).toBe(true);
+      expect(await store.operatorTestUser(refused)).toMatchObject({ accountId: 'acct_stock_delete_refused', status: 'test' });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();
