@@ -15,7 +15,7 @@ export function SentMessage({ content }: { content: string }) {
   return (
     <>
       <SentFileCards paths={paths} fileUrl={agentFiles.url} />
-      <Presence>{text && <motionElement.div {...presenceMotion} ref={NATIVE_READING ? setBubble : undefined} data-reading-user={NATIVE_READING ? "" : undefined} data-reading-bubble={size === undefined ? undefined : ""} style={readingStyle(size)} className={USER_MESSAGE_CLASS}>{text}</motionElement.div>}</Presence>
+      <Presence>{text && <motionElement.div {...presenceMotion} ref={NATIVE_READING ? setBubble : undefined} data-reading-user={NATIVE_READING ? "" : undefined} data-reading-bubble={size === undefined ? undefined : ""} style={readingStyle(size) ?? {}} className={USER_MESSAGE_CLASS}>{text}</motionElement.div>}</Presence>
     </>
   );
 }
