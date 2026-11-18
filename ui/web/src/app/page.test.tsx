@@ -85,12 +85,13 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     { MarkdownRenderer: ({ content, ...props }: { content: string }) => <Streamdown {...props}>{content}</Streamdown> },
   );
   const CopilotChatMessageView = Object.assign(
-    ({ assistantMessage, userMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; userMessage?: Partial<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
+    ({ assistantMessage, userMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; userMessage?: Partial<UserProps> | ComponentType<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
+      const User = typeof userMessage === 'function' ? userMessage : (props: UserProps) => <CopilotChatUserMessage {...props} {...userMessage} />;
       const agentMessages = copilot.kits.at(-1)?.selfManagedAgents['research-agent']?.messages ?? [];
       const rows = copilot.rows
         ? agentMessages.flatMap((message) => {
             const row = message.role === 'tool' ? [] : [
-              <MessageRow key={message.id} id={message.id}>{message.role === 'user' && <CopilotChatUserMessage message={message} {...userMessage} />}</MessageRow>,
+              <MessageRow key={message.id} id={message.id}>{message.role === 'user' && <User message={message} />}</MessageRow>,
             ];
             return copilot.slots ? [<Fragment key={`${message.id}-custom-before`} />, ...row, <Fragment key={`${message.id}-custom-after`} />] : row;
           })

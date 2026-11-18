@@ -4,16 +4,16 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "framer-motion";
 
-import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
   CopilotChatAssistantMessage,
+  CopilotChatUserMessage,
   CopilotChatInput,
   CopilotChatMessageView,
   type CopilotChatReasoningMessage,
   CopilotChatView,
-  type CopilotChatAssistantMessageProps,
   type CopilotChatInputProps,
   type CopilotChatMessageViewProps,
 } from "@copilotkit/react-core/v2";
@@ -26,28 +26,29 @@ import { endMoment, startMoment, type Moment } from "./latency";
 import type { ModelList } from "./model-selection";
 import { agentFiles } from "./agent-files";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
-import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
-import MarkdownRenderer from "./markdown-renderer";
+import { OpenScheduledRun, type ReachedScheduledRun } from "./scheduled-run-card";
 import { ReplyTurnRunning } from "./reply-turn";
 import { useComposerSizing } from "./composer-layout-height";
 import { useComposerOpen } from "./composer-open";
 import { keepArtifactReading } from "./artifact-reading";
-import { holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
+import { NATIVE_READING, ReadingState, readingStyle, useReadingSize } from "./native-reading";
+import { keepInPlace, holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
 import { OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
 import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
 import { webUiPlugin } from "@cartridge-ui";
-import { ArtifactMessage } from "./artifact-message";
+import { AssistantMessage } from "./reading-message";
+import { SentMessage } from "./sent-message";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/ui/button";
 import { cn, zoomOf } from "@/lib/utils";
-import { ComposerFilePicker, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFiles } from "./composer-files";
+import { ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { FileDropOverlay, addMenuSlot, useFileDrop } from "./composer-attach";
 import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
 import { showsProposalCard } from "./worklog-tools";
-import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
+import { fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
@@ -282,7 +283,12 @@ const USER_SCROLLS = ["wheel", "touchstart", "pointerdown", "keydown"];
 const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
 
 function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickToBottomInstance; inputHeight: number; resizing: boolean; follow: () => void }) {
-  const hidden = stick.isAtBottom || resizing;
+  const setReading = useContext(ReadingState)?.setActive;
+  const { isAtBottom } = stick;
+  useLayoutEffect(() => {
+    if (NATIVE_READING) setReading?.(!isAtBottom);
+  }, [setReading, isAtBottom]);
+  const hidden = isAtBottom || resizing;
   return (
     <div className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: inputHeight + 16 }}>
       <CopilotChatView.ScrollToBottomButton onClick={() => { follow(); void stick.scrollToBottom({ animation: "smooth", ignoreEscapes: true }); }} />
@@ -329,11 +335,14 @@ function DocumentStick({ inputContainerHeight, isResizing, contentRef, opened, f
 }
 
 function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>) {
+  const [reading, setReading] = useState(false);
+  const readingState = useMemo(() => ({ active: reading, setActive: setReading }), [reading]);
   const opensAt = useContext(OpensAt);
   const phone = useIsPhone();
   const { attach, content, opened, followsLatest, follow, instance, options } = useRotationReading(phone, opensAt === null);
   const controlProps = { inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content, opened, followsLatest, follow };
   return (
+    <ReadingState.Provider value={readingState}>
     <CopilotChatView.ScrollView
       {...props}
       {...options}
@@ -342,15 +351,10 @@ function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>
       scrollToBottomButton={NO_BUTTON}
       feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <ScrollButton stick={instance} inputHeight={controlProps.inputContainerHeight} resizing={controlProps.isResizing} follow={follow} /> }}
     >
-      <div ref={attach}>{props.children}</div>
+      <div ref={attach} data-reading-active={NATIVE_READING && reading ? "" : undefined}>{props.children}</div>
     </CopilotChatView.ScrollView>
+    </ReadingState.Provider>
   );
-}
-
-function AssistantMessage(props: CopilotChatAssistantMessageProps) {
-  const run = scheduledRunOf(props.message);
-  if (run !== null) return <div data-message-id={props.message.id}><ScheduledRunCard run={run}><MarkdownRenderer content={run.text} /></ScheduledRunCard></div>;
-  return <ArtifactMessage {...props} />;
 }
 
 /** The slot types its component with CopilotKit's sub-components, which it never reads, only renders. */
@@ -359,17 +363,11 @@ const ASSISTANT_MESSAGE_SLOT = AssistantMessage as typeof CopilotChatAssistantMe
 /** CopilotKit types slots with its statics but only calls the component. */
 const REASONING_MESSAGE = ThoughtStep as unknown as typeof CopilotChatReasoningMessage;
 
-function SentMessage({ content }: { content: string }) {
-  const { text, paths } = sentFilesOf(content);
-  return (
-    <>
-      <SentFileCards paths={paths} fileUrl={agentFiles.url} />
-      <Presence>{text && <motionElement.div {...presenceMotion} className={USER_MESSAGE_CLASS}>{text}</motionElement.div>}</Presence>
-    </>
-  );
+function UserMessage(props: ComponentProps<typeof CopilotChatUserMessage>) {
+  const size = useReadingSize(props.message.id);
+  return <CopilotChatUserMessage {...props} messageRenderer={SentMessage} data-reading-row={size === undefined ? undefined : ""} style={size ? { ...props.style, ...readingStyle(size) } : props.style} />;
 }
-
-const USER_MESSAGE = { messageRenderer: SentMessage };
+const USER_MESSAGE = UserMessage as typeof CopilotChatUserMessage;
 
 function MomentEnds({ moment }: { moment: Moment }) {
   useEffect(() => endMoment(moment), [moment]);
@@ -456,6 +454,11 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
     if (joined.current && list != null) finishEntrances(list);
     joined.current = true;
     if (read === null || list == null) return undefined;
+    if (NATIVE_READING) {
+      // Native anchoring does not land prepended history at scrollTop=0; retain the existing one-time pin.
+      keepInPlace(read);
+      return undefined;
+    }
     return holdReading(read, list, eventsOf(read.scroller));
   }, [first]);
 
@@ -765,7 +768,7 @@ function ChatThread({
   []);
 
   return (
-    <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
+    <div className="chat-wrapper" data-native-reading={NATIVE_READING ? "" : undefined} ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
       <FileDropOverlay open={fileDrop.over} />
       <Presence>{showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
       <ToolCallRenderer agent={agent} />

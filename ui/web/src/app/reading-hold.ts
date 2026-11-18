@@ -42,7 +42,7 @@ const laidOut = (list: Element, scroller: Element): Laid =>
     return [child, { at: contentTop(child, scroller), height: (box.bottom - box.top) / zoomOf(scroller) }];
   }));
 
-function keepInPlace(read: ReadRow) {
+export function keepInPlace(read: ReadRow) {
   if (!read.row.isConnected) return;
   const { scroller } = read;
   const at = contentTop(read.row, scroller);
