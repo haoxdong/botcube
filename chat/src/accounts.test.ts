@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
-import { accountRoutes } from './accounts.js';
+import { accountLifecycle, accountRoutes } from './accounts.js';
 import { HttpError } from './cartridge.js';
 
 /** Registration is the Cartridge's own; this one registers outright. */
@@ -99,4 +99,31 @@ it("takes the Cartridge's preferred account, keeps its sign-in need and forgets 
   await store.deleteAccount(account.accountId);
   const gone = await routes.request('/account/sign-ins', { headers: { Cookie: anonymous } });
   expect([gone.status, await gone.json()]).toEqual([401, { detail: 'Missing or invalid bot account cookie' }]);
+});
+
+it("erases a Guest's credentials before anything else, and keeps the Guest whole for the next sweep when the revoke fails", async () => {
+  const { store } = app();
+  const { account } = await store.anonymousAccount(undefined);
+  const steps: string[] = [];
+  let refuse = true;
+  const { deleteAccount } = accountLifecycle({
+    credentials: { async revoke(accountId) {
+      steps.push(`revoke ${accountId}`);
+      if (refuse) throw new HttpError(503, 'Credential Service account revoke failed with HTTP 500');
+    } },
+    history: { delete: async () => { steps.push('history'); }, transfer: vi.fn(), owns: vi.fn(), ownsMainChat: vi.fn() },
+    files: () => ({ delete: async () => { steps.push('files'); } }) as never,
+    computers: { erase: async () => { steps.push('computer'); } },
+    store: () => store,
+  });
+
+  await expect(deleteAccount(account.accountId)).rejects.toThrow('account revoke failed');
+  expect(steps).toEqual([`revoke ${account.accountId}`]);
+  expect(await store.loadAccount(account.accountId)).toMatchObject({ status: 'anonymous' });
+
+  refuse = false;
+  steps.length = 0;
+  await deleteAccount(account.accountId);
+  expect(steps).toEqual([`revoke ${account.accountId}`, 'computer', 'history', 'files']);
+  expect(await store.loadAccount(account.accountId)).toBeNull();
 });

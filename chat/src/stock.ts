@@ -3,13 +3,13 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { loadDeployment } from 'botcube-deployment-config/load';
 import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
-import { accountRoutes } from './accounts.js';
+import { accountLifecycle, accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
 import { HttpError, type CartridgeFactory } from './cartridge.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
-import { accountFilesFromEnv } from './files.js';
+import { accountFilesFromEnv, filesConfigured } from './files.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
 import { planModels } from './plan-models.js';
@@ -65,6 +65,10 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const store = () => accountStore;
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
   const files = accountFilesFromEnv(env, store);
+  const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
+  const credentials = credentialServiceUrl
+    ? { revoke: (accountId: string) => revokeAccountCredentials(credentialServiceUrl, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', accountId) }
+    : null;
   const plan = planModels({
     credentialServiceUrl: env.BOTCUBE_CREDENTIAL_SERVICE_URL,
     invocationSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
@@ -74,19 +78,14 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   return (history) => {
     const accounts = accountRoutes({ store, cookies, signIns: async () => [],
       ...(identity === null ? {} : { session: () => ({ signIn: 'oidc' }) }),
-      async deleteTestUser(accountId) {
-        if (env.BOTCUBE_CREDENTIAL_SERVICE_URL) {
-          await revokeAccountCredentials(env.BOTCUBE_CREDENTIAL_SERVICE_URL, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', accountId);
-        }
-        await history.delete(accountId);
-        await accountStore.deleteAccount(accountId);
-      },
+      deleteTestUser: (accountId) => lifecycle.deleteAccount(accountId),
     });
     const requester = async (c: Context) => {
       const { owner, account } = await accounts.owner(c);
       return { owner, anonymous: account?.status === 'anonymous' };
     };
     const computer = localAgentComputer({ history, requester, env, startPage: options.startPage });
+    const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     return {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: bot.models,

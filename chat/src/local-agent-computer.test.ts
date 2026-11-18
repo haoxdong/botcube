@@ -506,6 +506,18 @@ it('puts every computer to sleep at task stop and refuses a later wake', { timeo
   expect(await refused.json()).toEqual({ detail: 'Agent Computer task is stopping' });
 });
 
+it("stops every computer an erased account has running", { timeout: 15_000 }, async () => {
+  const local = newComputer({ startPage: await fakeSite() });
+  const app = computerApp(local);
+  await local.warmSession({ owner: OWNER }, 'erase-first');
+  await local.warmSession({ owner: OWNER }, 'erase-second');
+  await local.erase(OWNER);
+  for (const threadId of ['erase-first', 'erase-second']) {
+    // eslint-disable-next-line no-await-in-loop -- reads each Session's computer in turn
+    expect(await (await app.request(`/agent-computer?thread_id=${threadId}`, as())).json()).toEqual({ state: 'asleep', screenshot: null });
+  }
+});
+
 it('answers one sleep per computer at task stop, so a failed cleanup never abandons the others', { timeout: 15_000 }, async () => {
   const local = newComputer({ startPage: await fakeSite() });
   await local.warmSession({ owner: OWNER }, 'first-session');

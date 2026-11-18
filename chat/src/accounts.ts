@@ -141,15 +141,19 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
 }
 
 /**
- * What erasing an account does beyond its Sessions: its Files go with its chats (ADR 0077), and its
- * Agent Computer stops and is erased. Saving changes no account (ADR 0076), so nothing moves between them.
+ * What erasing an account does beyond its Sessions: the Credential Service revokes its credentials first, its
+ * Files go with its chats (ADR 0077), and its Agent Computer stops and is erased. Saving changes no account
+ * (ADR 0076), so nothing moves between them.
  */
 export function accountLifecycle<A extends Account>({
+  credentials,
   history,
   files,
   computers,
   store,
 }: {
+  /** The Credential Service's revoke of every credential the account holds, or null when nothing here holds any. */
+  credentials: { revoke(accountId: string): Promise<void> } | null;
   history: AccountHistory;
   /** The deploy's Files, or null without them. */
   files: (() => AccountFiles) | null;
@@ -157,8 +161,9 @@ export function accountLifecycle<A extends Account>({
   store: () => AccountStore<A>;
 }) {
   return {
-    /** Erase the account: its Agent Computer, then its Sessions and Files, then the account itself. */
+    /** Erase the account: its credentials, its Agent Computer, then its Sessions and Files, then the account itself. */
     async deleteAccount(accountId: string): Promise<void> {
+      await credentials?.revoke(accountId);
       await computers.erase(accountId);
       await history.delete(accountId);
       if (files !== null) await files().delete(accountId);
