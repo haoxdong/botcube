@@ -1,4 +1,4 @@
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "../app/collapse";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileTypeIcon } from '../components/file-type-icon';

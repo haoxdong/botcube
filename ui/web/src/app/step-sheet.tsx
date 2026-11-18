@@ -2,7 +2,7 @@
 
 import { Swap, Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 
 import { Dialog } from "@base-ui/react/dialog";
 import type { HighlightResult } from "@streamdown/code";

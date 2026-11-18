@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { m as motionElement, type AnimationDefinition } from "framer-motion";
+import { m as motionElement, type AnimationDefinition } from "motion/react";
 import { Maximize2, X } from "lucide-react";
 import { useContext, useRef, useState, type ComponentProps } from "react";
 import { defaultComponents, StreamdownContext, type StreamdownContextType } from "streamdown";

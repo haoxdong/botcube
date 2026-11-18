@@ -2,7 +2,7 @@
 
 import { Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";

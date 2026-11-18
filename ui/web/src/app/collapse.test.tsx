@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { m } from 'framer-motion';
+import { m } from 'motion/react';
 import type { ReactNode } from 'react';
 import { Collapse, CollapseItem, CollapseList, Fade, Presence, Swap, presenceMotion } from './collapse';
 

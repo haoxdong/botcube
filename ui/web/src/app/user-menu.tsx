@@ -2,7 +2,7 @@
 
 import { Swap, Presence, presenceMotion, Layout } from "./collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { useRef, useState } from "react";
 import { Pencil } from "lucide-react";
 import { Popover } from "@base-ui/react/popover";

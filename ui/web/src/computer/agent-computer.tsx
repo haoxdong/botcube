@@ -1,6 +1,6 @@
 
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';

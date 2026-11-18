@@ -1,6 +1,6 @@
 "use client";
 
-import { m } from "framer-motion";
+import { m } from "motion/react";
 import { Collapse, Presence, presenceMotion } from "./collapse";
 import { LoadFailed } from "./load-state";
 

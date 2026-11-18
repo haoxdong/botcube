@@ -2,7 +2,7 @@
 
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,

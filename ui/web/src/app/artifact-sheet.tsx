@@ -1,7 +1,7 @@
 "use client";
 
 import type { Sheet } from "botcube-artifact-check/sheet";
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { SheetIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 

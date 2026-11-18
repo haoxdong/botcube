@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./collapse";
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";

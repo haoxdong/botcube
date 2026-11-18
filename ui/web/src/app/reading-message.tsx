@@ -1,7 +1,7 @@
 "use client";
 
 import { CopilotChatUserMessage, type CopilotChatAssistantMessageProps, type CopilotChatUserMessageProps } from "@copilotkit/react-core/v2";
-import { AnimatePresence, domAnimation, LazyMotion, m as motionElement } from "framer-motion";
+import { AnimatePresence, domAnimation, LazyMotion, m as motionElement } from "motion/react";
 import type { ComponentPropsWithRef } from "react";
 import { useMessageEntrance } from "./message-entrance";
 import { SentMessage } from "./sent-message";

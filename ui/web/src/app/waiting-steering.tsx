@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useEffect, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { LazyMotion, domMax, m } from "framer-motion";
+import { LazyMotion, domMax, m } from "motion/react";
 import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
 import { Collapse, Fade, Presence, useInstant } from "./collapse";

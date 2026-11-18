@@ -4,7 +4,7 @@ import { EditorContent, generateJSON, generateText, useEditor } from "@tiptap/re
 import StarterKit from "@tiptap/starter-kit";
 import { readDraft, type EmailDraft } from "botcube-artifact-check/email-schema";
 import type { Imported } from "botcube-artifact-check/record";
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { MailIcon, PaperclipIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { recordOf } from "./artifact-newest";

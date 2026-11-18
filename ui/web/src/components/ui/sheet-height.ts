@@ -1,4 +1,4 @@
-import { animate } from 'framer-motion';
+import { animate } from 'motion/react';
 import { useLayoutEffect, useState } from 'react';
 import { motionTokens } from '../../app/motion-tokens';
 

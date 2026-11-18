@@ -1,5 +1,5 @@
 import { createContext, createElement, useContext, useLayoutEffect, useState, type ReactNode } from "react";
-import { useAnimationControls } from "framer-motion";
+import { useAnimationControls } from "motion/react";
 import { motionTokens } from "./motion-tokens";
 
 type Entrance = "history" | "arrival";

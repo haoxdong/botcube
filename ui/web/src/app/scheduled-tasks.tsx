@@ -3,7 +3,7 @@
 import { Swap, Collapse, Presence, presenceMotion, CollapseItem, CollapseList } from "./collapse";
 
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 
 import { CalendarClock } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";

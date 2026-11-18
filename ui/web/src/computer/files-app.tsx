@@ -2,7 +2,7 @@
 
 import { Collapse, Presence, presenceMotion } from "../app/collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 
 import { ChevronLeft, ChevronRight, Clock, Folder } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type RefObject, type MouseEvent } from 'react';

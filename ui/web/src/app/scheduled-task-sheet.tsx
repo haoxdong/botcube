@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, Collapse, Swap } from "./collapse";
 
 import { webUiPlugin } from "@cartridge-ui";

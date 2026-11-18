@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { PreviewProps, ViewerProps, Writes } from "./artifact-viewer";

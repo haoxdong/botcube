@@ -1,4 +1,4 @@
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Fragment, useLayoutEffect, useRef } from 'react';
 import { Presence, presenceMotion } from "../app/collapse";
 

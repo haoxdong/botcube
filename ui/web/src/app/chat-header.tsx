@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutGroup, LazyMotion, domMax, m as motionElement } from "framer-motion";
+import { LayoutGroup, LazyMotion, domMax, m as motionElement } from "motion/react";
 import { useEffect, useState, type RefObject } from "react";
 
 import { Avatar } from "./avatar";

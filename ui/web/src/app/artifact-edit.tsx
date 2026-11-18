@@ -2,7 +2,7 @@
 
 import { EditorContent, Extension, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { PencilIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 

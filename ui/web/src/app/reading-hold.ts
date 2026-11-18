@@ -1,4 +1,4 @@
-import { resize } from "framer-motion";
+import { resize } from "motion/react";
 import { useLayoutEffect, useRef, type RefObject } from "react";
 
 import { zoomOf } from "@/lib/utils";

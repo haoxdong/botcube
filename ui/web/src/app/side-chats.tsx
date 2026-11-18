@@ -2,7 +2,7 @@
 
 import { Swap, Presence, presenceMotion, Collapse } from "./collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { contextMenuKey } from "./context-menu-key";
 import { ContextMenu } from "@base-ui/react/context-menu";

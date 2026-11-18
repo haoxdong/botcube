@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "./collapse";
 
 import { Clock } from "lucide-react";

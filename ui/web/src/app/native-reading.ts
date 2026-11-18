@@ -2,7 +2,7 @@
 
 import "./native-reading.css";
 
-import { inView } from "framer-motion";
+import { inView } from "motion/react";
 import { createContext, useContext, useLayoutEffect, useState } from "react";
 
 import { zoomOf } from "@/lib/utils";

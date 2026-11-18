@@ -1,6 +1,6 @@
 import { prepareWithSegments, walkLineRanges } from '@chenglou/pretext';
 import { useLayoutEffect, useRef } from 'react';
-import { resize } from 'framer-motion';
+import { resize } from 'motion/react';
 
 /** A name's last characters, kept whole while its start gives way to an ellipsis, as Finder cuts a name: `rates…cap.md`. */
 const TAIL = 6;

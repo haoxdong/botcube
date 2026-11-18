@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, type HTMLMotionProps } from "framer-motion";
+import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, type HTMLMotionProps } from "motion/react";
 import { Children, Fragment, cloneElement, isValidElement, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref } from "react";
 
 import { motionTokens } from "./motion-tokens";

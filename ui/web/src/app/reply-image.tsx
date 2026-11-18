@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "./collapse";
 import { useState, type ComponentProps, type SyntheticEvent } from 'react';
 import { DownloadIcon } from 'lucide-react';

@@ -1,5 +1,5 @@
 import { CopilotChatAssistantMessage, type CopilotChatAssistantMessageProps } from "@copilotkit/react-core/v2";
-import { AnimatePresence, domAnimation, LazyMotion, m } from "framer-motion";
+import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { useMessageEntrance } from "./message-entrance";
 import { useContext, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 

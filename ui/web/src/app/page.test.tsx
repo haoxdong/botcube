@@ -3,7 +3,7 @@ import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
 import type { HttpAgent, Message } from '@ag-ui/client';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import * as motion from 'framer-motion';
+import * as motion from 'motion/react';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import type { ButtonHTMLAttributes, ComponentType, HTMLAttributes, ReactElement, ReactNode } from 'react';
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
@@ -12,8 +12,8 @@ import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFi
 import type { AuthUiState, AuxiliaryPanelHostProps, ComputerViewProps, WebUiPlugin } from '../cartridge/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
 
-vi.mock('framer-motion', async (importOriginal) => {
-  const original = await importOriginal<typeof import('framer-motion')>();
+vi.mock('motion/react', async (importOriginal) => {
+  const original = await importOriginal<typeof import('motion/react')>();
   return { ...original, resize: vi.fn(original.resize) };
 });
 

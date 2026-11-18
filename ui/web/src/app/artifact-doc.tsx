@@ -6,7 +6,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import { Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { FileTextIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 

@@ -1,7 +1,7 @@
 "use client";
 
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { partialJSONParse } from "@copilotkit/shared";
 import { Presence, presenceMotion, Collapse } from "./collapse";

@@ -2,7 +2,7 @@
 
 import { Presence, presenceMotion } from "./collapse";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 
 import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";

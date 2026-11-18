@@ -1,6 +1,6 @@
 "use client";
 
-import { m as motionElement } from "framer-motion";
+import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, Swap } from "./collapse";
 
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, List, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
