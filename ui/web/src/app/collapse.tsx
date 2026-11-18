@@ -68,9 +68,7 @@ function Collapsible({ as = "div", children }: { as?: Tag; children: ReactNode }
   const { move, quick } = motionTokens();
   const box = useRef<HTMLElement | null>(null);
   const Box = as === "li" ? m.li : m.div;
-  // Closing from "auto", Motion would lay the box out at its end height to measure it, and a scroll view held at its end
-  // would clamp its scroll there for good: the chat dropped by the box's height in one frame. Closing from the
-  // height it shows, it has nothing to measure.
+  // Motion measures an auto-height exit at zero and clamps bottom-held scrollers; give it a numeric origin.
   const variants = { closed: () => ({ height: [shownHeight(box.current), 0], opacity: 0 }) };
   return (
     <LazyMotion features={domMax} strict>
