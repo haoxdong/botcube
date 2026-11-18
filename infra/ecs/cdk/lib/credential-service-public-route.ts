@@ -35,7 +35,7 @@ export function publishCredentialService(origin: PreviewOriginStack, credentials
     credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_RPC_PATH', route.rpcPath);
   }
   if (route.chatTableKeyPrefixes.length) credentials.task.addToTaskRolePolicy(new iam.PolicyStatement({
-    actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [route.chatTable.tableArn],
+    actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], resources: [route.chatTable.tableArn],
     conditions: {
       'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': route.chatTableKeyPrefixes.map(prefix => `${prefix}*`) },
       Null: { 'dynamodb:LeadingKeys': 'false' },
