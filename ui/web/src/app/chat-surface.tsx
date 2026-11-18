@@ -9,7 +9,6 @@ import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
   CopilotChatAssistantMessage,
-  CopilotChatUserMessage,
   CopilotChatInput,
   CopilotChatMessageView,
   type CopilotChatReasoningMessage,
@@ -31,7 +30,7 @@ import { ReplyTurnRunning } from "./reply-turn";
 import { useComposerSizing } from "./composer-layout-height";
 import { useComposerOpen } from "./composer-open";
 import { keepArtifactReading } from "./artifact-reading";
-import { NATIVE_READING, ReadingState, readingStyle, useReadingSize } from "./native-reading";
+import { NATIVE_READING, ReadingState } from "./native-reading";
 import { keepInPlace, holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
 import { OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
@@ -39,8 +38,7 @@ import { useInitialStick, useRotationReading } from "./rotation-reading";
 import { useIsPhone } from "./phone-query";
 import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
 import { webUiPlugin } from "@cartridge-ui";
-import { AssistantMessage } from "./reading-message";
-import { SentMessage } from "./sent-message";
+import { AssistantMessage, USER_MESSAGE } from "./reading-message";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/ui/button";
 import { cn, zoomOf } from "@/lib/utils";
@@ -53,6 +51,7 @@ import { prefetchPlotly } from "../components/plotly-bundle";
 import { keepLateBoxes } from "./late-boxes";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { SHOWS_WAITING_STEERING, WaitingMessages } from "./waiting-steering";
+import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
 import { useAgentRunning } from "./agent-running";
 
 const MotionButton = motionElement.create(Button);
@@ -363,12 +362,6 @@ const ASSISTANT_MESSAGE_SLOT = AssistantMessage as typeof CopilotChatAssistantMe
 /** CopilotKit types slots with its statics but only calls the component. */
 const REASONING_MESSAGE = ThoughtStep as unknown as typeof CopilotChatReasoningMessage;
 
-function UserMessage(props: ComponentProps<typeof CopilotChatUserMessage>) {
-  const size = useReadingSize(props.message.id);
-  return <CopilotChatUserMessage {...props} messageRenderer={SentMessage} data-reading-row={size === undefined ? undefined : ""} style={size ? { ...props.style, ...readingStyle(size) } : props.style} />;
-}
-const USER_MESSAGE = UserMessage as typeof CopilotChatUserMessage;
-
 function MomentEnds({ moment }: { moment: Moment }) {
   useEffect(() => endMoment(moment), [moment]);
   return null;
@@ -388,14 +381,7 @@ function pageStart(elements: ReactElement[], end: number, messageIds: Set<string
   return start;
 }
 
-function finishEntrances(list: Element) {
-  for (const animation of list.getAnimations({ subtree: true })) {
-    if (animation instanceof CSSAnimation && animation.animationName === "messageIn") animation.finish();
-  }
-}
-
 const messageList = (list: HTMLDivElement | null) => {
-  if (list !== null) finishEntrances(list);
   const stops = [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list)];
   return () => stops.forEach((stop) => stop?.());
 };
@@ -447,12 +433,9 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
       uncovered.disconnect();
     };
   }, [first]);
-  const joined = useRef(false);
   useLayoutEffect(() => {
     const read = reading.current;
     const list = earlier.current?.parentElement ?? read?.row.parentElement;
-    if (joined.current && list != null) finishEntrances(list);
-    joined.current = true;
     if (read === null || list == null) return undefined;
     if (NATIVE_READING) {
       // Native anchoring does not land prepended history at scrollTop=0; retain the existing one-time pin.
@@ -465,7 +448,7 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
   return (
     <>
       {first > 0 && <div ref={earlier} data-chat-earlier aria-hidden />}
-      {rows.slice(first)}
+      {rows.slice(first).map((row) => <MessageEntranceRow key={row.key} id={String(row.key)}>{row}</MessageEntranceRow>)}
     </>
   );
 }
@@ -844,10 +827,11 @@ function ComputerStop({ chatId, stopRef }: { chatId: string; stopRef: Ref<ChatSt
   return null;
 }
 
-export default function ChatSurface({ children, chatId, stopRef, ...props }: Omit<ComponentProps<typeof CopilotKit>, "children"> & {
+export default function ChatSurface({ children, chatId, stopRef, entrances, ...props }: Omit<ComponentProps<typeof CopilotKit>, "children"> & {
   children: (Thread: typeof ChatThread) => ReactNode;
   chatId: string;
   stopRef?: Ref<ChatStop>;
+  entrances: MessageEntrances;
 }) {
   const steeringDrop = useRef<(() => void) | null>(null);
   // A reply's first chart draws from plotly.js the browser fetched while the chat sat idle.
@@ -856,7 +840,7 @@ export default function ChatSurface({ children, chatId, stopRef, ...props }: Omi
     <CopilotKit {...props}>
       <SteeringDrop.Provider value={steeringDrop}>
         <ComputerStop chatId={chatId} stopRef={stopRef} />
-        {children(ChatThread)}
+        <MessageEntranceHistory.Provider value={entrances}>{children(ChatThread)}</MessageEntranceHistory.Provider>
       </SteeringDrop.Provider>
     </CopilotKit>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MessageEntrances } from "./message-entrance";
 import type { Message } from "@ag-ui/client";
 import {
   buildDirectAgent,
@@ -99,7 +100,7 @@ export function useSessionNavigation({
   const reloadsOut = useRef(0);
   /** Why the open Session's latest Turn failed, as its last load said: a new value per load, so a repeated failure shows again. */
   const [turnFailure, setTurnFailure] = useState<SavedTurnFailure | null>(null);
-  const { agent, selfManagedAgents } = useMemo(() => {
+  const { agent, selfManagedAgents, entrances } = useMemo(() => {
     const threadId = activeId ?? "";
     const onStopFailed = (error: Error) => setStopError(stopFailure(error));
     const threadAgent = buildDirectAgent({
@@ -110,6 +111,7 @@ export function useSessionNavigation({
     });
     return {
       agent: threadAgent,
+      entrances: new MessageEntrances(activeInitialMessages),
       selfManagedAgents: {
         default: buildDirectAgent({
           chatServiceUrl,
@@ -127,8 +129,8 @@ export function useSessionNavigation({
     return () => agent.isRunning || agent.messages !== before || agent.messages.length !== count;
   };
   // The agent showing now, for a load that answers after the render that started it.
-  const agentRef = useRef(agent);
-  agentRef.current = agent;
+  const shownRef = useRef({ agent, entrances });
+  shownRef.current = { agent, entrances };
 
   /** Run a Side Chat action, showing its failure in the sidebar until the next one succeeds. */
   const sideChatAction = async (failure: string, action: () => Promise<void>) => {
@@ -173,12 +175,13 @@ export function useSessionNavigation({
       if (completedAt === undefined || entry?.read_at === completedAt) return;
       pending = true;
       const showAndRead = async () => {
-        const shown = agentRef.current;
+        const { agent: shown, entrances: shownEntrances } = shownRef.current;
         const before = shown.messages;
         const streaming = () => shown.isRunning;
         if (streaming()) return;
         const loaded = activeId === mainChatId ? await fetchMainChat({ chatServiceUrl }) : await openConversation({ id: activeId, chatServiceUrl });
         if (!isMounted() || document.visibilityState !== "visible" || streaming() || shown.messages !== before) return;
+        shownEntrances.history(loaded.messages);
         if (JSON.stringify(loaded.messages) !== JSON.stringify(before)) shown.setMessages(loaded.messages);
         await markChatRead(chatServiceUrl, activeId, completedAt);
         if (!isMounted()) return;
@@ -229,7 +232,7 @@ export function useSessionNavigation({
   };
 
   const loadIntoCopy = (copy: MainChatCopy, session: ReplayedSession) => {
-    const shown = agentRef.current;
+    const { agent: shown, entrances: shownEntrances } = shownRef.current;
     if (shown.threadId !== copy.id) {
       openChat(copy.id, session);
       return;
@@ -238,6 +241,7 @@ export function useSessionNavigation({
     setTurnKnown(true);
     const copied = JSON.stringify(copy.messages);
     if (!shown.isRunning && JSON.stringify(shown.messages) === copied) {
+      shownEntrances.history(messages);
       if (JSON.stringify(messages) !== copied) shown.setMessages(messages);
       setServerTurn(running === true ? { runId, runningSince } : null);
       setTurnFailure(failure ?? null);
@@ -427,6 +431,7 @@ export function useSessionNavigation({
           const { messages } = mainChat;
           if (!mounted || sequence !== refreshSequence || changed()) return;
           // A history with nothing new leaves the chat as it is, so a periodic refresh does not re-render it.
+          entrances.history(messages);
           if (JSON.stringify(messages) !== JSON.stringify(agent.messages)) agent.setMessages(messages);
           if (accountId !== undefined) withStorage(() => keepMainChatCopy(accountId, mainChat));
           setMainChatRefreshError(null);
@@ -476,9 +481,9 @@ export function useSessionNavigation({
         setStopError(null);
         if (completedRun !== input.runId) return;
         completedRun = undefined;
-        if (!readingNow.current || document.visibilityState !== "visible" || agentRef.current !== agent) return;
+        if (!readingNow.current || document.visibilityState !== "visible" || shownRef.current.agent !== agent) return;
         void markChatRead(chatServiceUrl, input.threadId, { runId: input.runId }).then(() => {
-          if (agentRef.current === agent) void refreshSideChats();
+          if (shownRef.current.agent === agent) void refreshSideChats();
         }, (error: Error) => setSideChatsError(`The chat could not be marked read: ${error.message}`));
       },
     });
@@ -505,7 +510,10 @@ export function useSessionNavigation({
       counted(reloadsOut, load).finally(next).then(
         ({ messages, running, runId, runningSince, failure }) => {
           if (stale()) return;
-          if (!(running && messages.length < agent.messages.length) && JSON.stringify(messages) !== JSON.stringify(agent.messages)) agent.setMessages(messages);
+          if (!(running && messages.length < agent.messages.length)) {
+            entrances.history(messages);
+            if (JSON.stringify(messages) !== JSON.stringify(agent.messages)) agent.setMessages(messages);
+          }
           setMainChatRefreshError(null);
           setServerTurn(running ? { runId, runningSince } : null);
           // Only the awaited run's failure: a send that never reached the Chat Service leaves an earlier one on record.
@@ -534,7 +542,7 @@ export function useSessionNavigation({
           setStopError(null);
           setServerTurn({ runId: undefined });
           stopTurn({ id: activeId, runId: serverRunId, chatServiceUrl }).catch((error: Error) => {
-            if (agentRef.current !== agent) return;
+            if (shownRef.current.agent !== agent) return;
             setStopError(stopFailure(error));
             setServerTurn((turn) => (turn === null ? null : { runId: turn.runId ?? serverRunId }));
           });
@@ -573,7 +581,7 @@ export function useSessionNavigation({
     });
 
   return {
-    current: { id: activeId, accountId: activeChat?.accountId, openAt, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, readOnly: activeReadOnly, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure, runningSince: serverTurn?.runningSince,
+    current: { id: activeId, accountId: activeChat?.accountId, openAt, newChat: newChatOwner !== null && newChatOwner.accountId === accountId, provider: activeProvider, readOnly: activeReadOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, runningSince: serverTurn?.runningSince,
       // A chat shown from this browser's copy may run a Turn until its load says otherwise.
       turnRunning: turnRunsOnServer || !turnKnown,
       turnRunsOnServer,

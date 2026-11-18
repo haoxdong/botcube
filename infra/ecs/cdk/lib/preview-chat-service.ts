@@ -32,13 +32,13 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   proxyEnvironment?: Record<string, string>;
   /** The OTLP/HTTP traces endpoint the collector sidecar exports to; absent, X-Ray. */
   otlpEndpoint?: string;
-  metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'errors', string>>;
+  metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
   taskFamily?: string;
   taskRoleName?: string;
   executionRoleName?: string;
   securityGroupName?: string;
   targetGroupName?: string;
-  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
+  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'account-deletion-failures' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
   ingress?: ChatServiceIngress;
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
@@ -264,6 +264,20 @@ export class PreviewChatService extends Construct {
       logGroup, filterPattern: logs.FilterPattern.anyTerm('Error', 'ERROR', 'Exception', 'failed'),
       metricNamespace: 'BotCube/ChatService', metricName: 'Errors', metricValue: '1',
     });
+    const accountDeletionFailures = new logs.MetricFilter(this, 'AccountDeletionFailures', {
+      ...optionalPhysicalName('filterName', props.metricFilterNames?.accountDeletionFailures),
+      logGroup, filterPattern: logs.FilterPattern.anyTerm('Account deletion failed; it remains pending', 'Session purge failed; authorized account deletion remains pending'),
+      metricNamespace: 'BotCube/ChatService', metricName: 'AccountDeletionFailures', metricValue: '1',
+    });
+    const accountDeletionAlarm = new cloudwatch.Alarm(this, 'AccountDeletionAlarm', {
+      alarmName: props.alarmNames?.['account-deletion-failures'] ?? `${props.clusterName}-account-deletion-failures`,
+      actionsEnabled: true,
+      metric: accountDeletionFailures.metric({ statistic: 'Sum', period: Duration.minutes(15) }),
+      threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      evaluationPeriods: 4, datapointsToAlarm: 4, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    accountDeletionAlarm.addAlarmAction(new actions.SnsAction(topic));
+    accountDeletionAlarm.addOkAction(new actions.SnsAction(topic));
     new CfnOutput(outputScope, 'AlertsTopicArn', { value: topic.topicArn });
     new CfnOutput(outputScope, 'ClusterName', { value: cluster.clusterName });
     new CfnOutput(outputScope, 'ServiceName', { value: service.serviceName });

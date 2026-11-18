@@ -3,7 +3,7 @@
 import "./native-reading.css";
 
 import { inView } from "framer-motion";
-import { createContext, useContext, useLayoutEffect, useState, type CSSProperties } from "react";
+import { createContext, useContext, useLayoutEffect, useState } from "react";
 
 import { zoomOf } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ export function useReadingSize(target: Element | string | null, part: "row" | "c
   return active ? size : undefined;
 }
 
-export function readingStyle(size: Size | undefined, part: "row" | "content" = "row"): CSSProperties | undefined {
+export function readingStyle(size: Size | undefined, part: "row" | "content" = "row") {
   if (size === undefined) return undefined;
   const prefix = part === "content" ? "--reading-content" : "--reading";
   return { [`${prefix}-height`]: `${size.height}px`, [`${prefix}-width`]: `${size.width}px` };

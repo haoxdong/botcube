@@ -67,13 +67,21 @@ const button = (name: string) =>
 type Viewport = { width: number; height: number };
 const happyDOM = () => (window as unknown as { happyDOM: { setViewport: (viewport: Viewport) => void } }).happyDOM;
 
-// Styles the computer with styles.css in a window of the given size, as the app does, for each test in the block.
+const here = path.dirname(fileURLToPath(import.meta.url));
+// The app's spacing tokens, which styles.css spaces with. Its motion tokens stay out: they would start animations the
+// tests then cancel.
+const spaceTokens = readFileSync(path.join(here, '../app/tokens.css'), 'utf8').match(/--space-\d+: [^;]+;/g);
+if (spaceTokens === null) throw new Error('tokens.css declares no --space-* tokens');
+const spacing = `:root { ${spaceTokens.join(' ')} }`;
+
+// Styles the computer with the spacing tokens and styles.css in a window of the given size, as the app does, for each
+// test in the block.
 const inWindow = (viewport: Viewport) => {
   let style: HTMLStyleElement;
 
   beforeEach(() => {
     style = document.createElement('style');
-    style.textContent = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8');
+    style.textContent = `${spacing}\n${readFileSync(path.join(here, 'styles.css'), 'utf8')}`;
     document.head.append(style);
     happyDOM().setViewport(viewport);
   });

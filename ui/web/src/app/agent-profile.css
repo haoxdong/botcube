@@ -21,7 +21,7 @@
   position: relative;
   max-width: 240px;
   margin-top: -6px;
-  padding: 2px 12px;
+  padding: 2px var(--space-12);
   overflow: hidden;
   text-align: center;
   white-space: nowrap;
@@ -43,7 +43,7 @@
 /* While the agent works, the capsule reads two lines: the name, then "is working", smaller and muted, still: the
    Worklog carries the shimmer. Marq bobs. */
 .chat-header-name:has(.chat-header-status) {
-  padding-block: 3px 4px;
+  padding-block: var(--space-4);
 }
 
 .chat-header-status {
@@ -66,7 +66,7 @@
 /* A failed sign-in, sign-out or Sheet action, between the header and the chat. */
 .chat-account-error {
   flex-shrink: 0;
-  margin: 0 auto 4px;
+  margin: 0 auto var(--space-4);
   width: min(640px, calc(100% - 32px));
   text-align: center;
   font-size: var(--font-small);
@@ -114,18 +114,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 24px 16px 16px;
+  gap: var(--space-4);
+  padding: var(--space-24) var(--space-16) var(--space-16);
 }
 
 /* A refresh error sits under the status at the header's 4px gap. */
 .agent-profile-header > .agent-profile-error {
-  margin: -12px 16px 16px;
+  margin: calc(-1 * var(--space-12)) var(--space-16) var(--space-16);
 }
 
 .agent-profile-avatar {
   position: relative;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-8);
 }
 
 .agent-profile-edit {
@@ -163,7 +163,7 @@
 .agent-file-saved {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-4);
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
@@ -175,7 +175,7 @@
 
 .agent-profile-status-online svg {
   box-sizing: content-box;
-  padding: 3px;
+  padding: var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--color-green);
   color: var(--color-white);
@@ -208,9 +208,9 @@
 
 .agent-profile-tabs {
   display: flex;
-  gap: 4px;
-  margin: 0 16px;
-  padding: 4px;
+  gap: var(--space-4);
+  margin: 0 var(--space-16);
+  padding: var(--space-4);
   border-radius: var(--radius-pill);
   background: var(--color-fill);
 }
@@ -225,7 +225,7 @@
   border: none;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  padding: 8px;
+  padding: var(--space-8);
   color: var(--color-text-muted);
 }
 
@@ -244,7 +244,7 @@
 .agent-profile-panel {
   flex: 1;
   overflow: auto;
-  padding: 20px 16px;
+  padding: var(--space-20) var(--space-16);
 }
 
 .agent-profile-empty {
@@ -255,13 +255,13 @@
 .agent-files {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: var(--space-24);
 }
 
 .agent-file {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 /* Each file's tint, after Muse's file cards (Fig 16), on its card in the Personalization tab and its page's header
@@ -293,7 +293,7 @@
 .agent-file-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   min-height: var(--button-height);
 }
 
@@ -311,7 +311,7 @@
   justify-content: center;
   width: calc(var(--font-body) * 2);
   height: calc(var(--font-body) * 2);
-  margin-left: 4px;
+  margin-left: var(--space-4);
   border-radius: var(--radius-md);
   background: var(--file-tint);
   color: var(--color-white);
@@ -351,7 +351,7 @@
 
 .agent-file-row {
   position: relative;
-  padding: 12px 16px;
+  padding: var(--space-12) var(--space-16);
   overflow-wrap: anywhere;
 }
 
@@ -368,7 +368,7 @@
 .agent-file-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--space-12);
 }
 
 .agent-file-card {
@@ -379,7 +379,7 @@
   flex-direction: column;
   aspect-ratio: 4 / 3;
   min-width: 0;
-  padding: 16px;
+  padding: var(--space-16);
   overflow: hidden;
   border: none;
   border-radius: var(--radius-xl);
@@ -440,7 +440,7 @@
 /* Clear of the icon, so a long count ("No memories yet") wraps rather than runs under it. */
 .agent-file-card-count {
   margin-top: auto;
-  padding-right: 32px;
+  padding-right: var(--space-32);
   font-size: var(--font-small);
   letter-spacing: var(--tracking-caps);
 }
@@ -455,7 +455,7 @@
 }
 
 .agent-file-text {
-  padding: 14px 16px;
+  padding: var(--space-16);
   line-height: var(--leading-loose);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -464,24 +464,25 @@
 .agent-file-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-12);
 }
 
 /* Editing Identity centres its avatar, its picture buttons centred under it. */
 .agent-file-form .picture-field {
   flex-wrap: wrap;
   justify-content: center;
-  row-gap: 12px;
-  padding: 8px 0;
+  row-gap: var(--space-12);
+  padding: var(--space-8) 0;
 }
 
 .agent-file-form .picture-field > .avatar {
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- half the 80px avatar: it takes a line of its own */
   margin-inline: calc(50% - 40px);
 }
 
 /* A quiet caption under the header; the file's own content starts 16px below it. */
 .agent-file-about {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-8);
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
@@ -489,7 +490,7 @@
 .picture-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 /* The file input stays reachable through its label, which looks like a button. */
@@ -512,13 +513,13 @@
 .agent-memory {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-8);
   list-style: none;
 }
 
 .agent-memory-line {
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   font-size: var(--font-body);
 }
 
@@ -528,20 +529,20 @@
 }
 
 /* ── Agent Profile: Sign-ins tab ── */
-.sign-ins { display: flex; flex-direction: column; gap: 12px; }
-.sign-ins-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sign-ins { display: flex; flex-direction: column; gap: var(--space-12); }
+.sign-ins-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-4); }
 .sign-in {
   display: grid;
   align-items: center;
-  gap: 2px 12px;
-  padding: 12px 0;
+  gap: 2px var(--space-12);
+  padding: var(--space-12) 0;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas: "name status" "user status" "actions actions";
 }
 .sign-in-name { font-weight: var(--weight-semibold); grid-area: name; font-size: var(--font-body); }
 .sign-in-username { color: var(--color-text-muted); font-size: var(--font-small); grid-area: user; }
 .sign-in-status { align-self: start; grid-area: status; }
-.sign-in-actions { display: flex; gap: 8px; grid-area: actions; margin-top: 8px; }
+.sign-in-actions { display: flex; gap: var(--space-8); grid-area: actions; margin-top: var(--space-8); }
 .sign-in-actions button:disabled { opacity: 0.5; cursor: default; }
 .sign-in-warning,
 .sign-in-error { margin: 0; color: var(--color-red); font-size: var(--font-small); }

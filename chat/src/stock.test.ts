@@ -1,8 +1,8 @@
 import { once } from 'node:events';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunAgentInput } from '@ag-ui/client';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -11,9 +11,12 @@ import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
+import { StandInOidcIssuer } from '../test/fakes/oidc-issuer.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
+import { Browser } from '../test/parity/browser.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } from './credential-service-token.js';
+import { directoryOf } from './files-shared.js';
 import { serveChatService } from './server.js';
 import { HttpError, type AccountHistory } from './cartridge.js';
 import { stockAccountStore, stockChatService } from './stock.js';
@@ -287,6 +290,19 @@ describe("the stock Chat Service's Plan Usage", () => {
   });
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const GUEST_START = new Date('2026-11-01T12:00:00Z');
+
+/** EFS Files over a local directory, as the Chat Service's own Files tests mount it. */
+const efsFiles = () => ({
+  BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
+  BOTCUBE_FILES_EFS_ROOT: mkdtempSync(join(tmpdir(), 'stock-files-')),
+  BOTCUBE_FILES_LINKS_URL: 'https://files.example.test/',
+  BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
+  BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
+  BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
+});
+
 describe("the stock Chat Service's account deletion", () => {
   const SECRET = 'invocation-secret';
   // The Credential Service's Vault: the accounts it holds credentials for, and those whose revoke it refuses.
@@ -316,6 +332,7 @@ describe("the stock Chat Service's account deletion", () => {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
+      ...efsFiles(),
     };
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
     const testUser = async (accountId: string) => {
@@ -325,6 +342,9 @@ describe("the stock Chat Service's account deletion", () => {
       await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${token}`, sk: 'META',
         record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
       vault.add(accountId);
+      const directory = join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf(accountId)));
+      mkdirSync(directory);
+      writeFileSync(join(directory, 'kept.txt'), 'kept');
       return token;
     };
     const deleted = await testUser('acct_stock_delete_revoked');
@@ -340,14 +360,237 @@ describe("the stock Chat Service's account deletion", () => {
       expect((await deleteTestUser(deleted)).status).toBe(204);
       expect(vault.has('acct_stock_delete_revoked')).toBe(false);
       expect(await store.loadAccount('acct_stock_delete_revoked')).toBeNull();
+      expect(existsSync(join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_delete_revoked'))))).toBe(false);
 
       const failed = await deleteTestUser(refused);
       expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service account revoke failed with HTTP 500' }]);
       expect(vault.has('acct_stock_delete_refused')).toBe(true);
       expect(await store.operatorTestUser(refused)).toMatchObject({ accountId: 'acct_stock_delete_refused', status: 'test' });
+      expect(existsSync(join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_delete_refused')), 'kept.txt'))).toBe(true);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();
     }
+  });
+
+  async function guestService(table: string, endpoint: string) {
+    const env = {
+      PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
+    };
+    const server = serveChatService(stockChatService(env), env);
+    await once(server, 'listening');
+    return {
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      store: stockAccountStore(env),
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  /** A Guest that signed in 31 days ago and holds a credential; the Chat Service that made it has stopped. */
+  async function expiredGuest() {
+    vi.useFakeTimers({ toFake: ['Date'], now: GUEST_START });
+    const endpoint = motoEndpoint();
+    const table = `stock-guest-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(endpoint, table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+    const first = await guestService(table, endpoint);
+    const { accountId } = await (await fetch(`${first.url}/account/session`)).json() as { accountId: string };
+    await first.close();
+    vault.add(accountId);
+    vi.setSystemTime(GUEST_START.getTime() + 31 * DAY_MS);
+    return { accountId, table, endpoint };
+  }
+
+  it("revokes an expired Guest's credentials and erases the Guest at the next sweep", async () => {
+    try {
+      const { accountId, table, endpoint } = await expiredGuest();
+      const restarted = await guestService(table, endpoint);
+      try {
+        // Expiry records the intent and the sweep completes it after the erase, so wait for both to show.
+        await vi.waitFor(async () => expect([await restarted.store.loadAccount(accountId), await restarted.store.pendingAccountDeletions()]).toEqual([null, []]));
+        expect(vault.has(accountId)).toBe(false);
+      } finally {
+        await restarted.close();
+      }
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps an expired Guest pending when its revoke fails, and erases it at the sweep after', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { accountId, table, endpoint } = await expiredGuest();
+      refusing.add(accountId);
+      const refused = await guestService(table, endpoint);
+      try {
+        await vi.waitFor(() => expect(logged).toHaveBeenCalledWith(
+          'Account deletion failed; it remains pending', accountId, expect.objectContaining({ status: 503 }),
+        ));
+        expect(vault.has(accountId)).toBe(true);
+        expect(await refused.store.loadAccount(accountId)).toMatchObject({ status: 'anonymous' });
+        expect(await refused.store.pendingAccountDeletions()).toEqual([expect.objectContaining({ accountId })]);
+      } finally {
+        await refused.close();
+      }
+
+      refusing.delete(accountId);
+      const retried = await guestService(table, endpoint);
+      try {
+        await vi.waitFor(async () => expect(await retried.store.loadAccount(accountId)).toBeNull());
+        expect(vault.has(accountId)).toBe(false);
+      } finally {
+        await retried.close();
+      }
+    } finally {
+      logged.mockRestore();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('a signed-in User deleting their own account', () => {
+  const ENTERPRISE = fileURLToPath(new URL('../../examples/enterprise/deployment-config.json', import.meta.url));
+  const EXAMPLE_BOT = fileURLToPath(new URL('../../examples/bot/bot.json', import.meta.url));
+  const UI = 'http://localhost:3001/';
+  const INTROSPECTION_SECRET = 'stand-in-invocation-secret';
+  let issuer: StandInOidcIssuer;
+  let config: string;
+  beforeAll(async () => {
+    issuer = await new StandInOidcIssuer().listen();
+    const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { identity: Record<string, unknown> };
+    config = join(mkdtempSync(join(tmpdir(), 'stock-oidc-')), 'deployment-config.json');
+    writeFileSync(config, JSON.stringify({ bot: EXAMPLE_BOT, identity: { ...enterprise.identity, issuer: issuer.url } }));
+  });
+  afterAll(async () => { await issuer.close(); });
+
+  async function oidcService(table: string, endpoint: string) {
+    const env = {
+      PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: config, BOTCUBE_OIDC_CLIENT_SECRET: 'stand-in-client-secret',
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: INTROSPECTION_SECRET,
+    };
+    const server = serveChatService(stockChatService(env), env);
+    await once(server, 'listening');
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { url, store: stockAccountStore(env), browser: () => new Browser(url), close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  }
+  type OidcService = Awaited<ReturnType<typeof oidcService>>;
+
+  /** Run `test` against a stock Chat Service on its own table; `restart` starts another on the same table. */
+  async function withService(test: (service: OidcService, restart: () => Promise<OidcService>) => Promise<void>) {
+    const endpoint = motoEndpoint();
+    const table = `stock-self-delete-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(endpoint, table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+    const running: OidcService[] = [];
+    const start = async () => {
+      const service = await oidcService(table, endpoint);
+      running.push(service);
+      return service;
+    };
+    try {
+      await test(await start(), start);
+    } finally {
+      await Promise.all(running.map((service) => service.close()));
+      vi.unstubAllEnvs();
+    }
+  }
+
+  /** Follow the provider's redirect, signed in there as `user`, back to the Chat Service's callback. */
+  async function throughProvider(browser: Browser, authorize: URL, user: string): Promise<Response> {
+    authorize.searchParams.set('login_hint', user);
+    const back = new URL((await fetch(authorize, { redirect: 'manual' })).headers.get('location') ?? '');
+    return browser.get(back.pathname + back.search);
+  }
+
+  async function signIn(browser: Browser, user: string) {
+    const login = await browser.get(`/auth/oidc/login?return_to=${encodeURIComponent(UI)}`);
+    expect((await throughProvider(browser, new URL(login.headers.get('location') ?? ''), user)).status).toBe(302);
+    return browser.openAccountSession();
+  }
+
+  it("answers a product service's Token Introspection of a signed-in User's session, and refuses an unsigned caller", async () => {
+    await withService(async (service) => {
+      const browser = service.browser();
+      const { accountId } = await signIn(browser, 'ada');
+      const token = browser.cookies.get('template_session') ?? '';
+      const introspect = (caller: string) => fetch(new URL('/oauth/introspect', service.url), {
+        method: 'POST', headers: { authorization: `Bearer ${caller}` }, body: new URLSearchParams({ token }),
+      });
+
+      const answer = await introspect(signCredentialServiceInvocation(INTROSPECTION_SECRET, 'introspector', 'gateway', { scope: 'token_introspection' }));
+
+      expect([answer.status, await answer.json()]).toEqual([200, { active: true, sub: accountId, exp: expect.any(Number) }]);
+      expect((await introspect('not-signed')).status).toBe(401);
+    });
+  });
+
+  async function startDeletion(browser: Browser): Promise<URL> {
+    const response = await browser.post(`/auth/oidc/delete?return_to=${encodeURIComponent(UI)}`, {});
+    expect(response.status).toBe(200);
+    return new URL(((await response.json()) as { authorizeUrl: string }).authorizeUrl);
+  }
+
+  it('sends the User to sign in again at the provider, whatever session it already holds', async () => {
+    await withService(async (service) => {
+      const browser = service.browser();
+      await signIn(browser, 'ada');
+
+      const authorize = await startDeletion(browser);
+
+      expect(authorize.origin).toBe(issuer.url);
+      expect(authorize.searchParams.get('prompt')).toBe('login');
+      expect(authorize.searchParams.get('max_age')).toBe('0');
+    });
+  });
+
+  it('records the deletion once the User has just signed in again, signs the browser out, and the next sweep erases the account', async () => {
+    await withService(async (service, restart) => {
+      const browser = service.browser();
+      const { accountId } = await signIn(browser, 'ada');
+
+      const back = await throughProvider(browser, await startDeletion(browser), 'ada');
+
+      expect([back.status, back.headers.get('location')]).toEqual([302, UI]);
+      expect(back.headers.getSetCookie()).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^template_account_id=; Max-Age=0;/),
+        expect.stringMatching(/^template_session=; Max-Age=0;/),
+      ]));
+      expect(await service.store.pendingAccountDeletions()).toEqual([expect.objectContaining({ accountId })]);
+      expect((await browser.request('/threads', { method: 'POST' })).status).toBe(401);
+      const swept = await restart();
+      // The sweep completes the intent after the erase, so wait on that last write.
+      await vi.waitFor(async () => expect(await swept.store.pendingAccountDeletions()).toEqual([]));
+      expect(await swept.store.loadAccount(accountId)).toBeNull();
+    });
+  });
+
+  const MINUTE_SECONDS = 60;
+  it.each([
+    ['signed in again as someone else', 'linus', undefined, 403, 'The provider signed in someone other than this account; nothing was deleted'],
+    ['last authenticated over five minutes ago', 'ada', -6 * MINUTE_SECONDS, 401, expect.stringContaining('auth_time')],
+    ['not saying when they authenticated', 'ada', null, 401, expect.stringContaining('auth_time')],
+  ])('refuses a deletion from a User %s, recording nothing', async (_, user, authenticatedAgo, status, detail) => {
+    await withService(async (service) => {
+      const browser = service.browser();
+      const { accountId } = await signIn(browser, 'ada');
+      if (authenticatedAgo === null) issuer.authenticatedAt.set(user, undefined);
+      else if (authenticatedAgo !== undefined) issuer.authenticatedAt.set(user, Math.floor(Date.now() / 1000) + authenticatedAgo);
+      try {
+        const back = await throughProvider(browser, await startDeletion(browser), user);
+
+        expect([back.status, await back.json()]).toEqual([status, { detail }]);
+        expect(await service.store.pendingAccountDeletions()).toEqual([]);
+        expect(await service.store.loadAccount(accountId)).toMatchObject({ status: 'registered' });
+        expect(await service.store.loadAccount(accountId)).not.toHaveProperty('deletionOperationId');
+      } finally {
+        issuer.authenticatedAt.delete(user);
+      }
+    });
   });
 });

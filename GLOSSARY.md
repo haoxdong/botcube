@@ -14,7 +14,7 @@ _Avoid_: environment, Deployment Environment, config (bare), env file
 
 **External Service**:
 Something outside BotCube that one deployment depends on, chosen by its operator in the Deployment Config, such as the model gateway, identity provider or scheduler.
-_Avoid_: backing service, dependency, integration, Connector
+_Avoid_: backing service, dependency, integration, Connector, App
 
 **Harness**:
 A complete agent implementation on one third-party harness library, such as deepagents with LangGraph, together with everything coupled to that library, such as memory backends and LLM provider factories. It is swapped whole, never in place, and lives in `botcube/harness/<library>/`.
@@ -33,11 +33,11 @@ The Chat Service's lookup record for one Session — owner, title, last activity
 _Avoid_: Journal, session history, session index, thread table
 
 **User**:
-A person using a BotCube app: a Guest until Saving. Sessions, Sign-ins and Connectors belong to them.
+A person using a bot: a Guest until Saving. Sessions, Sign-ins and Linked Accounts belong to them.
 _Avoid_: account (except a person's account at an outside provider), user account, login, profile, actor, anonymous user
 
 **Guest**:
-A User with no login-capable Sign-in yet, held by one browser. Its Sessions and Connectors are kept like any User's; a Guest never saved is deleted after a period of inactivity.
+A User with no login-capable Sign-in yet, held by one browser. Its Sessions and Linked Accounts are kept like any User's; a Guest never saved is deleted after a period of inactivity.
 _Avoid_: anonymous user, visitor, temporary account, temporary chat
 
 **Saving**:
@@ -45,7 +45,7 @@ Adding a Guest's first login-capable Sign-in. The User stays the same, so nothin
 _Avoid_: upgrade, claim, migration
 
 **User ID**:
-The identifier of one User, and one of the only two identifiers that cross from the app to AgentCore, where it is `actorId`. Every other user-related identifier stays inside the app.
+The identifier of one User, and one of the only two identifiers that cross from the bot to AgentCore, where it is `actorId`. Every other user-related identifier stays inside the bot.
 _Avoid_: account ID, filing user ID, filing account ID, actor ID (AgentCore's field name only), owner ID, principal
 
 **Session ID**:
@@ -53,31 +53,31 @@ The identifier of one Session, a server-issued UUID, and the other identifier th
 _Avoid_: chat ID, conversation ID, thread ID (except as the wire field), runtime session ID, runtime binding, generation
 
 **Test User**:
-A User created only through an operator-only path for tests (isolation checks, Memory tests, the census, live checks), never through the public app. It has no Sign-in, so it can never log in or be recovered. It may hold its owner's site-provider Connector credential, copied into its own Vault entry at the start of each run and revoked when the owner unlinks, so it tests with the owner's access. The check that creates it deletes it, copy included.
+A User created only through an operator-only path for tests (isolation checks, Memory tests, the census, live checks), never through the public bot. It has no Sign-in, so it can never log in or be recovered. It may hold its owner's site-provider Linked Account credential, copied into its own Vault entry at the start of each run and revoked when the owner unlinks, so it tests with the owner's access. The check that creates it deletes it, copy included.
 _Avoid_: anonymous account, throwaway account, service account
 
 **Sign-in**:
-A User's link to their identity at one provider, unique on that identity; a User holds many. Its provider is an identity provider (identity only, such as Google or Apple), a plan provider (identity plus Plan Usage, such as OpenAI), or a site provider (a bot's own site, whose login also sets up that site's Connector). An app designates which providers are login-capable: their Sign-ins log the user in and recover the Account.
-_Avoid_: connection, integration, linked account, login (bare)
+A User's link to their identity at one provider, unique on that identity; a User holds many. Its provider is an identity provider (identity only, such as Google or Apple), a plan provider (identity plus Plan Usage, such as OpenAI), or a site provider (a bot's own site, whose login also sets up that site's Linked Account). A bot designates which providers are login-capable: their Sign-ins log the user in and recover the Account.
+_Avoid_: connection, integration, Linked Account (an account the agent acts with), login (bare)
 
 **Plan Usage**:
 The user's paid AI plan at a plan provider paying for their model calls, in place of the platform's own inference.
 _Avoid_: API key, inference credential, bring your own key, Model Subscription
 
-**Connector**:
-A User's link to their account at an outside site, which the agent uses on their behalf, such as Gmail; a User holds many, and an outside account links to one User. A Connector never logs the user in; a site provider's login also sets up that site's Connector.
-_Avoid_: Sign-in, integration, plugin
+**Linked Account**:
+A User's account at an outside site, which the agent acts with on their behalf, such as their Gmail or GitHub account; a User holds many, and an outside account links to one User. A Linked Account never logs the user in; a site provider's login also sets up that site's Linked Account.
+_Avoid_: Connector (that is how the agent reaches a service), Sign-in, connection, integration
 
 **Durable Credential**:
-A Sign-in's or Connector's long-lived credential, which alone renews its short-lived access with no password or MFA, such as a plan provider's refresh token, which is replaced on every use.
+A Sign-in's or Linked Account's long-lived credential, which alone renews its short-lived access with no password or MFA, such as a plan provider's refresh token, which is replaced on every use.
 _Avoid_: refresh token (unqualified), the cookie
 
 **Credential Service**:
-The isolated service that alone can decrypt Durable Credentials. It attaches short-lived access to the calls the agent sends through it, to Connectors' services and to plan providers' models, so the agent never holds a Durable Credential.
+The isolated service that alone can decrypt Durable Credentials. It attaches short-lived access to the calls the agent sends through it, to Linked Accounts' services and to plan providers' models, so the agent never holds a Durable Credential.
 _Avoid_: Credential Broker, auth service, credential store (that is the Vault), proxy
 
 **Vault**:
-The per-User encrypted store of every Sign-in's and Connector's Durable Credential, one per provider, which only the Credential Service can decrypt.
+The per-User encrypted store of every Sign-in's and Linked Account's Durable Credential, one per provider, which only the Credential Service can decrypt.
 _Avoid_: cookie store, database, keychain
 
 **Turn**:
@@ -167,3 +167,25 @@ _Avoid_: revision, snapshot, draft
 **Visual**:
 A chart, diagram, drawing or picture the agent embeds in a reply. It is the agent's own work, distinct from content a tool returns, and is not an Artifact.
 _Avoid_: chart (bare), artifact, plot
+
+## Apps
+
+**App**:
+Anything on a bot's Apps tab that extends what the agent can do: a Plugin, a Connector, a Terminal App or a Skill. One may require a Linked Account.
+_Avoid_: plugin (that is a bundle), integration, extension, tool (the agent's tool calls)
+
+**Plugin**:
+Two or more Connectors, Terminal Apps or Skills shipped together and shown as one App, such as a site's Terminal App with the Skill that teaches it.
+_Avoid_: bundle, package, extension
+
+**Connector**:
+An outside service the agent reaches over MCP, such as Gmail.
+_Avoid_: MCP server (the protocol's name for it), integration, Linked Account
+
+**Terminal App**:
+A program on the Agent Computer that the agent runs from its shell.
+_Avoid_: CLI, command-line tool, computer app, package
+
+**Skill**:
+Written instructions that teach the agent a workflow; it brings no tools and no account of its own.
+_Avoid_: prompt, Soul (the agent's values), instructions (bot-wide)

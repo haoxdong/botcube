@@ -13,9 +13,9 @@
 .computer-screen-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-8);
   height: 32px;
-  padding: 0 6px 0 12px;
+  padding: 0 6px 0 var(--space-12);
   border-bottom: 1px solid var(--color-line);
   background: var(--color-fill);
 }
@@ -108,7 +108,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 16px;
+  padding: var(--space-16);
   text-align: center;
 }
 
@@ -182,7 +182,7 @@
   /* 42px and the frame's two border pixels: a 44px target. */
   .live-browser-panel .computer-screen-bar {
     height: 42px;
-    padding: 0 4px 0 14px;
+    padding: 0 var(--space-4) 0 var(--space-16);
     border-bottom: none;
     background: var(--color-white);
   }
@@ -210,7 +210,7 @@
   display: grid;
   place-items: center;
   min-height: 100dvh;
-  padding: 24px;
+  padding: var(--space-24);
   background: var(--color-fill);
 }
 

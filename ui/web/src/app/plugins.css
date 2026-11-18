@@ -1,4 +1,4 @@
-/* ── Plugins screen: each kind of plugin a placeholder card under its label ── */
+/* ── Apps screen: each kind of App a placeholder card under its label ── */
 .plugins {
   flex: 1;
   overflow: auto;
@@ -7,7 +7,7 @@
   max-width: 640px;
   margin: 0 auto;
   /* Clear of the round menu button at the top left */
-  padding: 72px 20px 48px;
+  padding: calc(var(--space-24) * 3) var(--space-20) calc(var(--space-24) * 2);
 }
 
 .plugins-title {
@@ -16,19 +16,19 @@
 }
 
 .plugins-intro {
-  margin-top: 4px;
+  margin-top: var(--space-4);
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
 
 .plugins-kind {
-  margin-top: 28px;
+  margin-top: var(--space-24);
 }
 
 .plugins-placeholder {
   align-items: center;
-  margin-top: 8px;
-  padding: 14px 16px;
+  margin-top: var(--space-8);
+  padding: var(--space-16);
   border: 1px dashed var(--color-line);
   border-radius: var(--radius-lg);
 }
@@ -48,7 +48,7 @@
   .plugins-placeholder {
     display: grid;
     grid-template-columns: var(--row-icon) 1fr;
-    column-gap: 14px;
+    column-gap: var(--space-12);
     row-gap: 2px;
   }
 
@@ -182,7 +182,7 @@
   }
 
   .agent-profile:has(.agent-file) .agent-profile-header > .agent-profile-error {
-    margin-top: 16px;
+    margin-top: var(--space-16);
   }
 }
 
@@ -203,13 +203,13 @@
      with it, so the two share a left edge. */
   .copilotKitInput {
     width: calc(100% + 8px) !important;
-    margin: 0 -4px !important;
+    margin: 0 calc(-1 * var(--space-4)) !important;
   }
 
   .composer-accessory {
     width: calc(100% + 8px);
-    margin-left: -4px;
-    margin-right: -4px;
+    margin-left: calc(-1 * var(--space-4));
+    margin-right: calc(-1 * var(--space-4));
   }
 }
 
@@ -279,6 +279,6 @@
   border-radius: var(--radius-pill);
   background: var(--color-blue);
 }
-.sidebar-item-btn .chat-unread-dot { margin-left: 8px; }
+.sidebar-item-btn .chat-unread-dot { margin-left: var(--space-8); }
 .sidebar-logo-btn { position: relative; }
 .drawer-unread-dot { position: absolute; top: 4px; right: 4px; }

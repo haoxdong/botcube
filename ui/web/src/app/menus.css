@@ -152,21 +152,21 @@
      its rows at the same pitch; content 20px from each side. */
   .sidebar-expanded .sidebar-brand {
     height: 44px;
-    padding: 0 20px;
+    padding: 0 var(--space-20);
   }
 
   .sidebar-expanded .sidebar-nav {
     gap: 0;
-    padding: 38px 10px 10px;
+    padding: calc(var(--space-20) * 2) var(--space-8) var(--space-12);
   }
 
   .sidebar-expanded .sidebar-section-header {
-    padding: 10px 20px 0;
+    padding: var(--space-12) var(--space-20) 0;
   }
 
   /* Rows across the nav pills' width, text 20px from the edge; a row's ⋯ under the + control */
   .sidebar-list {
-    padding: 0 10px;
+    padding: 0 var(--space-8);
   }
 
   .sidebar-item {
@@ -174,20 +174,20 @@
   }
 
   .sidebar-item-btn {
-    padding: 0 10px;
+    padding: 0 var(--space-12);
   }
 
   .sidebar-show-more {
-    padding-left: 10px;
+    padding-left: var(--space-12);
   }
 
   .sidebar-item-name {
-    padding-left: 9px;
+    padding-left: var(--space-8);
   }
 
   .sidebar-expanded .sidebar-nav-item {
-    gap: 18px;
-    padding: 8px 10px;
+    gap: var(--space-16);
+    padding: var(--space-8) var(--space-12);
   }
 
   .sidebar-expanded .sidebar-nav-icon {
@@ -196,10 +196,10 @@
   }
 
   .sidebar-expanded .sidebar-bottom {
-    padding: 4px 20px 8px;
+    padding: var(--space-4) var(--space-20) var(--space-8);
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-12);
   }
 
   .sidebar-collapsed {
@@ -250,11 +250,11 @@
 .load-skeleton {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-12);
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: var(--space-24) var(--space-16);
   box-sizing: border-box;
 }
 
@@ -279,8 +279,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 24px 16px;
+  gap: var(--space-12);
+  padding: var(--space-24) var(--space-16);
   text-align: center;
 }
 
@@ -301,7 +301,7 @@
 }
 
 .chat-run-error {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-8) var(--space-12);
   border-radius: var(--radius-lg);
   color: var(--color-red);
 }
@@ -312,7 +312,7 @@
 }
 
 .chat-failed-question {
-  padding: 0 0.75rem 0.5rem;
+  padding: 0 var(--space-12) var(--space-8);
   border-top: 0;
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   color: var(--color-text);
@@ -328,7 +328,7 @@
 
 .chat-turn-retry {
   display: block;
-  margin: 0.5rem auto 0;
+  margin: var(--space-8) auto 0;
 }
 
 /* ── Welcome screen (empty chat state) ── */
@@ -343,10 +343,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-8);
   pointer-events: none;
   text-align: center;
-  padding: 24px;
+  padding: var(--space-24);
 }
 
 .welcome-title {
@@ -391,7 +391,7 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-12);
   padding: var(--sidebar-btn-pad);
   border-radius: var(--radius-pill);
   cursor: pointer;
@@ -411,8 +411,8 @@
 /* On the nav rows' columns: the avatar centred on their 20px icons, the name on their labels' 52px edge */
 @media (min-width: 641px) {
   .sidebar-expanded .user-menu-trigger {
-    padding: 8px;
-    gap: 8px;
+    padding: var(--space-8);
+    gap: var(--space-8);
   }
 }
 
@@ -420,7 +420,7 @@
 @media (max-width: 640px) {
   .sidebar-expanded .user-menu-trigger {
     height: 44px;
-    gap: 13px;
+    gap: var(--space-12);
     padding: 0;
   }
 }
@@ -434,7 +434,7 @@
   background: var(--color-text);
   color: var(--color-white);
   font-size: var(--font-small);
-  padding: 6px 12px;
+  padding: 6px var(--space-12);
   border-radius: var(--radius-md);
   white-space: nowrap;
   pointer-events: none;
@@ -470,7 +470,7 @@
   background: var(--color-white);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  padding: 4px 0;
+  padding: var(--space-4) 0;
   /* One width for the menu and Edit profile, so the editor replaces the menu in place */
   width: 260px;
   box-shadow: var(--shadow-float);
@@ -481,8 +481,8 @@
 .user-menu-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
 }
 
 .user-menu-name {
@@ -494,12 +494,12 @@
 .user-menu-sep {
   height: 1px;
   background: var(--color-line);
-  margin: 4px 0;
+  margin: var(--space-4) 0;
 }
 
 .user-menu-note {
   margin: 0;
-  padding: 10px 16px 4px;
+  padding: var(--space-12) var(--space-16) var(--space-4);
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
@@ -512,8 +512,8 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
   font-size: var(--font-body);
   color: var(--color-text);
   cursor: pointer;
@@ -540,8 +540,8 @@
 .profile-editor {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-16);
 }
 
 .sheet .profile-editor {
@@ -551,7 +551,7 @@
 .profile-editor-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 
@@ -568,13 +568,13 @@
   background: var(--color-line);
   border: none;
   border-radius: var(--radius-pill);
-  padding: 8px 16px;
+  padding: var(--space-8) var(--space-16);
   font-size: var(--font-small);
   color: var(--color-text);
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   font-family: inherit;
   transition: background var(--motion-quick) var(--ease);
 }
@@ -636,12 +636,12 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 10px 16px;
+  padding: var(--space-12) var(--space-16);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
   transition: background var(--motion-quick) var(--ease);
-  gap: 16px;
+  gap: var(--space-16);
   color: var(--color-text);
 }
 
@@ -728,13 +728,13 @@
 .mep-option-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   color: var(--color-text-muted);
   font-size: var(--font-small);
 }
 
 .mep-back {
-  gap: 10px;
+  gap: var(--space-8);
   justify-content: flex-start;
   color: var(--color-text-muted);
 }
@@ -742,14 +742,14 @@
 .mep-separator {
   height: 1px;
   background: var(--color-line);
-  margin: 6px 16px;
+  margin: 6px var(--space-16);
 }
 
 .mep::after {
   content: "Loading models… Medium";
   visibility: hidden;
   grid-area: 1 / 1;
-  padding: 0 16px;
+  padding: 0 var(--space-16);
   font-size: var(--font-small);
   white-space: nowrap;
 }
@@ -792,7 +792,7 @@
   align-items: center;
   gap: inherit;
   max-width: 100%;
-  padding: 0 22px 0 6px;
+  padding: 0 var(--space-24) 0 6px;
   border-radius: inherit;
   pointer-events: none;
 }
@@ -813,7 +813,7 @@
 
 @media (max-width: 767px) {
   .mep-pill-background {
-    padding: 0 8px;
+    padding: 0 var(--space-8);
   }
 
   .mep-pill-background::before {

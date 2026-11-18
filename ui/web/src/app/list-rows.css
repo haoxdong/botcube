@@ -1,6 +1,6 @@
 /* ── List rows (Muse Fig 13, 15): a round icon tile, then a headline over muted detail lines ── */
 .list-group-heading {
-  margin: 24px 0 6px;
+  margin: var(--space-24) 0 6px;
   font-size: var(--font-body);
   font-weight: var(--weight-semibold);
 }
@@ -9,8 +9,8 @@
   --row-icon: 40px;
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 10px 0;
+  gap: var(--space-12);
+  padding: var(--space-12) 0;
 }
 
 .list-row-icon {
@@ -69,7 +69,7 @@
 }
 
 .scheduled > .agent-profile-error {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-12);
 }
 
 .scheduled-task-list {
@@ -104,7 +104,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
+  gap: var(--space-16);
   font-size: var(--font-small);
 }
 
@@ -141,9 +141,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-12);
   min-height: 48px;
-  padding: 8px 20px;
+  padding: var(--space-8) var(--space-20);
   color: var(--color-text);
 }
 
@@ -165,7 +165,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
   min-width: 0;
   margin: 0;
   text-align: right;
@@ -185,7 +185,7 @@
 .settings-select select {
   max-width: 100%;
   min-width: 0;
-  padding: 0 22px 0 0;
+  padding: 0 var(--space-24) 0 0;
   border: none;
   font: inherit;
   font-size: var(--font-body);
@@ -235,7 +235,7 @@
   gap: 6px;
   align-self: flex-start;
   min-height: 44px;
-  padding: 0 16px;
+  padding: 0 var(--space-16);
   border: none;
   font: inherit;
   font-size: var(--font-body);
@@ -256,16 +256,16 @@
    grows with it rather than ahead of it. */
 .scheduled-sheet-body > .collapsible {
   align-self: stretch;
-  margin-top: -16px;
+  margin-top: calc(-1 * var(--space-16));
 }
 
 .scheduled-sheet-body > .collapsible > div {
-  padding-top: 16px;
+  padding-top: var(--space-16);
 }
 
 /* A date and time in words, as Codex's Time reads; the native picker lies unseen over the whole row to take the tap. */
 .settings-when .settings-select > span {
-  padding-right: 22px;
+  padding-right: var(--space-24);
   text-align: right;
 }
 
@@ -310,7 +310,7 @@
 
 /* Title and the instructions: Codex's box, `radius-lg` with a `border` edge; the instructions 120px tall. */
 .settings-text {
-  padding: 14px 18px;
+  padding: var(--space-16) var(--space-20);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   font: inherit;
@@ -321,7 +321,7 @@
 
 textarea.settings-text {
   min-height: 120px;
-  padding: 18px;
+  padding: var(--space-20);
   resize: vertical;
 }
 
@@ -333,18 +333,18 @@ textarea.settings-text {
 .scheduled-edit-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-12);
 }
 
 .scheduled-edit-actions .button {
   min-height: max(36px, var(--button-height));
-  padding: 0 16px;
+  padding: 0 var(--space-16);
 }
 
 /* Open chat, Pause or Resume, Edit and Delete, one under another across the sheet. */
 .scheduled-sheet-actions {
   display: grid;
-  gap: 8px;
+  gap: var(--space-8);
   align-self: stretch;
 }
 
@@ -354,10 +354,10 @@ textarea.settings-text {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--space-4);
   max-width: 480px;
-  margin: 8px 0;
-  padding: 12px 14px;
+  margin: var(--space-8) 0;
+  padding: var(--space-12) var(--space-16);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background: var(--color-white);
@@ -377,7 +377,7 @@ textarea.settings-text {
 .scheduled-run-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   align-self: stretch;
 }
 
@@ -452,7 +452,7 @@ textarea.settings-text {
 .scheduled-task-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 .scheduled-task-heading .status-pill {

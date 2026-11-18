@@ -233,10 +233,26 @@ test('availability alarms use free metrics and publish only to the existing aler
   }
 });
 
-test('parked Chat has no paid serving alarms or failure metrics', () => {
+test.each([false, true])('persistent account deletion failures notify the alert owner, parked=%s', parked => {
+  const template = synth(undefined, parked);
+  template.hasResourceProperties('AWS::Logs::MetricFilter', {
+    LogGroupName: { Ref: named(template, 'ChatServiceLogs').id },
+    FilterPattern: '?"Account deletion failed; it remains pending" ?"Session purge failed; authorized account deletion remains pending"',
+    MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'AccountDeletionFailures', MetricValue: '1' }],
+  });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    AlarmName: 'test-account-deletion-failures', ActionsEnabled: true,
+    Namespace: 'BotCube/ChatService', MetricName: 'AccountDeletionFailures', Statistic: 'Sum',
+    Period: 900, Threshold: 1, ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    EvaluationPeriods: 4, DatapointsToAlarm: 4, TreatMissingData: 'notBreaching',
+    AlarmActions: [alerts], OKActions: [alerts],
+  });
+});
+
+test('parked Chat retains only the persistent deletion alarm and no serving failure metrics', () => {
   const template = synth(undefined, true);
   template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0 });
-  template.resourceCountIs('AWS::CloudWatch::Alarm', 0);
+  template.resourceCountIs('AWS::CloudWatch::Alarm', 1);
   const filters = Object.values(template.findResources('AWS::Logs::MetricFilter'));
   expect(filters.flatMap(filter => filter.Properties.MetricTransformations.map((metric: { MetricName: string }) => metric.MetricName))).not.toContain('FilesMountFailures');
 });

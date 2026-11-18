@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { DeploymentConfig } from 'botcube-deployment-config';
 import * as client from 'openid-client';
-import type { AccountCookies } from './account-cookies.js';
+import { clearCookie, type AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
 import { HttpError } from './cartridge.js';
 import { corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
@@ -27,6 +27,8 @@ interface OidcSignInOptions {
 const CALLBACK_PATH = '/auth/oidc/callback';
 const PENDING_COOKIE = 'botcube_oidc_sign_in';
 const PENDING_SECONDS = 600;
+/** How long ago the User may have signed in at the provider for their account's deletion. */
+const DELETION_REAUTH_SECONDS = 300;
 
 /** The `identity.clientSecret` the deploy reads from its secret into the Chat Service's environment. */
 export function oidcClientSecret(env: NodeJS.ProcessEnv): string {
@@ -40,15 +42,14 @@ export function oidcIdentity(
   identity: Extract<DeploymentConfig['identity'], { kind: 'oidc' }>,
   env: NodeJS.ProcessEnv,
   { store, cookies }: Pick<OidcSignInOptions, 'store' | 'cookies'>,
-): { routes: Hono } {
-  const { routes } = oidcSignIn({
+) {
+  return oidcSignIn({
     identity: { issuer: identity.issuer, clientId: identity.clientId, clientSecret: oidcClientSecret(env) },
     store,
     cookies,
     returnOrigins: corsOriginsFromEnv(env) ?? LOCAL_UI_ORIGINS,
     publicOrigin: env.BOTCUBE_PUBLIC_ORIGIN,
   });
-  return { routes };
 }
 
 interface PendingSignIn {
@@ -56,11 +57,15 @@ interface PendingSignIn {
   nonce: string;
   verifier: string;
   returnTo: string;
+  /** The sign-in re-authenticates the signed-in User to delete their account. */
+  deletion: boolean;
 }
 
 /**
  * Users sign in with an OpenID Connect provider: authorization code with PKCE, state and nonce. The provider's
- * user becomes the browser's account, registered; `/auth/logout` (accountRoutes) signs out.
+ * user becomes the browser's account, registered; `/auth/logout` (accountRoutes) signs out. `deletion` serves
+ * `POST /auth/oidc/delete`, which deletes the signed-in account once its User signs in to the provider again; the
+ * account deletion sweep erases it.
  */
 export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrigin }: OidcSignInOptions) {
   let configuration: Promise<client.Configuration> | undefined;
@@ -71,10 +76,11 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
   const redirectUri = (c: Context) => new URL(CALLBACK_PATH, publicOrigin ?? new URL(c.req.url).origin);
 
   const routes = new Hono();
-  routes.get('/auth/oidc/login', async (c) => {
+  /** The provider's authorization URL for this browser's sign-in, remembered in its pending cookie. */
+  async function authorization(c: Context, deletion: boolean, reauthentication: Record<string, string> = {}): Promise<URL> {
     const returnTo = c.req.query('return_to') ?? '';
     if (!URL.canParse(returnTo) || !returnOrigins.includes(new URL(returnTo).origin)) throw new HttpError(400, 'return_to is not a page of this bot');
-    const pending: PendingSignIn = { state: client.randomState(), nonce: client.randomNonce(), verifier: client.randomPKCECodeVerifier(), returnTo };
+    const pending: PendingSignIn = { state: client.randomState(), nonce: client.randomNonce(), verifier: client.randomPKCECodeVerifier(), returnTo, deletion };
     const url = client.buildAuthorizationUrl(await provider(), {
       redirect_uri: redirectUri(c).href,
       scope: 'openid profile',
@@ -82,9 +88,20 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
       code_challenge_method: 'S256',
       state: pending.state,
       nonce: pending.nonce,
+      ...reauthentication,
     });
     setCookie(c, PENDING_COOKIE, JSON.stringify(pending), { maxAge: PENDING_SECONDS, httpOnly: true, secure: redirectUri(c).protocol === 'https:', sameSite: 'Lax', path: CALLBACK_PATH });
-    return c.redirect(url.href);
+    return url;
+  }
+
+  routes.get('/auth/oidc/login', async (c) => c.redirect((await authorization(c, false)).href));
+
+  /** Deleting the account starts with the User signing in again at the provider; the callback records the deletion. */
+  const deletion = new Hono();
+  deletion.post('/auth/oidc/delete', async (c) => {
+    if (await store().sessionAccountId(cookies.sessionToken(c)) === null) throw new HttpError(401, 'Sign in before deleting your account');
+    const url = await authorization(c, true, { prompt: 'login', max_age: '0' });
+    return c.json({ authorizeUrl: url.href });
   });
 
   routes.get(CALLBACK_PATH, async (c) => {
@@ -93,6 +110,17 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
     const current = redirectUri(c);
     current.search = new URL(c.req.url).search;
     const claims = await redeem(await provider(), current, pending);
+    if (pending.deletion) {
+      const authTime = claims.auth_time;
+      if (authTime === undefined || authTime < Math.floor(Date.now() / 1000) - DELETION_REAUTH_SECONDS) {
+        throw new HttpError(401, 'Deleting your account needs a sign-in at the provider within the last 5 minutes, and its auth_time says otherwise; start the deletion again');
+      }
+      const intent = await store().authorizeOidcAccountDeletion(cookies.sessionToken(c), { issuer: claims.iss, subject: claims.sub });
+      if (intent === null) throw new HttpError(403, 'The provider signed in someone other than this account; nothing was deleted');
+      clearCookie(c, cookies.account);
+      clearCookie(c, cookies.session);
+      return c.redirect(pending.returnTo);
+    }
     const replaced = cookies.sessionToken(c);
     const { accountId, sessionToken } = await store().signInWithOidc(
       { issuer: claims.iss, subject: claims.sub, displayName: typeof claims.name === 'string' ? claims.name : undefined },
@@ -104,7 +132,7 @@ export function oidcSignIn({ identity, store, cookies, returnOrigins, publicOrig
     return c.redirect(pending.returnTo);
   });
 
-  return { routes };
+  return { routes, deletion };
 }
 
 async function discover({ issuer, clientId, clientSecret }: OidcIdentity): Promise<client.Configuration> {
@@ -116,7 +144,7 @@ async function discover({ issuer, clientId, clientSecret }: OidcIdentity): Promi
 function pendingSignIn(cookie: string | undefined): PendingSignIn {
   try {
     const pending = JSON.parse(cookie ?? '') as Partial<PendingSignIn>;
-    if (pending.state && pending.nonce && pending.verifier && pending.returnTo) return pending as PendingSignIn;
+    if (pending.state && pending.nonce && pending.verifier && pending.returnTo && typeof pending.deletion === 'boolean') return pending as PendingSignIn;
   } catch {
     // Malformed: the same answer as missing.
   }

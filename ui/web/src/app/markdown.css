@@ -2,12 +2,12 @@
 .copilotKitAssistantMessage [class*="cpk:prose"] pre {
   background: var(--color-fill);
   border-radius: var(--radius-sm);
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-4) var(--space-8);
   overflow-x: auto;
   font-size: var(--font-small);
   line-height: var(--leading-loose);
   border: none;
-  margin: 0.25rem 0;
+  margin: var(--space-4) 0;
 }
 
 .copilotKitAssistantMessage code {
@@ -17,14 +17,14 @@
 }
 
 .copilotKitAssistantMessage p {
-  margin: 0 0 16px !important;
+  margin: 0 0 var(--space-16) !important;
 }
 
 /* Hanging indent with markers in the text colour, as Muse does (Muse/dots north star Fig 11); streamdown sets `list-inside`. */
 .copilotKitAssistantMessage ol,
 .copilotKitAssistantMessage ul {
-  margin: 0 0 12px !important;
-  padding-left: 20px !important;
+  margin: 0 0 var(--space-12) !important;
+  padding-left: var(--space-20) !important;
   list-style-position: outside !important;
 }
 
@@ -34,7 +34,7 @@
 
 .copilotKitAssistantMessage li {
   margin-top: 0 !important;
-  margin-bottom: 12px !important;
+  margin-bottom: var(--space-12) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
@@ -55,7 +55,7 @@
   display: inline-block;
   min-width: calc(var(--font-label) * var(--leading));
   margin-left: 2px;
-  padding: 0 4px;
+  padding: 0 var(--space-4);
   border-radius: var(--radius-pill);
   vertical-align: 3px;
   background: var(--color-fill);
@@ -80,7 +80,7 @@
 /* Inline code: a quiet white pill at 0.9 of the text beside it (see --font-code), never bold (Typography sets 600). */
 .copilotKitAssistantMessage :not(pre) > code {
   font-size: var(--font-code-size);
-  padding: 1px 4px;
+  padding: 1px var(--space-4);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
   background: var(--color-white);
@@ -119,20 +119,20 @@
 }
 
 .copilotKitUserMessage + .worklog {
-  margin-top: 12px;
+  margin-top: var(--space-12);
 }
 
 /* With the body's 12px bottom margin, the answer starts 20px under the last step; under a closed header, 8px. */
 .worklog + .copilotKitAssistantMessage {
-  margin-top: 8px;
+  margin-top: var(--space-8);
 }
 
 .worklog-head {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-4);
   max-width: 100%;
-  padding: 4px 8px 4px 0;
+  padding: var(--space-4) var(--space-8) var(--space-4) 0;
   font-size: var(--font-small);
   color: var(--color-text-muted);
 }
@@ -171,12 +171,12 @@ button.worklog-head {
 .worklog-step {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 .worklog-body {
   position: relative;
-  margin: 4px 0 12px;
+  margin: var(--space-4) 0 var(--space-12);
 }
 
 .worklog-body .copilotKitMessage {
@@ -239,7 +239,7 @@ button.worklog-head {
 .worklog-step-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-8);
   width: calc(100% - var(--worklog-indent) + 12px);
   min-height: calc(var(--font-small) + 11px);
   margin: -2px -6px -2px calc(var(--worklog-indent) - 6px);
@@ -293,7 +293,7 @@ button.worklog-step-head {
 .worklog-step-time {
   flex: none;
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--space-8);
   font-variant-numeric: tabular-nums;
 }
 

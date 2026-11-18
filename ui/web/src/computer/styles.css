@@ -9,7 +9,7 @@
   align-items: center;
   /* The Computer tab hangs its preview just under the tabs, as Muse does (Fig 14). */
   justify-content: flex-start;
-  gap: 12px;
+  gap: var(--space-12);
   --agent-computer-chrome: 124px;
 }
 .agent-computer-sheet { justify-content: center; --agent-computer-chrome: 150px; }
@@ -18,15 +18,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 /* With no browser and no Turn there is nothing to say, and no gap under the desktop either. */
 .agent-computer-bar:empty { display: none; }
 .agent-computer-pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 5px 5px 14px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-4) var(--space-4) var(--space-16);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-pill);
   background: var(--color-white);
@@ -36,7 +36,7 @@
 }
 .agent-computer-control,
 .agent-computer-stop {
-  padding: 4px 10px;
+  padding: var(--space-4) var(--space-12);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-pill);
   background: var(--color-white);
@@ -60,8 +60,8 @@
   width: min(100%, calc((100cqh - var(--agent-computer-chrome)) * 16 / 9 + 48px));
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 24px 24px 10px;
+  gap: var(--space-8);
+  padding: var(--space-24) var(--space-24) var(--space-12);
   border-radius: var(--radius-lg);
   background: linear-gradient(135deg, var(--agent-deepest), var(--agent-deep) 55%, var(--agent-outline));
   box-shadow: var(--shadow-rest);
@@ -120,7 +120,7 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-8);
   align-items: center;
   justify-content: center;
 }
@@ -142,7 +142,7 @@
 .agent-computer-notice {
   position: relative;
   margin: 0;
-  padding: 0 16px;
+  padding: 0 var(--space-16);
   text-align: center;
   font-size: var(--font-small);
   color: var(--frost);
@@ -156,7 +156,7 @@
   z-index: 1;
   transform: translate(-50%, -50%);
   margin: 0;
-  padding: 8px 20px;
+  padding: var(--space-8) var(--space-20);
   border-radius: var(--radius-pill);
   background: var(--color-white);
   color: var(--color-text);
@@ -216,7 +216,7 @@
   font-size: var(--font-small);
 }
 .agent-computer-app > :not(.agent-computer-terminal-bar) { flex: 1; min-height: 0; }
-.agent-computer-app .agent-computer-error { padding: 10px 12px; font-size: inherit; }
+.agent-computer-app .agent-computer-error { padding: var(--space-12); font-size: inherit; }
 
 /*
  * Terminal, drawn as the live view draws Chrome: every size a share of the screen's width, as on a 1280px screen, so its
@@ -226,8 +226,10 @@
   flex: none;
   display: flex;
   align-items: center;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
   gap: 0.63cqw;
   height: 2.97cqw;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
   padding: 0 1.25cqw;
   border-bottom: 0.5px solid var(--color-line);
   background: var(--color-white);
@@ -241,6 +243,7 @@
 
 .agent-computer-terminal {
   overflow: auto;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
   padding: 0.63cqw 1.09cqw;
   background: var(--color-text);
   color: var(--color-line);
@@ -268,7 +271,7 @@
 .agent-computer-files-sidebar {
   flex: none;
   width: 26%;
-  padding: 4px;
+  padding: var(--space-4);
   overflow: auto;
   border-right: 0.5px solid var(--color-line);
   background: var(--color-fill);
@@ -278,10 +281,10 @@
 .agent-computer-files-sidebar button {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-4);
   width: 100%;
   height: 32px;
-  padding: 0 5px;
+  padding: 0 var(--space-4);
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
@@ -297,7 +300,7 @@
 .agent-computer-files-sidebar [aria-current='true'] svg { color: var(--color-blue); }
 
 .agent-computer-files-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.agent-computer-files-empty { margin: 0; padding: 10px 12px; color: var(--color-text-muted); }
+.agent-computer-files-empty { margin: 0; padding: var(--space-12); color: var(--color-text-muted); }
 
 /* A white bar across the pane: Back and Forward, then the location field filling the rest. */
 .agent-computer-files-toolbar {
@@ -306,7 +309,7 @@
   align-items: center;
   gap: 2px;
   height: 36px;
-  padding: 0 6px 0 4px;
+  padding: 0 6px 0 var(--space-4);
   border-bottom: 0.5px solid var(--color-line);
   background: var(--color-white);
 }
@@ -333,7 +336,7 @@
   left: 50%;
   width: 28px;
   height: 28px;
-  margin: -14px 0 0 -14px;
+  translate: -50% -50%;
   border-radius: var(--radius-pill);
 }
 .agent-computer-files-toolbar > button:disabled { color: var(--color-line); cursor: default; }
@@ -351,9 +354,9 @@
   align-self: stretch;
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 4px;
-  padding: 0 4px 0 8px;
+  gap: var(--space-4);
+  margin-left: var(--space-4);
+  padding: 0 var(--space-4) 0 var(--space-8);
   color: var(--color-text-muted);
   font-size: var(--font-label);
   white-space: nowrap;
@@ -377,7 +380,7 @@
 .agent-computer-files-crumbs button {
   min-width: 32px;
   height: 32px;
-  padding: 0 3px;
+  padding: 0 var(--space-4);
   border: 0;
   background: none;
   color: inherit;
@@ -401,8 +404,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   align-content: start;
-  gap: 0 4px;
-  padding: 3px 6px;
+  gap: 0 var(--space-4);
+  padding: var(--space-4) 6px;
 }
 .agent-computer-files-grid,
 .agent-computer-files-empty,
@@ -468,7 +471,7 @@
   flex: none;
   height: 20px;
   margin: 0;
-  padding: 0 8px;
+  padding: 0 var(--space-8);
   overflow: hidden;
   border-top: 0.5px solid var(--color-line);
   background: var(--color-fill);
@@ -498,10 +501,10 @@
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5em;
+  gap: var(--space-8);
   align-items: center;
   justify-content: flex-end;
-  padding: 0.6em;
+  padding: var(--space-8);
   border-bottom: 1px solid var(--color-line);
   background: var(--color-white);
   box-shadow: var(--shadow-float);
@@ -510,7 +513,7 @@
 .agent-computer-files-sheet button {
   min-width: 44px;
   min-height: 44px;
-  padding: 0.15em 0.7em;
+  padding: 2px var(--space-8);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-white);
@@ -544,7 +547,7 @@
   cursor: pointer;
 }
 
-.agent-computer-sheet-title { display: inline-flex; align-items: center; gap: 8px; font-size: var(--font-body); font-weight: var(--weight-semibold); }
+.agent-computer-sheet-title { display: inline-flex; align-items: center; gap: var(--space-8); font-size: var(--font-body); font-weight: var(--weight-semibold); }
 
 @media (min-width: 641px) {
   .agent-computer-sheet {
@@ -553,11 +556,11 @@
     z-index: 200;
     height: auto;
     min-height: 0;
-    padding: 64px 24px 24px;
+    padding: calc(var(--space-32) * 2) var(--space-24) var(--space-24);
     background: var(--color-white);
   }
 
-  .agent-computer-sheet-head { gap: 8px; min-height: 52px; padding: 8px 16px; border-bottom: 1px solid var(--color-line); }
+  .agent-computer-sheet-head { gap: var(--space-8); min-height: 52px; padding: var(--space-8) var(--space-16); border-bottom: 1px solid var(--color-line); }
   .agent-computer-sheet-close { width: 32px; height: 32px; background: none; color: var(--color-text); }
   @media (hover: hover) {
   .agent-computer-sheet-close:hover { background: var(--color-fill); }
@@ -581,8 +584,8 @@
  */
 @media (max-width: 640px) {
   .agent-profile-panel:has(.agent-computer-touch) { padding: 0; }
-  .agent-computer { min-height: 0; gap: 8px; }
-  .agent-computer-desktop { gap: 8px; padding: 12px 12px 8px; }
+  .agent-computer { min-height: 0; gap: var(--space-8); }
+  .agent-computer-desktop { gap: var(--space-8); padding: var(--space-12) var(--space-12) var(--space-8); }
   .agent-computer-sheet > .agent-computer-desktop,
   .agent-computer:has(.agent-computer-touch) > .agent-computer-desktop { border-radius: 0; box-shadow: none; }
   .agent-computer-window { border-radius: var(--radius-md); }
@@ -600,12 +603,12 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 4px 16px 8px;
+    gap: var(--space-8);
+    padding: var(--space-4) var(--space-16) var(--space-8);
     font-size: var(--font-small);
   }
 
-  .agent-computer-touch-tools { flex-basis: 100%; display: flex; justify-content: flex-end; gap: 10px; }
+  .agent-computer-touch-tools { flex-basis: 100%; display: flex; justify-content: flex-end; gap: var(--space-8); }
 
   .agent-computer-touch-tool {
     width: 44px;
@@ -636,7 +639,7 @@
     color: var(--color-white);
   }
 
-  .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+  .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(var(--space-12), env(safe-area-inset-top)) var(--space-16) var(--space-12); }
 
   .agent-computer-sheet-close {
     position: absolute;
@@ -654,7 +657,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    padding-bottom: max(var(--space-12), env(safe-area-inset-bottom));
   }
 
   .agent-computer-sheet .agent-computer-touch-tool { background: var(--color-text); }
@@ -687,7 +690,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--space-24);
   font-size: var(--font-small);
   color: var(--color-text-muted);
   background: var(--color-fill);

@@ -3,7 +3,7 @@
 .step-sheet-body {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-16);
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -33,11 +33,11 @@
   z-index: 500;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-12);
   width: calc(100% - 48px);
   max-width: 640px;
   max-height: 80vh;
-  padding: 6px 16px 20px;
+  padding: 6px var(--space-16) var(--space-20);
   border-radius: var(--radius-xl);
   background: var(--color-white);
   box-shadow: var(--shadow-float);
@@ -69,7 +69,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 .step-section-label {
@@ -81,7 +81,7 @@
 
 .step-section-copy {
   margin-left: auto;
-  padding: 4px;
+  padding: var(--space-4);
   border-radius: var(--radius-md);
 }
 
@@ -104,7 +104,7 @@
 
 .step-section-text {
   margin: 0;
-  padding: 8px 12px;
+  padding: var(--space-8) var(--space-12);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-fill);

@@ -60,11 +60,12 @@ div.copilotKitInput {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-12);
   width: calc(min(720px, 100%) - 3rem);
   min-height: 52px;
   margin: 0 auto;
-  padding: 7px 8px 7px 16px;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- 7px: ChatGPT's 52px row, (52 - 36 - 2) / 2 */
+  padding: 7px var(--space-8) 7px var(--space-16);
   border: 1px solid transparent;
   border-radius: var(--radius-xl);
   background-color: var(--color-white);
@@ -86,7 +87,7 @@ div.copilotKitInput {
 .composer-accessory {
   display: flex;
   width: calc(min(720px, 100%) - 3rem);
-  margin: 0 auto 8px;
+  margin: 0 auto var(--space-8);
 }
 .composer-accessory > * {
   pointer-events: auto;
@@ -94,7 +95,7 @@ div.copilotKitInput {
 .composer-accessory:has(.guest-notice) {
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
 }
 
 .guest-notice {
@@ -123,10 +124,10 @@ div.copilotKitInput {
   align-self: stretch;
   /* One row that scrolls sideways, as ChatGPT's composer keeps its files: more files never push the chat up. */
   display: flex;
-  gap: 8px;
+  gap: var(--space-8);
   min-width: 0;
   margin: 0;
-  padding: 10px 10px 0;
+  padding: var(--space-12) var(--space-12) 0;
   overflow-x: auto;
   scrollbar-width: none;
   list-style: none;
@@ -136,9 +137,9 @@ div.copilotKitInput {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: var(--space-8);
   width: min(240px, 75%);
-  padding: 6px 4px 6px 6px;
+  padding: 6px var(--space-4) 6px 6px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background: var(--color-white);
@@ -304,7 +305,7 @@ div.copilotKitInput {
   order: -1;
   align-self: stretch;
   min-width: 0;
-  padding: 6px 10px 0;
+  padding: 6px var(--space-12) 0;
 }
 
 .composer-file-failures > p {
@@ -324,13 +325,13 @@ div.copilotKitInput {
   .composer-file-remove {
     width: 44px;
     height: 44px;
-    margin: -8px -4px -8px -8px;
+    margin: calc(-1 * var(--space-8)) calc(-1 * var(--space-4)) calc(-1 * var(--space-8)) calc(-1 * var(--space-8));
     align-self: center;
   }
 
   .composer-file-retry {
     min-height: 44px;
-    margin: -12px 0;
+    margin: calc(-1 * var(--space-12)) 0;
   }
 
   /* Remove grows only up and right, off the image, so it never covers Retry; painted after Retry, it keeps its own circle. */
@@ -411,13 +412,13 @@ div.copilotKitInput {
   }
 
   div.copilotKitInput {
-    margin-bottom: 12px !important;
+    margin-bottom: var(--space-12) !important;
   }
 
   .composer-read-only {
     min-height: 46px;
-    margin-bottom: 12px;
-    padding: 0 1px 0 15px;
+    margin-bottom: var(--space-12);
+    padding: 0 1px 0 calc(var(--space-16) - 1px);
   }
 
   .composer-read-only .button {
@@ -432,8 +433,8 @@ div.copilotKitInput {
 @media (max-width: 639.98px) {
   .composer-read-only {
     width: calc(100% + 8px);
-    margin-right: -4px;
-    margin-left: -4px;
+    margin-right: calc(-1 * var(--space-4));
+    margin-left: calc(-1 * var(--space-4));
   }
 }
 
@@ -441,8 +442,9 @@ div.copilotKitInput {
    box's 1px border, the + 9px and Send 11px inside its outer edges, the text 12px right of the +. */
 @media (min-width: 768px) {
   .copilotKitInput > [data-layout] {
-    padding: 7px 10px 7px 8px !important;
-    column-gap: 12px !important;
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- 7px rows and Send 11px in from the edge (10px plus the 1px border), as measured above */
+    padding: 7px 10px 7px var(--space-8) !important;
+    column-gap: var(--space-12) !important;
   }
 
   .copilotKitInput > [data-layout] > :nth-child(2) {
@@ -450,7 +452,7 @@ div.copilotKitInput {
   }
 
   .copilotKitInput textarea {
-    padding: 8px 0 !important;
+    padding: var(--space-8) 0 !important;
   }
 
   .copilotKitInput [data-testid="copilot-add-menu-button"] {
@@ -490,7 +492,7 @@ div.copilotKitInput {
 
   /* Its 8px above and below as on one line, so CopilotKit's height for it stands when the layout changes. */
   .copilotKitInput > [data-layout="expanded"] textarea {
-    padding: 8px !important;
+    padding: var(--space-8) !important;
   }
 }
 

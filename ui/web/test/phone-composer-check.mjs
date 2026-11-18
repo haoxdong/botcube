@@ -81,13 +81,13 @@ export async function checkPhoneComposer(page, screen = 'WebKit iPhone 15') {
     await capture('down');
     const readingTop = await scrolling.evaluate(element => element.scrollTop);
     await page.getByRole('button', { name: 'Toggle sidebar', exact: true }).click();
-    await page.getByRole('button', { name: 'Plugins', exact: true }).click();
-    await page.getByRole('heading', { name: 'Plugins', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Apps', exact: true }).click();
+    await page.getByRole('heading', { name: 'Apps', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Toggle sidebar', exact: true }).click();
     await page.getByRole('button', { name: 'Main Chat', exact: true }).click();
     await page.locator('.app-chat:not(.app-chat-opening) .copilotKitMessage').last().waitFor();
     await page.waitForTimeout(400);
-    assert.equal(await scrolling.evaluate(element => element.scrollTop), readingTop, 'Plugins must preserve the reading position');
+    assert.equal(await scrolling.evaluate(element => element.scrollTop), readingTop, 'Apps must preserve the reading position');
     await textarea.fill('Keyboard visibility regression');
     await page.evaluate(() => {
       const viewport = visualViewport;

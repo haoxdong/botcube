@@ -76,7 +76,7 @@
 /* Until Agent Identity's character line comes, the status keeps its place under the name, so nothing drops as it
    lands: the line's height and the header's gap. */
 .agent-profile-name + .agent-profile-status {
-  margin-top: calc(var(--font-small) * var(--leading) + 4px);
+  margin-top: calc(var(--font-small) * var(--leading) + var(--space-4));
 }
 
 /* The desktop profile slides in from the right edge and back out as the chat stage glides beside it. */
@@ -134,13 +134,6 @@
   100% {
     --table-fade-start: 48px;
     --table-fade-end: 0px;
-  }
-}
-
-@keyframes messageIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
   }
 }
 

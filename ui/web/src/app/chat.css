@@ -115,6 +115,7 @@
   align-items: center;
   gap: 6px;
   min-height: 44px;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- ChatGPT's + menu: the icon 10px in */
   padding: 0 10px;
   border-radius: var(--radius-md);
   color: var(--color-text);
@@ -147,7 +148,7 @@
 @media (max-width: 767px) {
   /* Text sits 16px inside the box's outer edge: 15px here plus its 1px border. */
   .copilotKitInput > [data-layout] {
-    padding: 0 15px !important;
+    padding: 0 calc(var(--space-16) - 1px) !important;
     grid-template-rows: minmax(44px, auto) 44px !important;
   }
 
@@ -162,7 +163,7 @@
   /* The + under the text at the left, its 20px glyph lined up with the text's left edge (its 44px target centres it). */
   .composer-can-attach .copilotKitInput > [data-layout] > :first-child {
     grid-row: 2 !important;
-    margin-left: -12px;
+    margin-left: calc(-1 * var(--space-12));
   }
 
   .composer-can-attach .copilotKitInput > [data-layout] > :nth-child(2) {
@@ -171,11 +172,11 @@
 
   /* Send's 44px target reaches 2px from the box's right edge, so its 32px circle sits 7px inside the border. */
   .copilotKitInput > [data-layout] > :nth-child(3) > div:has(> [data-testid="copilot-send-button"]) {
-    margin-right: -14px !important;
+    margin-right: calc(2px - var(--space-16)) !important;
   }
 
   .copilotKitInput textarea {
-    padding: 8px 0 0 !important;
+    padding: var(--space-8) 0 0 !important;
   }
 
   /* One row at rest, until its text is tapped (DESIGN.md Composer). */
@@ -211,6 +212,7 @@
   }
 
   .copilotKitInput:not([data-open]) textarea {
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- centres one line in the 44px target */
     padding: calc((44px - var(--font-body) * var(--leading)) / 2) 0 !important;
   }
 }
@@ -232,7 +234,7 @@
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: 1.25rem 1.5rem;
+  padding: var(--space-20) var(--space-24);
   /* Earlier messages joining above keep the one being read in place themselves (MessageRows), in every browser. */
   overflow-anchor: none;
 }
@@ -256,7 +258,7 @@
 
 /* Right under the agent's header, which floats over the chat, the first message starts below it. */
 .chat-header + :is(.app-chat, .artifact-layout) .copilotKitMessages {
-  padding-top: calc(var(--chat-header-height) + 0.5rem);
+  padding-top: calc(var(--chat-header-height) + var(--space-8));
 }
 
 /* A message's markdown table sits flat on the bubble, with no fill or frame, only its row lines. streamdown 2.7 wraps
@@ -327,7 +329,7 @@
 }
 
 .copilotKitAssistantMessage [class*="cpk:prose"] :is(th, td) {
-  padding: 8px 12px;
+  padding: var(--space-8) var(--space-12);
   font-size: inherit;
   line-height: inherit;
   font-variant-numeric: tabular-nums;
@@ -409,7 +411,7 @@
 }
 
 .copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button {
-  padding: 4px;
+  padding: var(--space-4);
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   transition-property: color, background-color;
@@ -444,18 +446,6 @@
   }
 }
 
-/* ── Message entrance animation ── */
-.copilotKitMessage {
-  animation: messageIn var(--motion-move) var(--ease);
-}
-
-/* The kept history the page shows while the chat loads, and the history a chat held as it opened, is no message
-   arriving: it shows at once. */
-[aria-label="Loading chat controls"] .copilotKitMessage,
-.copilotKitMessage[data-opened] {
-  animation: none;
-}
-
 /* ── User message — outer container transparent, inner bubble in the user's bubble colours ── */
 .copilotKitUserMessage {
   background: transparent !important;
@@ -467,7 +457,7 @@
   color: var(--color-text) !important;
   border-radius: var(--radius-xl) !important;
   /* One line is twice the corner tall, an exact pill, as Muse's; bubble-width.ts hugs its widest line. */
-  padding: calc(var(--radius-xl) - 0.5lh) 16px !important;
+  padding: calc(var(--radius-xl) - 0.5lh) var(--space-16) !important;
   font-size: var(--font-body);
   line-height: var(--leading);
   max-width: 90%;
@@ -494,8 +484,8 @@
   box-shadow: var(--shadow-rest);
   color: var(--color-text);
   border-radius: var(--radius-xl);
-  padding: calc(var(--radius-xl) - 0.5lh) 16px;
-  margin-block: 4px;
+  padding: calc(var(--radius-xl) - 0.5lh) var(--space-16);
+  margin-block: var(--space-4);
 }
 
 /* A bubble holding a chart is as wide as its cap from its first frame, so the chart's box is there at the reply's width
@@ -507,11 +497,11 @@
 /* Rhythm: blocks space by a 12px bottom margin, which collapses into a heading's 20px above and 8px below; a table or
    code block stands 16px clear. The first and last block meet the bubble's padding. */
 .copilotKitAssistantMessage [class*="cpk:prose"] :is(h1, h2, h3, h4) {
-  margin: 20px 0 8px !important;
+  margin: var(--space-20) 0 var(--space-8) !important;
 }
 
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div > :is([data-streamdown="table-wrapper"], [data-streamdown="code-block"], [data-streamdown="mermaid-block"], pre) {
-  margin: 16px 0 !important;
+  margin: var(--space-16) 0 !important;
 }
 
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child {
@@ -522,13 +512,19 @@
   margin-bottom: 0 !important;
 }
 
-/* A Turn starts well clear of the last; its answer sits under the question, or under the Turn's Worklog. */
-:is(.copilotKitAssistantMessage, .worklog) + .copilotKitUserMessage {
-  margin-top: 32px;
+/* A Turn starts well clear of the last, by relation: any user message after a reply or Worklog, whatever sits between
+   (DESIGN.md spacing rule 4); bubbles grouped with the one above override it below. Its answer sits under the question,
+   or under the Turn's Worklog. */
+:is(.copilotKitAssistantMessage, .worklog) ~ .copilotKitUserMessage {
+  margin-top: var(--space-32);
+}
+
+.copilotKitUserMessage + .copilotKitUserMessage {
+  margin-top: 0;
 }
 
 .copilotKitUserMessage + .copilotKitAssistantMessage {
-  margin-top: 14px;
+  margin-top: var(--space-12);
 }
 
 /* Bubbles in a row from one sender, nothing shown between them, stack 4px apart as one group (Muse): where two meet,
@@ -546,7 +542,7 @@
 }
 
 .copilotKitUserMessage:has(> .cpk\:prose) + .copilotKitUserMessage:has(> .cpk\:prose:first-child) {
-  margin-top: 4px;
+  margin-top: var(--space-4);
 }
 
 .copilotKitUserMessage:has(> .cpk\:prose) + .copilotKitUserMessage > .cpk\:prose:first-child {

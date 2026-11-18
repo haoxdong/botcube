@@ -69,11 +69,11 @@ vi.mock('@copilotkit/react-core/v2', async () => {
     return <div data-message-row={id}>{children}</div>;
   };
   // Like CopilotChatUserMessage: its message renderer slot shows the message's text in the bubble.
-  type UserProps = { message: Message; messageRenderer?: ComponentType<{ content: string }> };
+  type UserProps = HTMLAttributes<HTMLDivElement> & { message: Message; messageRenderer?: ComponentType<{ content: string }> };
   const UserMessageRenderer = ({ content, className = '' }: { content: string; className?: string }) => <div className={`cpk:prose ${className}`}>{content}</div>;
   const CopilotChatUserMessage = Object.assign(
-    ({ message, messageRenderer: Renderer = UserMessageRenderer }: UserProps) => (
-      <div className="copilotKitMessage copilotKitUserMessage"><Renderer content={message.content as string} /></div>
+    ({ message, messageRenderer: Renderer = UserMessageRenderer, ...props }: UserProps) => (
+      <div {...props} className="copilotKitMessage copilotKitUserMessage"><Renderer content={message.content as string} /></div>
     ),
     { MessageRenderer: UserMessageRenderer },
   );
@@ -86,8 +86,8 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   );
   const CopilotChatMessageView = Object.assign(
     ({ assistantMessage, userMessage, children }: { assistantMessage?: Partial<AssistantProps> | ComponentType<AssistantProps>; userMessage?: Partial<UserProps> | ComponentType<UserProps>; children?: (parts: MessageViewParts) => ReactNode }) => {
-      const User = typeof userMessage === 'function' ? userMessage : (props: UserProps) => <CopilotChatUserMessage {...props} {...userMessage} />;
       const agentMessages = copilot.kits.at(-1)?.selfManagedAgents['research-agent']?.messages ?? [];
+      const User = typeof userMessage === 'function' ? userMessage : (props: UserProps) => <CopilotChatUserMessage {...props} {...userMessage} />;
       const rows = copilot.rows
         ? agentMessages.flatMap((message) => {
             const row = message.role === 'tool' ? [] : [
@@ -1471,6 +1471,23 @@ describe('Main Chat kept in this browser', () => {
     expect(kept()).toEqual({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: [...earlier, reply] });
   });
 
+  it('shows a newly reconciled saved row at rest rather than as a live arrival', async () => {
+    copilot.rows = true;
+    document.documentElement.style.setProperty('--motion-move', '10s');
+    onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
+    localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: earlier }));
+    const held = holdMainChat();
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await waitFor(() => expect(held).toHaveLength(1));
+    const restored: Message = { id: 'reconciled-question', role: 'user', content: 'A question saved elsewhere' };
+    await act(async () => {
+      present(held[0], 'the Main Chat load')(answer(200, { id: 'main-1', provider: 'openai', messages: [...earlier, restored] }));
+    });
+    const row = () => document.querySelector<HTMLElement>('[data-message-row="reconciled-question"] .copilotKitMessage');
+    await waitFor(() => expect(row()?.style.opacity).toBe('1'));
+    expect(row()?.style.transform).toBe('none');
+  });
+
   // The copy reconciled history but discarded the server Turn and its failure.
   it.each([false, true])('keeps Stop available when the Main Chat loads an active server Turn (copy: %s)', async (copy) => {
     if (copy) localStorage.setItem(KEY, JSON.stringify({ accountId: 'acct-first', id: 'main-1', provider: 'openai', messages: earlier }));
@@ -2421,32 +2438,20 @@ describe('Main Chat', () => {
       expect(rows()).toEqual(['m79', 'm80', 'm81', 'm82', 'm83', 'm84', 'm85', 'm86']);
     });
 
-    it('shows history rows at once as the chat opens and as earlier rows join, and lets other animations play', async () => {
-      class CSSAnimation {
-        constructor(readonly animationName: string) {}
-        finish = vi.fn();
-      }
-      vi.stubGlobal('CSSAnimation', CSSAnimation);
-      const played: { animationName: string; finish: () => void }[] = [];
-      vi.spyOn(Element.prototype, 'getAnimations').mockImplementation(function (this: Element, options?: GetAnimationsOptions) {
-        if (this !== screen.queryByTestId('copilot-message-list') || options?.subtree !== true) return [];
-        // A row's entrance, another CSS animation, and a script's animation that shares the entrance's name.
-        const animations = [new CSSAnimation('messageIn'), new CSSAnimation('loadPulse'), { animationName: 'messageIn', finish: vi.fn() }];
-        played.push(...animations);
-        return animations as unknown as Animation[];
-      });
-      const finished = () => played.map(({ animationName, finish }) => `${animationName}${vi.mocked(finish).mock.calls.length}`);
-
+    it('shows initial and paged history at rest, while a fresh row starts its entrance', async () => {
+      document.documentElement.style.setProperty('--motion-move', '1s');
+      onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
+      const row = (id: string) => document.querySelector<HTMLElement>(`[data-message-row="${id}"] .copilotKitMessage`);
       await renderPage();
-      expect(finished()).toEqual(['messageIn1', 'loadPulse0', 'messageIn0']);
-
+      await waitFor(() => expect(row('m86')?.style.opacity).toBe('1'));
+      expect(row('m86')?.style.transform).toBe('none');
       layOut();
       await scrollToTop();
-      expect(finished()).toEqual(['messageIn1', 'loadPulse0', 'messageIn0', 'messageIn1', 'loadPulse0', 'messageIn0']);
-
-      // A message arriving plays its entrance.
+      await waitFor(() => expect(row('m80')?.style.opacity).toBe('1'));
+      expect(row('m80')?.style.transform).toBe('none');
       await agentAddsMessage({ id: 'm87', role: 'user', content: 'Next question' });
-      expect(played).toHaveLength(6);
+      expect(row('m87')?.style.opacity).not.toBe('');
+      expect(Number(row('m87')?.style.opacity)).toBeLessThan(1);
     });
 
     // CopilotKit lays out custom-message slots around each message's row, so 4 elements held barely 2 messages.
@@ -2821,23 +2826,23 @@ describe('Main Chat', () => {
     expect(document.querySelector('.sidebar-item-active')).toBeNull();
   });
 
-  // Plugins, under Main chat, opens a screen of the plugin kinds to come, each a placeholder.
-  it('opens the Plugins screen in place of the chat, and returns to the Main Chat', async () => {
+  // Apps, under Main chat, opens a screen of the App kinds to come in the decided order, each a placeholder.
+  it('opens the Apps screen in place of the chat, and returns to the Main Chat', async () => {
     await renderPage();
 
-    await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
+    await userEvent.click(sidebar().getByRole('button', { name: 'Apps' }));
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Plugins' })).toBeVisible();
-    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Connectors', 'MCP servers', 'Skills']);
-    expect(screen.getAllByText('Coming soon')).toHaveLength(3);
-    expect(sidebar().getByRole('button', { name: 'Plugins' })).toHaveClass('sidebar-nav-item-active');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Apps' })).toBeVisible();
+    expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual(['Plugins', 'Connectors', 'Terminal apps', 'Skills']);
+    expect(screen.getAllByText('Coming soon')).toHaveLength(4);
+    expect(sidebar().getByRole('button', { name: 'Apps' })).toHaveClass('sidebar-nav-item-active');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).not.toHaveClass('sidebar-nav-item-active');
     expect(document.querySelector('.chat-header')?.closest('main')).not.toBeVisible();
 
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await settle();
 
-    expect(screen.queryByRole('heading', { name: 'Plugins' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Apps' })).toBeNull();
     expect(copilot.chat?.threadId).toBe('main-1');
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item-active');
   });
@@ -5039,13 +5044,13 @@ describe('sidebar', () => {
     expect(localStorage.getItem('botcube.sidebar-expanded')).toBe('true');
   });
 
-  it('stays open when Plugins is chosen, and over a click on the Plugins stage', async () => {
+  it('stays open when Apps is chosen, and over a click on the Apps stage', async () => {
     await renderPage();
     await openSidebar();
-    await userEvent.click(sidebar().getByRole('button', { name: 'Plugins' }));
-    expect(screen.getByRole('heading', { name: 'Plugins' })).toBeVisible();
+    await userEvent.click(sidebar().getByRole('button', { name: 'Apps' }));
+    expect(screen.getByRole('heading', { name: 'Apps' })).toBeVisible();
     expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
-    await userEvent.click(screen.getByRole('heading', { name: 'Plugins' }));
+    await userEvent.click(screen.getByRole('heading', { name: 'Apps' }));
     expect(document.querySelector('aside')).toHaveClass('sidebar-expanded');
   });
 

@@ -114,7 +114,7 @@ it("starts a Turn well clear of the last, its Worklog under the question and its
   expect(getComputedStyle(answer).marginTop).toBe('8px');
   expect(getComputedStyle(next).marginTop).toBe('32px');
   worklog.remove();
-  expect(getComputedStyle(answer).marginTop).toBe('14px');
+  expect(getComputedStyle(answer).marginTop).toBe('12px');
 });
 
 it('hides a Worklog row with nothing to show, so it adds no gap', () => {
@@ -354,7 +354,7 @@ const composerCases = composerSizes.flatMap(([width, textSize, pickerSize]) =>
 );
 // Paddings read top, right, bottom, left.
 const composerLayouts = {
-  phone: { rows: 'minmax(44px, auto) 44px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '0px', '0px', '0px'], padding: ['0px', '15px', '0px', '15px'], columnGap: undefined, target: '44px' },
+  phone: { rows: 'minmax(44px, auto) 44px', textColumn: '1 / -1', controlsRow: '2', textPadding: ['8px', '0px', '0px', '0px'], padding: ['0px', 'calc(16px - 1px)', '0px', 'calc(16px - 1px)'], columnGap: undefined, target: '44px' },
   // ChatGPT's desktop composer: 36px controls in a 52px row, inside 7px of padding and the 1px border.
   compact: { rows: 'auto', textColumn: '1', controlsRow: '1', textPadding: ['8px', '0px', '8px', '0px'], padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', target: '36px' },
   // Two lines on a desktop, ChatGPT's pattern: the text across the top, its left edge on the +'s glyph, over the 36px
@@ -641,8 +641,8 @@ it("lines the composer and its accessory up with the messages' column, the grey 
     // 12px from the screen's edges like ChatGPT Work's; its accessory shares its left edge.
     for (const className of ['copilotKitInput', 'composer-accessory']) {
       expect(box(className).width).toBe('calc(100% + 8px)');
-      expect(box(className).marginLeft).toBe('-4px');
-      expect(box(className).marginRight).toBe('-4px');
+      expect(box(className).marginLeft).toBe('calc(-1 * 4px)');
+      expect(box(className).marginRight).toBe('calc(-1 * 4px)');
     }
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
@@ -823,15 +823,15 @@ it("answers a mouse over the agent's capsule and rings it on keyboard focus", ()
 });
 
 it('lays inline steering out as a normal user message', () => {
-  expect(sheet).toMatch(/:is\(\.copilotKitAssistantMessage, \.worklog\) \+ \.copilotKitUserMessage \{\s*margin-top: 32px;/);
-  expect(sheet).toMatch(/\.copilotKitUserMessage > div:first-of-type \{[^}]*padding: calc\(var\(--radius-xl\) - 0\.5lh\) 16px !important;[^}]*line-height: var\(--leading\);/);
+  expect(sheet).toMatch(/:is\(\.copilotKitAssistantMessage, \.worklog\) ~ \.copilotKitUserMessage \{\s*margin-top: var\(--space-32\);/);
+  expect(sheet).toMatch(/\.copilotKitUserMessage > div:first-of-type \{[^}]*padding: calc\(var\(--radius-xl\) - 0\.5lh\) var\(--space-16\) !important;[^}]*line-height: var\(--leading\);/);
   expect(sheet).not.toContain('.chat-queued-');
 });
 
 it("keeps the profile's status where it lands as the agent's character line comes", () => {
   // Without the line, the status takes its place: the line's height in the small role, and the header's 4px gap.
-  expect(motion).toMatch(/\.agent-profile-name \+ \.agent-profile-status \{\s*margin-top: calc\(var\(--font-small\) \* var\(--leading\) \+ 4px\);/);
-  expect(sheet).toMatch(/\n\.agent-profile-identity \{[^}]*gap: 4px;/);
+  expect(motion).toMatch(/\.agent-profile-name \+ \.agent-profile-status \{\s*margin-top: calc\(var\(--font-small\) \* var\(--leading\) \+ var\(--space-4\)\);/);
+  expect(sheet).toMatch(/\n\.agent-profile-identity \{[^}]*gap: var\(--space-4\);/);
   expect(sheet).toMatch(/\n\.agent-profile-character \{[^}]*font-size: var\(--font-small\);/);
 });
 
@@ -897,7 +897,7 @@ it("floats the agent's header over the chat, which scrolls beneath it without a 
   expect(styleOf(container, '.pseudo-before').backgroundImage || 'none').toBe('none');
   // happy-dom leaves var() and calc() unresolved, so this reads the sheet: the header's height, then the column's gap.
   expect(sheet).toMatch(/\n\.app-shell \{[^}]*--chat-header-height: 97px;/);
-  expect(sheet).toMatch(/\n\.chat-header \+ :is\(\.app-chat, \.artifact-layout\) \.copilotKitMessages \{\s*padding-top: calc\(var\(--chat-header-height\) \+ 0\.5rem\);/);
+  expect(sheet).toMatch(/\n\.chat-header \+ :is\(\.app-chat, \.artifact-layout\) \.copilotKitMessages \{\s*padding-top: calc\(var\(--chat-header-height\) \+ var\(--space-8\)\);/);
   expect(sheet).toMatch(/\n\.welcome-screen \{[^}]*top: var\(--chat-header-height\);/);
 });
 
@@ -1192,14 +1192,14 @@ it('gives Side Chats space and phone sidebar controls full targets', () => {
         }
         // On a phone, the Muse/dots north star's Fig 21 drawer
         if (width === 440) {
-          expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('10px');
-          expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('10px');
+          expect(styleOf(container, '.sidebar-main').paddingBottom).toBe('12px');
+          expect(styleOf(container, '.sidebar-section-header').paddingTop).toBe('12px');
           expect(styleOf(container, '.sidebar-section-header').paddingBottom).toBe('0px');
           expect(styleOf(container, '.sidebar-brand').padding).toBe('0px 20px');
           expect(styleOf(container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
           expect(styleOf(container, '.user-menu-trigger').height).toBe('44px');
           expect(styleOf(container, '.user-menu-trigger').padding).toBe('0px');
-          expect(styleOf(container, '.user-menu-trigger').gap).toBe('13px');
+          expect(styleOf(container, '.user-menu-trigger').gap).toBe('12px');
         }
       } finally {
         unmount();
@@ -1296,7 +1296,7 @@ it('scrolls the phone chat with the page, up under the status bar, under no band
   // 1px above his box, and the menu button, 2px below the sidebar's safe area, meet it. The drawer's strip keeps the
   // menu's faded copy where the menu stood. The layout check measures them.
   expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.chat-header \{\s*position: fixed;[^}]*padding-top: calc\(1px \+ var\(--chat-header-safe-top\)\);/);
-  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.sidebar-collapsed \.sidebar-brand \{\s*padding: 2px 12px 12px 24px;/);
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.sidebar-collapsed \.sidebar-brand \{\s*padding: 2px var\(--space-12\) var\(--space-12\) var\(--space-24\);/);
   expect(sheet).toMatch(/\.sidebar-strip-close-menu \{\s*position: absolute;\s*top: calc\(var\(--app-safe-top\) \+ 2px\);\s*left: 24px;/);
   expect(sheet).not.toMatch(/\}\s*\.app-chat \[data-testid='copilot-input-overlay'\] > \[data-copilotkit\] \{\s*transform: none/);
 });
@@ -1378,7 +1378,7 @@ it("draws the phone's Marq 68px tall in front of the pill tucked behind him", ()
     // 120 viewBox units hold his 93-unit height, hat to body, so 88px draws him 68px tall. His hat, 17 units (12.5px)
     // down the 88px svg, which overhangs his 72px box, set 1px down, by 8px, meets the screen's top 5.5px higher.
     expect(marq).toEqual({ width: '88px', height: '88px', position: 'relative', zIndex: '1', transform: 'translateY(-5.5px)' });
-    expect(pill.marginTop).toBe('-12px');
+    expect(pill.marginTop).toBe('calc(-1 * 12px)');
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
@@ -1395,7 +1395,7 @@ const desktopApp = (sidebar: 'sidebar-collapsed' | 'sidebar-expanded') => (
         <div className="sidebar-brand"><span className="sidebar-brand-text">Bot</span></div>
         <nav className="sidebar-nav sidebar-main">
           <button className="sidebar-nav-item sidebar-main-chat sidebar-nav-item-active"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Main chat</span></button>
-          <button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Plugins</span></button>
+          <button className="sidebar-nav-item"><svg className="sidebar-nav-icon" /><span className="sidebar-nav-label">Apps</span></button>
           <span className="pseudo-after" />
         </nav>
       </div>
@@ -1551,7 +1551,7 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
       // The phone's own frosted pill over the page-scrolled chat, not the desktop's white one.
       const pill = styleOf(shut.container, '.chat-header-name');
       expect({ background: pill.backgroundColor, frost: pill.backdropFilter, top: pill.marginTop })
-        .toEqual({ background: 'rgba(255, 255, 255, 0.8)', frost: 'blur(4px)', top: '-12px' });
+        .toEqual({ background: 'rgba(255, 255, 255, 0.8)', frost: 'blur(4px)', top: 'calc(-1 * 12px)' });
       expect(zero(styleOf(shut.container, '.chat-header-agent .avatar-agent').marginTop)).toBe('0px');
     } finally {
       shut.unmount();
@@ -1562,23 +1562,23 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     try {
       expect(styleOf(open.container, '.sidebar').backgroundColor).toBe('#f0f0f0');
       expect(zero(styleOf(open.container, '.sidebar-main').gap)).toBe('0px');
-      expect(styleOf(open.container, '.sidebar-main').padding).toBe('38px 10px 10px');
-      expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('10px 20px 0px');
+      expect(styleOf(open.container, '.sidebar-main').padding).toBe('calc(20px * 2) 8px 12px');
+      expect(styleOf(open.container, '.sidebar-section-header').padding).toBe('12px 20px 0px');
       // happy-dom keeps :root's custom properties from their first read, whatever the viewport since, so this reads
       // the sheet: the label still takes the phone's 13px `label` role, tracked, in capitals.
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*(\/\*[^*]*\*\/\s*)?:root \{[^}]*--font-label: 0\.8125rem;/);
       expect(sheet).toMatch(/@media \(max-width: 640px\) \{\s*\.sidebar-side-chats-toggle \{\s*font-size: var\(--font-label\);\s*letter-spacing: var\(--tracking-caps\);/);
       expect(styleOf(open.container, '.sidebar-side-chats-toggle').textTransform).toBe('uppercase');
-      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 10px');
+      expect(styleOf(open.container, '.sidebar-list').padding).toBe('0px 8px');
       expect(styleOf(open.container, '.sidebar-bottom').padding).toBe('4px 20px 8px');
       expect(styleOf(open.container, '.sidebar-nav-item-active').backgroundColor).toBe('#e8e8e8');
       const nav = styleOf(open.container, '.sidebar-nav-item');
       expect({ top: nav.paddingTop, margin: nav.margin }).toEqual({ top: '8px', margin: '2px 0px' });
       const row = styleOf(open.container, '.sidebar-item-btn');
-      expect({ top: zero(row.paddingTop), left: row.paddingLeft }).toEqual({ top: '0px', left: '10px' });
+      expect({ top: zero(row.paddingTop), left: row.paddingLeft }).toEqual({ top: '0px', left: '12px' });
       // Touch opens a row's menu with a long-press, so the phone's rows show no actions button.
       expect(styleOf(open.container, '.sidebar-item-more').clipPath).toBe('inset(50%)');
-      expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('13px');
+      expect(styleOf(open.container, '.user-menu-trigger').gap).toBe('12px');
     } finally {
       open.unmount();
     }
@@ -1678,18 +1678,14 @@ it('keeps the opening chat\'s composer shown over its kept view, so the draft ca
   }
 });
 
-it('shows a message the chat held as it opened at once, and fades in one that arrives later', () => {
+it('shows a history reply image without a fade', () => {
   const { container, unmount } = render(
     <div>
-      <div className="copilotKitMessage history" data-opened="" />
-      <div className="copilotKitMessage arriving" />
       <div className="copilotKitMessage" data-opened=""><div className="reply-image"><img className="history-image" /></div></div>
     </div>,
   );
 
   try {
-    expect(styleOf(container, '.history').animation).toBe('none');
-    expect(styleOf(container, '.arriving').animation).toMatch(/messageIn/);
     expect(styleOf(container, '.history-image').transition).toMatch(/^none|^all 0s/);
   } finally {
     unmount();

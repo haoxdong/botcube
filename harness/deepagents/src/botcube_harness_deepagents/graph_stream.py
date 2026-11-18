@@ -85,20 +85,23 @@ def clock_events(source: AsyncGenerator[Any, None], lane: Callable[[], str | Non
 async def _clock_events(source: AsyncGenerator[Any, None], lane: Callable[[], str | None]) -> AsyncGenerator[Any, None]:
     clock = message_times.TurnClock()
     published_revision = -1
+    published_at = 0
     try:
         async with aclosing(_paced_events(source, lane, clock)) as events:
             async for event in events:
                 for framed in _clock_boundary(event, clock):
                     yield framed
                 if event is None:
+                    published_at = message_times.now()
                     continue
                 _published(event, clock)
                 if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                     return
                 changed = clock.revision != published_revision or event.type == EventType.MESSAGES_SNAPSHOT
-                if clock.question_id is not None and changed:
-                    yield _clock_delta(clock)
+                if clock.question_id is not None and (changed or message_times.now() - published_at >= 1000):
                     published_revision = clock.revision
+                    published_at = message_times.now()
+                    yield _clock_delta(clock)
     except Exception:
         if clock.question_id is not None:
             clock.stop(message_times.now())

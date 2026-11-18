@@ -5,12 +5,6 @@ import { viewTop } from "./reading-hold";
 type Card = { element: HTMLElement; at: number; height: number; top: number; scroll: number; words: string; stage: string; holding: boolean };
 type View = { scroller: Element; zoom: number; top: number; bottom: number };
 
-function settleEntrance(element: HTMLElement) {
-  for (const animation of element.closest('.copilotKitMessage')?.getAnimations() ?? []) {
-    if (animation instanceof CSSAnimation && animation.animationName === 'messageIn') animation.cancel();
-  }
-}
-
 function readCard(element: HTMLElement, { scroller, zoom }: View, words: string, stage: string): Card {
   const box = element.getBoundingClientRect();
   return { element, at: box.top / zoom + scroller.scrollTop, height: box.height, top: box.top, scroll: scroller.scrollTop, words, stage, holding: false };
@@ -46,7 +40,6 @@ export function keepArtifactReading(list: HTMLElement | null) {
       if (bubble === null) continue;
       const key = JSON.stringify([bubble.dataset.artifactTurn, element.dataset.artifactId]);
       const was = previous.get(key);
-      if (was !== undefined && was.element !== element && bubble.hasAttribute('data-artifact-answer')) settleEntrance(element);
       const words = bubble.querySelector('.chat-markdown')?.textContent ?? '';
       const card = readCard(element, view, words, bubble.dataset.artifactStage ?? '');
       const changing = was !== undefined && (was.element !== element || was.words !== words || was.stage !== card.stage || was.holding);

@@ -27,7 +27,7 @@ export class FilesAccessPointPool extends Construct {
     const functions = ['onEvent', 'isComplete', 'worker'].map(handler => {
       const fn = new lambda.Function(this, handler, {
         runtime: lambda.Runtime.NODEJS_24_X, handler: `index.${handler}`, code: lambda.Code.fromAsset(path.resolve(props.source), { exclude: ['*.test.ts'] }),
-        memorySize: 512, timeout: Duration.minutes(2), environment: { QUEUE_URL: queue.queueUrl }, ...(handler === 'worker' ? { reservedConcurrentExecutions: 1 } : {}),
+        memorySize: 512, timeout: Duration.minutes(2), environment: { QUEUE_URL: queue.queueUrl }, ...(handler === 'worker' ? { reservedConcurrentExecutions: 1, recursiveLoop: lambda.RecursiveLoop.ALLOW } : {}),
       });
       this.bucket.grantReadWrite(fn);
       queue.grantSendMessages(fn);

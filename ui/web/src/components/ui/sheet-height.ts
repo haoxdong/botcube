@@ -8,26 +8,22 @@ export function useSheetHeight(snapped: boolean) {
   const [content, setContent] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     if (snapped || popup === null || content === null || motionTokens().move.duration === 0) return;
-    let previous = popup.getBoundingClientRect().height;
+    let previous = Number.NaN;
     let animation: ReturnType<typeof animate> | undefined;
-    let frame = 0;
-    popup.style.height = `${previous}px`;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const style = getComputedStyle(popup);
-        const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-        const to = content.offsetHeight + padding;
-        if (previous === to) return;
-        previous = to;
-        animation?.stop();
-        animation = animate(popup, { height: to }, motionTokens().move);
-      });
+    const observer = new ResizeObserver(([entry]) => {
+      const size = entry?.borderBoxSize[0];
+      if (!size) return;
+      const style = getComputedStyle(popup);
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const to = size.blockSize + padding;
+      if (previous === to) return;
+      previous = to;
+      animation?.stop();
+      animation = animate(popup, { height: to }, motionTokens().move);
     });
     observer.observe(content);
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(frame);
       animation?.stop();
       popup.style.removeProperty('height');
     };

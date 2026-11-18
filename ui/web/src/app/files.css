@@ -5,9 +5,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--space-8);
   max-width: 80%;
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-8);
   padding: 0;
   list-style: none;
 }
@@ -15,9 +15,9 @@
 .sent-file {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-12);
   max-width: 100%;
-  padding: 8px 16px 8px 8px;
+  padding: var(--space-8) var(--space-16) var(--space-8) var(--space-8);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background: var(--color-white);
@@ -108,7 +108,7 @@
 .copilotKitAssistantMessage a.reply-file {
   width: 280px;
   min-height: 44px;
-  margin: 0 0 16px;
+  margin: 0 0 var(--space-16);
   color: inherit;
   font-weight: var(--weight-regular);
   text-decoration: none;
@@ -117,7 +117,7 @@
 /* An image a reply links to in a card's place: a block with the card's spacing, not a line holding the picture. */
 .reply-file-image {
   display: block;
-  margin: 0 0 16px;
+  margin: 0 0 var(--space-16);
 }
 
 .reply-file-image > [data-streamdown="image-wrapper"] {
@@ -178,7 +178,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 0 16px;
+  padding: 0 var(--space-16);
   overflow-wrap: anywhere;
   color: var(--color-red);
   font-size: var(--font-small);
@@ -188,7 +188,7 @@
 /* A PDF's card has its first page across the top and the icon and name in a row under it. */
 .copilotKitAssistantMessage a.reply-file[data-preview] {
   flex-wrap: wrap;
-  row-gap: 8px;
+  row-gap: var(--space-8);
   overflow: hidden;
 }
 
@@ -201,7 +201,7 @@
   display: block;
   flex: 0 0 calc(100% + 24px);
   height: 160px;
-  margin: -8px -16px 0 -8px;
+  margin: calc(-1 * var(--space-8)) calc(-1 * var(--space-16)) 0 calc(-1 * var(--space-8));
   overflow: hidden;
   border-bottom: 1px solid var(--color-line);
   background: var(--color-fill);
@@ -257,7 +257,7 @@
 .reply-chart {
   position: relative;
   display: block;
-  margin: 16px 0;
+  margin: var(--space-16) 0;
 }
 
 .reply-chart[data-loading] {
@@ -319,9 +319,9 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-8);
   min-height: 36px;
-  padding: 0 8px;
+  padding: 0 var(--space-8);
   border-bottom: 0.5px solid var(--color-line);
 }
 
@@ -335,13 +335,13 @@
 
 .agent-computer-files-chart-bar > button {
   min-height: 32px;
-  padding: 0 8px;
+  padding: 0 var(--space-8);
 }
 
 .agent-computer-files-chart-body {
   flex: 1;
   min-height: 0;
-  padding: 8px;
+  padding: var(--space-8);
 }
 
 /*

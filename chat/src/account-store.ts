@@ -464,6 +464,18 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     ]];
   }
 
+  /** Authorize deleting the session's account if the OIDC user who signed in again owns it; else null. */
+  authorizeOidcAccountDeletion(sessionToken: string, user: OidcSubject): Promise<AccountDeletionIntent | null> {
+    return this.mutation(async (lease) => {
+      const session = await this.activeSession(sessionToken);
+      const account = session === null ? null : await this.loadAccount(session.accountId);
+      if (account?.status !== 'registered' || account.oidc?.issuer !== user.issuer || account.oidc.subject !== user.subject) return null;
+      const [intent, operations] = await this.deletionAuthorization(account, sessionToken);
+      await this.commit(lease, operations);
+      return intent;
+    });
+  }
+
   async accountDeletion(accountId: string): Promise<AccountDeletionIntent | null> {
     const item = await this.get('ACCOUNT_DELETIONS', accountId);
     if (item === undefined) return null;

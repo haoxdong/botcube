@@ -52,7 +52,7 @@ import { useSessionNavigation } from "./session-navigation";
 const ChatSurface = lazy(() => import("./chat-surface"));
 const ChatColumn = lazy(() => import("./artifact-panel").then(({ ArtifactLayout }) => ({ default: ArtifactLayout })));
 const ArtifactLibrary = lazy(() => import("./artifact-library").then(({ ArtifactLibrary }) => ({ default: ArtifactLibrary })));
-const PluginsScreen = lazy(() => import("./plugins").then(({ PluginsScreen }) => ({ default: PluginsScreen })));
+const AppsScreen = lazy(() => import("./plugins").then(({ AppsScreen }) => ({ default: AppsScreen })));
 
 const LiveBrowser = BOT_SETTINGS.agentComputer.liveBrowser ? LiveBrowserPanel : () => null;
 const { config: UI_CONFIG } = webUiPlugin;
@@ -91,7 +91,7 @@ export default function App({
     swipe.toggle();
     if (!isPhone) withStorage(() => localStorage.setItem(SIDEBAR_EXPANDED_KEY, String(!sidebarExpanded)));
   };
-  const [screen, setScreen] = useState<'chat' | 'plugins' | 'artifacts'>('chat');
+  const [screen, setScreen] = useState<'chat' | 'apps' | 'artifacts'>('chat');
   const screenOpen = screen !== 'chat';
   const { request: artifactRequest, initialized: artifactWorkspace, select: selectArtifact } = useArtifactWorkspace(auth);
   const [keptChatShown, setKeptChatShown] = useState(true);
@@ -100,7 +100,7 @@ export default function App({
   const { accountId } = auth;
   useEffect(() => setScreen('chat'), [accountId]);
   const {
-    current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
+    current: { id: activeId, accountId: activeAccountId, openAt, newChat, provider: activeProvider, readOnly, agent, selfManagedAgents, entrances, showWelcome, stopServerTurn, turnFailure, turnRunning, turnRunsOnServer, turnMayRun, runningSince },
     mainChatId,
     mainChatUnread,
     sideChats: { entries: sideChats, error: sideChatsError, listed: sideChatsListed },
@@ -176,7 +176,7 @@ export default function App({
     [ready, accountId],
   );
 
-  const showMain = (view: 'chat' | 'plugins' | 'artifacts') => {
+  const showMain = (view: 'chat' | 'apps' | 'artifacts') => {
     setScreen(view);
     if (isPhone) swipe.close();
   };
@@ -214,7 +214,7 @@ export default function App({
 
   const screenContent = {
     chat: { label: "Chat", content: null },
-    plugins: { label: "Plugins", content: <PluginsScreen agentName={agentName} /> },
+    apps: { label: "Apps", content: <AppsScreen agentName={agentName} /> },
     artifacts: { label: "Artifacts", content: <ArtifactLibrary accountId={accountId} onSelect={(artifact) => {
       if (selectArtifact(artifact)) setScreen('chat');
     }} /> },
@@ -253,13 +253,13 @@ export default function App({
               <UnreadDot unread={mainChatUnread} />
             </SidebarRow>
             <SidebarRow
-              active={screen === 'plugins'}
-              onClick={() => showMain('plugins')}
-              aria-label="Plugins"
-              title="Plugins"
+              active={screen === 'apps'}
+              onClick={() => showMain('apps')}
+              aria-label="Apps"
+              title="Apps"
             >
               <Blocks className="sidebar-nav-icon" aria-hidden />
-              <span className="sidebar-nav-label">Plugins</span>
+              <span className="sidebar-nav-label">Apps</span>
             </SidebarRow>
             <SidebarRow active={screen === 'artifacts'} disabled={!ready} onClick={() => showMain('artifacts')} aria-label="Artifacts" title="Artifacts">
               <PanelsTopLeftIcon className="sidebar-nav-icon" aria-hidden />
@@ -309,6 +309,7 @@ export default function App({
             chatId={activeId ?? ""}
             stopRef={setChatStop}
             selfManagedAgents={selfManagedAgents}
+            entrances={entrances}
             properties={properties}
           >
             {(ChatThread) => <>

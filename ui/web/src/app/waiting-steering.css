@@ -11,17 +11,17 @@
 }
 
 .copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage.copilotKitMessage {
-  margin-top: 10px;
+  margin-top: var(--space-24);
 }
 
 .waiting-message-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-12);
   height: 28px;
-  margin-top: 8px;
-  padding-inline-end: 8px;
+  margin-top: var(--space-8);
+  padding-inline-end: var(--space-8);
   color: var(--color-text-muted);
   font-size: var(--font-small);
   line-height: var(--leading);
@@ -59,6 +59,7 @@
 .waiting-message-icons {
   display: flex;
   gap: 2px;
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the 17px glyph's edge on the text's, in its 28px target */
   margin-inline-end: calc((17px - 28px) / 2);
   opacity: 0;
   pointer-events: none;
@@ -121,6 +122,7 @@
   }
 
   .waiting-message-icons {
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- the 20px glyph's edge on the text's, in its 44px target */
     margin-inline-end: calc((20px - 44px) / 2);
   }
 }

@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { loadDeployment } from 'botcube-deployment-config/load';
 import { accountCookies } from './account-cookies.js';
+import { accountDeletions } from './account-deletions.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
@@ -14,6 +15,7 @@ import { localAgentComputer } from './local-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
 import { planModels } from './plan-models.js';
 import { serveChatService } from './server.js';
+import { tokenIntrospectionRoutes } from './token-introspection.js';
 
 const ACCOUNT_KEY = 'template';
 const cookies = accountCookies(ACCOUNT_KEY);
@@ -66,6 +68,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
   const files = accountFilesFromEnv(env, store);
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
+  // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
+  const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;
   const credentials = credentialServiceUrl
     ? { revoke: (accountId: string) => revokeAccountCredentials(credentialServiceUrl, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', accountId) }
     : null;
@@ -86,10 +90,12 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     };
     const computer = localAgentComputer({ history, requester, env, startPage: options.startPage });
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
+    const deletions = accountDeletions({ store, deleteAccount: lifecycle.deleteAccount });
     return {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: bot.models,
       memory: bot.memory,
+      recoverAccountDeletions: () => deletions.recover(),
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
       accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()
@@ -97,7 +103,9 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         .route('/', computerFilesRoutes({ requester, history, computers: computer, files: () => files() }))
         .route('/account/plan-usage/openai', plan.routes)
         .route('/', accounts.routes)
-        .route('/', identity?.routes ?? new Hono()),
+        .route('/', identity?.routes ?? new Hono())
+        .route('/', identity?.deletion ?? new Hono())
+        .route('/', invocationSecret ? tokenIntrospectionRoutes({ sessions: store, invocationSecret }) : new Hono()),
       requester,
       filingUserId: (owner) => owner,
       scheduledRequester: async (owner) => ({ owner }),

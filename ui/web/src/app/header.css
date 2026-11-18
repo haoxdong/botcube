@@ -31,7 +31,7 @@
   z-index: 30;
   display: flex;
   justify-content: center;
-  padding: 2px 16px 16px;
+  padding: 2px var(--space-16) var(--space-16);
   pointer-events: none;
 }
 
@@ -123,7 +123,7 @@
 
   /* CopilotKit leaves the overlay's height under the last message; it stands 6px higher. */
   .app-chat .copilotKitMessages {
-    padding-bottom: calc(1.25rem + 6px);
+    padding-bottom: calc(var(--space-20) + 6px);
   }
 
   /* Marq's hat, which rises 1px above his box, and the menu button's top meet the top of the screen below the status
@@ -148,7 +148,7 @@
      It stands 2px below the sidebar's safe area: at the top edge, iOS Safari paints its status bar white over the
      chat. */
   .sidebar-collapsed .sidebar-brand {
-    padding: 2px 12px 12px 24px;
+    padding: 2px var(--space-12) var(--space-12) var(--space-24);
   }
 
   .chat-header-agent .avatar-agent {
@@ -171,7 +171,7 @@
      bar, left a strip of undimmed text between the two fades. So the pill carries its own crisp white
      backing, as Muse's does, which keeps the name readable over the text. */
   .chat-header-agent .chat-header-name {
-    margin-top: -12px;
+    margin-top: calc(-1 * var(--space-12));
     background: var(--frost);
     box-shadow: none;
   }
@@ -221,6 +221,7 @@
   }
 
   .chat-header-agent .avatar-agent {
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- Marq's hat over the status bar (Muse Fig 11) */
     margin-top: -10px;
   }
 
@@ -230,6 +231,7 @@
   }
 
   .chat-header-agent .chat-header-name {
+    /* stylelint-disable-next-line declaration-property-value-allowed-list -- the name tucks under the hat (Muse Fig 11) */
     margin-top: -11px;
     background: var(--color-white);
     backdrop-filter: none;

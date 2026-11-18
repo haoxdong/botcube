@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useContext, useEffect, useLayoutEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { LazyMotion, domMax, m } from "framer-motion";
 import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
 import { Collapse, Fade, Presence, useInstant } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import { sentFilesOf } from "./composer-files";
+import { MessageEntranceHistory } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
 
 export const SHOWS_WAITING_STEERING = process.env.NEXT_PUBLIC_WAITING_STEERING === "1";
@@ -30,30 +31,6 @@ function rowsOf(waiting: PendingMessage[], closing: Map<string, Closing>): Row[]
   return rows;
 }
 
-const userRowIds = (list: Element | null | undefined) =>
-  new Set([...list?.querySelectorAll<HTMLElement>(".copilotKitUserMessage[data-message-id]") ?? []].map((row) => row.dataset.messageId ?? ""));
-
-function useArrivesInPlace(waiting: PendingMessage[]) {
-  const listRef = useRef<Element | null>(null);
-  const before = useRef<{ waiting: Set<string>; rows: Set<string> }>({ waiting: new Set(), rows: new Set() });
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const now = { waiting: new Set(waiting.map(({ id }) => id)), rows: userRowIds(list) };
-    const left = [...before.current.waiting].filter((id) => !now.waiting.has(id));
-    for (const id of left.length > 0 ? now.rows : []) {
-      if (before.current.rows.has(id) && !left.includes(id)) continue;
-      const row = list?.querySelector(`.copilotKitUserMessage[data-message-id="${CSS.escape(id)}"]`);
-      for (const animation of row?.getAnimations() ?? []) {
-        if (animation instanceof CSSAnimation && animation.animationName === "messageIn") animation.finish();
-      }
-    }
-    before.current = now;
-  });
-  return (row: HTMLElement | null) => {
-    if (row?.parentElement) listRef.current = row.parentElement;
-  };
-}
-
 function useOpenRow(): [string | null, (id: string | null) => void] {
   const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
@@ -67,12 +44,11 @@ function useOpenRow(): [string | null, (id: string | null) => void] {
   return [open, setOpen];
 }
 
-function WaitingMessage({ message, shown, last, onClosed, list, open, onToggle, onSendNow, onEdit, onCancel, outcome }: {
+function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSendNow, onEdit, onCancel, outcome }: {
   message: PendingMessage;
   shown: boolean;
   last: boolean;
   onClosed: () => void;
-  list: (row: HTMLElement | null) => void;
   open: boolean;
   onToggle: () => void;
   onSendNow: (() => void) | undefined;
@@ -88,10 +64,13 @@ function WaitingMessage({ message, shown, last, onClosed, list, open, onToggle, 
   useEffect(() => {
     if (!shown && instant) onClosed();
   }, [shown, instant, onClosed]);
-  const closed = { height: 0, opacity: 0, marginBottom: last ? 0 : -4 };
+  // A closing row gives up one gap (--space-24, waiting-steering.css) as it folds: one before the last cancels the next
+  // row's with its bottom margin; the last folds its own top margin away.
+  const closed = () => last
+    ? { height: 0, opacity: 0, marginTop: 0 }
+    : { height: 0, opacity: 0, marginBottom: -parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--space-24")) };
   return (
     <m.div
-      ref={list}
       data-copilotkit
       className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10 waiting-message"
       data-waiting-id={message.id}
@@ -101,8 +80,8 @@ function WaitingMessage({ message, shown, last, onClosed, list, open, onToggle, 
       inert={shown ? undefined : true}
       style={{ overflow: shown ? undefined : "hidden" }}
       initial={false}
-      animate={shown || instant ? { opacity: 1 } : closed}
-      transition={{ height: move, marginBottom: move, opacity: quick }}
+      animate={shown || instant ? { opacity: 1 } : closed()}
+      transition={{ height: move, marginTop: move, marginBottom: move, opacity: quick }}
       {...(shown || instant ? {} : { onAnimationComplete: onClosed })}
     >
       <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
@@ -132,7 +111,10 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
   sendNow: ((id: string) => Promise<Withdrawal>) | undefined;
   onEdit: (message: PendingMessage) => void;
 }) {
-  const list = useArrivesInPlace(waiting);
+  const entrances = useContext(MessageEntranceHistory);
+  useLayoutEffect(() => {
+    for (const { id } of waiting) entrances?.presentedMessage(id);
+  }, [entrances, waiting]);
   const [open, setOpen] = useOpenRow();
   const [closing, setClosing] = useState(new Map<string, Closing>());
   const [outcomes, setOutcomes] = useState(new Map<string, Withdrawal>());
@@ -160,7 +142,6 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
             shown={shown}
             last={index === rows.length - 1}
             onClosed={closed(message.id)}
-            list={list}
             open={open === message.id}
             onToggle={() => setOpen(open === message.id ? null : message.id)}
             onSendNow={send && (() => void act(message, send, false))}

@@ -6,10 +6,13 @@ const STAND_IN_USER = 'ada';
 /**
  * A stand-in OpenID Connect provider on this machine (oauth2-mock-server): discovery, JWKS, and an authorization
  * endpoint that signs the User in at once, as the `login_hint` its request names, and redirects back with a code.
+ * Its ID tokens say the User authenticated just now, unless `authenticatedAt` names another time or none.
  */
 export class StandInOidcIssuer {
   private readonly server = new OAuth2Server();
   private readonly users = new Map<string, string>();
+  /** The `auth_time` each User's ID tokens carry, in seconds; undefined leaves the claim out. */
+  readonly authenticatedAt = new Map<string, number | undefined>();
 
   async listen(): Promise<this> {
     await this.server.issuer.keys.generate('RS256');
@@ -21,7 +24,9 @@ export class StandInOidcIssuer {
     this.server.service.on('beforeTokenSigning', (token: { payload: Record<string, unknown> }, req: { body?: Record<string, unknown> }) => {
       // Signed twice per code: the access token, then the ID token.
       const user = typeof req.body?.code === 'string' ? this.users.get(req.body.code) : undefined;
-      if (user !== undefined) Object.assign(token.payload, { sub: user, name: `Stand-in ${user}` });
+      if (user === undefined) return;
+      const authTime = this.authenticatedAt.has(user) ? this.authenticatedAt.get(user) : Math.floor(Date.now() / 1000);
+      Object.assign(token.payload, { sub: user, name: `Stand-in ${user}`, ...(authTime === undefined ? {} : { auth_time: authTime }) });
     });
     await this.server.start(0, '127.0.0.1');
     // oauth2-mock-server names a loopback issuer `localhost`, which can resolve to ::1, where it does not listen.

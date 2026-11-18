@@ -1,22 +1,23 @@
 "use client";
 
-import { BookOpen, Cable, Server, type LucideIcon } from "lucide-react";
+import { BookOpen, Cable, Package, SquareTerminal, type LucideIcon } from "lucide-react";
 
 import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { StatusPill } from "../components/ui/status-pill";
 
-/** The kinds of plugin the agent will take, none of them available yet. */
+/** The kinds of App the agent will take (botcube/GLOSSARY.md → Apps), in the decided order, none available yet. */
 const KINDS: readonly { name: string; none: string; Icon: LucideIcon; about: (agentName: string) => string }[] = [
-  { name: "Connectors", none: "No connectors yet", Icon: Cable, about: (agent) => `Link your apps so ${agent} can read and act in them.` },
-  { name: "MCP servers", none: "No MCP servers yet", Icon: Server, about: (agent) => `Add Model Context Protocol servers to give ${agent} new tools.` },
+  { name: "Plugins", none: "No plugins yet", Icon: Package, about: () => "Connectors, terminal apps and skills, bundled as one app." },
+  { name: "Connectors", none: "No connectors yet", Icon: Cable, about: (agent) => `Services like Gmail that ${agent} reaches over MCP.` },
+  { name: "Terminal apps", none: "No terminal apps yet", Icon: SquareTerminal, about: (agent) => `Programs ${agent} runs from the shell on its computer.` },
   { name: "Skills", none: "No skills yet", Icon: BookOpen, about: (agent) => `Teach ${agent} reusable workflows and know-how.` },
 ];
 
-/** The Plugins screen the sidebar opens: each kind of plugin as a placeholder, as none is available yet. */
-export function PluginsScreen({ agentName }: { agentName: string }) {
+/** The Apps screen the sidebar opens: each kind of App as a placeholder, as none is available yet. */
+export function AppsScreen({ agentName }: { agentName: string }) {
   return (
     <div className="plugins">
-      <h1 className="plugins-title">Plugins</h1>
+      <h1 className="plugins-title">Apps</h1>
       <p className="plugins-intro">Extend what {agentName} can do.</p>
       {KINDS.map(({ name, none, Icon, about }) => (
         <section key={name} className="plugins-kind" aria-label={name}>
