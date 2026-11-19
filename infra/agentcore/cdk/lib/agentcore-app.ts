@@ -47,6 +47,8 @@ export function addAgentCoreStacks(
       chatServiceIssuer,
       userMemoryRole,
       privateNatBrowser: agentCore.privateNatBrowser,
+      platformVersion: agentCore.platformVersion,
+      ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
       harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
       runtimeNetwork: agentCore.runtimeNetworkParameter
         ? {

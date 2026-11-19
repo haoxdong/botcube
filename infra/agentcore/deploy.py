@@ -134,7 +134,14 @@ def deploy(stack: str, name: str, commit: str, evidence: str) -> None:
     runtime = next(
         physical for kind, physical in after.values() if kind.endswith("::Runtime")
     )
-    status, runtime_arn = verify_runtime(runtime, version)
+    platform = outputs["RuntimePlatformVersion"]
+    status, runtime_arn = verify_runtime(runtime, version, platform)
+    rollback = None
+    if "V1RollbackVersion" in outputs:
+        rollback_version = outputs["V1RollbackVersion"]
+        rollback_status, _ = verify_runtime(runtime, rollback_version, "V1", "V1_ROLLBACK")
+        rollback = {"endpoint": "V1_ROLLBACK", "runtimeVersion": rollback_version,
+                    "platformVersion": "V1", "status": rollback_status}
     proof = {
         "stack": stack,
         "changeSetArn": arn,
@@ -142,6 +149,8 @@ def deploy(stack: str, name: str, commit: str, evidence: str) -> None:
         "commit": commit,
         "runtimeArn": runtime_arn,
         "runtimeVersion": version,
+        "platformVersion": platform,
+        "rollback": rollback,
         "status": status,
         "protectedResources": after,
     }
@@ -149,8 +158,10 @@ def deploy(stack: str, name: str, commit: str, evidence: str) -> None:
     print(json.dumps(proof))
 
 
-def verify_runtime(runtime_id: str, version: str) -> tuple[str, str]:
+def verify_runtime(runtime_id: str, version: str, platform: str, endpoint_name: str = "DEFAULT") -> tuple[str, str]:
     """CloudFormation names a Runtime by its ID, unlike a Memory, by its ARN."""
+    if platform not in {"V1", "V2"}:
+        raise ValueError("Unknown declared runtime platform")
     deadline = time.monotonic() + 300
     while True:
         state = aws(
@@ -168,15 +179,17 @@ def verify_runtime(runtime_id: str, version: str) -> tuple[str, str]:
             raise ValueError("Runtime version identity mismatch")
         status = state["status"]
         if status == "READY":
+            if state["platformVersion"] != platform:
+                raise ValueError(f"Runtime platform does not match declared {platform}")
             break
         if status not in {"CREATING", "UPDATING"} or time.monotonic() >= deadline:
             raise ValueError(f"Deployed runtime version is not READY: {status}")
         time.sleep(5)
-    verify_endpoint(runtime_id, version)
+    verify_endpoint(runtime_id, version, endpoint_name)
     return status, state["agentRuntimeArn"]
 
 
-def verify_endpoint(runtime_id: str, version: str) -> None:
+def verify_endpoint(runtime_id: str, version: str, endpoint_name: str) -> None:
     deadline = time.monotonic() + 300
     while True:
         endpoint = aws(
@@ -185,7 +198,7 @@ def verify_endpoint(runtime_id: str, version: str) -> None:
             "--agent-runtime-id",
             runtime_id,
             "--endpoint-name",
-            "DEFAULT",
+            endpoint_name,
         )
         status = endpoint["status"]
         if status == "READY" and endpoint["liveVersion"] == version:
@@ -195,7 +208,7 @@ def verify_endpoint(runtime_id: str, version: str) -> None:
             or time.monotonic() >= deadline
         ):
             raise ValueError(
-                "DEFAULT endpoint does not serve the deployed READY version"
+                f"{endpoint_name} endpoint does not serve the declared READY version"
             )
         time.sleep(5)
 

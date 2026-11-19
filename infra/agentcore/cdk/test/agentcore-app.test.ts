@@ -63,6 +63,51 @@ test('fails loud when the spec declares no runtime', () => {
   );
 });
 
+test.each(['V1', 'V2'] as const)(
+  'deploys configured %s independently from the removable V1 endpoint',
+  platformVersion => {
+    const app = new App();
+    addAgentCoreStacks(app, deployConfig({ platformVersion, rollbackVersion: '421' }), COMMIT);
+    const stack = onlyStack(app);
+    const template = Template.fromStack(stack);
+    const [runtimeId] = Object.keys(template.findResources('AWS::BedrockAgentCore::Runtime'));
+    expect(runtimeId).toBeDefined();
+    template.hasResourceProperties('AWS::BedrockAgentCore::Runtime', { PlatformVersion: platformVersion });
+    template.hasResourceProperties('AWS::BedrockAgentCore::RuntimeEndpoint', {
+      AgentRuntimeId: { 'Fn::GetAtt': [runtimeId, 'AgentRuntimeId'] },
+      AgentRuntimeVersion: '421',
+      Name: 'V1_ROLLBACK',
+    });
+    template.hasResource('AWS::BedrockAgentCore::RuntimeEndpoint', {
+      DeletionPolicy: 'Delete',
+      UpdateReplacePolicy: 'Delete',
+    });
+    template.hasOutput('RuntimePlatformVersion', { Value: platformVersion });
+    template.hasOutput('V1RollbackVersion', { Value: '421' });
+  }
+);
+
+test('defaults every bot to V2 without a rollback endpoint', () => {
+  const app = new App();
+  addAgentCoreStacks(app, deployConfig(), COMMIT);
+  const template = Template.fromStack(onlyStack(app));
+  template.hasResourceProperties('AWS::BedrockAgentCore::Runtime', { PlatformVersion: 'V2' });
+  template.resourceCountIs('AWS::BedrockAgentCore::RuntimeEndpoint', 0);
+  template.hasOutput('RuntimePlatformVersion', { Value: 'V2' });
+});
+
+test('rejects a symbolic V1 rollback version at the public deployment seam', () => {
+  expect(() => addAgentCoreStacks(new App(), deployConfig({ rollbackVersion: 'DEFAULT' }), COMMIT)).toThrow(
+    'numeric runtime version'
+  );
+});
+
+test.each(['unknown', null])('rejects invalid declared platform %s', platformVersion => {
+  expect(() => addAgentCoreStacks(new App(), deployConfig({ platformVersion }), COMMIT)).toThrow(
+    'Runtime platform must be V1 or V2'
+  );
+});
+
 test('adds one stack per target, named for the stack family and target, in its account and region', () => {
   const app = new App();
   const config = deployConfig();

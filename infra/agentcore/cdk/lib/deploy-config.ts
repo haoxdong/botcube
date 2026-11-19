@@ -7,6 +7,7 @@ import {
 } from '@aws/agentcore-cdk';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { RuntimePlatformVersion } from './runtime-platform';
 
 /** This project's directory holds cdk.json, whether the app runs from source or from dist/. */
 function projectDir(dir: string): string {
@@ -91,6 +92,8 @@ export interface DeployIdentity {
       memory: string;
       sessionApiFunction: string;
       sessionApiAlias: string;
+      platformVersion: RuntimePlatformVersion;
+      rollbackVersion?: string;
     } &
       // The runtime network places the runtime in the private NAT browser's subnets.
       (

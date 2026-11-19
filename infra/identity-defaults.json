@@ -1,7 +1,8 @@
 {
   "aws": {
     "agentCore": {
-      "sessionApiAlias": "live"
+      "sessionApiAlias": "live",
+      "platformVersion": "V2"
     },
     "credentialService": {
       "port": 8081

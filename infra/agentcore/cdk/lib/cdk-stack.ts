@@ -10,6 +10,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
+import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-platform';
 import { scaleSessionApi } from './session-api-scaling';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
@@ -110,6 +111,8 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
   runtimeIdleTimeoutSeconds?: number;
+  platformVersion?: RuntimePlatformVersion;
+  rollbackVersion?: string;
   /** The session-storage mount; the shell works in its files child. */
   workspace?: string;
   sessionApiTimeoutSeconds?: number;
@@ -251,6 +254,11 @@ export class AgentCoreStack extends Stack {
     // it on the underlying CfnRuntime (the runtime's default child).
     for (const env of this.application.environments.values()) {
       const cfnRuntime = env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime;
+      const platformVersion = props.platformVersion === undefined ? 'V2' : props.platformVersion;
+      applyRuntimePlatform(cfnRuntime, platformVersion, props.rollbackVersion);
+      new CfnOutput(this, 'RuntimePlatformVersion', { value: platformVersion });
+      if (props.rollbackVersion !== undefined)
+        new CfnOutput(this, 'V1RollbackVersion', { value: props.rollbackVersion });
       cfnRuntime.lifecycleConfiguration = {
         maxLifetime: props.runtimeMaxLifetimeSeconds ?? RUNTIME_MAX_LIFETIME_SECONDS,
         idleRuntimeSessionTimeout: props.runtimeIdleTimeoutSeconds ?? RUNTIME_IDLE_TIMEOUT_SECONDS,

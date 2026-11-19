@@ -49,13 +49,13 @@ def install_aws(
             'Stacks': [{
                 'StackId': STACK_ID,
                 'StackStatus': 'UPDATE_COMPLETE',
-                'Outputs': [commit_output, {'OutputKey': 'AgentRuntimeVersion', 'OutputValue': '7'}],
+                'Outputs': [commit_output, {'OutputKey': 'AgentRuntimeVersion', 'OutputValue': '7'}, {'OutputKey': 'RuntimePlatformVersion', 'OutputValue': 'V2'}],
             }],
         },
         ('bedrock-agentcore-control', 'get-agent-runtime', '--agent-runtime-id', 'runtime-fixture', '--agent-runtime-version', '7'): {
             'agentRuntimeId': 'runtime-fixture', 'agentRuntimeVersion': '7',
             'agentRuntimeArn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/runtime-fixture',
-            'status': 'READY',
+            'status': 'READY', 'platformVersion': 'V2',
         },
         ('bedrock-agentcore-control', 'get-agent-runtime-endpoint', '--agent-runtime-id', 'runtime-fixture', '--endpoint-name', 'DEFAULT'): {
             'status': 'READY', 'liveVersion': '7',
@@ -98,7 +98,7 @@ def test_executes_stack_only_changes_and_verifies_updated_commit(
         'stack': 'fixture-stack', 'changeSetArn': ARN, 'executed': True,
         'commit': 'fixture-commit',
         'runtimeArn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/runtime-fixture',
-        'runtimeVersion': '7', 'status': 'READY',
+        'runtimeVersion': '7', 'status': 'READY', 'platformVersion': 'V2', 'rollback': None,
         'protectedResources': {
             'Runtime': ['AWS::BedrockAgentCore::Runtime', 'runtime-fixture'],
             'Memory': ['AWS::BedrockAgentCore::Memory', 'memory-fixture'],
