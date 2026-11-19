@@ -24,19 +24,19 @@ dark theme.
 
 ## Motion
 
-Motion is calm and continuous, as iOS and macOS move. Four rules, each checkable in a frame strip:
+Motion is calm, continuous and sparing, as on iOS and macOS. Five rules, each checkable in a frame strip:
 
-- **Nothing snaps.** Every change of size, place or presence settles with a spring, never a cut or a bounce.
-- **The finger leads.** A drag moves the surface with the finger; on release, and on a tap, it settles with the move
-  spring.
-- **Interrupted motion carries on** from where it is, at the speed it had.
-- **What you read stays put.** New content arrives without moving the line being read.
+- **Little travels.** Only sheets, panes, the sidebar, drags and arriving messages move or resize; the rest fades or
+  appears.
+- **Nothing snaps.** What moves settles with a spring, no cut or bounce; a change of state is a quick fade.
+- **The finger leads.** A drag follows the finger; on release or a tap it settles with the move spring.
+- **Interrupted motion carries on** at its speed: a spring retargets, never restarts.
+- **What you read stays put.** New content never moves the line being read.
 
-`--motion-quick` settles what changes in place, fades included; `--motion-move` what moves or resizes; `--ease`
-serves CSS transitions not yet on the spring; `--motion-loop` is the one ambient loop (the Worklog shimmer, Marq's
-bob). Only `transform` and `opacity` animate, each moving element has one owner, and an exiting element stays until
-its fade ends. Full motion always, Reduce Motion or not (the maintainer, 2026-11-03). A change to motion ships with a
-frame strip at 390 and 1440 px beside today's.
+Two mechanisms: `--motion-move` springs what moves or resizes; `--motion-quick` with `--ease` fades state.
+`--motion-loop` is the one ambient loop (Worklog shimmer, Marq's bob). Each moving element has one owner; an
+exiting one stays until its fade ends. Full motion always, Reduce Motion or not (the maintainer, 2026-11-03). A motion
+change ships with a frame strip at 390 and 1440 px beside today's.
 
 ## Spacing
 
