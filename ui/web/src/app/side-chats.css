@@ -10,7 +10,6 @@
 
 .side-chats-body[aria-hidden="true"] {
   grid-template-rows: 0fr;
-  opacity: 0;
 }
 
 .side-chats-body > .sidebar-list {
@@ -94,4 +93,10 @@
   flex: 1;
   min-width: 0;
   display: flex;
+}
+
+@starting-style {
+  .side-chats-body[data-native-entry] {
+    opacity: 0;
+  }
 }

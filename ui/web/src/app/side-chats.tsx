@@ -3,7 +3,7 @@
 import { Swap, Presence, presenceMotion, Collapse } from "./collapse";
 
 import { m as motionElement } from "motion/react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { contextMenuKey } from "./context-menu-key";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { Menu } from "@base-ui/react/menu";
@@ -14,6 +14,10 @@ import { SideChatNameField } from "./side-chat-name-field";
 import { UnreadDot } from "./unread-dot";
 import type { AuthUiState } from "../cartridge/index.js";
 import type { useSessionNavigation } from "./session-navigation";
+
+const NATIVE_SIDE_CHAT_BODY = process.env.NEXT_PUBLIC_NATIVE_SIDE_CHAT_BODY === "1";
+const SideChatsBody = NATIVE_SIDE_CHAT_BODY ? "div" : motionElement.div;
+const BodyPresence = NATIVE_SIDE_CHAT_BODY ? Fragment : Presence;
 
 const MotionClock = motionElement.create(Clock);
 const MotionChevronRight = motionElement.create(ChevronRight);
@@ -85,6 +89,40 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
     </SideChatRow>
   );
 
+  const body = sideChatsPreference !== null && (
+    <SideChatsBody {...(NATIVE_SIDE_CHAT_BODY ? {} : presenceMotion)} data-native-entry={NATIVE_SIDE_CHAT_BODY || undefined} className="side-chats-body" aria-hidden={sideChatsCollapsed} inert={sideChatsCollapsed}>
+      <div className="sidebar-list" id={sideChatsListId}>
+        <Presence>{listed && sideChats.length === 0 && sideChatsError === null && (
+          <motionElement.div {...presenceMotion} className="sidebar-empty">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+              <path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
+            </svg>
+            <strong className="sidebar-empty-title">Start a side chat</strong>
+            <span>Side chats are an optional way to organize your conversations by topic.</span>
+          </motionElement.div>
+        )}</Presence>
+        {shownSideChats.slice(0, firstShown).map(row)}
+        {more.map((batch, index) => (
+          <Collapse key={index} open>
+            {batch.map(row)}
+          </Collapse>
+        ))}
+        <Presence>{shownSideChats.length < sideChats.length && (
+          <motionElement.button {...presenceMotion}
+            className="sidebar-show-more"
+            onClick={() => {
+              revealedSideChat.current = sideChats[shownSideChats.length]?.id ?? null;
+              setMoreBatches(moreBatches + 1);
+            }}
+          >
+            Show more
+          </motionElement.button>
+        )}</Presence>
+      </div>
+    </SideChatsBody>
+  );
+
   return (
         <div className="sidebar-recents">
           <div className="sidebar-section-header">
@@ -99,39 +137,7 @@ export function SideChats({ accountId, activeId, pluginsOpen, visible, entries: 
           <Collapse open={sideChatsError !== null}>
             <div className="sidebar-error" role="alert" hidden={!visible}>{lastError}</div>
           </Collapse>
-          <Presence>{sideChatsPreference !== null && (
-          <motionElement.div {...presenceMotion} className="side-chats-body" aria-hidden={sideChatsCollapsed} inert={sideChatsCollapsed}>
-          <div className="sidebar-list" id={sideChatsListId}>
-            <Presence>{listed && sideChats.length === 0 && sideChatsError === null && (
-              <motionElement.div {...presenceMotion} className="sidebar-empty">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                  <path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" />
-                </svg>
-                <strong className="sidebar-empty-title">Start a side chat</strong>
-                <span>Side chats are an optional way to organize your conversations by topic.</span>
-              </motionElement.div>
-            )}</Presence>
-            {shownSideChats.slice(0, firstShown).map(row)}
-            {more.map((batch, index) => (
-              <Collapse key={index} open>
-                {batch.map(row)}
-              </Collapse>
-            ))}
-            <Presence>{shownSideChats.length < sideChats.length && (
-              <motionElement.button {...presenceMotion}
-                className="sidebar-show-more"
-                onClick={() => {
-                  revealedSideChat.current = sideChats[shownSideChats.length]?.id ?? null;
-                  setMoreBatches(moreBatches + 1);
-                }}
-              >
-                Show more
-              </motionElement.button>
-            )}</Presence>
-          </div>
-          </motionElement.div>
-          )}</Presence>
+          <BodyPresence>{body}</BodyPresence>
 
         </div>
 
