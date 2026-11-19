@@ -24,6 +24,10 @@ vi.mock('@copilotkit/react-core/v2/headless', () => ({
   useCopilotKit: () => ({ copilotkit: kit.copilotkit }),
 }));
 
+vi.mock('bedrock-agentcore/browser/live-view', () => ({
+  BrowserLiveView: () => { throw new Error('The screenshot view must not mount the DCV viewer'); },
+}));
+
 import { ComputerView } from './computer-view';
 import { LiveBrowserPanel } from './live-browser-panel';
 import { LiveBrowserWindow } from './live-browser-window';
