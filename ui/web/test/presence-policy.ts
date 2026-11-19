@@ -1,8 +1,8 @@
 import ts from 'typescript';
 
-const owned = new Set(['Presence', 'Swap', 'Fade', 'Collapse', 'CollapseList', 'AnimatePresence']);
-const lifecycle = new Set(['Sheet', 'StepSheet', 'Fade', 'Collapse', 'CollapseItem', 'FadeItem', 'Collapsible', 'Fading']);
-const noBox = new Set(['MomentEnds', 'ComposerFilePicker', 'ChatSurface']);
+const owned = new Set(['Presence', 'Swap', 'Fade', 'Collapse', 'GridCollapse', 'RowCollapse', 'CollapseList', 'AnimatePresence']);
+const lifecycle = new Set(['Sheet', 'StepSheet', 'Fade', 'Collapse', 'GridCollapse', 'RowCollapse', 'CollapseItem', 'FadeItem', 'Collapsible', 'GridCollapsible', 'Fading']);
+const noBox = new Set(['MomentEnds', 'ComposerFilePicker', 'ChatSurface', 'PageScroll', 'ScrollUpClosesKeyboard']);
 
 function elementName(node: ts.Node, source: ts.SourceFile): string | null {
   if (ts.isJsxElement(node)) return node.openingElement.tagName.getText(source);
@@ -60,7 +60,7 @@ export function bareVisibleMounts(text: string, file = 'fixture.tsx') {
         const name = elementName(root, source);
         if (name === null || lifecycle.has(name) || noBox.has(name) || invisible(root) || providerBoundary(root, source)) continue;
         const owner = ownerOf(node, source);
-        if (owner !== null && (animated(root, source) || ['Swap', 'Collapse', 'Fade'].includes(owner))) continue;
+        if (owner !== null && (animated(root, source) || ['Swap', 'Collapse', 'GridCollapse', 'RowCollapse', 'Fade'].includes(owner))) continue;
         failures.push({ line: source.getLineAndCharacterOfPosition(root.getStart(source)).line + 1, element: name });
       }
     }

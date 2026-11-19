@@ -68,15 +68,34 @@
   overflow-anchor: none;
 }
 
+.conversation-thread [data-message-id] {
+  scroll-margin-top: var(--chat-header-height);
+}
+
+/* A thread opening at a linked row shows once ReadLine has placed it. */
+.conversation-thread[data-landing] {
+  visibility: hidden;
+}
+
 @media (min-width: 641px) {
   .copilotKitMessages > :not([data-chat-earlier]) {
     contain-intrinsic-block-size: auto none;
   }
 
-  .copilotKitMessages > :not([data-chat-earlier]):not(:last-child) {
+  /* A `content-visibility: auto` row lays out at zero height until its first paint. */
+  .copilotKitMessages > :not([data-chat-earlier]):has(~ .copilotKitUserMessage) {
     contain: layout style;
     content-visibility: auto;
     overflow-clip-margin: 32px;
+  }
+
+  /* Without that transition a thread opening at a linked row would place it among rows still at zero height. */
+  .conversation-thread[data-landing] .copilotKitMessages > :not([data-chat-earlier]) {
+    content-visibility: visible;
+  }
+
+  /* WebKit hides the streaming line behind the composer when this runs inside the flagged thread. */
+  .copilotKitMessages:not(.conversation-thread *) > :not([data-chat-earlier]):has(~ .copilotKitUserMessage) {
     transition: content-visibility var(--motion-quick) var(--ease) allow-discrete;
 
     @starting-style {
@@ -339,6 +358,15 @@
 
 .copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child {
   margin-bottom: 0 !important;
+}
+
+/* WebKit clamps the scroll whenever the list gets shorter. */
+.chat-pending-cursor {
+  height: 0;
+}
+
+.chat-pending-cursor > * {
+  margin-top: var(--space-8);
 }
 
 /* A Turn starts well clear of the last, by relation: any user message after a reply or Worklog, whatever sits between

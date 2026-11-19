@@ -43,7 +43,7 @@ import { zoomOf } from "@/lib/utils";
 import { ComposerFileChips, ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { AddMenu, FileDropOverlay, useFileDrop } from "./composer-attach";
 import { Composer } from "./composer";
-import { ThoughtStep, ToolStep, worklogRows } from "./worklog";
+import { ThoughtStep, ToolStep, worklogKey, worklogRows } from "./worklog";
 import { showsProposalCard } from "./worklog-tools";
 import { fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
@@ -52,6 +52,7 @@ import { shows, useSteering, type PendingMessage, type Withdrawal } from "./stee
 import { SHOWS_WAITING_STEERING, WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
 import { useAgentRunning } from "./agent-running";
+import { CONVERSATION_THREAD, ThreadScrollView } from "./conversation-thread";
 
 const MotionButton = motionElement.create(Button);
 
@@ -361,6 +362,10 @@ function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>
   );
 }
 
+const ConversationScrollView = (props: ComponentProps<typeof CopilotChatView.ScrollView>) => (
+  <ThreadScrollView {...props} opensAt={useContext(OpensAt)} />
+);
+
 /** The slot types its component with CopilotKit's sub-components, which it never reads, only renders. */
 const ASSISTANT_MESSAGE_SLOT = AssistantMessage as typeof CopilotChatAssistantMessage;
 
@@ -379,7 +384,8 @@ function pageStart(elements: ReactElement[], end: number, messageIds: Set<string
   let start = end;
   for (let rows = 0; start > 0 && rows < MESSAGE_ROWS_PER_PAGE; ) {
     start -= 1;
-    if (messageIds.has(String(elements[start]?.key))) rows += 1;
+    const key = String(elements[start]?.key);
+    if (messageIds.has(key) || key.startsWith(worklogKey(""))) rows += 1;
   }
   const first = elements[start]?.key;
   while (start > 0 && elements[start - 1]?.key === `${first}-custom-before`) start -= 1;
@@ -387,7 +393,7 @@ function pageStart(elements: ReactElement[], end: number, messageIds: Set<string
 }
 
 const messageList = (list: HTMLDivElement | null) => {
-  const stops = [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list)];
+  const stops = CONVERSATION_THREAD ? [fitBubbles(list)] : [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list)];
   return () => stops.forEach((stop) => stop?.());
 };
 
@@ -409,7 +415,7 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
     const now = rowsRef.current;
     setFirstKey(now.rows[pageStart(now.rows, first, now.messageIds)]?.key ?? null);
   };
-  useRowsLandOnce(list, earlier, opensAt === null, first, join);
+  useRowsLandOnce(list, earlier, !CONVERSATION_THREAD && opensAt === null, first, join);
   useEffect(() => {
     const marker = earlier.current;
     if (first === 0 || marker === null) return undefined;
@@ -423,7 +429,7 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
       if (!entry?.isIntersecting || marker.closest("[inert], [hidden]") !== null) return;
       const scroller = scrollParent(marker);
       const list = marker.parentElement;
-      if (!(atStart && reading.current?.row.isConnected)) reading.current = scroller && list && rowRead(list, scroller);
+      if (!CONVERSATION_THREAD && !(atStart && reading.current?.row.isConnected)) reading.current = scroller && list && rowRead(list, scroller);
       join();
     });
     observer.observe(marker);
@@ -441,7 +447,7 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
   useLayoutEffect(() => {
     const read = reading.current;
     const list = earlier.current?.parentElement ?? read?.row.parentElement;
-    if (read === null || list == null) return undefined;
+    if (CONVERSATION_THREAD || read === null || list == null) return undefined;
     if (NATIVE_READING) {
       // Native anchoring does not land prepended history at scrollTop=0; retain the existing one-time pin.
       keepInPlace(read);
@@ -483,7 +489,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
                 <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} list={list} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
-              <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="cpk:mt-2"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
+              <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
               {isRunning && last?.role !== "reasoning" && <MomentEnds moment="send-acknowledged" />}
               <ThreadWaiting />
 
@@ -592,7 +598,7 @@ function ChatThread({
   const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
   useEffect(() => {
     const wrapper = wrapperRef.current;
-    if (opensAt === null || wrapper === null) return undefined;
+    if (CONVERSATION_THREAD || opensAt === null || wrapper === null) return undefined;
     return holdAtRow(wrapper, opensAt);
   },
   // Stryker disable next-line ArrayDeclaration: a chat opens at its message once, as it mounts
@@ -746,7 +752,7 @@ function ChatThread({
             className="chat-full-height"
             messageView={CHAT_MESSAGES}
             input={CHAT_INPUT}
-            scrollView={ChatScrollView}
+            scrollView={CONVERSATION_THREAD ? ConversationScrollView : ChatScrollView}
             onError={(event) => {
               const error = "error" in event ? event.error : new Error("Chat content failed to load");
               if (error.name === "AbortError") return;

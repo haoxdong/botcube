@@ -1,10 +1,13 @@
 import type { Message } from '@ag-ui/client';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { useLayoutEffect } from 'react';
-import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { Streamdown } from 'streamdown';
 import { KeptChat } from './kept-chat';
+
+vi.hoisted(() => vi.stubEnv('NEXT_PUBLIC_CONVERSATION_THREAD', '0'));
+afterAll(() => vi.unstubAllEnvs());
 
 const messages: Message[] = [
   { id: 'm1', role: 'user', content: 'Where did rates close?' },
@@ -221,7 +224,7 @@ it("ends the messages the composer's height plus 32px above the bottom from the 
 
 // On a desktop, 1px short of its end, where the chat surface's scroll view keeps its latest message, so that message
 // does not move as the chat surface takes over.
-it('opens at the latest message, and stays there as the messages grow', () => {
+it('with the Conversation flag off, opens at the latest message and follows growing messages', () => {
   let scrollHeight = 900;
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);

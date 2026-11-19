@@ -4,7 +4,8 @@
 import { m as motionElement } from "motion/react";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { partialJSONParse } from "@copilotkit/shared";
-import { Presence, presenceMotion, Collapse } from "./collapse";
+import { Presence, presenceMotion } from "./collapse";
+import { RowCollapse } from "./conversation-thread";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { AlignLeftIcon, BrainIcon, ChevronRightIcon, CircleXIcon, TimerIcon, type LucideIcon } from "lucide-react";
@@ -62,10 +63,12 @@ function messageIdOf(row: ReactElement): string {
   return typeof message === "object" && message !== null && "id" in message && typeof message.id === "string" ? message.id : String(row.key);
 }
 
+export const worklogKey = (turn: string) => `worklog:${turn}`;
+
 /**
- * The chat's rows with each Turn's work rows folded into its Worklog, keyed as its first row so a row that pages the chat
- * counts it as one and a renamed message keeps its Worklog's clock. A Worklog runs while the run is its Turn's, and its
- * time is its Turn's, answer included.
+ * The chat's rows with each Turn's work rows folded into its Worklog, keyed by its Turn: a remount empties the row for a
+ * layout, and WebKit clamps the scroll to that shorter list. A Worklog runs while the run is its Turn's, and its time is
+ * its Turn's, answer included.
  */
 export function worklogRows(rows: readonly ReactElement[], messages: readonly TurnMessage[], isRunning: boolean, { started = isRunning, rendering = "interactive" }: { started?: boolean; rendering?: WorklogRendering } = {}): ReactElement[] {
   const advanceClock = rendering === "interactive";
@@ -89,7 +92,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
       const turn = messages.slice(first, next < 0 ? undefined : next);
       const question = messages.findLast((m, i) => i < first && m.role === "user");
       out.push(
-        <Worklog key={id} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} expanding={isRunning && started && first > lastQuestion && !answering} asked={asked}>
+        <Worklog key={worklogKey(turnKey)} id={id} advanceClock={advanceClock} turn={turn} question={question} took={spanOf(turn)} startedAt={startOf(turn)} running={isRunning && started && first > lastQuestion} expanding={isRunning && started && first > lastQuestion && !answering} asked={asked}>
           {work}
         </Worklog>,
       );
@@ -118,7 +121,7 @@ export function worklogRows(rows: readonly ReactElement[], messages: readonly Tu
   }
   fold();
   if (isRunning && started && latest?.role === "user") {
-    out.push(<Worklog key={`worklog:${latest.id}`} id={latest.id} advanceClock={advanceClock} running asked={latest.id} />);
+    out.push(<Worklog key={worklogKey(latest.id)} id={latest.id} advanceClock={advanceClock} running asked={latest.id} />);
   }
   return out;
 }
@@ -207,7 +210,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
       </button>
-      <Collapse open={open} appear={advanceClock}>
+      <RowCollapse open={open} appear={advanceClock}>
         <div className="worklog-body">
           <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
             <Presence>{start && (
@@ -223,7 +226,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
             )}</Presence>
           </StepTimes.Provider>
         </div>
-      </Collapse>
+      </RowCollapse>
     </div>
   );
 }
@@ -261,7 +264,7 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
       </Head>
     </div>
   );
-  return grows ? <Collapse open>{step}</Collapse> : step;
+  return grows ? <RowCollapse open>{step}</RowCollapse> : step;
 }
 
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */

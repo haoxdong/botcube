@@ -45,6 +45,7 @@ const copyBoundary = vi.hoisted(() => ({ isolateRendering: false }));
 // The build's Chat Service, read as the page's modules load.
 vi.hoisted(() => {
   vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
+  vi.stubEnv('NEXT_PUBLIC_CONVERSATION_THREAD', undefined);
 });
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -1848,6 +1849,133 @@ describe('the kept Main Chat over the chat as it opens', () => {
     await renderPage(auth({ accountId: 'acct-first' }));
 
     expect(keptChat()?.querySelector('.worklog-title')).toHaveTextContent(/^Working · /);
+  });
+
+  it('with the Conversation flag unset, fills the old scroll view with history before opening', async () => {
+    copilot.rows = true;
+    vi.stubGlobal('IntersectionObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.testid === 'copilot-scroll-view' ? 500 : 800;
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.querySelectorAll('[data-message-row]').length * 100;
+    });
+    service.mainChat = {
+      id: 'main-1',
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `message-${index}`, role: index % 2 === 0 ? 'user' : 'assistant', content: `Message ${index}`,
+      })),
+    };
+
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await frame();
+    await frame();
+
+    const scroller = await screen.findByTestId('copilot-scroll-view');
+    expect(scroller.querySelectorAll('[data-message-row]')).toHaveLength(8);
+    expect(scroller).toHaveTextContent('Message 10');
+  });
+
+  it('with the Conversation flag unset, holds the read line when earlier history joins', async () => {
+    copilot.rows = true;
+    const intersections = new Map<Element, IntersectionObserverCallback>();
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      observe(element: Element) { intersections.set(element, this.callback); }
+      disconnect() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.testid === 'copilot-scroll-view' ? 300 : 1000;
+    });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.querySelectorAll('[data-message-row]').length * 100;
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const scroller = this.closest('[data-testid="copilot-scroll-view"]');
+      const rows = [...(scroller?.querySelectorAll('[data-message-row]') ?? [])];
+      const index = rows.indexOf(this);
+      if (this.hasAttribute('data-chat-earlier')) return new DOMRect(0, -(scroller?.scrollTop ?? 0), 600, 0);
+      return index >= 0
+        ? new DOMRect(0, index * 100 - (scroller?.scrollTop ?? 0), 600, 100)
+        : new DOMRect(0, 0, 600, this.dataset.testid === 'copilot-scroll-view' ? 300 : rows.length * 100);
+    });
+    service.mainChat = {
+      id: 'main-1',
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `message-${index}`, role: index % 2 === 0 ? 'user' : 'assistant', content: `Message ${index}`,
+      })),
+    };
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await frame();
+    await frame();
+    const scroller = await screen.findByTestId('copilot-scroll-view');
+    let position = 0;
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => position,
+      set: (value: number) => { position = Math.max(0, Math.min(value, scroller.scrollHeight - scroller.clientHeight)); },
+    });
+    const read = present(scroller.querySelector('[data-message-row="message-10"]'), 'the read line');
+    expect(read.getBoundingClientRect().top).toBe(200);
+    const marker = present(scroller.querySelector('[data-chat-earlier]'), 'the earlier history marker');
+    const intersect = present(intersections.get(marker), 'the history observer');
+
+    await act(async () => { intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
+
+    expect(scroller.querySelectorAll('[data-message-row]')).toHaveLength(8);
+    expect(scroller.scrollTop).toBe(400);
+    expect(read.getBoundingClientRect().top).toBe(200);
+  });
+
+  it('with the Conversation flag unset, reserves diagram space when a reply arrives', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await frame();
+    await frame();
+    const list = await screen.findByTestId('copilot-message-list');
+    const row = document.createElement('div');
+    row.className = 'copilotKitAssistantMessage';
+    row.dataset.messageId = 'diagram-reply';
+    const diagram = document.createElement('div');
+    diagram.dataset.streamdown = 'mermaid-block';
+    row.append(diagram);
+
+    await act(async () => { list.append(row); });
+
+    expect(diagram.style.getPropertyValue('--diagram-height')).toBe('200px');
+  });
+
+  it('with the Conversation flag unset, holds a visible artifact as its preceding words grow', async () => {
+    await renderPage(auth({ accountId: 'acct-first' }));
+    await frame();
+    await frame();
+    const scroller = await screen.findByTestId('copilot-scroll-view');
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1000 },
+    });
+    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 500));
+    const bubble = document.createElement('div');
+    bubble.className = 'artifact-reply-bubble';
+    bubble.dataset.artifactTurn = 'artifact-reply';
+    const words = document.createElement('div');
+    words.className = 'chat-markdown';
+    words.textContent = 'A summary';
+    const card = document.createElement('div');
+    card.className = 'artifact-card';
+    card.dataset.artifactId = 'rates';
+    let offset = 100;
+    vi.spyOn(card, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, offset - scroller.scrollTop, 400, 200));
+    bubble.append(words, card);
+    await act(async () => { screen.getByTestId('copilot-message-list').append(bubble); });
+
+    offset = 180;
+    await act(async () => { words.textContent = 'A summary that grew above the visible artifact'; });
+
+    expect(scroller.scrollTop).toBe(80);
+    expect(card.getBoundingClientRect().top).toBe(100);
   });
 
   it('lifts on the first frame when the chat has nothing to scroll', async () => {

@@ -1,9 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { m } from 'motion/react';
 import type { ReactNode } from 'react';
-import { Collapse, CollapseItem, CollapseList, Fade, Presence, Swap, presenceMotion } from './collapse';
+import { Collapse, CollapseItem, CollapseList, Fade, GridCollapse, Presence, Swap, presenceMotion } from './collapse';
 
 // globals.css's tokens, which the transitions read as they start.
 const tokens = () => {
@@ -96,6 +96,81 @@ describe('Collapse', () => {
       await waitFor(() => expect(screen.queryByText('FX check')).toBeNull(), { timeout: 1000 });
       expect(view.container.querySelectorAll('li')).toHaveLength(1);
     });
+  });
+});
+
+describe('GridCollapse', () => {
+  const running = (box: Element, ...properties: string[]) => Object.defineProperty(box, 'getAnimations', { configurable: true, value: () => properties.map((transitionProperty) => ({ transitionProperty })) });
+  const boxOf = (container: HTMLElement) => {
+    const box = container.querySelector<HTMLElement>('.grid-collapse');
+    if (!box) throw new Error('The open GridCollapse has no box');
+    return box;
+  };
+  const ended = (target: Element, propertyName: string) => {
+    const event = new Event('transitionend', { bubbles: true });
+    Object.defineProperty(event, 'propertyName', { value: propertyName });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+  };
+
+  it('never gives Motion a height to measure', () => {
+    tokens();
+    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    expect(boxOf(view.container).getAttribute('style')).toBeNull();
+  });
+
+  it('closes its rows, inert, until their transition ends, then unmounts', () => {
+    tokens();
+    const view = render(<GridCollapse open><span>Steps</span></GridCollapse>);
+    const box = boxOf(view.container);
+    running(box, 'grid-template-rows', 'opacity');
+    view.rerender(<GridCollapse open={false}><span>Steps</span></GridCollapse>);
+    expect(box).toHaveAttribute('data-closing');
+    expect(box).toHaveAttribute('inert');
+    ended(screen.getByText('Steps'), 'grid-template-rows');
+    ended(box, 'opacity');
+    expect(screen.queryByText('Steps')).not.toBeNull();
+    ended(box, 'grid-template-rows');
+    expect(screen.queryByText('Steps')).toBeNull();
+  });
+
+  it('unmounts at once when its close starts no transition, as under a hidden ancestor', async () => {
+    tokens();
+    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    running(boxOf(view.container));
+    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
+    await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
+  });
+
+  it('unmounts at once when only its fade runs, as with a zero --motion-move', async () => {
+    tokens();
+    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    running(boxOf(view.container), 'opacity');
+    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
+    await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
+  });
+
+  it('stays open when reopened while closing', () => {
+    tokens();
+    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    const box = boxOf(view.container);
+    running(box, 'grid-template-rows', 'opacity');
+    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
+    view.rerender(<GridCollapse open>Steps</GridCollapse>);
+    ended(box, 'grid-template-rows');
+    expect(screen.getByText('Steps')).toBeVisible();
+    expect(boxOf(view.container)).not.toHaveAttribute('data-closing');
+  });
+
+  it('shows at once when it must not appear, and grows in when opened later', () => {
+    tokens();
+    const view = render(<GridCollapse open appear={false}>Steps</GridCollapse>);
+    expect(boxOf(view.container)).toHaveAttribute('data-still');
+    running(boxOf(view.container));
+    view.rerender(<GridCollapse open={false} appear={false}>Steps</GridCollapse>);
+    view.rerender(<GridCollapse open appear={false}>Steps</GridCollapse>);
+    expect(boxOf(view.container)).not.toHaveAttribute('data-still');
   });
 });
 

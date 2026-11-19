@@ -12,6 +12,32 @@
   display: flow-root;
 }
 
+.grid-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--motion-move) var(--ease),
+    opacity var(--motion-quick) var(--ease);
+}
+
+@starting-style {
+  .grid-collapse:not([data-still]) {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.grid-collapse[data-closing] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.grid-collapse > div {
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+}
+
 /* Desktop: toggling the docked sidebar is a View Transition (motion.ts's glide). The chat stage glides to its new
    width, its snapshots unscaled and centred as its column is, so words never stretch; the sidebar slides in from the
    left edge and back out. Every View Transition runs on --motion-move and --ease. */

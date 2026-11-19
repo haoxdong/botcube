@@ -114,8 +114,10 @@
  * between every item; a 1px rail 6px in runs down the open body, and it ends 20px above the answer. Live words
  * shimmer; nothing else moves. Notes read on the loose line, steps on the page's.
  */
+/* WebKit clamps the scroll whenever the list gets shorter. */
 .worklog {
   --worklog-indent: 26px;
+  min-height: calc(var(--font-small) * var(--leading-loose) + 2 * var(--space-4));
 }
 
 .copilotKitUserMessage + .worklog {

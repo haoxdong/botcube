@@ -23,6 +23,8 @@ describe('conditional mount ownership', () => {
     '<Swap state={editing}>{editing ? <Editor /> : <Document />}</Swap>',
     '<main>{kept && <Sheet open={open}>Contents</Sheet>}</main>',
     '<main>{earlier && <div data-chat-earlier aria-hidden />}</main>',
+    '<RowCollapse open={failed}>{failed && <LoadFailed />}</RowCollapse>',
+    '<AnimatePresence>{open && <GridCollapsible key={opens}>Steps</GridCollapsible>}</AnimatePresence>',
   ])('accepts a retained owner or nonvisual marker: %s', (source) => {
     expect(bareVisibleMounts(source)).toEqual([]);
   });

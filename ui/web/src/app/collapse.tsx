@@ -1,7 +1,7 @@
 "use client";
 
-import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, type HTMLMotionProps } from "motion/react";
-import { Children, Fragment, cloneElement, isValidElement, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref } from "react";
+import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, usePresence, type HTMLMotionProps } from "motion/react";
+import { Children, Fragment, cloneElement, isValidElement, useEffect, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref } from "react";
 
 import { motionTokens } from "./motion-tokens";
 
@@ -95,6 +95,45 @@ export function Collapse({ open, appear = true, children }: { open: boolean; app
   const instant = useInstant();
   if (instant) return open ? <div className="collapsible"><div>{children}</div></div> : null;
   return <AnimatePresence initial={appear}>{open && <Collapsible>{children}</Collapsible>}</AnimatePresence>;
+}
+
+const closesRows = (animation: Animation) => "transitionProperty" in animation && animation.transitionProperty === "grid-template-rows";
+
+function GridCollapsible({ still, children }: { still: boolean; children: ReactNode }) {
+  const [present, safeToRemove] = usePresence();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (present) return;
+    if (box.current === null) throw new Error("A closing GridCollapse has no box to close from");
+    // No transitionend comes when the rows start no transition: a zero --motion-move, or a box under a hidden ancestor.
+    if (!box.current.getAnimations().some(closesRows)) safeToRemove();
+  }, [present, safeToRemove]);
+  return (
+    <div
+      ref={box}
+      className="collapsible grid-collapse"
+      data-still={still || undefined}
+      data-closing={present ? undefined : true}
+      inert={present ? undefined : true}
+      onTransitionEnd={(event) => {
+        if (!present && event.target === event.currentTarget && event.propertyName === "grid-template-rows") safeToRemove();
+      }}
+    >
+      <div>{children}</div>
+    </div>
+  );
+}
+
+export function GridCollapse({ open, appear = true, children }: { open: boolean; appear?: boolean; children: ReactNode }) {
+  const instant = useInstant();
+  const [shown, setShown] = useState(open);
+  const [opens, setOpens] = useState(0);
+  if (open !== shown) {
+    setShown(open);
+    if (open) setOpens(opens + 1);
+  }
+  if (instant) return open ? <div className="collapsible"><div>{children}</div></div> : null;
+  return <AnimatePresence initial={false}>{open && <GridCollapsible key={opens} still={!appear && opens === 0}>{children}</GridCollapsible>}</AnimatePresence>;
 }
 
 export function CollapseList({ children, initial = false, ...presence }: { children: ReactNode; initial?: boolean; onExitComplete?: () => void }) {
