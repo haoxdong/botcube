@@ -103,9 +103,8 @@ export async function startLocalChromium(
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--no-first-run',
-    // Chromium's own calls home (updates, network time) would leave through the deployment's proxy;
-    // the Agent Computer egresses only for the pages the agent opens.
     '--disable-background-networking',
+    '--disable-component-update',
     '--disable-features=NetworkTimeServiceQuerying',
     // Without it, each temporary profile asks the macOS login keychain for a "Chrome" item, which can raise "Keychain Not Found".
     '--use-mock-keychain',
