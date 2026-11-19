@@ -6,7 +6,6 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { DynamoEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { parkingTransition } from './parking-transition.js';
 import type { DeployIdentity } from './production-identity.js';
@@ -57,8 +56,6 @@ export class ProductionParkingStack extends Stack {
       SLOT_BUCKET: props.parking.slotBucket,
       ORIGIN_SLOT_KEY: props.parking.originSlotKey,
       TRANSITION_FUNCTION: transition.functionName,
-      GITHUB_APP_SECRET: props.identity.aws.ecs.parking.appSecretName,
-      REPOSITORY: props.identity.aws.ecs.parking.repository,
     });
     dispatcher.addToRolePolicy(items(['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']));
     dispatcher.addToRolePolicy(new iam.PolicyStatement({
@@ -71,7 +68,6 @@ export class ProductionParkingStack extends Stack {
     dispatcher.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [`arn:${this.partition}:s3:::${props.parking.slotBucket}`] }));
     (dispatcher.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 1;
     transition.grantInvoke(dispatcher);
-    secretsmanager.Secret.fromSecretNameV2(this, 'GithubApp', props.identity.aws.ecs.parking.appSecretName).grantRead(dispatcher);
     dispatcher.addEventSource(new DynamoEventSource(chatTable, {
       startingPosition: lambda.StartingPosition.LATEST, retryAttempts: 0, batchSize: 1,
       filters: [lambda.FilterCriteria.filter({

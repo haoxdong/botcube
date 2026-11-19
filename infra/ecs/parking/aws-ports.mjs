@@ -1,5 +1,3 @@
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { installationToken } from './github-app.mjs';
 import { ConditionalCheckFailedException, DeleteItemCommand, DynamoDBClient, GetItemCommand, PutItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, NoSuchKey, S3Client } from '@aws-sdk/client-s3';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
@@ -62,7 +60,7 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThi
   };
 }
 
-export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}), secrets = new SecretsManagerClient({}), fetch = globalThis.fetch } = {}) {
+export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}), fetch = globalThis.fetch } = {}) {
   const TableName = env('CHAT_TABLE');
   const invoke = async (/** @type {object} */ event) => {
     const response = await lambda.send(new InvokeCommand({ FunctionName: env('TRANSITION_FUNCTION'), InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
@@ -107,17 +105,6 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
     },
     async forgetRequest(/** @type {number} */ at) {
       await dynamodb.send(new DeleteItemCommand({ TableName, Key: { pk: { S: PARTITION }, sk: { S: `${DISPATCH}${at}` } } }));
-    },
-    async fallback(/** @type {'park' | 'unpark'} */ action) {
-      const { SecretString } = await secrets.send(new GetSecretValueCommand({ SecretId: env('GITHUB_APP_SECRET') }));
-      // repository_dispatch needs contents:write; the App has no Actions permission for workflow_dispatch.
-      const token = await installationToken(JSON.parse(SecretString ?? ''), env('REPOSITORY'), { contents: 'write' }, fetch);
-      const response = await fetch(`https://api.github.com/repos/${env('REPOSITORY')}/dispatches`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
-        body: JSON.stringify({ event_type: 'park-production', client_payload: { action } }),
-      });
-      if (response.status !== 204) throw new Error(`GitHub refused the ${action} dispatch with HTTP ${response.status}: ${await response.text()}`);
     },
     async dispatch(/** @type {'park' | 'unpark'} */ action) {
       return invoke({ action, op: 'start' });

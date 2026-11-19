@@ -90,8 +90,6 @@
       "parking": {
         "autoPark": false,
         "functionName": "bot-cube-production-parking",
-        "repository": "example-owner/example-repository",
-        "appSecretName": "bot-cube/github-app",
         "slotBucket": "bot-cube-sessions",
         "originSlotKey": "dev-slots/DEV_SLOT_ORIGIN",
         "automationUserAgents": ["-Verification/", "collective-automation"]

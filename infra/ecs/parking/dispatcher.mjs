@@ -26,10 +26,6 @@ export async function dispatch(event, resolved) {
     const execution = await resolved.dispatch(event.op);
     return { started: event.op, ...execution };
   }
-  if (event.op === 'fallback' && (event.action === 'park' || event.action === 'unpark')) {
-    await resolved.fallback(event.action);
-    return { fallback: event.action };
-  }
   if (event.op === 'idle') return service.idle();
   if (event.op === 'check') {
     const result = await service.check();

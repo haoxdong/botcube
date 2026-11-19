@@ -123,7 +123,7 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
   const policies = Object.values(parking.findResources('AWS::IAM::Policy')) as { Properties: { Roles: { Ref: string }[]; PolicyDocument: { Statement: { Action: string | string[]; Condition?: unknown }[] } } }[];
   const rolesAllowed = (action: string) => policies.filter(({ Properties }) => Properties.PolicyDocument.Statement.some(({ Action }) => [Action].flat().includes(action)))
     .flatMap(({ Properties }) => Properties.Roles.map(({ Ref }) => Ref.replace(/[A-F0-9]{8}$/, '')));
-  expect(rolesAllowed('secretsmanager:GetSecretValue')).toEqual(['TransitionServiceRole', 'dispatcherServiceRole']);
+  expect(rolesAllowed('secretsmanager:GetSecretValue')).toEqual(['TransitionServiceRole']);
   parking.hasResourceProperties('AWS::IAM::Policy', { PolicyDocument: { Statement: Match.arrayWith([Match.objectLike({ Action: 'ssm:GetParameters', Resource: Match.objectLike({ 'Fn::Join': Match.anyValue() }) })]) } });
   for (const metric of ['ExecutionsFailed', 'ExecutionsTimedOut', 'ExecutionsAborted']) {
     parking.hasResourceProperties('AWS::CloudWatch::Alarm', {
