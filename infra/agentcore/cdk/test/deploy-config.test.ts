@@ -232,3 +232,19 @@ test('rejects an agentcore.json that the defaults cannot make valid, naming it',
     `Invalid AgentCore config at ${path.join(root, 'agentcore/agentcore.json')}`
   );
 });
+
+test('SDK metrics stay off while Turn tracing remains enabled', async () => {
+  const config = await loadDeployConfig(TEMPLATE_DEPLOY, '/');
+  expect(runtimeOf(config.spec).envVars).toEqual(
+    expect.arrayContaining([
+      { name: 'AGENT_OBSERVABILITY_ENABLED', value: 'true' },
+      { name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' },
+      { name: 'OTEL_PYTHON_CONFIGURATOR', value: 'aws_configurator' },
+      { name: 'OTEL_TRACES_SAMPLER', value: 'always_on' },
+      { name: 'TRACELOOP_TRACE_CONTENT', value: 'false' },
+      { name: 'UNIFIED_TRACES_DESTINATION_ENABLED', value: 'false' },
+      { name: 'OTEL_METRICS_EXPORTER', value: 'none' },
+      { name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED', value: 'false' },
+    ])
+  );
+});

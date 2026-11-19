@@ -32,6 +32,8 @@ const RUNTIME_DEFAULTS = {
     { name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' },
     { name: 'OTEL_PYTHON_CONFIGURATOR', value: 'aws_configurator' },
     { name: 'OTEL_TRACES_SAMPLER', value: 'always_on' },
+    { name: 'OTEL_METRICS_EXPORTER', value: 'none' },
+    { name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED', value: 'false' },
     { name: 'TRACELOOP_TRACE_CONTENT', value: 'false' },
     { name: 'UNIFIED_TRACES_DESTINATION_ENABLED', value: 'false' },
     // Builds a throwaway agent before the first /ping, so a Runtime V2 snapshot holds that work.
