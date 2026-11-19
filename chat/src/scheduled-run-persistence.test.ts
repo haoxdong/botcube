@@ -1,7 +1,6 @@
 import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { DeleteCommand, GetCommand, DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { Hono } from 'hono';
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RUNTIME_ARN } from '../test/fakes/stack.js';
@@ -9,7 +8,7 @@ import { defined } from '../test/defined.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import type { AgentDocuments } from './agent-documents.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
-import type { ChatServiceCartridge } from './cartridge.js';
+import type { ScheduledRunSource } from './scheduled-runs.js';
 import { runScheduledTask, sqsRunQueue } from './scheduled-runs.js';
 import { ScheduledTasks, type ScheduledRunMessage } from './scheduled-tasks.js';
 import { sessionApi, type SessionApi } from './session-api.js';
@@ -94,14 +93,14 @@ describe('scheduled persistence dispatch admission', () => {
       const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
         new SchedulerClient(motoAws()));
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
-      const cartridge: ChatServiceCartridge = {
-        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+      const bot: ScheduledRunSource = {
+        agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
-        routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
-      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Brief', summary: 'Checked the curve.' }),
@@ -146,14 +145,14 @@ describe('scheduled persistence dispatch admission', () => {
       const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
         new SchedulerClient(motoAws()));
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
-      const cartridge: ChatServiceCartridge = {
-        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+      const bot: ScheduledRunSource = {
+        agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
-        routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
-      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: tasks,
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
@@ -183,12 +182,12 @@ describe('scheduled persistence dispatch admission', () => {
       const tasks = new ScheduledTasks(isolated.table.name, runs.runs, isolated.table.client,
         new SchedulerClient(motoAws()));
       const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: isolated.agentcore.url });
-      const cartridge: ChatServiceCartridge = {
-        corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+      const bot: ScheduledRunSource = {
+        agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
-        routes: new Hono(), requester: async () => ({ owner: account }), scheduledRequester: async (owner) => ({ owner }),
+        scheduledRequester: async (owner) => ({ owner }),
         filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-        credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+        credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
       // Storage refuses the first retirement, as a throttled transaction would.
       let refusals = 1;
@@ -196,7 +195,7 @@ describe('scheduled persistence dispatch admission', () => {
         if (refusals-- > 0) throw new Error('Retirement throttled');
         return tasks.retire(...args);
       };
-      const deps = { turnIdentity: null, cartridge, sessionMetadata: isolated.sessionMetadata,
+      const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
         agentDocuments: new DynamoDBAgentDocuments(isolated.table.name, isolated.table.client), scheduledTasks: { get: tasks.get.bind(tasks), recordRun: tasks.recordRun.bind(tasks), retire, issueSideChat: tasks.issueSideChat.bind(tasks) },
         stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: isolated.sessionApi.url }),
         summarizeTurn: async () => ({ title: 'Payrolls', summary: 'Previewed payrolls.' }),
@@ -234,14 +233,14 @@ describe('scheduled persistence dispatch admission', () => {
     const destinationMain = await claimed.sessionMetadata.mainChat(destination, `filed-${destination}`);
     claimed.agentcore.scriptPrompt('Preserve this occurrence', stream(...text('reserved-answer', 'Recovered original occurrence.')));
     const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: claimed.agentcore.url });
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
+    const bot: ScheduledRunSource = {
+      agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
       models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
-      routes: new Hono(), requester: async () => ({ owner: source }), scheduledRequester: async (account) => ({ owner: account }),
+      scheduledRequester: async (account) => ({ owner: account }),
       filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
-    const deps = { turnIdentity: null, cartridge, sessionMetadata: claimed.sessionMetadata,
+    const deps = { turnIdentity: null, bot, sessionMetadata: claimed.sessionMetadata,
       agentDocuments: new DynamoDBAgentDocuments(claimed.table.name, claimed.table.client), scheduledTasks: tasks,
       stopScheduledRuntime: runtime.stop, upstream: sessionLifecycle(runtime, runtime.stop), invokeSessionApi: sessionApi({ localUrl: claimed.sessionApi.url }),
       summarizeTurn: async () => ({ title: 'Reserved Claim', summary: 'Completed this occurrence.' }),
@@ -356,18 +355,18 @@ describe('scheduled persistence dispatch admission', () => {
     const account = owner();
     const task = { id: 'busy-main-result', proposalId: 'busy-main-result', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
     const deps = {
       turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata,
+      bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, async () => undefined), invokeSessionApi: post,
@@ -388,19 +387,19 @@ describe('scheduled persistence dispatch admission', () => {
     const account = owner();
     const task = { id: 'busy-main-result', proposalId: 'busy-main-result', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
     const stop = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error('Temporary stop failure')).mockResolvedValue(undefined);
     const deps = {
       turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata,
+      bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, stop), invokeSessionApi: post,
@@ -423,18 +422,18 @@ describe('scheduled persistence dispatch admission', () => {
     const destination = owner();
     const task = { id: 'busy-main-result', proposalId: 'busy-main-result', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
     const post = vi.fn<SessionApi>(async () => ({}));
     const deps = {
       turnIdentity: null, summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata,
+      bot, sessionMetadata: stack.sessionMetadata,
       agentDocuments: { get: async () => templates, save: async () => undefined, delete: async () => undefined, picture: async () => null, savePicture: async () => undefined },
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }), invokeSessionApi: post,
@@ -485,13 +484,13 @@ describe('scheduled persistence dispatch admission', () => {
     const account = owner();
     const task = { id: 'post-recovery', proposalId: 'post-recovery', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null,
+      stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,
@@ -508,7 +507,7 @@ describe('scheduled persistence dispatch admission', () => {
     const deps = {
       turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
@@ -647,13 +646,13 @@ describe('scheduled persistence dispatch admission', () => {
     const account = owner();
     const task = { id: 'record-retry', proposalId: 'record-retry', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null,
+      stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined,
@@ -666,7 +665,7 @@ describe('scheduled persistence dispatch admission', () => {
     const deps = {
       turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun, retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-fixture-runtime', invoke }, async () => undefined),
       invokeSessionApi: post,
@@ -685,17 +684,16 @@ describe('scheduled persistence dispatch admission', () => {
   it('propagates account deletion during scheduled preparation without posting to Main Chat', async () => {
     const account = owner();
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => {
         await stack.sessionMetadata.fenceOwner(value);
         return { owner: value };
       },
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null,
+      stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,
@@ -706,7 +704,7 @@ describe('scheduled persistence dispatch admission', () => {
     await expect(runScheduledTask({
       turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => ({ id: 'deleted-run', proposalId: 'deleted-proposal', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false }), recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => 'deleted-run' },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }, async () => undefined),
       invokeSessionApi: post,
@@ -719,13 +717,13 @@ describe('scheduled persistence dispatch admission', () => {
     const account = owner();
     const task = { id: 'scheduled-dispatch', proposalId: 'proposal-dispatch', title: 'Brief', prompt: 'Brief me', schedule: 'rate(1 day)', timezone: 'UTC', paused: false, ended: false };
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
-    const cartridge: ChatServiceCartridge = {
-      corsOrigins: [], agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-      accountModels: async () => [], accountModel: async () => undefined, routes: new Hono(),
-      requester: async () => ({ owner: account }), scheduledRequester: async (value) => ({ owner: value }),
+    const bot: ScheduledRunSource = {
+      agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
+      accountModels: async () => [], accountModel: async () => undefined,
+      scheduledRequester: async (value) => ({ owner: value }),
       filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
-      credentialProps: [], signInNeeded: async () => null, authorizeBrowserLiveView: async () => undefined,
-      warmSession: async () => undefined, stopSessionComputer: async () => undefined,
+      credentialProps: [], signInNeeded: async () => null,
+      stopSessionComputer: async () => undefined,
     };
     const documents: AgentDocuments = {
       get: async () => templates, save: async () => undefined, delete: async () => undefined,
@@ -738,7 +736,7 @@ describe('scheduled persistence dispatch admission', () => {
     const run = runScheduledTask({
       turnIdentity: null,
       summarizeTurn: async () => ({ title: 'Brief', summary: 'Completed the brief.' }),
-      cartridge, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
+      bot, sessionMetadata: stack.sessionMetadata, agentDocuments: documents,
       scheduledTasks: { get: async () => task, recordRun: async () => undefined, retire: async () => undefined, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke: async () => new Response('data: {"type":"RUN_FINISHED"}\n\n') }, async () => undefined),
       invokeSessionApi: async (event) => {

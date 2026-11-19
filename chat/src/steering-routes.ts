@@ -1,7 +1,7 @@
 import { assertIdleContinuable } from './sessions.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
-import type { ChatServiceCartridge } from './cartridge.js';
+import type { RequesterSource } from './requester.js';
 import { HttpError } from './http-error.js';
 import type { SessionMetadata } from './session-metadata.js';
 import type { sessionLifecycle } from './session-lifecycle.js';
@@ -18,13 +18,13 @@ function missed(sessionId: string, messageId: string) {
 
 export function steeringRoutes(
   app: Hono,
-  cartridge: ChatServiceCartridge,
+  bot: RequesterSource,
   sessionMetadata: SessionMetadata,
   upstream: ReturnType<typeof sessionLifecycle> | null,
 ) {
   app.post('/threads/:id/steer', async (c) => {
     if (upstream === null) throw new HttpError(503, 'Harness is not configured');
-    const { owner } = await cartridge.requester(c);
+    const { owner } = await bot.requester(c);
     const sessionId = c.req.param('id');
     const parsed = steeringMessage.safeParse(await c.req.json().catch(() => undefined));
     if (!parsed.success) throw new HttpError(422, 'A steering message requires id and content');
@@ -49,7 +49,7 @@ export function steeringRoutes(
 
   app.delete('/threads/:id/steer/:messageId', async (c) => {
     if (upstream === null) throw new HttpError(503, 'Harness is not configured');
-    const { owner } = await cartridge.requester(c);
+    const { owner } = await bot.requester(c);
     const sessionId = c.req.param('id');
     const messageId = c.req.param('messageId');
     const metadata = await sessionMetadata.get(owner, sessionId);

@@ -155,7 +155,7 @@ export function createChatService(
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
+    const deps = { bot: cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
     const unavailable = () => { scheduledRunsUnavailable = true; };
     const stopRuns = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, unavailable, async () => {
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
@@ -191,7 +191,7 @@ export function createChatService(
 
 
   turnRoutes(app, {
-    cartridge,
+    bot: cartridge,
     stores: { sessionMetadata, agentDocuments },
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
     turns: { summarizeTurn, turnQuota, turnCredentials, userTokens: turnIdentity },

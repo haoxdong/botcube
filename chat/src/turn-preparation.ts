@@ -4,6 +4,48 @@ import { sessionAccessError } from './sessions.js';
 import { persistedTurnError, turnErrorDetails } from './turn-stream.js';
 import type { AgentDocumentSet } from './agent-documents.js';
 import { HttpError } from './http-error.js';
+import type { RunAgentInput } from '@ag-ui/client';
+import type { AgentModel, ModelSource } from './models.js';
+import type { Requester, RequesterSource } from './requester.js';
+
+/** What a Turn, chat or scheduled, needs from the bot: its documents, models, Memory gate and upstream payload. */
+export interface TurnSource<R extends Requester = Requester> extends ModelSource<R> {
+  /** The Agent Identity and Soul templates every account's agent starts from. */
+  readonly agentDocuments: AgentDocumentSet;
+  /**
+   * The bot settings' Memory gate (`memory`): false keeps no Memory for anyone. Its routes refuse,
+   * and each Turn tells the Harness (`forwardedProps.botMemory`). On unless false.
+   */
+  readonly memory?: boolean;
+  /** The user ID an account's Sessions are filed under in the Session record. */
+  filingUserId(owner: string): string;
+  /**
+   * The upstream payload for one Turn. It must forward the requester's account ID
+   * and any credential binding; the Chat Service adds `forwardedProps.sessionUserId`.
+   */
+  invocationPayload(input: RunAgentInput, requester: R, model: AgentModel): Promise<InvocationPayload>;
+  /** A chat's Turn passed its Session's checks and starts now; whatever this begins must not hold the Turn. */
+  turnStarting?(requester: R, threadId: string): void;
+  /**
+   * The forwarded props in which `invocationPayload` hands the Harness a credential,
+   * which the Chat Service never relays to the client.
+   */
+  readonly credentialProps: readonly string[];
+}
+
+/** What the chat Turn routes need from the bot beyond a Turn's own: the requester and its browser. */
+export interface TurnRouteSource<R extends Requester = Requester> extends TurnSource<R>, RequesterSource<R> {
+  browserLiveView?(requester: R, threadId: string): Promise<{ open: true; sessionId: string } | null>;
+  /**
+   * The forwarded props in which `invocationPayload` tells the Harness who the requester is.
+   * The Chat Service strips any a client sent, with the credential props and BotCube's own.
+   */
+  readonly identityProps?: readonly string[];
+  /** Whether the requester may run a Turn on a candidate `agentSystemPrompt` or `cartridgeSystemPrompt`; none may without it. */
+  tunesPrompts?(requester: R): boolean;
+  /** Ready the bot's own side of a chat the requester opened, alongside its agent's warmup, such as its browser. */
+  warmSession(requester: R, sessionId: string): Promise<void>;
+}
 
 /** The JSON body an upstream Harness receives for one Turn. */
 export type InvocationPayload = Record<string, unknown> & {

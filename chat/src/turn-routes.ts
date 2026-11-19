@@ -2,8 +2,7 @@ import type { Hono } from 'hono';
 import type { RunAgentInput } from '@ag-ui/client';
 import { RunAgentInputSchema, RunErrorEventSchema } from '@ag-ui/core/schemas';
 import { agentDocumentEdit, type AgentDocumentSet, type AgentDocuments } from './agent-documents.js';
-import type { ChatServiceCartridge } from './cartridge.js';
-import { botMemory } from './turn-preparation.js';
+import { botMemory, type TurnRouteSource } from './turn-preparation.js';
 import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
@@ -23,6 +22,7 @@ import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
 import { isRecord, omitOptionalNulls } from './payload.js';
 import { dispatchAfterWriter, preparationFailure, turnAccessError } from './turn-preparation.js';
+
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
 const BOTCUBE_CREDENTIAL_PROPS = ['temporary', 'agentComputerCdpUrl', 'credentialServiceInvocationToken', 'credentialServiceUrl', 'files', 'userToken'];
@@ -69,7 +69,7 @@ class WarmupFailure extends Error {
 }
 
 interface TurnRoutesOptions {
-  cartridge: ChatServiceCartridge;
+  bot: TurnRouteSource;
   stores: { sessionMetadata: SessionMetadata; agentDocuments: AgentDocuments };
   harness: { upstream: ReturnType<typeof sessionLifecycle> | null; warmupTimeoutMs: number };
   turns: {
@@ -80,7 +80,7 @@ interface TurnRoutesOptions {
   };
 }
 
-export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: TurnRoutesOptions) {
+export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoutesOptions) {
   const { sessionMetadata, agentDocuments } = stores;
   const { upstream, warmupTimeoutMs } = harness;
   const { summarizeTurn, turnQuota, turnCredentials: credentialSource, userTokens } = turns;
@@ -90,23 +90,23 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
     for (const prop of ['agentSystemPrompt', 'cartridgeSystemPrompt']) {
       const candidate = forwardedProps?.[prop];
       if (candidate === undefined) continue;
-      if (cartridge.tunesPrompts?.(requester) !== true) throw new HttpError(403, `${prop} is only for the prompt tuner`);
+      if (bot.tunesPrompts?.(requester) !== true) throw new HttpError(403, `${prop} is only for the prompt tuner`);
       if (typeof candidate !== 'string') throw new HttpError(422, `${prop} must be text`);
     }
   };
 
-  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, cartridge.agentDocuments)) => {
+  const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
-    for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...cartridge.credentialProps, ...(cartridge.identityProps ?? [])]) delete forwardedProps[prop];
-    const preparing = cartridge.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
-      captureCredentials?.(turnCredentials(payload.forwardedProps, cartridge.credentialProps));
+    for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...bot.credentialProps, ...(bot.identityProps ?? [])]) delete forwardedProps[prop];
+    const preparing = bot.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
+      captureCredentials?.(turnCredentials(payload.forwardedProps, bot.credentialProps));
       return payload;
     });
     const [payload, loadedDocuments] = await admissionResults([preparing, documents]);
     payload.forwardedProps.model = model.key;
     payload.forwardedProps.agentIdentity = loadedDocuments.agentIdentity;
     payload.forwardedProps.soul = loadedDocuments.soul;
-    botMemory(payload.forwardedProps, cartridge);
+    botMemory(payload.forwardedProps, bot);
     return payload;
   };
 
@@ -118,7 +118,7 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
     const timing = new TurnTiming(receipt, parsed.data.runId, parsed.data.threadId, c.req.header('user-agent'));
     try {
-      const requester = await cartridge.requester(c);
+      const requester = await bot.requester(c);
       timing.mark('requester');
       // Forward the client's input as sent, but its held IDs: the protocol allows fields this schema does not know.
       const input = body as RunAgentInput;
@@ -127,21 +127,21 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
       if (opening && input.messages.length !== 0) throw new HttpError(422, 'An opening Turn cannot contain messages');
       const initialMessages = structuredClone(input.messages);
       const held = takeHeldIds(input.forwardedProps ?? {});
-      const model = await requireAllowedModel(input, cartridge, requester);
+      const model = await requireAllowedModel(input, bot, requester);
       requireCandidatePrompts(input.forwardedProps, requester);
       const traffic = trafficMarker(input.forwardedProps?.traffic, c.req.header('user-agent'));
       timing.model = model.key;
       timing.mark('model');
       await turnQuota?.admit(requester.owner, c.req.header('cf-connecting-ip'), requester.rateTier === 'authenticated');
-      const documents = Promise.allSettled([agentDocuments.get(requester.owner, cartridge.agentDocuments)]);
-      const accessError = (error: unknown) => turnAccessError(error, documents, cartridge.agentDocuments);
+      const documents = Promise.allSettled([agentDocuments.get(requester.owner, bot.agentDocuments)]);
+      const accessError = (error: unknown) => turnAccessError(error, documents, bot.agentDocuments);
       const running = { startedAt: new Date().toISOString(), runId: input.runId };
       const request = validatedInput.messages.slice().reverse().find((message) => message.role === 'user');
       let prepared: PreparedTurn;
       let filingUserId: string;
       try {
         prepared = await sessionMetadata.prepareTurn(requester.owner, input.threadId, {
-          filingUserId: cartridge.filingUserId(requester.owner),
+          filingUserId: bot.filingUserId(requester.owner),
           title: (validatedInput.messages.map(userText).find(Boolean) ?? 'Untitled conversation').slice(0, 200),
           provider: model.provider,
           running,
@@ -164,7 +164,7 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
       }
       timing.mark('admitted');
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
-      let credentials = turnCredentials(input.forwardedProps ?? {}, cartridge.credentialProps);
+      let credentials = turnCredentials(input.forwardedProps ?? {}, bot.credentialProps);
       try {
         const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; }, documents.then(([result]) => {
           if (result.status === 'rejected') throw result.reason;
@@ -172,7 +172,7 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
         }));
         timing.mark('payload');
         const identity = await forwardTurnIdentity(credentialSource, payload.forwardedProps, {
-          actorId: cartridge.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
+          actorId: bot.filingUserId(requester.owner), filingActorId: filingUserId, sessionId: input.threadId, startedAt: running.startedAt,
         });
         const userToken = await forwardUserToken(userTokens, payload.forwardedProps, { ...requester, threadId: input.threadId, startedAt: running.startedAt });
         timing.mark('identity');
@@ -180,8 +180,8 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
         payload.forwardedProps.sessionUserId = filingUserId;
         Object.assign(payload.forwardedProps, traffic);
         payload.forwardedProps.turnStartedAt = running.startedAt;
-        cartridge.turnStarting?.(requester, input.threadId);
-        const browserLiveView = await cartridge.browserLiveView?.(requester, input.threadId);
+        bot.turnStarting?.(requester, input.threadId);
+        const browserLiveView = await bot.browserLiveView?.(requester, input.threadId);
         timing.mark('liveView');
         const saveTurn = (finished: TurnActivity) => request === undefined ? undefined : sessionMetadata.saveTurnSummary(requester.owner, { sessionId: input.threadId, filingUserId, messageId: request.id }, finished);
         timing.mark('warmupWaitStart');
@@ -236,11 +236,11 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
     }
   });
 
-  steeringRoutes(app, cartridge, sessionMetadata, upstream);
+  steeringRoutes(app, bot, sessionMetadata, upstream);
 
   app.post('/threads/:id/stop', async (c) => {
     if (upstream === null) return c.json({ error: 'AGENTCORE_RUNTIME_ARN is not configured' }, 503);
-    const { owner } = await cartridge.requester(c);
+    const { owner } = await bot.requester(c);
     const sessionId = c.req.param('id');
     const body: unknown = await c.req.json().catch(() => undefined);
     const runId = isRecord(body) ? body.runId : undefined;
@@ -270,12 +270,12 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
 
   const namedWarmupProps = async (input: RunAgentInput, requester: Requester, requestedModel: unknown, effort: unknown) => {
     input.forwardedProps = {
-      model: requestedModel ?? accountDefaultModel(await accountModelList(cartridge, requester)).key,
+      model: requestedModel ?? accountDefaultModel(await accountModelList(bot, requester)).key,
       ...(typeof effort === 'string' && { effort }),
     };
-    const payload = await turnPayload(input, requester, await requireAllowedModel(input, cartridge, requester));
+    const payload = await turnPayload(input, requester, await requireAllowedModel(input, bot, requester));
     const recorded = await sessionMetadata.get(requester.owner, input.threadId);
-    return { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? cartridge.filingUserId(requester.owner) };
+    return { ...payload.forwardedProps, warmup: true, sessionUserId: recorded?.filing_user_id ?? bot.filingUserId(requester.owner) };
   };
 
   app.post('/warmup', async (c) => {
@@ -309,8 +309,8 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
     let warmSession: () => Promise<void> = async () => undefined;
     let endWarming = () => {};
     if (mainChat === true || (typeof threadId === 'string' && threadId)) {
-      const requester = await cartridge.requester(c);
-      input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner, cartridge.filingUserId(requester.owner)) : (threadId as string);
+      const requester = await bot.requester(c);
+      input.threadId = mainChat === true ? await sessionMetadata.mainChat(requester.owner, bot.filingUserId(requester.owner)) : (threadId as string);
       endWarming = warming.begin(requester.owner, input.threadId);
       input.forwardedProps = await namedWarmupProps(input, requester, requestedModel, effort).catch((error: unknown) => {
         endWarming();
@@ -318,8 +318,8 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
       });
       mark('props');
       const sessionId = input.threadId;
-      namedSession = { owner: requester.owner, accountActorId: cartridge.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
-      warmSession = () => cartridge.warmSession(requester, sessionId);
+      namedSession = { owner: requester.owner, accountActorId: bot.filingUserId(requester.owner), session: { session_id: sessionId, filing_user_id: input.forwardedProps.sessionUserId as string } };
+      warmSession = () => bot.warmSession(requester, sessionId);
     }
     const warmAgent = async () => {
       try {
@@ -347,7 +347,7 @@ export function turnRoutes(app: Hono, { cartridge, stores, harness, turns }: Tur
           await response.body?.cancel();
           return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
         }
-        const credentials = turnCredentials(input.forwardedProps as Record<string, unknown>, cartridge.credentialProps);
+        const credentials = turnCredentials(input.forwardedProps as Record<string, unknown>, bot.credentialProps);
         const text = await response.text();
         mark('answer');
         const failure = await runError(text, credentials);

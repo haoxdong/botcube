@@ -7,8 +7,7 @@ import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { AgentDocuments } from './agent-documents.js';
 import type { ParkHistory } from './park-history.js';
-import type { ChatServiceCartridge } from './cartridge.js';
-import { botMemory } from './turn-preparation.js';
+import { botMemory, type TurnSource } from './turn-preparation.js';
 import { HttpError } from './http-error.js';
 import { accountDefaultModel, accountModelList, namedModel } from './models.js';
 import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
@@ -19,13 +18,28 @@ import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-sum
 import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { assertReservedMainIdentity, postScheduledResult, type ScheduledDeliveryDeps } from './scheduled-run-delivery.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';
+import type { Requester } from './requester.js';
+
+/** What a scheduled run needs from the bot beyond a Turn's own: the owner's requester and Agent Computer. */
+export interface ScheduledRunSource<R extends Requester = Requester> extends TurnSource<R> {
+  /** The requester a scheduled run of the owner's acts as, with no request to resolve it from. */
+  scheduledRequester(owner: string): Promise<R>;
+  /**
+   * The sign-in a scheduled run's outputs (its tool results and answers) say
+   * the agent needed, recorded on the owner's account so the user is asked for
+   * it; null when the run needed none. Absent, a run ends on its own outcome: a bot whose own service refuses a
+   * missing sign-in fails the run with that service's message (ADR 0091).
+   */
+  signInNeeded?(owner: string, outputs: string[]): Promise<string | null>;
+  stopSessionComputer?(owner: string, sessionId: string): Promise<void>;
+}
 
 export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   /** Null: the Chat Service has no keys and forwards no Turn identity. */
   turnIdentity: TurnCredentialSource | null;
   /** The Turn identity keys that sign the owner's user token; absent, none is forwarded. */
   userTokens?: UserTokenSigner | null | undefined;
-  cartridge: ChatServiceCartridge;
+  bot: ScheduledRunSource;
   agentDocuments: AgentDocuments;
   scheduledTasks: Pick<ScheduledTasks, 'get' | 'recordRun' | 'retire' | 'issueSideChat'>;
   summarizeTurn: TurnSummarizer;
@@ -44,7 +58,7 @@ async function allocateSideChat(metadata: SessionMetadata, owner: string, sideCh
  */
 
 export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, deliveryId, deliveryFence, firedAt }: ScheduledRunMessage & { deliveryId?: string; firedAt?: Date }): Promise<void> {
-  const { cartridge, sessionMetadata } = deps;
+  const { bot, sessionMetadata } = deps;
   if (typeof deliveryId !== 'string' || deliveryId.trim() === '') throw new HttpError(503, 'Scheduled delivery identity is unavailable');
   const store = sessionMetadata.scheduledRuns;
   if (store === undefined) throw new HttpError(503, 'Scheduled delivery storage is unavailable');
@@ -54,7 +68,7 @@ export async function runScheduledTask(deps: ScheduledRunDeps, { owner, taskId, 
   const admission = await scheduledTaskAdmission(deps, store, owner, taskId, previous, deliveryContext);
   if (admission === null) return;
   const { executionOwner, task } = admission;
-  const filingUserId = previous?.filingUserId ?? cartridge.filingUserId(owner);
+  const filingUserId = previous?.filingUserId ?? bot.filingUserId(owner);
   const mainChat = previous?.mainChat ?? await sessionMetadata.mainChat(owner, filingUserId);
   await assertReservedMainIdentity(sessionMetadata, owner, executionOwner, mainChat, previous?.mainFilingUserId);
   const delivery = previous === null
@@ -162,10 +176,10 @@ async function resumeScheduledDelivery(sessionMetadata: SessionMetadata, previou
 }
 
 function scheduledTeardown(deps: ScheduledRunDeps, owner: string, sideChat: string) {
-  if (deps.upstream?.runtimeTarget !== undefined && (deps.stopScheduledRuntime === undefined || deps.cartridge.stopSessionComputer === undefined)) {
+  if (deps.upstream?.runtimeTarget !== undefined && (deps.stopScheduledRuntime === undefined || deps.bot.stopSessionComputer === undefined)) {
     throw new HttpError(503, 'Scheduled execution requires Runtime and Browser teardown');
   }
-  return [() => deps.stopScheduledRuntime?.(sideChat), () => deps.cartridge.stopSessionComputer?.(owner, sideChat)];
+  return [() => deps.stopScheduledRuntime?.(sideChat), () => deps.bot.stopSessionComputer?.(owner, sideChat)];
 }
 
 async function runInSideChat(
@@ -177,17 +191,17 @@ async function runInSideChat(
   reached: { sideChat: boolean },
   deliveryContext: Pick<ScheduledRunMessage, 'deliveryFence'>,
 ): Promise<RunOutcome> {
-  const { cartridge, sessionMetadata } = deps;
+  const { bot, sessionMetadata } = deps;
   if (deps.upstream === null) throw new Error('AGENTCORE_RUNTIME_ARN is not configured');
   const sideChat = delivery.sideChat;
   const stops = scheduledTeardown(deps, owner, sideChat);
   const messageId = delivery.inputMessageId;
-  const requester = await cartridge.scheduledRequester(owner);
+  const requester = await bot.scheduledRequester(owner);
   // The task's chosen model, else the account's default.
   const model =
     task.model === undefined
-      ? accountDefaultModel(await accountModelList(cartridge, requester))
-      : await namedModel(cartridge, requester, task.model);
+      ? accountDefaultModel(await accountModelList(bot, requester))
+      : await namedModel(bot, requester, task.model);
   const input: RunAgentInput = {
     threadId: sideChat,
     runId: delivery.runId,
@@ -220,21 +234,21 @@ async function runInSideChat(
   try {
     execution = await deps.sessionMetadata.scheduledRuns?.execution(owner, sideChat);
     if (execution === undefined) throw new HttpError(503, 'Scheduled execution admission is unavailable');
-    const payload = await cartridge.invocationPayload(input, requester, model);
-    const documents = await deps.agentDocuments.get(owner, cartridge.agentDocuments);
+    const payload = await bot.invocationPayload(input, requester, model);
+    const documents = await deps.agentDocuments.get(owner, bot.agentDocuments);
     payload.forwardedProps.agentIdentity = documents.agentIdentity;
     payload.forwardedProps.soul = documents.soul;
-    botMemory(payload.forwardedProps, cartridge);
+    botMemory(payload.forwardedProps, bot);
     payload.forwardedProps.sessionUserId = sessionUserId;
     payload.forwardedProps.turnStartedAt = new Date().toISOString();
     // The prompt may still say how often to run; a run must not propose another task.
     payload.forwardedProps.scheduledRun = true;
     await forwardTurnIdentity(deps.turnIdentity, payload.forwardedProps, {
-      actorId: cartridge.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
+      actorId: bot.filingUserId(owner), filingActorId: sessionUserId, sessionId: sideChat, startedAt: running.startedAt,
     });
     await forwardUserToken(deps.userTokens ?? null, payload.forwardedProps, { ...requester, threadId: sideChat, startedAt: running.startedAt });
     // A scheduled run is a Turn of its Side Chat, so its browser starts as a chat Turn's does (ADR 0077 decision 1).
-    cartridge.turnStarting?.(requester, sideChat);
+    bot.turnStarting?.(requester, sideChat);
     const current = await deps.scheduledTasks.get(owner, task.id, deliveryContext);
     if (current === null) return { status: 'skipped', text: 'the task was no longer available' };
     const boundsChanged = current.startDate !== task.startDate || current.endDate !== task.endDate;
@@ -247,7 +261,7 @@ async function runInSideChat(
     output = await readScheduledRun(
       response,
       deps.upstream.label,
-      turnCredentials(payload.forwardedProps, cartridge.credentialProps),
+      turnCredentials(payload.forwardedProps, bot.credentialProps),
       initialMessages,
     );
   } catch (error) {
@@ -260,7 +274,7 @@ async function runInSideChat(
       await sessionMetadata.turnEnded(owner, sideChat, running, undefined);
     }
   }
-  const signIn = await cartridge.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
+  const signIn = await bot.signInNeeded?.(owner, [...output.toolResults, ...output.texts]) ?? null;
   const answer = output.texts.at(-1);
   const turn = { sessionId: sideChat, filingUserId: sessionUserId, messageId };
   if (signIn === null && output.error === null) {
