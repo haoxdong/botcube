@@ -3,10 +3,11 @@ import { HttpFake } from '../test/fakes/http-fake.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { HttpError } from './http-error.js';
+import { filed } from '../test/stock-bot.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true });
 });
 afterAll(() => stack.stop());
 afterEach(() => vi.restoreAllMocks());
@@ -18,7 +19,7 @@ const postTurn = (target: InProcessStack, body: string, headers: Record<string, 
   target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
 
 async function titleOf(threadId: string, messages: unknown[]): Promise<string> {
-  await stack.allocate('account-1', threadId);
+  await stack.allocate('acct_account-1', threadId);
   await (await postTurn(stack, turn(threadId, messages))).text();
   const { threads } = (await (await stack.app.request('/threads')).json()) as { threads: { id: string; title: string }[] };
   return defined(threads.find(({ id }) => id === threadId), `thread ${threadId}`).title;
@@ -26,7 +27,7 @@ async function titleOf(threadId: string, messages: unknown[]): Promise<string> {
 
 describe('a Turn', () => {
   it('passes the browser timezone through to the Harness', async () => {
-    await stack.allocate('account-1', 'timezone-turn');
+    await stack.allocate('acct_account-1', 'timezone-turn');
     const response = await postTurn(stack, JSON.stringify({
       threadId: 'timezone-turn', runId: 'run-zone', state: {},
       messages: [{ id: 'zone-question', role: 'user', content: 'What day is it?' }],
@@ -44,12 +45,12 @@ describe('a Turn', () => {
     let entered!: () => void;
     const waiting = new Promise<void>((resolve) => { release = resolve; });
     const preparing = new Promise<void>((resolve) => { entered = resolve; });
-    const target = await startInProcess({ cartridge: { invocationPayload: async (input) => {
+    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async (input) => {
       entered();
       await waiting;
       return { ...input, forwardedProps: { ...input.forwardedProps } };
     } } });
-    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('account-1', 'preparing-side');
+    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('acct_account-1', 'preparing-side');
     const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
     target.sessionApi.reply(id, 404, { code: 'SESSION_NOT_FOUND', error: 'No checkpoint yet' });
     const posted = postTurn(target, turn(id));
@@ -80,12 +81,12 @@ describe('a Turn', () => {
     let entered!: () => void;
     const waiting = new Promise<void>((resolve) => { release = resolve; });
     const preparing = new Promise<void>((resolve) => { entered = resolve; });
-    const target = await startInProcess({ cartridge: { invocationPayload: async () => {
+    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async () => {
       entered();
       await waiting;
       throw new HttpError(503, 'Turn credentials unavailable');
     } } });
-    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('account-1', 'failed-preparing-side');
+    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('acct_account-1', 'failed-preparing-side');
     const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
     target.sessionApi.reply(id, 200, { messages: [] });
     const posted = postTurn(target, turn(id));
@@ -113,12 +114,12 @@ describe('a Turn', () => {
 
   it('withholds newly issued payload credentials from a preparation failure on reload', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const target = await startInProcess({ cartridge: {
+    const target = await startInProcess({ stock: true, cartridge: {
       credentialProps: ['testToken'],
       invocationPayload: async (input) => ({ ...input, forwardedProps: { testToken: 'issued-private-token' } }),
       browserLiveView: async () => { throw new Error('echo: issued-private-token'); },
     } });
-    const id = await target.allocate('account-1', 'preparation-credential');
+    const id = await target.allocate('acct_account-1', 'preparation-credential');
     target.sessionApi.reply(id, 200, { messages: [] });
     try {
       const response = await postTurn(target, turn(id));
@@ -150,8 +151,8 @@ describe('a Turn', () => {
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
-    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('account-1', 'failed-before-stream-side');
+    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
+    const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('acct_account-1', 'failed-before-stream-side');
     const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
     target.sessionApi.reply(id, 200, { messages: [] });
     try {
@@ -185,14 +186,14 @@ describe('a Turn', () => {
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
       }).listen();
-      const target = await startInProcess({
+      const target = await startInProcess({ stock: true,
         config: { localHarnessUrl: local.url },
         cartridge: { invocationPayload: async (input) => {
           if (failing && mode === 'preparation') throw new HttpError(503, `Turn credentials unavailable: ${details}`);
           return { ...input, forwardedProps: { ...input.forwardedProps } };
         } },
       });
-      const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('account-1', `oversized-${mode}-side`);
+      const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('acct_account-1', `oversized-${mode}-side`);
       const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
       target.sessionApi.reply(id, 200, { messages: [] });
       try {
@@ -226,7 +227,7 @@ describe('a Turn', () => {
 
   // A reload or a closed tab stopped the Turn, leaving its reply cut off.
   it('runs on to its end when its client goes away, sending AgentCore no stop', async () => {
-    await stack.allocate('account-1', 'session-left');
+    await stack.allocate('acct_account-1', 'session-left');
     const response = await postTurn(stack, turn('session-left'));
 
     await defined(response.body, 'a response body').cancel();
@@ -250,7 +251,7 @@ describe('a Turn', () => {
       ],
       drop,
     });
-    await stack.allocate('account-1', sessionId);
+    await stack.allocate('acct_account-1', sessionId);
     const response = await postTurn(stack, turn(sessionId));
 
     await defined(response.body, 'a response body').cancel();
@@ -267,10 +268,10 @@ describe('a Turn', () => {
       response.write('data: {"type":"RUN_STARTED"}\n\n');
       finish = () => response.end('data: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
+    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      await target.allocate('account-1', 'session-midway');
+      await target.allocate('acct_account-1', 'session-midway');
       const response = await postTurn(target, turn('session-midway'));
       target.sessionApi.reply('session-midway', 404, { code: 'SESSION_NOT_FOUND', error: 'No checkpoint yet' });
       reader = defined(response.body, 'the running Turn stream').getReader();
@@ -298,7 +299,7 @@ describe('a Turn', () => {
   it('reaches the AgentCore Runtime for its Session, filed under its account', async ({ onTestFinished }) => {
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-03T22:00:00.250Z') });
     onTestFinished(() => { vi.useRealTimers(); });
-    await stack.allocate('account-1', 'session-relayed');
+    await stack.allocate('acct_account-1', 'session-relayed');
     const response = await postTurn(stack, turn('session-relayed'), { accept: 'text/event-stream' });
 
     expect(response.status).toBe(200);
@@ -313,17 +314,19 @@ describe('a Turn', () => {
       tools: [],
       context: [],
       forwardedProps: {
-        sessionUserId: 'filed-account-1',
+        sessionUserId: filed('acct_account-1'),
         turnStartedAt: '2026-11-03T22:00:00.250Z',
-        agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
+        agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Direct, precise, and calm', avatar: '' },
         soul: 'Be brief.',
-        model: 'plan',
+        // The local Agent Computer's CDP endpoint for this Session.
+        agentComputerCdpUrl: expect.stringMatching(/^ws:\/\//),
+        model: 'quick',
       },
     });
   });
 
   it('carries the browser live-view event name the Cartridge picks', async () => {
-    await stack.allocate('account-1', 'session-live-view');
+    await stack.allocate('acct_account-1', 'session-live-view');
     stack.agentcore.script('session-live-view', {
       kind: 'stream',
       frames: ['data: {"type":"TOOL_CALL_ARGS","toolCallId":"c1","delta":"Session: S-1 "}'],
@@ -339,7 +342,7 @@ describe('a Turn', () => {
   });
 
   it('answers 503 when no Harness is configured', async () => {
-    const bare = await startInProcess({ config: { agentCore: null } });
+    const bare = await startInProcess({ stock: true, config: { agentCore: null } });
     try {
       const response = await postTurn(bare, turn('session-unconfigured'));
 
@@ -356,9 +359,9 @@ describe('a Turn', () => {
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end('data: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
+    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
     try {
-      await target.allocate('account-1', 'session-local');
+      await target.allocate('acct_account-1', 'session-local');
       const response = await postTurn(target, turn('session-local'), { accept: 'application/json' });
 
       expect(response.status).toBe(200);
@@ -374,7 +377,7 @@ describe('a Turn', () => {
   });
 
   it('on a deleted Session answers 410 without reaching the agent', async () => {
-    await stack.allocate('account-1', 'session-deleted');
+    await stack.allocate('acct_account-1', 'session-deleted');
     await (await postTurn(stack, turn('session-deleted'))).text();
     expect((await stack.app.request('/threads/session-deleted', { method: 'DELETE' })).status).toBe(204);
 
@@ -387,9 +390,9 @@ describe('a Turn', () => {
 
   it('tells the Cartridge it starts only once its Session took it', async () => {
     const turnStarting = vi.fn();
-    const watched = await startInProcess({ cartridge: { turnStarting } });
+    const watched = await startInProcess({ stock: true, cartridge: { turnStarting } });
     try {
-      await watched.allocate('account-1', 'session-starting');
+      await watched.allocate('acct_account-1', 'session-starting');
       await (await postTurn(watched, turn('session-starting'))).text();
       expect(turnStarting.mock.calls).toEqual([[expect.anything(), 'session-starting']]);
       expect((await watched.app.request('/threads/session-starting', { method: 'DELETE' })).status).toBe(204);
@@ -405,7 +408,7 @@ describe('a Turn', () => {
   it('whose Session cannot be recorded fails as a 500', async () => {
     const failure = new Error('no filing user');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const broken = await startInProcess({
+    const broken = await startInProcess({ stock: true,
       cartridge: {
         filingUserId: () => {
           throw failure;
@@ -439,7 +442,7 @@ describe("a Turn's traffic marker", () => {
     ['an unmarked browser', 'Mozilla/5.0', {}, undefined],
   ])('reaches the Harness as sent for %s', async (name, userAgent, forwardedProps, expected) => {
     const threadId = `traffic-${name.replaceAll(' ', '-')}`;
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
 
     await (await postTurn(stack, markedTurn(threadId, forwardedProps), { 'user-agent': userAgent })).text();
 

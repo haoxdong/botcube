@@ -39,13 +39,12 @@ export class TestAccounts extends AccountStore {
     super(table, { key: TEST_ACCOUNT_KEY, product: TEST_BOT.agentIdentity.name }, documents);
   }
 
-  /** A session token for `accountId`, registering the account on first use. */
-  signIn(accountId: string): Promise<string> {
-    let session = this.sessions.get(accountId);
-    if (session === undefined) {
-      session = this.register(accountId).then(() => this.createSession(accountId));
-      this.sessions.set(accountId, session);
-    }
+  /** A live session token for `accountId`, registering the account on first use; a test's fake clock can expire one. */
+  async signIn(accountId: string): Promise<string> {
+    const cached = this.sessions.get(accountId);
+    if (cached !== undefined && await this.liveSession(await cached) !== null) return cached;
+    const session = (cached ?? this.register(accountId)).then(() => this.createSession(accountId));
+    this.sessions.set(accountId, session);
     return session;
   }
 

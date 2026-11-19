@@ -3,12 +3,13 @@ import { HttpError } from './http-error.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN } from '../test/fakes/stack.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
+import { filed } from '../test/stock-bot.js';
 
 const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true });
 });
 afterAll(() => stack.stop());
 afterEach(() => vi.restoreAllMocks());
@@ -18,7 +19,7 @@ const postWarmup = (target: InProcessStack, body?: BodyInit) =>
 
 describe('POST /warmup', () => {
   it("sends the requester's Turn invocation with no message, so the Harness builds their agent before the Turn", async () => {
-    await stack.allocate('account-1', 'warm-session');
+    await stack.allocate('acct_account-1', 'warm-session');
     const response = await postWarmup(stack, '{"threadId":"warm-session","model":"thorough","effort":"high"}');
 
     expect(response.status).toBe(200);
@@ -36,15 +37,17 @@ describe('POST /warmup', () => {
         model: 'thorough',
         effort: 'high',
         warmup: true,
-        agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
+        agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Direct, precise, and calm', avatar: '' },
         soul: 'Be brief.',
-        sessionUserId: 'filed-account-1',
+        // The local Agent Computer's CDP endpoint for this Session.
+        agentComputerCdpUrl: expect.stringMatching(/^ws:\/\//),
+        sessionUserId: filed('acct_account-1'),
       },
     });
   });
 
   it('logs one chat_warmup_timing line with each stage offset, so a slow warmup shows which stage took the time', async () => {
-    await stack.allocate('account-1', 'warm-timed');
+    await stack.allocate('acct_account-1', 'warm-timed');
     const log = vi.spyOn(console, 'info');
 
     expect((await postWarmup(stack, '{"threadId":"warm-timed"}')).status).toBe(200);
@@ -60,7 +63,7 @@ describe('POST /warmup', () => {
   });
 
   it('logs a failed chat_warmup_timing line for a warmup the Runtime refuses', async () => {
-    await stack.allocate('account-1', 'warm-timed-refused');
+    await stack.allocate('acct_account-1', 'warm-timed-refused');
     stack.agentcore.script('warm-timed-refused', { kind: 'error', status: 500, body: null });
     const log = vi.spyOn(console, 'info');
 
@@ -72,7 +75,7 @@ describe('POST /warmup', () => {
 
   it('holds a Turn sent while its chat is still warming until the warmup ends, instead of failing it SESSION_BUSY', async () => {
     const timingLog = vi.spyOn(console, 'info');
-    await stack.allocate('account-1', 'warm-then-send');
+    await stack.allocate('acct_account-1', 'warm-then-send');
     let release = () => {};
     const hold = new Promise<void>((resolve) => { release = resolve; });
     stack.agentcore.script('warm-then-send', { kind: 'stream', frames: ['data: {"type":"RUN_STARTED"}', 'data: {"type":"RUN_FINISHED"}'], hold });
@@ -101,7 +104,7 @@ describe('POST /warmup', () => {
   });
 
   it('does not hold a Turn for a warmup that was refused', async () => {
-    await stack.allocate('account-1', 'warm-refused-then-send');
+    await stack.allocate('acct_account-1', 'warm-refused-then-send');
     expect((await postWarmup(stack, '{"threadId":"warm-refused-then-send","model":"other"}')).status).toBe(422);
 
     const answer = await (await stack.app.request('/', {
@@ -113,10 +116,10 @@ describe('POST /warmup', () => {
   });
 
   it("warms the account's default model, the one its model selector starts on, when the warmup names none", async () => {
-    await stack.allocate('account-1', 'warm-default');
+    await stack.allocate('acct_account-1', 'warm-default');
     await postWarmup(stack, '{"threadId":"warm-default"}');
 
-    expect(stack.agentcore.invocationFor('warm-default').payload.forwardedProps).toMatchObject({ model: 'plan' });
+    expect(stack.agentcore.invocationFor('warm-default').payload.forwardedProps).toMatchObject({ model: 'quick' });
   });
 
   it("warms the requester's Main Chat by name, so it need not wait for the Main Chat's replay", async () => {
@@ -128,7 +131,7 @@ describe('POST /warmup', () => {
   });
 
   it('refuses to warm a model the account may not use, as a Turn would', async () => {
-    await stack.allocate('account-1', 'warm-refused');
+    await stack.allocate('acct_account-1', 'warm-refused');
     const response = await postWarmup(stack, '{"threadId":"warm-refused","model":"other"}');
 
     expect(response.status).toBe(422);
@@ -140,7 +143,7 @@ describe('POST /warmup', () => {
     ['an empty threadId', '{"threadId":""}'],
     ['a threadId that is not a string', '{"threadId":42}'],
   ])('warms the placeholder Session given %s', async (_, body) => {
-    const target = await startInProcess();
+    const target = await startInProcess({ stock: true });
     try {
       const response = await postWarmup(target, body);
 
@@ -175,7 +178,7 @@ describe('POST /warmup', () => {
   });
 
   it.each([400, 500])('reports a warmup the Runtime answers with HTTP %i as 503', async (status) => {
-    await stack.allocate('account-1', `warm-rejected-${status}`);
+    await stack.allocate('acct_account-1', `warm-rejected-${status}`);
     stack.agentcore.script(`warm-rejected-${status}`, { kind: 'error', status, body: '{}' });
 
     const response = await postWarmup(stack, `{"threadId":"warm-rejected-${status}"}`);
@@ -185,7 +188,7 @@ describe('POST /warmup', () => {
   });
 
   it('accepts a warmup the Runtime answers below HTTP 400', async () => {
-    await stack.allocate('account-1', 'warm-redirected');
+    await stack.allocate('acct_account-1', 'warm-redirected');
     stack.agentcore.script('warm-redirected', { kind: 'error', status: 399, body: '{}' });
 
     const response = await postWarmup(stack, '{"threadId":"warm-redirected"}');
@@ -195,7 +198,7 @@ describe('POST /warmup', () => {
   });
 
   it('accepts a warmup the Runtime answers with no body', async () => {
-    await stack.allocate('account-1', 'warm-empty');
+    await stack.allocate('acct_account-1', 'warm-empty');
     stack.agentcore.script('warm-empty', { kind: 'error', status: 204, body: '' });
 
     const response = await postWarmup(stack, '{"threadId":"warm-empty"}');
@@ -206,7 +209,7 @@ describe('POST /warmup', () => {
 
   it("reports a warmup whose agent build the Harness fails as 503", async () => {
     const error = { type: 'RUN_ERROR', message: 'model relay unavailable', code: 'INTERNAL_ERROR' };
-    await stack.allocate('account-1', 'warm-build-failed');
+    await stack.allocate('acct_account-1', 'warm-build-failed');
     stack.agentcore.script('warm-build-failed', { kind: 'stream', frames: [`data: ${JSON.stringify(error)}`] });
 
     const response = await postWarmup(stack, '{"threadId":"warm-build-failed"}');
@@ -216,7 +219,7 @@ describe('POST /warmup', () => {
   });
 
   it("withholds a failed agent build's message that carries the Turn's credentials", async () => {
-    const signed = await startInProcess({
+    const signed = await startInProcess({ stock: true,
       cartridge: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
@@ -224,7 +227,7 @@ describe('POST /warmup', () => {
     });
     try {
       const error = { type: 'RUN_ERROR', message: 'relay refused token v1.signed.token', code: 'INTERNAL_ERROR' };
-      await signed.allocate('account-1', 'warm-build-leaks');
+      await signed.allocate('acct_account-1', 'warm-build-leaks');
       signed.agentcore.script('warm-build-leaks', { kind: 'stream', frames: [`data: ${JSON.stringify(error)}`] });
 
       const response = await postWarmup(signed, '{"threadId":"warm-build-leaks"}');
@@ -240,7 +243,7 @@ describe('POST /warmup', () => {
   });
 
   it('reads a warmup error after an SSE comment with CRLF boundaries', async () => {
-    await stack.allocate('account-1', 'warm-crlf');
+    await stack.allocate('acct_account-1', 'warm-crlf');
     stack.agentcore.script('warm-crlf', { kind: 'stream', frames: [
       ': keepalive\r\n\r\ndata: {"type":"RUN_ERROR","message":"model unavailable"}',
     ] });
@@ -250,7 +253,7 @@ describe('POST /warmup', () => {
   });
 
   it('reports the warmup error after one malformed data frame', async () => {
-    await stack.allocate('account-1', 'warm-recover');
+    await stack.allocate('acct_account-1', 'warm-recover');
     stack.agentcore.script('warm-recover', { kind: 'stream', frames: [
       'data: not-json',
       'data: {"type":"RUN_ERROR","message":"model unavailable"}',
@@ -261,7 +264,7 @@ describe('POST /warmup', () => {
   });
 
   it('accepts a completed warmup after one malformed data frame', async () => {
-    await stack.allocate('account-1', 'warm-recovered');
+    await stack.allocate('acct_account-1', 'warm-recovered');
     stack.agentcore.script('warm-recovered', { kind: 'stream', frames: [
       'data: not-json',
       'data: {"type":"RUN_FINISHED"}',
@@ -272,7 +275,7 @@ describe('POST /warmup', () => {
   });
 
   it('rejects a JSON frame without an event type', async () => {
-    await stack.allocate('account-1', 'warm-invalid-event');
+    await stack.allocate('acct_account-1', 'warm-invalid-event');
     stack.agentcore.script('warm-invalid-event', { kind: 'stream', frames: ['data: {"message":"not an event"}'] });
     const response = await postWarmup(stack, '{"threadId":"warm-invalid-event"}');
     expect(response.status).toBe(503);
@@ -283,7 +286,7 @@ describe('POST /warmup', () => {
 
   it('reports a malformed warmup frame without credentials as 503', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await stack.allocate('account-1', 'warm-malformed');
+    await stack.allocate('acct_account-1', 'warm-malformed');
     stack.agentcore.script('warm-malformed', { kind: 'stream', frames: ['data: not-json'] });
 
     const response = await postWarmup(stack, '{"threadId":"warm-malformed"}');
@@ -298,14 +301,14 @@ describe('POST /warmup', () => {
 
   it("withholds a malformed warmup frame that carries the Turn's credentials", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const signed = await startInProcess({
+    const signed = await startInProcess({ stock: true,
       cartridge: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
       },
     });
     try {
-      await signed.allocate('account-1', 'warm-malformed-leaks');
+      await signed.allocate('acct_account-1', 'warm-malformed-leaks');
       signed.agentcore.script('warm-malformed-leaks', { kind: 'stream', frames: ['data: v1.signed.token', 'data: {"type":"RUN_FINISHED"}'] });
 
       const response = await postWarmup(signed, '{"threadId":"warm-malformed-leaks"}');
@@ -323,14 +326,14 @@ describe('POST /warmup', () => {
 
   it("reports a malformed warmup frame without quoting it, since it may carry the Turn's credentials JSON-escaped", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const signed = await startInProcess({
+    const signed = await startInProcess({ stock: true,
       cartridge: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
       },
     });
     try {
-      await signed.allocate('account-1', 'warm-malformed-escaped');
+      await signed.allocate('acct_account-1', 'warm-malformed-escaped');
       signed.agentcore.script('warm-malformed-escaped', { kind: 'stream', frames: ['data: v1.signed.\\u0074oken'] });
 
       const response = await postWarmup(signed, '{"threadId":"warm-malformed-escaped"}');
@@ -349,7 +352,7 @@ describe('POST /warmup', () => {
   it('reports a warmup the Runtime does not answer within the warmup timeout as 503', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const runtime = await new HttpFake(() => undefined).listen();
-    const target = await startInProcess({
+    const target = await startInProcess({ stock: true,
       config: { agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: runtime.url }, warmupTimeoutMs: 200 },
     });
     try {
@@ -374,7 +377,7 @@ describe('POST /warmup', () => {
 
   it('reports a warmup that cannot reach the Runtime as 503', async () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const unreachable = await startInProcess();
+    const unreachable = await startInProcess({ stock: true });
     await unreachable.agentcore.close();
     try {
       const response = await postWarmup(unreachable, '{}');
@@ -388,7 +391,7 @@ describe('POST /warmup', () => {
   });
 
   it('is skipped when no Runtime is configured', async () => {
-    const bare = await startInProcess({ config: { agentCore: null } });
+    const bare = await startInProcess({ stock: true, config: { agentCore: null } });
     try {
       const response = await postWarmup(bare, '{"threadId":"warm-skipped"}');
 
@@ -406,7 +409,7 @@ describe("POST /warmup readies the Cartridge's side of the chat", () => {
   let release = () => {};
   let session: InProcessStack;
   beforeAll(async () => {
-    session = await startInProcess({
+    session = await startInProcess({ stock: true,
       cartridge: {
         warmSession: async ({ owner }, sessionId) => {
           warmed.push([owner, sessionId]);
@@ -419,22 +422,22 @@ describe("POST /warmup readies the Cartridge's side of the chat", () => {
   afterAll(() => session.stop());
 
   it('for the chat the requester opened (ADR 0077)', async () => {
-    await session.allocate('account-1', 'warm-opened');
+    await session.allocate('acct_account-1', 'warm-opened');
     const response = await postWarmup(session, '{"threadId":"warm-opened"}');
 
     expect(response.status).toBe(200);
-    expect(warmed).toContainEqual(['account-1', 'warm-opened']);
+    expect(warmed).toContainEqual(['acct_account-1', 'warm-opened']);
   });
 
   it('for the Main Chat by name', async () => {
     await postWarmup(session, '{"mainChat":true}');
 
     const { id } = (await (await session.app.request('/main-chat')).json()) as { id: string };
-    expect(warmed).toContainEqual(['account-1', id]);
+    expect(warmed).toContainEqual(['acct_account-1', id]);
   });
 
   it('while the agent builds, so neither waits for the other', async () => {
-    await session.allocate('account-1', 'warm-slow-session');
+    await session.allocate('acct_account-1', 'warm-slow-session');
     const response = postWarmup(session, '{"threadId":"warm-slow-session"}');
 
     await vi.waitFor(() => session.agentcore.invocationFor('warm-slow-session'));
@@ -443,7 +446,7 @@ describe("POST /warmup readies the Cartridge's side of the chat", () => {
   });
 
   it('and answers its failure', async () => {
-    await session.allocate('account-1', 'warm-refused-session');
+    await session.allocate('acct_account-1', 'warm-refused-session');
     const response = await postWarmup(session, '{"threadId":"warm-refused-session"}');
 
     expect(response.status).toBe(409);
@@ -453,8 +456,8 @@ describe("POST /warmup readies the Cartridge's side of the chat", () => {
   it('answers an AgentCore failure without waiting for the Cartridge sibling', async () => {
     let release = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
-    const target = await startInProcess({ cartridge: { warmSession: () => held } });
-    await target.allocate('account-1', 'warm-fail-fast');
+    const target = await startInProcess({ stock: true, cartridge: { warmSession: () => held } });
+    await target.allocate('acct_account-1', 'warm-fail-fast');
     target.agentcore.script('warm-fail-fast', { kind: 'error', status: 500, body: '{}' });
     let answer: Response | undefined;
     const request = Promise.resolve(postWarmup(target, '{"threadId":"warm-fail-fast"}')).then((response) => { answer = response; });

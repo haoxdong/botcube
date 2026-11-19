@@ -4,6 +4,7 @@ import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../test/fakes/credenti
 import { motoEndpoint } from '../test/fakes/moto.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { assumeRoleTurnCredentials, memorySessionPolicy, SESSION_POLICY_LIMIT } from './turn-credentials.js';
+import { filed } from '../test/stock-bot.js';
 
 const ROLE_ARN = 'arn:aws:iam::123456789012:role/bot-cube-user-memory';
 
@@ -14,7 +15,7 @@ beforeAll(async () => {
   vi.stubEnv('AWS_REGION', 'us-east-1');
   vi.stubEnv('AWS_ACCESS_KEY_ID', AWS_ACCESS_KEY_ID);
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', AWS_SECRET_ACCESS_KEY);
-  stack = await startInProcess({ config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
+  stack = await startInProcess({ stock: true, config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
 });
 afterAll(async () => {
   await stack.stop();
@@ -35,19 +36,19 @@ async function turn(owner: string, sessionId: string) {
 
 describe('assume-role Turn credentials', () => {
   it("hands each Turn its own User's credentials, never the client's", async () => {
-    const [first, second] = [`owner-${randomUUID()}`, `owner-${randomUUID()}`];
+    const [first, second] = [`acct_owner-${randomUUID()}`, `acct_owner-${randomUUID()}`];
     const [firstSession, secondSession] = [randomUUID(), randomUUID()];
-    await stack.sessionMetadata.recordTurn(first, firstSession, { filingUserId: `filed-${first}`, title: 'First', allocation: true });
-    await stack.sessionMetadata.recordTurn(second, secondSession, { filingUserId: `filed-${second}`, title: 'Second', allocation: true });
+    await stack.sessionMetadata.recordTurn(first, firstSession, { filingUserId: filed(first), title: 'First', allocation: true });
+    await stack.sessionMetadata.recordTurn(second, secondSession, { filingUserId: filed(second), title: 'Second', allocation: true });
 
     const [mine, theirs] = await Promise.all([turn(first, firstSession), turn(second, secondSession)]);
 
     expect(mine.props.turnIdentity).toEqual({
-      actorId: `filed-${first}`, filingActorId: `filed-${first}`, sessionId: firstSession, writesPrefix: expect.stringMatching(/^lgw-[0-9a-f]{32}$/),
+      actorId: filed(first), filingActorId: filed(first), sessionId: firstSession, writesPrefix: expect.stringMatching(/^lgw-[0-9a-f]{32}$/),
       turnId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       accessKeyId: expect.any(String), secretAccessKey: expect.any(String), sessionToken: expect.any(String), expiration: expect.any(String),
     });
-    expect(theirs.props.turnIdentity).toMatchObject({ actorId: `filed-${second}`, filingActorId: `filed-${second}`, sessionId: secondSession });
+    expect(theirs.props.turnIdentity).toMatchObject({ actorId: filed(second), filingActorId: filed(second), sessionId: secondSession });
     const [mineKeys, theirKeys] = [mine, theirs].map(({ props }) => (props.turnIdentity as { sessionToken: string }).sessionToken);
     expect(mineKeys).not.toBe(theirKeys);
     expect(mine.props.sessionSnapshotEpoch).toEqual({ epoch: expect.any(String), turnId: (mine.props.turnIdentity as { turnId: string }).turnId });
@@ -55,9 +56,9 @@ describe('assume-role Turn credentials', () => {
   });
 
   it('withholds a stream that carries the credentials', async () => {
-    const owner = `owner-${randomUUID()}`;
+    const owner = `acct_owner-${randomUUID()}`;
     const sessionId = randomUUID();
-    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: `filed-${owner}`, title: 'Leak', allocation: true });
+    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: filed(owner), title: 'Leak', allocation: true });
     stack.agentcore.script(sessionId, { kind: 'stream', frames: (props) => [
       'data: {"type":"RUN_STARTED"}',
       `data: ${JSON.stringify({ type: 'RUN_ERROR', message: `signed with ${(props.turnIdentity as { sessionToken: string }).sessionToken}` })}`,
@@ -81,14 +82,14 @@ describe('the assume-role STS client', () => {
     vi.stubEnv('AWS_DEFAULT_REGION', undefined);
     vi.stubEnv('AWS_PROFILE', undefined);
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
-    const turn = { actorId: 'filed-a', filingActorId: 'filed-a', sessionId: randomUUID(), startedAt: new Date().toISOString() };
+    const turn = { actorId: filed('a'), filingActorId: filed('a'), sessionId: randomUUID(), startedAt: new Date().toISOString() };
 
     await expect(assumeRoleTurnCredentials(ROLE_ARN).grant(turn)).rejects.toThrow('Region is missing');
   });
 });
 
 describe('the Memory session policy', () => {
-  const scope = { actorId: 'filed-a', filingActorId: 'filed-anon-7', sessionId: 'session-1', writesPrefix: 'lgw-3d005e2ccf2461767eb01d780463736c' };
+  const scope = { actorId: filed('a'), filingActorId: filed('anon-7'), sessionId: 'session-1', writesPrefix: 'lgw-3d005e2ccf2461767eb01d780463736c' };
   it("is the Memory role's statements with the Turn's own values in place of its tags, so another User's actor or record matches none", () => {
     expect(JSON.parse(memorySessionPolicy(scope))).toEqual({
       Version: '2012-10-17',
@@ -96,13 +97,13 @@ describe('the Memory session policy', () => {
         {
           Effect: 'Allow', Action: 'bedrock-agentcore:*Event*', Resource: '*',
           Condition: {
-            StringEquals: { 'bedrock-agentcore:actorId': 'filed-anon-7' },
+            StringEquals: { 'bedrock-agentcore:actorId': filed('anon-7') },
             StringLike: { 'bedrock-agentcore:sessionId': ['session-1', 'lgw-3d005e2ccf2461767eb01d780463736c-*'] },
           },
         },
-        { Effect: 'Allow', Action: 'bedrock-agentcore:*Event*', Resource: '*', Condition: { StringEquals: { 'bedrock-agentcore:actorId': 'filed-a' } } },
-        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecord*', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespace': '/actors/filed-a/*' } } },
-        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecords', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespacePath': '/actors/filed-a/*' } } },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*Event*', Resource: '*', Condition: { StringEquals: { 'bedrock-agentcore:actorId': filed('a') } } },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecord*', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespace': `/actors/${filed('a')}/*` } } },
+        { Effect: 'Allow', Action: 'bedrock-agentcore:*MemoryRecords', Resource: '*', Condition: { StringLike: { 'bedrock-agentcore:namespacePath': `/actors/${filed('a')}/*` } } },
       ],
     });
   });

@@ -8,7 +8,7 @@ const SESSION_HEADER = 'x-amzn-bedrock-agentcore-runtime-session-id';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -44,8 +44,9 @@ describe('one Session ID per chat', () => {
     const warmup = await stack.app.request('/warmup', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-account': 'side-one-id' }, body: JSON.stringify({ threadId: id }),
     });
-    expect(warmup.status).toBe(503);
-    expect(await warmup.json()).toMatchObject({ error: 'AgentCore warmup failed' });
+    // The Agent Computer refuses a deleted Session before AgentCore is asked to warm it.
+    expect(warmup.status).toBe(404);
+    expect(await warmup.json()).toMatchObject({ detail: 'This account does not own the Session' });
     await expect.poll(() => stack.sessionApi.events()).toContainEqual(expect.objectContaining({ operation: 'purge', sessionId: id }));
     expect(stops()).toContain(id);
   });

@@ -4,11 +4,12 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { HttpError } from './http-error.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
+import { filed } from '../test/stock-bot.js';
 
 // Each request acts as the account its x-account header names.
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -68,19 +69,19 @@ describe('Turn preparation cleanup', () => {
   });
 
   it('relays a classified run error when recording RUN_STARTED fails, then clears its preparing mark', async () => {
-    const target = await startInProcess();
+    const target = await startInProcess({ stock: true });
     const failure = new Error('start metadata unavailable');
     const started = vi.spyOn(target.sessionMetadata, 'turnStarted').mockRejectedValue(failure);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      await target.allocate('account-1', 'start-metadata-fails');
+      await target.allocate('acct_account-1', 'start-metadata-fails');
       const response = await target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: 'start-metadata-fails', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }) });
       expect(response.status).toBe(200);
       const frames = await response.text();
       expect(frames).toContain('"code":"TURN_START_FAILED"');
       expect(frames).toContain('start metadata unavailable');
       expect(frames).not.toContain('RUN_FINISHED');
-      const recorded = await target.sessionMetadata.get('account-1', 'start-metadata-fails');
+      const recorded = await target.sessionMetadata.get('acct_account-1', 'start-metadata-fails');
       expect(recorded).not.toHaveProperty('turn_running_since');
       expect(recorded).not.toHaveProperty('turn_run_id');
       expect(recorded).not.toHaveProperty('turn_preparing');
@@ -105,11 +106,11 @@ describe('Turn preparation cleanup', () => {
         finish = () => response.end('data: {"type":"RUN_ERROR","code":"TURN_STOPPED","message":"The Turn was stopped"}\n\n');
       }
     }).listen();
-    const target = await startInProcess({ config: { localHarnessUrl: upstream.url }, cartridge: { invocationPayload: async (input) => {
+    const target = await startInProcess({ stock: true, config: { localHarnessUrl: upstream.url }, cartridge: { invocationPayload: async (input) => {
       entered(); await waiting;
       return { ...input, forwardedProps: { ...input.forwardedProps } };
     } } });
-    const sessionId = await target.allocate('account-1', 'stopped-while-preparing');
+    const sessionId = await target.allocate('acct_account-1', 'stopped-while-preparing');
     target.sessionApi.reply(sessionId, 200, { messages: [] });
     const posted = target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ threadId: sessionId, runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps: {} }) });
     const stop = () => target.app.request(`/threads/${sessionId}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'run-1' }) });
@@ -149,12 +150,12 @@ describe('Turn preparation cleanup', () => {
   it.each([false, true])('preserves the preparation error when cleanup failure is %s', async (cleanupFails) => {
     const preparationError = new HttpError(403, 'Turn credentials denied');
     const cleanupError = new Error('running mark store unavailable');
-    const target = await startInProcess({ cartridge: { invocationPayload: async () => { throw preparationError; } } });
+    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async () => { throw preparationError; } } });
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const ended = vi.spyOn(target.sessionMetadata, 'turnEnded');
     if (cleanupFails) ended.mockRejectedValue(cleanupError);
     try {
-      await target.allocate('account-1', 'preparation-cleanup');
+      await target.allocate('acct_account-1', 'preparation-cleanup');
       const response = await target.app.request('/', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -174,7 +175,7 @@ describe('Turn preparation cleanup', () => {
         expect(logged).not.toHaveBeenCalled();
       }
       expect(target.agentcore.invocations()).toEqual([]);
-      const recorded = await target.sessionMetadata.get('account-1', 'preparation-cleanup');
+      const recorded = await target.sessionMetadata.get('acct_account-1', 'preparation-cleanup');
       if (cleanupFails) expect(recorded).toMatchObject({ turn_run_id: 'run-1' });
       else expect(recorded).not.toHaveProperty('turn_run_id');
     } finally {
@@ -248,13 +249,13 @@ describe('GET /threads/{id}', () => {
       id: 'replayed',
       turn_completed_at: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
       title: 'about replayed',
-      provider: 'openai',
+      provider: 'anthropic',
       created_at: expect.stringMatching(TIMESTAMP),
       updated_at: expect.stringMatching(TIMESTAMP),
       messages,
       running: false,
     });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: 'replayed', userId: 'filed-replayer' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: 'replayed', userId: filed('replayer') });
   });
 
   // A page reloaded mid-Turn waited for a focus to see its reply; it polls while the Session's Turn runs.
@@ -273,7 +274,7 @@ describe('GET /threads/{id}', () => {
     expect(stack.sessionApi.events()).toContainEqual({
       operation: 'get',
       sessionId,
-      userId: 'filed-runner',
+      userId: filed('runner'),
     });
   });
 
@@ -309,7 +310,7 @@ describe('DELETE /threads/{id}', () => {
     expect((await as('deleter', '/threads/deleted')).status).toBe(404);
     await expect
       .poll(() => stack.sessionApi.events())
-      .toContainEqual({ operation: 'purge', sessionId: 'deleted', userId: 'filed-deleter' });
+      .toContainEqual({ operation: 'purge', sessionId: 'deleted', userId: filed('deleter') });
   });
 
   it("leaves another account's Session untouched and purges nothing", async () => {
@@ -433,9 +434,9 @@ describe('GET /main-chat', () => {
 
     const response = await as('main-replayer', '/main-chat');
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id, provider: 'openai', messages, running: false });
+    expect(await response.json()).toEqual({ id, provider: 'anthropic', messages, running: false });
     expect(response.headers.get('server-timing')).toMatch(/^auth;dur=\d+\.\d, history;dur=\d+\.\d, json;dur=\d+\.\d, total;dur=\d+\.\d$/);
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: 'filed-main-replayer' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: id, userId: filed('main-replayer') });
   });
 
   // A checkpoint posted without Session Metadata loads empty, so its opening is refused.
@@ -574,7 +575,7 @@ describe('POST /threads/{id}/stop', () => {
   // A page that opens the chat after its Turn failed unseen shows why.
   it.each(['Main', 'Side'])("replays why the %s Chat's latest Turn failed, with its run ID", async (kind) => {
     const owner = `failed-${kind}`;
-    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner, `filed-${owner}`) : 'failed-side';
+    const sessionId = kind === 'Main' ? await stack.sessionMetadata.mainChat(owner, filed(owner)) : 'failed-side';
     const running = { startedAt: new Date().toISOString(), runId: `failed-${kind}-run` };
     await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'f', title: 'failing', running, allocation: true });
     await stack.sessionMetadata.turnEnded(owner, sessionId, running, { code: 'PROVIDER_ERROR', message: 'The provider failed' });
@@ -601,7 +602,7 @@ describe('POST /threads/{id}/stop', () => {
 
     expect(response.status).toBe(204);
     expect(stopsOf('stopped')).toEqual([
-      { threadId: 'stopped', runId: 'run-1', messages: [], tools: [], context: [], state: {}, forwardedProps: { stop: true, sessionUserId: 'filed-stopper' } },
+      { threadId: 'stopped', runId: 'run-1', messages: [], tools: [], context: [], state: {}, forwardedProps: { stop: true, sessionUserId: filed('stopper') } },
     ]);
   });
 

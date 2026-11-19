@@ -3,11 +3,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, v
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { eventually } from '../test/eventually.js';
+import { filed } from '../test/stock-bot.js';
 
 // Each request acts as the account its x-account header names.
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -55,7 +56,7 @@ async function chat(account: string, at: string, ...threadIds: string[]): Promis
 
 describe('GET /activity', () => {
   it.each(['interrupt', 'cancelled'] as const)('keeps a %s outcome out of Activity and permits the next Turn', async (type) => {
-    const account = `outcome-${type}`;
+    const account = `acct_outcome-${type}`;
     const threadId = `session-${type}`;
     const terminal = { type: 'RUN_FINISHED', threadId, runId: 'run',
       outcome: type === 'interrupt' ? { type, interrupts: [{ id: 'approval', reason: 'Approve the action' }] } : { type } };
@@ -155,7 +156,7 @@ describe('GET /activity', () => {
       new PutCommand({
         TableName: stack.table.name,
         Item: {
-          pk: 'TURN_SUMMARIES#filed-unfilled',
+          pk: `TURN_SUMMARIES#${filed('unfilled')}`,
           sk: 'SESSION#old#TURN#before-3226',
           session_id: 'old',
           message_id: 'before-3226',
