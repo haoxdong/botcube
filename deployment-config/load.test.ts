@@ -57,6 +57,20 @@ const OIDC = {
   clients: [{ clientId: 'botcube', clientSecret: OIDC_CLIENT_SECRET }],
 };
 
+const OAUTH = {
+  kind: 'oauth-client-credentials',
+  tokenEndpoint: 'https://login.example.com/oauth2/token',
+  clientId: 'botcube-models',
+  clientSecret: { kind: 'file', path: '/run/secrets/botcube/models-client-secret' },
+};
+
+const EXTERNAL_HARNESS = {
+  kind: 'jwt-bearer',
+  issuer: 'https://login.example.com/realms/platform/.well-known/openid-configuration',
+  clients: [{ clientId: 'botcube-harness' }],
+  token: { kind: 'file', path: '/run/secrets/botcube/harness-token' },
+};
+
 /** Where the enterprise example leaves the defaults, one section per seam. */
 const ENTERPRISE_SECTIONS = {
   identity: OIDC,
@@ -137,6 +151,28 @@ describe('a Deployment Config', () => {
       'models.credential: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
     ['a botcube OIDC client secret', { bot: './bot.json', identity: { kind: 'oidc', issuer: 'https://login.example.com', clients: [{ clientId: 'botcube', clientSecret: { kind: 'botcube', audience: 'login.example.com' } }] } },
       'identity.clients.0.clientSecret: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
+    ...(['tokenEndpoint', 'clientId', 'clientSecret'] as const).map(field => [
+      `an OAuth client-credentials source without its ${field}`,
+      { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, [field]: undefined } } },
+      `models.credential.${field}: `,
+    ] as const),
+    ['an OAuth client secret given as its value', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, clientSecret: 's3cret' } } },
+      'models.credential.clientSecret: '],
+    ...([
+      ['aws', { kind: 'aws', audience: 'login.example.com' }],
+      ['botcube', { kind: 'botcube', audience: 'login.example.com' }],
+      ['oauth-client-credentials', OAUTH],
+    ] as const).map(([kind, clientSecret]) => [
+      `an OAuth client secret from a ${kind} source`, { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, clientSecret } } },
+      "models.credential.clientSecret.kind: Invalid discriminator value. Expected 'secret' | 'file' | 'command'",
+    ] as const),
+    ['an OAuth token endpoint over http beyond this machine', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, tokenEndpoint: 'http://login.example.com/oauth2/token' } } },
+      'models.credential.tokenEndpoint: A token endpoint is an https URL'],
+    ['an empty OAuth scope list', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, scopes: [] } } }, 'models.credential.scopes: '],
+    ['two OAuth scopes in one string', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, scopes: ['models.read models.write'] } } },
+      'models.credential.scopes.0: Expected an OAuth scope'],
+    ['an OAuth command client secret without the opt-in', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { ...OAUTH, clientSecret: COMMAND } } },
+      'models.credential.clientSecret: A command credential runs only when allowCommandCredentials is true'],
     ['a command source without the opt-in',{ bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: COMMAND } },
       'models.credential: A command credential runs only when allowCommandCredentials is true'],
     ['a header that is not a header name', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, headers: { 'x tenant': 'a' } } }, 'models.headers.x tenant: '],
@@ -148,8 +184,18 @@ describe('a Deployment Config', () => {
     ['a JWT bearer without its client', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer' } }, 'harnessAuth.clients: '],
     ['a JWT bearer on the old audience field', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], audience: 'botcube-harness' } },
       'harnessAuth.audience: Unrecognized key'],
-    ['a JWT bearer from an issuer other than BotCube', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', issuer: 'https://login.example.com', clients: [{ clientId: 'botcube-harness' }] } },
-      'harnessAuth.issuer: '],
+    ...['https://login.example.com', 'http://login.example.com/.well-known/openid-configuration', 'login.example.com/.well-known/openid-configuration'].map(issuer => [
+      `a JWT bearer issuer ${issuer}, which is not an https discovery URL`, { bot: './bot.json', harnessAuth: { ...EXTERNAL_HARNESS, issuer } },
+      "harnessAuth.issuer: Expected 'botcube' or an https OIDC discovery URL ending in /.well-known/openid-configuration",
+    ] as const),
+    ['a JWT bearer from a discovery URL without its token', { bot: './bot.json', harnessAuth: { ...EXTERNAL_HARNESS, token: undefined } },
+      'harnessAuth.token: An issuer at a discovery URL needs the token Chat sends it, a Credential Source'],
+    ['a token beside the botcube issuer', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], token: EXTERNAL_HARNESS.token } },
+      'harnessAuth.token: Chat signs its own bearer for the botcube issuer; token is for an issuer at a discovery URL'],
+    ['a command Harness token without the opt-in', { bot: './bot.json', harnessAuth: { ...EXTERNAL_HARNESS, token: COMMAND } },
+      'harnessAuth.token: A command credential runs only when allowCommandCredentials is true'],
+    ['a botcube Harness token', { bot: './bot.json', harnessAuth: { ...EXTERNAL_HARNESS, token: { kind: 'botcube', audience: 'botcube-harness' } } },
+      'harnessAuth.token: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
     ...['sts.amazonaws.com', 'botcube-user', 'botcube-chat-service'].map(audience => [
       `a JWT bearer on the reserved audience ${audience}`, { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }, { clientId: audience }] } },
       `harnessAuth.clients.1.clientId: The Harness audience ${audience} is reserved for another kind of BotCube token`,
@@ -211,6 +257,30 @@ describe('a Deployment Config', () => {
   ])('gives the models endpoint its credential from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
     expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+  });
+
+  it.each([
+    ['a mounted file and no scope', OAUTH],
+    ['a Secrets Manager secret and scopes', { ...OAUTH, clientSecret: { kind: 'secret', secretArn: SECRET_ARN }, scopes: ['models.invoke', 'api://botcube/.default'] }],
+    ['a stand-in token endpoint on this machine', { ...OAUTH, tokenEndpoint: 'http://127.0.0.1:9400/token' }],
+  ])('gives the models endpoint an OAuth client-credentials token from %s', (_, credential) => {
+    const models = { ...ENTERPRISE_MODELS, credential };
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+  });
+
+  it('runs an opted-in command for an OAuth client secret', () => {
+    const credential = { ...OAUTH, clientSecret: COMMAND };
+    const config = loadDeployment(configFile({ bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, credential } })).config;
+    expect(config.models).toMatchObject({ credential: { clientSecret: { ...COMMAND, timeoutSeconds: 30 } } });
+  });
+
+  it.each([
+    ['a Secrets Manager secret', { allowCommandCredentials: false }, { kind: 'secret', secretArn: SECRET_ARN }],
+    ['a mounted file', { allowCommandCredentials: false }, { kind: 'file', path: '/run/secrets/botcube/harness-token' }],
+    ['an opted-in command', { allowCommandCredentials: true }, { ...COMMAND, timeoutSeconds: 30 }],
+  ])('trusts an outside Harness issuer at its discovery URL, with the token from %s', (_, optIn, token) => {
+    const harnessAuth = { ...EXTERNAL_HARNESS, token };
+    expect(loadDeployment(configFile({ bot: './bot.json', ...optIn, harnessAuth })).config.harnessAuth).toEqual(harnessAuth);
   });
 
   it('takes a second sign-in client as a list entry', () => {

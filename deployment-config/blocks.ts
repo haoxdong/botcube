@@ -5,8 +5,7 @@ const secretArn = z.string().regex(/^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d
 /** The seconds a command credential may run before it is stopped, as Google's executable sources default to. */
 export const COMMAND_TIMEOUT_SECONDS = 30;
 
-/** Where a seam's secret or token comes from (ADR 0091); each source gives a value and when it expires. */
-export const credentialSource = z.discriminatedUnion('kind', [
+const secretSources = [
   z.strictObject({ kind: z.literal('secret'), secretArn }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials."),
   z.strictObject({
     kind: z.literal('file'),
@@ -19,6 +18,28 @@ export const credentialSource = z.discriminatedUnion('kind', [
   }).describe(
     'A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials.',
   ),
+] as const;
+
+const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost']);
+const httpsOrLoopback = (url: string) => {
+  const { protocol, hostname } = new URL(url);
+  return protocol === 'https:' || (protocol === 'http:' && LOOPBACK.has(hostname));
+};
+
+/** RFC 6749's scope-token: printable ASCII but space, `"` and `\\`. */
+const oauthScope = z.string().regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/, 'Expected an OAuth scope: printable ASCII without spaces, quotes or backslashes');
+
+/** Where a seam's secret or token comes from (ADR 0091); each source gives a value and when it expires. */
+export const credentialSource = z.discriminatedUnion('kind', [
+  ...secretSources,
+  z.strictObject({
+    kind: z.literal('oauth-client-credentials'),
+    tokenEndpoint: z.url().refine(httpsOrLoopback, 'A token endpoint is an https URL; only a stand-in on this machine may use http')
+      .describe("The identity provider's token endpoint, as its OpenID configuration names token_endpoint."),
+    clientId: z.string().min(1),
+    clientSecret: z.discriminatedUnion('kind', [...secretSources]).describe("Where the client's secret is read, sent as HTTP Basic each time a token is asked for."),
+    scopes: z.array(oauthScope).min(1).optional().describe('The scopes asked for; absent, the provider grants its default.'),
+  }).describe("An access token from an identity provider's OAuth 2.0 client-credentials grant, asked for again a minute before its expires_in runs out."),
   z.strictObject({
     kind: z.literal('aws'),
     audience: z.string().min(1).describe('The receiver, signed into the request as x-botcube-audience so it cannot be replayed to another.'),
@@ -55,11 +76,10 @@ export const endpoint = z.strictObject({
 });
 export type Endpoint = z.output<typeof endpoint>;
 
-const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost']);
-export const oidcIssuer = z.url().refine((issuer) => {
-  const { protocol, hostname } = new URL(issuer);
-  return protocol === 'https:' || (protocol === 'http:' && LOOPBACK.has(hostname));
-}, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
+export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
+
+/** An OIDC issuer's discovery URL, as AgentCore's JWT authorizer takes it. */
+export const oidcDiscoveryUrl = z.templateLiteral(['https://', z.string(), '/.well-known/openid-configuration']).refine((url) => URL.canParse(url));
 
 /** Who BotCube accepts tokens from (ADR 0091): an OIDC issuer and the clients its tokens are for. */
 export const trust = <Issuer extends z.ZodType<string>, Client extends z.ZodType>(issuer: Issuer, client: Client) => ({

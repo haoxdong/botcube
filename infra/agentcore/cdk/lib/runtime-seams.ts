@@ -47,15 +47,27 @@ function restrictRuntimePolicy(
   };
 }
 
-/** The Runtime admits only bearer tokens the Chat Service signs for one of its audiences, the Trust's clients (AgentCore's inbound JWT authorizer). */
+/**
+ * The Runtime admits only bearer tokens for one of the Trust's clients (AgentCore's inbound JWT authorizer): under
+ * `botcube`, the Chat Service's tokens for one of their audiences; under an outside issuer, its tokens whose
+ * `client_id` is one of them, so its other clients can't call the Harness.
+ */
 function jwtAuthorizer(
-  audiences: string[],
-  issuer: string | undefined
+  { issuer, clients }: Extract<HarnessAuth, { kind: 'jwt-bearer' }>,
+  chatServiceIssuer: string | undefined
 ): bedrockagentcore.CfnRuntime.AuthorizerConfigurationProperty {
-  if (issuer === undefined) throw new Error('A JWT bearer Harness auth needs the Chat Service issuer');
+  const clientIds = clients.map(({ clientId }) => clientId);
   return {
-    customJwtAuthorizer: { discoveryUrl: `${issuer}/.well-known/openid-configuration`, allowedAudience: audiences },
+    customJwtAuthorizer:
+      issuer === 'botcube'
+        ? { discoveryUrl: chatServiceDiscoveryUrl(chatServiceIssuer), allowedAudience: clientIds }
+        : { discoveryUrl: issuer, allowedClients: clientIds },
   };
+}
+
+function chatServiceDiscoveryUrl(chatServiceIssuer: string | undefined): string {
+  if (chatServiceIssuer === undefined) throw new Error('A JWT bearer Harness auth needs the Chat Service issuer');
+  return `${chatServiceIssuer}/.well-known/openid-configuration`;
 }
 
 /** The agent's models run on the Deployment Config's OpenAI-compatible Endpoint, granted the secret its credential is read from if any. */
@@ -77,8 +89,8 @@ function applyModelsEndpoint(runtime: AgentCoreRuntime, models: ModelsDeployment
 /**
  * The Deployment Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
  * credential is read from. Absent, `harnessAuth` is
- * SigV4; a JWT bearer is checked against the Chat Service's OIDC discovery at `chatServiceIssuer`, whatever the Turn
- * credentials adapter.
+ * SigV4; a JWT bearer is checked against its issuer's OIDC discovery, the Chat Service's at `chatServiceIssuer` under
+ * `botcube`, whatever the Turn credentials adapter.
  */
 export function applyDeploymentSeams(
   stack: Stack,
@@ -93,10 +105,7 @@ export function applyDeploymentSeams(
 ): void {
   applyModelsEndpoint(runtime, props.models);
   if (props.harnessAuth?.kind === 'jwt-bearer')
-    cfnRuntime.authorizerConfiguration = jwtAuthorizer(
-      props.harnessAuth.clients.map(({ clientId }) => clientId),
-      props.chatServiceIssuer
-    );
+    cfnRuntime.authorizerConfiguration = jwtAuthorizer(props.harnessAuth, props.chatServiceIssuer);
   restrictRuntimePolicy(stack, runtime.role, props.models, props.telemetry);
 }
 

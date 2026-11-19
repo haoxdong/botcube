@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { ALLOW_COMMAND_CREDENTIALS_ENV, type CredentialSource as CredentialSourceConfig } from 'botcube-deployment-config/blocks';
 import { decodeJwt } from 'jose';
+import * as oidc from 'openid-client';
 import { z } from 'zod';
 import { signedAwsHeaders } from './aws.js';
 
@@ -79,6 +80,21 @@ function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.
       if (env[ALLOW_COMMAND_CREDENTIALS_ENV] !== '1') return { about, refused: `a command credential runs only when ${ALLOW_COMMAND_CREDENTIALS_ENV}=1` };
       return { about, read: async () => execCredential(await stdoutOf(source.command, source.timeoutSeconds)) };
     }
+    case 'oauth-client-credentials': {
+      const about = `oauth-client-credentials ${source.tokenEndpoint}`;
+      const secret = adapter(source.clientSecret, now, env, botcube);
+      const secretNamed = `client secret (${secret.about})`;
+      if ('refused' in secret) return { about, refused: `${secretNamed}: ${secret.refused}` };
+      return {
+        about,
+        read: async () => {
+          const clientSecret = await secret.read().catch((error: unknown) => {
+            throw new Error(`${secretNamed}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+          });
+          return clientCredentialsGrant(source, clientSecret.value, now);
+        },
+      };
+    }
     case 'aws': return {
       about: `aws ${source.audience}`,
       read: async () => ({ value: await callerIdentityRequest(source.audience, env), expiresAt: new Date(now() + SIGV4_VALID_MS) }),
@@ -95,6 +111,46 @@ function adapter(source: CredentialSourceConfig, now: () => number, env: NodeJS.
       };
     }
   }
+}
+
+/** RFC 6749 section 4.4's client-credentials grant, the client authenticating with HTTP Basic. */
+async function clientCredentialsGrant(
+  { tokenEndpoint, clientId, scopes }: Extract<CredentialSourceConfig, { kind: 'oauth-client-credentials' }>,
+  clientSecret: string,
+  now: () => number,
+): Promise<Credential> {
+  const endpoint = new URL(tokenEndpoint);
+  const configuration = new oidc.Configuration({ issuer: endpoint.origin, token_endpoint: tokenEndpoint }, clientId, undefined, oidc.ClientSecretBasic(clientSecret));
+  if (endpoint.protocol === 'http:') oidc.allowInsecureRequests(configuration);
+  const token = await oidc.clientCredentialsGrant(configuration, scopes ? { scope: scopes.join(' ') } : {}).catch((error: unknown) => {
+    throw tokenEndpointError(error);
+  });
+  const expiresAt = token.expires_in === undefined ? (jwtExpiry(token.access_token) ?? now() + REREAD_AFTER_MS) : now() + token.expires_in * 1000;
+  return { value: token.access_token, expiresAt: new Date(expiresAt) };
+}
+
+/** RFC 6749 section 5.1 only recommends `expires_in`; an access token that is a JWT still carries its own `exp`. */
+function jwtExpiry(token: string): number | undefined {
+  try {
+    const { exp } = decodeJwt(token);
+    return exp === undefined ? undefined : exp * 1000;
+  } catch {
+    return undefined;
+  }
+}
+
+/** RFC 6749 section 5.2's error code, a registered token such as invalid_client; its description may echo the request. */
+const OAUTH_ERROR_CODE = /^[\x20-\x21\x23-\x5B\x5D-\x7E]+$/;
+
+/** The status and OAuth error code only: openid-client's error carries the reply, which may echo the secret. */
+function tokenEndpointError(error: unknown): Error {
+  if (error instanceof oidc.ResponseBodyError) {
+    return new Error(`the token endpoint answered ${error.status}${OAUTH_ERROR_CODE.test(error.error) ? ` ${error.error}` : ''}`);
+  }
+  if (error instanceof oidc.WWWAuthenticateChallengeError) return new Error(`the token endpoint answered ${error.status}`);
+  if (error instanceof oidc.ClientError && error.cause instanceof Response) return new Error(`the token endpoint answered ${error.cause.status}`);
+  if (error instanceof TypeError) return new Error(`the token endpoint could not be reached: ${error.message}`);
+  return new Error('the token endpoint did not answer with an access_token');
 }
 
 /**

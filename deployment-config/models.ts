@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { type DeploymentConfig } from './schema.js';
+import { secretArns } from './credential-fields.js';
+import type { DeploymentConfig } from './schema.js';
 import { endpoint, jsonFromEnv, type Endpoint } from './blocks.js';
 import type { ModelsDeployment, ModelsEnv } from './seams.js';
 
@@ -23,7 +24,7 @@ export function modelsDeployment(models: DeploymentConfig['models']): ModelsDepl
       [MODELS_ENV.endpoint]: JSON.stringify({ url, credential, ...(headers ? { headers } : {}) }),
       [MODELS_ENV.turnSummaryModel]: models.turnSummaryModel,
     },
-    secretArns: credential.kind === 'secret' ? [credential.secretArn] : [],
+    secretArns: secretArns(credential),
   };
 }
 

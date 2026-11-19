@@ -1,3 +1,4 @@
+import { outsideIssuer } from './credential-fields.js';
 import type { DeploymentConfig } from './schema.js';
 import type { CredentialSource } from './blocks.js';
 
@@ -216,12 +217,10 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
       iam: { chatService: { actions: ['bedrock-agentcore:InvokeAgentRuntime', 'bedrock-agentcore:StopRuntimeSession', 'lambda:InvokeFunction'] } },
       egressHosts: aws('bedrock-agentcore', 'lambda'),
     },
-    // Chat signs the Runtime's bearer token with its Turn identity keys, so it holds no Runtime grant; the AgentCore
-    // Runtime fetches the keys from the Chat Service's public origin. The session API is still a SigV4 Lambda call.
-    'jwt-bearer': {
-      iam: { chatService: { actions: ['lambda:InvokeFunction'] } },
-      egressHosts: aws('bedrock-agentcore', 'lambda'),
-    },
+    'jwt-bearer': (auth) => [
+      { iam: { chatService: { actions: ['lambda:InvokeFunction'] } }, egressHosts: aws('bedrock-agentcore', 'lambda') },
+      ...(outsideIssuer(auth) ? [{ egressHosts: [new URL(auth.issuer).host] }, credentialNeed('harnessAuth.token', auth.token, ['chatService'])] : []),
+    ],
   },
   turnCredentials: {
     'web-identity': {
@@ -276,7 +275,7 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
   },
 };
 
-/** What reading `credential` at `field` needs of each of its `readers`: a secret's grant, or a command they may run. */
+/** What reading `credential` at `field` needs of each of its `readers`: a secret's grant, a command they may run, or a token endpoint they reach. */
 function credentialNeed(field: string, credential: CredentialSource, readers: readonly Principal[]): Need {
   switch (credential.kind) {
     case 'secret':
@@ -288,6 +287,10 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
       return {};
     case 'command':
       return { commands: [`${field} (${readers.join(', ')}): ${credential.command.join(' ')}`] };
+    case 'oauth-client-credentials': {
+      const secret = credentialNeed(`${field}.clientSecret`, credential.clientSecret, readers);
+      return { ...secret, egressHosts: [new URL(credential.tokenEndpoint).host, ...(secret.egressHosts ?? [])] };
+    }
   }
 }
 

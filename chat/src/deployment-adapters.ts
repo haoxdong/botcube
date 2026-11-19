@@ -1,6 +1,6 @@
 import { deploymentSections, type DeploymentConfig } from 'botcube-deployment-config';
 import { loadDeployment } from 'botcube-deployment-config/load';
-import type { HarnessAuth } from 'botcube-deployment-config/seams';
+import type { ChatHarnessAuth } from './harness-auth.js';
 
 const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
 
@@ -8,7 +8,7 @@ const USER_MEMORY_ROLE_ARN = 'BOTCUBE_USER_MEMORY_ROLE_ARN';
 export type TurnCredentialsAdapter = { kind: 'web-identity' } | { kind: 'assume-role'; roleArn: string };
 
 export interface DeploymentAdapters {
-  harnessAuth: HarnessAuth;
+  harnessAuth: ChatHarnessAuth;
   turnCredentials: TurnCredentialsAdapter;
   schedules: DeploymentConfig['schedules'];
 }

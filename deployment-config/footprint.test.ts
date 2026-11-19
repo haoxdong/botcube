@@ -153,6 +153,21 @@ describe("the models Endpoint's credential", () => {
     const printed = formatFootprint(withCredential({ kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'], timeoutSeconds: 30 }));
     expect(printed).toContain('\nCommands\n  models.credential (chatService, harness): /usr/local/bin/token-broker --audience models\n');
   });
+
+  const oauth = (clientSecret: Extract<CredentialSource, { kind: 'oauth-client-credentials' }>['clientSecret']) =>
+    withCredential({ kind: 'oauth-client-credentials', tokenEndpoint: 'https://idp.example.com:8443/oauth2/token', clientId: 'botcube-models', clientSecret });
+
+  it('from OAuth client credentials reaches the token endpoint, and grants its readers the client secret', () => {
+    const needs = oauth({ kind: 'secret', secretArn });
+    expect(needs.egressHosts).toEqual(expect.arrayContaining(['idp.example.com:8443', 'secretsmanager.<region>.amazonaws.com']));
+    expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.harness?.actions).toContain('secretsmanager:GetSecretValue');
+  });
+
+  it("from OAuth client credentials lists the command its readers may run for the client secret", () => {
+    const printed = formatFootprint(oauth({ kind: 'command', command: ['/usr/local/bin/client-secret'], timeoutSeconds: 30 }));
+    expect(printed).toContain('\nCommands\n  models.credential.clientSecret (chatService, harness): /usr/local/bin/client-secret\n');
+  });
 });
 
 describe("sign-in's client secret", () => {
@@ -243,5 +258,36 @@ describe("the enterprise example's proxy Endpoint", () => {
   it('from a command lists the command each of them may run', () => {
     const needs = footprint(withCredential({ kind: 'command', command: ['/usr/local/bin/proxy-token', '--egress'], timeoutSeconds: 30 }));
     expect(needs.commands).toEqual(['proxy.credential (chatService, harness): /usr/local/bin/proxy-token --egress']);
+  });
+});
+
+describe("an outside Harness issuer's bearer", () => {
+  const { config } = loadDeployment(example('public'));
+  const issuer = 'https://idp.example.com/realms/platform/.well-known/openid-configuration';
+  const withToken = (token: CredentialSource) =>
+    footprint({ ...config, allowCommandCredentials: true, harnessAuth: { kind: 'jwt-bearer', issuer, clients: [{ clientId: 'botcube-harness' }], token } });
+
+  it('reaches the issuer, which the Runtime authorizer discovers its keys at', () => {
+    expect(withToken({ kind: 'file', path: '/run/secrets/botcube/harness-token' }).egressHosts).toContain('idp.example.com');
+  });
+
+  it('from a secret grants the Chat Service alone its value', () => {
+    const needs = withToken({ kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/harness-token' });
+    expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
+  });
+
+  it('from a command lists the command the Chat Service may run', () => {
+    expect(withToken({ kind: 'command', command: ['/usr/local/bin/token-broker', 'harness'], timeoutSeconds: 30 }).commands)
+      .toEqual(['harnessAuth.token (chatService): /usr/local/bin/token-broker harness']);
+  });
+});
+
+describe('the botcube Harness issuer', () => {
+  it('reaches no issuer beyond the Chat Service, which signs the bearer', () => {
+    const { config } = loadDeployment(example('public'));
+    const sigv4 = footprint(config);
+    const botcube = footprint({ ...config, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } });
+    expect(botcube.egressHosts).toEqual(sigv4.egressHosts);
   });
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
-import { credentialSource, endpoint, endpointHeaders, headersBeside, oidcIssuer, trust, type CredentialSource } from 'botcube-deployment-config/blocks';
+import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-deployment-config/credential-fields';
+import { credentialSource, endpoint, endpointHeaders, headersBeside, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-deployment-config/blocks';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
 // Every object is strict, so an unknown key fails startup instead of being ignored.
@@ -123,18 +124,31 @@ const harnessAuth = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('jwt-bearer'),
     ...trust(
-      z.literal('botcube').default('botcube').describe('The Chat Service at its public origin, the one issuer whose keys sign the bearer.'),
+      z.union([z.literal('botcube'), oidcDiscoveryUrl], { error: "Expected 'botcube' or an https OIDC discovery URL ending in /.well-known/openid-configuration" })
+        .default('botcube')
+        .describe("`botcube`, the Chat Service at its public origin signing with its Turn identity keys; or an outside issuer's OIDC discovery URL."),
       z.strictObject({
         clientId: z.string().min(1)
           .refine((audience) => !RESERVED_AUDIENCES.includes(audience), { error: (issue) => reservedAudienceError(String(issue.input)) })
-          .describe("An `aud` the Runtime's JWT authorizer allows; Chat signs for the first."),
+          .describe("A client the Runtime's JWT authorizer allows: under `botcube`, a bearer's `aud`, Chat signing for the first; under an outside issuer, its `client_id`, so the issuer's other clients can't call the Harness."),
       }),
     ),
-  }).describe("Chat signs a short-lived bearer token with its Turn identity keys, as the issuer at its public origin; the AgentCore Runtime's JWT authorizer checks it."),
+    token: credentialSource.optional().describe("The bearer Chat sends under an outside issuer, read again before it expires; required for a discovery URL issuer."),
+  }).transform(({ token, ...auth }, context): Exclude<HarnessAuth<CredentialSource>, { kind: 'sigv4' }> => {
+    if (auth.issuer === 'botcube') {
+      if (token !== undefined) context.addIssue({ code: 'custom', path: ['token'], message: 'Chat signs its own bearer for the botcube issuer; token is for an issuer at a discovery URL' });
+      return { kind: auth.kind, issuer: auth.issuer, clients: auth.clients };
+    }
+    if (token === undefined) {
+      context.addIssue({ code: 'custom', path: ['token'], message: 'An issuer at a discovery URL needs the token Chat sends it, a Credential Source' });
+      return z.NEVER;
+    }
+    return { kind: auth.kind, issuer: auth.issuer, clients: auth.clients, token };
+  }).describe("A bearer token the AgentCore Runtime's JWT authorizer checks: one Chat signs with its Turn identity keys, or an outside issuer's from `token`."),
 ]);
 /** Fails to compile when the schema and the `HarnessAuth` seam drift apart. */
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-true satisfies Same<z.infer<typeof harnessAuth>, HarnessAuth>;
+true satisfies Same<z.infer<typeof harnessAuth>, HarnessAuth<CredentialSource>>;
 const turnCredentials = z.discriminatedUnion('kind', [
   kindOnly('web-identity'),
   kindOnly('assume-role').describe('The Chat Service assumes the Memory role for each Turn with a session policy naming its User; no OIDC provider or session tags.'),
@@ -247,7 +261,7 @@ export const deploymentSections = z.strictObject({
     .describe('Whether a credential may come from a command, which then runs as the service; whoever can edit this file chooses that command.'),
   identity: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
   models: models.default({ kind: 'bedrock' }).describe('Where the agent and turn summaries reach their models.'),
-  harnessAuth: harnessAuth.default({ kind: 'sigv4' }).describe('How Chat authenticates to the Harness.'),
+  harnessAuth: harnessAuth.prefault({ kind: 'sigv4' }).describe('How Chat authenticates to the Harness.'),
   turnCredentials: turnCredentials.default({ kind: 'web-identity' }).describe("How each Turn gets its User's AWS credentials."),
   schedules: schedules.default({ kind: 'eventbridge-scheduler' }).describe('What fires scheduled tasks.'),
   liveView: liveView.default({ kind: 'agentcore-browser' }).describe("How the User watches the Agent Computer's browser."),
@@ -257,16 +271,17 @@ export const deploymentSections = z.strictObject({
   proxy: proxy.default({ kind: 'none' }).describe('The proxy outbound traffic goes through.'),
 });
 
-type CredentialField = [path: (string | number)[], source: CredentialSource];
 
 /** Every Credential Source the Deployment Config names, by its path. */
-export function credentialFields({ identity, models, telemetry, proxy }: z.output<typeof deploymentSections>): CredentialField[] {
-  return [
+export function credentialFields({ identity, models, harnessAuth, telemetry, proxy }: z.output<typeof deploymentSections>): CredentialField[] {
+  const fields: CredentialField[] = [
+    ...(outsideIssuer(harnessAuth) ? [[['harnessAuth', 'token'], harnessAuth.token] satisfies CredentialField] : []),
     ...(proxy.kind === 'forward' && proxy.credential ? [[['proxy', 'credential'], proxy.credential] satisfies CredentialField] : []),
     ...(telemetry.kind === 'otlp' && telemetry.credential ? [[['telemetry', 'credential'], telemetry.credential] satisfies CredentialField] : []),
     ...(identity.kind === 'oidc' ? identity.clients.map(({ clientSecret }, index): CredentialField => [['identity', 'clients', index, 'clientSecret'], clientSecret]) : []),
     ...(models.kind === 'openai-compatible' ? [[['models', 'credential'], models.credential] satisfies CredentialField] : []),
   ];
+  return fields.flatMap(withClientSecret);
 }
 
 export const deploymentConfig = deploymentSections.superRefine((config, context) => {

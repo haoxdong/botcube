@@ -8,6 +8,7 @@
   "exports": {
     ".": "./schema.ts",
     "./blocks": "./blocks.ts",
+    "./credential-fields": "./credential-fields.ts",
     "./load": "./load.ts",
     "./parse": "./parse.ts",
     "./footprint": "./footprint.ts",

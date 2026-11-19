@@ -28,8 +28,7 @@ import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
 import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
-import type { HarnessAuth } from 'botcube-deployment-config/seams';
-import { harnessBearer } from './harness-auth.js';
+import { harnessBearer, type ChatHarnessAuth } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
 import { accountRoutes } from './account-routes.js';
@@ -46,7 +45,7 @@ export interface ChatServiceConfig {
   /** Unset: Turns get 503 and warmup is skipped. */
   agentCore: AgentCoreRuntime | null;
   /** How Turns authenticate to the Harness; unset is SigV4. */
-  harnessAuth?: HarnessAuth;
+  harnessAuth?: ChatHarnessAuth;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
   localHarnessUrl: string | null;
   /** BOTCUBE_CORS_ORIGINS; null keeps the bot's defaults. */

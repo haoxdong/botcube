@@ -63,6 +63,14 @@ describe("the deploy's command credential opt-in", () => {
     }
   });
 
+  it("fails an OAuth client secret's command the operator did not opt in to, naming its field", () => {
+    const credential = { kind: 'oauth-client-credentials', tokenEndpoint: 'https://login.example.com/oauth2/token', clientId: 'botcube', clientSecret: COMMAND };
+    const config = deploymentConfig.parse({ ...withCommand, models: { ...withCommand.models, credential } });
+
+    expect(() => commandCredentialOptIn(config, {}))
+      .toThrow('models.credential.clientSecret is a command credential, which runs only when the deploy environment sets BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1');
+  });
+
   it('gives nothing when the config runs no command and the operator set nothing', () => {
     expect(commandCredentialOptIn(withoutCommand, {})).toEqual({});
   });
@@ -72,5 +80,23 @@ describe("the deploy's command credential opt-in", () => {
     const telemetry = telemetryDeployment({ kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND });
     const environments = [models?.environment, telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
     expect(environments.filter((environment) => environment && 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS' in environment)).toEqual([]);
+  });
+});
+
+describe("the deploy's secret grants", () => {
+  const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:oauth-client-AbCdEf';
+  const oauthClient = {
+    kind: 'oauth-client-credentials',
+    tokenEndpoint: 'https://login.example.com/oauth2/token',
+    clientId: 'botcube',
+    clientSecret: { kind: 'secret', secretArn: SECRET_ARN },
+  } as const;
+
+  it("grants the secret an OAuth client's secret is read from, for models and telemetry", () => {
+    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient, turnSummaryModel: 'summary' });
+    const telemetry = telemetryDeployment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces', credential: oauthClient });
+
+    expect(models?.secretArns).toEqual([SECRET_ARN]);
+    expect(telemetry.secretArns).toEqual([SECRET_ARN]);
   });
 });

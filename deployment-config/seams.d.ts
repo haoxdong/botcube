@@ -1,7 +1,16 @@
 // A declaration file: the CDK packages' rootDir admits declaration files from outside it, but no source.
 
-export type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; issuer: 'botcube'; clients: [HarnessClient, ...HarnessClient[]] };
-/** A Harness bearer's audience, which the Runtime's JWT authorizer allows. */
+/**
+ * How Chat authenticates to the Harness. `Token` is the Credential Source Chat reads an outside issuer's bearer from,
+ * which the CDK passes through unread.
+ */
+export type HarnessAuth<Token = unknown> =
+  | { kind: 'sigv4' }
+  | { kind: 'jwt-bearer'; issuer: 'botcube'; clients: [HarnessClient, ...HarnessClient[]] }
+  | { kind: 'jwt-bearer'; issuer: DiscoveryUrl; clients: [HarnessClient, ...HarnessClient[]]; token: Token };
+/** An OIDC issuer's discovery URL, as AgentCore's JWT authorizer takes it. */
+export type DiscoveryUrl = `https://${string}/.well-known/openid-configuration`;
+/** A client the Runtime's JWT authorizer allows: a Harness bearer's `aud` under `botcube`, its `client_id` under an outside issuer. */
 export interface HarnessClient {
   clientId: string;
 }

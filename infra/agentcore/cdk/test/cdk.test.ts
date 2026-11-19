@@ -15,6 +15,7 @@ import {
   RUNTIME_IDLE_TIMEOUT_SECONDS,
 } from '../lib/cdk-stack';
 import { readCdkContext } from '../lib/cdk-context';
+import type { HarnessAuth } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
 
 /** The template's one runtime and one memory. */
 function onlyOf<T>(entries: T[]): T {
@@ -449,6 +450,47 @@ test('grants the runtime role no X-Ray when telemetry is none, and keeps it othe
 
   expect(runtimePolicies({ kind: 'none', secretArns: [] })).not.toContain('xray:');
   expect(runtimePolicies({ kind: 'xray', secretArns: [] })).toContain('xray:PutTraceSegments');
+});
+
+test.each([
+  [
+    'the Chat Service, under botcube, for the audiences of its clients',
+    {
+      kind: 'jwt-bearer',
+      issuer: 'botcube',
+      clients: [{ clientId: 'botcube-harness' }],
+    } satisfies HarnessAuth as HarnessAuth,
+    {
+      DiscoveryUrl: 'https://chat.example.com/.well-known/openid-configuration',
+      AllowedAudience: ['botcube-harness'],
+      AllowedClients: Match.absent(),
+    },
+  ],
+  [
+    'an outside issuer, at its discovery URL, for its clients alone',
+    {
+      kind: 'jwt-bearer',
+      issuer: 'https://idp.example.com/realms/platform/.well-known/openid-configuration',
+      clients: [{ clientId: 'botcube-chat' }, { clientId: 'botcube-scheduler' }],
+      token: { kind: 'file', path: '/run/secrets/botcube/harness-token' },
+    } satisfies HarnessAuth as HarnessAuth,
+    {
+      DiscoveryUrl: 'https://idp.example.com/realms/platform/.well-known/openid-configuration',
+      AllowedClients: ['botcube-chat', 'botcube-scheduler'],
+      AllowedAudience: Match.absent(),
+    },
+  ],
+])("authorizes the runtime's bearer tokens from %s", (_, harnessAuth, authorizer) => {
+  const stack = new AgentCoreStack(new cdk.App(), 'RuntimeAuthorizerStack', {
+    spec: readProjectSpec(DEPLOY_ROOT),
+    physicalIdentity: PHYSICAL_IDENTITY,
+    harnessAuth,
+    chatServiceIssuer: 'https://chat.example.com',
+  });
+
+  Template.fromStack(stack).hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
+    AuthorizerConfiguration: { CustomJWTAuthorizer: authorizer },
+  });
 });
 
 test('caps the lifecycle of the runtime the stack deploys (ADR 0029)', () => {

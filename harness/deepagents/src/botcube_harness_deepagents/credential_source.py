@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -9,8 +10,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, quote_plus, urlsplit
 
+import httpx
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -56,12 +58,29 @@ class BotCubeSource(_Source):
     audience: str
 
 
-Source = Annotated[SecretSource | FileSource | CommandSource | AwsSource | BotCubeSource, Field(discriminator='kind')]
+class OAuthClientCredentialsSource(_Source):
+    kind: Literal['oauth-client-credentials']
+    token_endpoint: str = Field(alias='tokenEndpoint')
+    client_id: str = Field(alias='clientId', min_length=1)
+    client_secret: Annotated[SecretSource | FileSource | CommandSource, Field(discriminator='kind')] = Field(alias='clientSecret')
+    scopes: list[str] | None = None
+
+
+Source = Annotated[
+    SecretSource | FileSource | CommandSource | OAuthClientCredentialsSource | AwsSource | BotCubeSource, Field(discriminator='kind'),
+]
 _SOURCE: TypeAdapter[Source] = TypeAdapter(Source)
 
 
 class CredentialSourceError(RuntimeError):
     pass
+
+
+class _Refused(Exception):
+    def __init__(self, about: str, reason: str) -> None:
+        super().__init__(reason)
+        self.about = about
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -104,22 +123,46 @@ def credential_source(
         parsed = _SOURCE.validate_python(source)
     except ValidationError as error:
         raise CredentialSourceError('\n'.join(f'{seam} credential: {_field(issue)}: {issue["msg"]}' for issue in error.errors())) from None
-    match parsed:
+    try:
+        about, read = _adapter(parsed, env, now)
+    except _Refused as refused:
+        raise CredentialSourceError(f'{seam} credential ({refused.about}): {refused.reason}') from None
+    return CredentialSource(f'{seam} credential ({about})', read, now)
+
+
+def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float]) -> tuple[str, Callable[[], Credential]]:
+    match source:
         case SecretSource(secret_arn=arn):
-            return CredentialSource(f'{seam} credential (secret {arn})', lambda: Credential(_secret_string(arn), now() + REREAD_AFTER_SECONDS), now)
+            return f'secret {arn}', lambda: Credential(_secret_string(arn), now() + REREAD_AFTER_SECONDS)
         case FileSource(path=path):
-            return CredentialSource(f'{seam} credential (file {path})', lambda: Credential(_file_text(path), now() + REREAD_AFTER_SECONDS), now)
+            return f'file {path}', lambda: Credential(_file_text(path), now() + REREAD_AFTER_SECONDS)
         case CommandSource(command=command, timeout_seconds=timeout):
-            named = f'{seam} credential (command {command[0]})'
             if env.get(ALLOW_COMMAND_CREDENTIALS_ENV) != '1':
-                raise CredentialSourceError(f'{named}: a command credential runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
-            return CredentialSource(named, lambda: _exec_credential(_stdout_of(command, timeout)), now)
+                raise _Refused(f'command {command[0]}', f'a command credential runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
+            return f'command {command[0]}', lambda: _exec_credential(_stdout_of(command, timeout))
+        case OAuthClientCredentialsSource():
+            return _oauth_adapter(source, env, now)
         case AwsSource(audience=audience):
-            return CredentialSource(
-                f'{seam} credential (aws {audience})', lambda: Credential(_caller_identity_request(audience, env), now() + SIGV4_VALID_SECONDS), now,
-            )
+            return f'aws {audience}', lambda: Credential(_caller_identity_request(audience, env), now() + SIGV4_VALID_SECONDS)
         case BotCubeSource(audience=audience):
-            raise CredentialSourceError(f'{seam} credential (botcube {audience}): only the Chat Service signs a botcube token, with its Turn identity keys')
+            raise _Refused(f'botcube {audience}', 'only the Chat Service signs a botcube token, with its Turn identity keys')
+
+
+def _oauth_adapter(source: OAuthClientCredentialsSource, env: Mapping[str, str], now: Callable[[], float]) -> tuple[str, Callable[[], Credential]]:
+    about = f'oauth-client-credentials {source.token_endpoint}'
+    try:
+        secret_about, read_secret = _adapter(source.client_secret, env, now)
+    except _Refused as refused:
+        raise _Refused(about, f'client secret ({refused.about}): {refused.reason}') from None
+
+    def read() -> Credential:
+        try:
+            secret = read_secret().value
+        except Exception as error:
+            raise RuntimeError(f'client secret ({secret_about}): {error}') from error
+        return _client_credentials_grant(source, secret, now)
+
+    return about, read
 
 
 def credential_source_from_env(seam: str, name: str, env: Mapping[str, str] = os.environ) -> CredentialSource | None:
@@ -144,6 +187,56 @@ def _secret_string(arn: str) -> str:
     if not value:
         raise ValueError('the secret holds no string')
     return value
+
+
+class _TokenEndpointError(RuntimeError):
+    pass
+
+
+class _TokenReply(BaseModel):
+    access_token: str = Field(min_length=1)
+    expires_in: float | None = Field(default=None, gt=0)
+
+
+class _ErrorReply(BaseModel):
+    # RFC 6749 section 5.2's error code, a registered token such as invalid_client; its description may echo the request.
+    error: str = Field(pattern=r'^[\x20-\x21\x23-\x5B\x5D-\x7E]+$')
+
+
+def _client_credentials_grant(source: OAuthClientCredentialsSource, client_secret: str, now: Callable[[], float]) -> Credential:
+    """RFC 6749 section 4.4: the client authenticates with HTTP Basic, its id and secret each form-encoded."""
+    basic = base64.b64encode(f'{quote_plus(source.client_id)}:{quote_plus(client_secret)}'.encode()).decode()
+    form = {'grant_type': 'client_credentials', **({'scope': ' '.join(source.scopes)} if source.scopes else {})}
+    response = httpx.post(source.token_endpoint, data=form, headers={'authorization': f'Basic {basic}', 'accept': 'application/json'})
+    if not response.is_success:
+        try:
+            error = _ErrorReply.model_validate_json(response.content)
+        except ValidationError:
+            raise _TokenEndpointError(f'the token endpoint answered {response.status_code}') from None
+        raise _TokenEndpointError(f'the token endpoint answered {response.status_code} {error.error}')
+    try:
+        token = _TokenReply.model_validate_json(response.content)
+    except ValidationError:
+        raise _TokenEndpointError('the token endpoint did not answer with an access_token') from None
+    if token.expires_in is not None:
+        return Credential(token.access_token, now() + token.expires_in)
+    expiry = _jwt_expiry(token.access_token)
+    return Credential(token.access_token, now() + REREAD_AFTER_SECONDS if expiry is None else expiry)
+
+
+class _JwtClaims(BaseModel):
+    exp: float | None = None
+
+
+def _jwt_expiry(token: str) -> float | None:
+    # RFC 6749 section 5.1 only recommends expires_in; an access token that is a JWT still carries its own exp.
+    parts = token.split('.')
+    if len(parts) != 3:
+        return None
+    try:
+        return _JwtClaims.model_validate_json(base64.urlsafe_b64decode(parts[1] + '=' * (-len(parts[1]) % 4))).exp
+    except ValueError:
+        return None
 
 
 def _caller_identity_request(audience: str, env: Mapping[str, str]) -> str:

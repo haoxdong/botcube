@@ -1,4 +1,5 @@
-import { type DeploymentConfig } from 'botcube-deployment-config';
+import type { DeploymentConfig } from 'botcube-deployment-config';
+import { secretArns } from 'botcube-deployment-config/credential-fields';
 import { credentialSource, jsonFromEnv, type CredentialSource } from 'botcube-deployment-config/blocks';
 
 /** The variable both services read the `otlp` Endpoint's credential from, as Credential Source JSON. */
@@ -34,7 +35,7 @@ export function telemetryDeployment(telemetry: DeploymentConfig['telemetry']): T
   return {
     chatService: shared,
     harness: { ...shared, ...(credential ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
-    secretArns: credential?.kind === 'secret' ? [credential.secretArn] : [],
+    secretArns: credential ? secretArns(credential) : [],
   };
 }
 

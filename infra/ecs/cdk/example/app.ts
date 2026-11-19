@@ -6,6 +6,7 @@ import type { App } from 'aws-cdk-lib';
 import { commandCredentialOptIn, proxyEnvironment } from '../../../../deployment-config/environment.js';
 import { loadDeployment } from '../../../../deployment-config/load.js';
 import { modelsDeployment } from '../../../../deployment-config/models.js';
+import { outsideIssuer, secretArns } from '../../../../deployment-config/credential-fields.js';
 import type { DeploymentConfig } from '../../../../deployment-config/schema.js';
 import { telemetryDeployment } from '../../../../deployment-config/telemetry.js';
 import { addAgentCoreStacks } from '../../../agentcore/cdk/lib/agentcore-app.js';
@@ -106,10 +107,10 @@ function seamWiring(config: DeploymentConfig) {
     production: {
       ...(models ? { models } : {}),
       turnCredentials: config.turnCredentials.kind,
-      chatSecretArns:
-        config.identity.kind === 'oidc'
-          ? config.identity.clients.flatMap(({ clientSecret }) => (clientSecret.kind === 'secret' ? [clientSecret.secretArn] : []))
-          : [],
+      chatSecretArns: secretArns(
+        ...(config.identity.kind === 'oidc' ? config.identity.clients.map(({ clientSecret }) => clientSecret) : []),
+        ...(outsideIssuer(config.harnessAuth) ? [config.harnessAuth.token] : []),
+      ),
     } satisfies Partial<ProductionOptions>,
     chat: { harnessAuth: config.harnessAuth, schedules: config.schedules.kind, liveView: config.liveView.kind } satisfies ProductionOptions['chat'],
     agentCore: { ...(models ? { models } : {}), harnessAuth: config.harnessAuth },
