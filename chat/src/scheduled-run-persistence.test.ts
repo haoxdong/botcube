@@ -18,6 +18,7 @@ import { agentCoreUpstream } from './upstream.js';
 
 import { owner, stack, stream, text } from '../test/scheduled-run-fixture.js';
 import { motoAws } from '../test/fakes/moto.js';
+import { filed } from '../test/stock-bot.js';
 
 afterEach(async () => {
   const documents = DynamoDBDocumentClient.from(stack.table.client);
@@ -48,10 +49,10 @@ function interruptReservation(store: NonNullable<SessionMetadata['scheduledRuns'
 
 async function seedSettledFailedDelivery(metadata: SessionMetadata, account: string, taskId: string, deliveryId: string): Promise<void> {
   const store = defined(metadata.scheduledRuns, 'scheduled delivery store');
-  const main = await metadata.mainChat(account, `filed-${account}`);
-  const delivery = await store.claim(account, taskId, deliveryId, `filed-${account}`, main, taskId);
+  const main = await metadata.mainChat(account, filed(account));
+  const delivery = await store.claim(account, taskId, deliveryId, filed(account), main, taskId);
   await store.admit(delivery);
-  await metadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Brief', messageId: delivery.postMessageId, postAcceptance: true });
+  await metadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Brief', messageId: delivery.postMessageId, postAcceptance: true });
   const complete = await metadata.beginDispatch(account, main, undefined, { messageId: delivery.postMessageId });
   const posting = await store.posting(delivery, complete, true);
   await defined(complete.markSucceeded, 'registered post success proof')('session-post', store.postedTransaction(posting));
@@ -77,7 +78,7 @@ async function changeReservedClaimBoundary(claimed: InProcessStack, boundary: st
 
 describe('scheduled persistence dispatch admission', () => {
   it('runs one first occurrence while an overlapping occurrence skips and stays skipped on redelivery', async () => {
-    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
     const account = owner();
     let release!: () => void;
     const hold = new Promise<void>((resolve) => { release = resolve; });
@@ -97,7 +98,7 @@ describe('scheduled persistence dispatch admission', () => {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         scheduledRequester: async (owner) => ({ owner }),
-        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
       const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
@@ -133,7 +134,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it('keeps a task made one-off after a recurring run was queued, until its own time comes', async () => {
-    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
     try {
       const account = owner();
       const call = (method: string, path: string, body: unknown) => isolated.app.request(path, { method,
@@ -149,7 +150,7 @@ describe('scheduled persistence dispatch admission', () => {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         scheduledRequester: async (owner) => ({ owner }),
-        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
       const deps = { turnIdentity: null, bot, sessionMetadata: isolated.sessionMetadata,
@@ -170,7 +171,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it("retires a one-off on its redelivery when retiring failed after its run's post", async () => {
-    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
     try {
       const account = owner();
       const response = await isolated.app.request('/scheduled-tasks', { method: 'POST',
@@ -186,7 +187,7 @@ describe('scheduled persistence dispatch admission', () => {
         agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
         scheduledRequester: async (owner) => ({ owner }),
-        filingUserId: (owner) => `filed-${owner}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+        filingUserId: (owner) => filed(owner), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
         credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
       };
       // Storage refuses the first retirement, as a throttled transaction would.
@@ -218,7 +219,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it.each(['valid transfer', 'original Main filing', 'missing original Main filing proof', 'concurrent replacements', 'deleted destination', 'further Claim', 'changed source Claim', 'missing moved task', 'paused moved task', 'missing original Main', 'fresh source delivery', 'missing same-owner task', 'paused same-owner task'] as const)('recovers the original reserved SQS delivery after its real scheduled task moves during Account Claim: %s', async (boundary) => {
-    const claimed = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
+    const claimed = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
     const source = owner();
     const destination = owner();
     const runs = defined(claimed.scheduler, 'the Claim stack schedules tasks');
@@ -228,16 +229,16 @@ describe('scheduled persistence dispatch admission', () => {
       body: JSON.stringify({ title: 'Reserved Claim', prompt: 'Preserve this occurrence', schedule: 'rate(1 day)', timezone: 'UTC', proposalId: 'reserved-claim-proof' }) });
     expect(response.status).toBe(201);
     const { id: taskId } = await response.json() as { id: string };
-    const originalMainFiling = boundary === 'original Main filing' ? 'original-filing' : `filed-${source}`;
+    const originalMainFiling = boundary === 'original Main filing' ? 'original-filing' : filed(source);
     const originalMain = await claimed.sessionMetadata.mainChat(source, originalMainFiling);
-    const destinationMain = await claimed.sessionMetadata.mainChat(destination, `filed-${destination}`);
+    const destinationMain = await claimed.sessionMetadata.mainChat(destination, filed(destination));
     claimed.agentcore.scriptPrompt('Preserve this occurrence', stream(...text('reserved-answer', 'Recovered original occurrence.')));
     const runtime = agentCoreUpstream({ arn: RUNTIME_ARN, region: 'us-east-1', endpoint: claimed.agentcore.url });
     const bot: ScheduledRunSource = {
       agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
       models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (account) => ({ owner: account }),
-      filingUserId: (account) => `filed-${account}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (account) => filed(account), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const deps = { turnIdentity: null, bot, sessionMetadata: claimed.sessionMetadata,
@@ -266,7 +267,7 @@ describe('scheduled persistence dispatch admission', () => {
       if (sameOwner) expect(await tasks.get(source, taskId)).toMatchObject({ id: taskId });
       else { expect(await tasks.get(source, taskId)).toBeNull(); expect(await tasks.get(destination, taskId)).toMatchObject({ id: taskId }); }
       const reserved = defined(await store.get(source, message.deliveryId, taskId), 'original reservation');
-      expect(reserved).toMatchObject({ phase: 'reserved', mainChat: originalMain, filingUserId: `filed-${source}` });
+      expect(reserved).toMatchObject({ phase: 'reserved', mainChat: originalMain, filingUserId: filed(source) });
       await sqs.send(new ChangeMessageVisibilityCommand({ QueueUrl: runs.runs.queueUrl, ReceiptHandle: original.receipt, VisibilityTimeout: 0 }));
       const redelivery = defined((await queue.receive(new AbortController().signal))[0], 'replacement SQS delivery');
       expect(redelivery.deliveryId).toBe(original.deliveryId);
@@ -298,7 +299,7 @@ describe('scheduled persistence dispatch admission', () => {
         expect(claimed.agentcore.invocations()).toHaveLength(0);
         expect(claimed.sessionApi.events().filter((event) => event.operation === 'post')).toEqual([]);
         expect(await store.get(source, message.deliveryId, taskId)).toMatchObject({ phase: 'reserved', sideChat: reserved.sideChat, runId: reserved.runId });
-        expect(await replacement.mainChat(destination, `filed-${destination}`)).toBe(destinationMain);
+        expect(await replacement.mainChat(destination, filed(destination))).toBe(destinationMain);
         return;
       }
       if (boundary === 'concurrent replacements') {
@@ -323,8 +324,8 @@ describe('scheduled persistence dispatch admission', () => {
         sideChat: reserved.sideChat, runId: reserved.runId, postMessageId: reserved.postMessageId });
       await resume();
       expect(claimed.agentcore.invocations()).toHaveLength(1);
-      expect(claimed.agentcore.invocationFor(reserved.sideChat).payload.forwardedProps.sessionUserId).toBe(`filed-${source}`);
-      expect(await replacement.mainChat(destination, `filed-${destination}`)).toBe(destinationMain);
+      expect(claimed.agentcore.invocationFor(reserved.sideChat).payload.forwardedProps.sessionUserId).toBe(filed(source));
+      expect(await replacement.mainChat(destination, filed(destination))).toBe(destinationMain);
       expect(claimed.sessionApi.events().filter((event) => event.operation === 'post')).toEqual([expect.objectContaining({ sessionId: originalMain,
         userId: originalMainFiling, messageId: reserved.postMessageId, content: 'Scheduled task "Reserved Claim": Recovered original occurrence.' })]);
     } finally { restoreAdmission(); reservation.mockRestore(); await claimed.stop(); }
@@ -333,20 +334,20 @@ describe('scheduled persistence dispatch admission', () => {
   it.each(['deleted owner', 'Account Claim'] as const)('refuses a new durable delivery claim after %s', async (fence) => {
     const account = owner();
     const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
     if (fence === 'deleted owner') await stack.sessionMetadata.fenceOwner(account);
     else await DynamoDBDocumentClient.from(stack.table.client).send(new PutCommand({ TableName: stack.table.name,
       Item: { pk: `SESSIONS#${account}`, sk: 'CLAIM', destination: owner() } }));
-    await expect(store.claim(account, 'task', 'fenced-occurrence', `filed-${account}`, main, 'task')).rejects.toThrow();
+    await expect(store.claim(account, 'task', 'fenced-occurrence', filed(account), main, 'task')).rejects.toThrow();
     expect(await store.get(account, 'fenced-occurrence', 'task')).toBeNull();
   });
 
   it('retains one original durable delivery identity and refuses another task reusing it', async () => {
     const account = owner();
     const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
-    const original = await store.claim(account, 'task', 'same-occurrence', `filed-${account}`, main, 'task');
-    await expect(store.claim(account, 'task', 'same-occurrence', `filed-${account}`, main, 'task')).rejects.toThrow();
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
+    const original = await store.claim(account, 'task', 'same-occurrence', filed(account), main, 'task');
+    await expect(store.claim(account, 'task', 'same-occurrence', filed(account), main, 'task')).rejects.toThrow();
     expect(await store.get(account, 'same-occurrence', 'task')).toMatchObject(original);
     await expect(store.get(account, 'same-occurrence', 'different-task')).rejects.toThrow('Scheduled delivery identity is invalid');
   });
@@ -359,7 +360,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
@@ -371,8 +372,8 @@ describe('scheduled persistence dispatch admission', () => {
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, async () => undefined), invokeSessionApi: post,
     };
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
-    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
+    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Main', messageId: 'active-main' });
     const active = await stack.sessionMetadata.beginDispatch(account, main);
     await defined(active.markRejected, 'rejected writer')('scheduled-recovery-runtime');
     const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
@@ -391,7 +392,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
@@ -404,8 +405,8 @@ describe('scheduled persistence dispatch admission', () => {
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       stopScheduledRuntime: async () => undefined, upstream: sessionLifecycle({ label: 'AgentCore', runtimeTarget: 'scheduled-recovery-runtime', invoke }, stop), invokeSessionApi: post,
     };
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
-    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
+    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Main', messageId: 'active-main' });
     const active = await stack.sessionMetadata.beginDispatch(account, main);
     await defined(active.markRejected, 'rejected writer')('scheduled-recovery-runtime');
     const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
@@ -426,7 +427,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null, stopSessionComputer: async () => undefined,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Saved answer"}\n\ndata: {"type":"RUN_FINISHED"}\n\n'));
@@ -438,8 +439,8 @@ describe('scheduled persistence dispatch admission', () => {
       scheduledTasks: { get: async () => task, recordRun: vi.fn(async () => undefined), retire: async () => undefined, issueSideChat: async () => task.id },
       upstream: sessionLifecycle({ label: 'AgentCore', invoke }), invokeSessionApi: post,
     };
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
-    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Main', messageId: 'active-main' });
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
+    await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Main', messageId: 'active-main' });
     const active = await stack.sessionMetadata.beginDispatch(account, main);
     const message = { owner: account, taskId: task.id, deliveryId: 'busy-main-occurrence' };
     let observeBusy!: () => void;
@@ -462,7 +463,7 @@ describe('scheduled persistence dispatch admission', () => {
       expect(await store.get(account, message.deliveryId, task.id)).toMatchObject({ phase: 'admitted' });
       expect(invoke).toHaveBeenCalledOnce();
       expect(post).not.toHaveBeenCalled();
-      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'New Main question', messageId: 'replacement-main' });
+      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'New Main question', messageId: 'replacement-main' });
       replacement = await stack.sessionMetadata.beginDispatch(account, main);
       if (claim) await stack.history.transfer(account, destination);
       await active();
@@ -470,7 +471,7 @@ describe('scheduled persistence dispatch admission', () => {
       await run;
       expect(invoke).toHaveBeenCalledOnce();
       expect(post).toHaveBeenCalledOnce();
-      expect(post.mock.calls[0]?.[0]).toMatchObject({ userId: `filed-${account}`, scheduledRun: { text: 'Saved answer' } });
+      expect(post.mock.calls[0]?.[0]).toMatchObject({ userId: filed(account), scheduledRun: { text: 'Saved answer' } });
       expect(deps.scheduledTasks.recordRun).toHaveBeenCalledWith(claim ? destination : account, task.id, { at: expect.any(String), status: 'done' });
       expect(await store.get(account, message.deliveryId, task.id)).toMatchObject({ phase: 'completed' });
     } finally {
@@ -488,7 +489,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
       stopSessionComputer: async () => undefined,
     };
@@ -528,8 +529,8 @@ describe('scheduled persistence dispatch admission', () => {
     const store = defined(stack.sessionMetadata.scheduledRuns, 'scheduled delivery store');
     let mainRunningSnapshot: unknown;
     if (failure === 'running Main') {
-      const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
-      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: `filed-${account}`, title: 'Ordinary Main Chat', messageId: 'ordinary-main-message', running: { runId: 'ordinary-main-run', startedAt: '2026-10-09T00:00:00Z' } });
+      const main = await stack.sessionMetadata.mainChat(account, filed(account));
+      await stack.sessionMetadata.recordTurn(account, main, { filingUserId: filed(account), title: 'Ordinary Main Chat', messageId: 'ordinary-main-message', running: { runId: 'ordinary-main-run', startedAt: '2026-10-09T00:00:00Z' } });
       invoke.mockImplementation(async () => {
         mainRunningSnapshot = await stack.sessionMetadata.get(account, main);
         return new Response('data: {"type":"RUN_FINISHED"}\n\n');
@@ -547,9 +548,9 @@ describe('scheduled persistence dispatch admission', () => {
       try {
         await reservationEntered;
         const unrelatedOwner = owner();
-        const unrelatedMain = await stack.sessionMetadata.mainChat(unrelatedOwner, `filed-${unrelatedOwner}`);
+        const unrelatedMain = await stack.sessionMetadata.mainChat(unrelatedOwner, filed(unrelatedOwner));
         await stack.sessionMetadata.recordTurn(unrelatedOwner, unrelatedMain, {
-          filingUserId: `filed-${unrelatedOwner}`, title: 'Unrelated Turn', messageId: randomUUID(),
+          filingUserId: filed(unrelatedOwner), title: 'Unrelated Turn', messageId: randomUUID(),
         });
         const reserved = defined(await store.get(account, message.deliveryId, task.id), 'original reservation');
         const replacement = new DynamoDBSessionMetadata(stack.table.name, stack.table.client);
@@ -620,7 +621,7 @@ describe('scheduled persistence dispatch admission', () => {
       return;
     }
     expect(post).toHaveBeenCalledTimes(1);
-    const main = await stack.sessionMetadata.mainChat(account, `filed-${account}`);
+    const main = await stack.sessionMetadata.mainChat(account, filed(account));
     const address = defined(await stack.sessionMetadata.get(account, main), 'accepted Main result');
     if (failure === 'success proof failure' || failure === 'uncertain post') {
       await expect(stack.sessionMetadata.assertNoDispatch(address)).rejects.toThrow('Session dispatch is still registered');
@@ -650,7 +651,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
       stopSessionComputer: async () => undefined,
     };
@@ -691,7 +692,7 @@ describe('scheduled persistence dispatch admission', () => {
         await stack.sessionMetadata.fenceOwner(value);
         return { owner: value };
       },
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
       stopSessionComputer: async () => undefined,
     };
@@ -721,7 +722,7 @@ describe('scheduled persistence dispatch admission', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
       stopSessionComputer: async () => undefined,
     };

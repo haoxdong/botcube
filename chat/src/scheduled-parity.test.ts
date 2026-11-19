@@ -12,7 +12,7 @@ type Browser = ReturnType<typeof inProcessBrowser>;
 let stack: InProcessStack;
 let scheduler: NonNullable<InProcessStack['scheduler']>;
 beforeEach(async () => {
-  stack = await startInProcess({ scheduled: true });
+  stack = await startInProcess({ stock: true, scheduled: true });
   scheduler = defined(stack.scheduler, 'scheduled fixture');
 });
 afterEach(async () => { vi.restoreAllMocks(); await stack.stop(); });

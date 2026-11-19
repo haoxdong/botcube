@@ -3,6 +3,7 @@ import { defined } from '../test/defined.js';
 import { startInProcess } from '../test/in-process.js';
 
 import { activity, mainChat, owner, posted, request, run, scheduler, sideChatOf, signInChecks, stack, stream, text, unavailableCatalogs } from '../test/scheduled-run-fixture.js';
+import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
   it('does not publish an unfinished stream as a completed scheduled answer', async () => {
@@ -14,11 +15,11 @@ describe('a scheduled run', () => {
     };
     await run(account, partial);
     const posts = await posted(main);
-    expect(posts).toEqual([{ content: 'Scheduled task "Morning brief" failed: AgentCore upstream stream ended before RUN_FINISHED', userId: `filed-${account}` }]);
+    expect(posts).toEqual([{ content: 'Scheduled task "Morning brief" failed: AgentCore upstream stream ended before RUN_FINISHED', userId: filed(account) }]);
     expect(stack.bedrock.summarizedTurns()).not.toContainEqual(expect.objectContaining({ answer: 'Unfinished research conclusion' }));
 
     await run(account, stream(...text('recovered', 'Completed research conclusion')), 'Recovered brief');
-    await vi.waitFor(async () => expect(await posted(main)).toContainEqual({ content: 'Scheduled task "Recovered brief": Completed research conclusion', userId: `filed-${account}` }), { timeout: 2_000 });
+    await vi.waitFor(async () => expect(await posted(main)).toContainEqual({ content: 'Scheduled task "Recovered brief": Completed research conclusion', userId: filed(account) }), { timeout: 2_000 });
   });
 
   it.each([
@@ -61,7 +62,7 @@ describe('a scheduled run', () => {
   // A card opens the run in its Side Chat: a run that never got there has nothing to open. Its own stack, since the
   // failed delivery stays on the queue and backs the poller off, which would hold up a later run.
   it('posts a run that failed before reaching its Side Chat with a run card that has nothing to open', async () => {
-    const isolated = await startInProcess({ scheduled: true, cartridge: {
+    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
       accountModels: async (requester) => {
         if ('scheduled' in requester) throw new Error('The plan catalog is unavailable');
@@ -116,14 +117,14 @@ describe('a scheduled run', () => {
     const posts = await posted(main);
     await vi.waitFor(async () => expect(await stack.sessionMetadata.get(account, main)).toHaveProperty('turn_completed_at'));
     expect(posts).toEqual([
-      { content: 'Scheduled task "Morning brief": The 10y yield fell 5bp overnight.', userId: `filed-${account}` },
+      { content: 'Scheduled task "Morning brief": The 10y yield fell 5bp overnight.', userId: filed(account) },
     ]);
     stack.sessionApi.reply(main, 200, { messages: [] });
     await request(account, '/main-chat');
     expect(stack.sessionApi.events()).toContainEqual({
       operation: 'get',
       sessionId: main,
-      userId: `filed-${account}`,
+      userId: filed(account),
     });
     const threads = ((await (await request(account, '/threads')).json()) as { threads: { id: string; title: string }[] }).threads;
     expect(threads).toEqual([expect.objectContaining({ title: 'Morning brief' })]);
@@ -138,7 +139,7 @@ describe('a scheduled run', () => {
         // The owner's default model, the one the composer starts on.
         model: 'plan',
         approvedModel: { key: 'plan', label: 'Plan', provider: 'openai' },
-        sessionUserId: `filed-${account}`,
+        sessionUserId: filed(account),
         agentIdentity: { name: 'Test Bot' },
         soul: 'Be brief.',
         // The Harness leaves out the proposal tool, so a run never proposes another task.
@@ -190,7 +191,7 @@ describe('a scheduled run', () => {
 
     await run(account, stream(...text('a1', 'Done.')), 'Morning brief', { model });
 
-    expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: `filed-${account}` }]);
+    expect(await posted(main)).toEqual([{ content: 'Scheduled task "Morning brief": Done.', userId: filed(account) }]);
   });
 
   it("keeps its Side Chat on the default model's provider, and the Main Chat on none until the user's Turn", async () => {
@@ -324,7 +325,7 @@ describe('a scheduled run', () => {
   it('marks the task Side Chat as scheduled in the Side Chat list, and no other', async () => {
     const account = owner();
     await stack.allocate(account, 'topic-chat');
-    await stack.sessionMetadata.recordTurn(account, 'topic-chat', { filingUserId: `filed-${account}`, title: 'My topic' });
+    await stack.sessionMetadata.recordTurn(account, 'topic-chat', { filingUserId: filed(account), title: 'My topic' });
 
     const { id } = await run(account, stream(...text('a1', 'All quiet.')));
 

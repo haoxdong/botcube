@@ -19,7 +19,7 @@ export const turnSecrets = {
 export let stack: InProcessStack;
 export let scheduler: SchedulerView;
 beforeAll(async () => {
-  stack = await startInProcess({
+  stack = await startInProcess({ stock: true,
     scheduled: true,
     cartridge: {
       credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
@@ -29,6 +29,7 @@ beforeAll(async () => {
         if ('scheduled' in requester && unavailableCatalogs.has(requester.owner)) throw new Error('The plan catalog is unavailable');
         return [{ key: 'plan', label: 'Plan', provider: 'openai' }];
       },
+      accountModel: async (_requester, key) => (key === 'plan' ? { key: 'plan', label: 'Plan', provider: 'openai' } : undefined),
       invocationPayload: async (input, requester, model?: AgentModel) => ({
         ...input, forwardedProps: { ...input.forwardedProps, requester, approvedModel: model, ...turnSecrets },
       }),
@@ -42,7 +43,7 @@ beforeAll(async () => {
 });
 afterAll(() => stack.stop());
 
-export const owner = () => `owner-${Math.random().toString(36).slice(2)}`;
+export const owner = () => `acct_owner-${Math.random().toString(36).slice(2)}`;
 
 export const request = (account: string, path: string, init: { method?: string; body?: unknown } = {}) =>
   stack.app.request(path, {

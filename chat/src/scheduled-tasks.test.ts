@@ -20,7 +20,7 @@ import { eventually } from '../test/eventually.js';
 let stack: InProcessStack;
 let scheduler: SchedulerView;
 beforeAll(async () => {
-  stack = await startInProcess({ scheduled: true });
+  stack = await startInProcess({ stock: true, scheduled: true });
   scheduler = defined(stack.scheduler, 'the stack schedules tasks');
 });
 afterAll(() => stack.stop());
@@ -70,7 +70,7 @@ async function listed(owner: string): Promise<Task[]> {
   return ((await response.json()) as { tasks: Task[] }).tasks;
 }
 
-const owner = () => `owner-${Math.random().toString(36).slice(2)}`;
+const owner = () => `acct_owner-${Math.random().toString(36).slice(2)}`;
 
 /** The task once paused: it has no next run. */
 const asPaused = ({ nextRun: _, ...task }: Task): Task => ({ ...task, paused: true });
@@ -341,7 +341,7 @@ describe('POST /scheduled-tasks', () => {
     let resume!: () => void;
     const admitted = new Promise<void>((resolve) => { admit = resolve; });
     const paused = new Promise<void>((resolve) => { resume = resolve; });
-    const deleting = await startInProcess({
+    const deleting = await startInProcess({ stock: true,
       scheduled: true,
       cartridge: {
         requester: async () => {
@@ -440,11 +440,11 @@ describe('POST /scheduled-tasks', () => {
     const account = owner();
 
     const task = await confirm(account, MORNING_BRIEF);
-    const edited = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { model: 'plan' } });
+    const edited = await request(account, `/scheduled-tasks/${task.id}`, { method: 'PATCH', body: { model: 'thorough' } });
 
     expect(task).not.toHaveProperty('model');
-    expect(await edited.json()).toEqual({ ...task, model: 'plan' });
-    expect(await listed(account)).toEqual([{ ...task, model: 'plan' }]);
+    expect(await edited.json()).toEqual({ ...task, model: 'thorough' });
+    expect(await listed(account)).toEqual([{ ...task, model: 'thorough' }]);
   });
 
   it('lists tasks in the order they were confirmed', async () => {
@@ -707,7 +707,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
   });
 
   it('deletes from its original group when the configured group is missing', async () => {
-    const isolated = await startInProcess({ scheduled: true });
+    const isolated = await startInProcess({ stock: true, scheduled: true });
     const view = defined(isolated.scheduler, 'the stack schedules tasks');
     const account = owner();
     const proposalId = randomUUID();
@@ -739,7 +739,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
   });
 
   it('deletes from the original group after configuration changes to another existing group', async () => {
-    const isolated = await startInProcess({ scheduled: true });
+    const isolated = await startInProcess({ stock: true, scheduled: true });
     const view = defined(isolated.scheduler, 'the stack schedules tasks');
     const account = owner();
     const call = (method: string, path: string, body?: object) => isolated.app.request(path, {
@@ -965,7 +965,7 @@ describe("an account's scheduled tasks", () => {
 describe('a Chat Service without scheduled tasks', () => {
   let unscheduled: InProcessStack;
   beforeAll(async () => {
-    unscheduled = await startInProcess();
+    unscheduled = await startInProcess({ stock: true });
   });
   afterAll(() => unscheduled.stop());
 

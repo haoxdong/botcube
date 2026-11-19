@@ -148,7 +148,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const service = createChatService(
     (hooks) => {
       history = hooks;
-      built = stock ? { ...stock(hooks), ...overrides } : options.cartridgeFactory?.(hooks) ?? cartridge;
+      built = stock ? { ...stock(hooks), ...overrides, ...(signInNeeded === undefined ? {} : { signInNeeded }) } : options.cartridgeFactory?.(hooks) ?? cartridge;
       return built;
     },
     config,

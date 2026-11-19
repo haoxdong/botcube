@@ -18,6 +18,7 @@ import { SessionDeletedError } from './session-metadata.js';
 import { activity, mainChat, owner, posted, request, run, scheduler, signInChecks, snapshot, stack, stream, text } from '../test/scheduled-run-fixture.js';
 import { motoAws } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
+import { filed } from '../test/stock-bot.js';
 
 describe('a scheduled run', () => {
   it('forwards the task timezone to its scheduled Turn', async () => {
@@ -37,7 +38,7 @@ describe('a scheduled run', () => {
     const main = await mainChat(account);
     await run(account, stream(event));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": Chunk brief.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": Chunk brief.', userId: filed(account),
     }]);
   });
 
@@ -60,7 +61,7 @@ describe('a scheduled run', () => {
     } });
     expect(await posted(main)).toEqual([{
       content: answered ? 'Scheduled task "Morning brief": Current brief.' : 'Scheduled task "Morning brief": finished without an answer.',
-      userId: `filed-${account}`,
+      userId: filed(account),
     }]);
     expect(signInChecks).toContainEqual({ owner: account, outputs: answered ? ['Current brief.'] : [] });
   });
@@ -73,7 +74,7 @@ describe('a scheduled run', () => {
       { id: 'old-answer', role: 'assistant', content: 'Sign in to continue' },
     ] }));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": finished without an answer.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": finished without an answer.', userId: filed(account),
     }]);
     expect(signInChecks).toContainEqual({ owner: account, outputs: [] });
   });
@@ -83,7 +84,7 @@ describe('a scheduled run', () => {
     const main = await mainChat(account);
     await run(account, stream(snapshot([{ id: 'current', role: 'assistant', content: 'Sign in to continue' }])));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief" could not finish: Sign in to continue', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief" could not finish: Sign in to continue', userId: filed(account),
     }]);
     expect(signInChecks).toContainEqual({ owner: account, outputs: ['Sign in to continue'] });
   });
@@ -96,7 +97,7 @@ describe('a scheduled run', () => {
       { type: 'TEXT_MESSAGE_CHUNK', messageId: 'brief', delta: 'brief.' },
     ));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": Current brief.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": Current brief.', userId: filed(account),
     }]);
   });
 
@@ -108,7 +109,7 @@ describe('a scheduled run', () => {
       snapshot([{ id: 'brief', role: 'assistant', content: 'Final brief.' }]),
     ));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": Final brief.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": Final brief.', userId: filed(account),
     }]);
   });
 
@@ -120,7 +121,7 @@ describe('a scheduled run', () => {
       [{ id: 'old', role: 'assistant', content: 'Old brief.' }],
     )));
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": Current brief.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": Current brief.', userId: filed(account),
     }]);
   });
 
@@ -131,7 +132,7 @@ describe('a scheduled run', () => {
       'data: {"type":"RUN_STARTED"}\r\n\r\ndata: {"type":"TEXT_MESSAGE_CHUNK","messageId":"brief","delta":"First "}\r\n\r\ndata: {"type":"TEXT_MESSAGE_CHUNK","delta":"brief."}\r\n\r\ndata: {"type":"RUN_FINISHED"}',
     ] });
     expect(await posted(main)).toEqual([{
-      content: 'Scheduled task "Morning brief": First brief.', userId: `filed-${account}`,
+      content: 'Scheduled task "Morning brief": First brief.', userId: filed(account),
     }]);
   });
 
@@ -204,7 +205,7 @@ describe('a scheduled run', () => {
       expect(chatting.status).toBe(200);
       await scheduler.fire(id);
       await eventually(async () => expect(await posted(main)).toContainEqual({
-        content: 'Scheduled task "Morning brief" skipped: the previous run was still going', userId: `filed-${account}`,
+        content: 'Scheduled task "Morning brief" skipped: the previous run was still going', userId: filed(account),
       }));
       // Its request was never written, so its card has nothing to open.
       const skipped = stack.sessionApi.events().find((event) => event.operation === 'post' && event.sessionId === main && event.content?.includes('skipped'));
@@ -254,7 +255,7 @@ describe('a scheduled run', () => {
     await DynamoDBDocumentClient.from(stack.table.client).send(new UpdateCommand({
       TableName: stack.table.name, Key: { pk: `SESSIONS#${account}`, sk: `SESSION#${id}` },
       UpdateExpression: 'SET session_id = :id, filing_user_id = :filing, runtime_binding = :binding, runtime_generation = :generation, read_only = :read_only, scheduled_task_id = :id, title = :title, created_at = :at, updated_at = :at',
-      ExpressionAttributeValues: { ':id': id, ':filing': `filed-${account}`, ':binding': 'runtime-00000000-0000-4000-8000-000000000000', ':generation': 'tracked-v1', ':read_only': true, ':title': 'Old task', ':at': '2026-10-01T00:00:00.000000+00:00' },
+      ExpressionAttributeValues: { ':id': id, ':filing': filed(account), ':binding': 'runtime-00000000-0000-4000-8000-000000000000', ':generation': 'tracked-v1', ':read_only': true, ':title': 'Old task', ':at': '2026-10-01T00:00:00.000000+00:00' },
     }));
 
     await scheduler.fire(id);
@@ -349,7 +350,7 @@ describe('a scheduled run', () => {
       new SchedulerClient(motoAws()));
     const main = await mainChat(account);
     const store = defined(stack.sessionMetadata.scheduledRuns, 'delivery store');
-    const delivery = await store.claim(account, id, 'pre-cutover', `filed-${account}`, main, id);
+    const delivery = await store.claim(account, id, 'pre-cutover', filed(account), main, id);
     const documents = DynamoDBDocumentClient.from(stack.table.client);
     await documents.send(new UpdateCommand({
       TableName: stack.table.name, Key: { pk: `SCHEDULED#${account}`, sk: `TASK#${id}` },
@@ -360,7 +361,7 @@ describe('a scheduled run', () => {
       UpdateExpression: 'SET #phase = :phase, #status = :status, postSession = :session, postToken = :token, failed = :failed',
       ExpressionAttributeNames: { '#phase': 'phase', '#status': 'status' }, ExpressionAttributeValues: {
         ':phase': phase, ':status': 'done', ':failed': false, ':token': randomUUID(),
-        ':session': { session_id: main, filing_user_id: `filed-${account}`, runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'tracked-v1' },
+        ':session': { session_id: main, filing_user_id: filed(account), runtime_binding: `runtime-${randomUUID()}`, runtime_generation: 'tracked-v1' },
       },
     }));
     const templates = { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' };
@@ -368,7 +369,7 @@ describe('a scheduled run', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }], accountModels: async () => [],
       accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
     };
     const invoke = vi.fn(async () => new Response('data: {"type":"RUN_FINISHED"}\n\n'));
@@ -404,7 +405,7 @@ describe('a scheduled run', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
     };
     const documents: AgentDocuments = {
@@ -457,7 +458,7 @@ describe('a scheduled run', () => {
       agentDocuments: templates, models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
       accountModels: async () => [], accountModel: async () => undefined,
       scheduledRequester: async (value) => ({ owner: value }),
-      filingUserId: (value) => `filed-${value}`, invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
+      filingUserId: (value) => filed(value), invocationPayload: async (input) => ({ ...input, forwardedProps: {} }),
       credentialProps: [], signInNeeded: async () => null,
     };
     const documents: AgentDocuments = {
@@ -484,10 +485,10 @@ describe('a scheduled run', () => {
 
   it('hands the Harness a signed user token for the owner that expires with the run, as a chat Turn does', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    const signed = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
+    const signed = await startInProcess({ stock: true, scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
     const account = owner();
     try {
-      await signed.sessionMetadata.mainChat(account, `filed-${account}`);
+      await signed.sessionMetadata.mainChat(account, filed(account));
       const prompt = 'Brief me as myself';
       signed.agentcore.scriptPrompt(prompt, stream(...text('own', 'Done.')));
       const response = await signed.app.request('/scheduled-tasks', {
@@ -506,10 +507,10 @@ describe('a scheduled run', () => {
   });
 
   it('ends on its own outcome for a bot that names no sign-in its runs may need', async () => {
-    const plain = await startInProcess({ scheduled: true, cartridge: { signInNeeded: undefined } });
+    const plain = await startInProcess({ stock: true, scheduled: true, cartridge: { signInNeeded: undefined } });
     const account = owner();
     try {
-      await plain.sessionMetadata.mainChat(account, `filed-${account}`);
+      await plain.sessionMetadata.mainChat(account, filed(account));
       const prompt = 'Brief me without a sign-in hook';
       plain.agentcore.scriptPrompt(prompt, stream(...text('plain', 'Sign in to continue')));
       const response = await plain.app.request('/scheduled-tasks', {
@@ -528,10 +529,10 @@ describe('a scheduled run', () => {
   });
 
   it('retires a one-off under the claiming account when Account Claim moves it mid-run', async () => {
-    const claimed = await startInProcess({ scheduled: true });
+    const claimed = await startInProcess({ stock: true, scheduled: true });
     const source = owner();
     const destination = owner();
-    const originalMain = await claimed.sessionMetadata.mainChat(source, `filed-${source}`);
+    const originalMain = await claimed.sessionMetadata.mainChat(source, filed(source));
     const prepareTurn = claimed.sessionMetadata.prepareTurn.bind(claimed.sessionMetadata);
     const recording = vi.spyOn(claimed.sessionMetadata, 'prepareTurn').mockImplementation(async (account, sessionId, turn) => {
       const complete = await prepareTurn(account, sessionId, turn);
@@ -561,10 +562,10 @@ describe('a scheduled run', () => {
   });
 
   it('dispatches an accepted scheduled Turn after Account Claim moves its Session and task', async () => {
-    const claimed = await startInProcess({ scheduled: true });
+    const claimed = await startInProcess({ stock: true, scheduled: true });
     const source = owner();
     const destination = owner();
-    const originalMain = await claimed.sessionMetadata.mainChat(source, `filed-${source}`);
+    const originalMain = await claimed.sessionMetadata.mainChat(source, filed(source));
     let sideChat: string | undefined;
     let admitted: ((error: unknown) => void) | undefined;
     const admission = new Promise<unknown>((resolve) => { admitted = resolve; });
@@ -596,13 +597,13 @@ describe('a scheduled run', () => {
       await defined(claimed.scheduler, 'the Claim stack schedules tasks').fire(id);
       expect(await admission).toBeUndefined();
       const sessionId = defined(sideChat, 'accepted scheduled Side Chat');
-      await eventually(() => expect(claimed.agentcore.invocationFor(sessionId).payload.forwardedProps.sessionUserId).toBe(`filed-${source}`));
+      await eventually(() => expect(claimed.agentcore.invocationFor(sessionId).payload.forwardedProps.sessionUserId).toBe(filed(source)));
       expect(await claimed.sessionMetadata.get(source, sessionId)).toBeNull();
-      expect(await claimed.sessionMetadata.get(destination, sessionId)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+      expect(await claimed.sessionMetadata.get(destination, sessionId)).toEqual(expect.objectContaining({ filing_user_id: filed(source) }));
       const tasks = (await (await claimed.app.request('/scheduled-tasks', { headers: { 'x-test-owner': destination } })).json()) as { tasks: { id: string }[] };
       expect(tasks.tasks).toContainEqual(expect.objectContaining({ id }));
       await eventually(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
-        operation: 'post', sessionId: originalMain, userId: `filed-${source}`, content: 'Scheduled task "Claimed brief": Accepted occurrence completed.',
+        operation: 'post', sessionId: originalMain, userId: filed(source), content: 'Scheduled task "Claimed brief": Accepted occurrence completed.',
       })));
     } finally {
       recording.mockRestore();
@@ -611,7 +612,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['accepted', 'destination deleted', 'replaced post', 'Claim starts during admission'] as const)('preserves the accepted Main Chat post through Account Claim: %s', async (outcome) => {
-    const claimed = await startInProcess({ scheduled: true });
+    const claimed = await startInProcess({ stock: true, scheduled: true });
     const source = owner();
     const destination = owner();
     const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
@@ -638,7 +639,7 @@ describe('a scheduled run', () => {
           mainAccepted = true;
           if (outcome !== 'Claim starts during admission') await claimed.history.transfer(source, destination);
           if (outcome === 'destination deleted') await claimed.sessionMetadata.fenceOwner(destination);
-          if (outcome === 'replaced post') await recordTurn(destination, main, { filingUserId: `filed-${destination}`, title: 'Newer post', messageId: 'replacement-message' });
+          if (outcome === 'replaced post') await recordTurn(destination, main, { filingUserId: filed(destination), title: 'Newer post', messageId: 'replacement-message' });
         }
         const complete = await beginDispatch(...args);
         if (args[0] === source && args[1] === main) defined(admitted, 'Main Chat admission')(undefined);
@@ -661,11 +662,11 @@ describe('a scheduled run', () => {
       if (outcome === 'accepted' || outcome === 'Claim starts during admission') {
         expect(await admission).toBeUndefined();
         await eventually(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
-          operation: 'post', sessionId: main, userId: `filed-${source}`, content: 'Scheduled task "Moved result": Preserved result.',
+          operation: 'post', sessionId: main, userId: filed(source), content: 'Scheduled task "Moved result": Preserved result.',
         })));
         await eventually(async () => expect(await runs.queued()).toBe(0));
         expect(await claimed.sessionMetadata.get(source, main)).toBeNull();
-        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: filed(source) }));
         expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_running_since');
         expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_preparing');
       } else {
@@ -679,7 +680,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['accepted', 'destination deleted', 'moves during admission'] as const)('preserves the accepted Main Chat post while Account Claim is still moving: %s', async (outcome) => {
-    const claimed = await startInProcess({ scheduled: true });
+    const claimed = await startInProcess({ stock: true, scheduled: true });
     const source = owner();
     const destination = owner();
     const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
@@ -739,13 +740,13 @@ describe('a scheduled run', () => {
       if (outcome !== 'destination deleted') {
         expect(await admission).toBeUndefined();
         await eventually(() => expect(claimed.sessionApi.events()).toContainEqual(expect.objectContaining({
-          operation: 'post', sessionId: main, userId: `filed-${source}`, content: 'Scheduled task "Moved result": Preserved result.',
+          operation: 'post', sessionId: main, userId: filed(source), content: 'Scheduled task "Moved result": Preserved result.',
         })));
         await eventually(async () => expect(await runs.queued()).toBe(0));
         defined(releaseClaim, 'finish Claim')();
         await transfer;
         expect(await claimed.sessionMetadata.get(source, main)).toBeNull();
-        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: `filed-${source}` }));
+        expect(await claimed.sessionMetadata.get(destination, main)).toEqual(expect.objectContaining({ filing_user_id: filed(source) }));
         expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_running_since');
         expect(await claimed.sessionMetadata.get(destination, main)).not.toHaveProperty('turn_preparing');
       } else {
@@ -781,7 +782,7 @@ describe('a scheduled run', () => {
       const sideChat = await recorded;
       stack.sessionApi.reply(sideChat, 200, { messages: [] });
       await request(account, `/threads/${sideChat}`);
-      expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: sideChat, userId: `filed-${account}` });
+      expect(stack.sessionApi.events()).toContainEqual({ operation: 'get', sessionId: sideChat, userId: filed(account) });
       release();
       await posted(main);
       expect(await stack.sessionMetadata.get(account, sideChat)).not.toHaveProperty('turn_running_since');
@@ -872,7 +873,7 @@ describe('a scheduled run', () => {
   });
 
   it('records a scheduled Side Chat and clears its running Turn when its payload fails', async () => {
-    const isolated = await startInProcess({ scheduled: true, cartridge: {
+    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
       invocationPayload: async () => { throw new Error('Computer capability is unavailable'); },
     } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -906,7 +907,7 @@ describe('a scheduled run', () => {
 
   // Scheduler deleted the one-off's schedule when it fired, so it can never run again: once the Main Chat has heard, it goes.
   it('retires a one-off task whose run failed once its failure reaches the Main Chat, still failing its delivery', async () => {
-    const isolated = await startInProcess({ scheduled: true, cartridge: {
+    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
       invocationPayload: async () => { throw new Error('Computer capability is unavailable'); },
     } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -955,7 +956,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['interrupt', 'cancelled'] as const)('posts a %s outcome as failed rather than an answer', async (type) => {
-    const isolated = await startInProcess({ scheduled: true });
+    const isolated = await startInProcess({ stock: true, scheduled: true });
     const account = owner();
     const call = (path: string, body?: unknown) => isolated.app.request(path, {
       method: body === undefined ? 'GET' : 'POST',

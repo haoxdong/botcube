@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { InProcessStack } from './in-process.js';
 
-export function inProcessBrowser(stack: InProcessStack, accountId = randomUUID()) {
+export function inProcessBrowser(stack: InProcessStack, accountId = `acct_${randomUUID()}`) {
   const request = (path: string, init: RequestInit = {}) => stack.app.request(path, {
     ...init,
     headers: { ...Object.fromEntries(new Headers(init.headers)), 'x-test-owner': accountId },
