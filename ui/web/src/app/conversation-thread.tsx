@@ -193,9 +193,8 @@ function ReadLine({ stick, opensAt, room, onLanded }: { stick: StickToBottomCont
       }
       const view = scroller === document.documentElement ? { top: 0, bottom: innerHeight } : scroller.getBoundingClientRect();
       const rows = [...content.querySelectorAll("[data-message-id]")].map((row) => ({ row, box: row.getBoundingClientRect() }));
-      const middle = (view.top + view.bottom) / 2;
-      const shown = rows.filter(({ box }) => box.bottom > Math.max(box.top, view.top) && box.top < view.bottom);
-      const read = shown.find(({ box }) => box.top >= middle) ?? shown.at(-1);
+      // A row cut off above the view can grow below its top as it renders, moving the line read.
+      const read = rows.find(({ box }) => box.top >= view.top && box.top < view.bottom) ?? rows.find(({ box }) => box.bottom > view.top);
       line.current = read ? { row: read.row, top: read.box.top } : null;
     };
     // Older history joins above the read line. WebKit has no scroll anchoring, and Chromium skips it at scrollTop 0.
