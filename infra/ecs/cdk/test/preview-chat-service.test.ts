@@ -31,14 +31,15 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   return parkingTemplate(origin, parked, prepareOrigin);
 }
 
-test('origin preparation attaches ingress at zero capacity and keeps the parked edge', () => {
+test('origin preparation builds ingress, leaves the parked service untouched and keeps the parked edge', () => {
   const template = synth(undefined, true, privateSubnets, {}, true);
   template.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
   template.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', 1);
-  template.hasResourceProperties('AWS::ECS::Service', {
-    DesiredCount: 0,
-    LoadBalancers: [Match.objectLike({ ContainerName: 'chat-service', ContainerPort: 8123 })],
-  });
+  expect(Object.keys(template.findResources('AWS::ElasticLoadBalancingV2::ListenerRule')).length).toBeGreaterThan(0);
+  const [service] = Object.values(template.findResources('AWS::ECS::Service'));
+  const [parked] = Object.values(synth(undefined, true).findResources('AWS::ECS::Service'));
+  expect(service).toEqual(parked);
+  template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0, LoadBalancers: [] });
   template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker' });
   template.hasResourceProperties('AWS::CloudFormation::CustomResource', {
     Kind: 'Dns', Hostname: 'api.example.com', Target: 'parked.invalid', Worker: Match.anyValue(),

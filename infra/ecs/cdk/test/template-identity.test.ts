@@ -56,7 +56,8 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   const credential = Object.keys(services).find((id) => id.startsWith('CredentialService'));
   const chat = Object.entries(services).find(([id]) => id.startsWith('ChatService'))?.[1];
   expect(credential).toBeDefined();
-  expect(chat?.DependsOn).toContain(credential);
+  // Chat and Credential start together; Chat's first deletion sweep waits for Credential's health check instead.
+  expect(chat?.DependsOn ?? []).not.toContain(credential);
 
   expect(Object.keys(origin.findResources('AWS::IAM::Policy', {
     Properties: { Roles: [identity.aws.ecs.deployRoleName] },

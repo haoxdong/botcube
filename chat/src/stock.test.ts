@@ -274,6 +274,7 @@ describe("the stock Chat Service's Plan Usage", () => {
   // The Credential Service's OpenAI provider: its Vault holds Sign-ins, and its relay serves only a vaulted plan's catalog.
   const vault = new Set([PLAN_OWNER]);
   const credentialService = new HttpFake((request, response) => {
+    if (`${request.method} ${request.path}` === 'GET /health') return sendJson(response, 200, { status: 'ok' });
     const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
     if (invocation === null) return sendJson(response, 401, { detail: 'Invalid Credential Service invocation token' });
     const route = `${request.method} ${request.path}`;
@@ -459,6 +460,7 @@ describe("the stock Chat Service's account deletion", () => {
   // The Connectors the Credential Service copied to Test Users, and the operator session each ran under.
   const copies: { accountId: string; sessionId: string }[] = [];
   const credentialService = new HttpFake((request, response) => {
+    if (`${request.method} ${request.path}` === 'GET /health') return sendJson(response, 200, { status: 'ok' });
     const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
     if (invocation === null || request.headers['x-botcube-account-id'] !== invocation.accountId) {
       return sendJson(response, 401, { detail: 'Invalid Credential Service invocation token' });

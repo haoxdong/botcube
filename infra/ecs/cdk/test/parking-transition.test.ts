@@ -45,3 +45,12 @@ test('lets the transition register the Session API scalable target', () => {
     .flatMap(statement => [statement.Action].flat());
   expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
 });
+
+test('rechecks a transition stack every 5 seconds, so a finished update starts the next step promptly', () => {
+  const stack = new Stack(new App(), 'Polling', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const [machine] = Object.values(Template.fromStack(stack).findResources('AWS::StepFunctions::StateMachine'))
+    .map(resource => JSON.stringify(stack.resolve((resource as { Properties: unknown }).Properties)))
+    .filter(definition => definition.includes('WaitForStack'));
+  expect(machine).toMatch(/\\"WaitForStack\\":\{\\"Type\\":\\"Wait\\",\\"Seconds\\":5,/);
+});

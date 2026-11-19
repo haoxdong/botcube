@@ -56,11 +56,11 @@ export function parkServiceIngress(service: ecs.FargateService, target: elb.Appl
   const state = originState(origin);
   const cfnService = service.node.defaultChild as ecs.CfnService;
   cfnService.node.removeDependency(target.loadBalancerAttached);
-  cfnService.addPropertyOverride('LoadBalancers', Fn.conditionIf(state.infrastructureCondition.logicalId, [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }], []));
+  cfnService.addPropertyOverride('LoadBalancers', Fn.conditionIf(state.liveCondition.logicalId, [{ ContainerName: containerName, ContainerPort: port, TargetGroupArn: target.targetGroupArn }], []));
   for (const resource of origin.node.findAll()) {
     if (resource instanceof elb.CfnListenerRule) {
       resource.cfnOptions.condition = state.infrastructureCondition;
-      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, Token.asString(Fn.conditionIf(state.infrastructureCondition.logicalId, resource.ref, 'parked')));
+      cfnService.tags.setTag(`ParkingListener${origin.getLogicalId(resource)}`, Token.asString(Fn.conditionIf(state.liveCondition.logicalId, resource.ref, 'parked')));
     }
   }
 }

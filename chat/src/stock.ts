@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { loadDeployment } from 'botcube-deployment-config/load';
 import { accountCookies } from './account-cookies.js';
-import { accountDeletions } from './account-deletions.js';
+import { accountDeletions, serviceHealthy } from './account-deletions.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
@@ -107,7 +107,11 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
       : localAgentComputer({ history, requester, env, startPage: options.startPage });
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
-    const deletions = accountDeletions({ store, deleteAccount: lifecycle.deleteAccount });
+    const deletions = accountDeletions({
+      store, deleteAccount: lifecycle.deleteAccount,
+      // A waking Credential Service starts beside this one: the first sweep revokes only once it is healthy.
+      ...(credentialServiceUrl ? { credentialsReady: () => serviceHealthy(credentialServiceUrl) } : {}),
+    });
     let filesRecovery: Promise<void> | undefined;
     return {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),

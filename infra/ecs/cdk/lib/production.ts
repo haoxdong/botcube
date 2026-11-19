@@ -231,7 +231,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
     ...options.credentials,
   });
-  chat.service.node.addDependency(credentials.service);
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
   credentials.container.addEnvironment('BOTCUBE_ISSUER', publicOrigin);
