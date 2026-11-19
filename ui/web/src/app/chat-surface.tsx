@@ -295,7 +295,7 @@ function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickTo
   const hidden = isAtBottom || resizing;
   return (
     <div className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: inputHeight + 16 }}>
-      <CopilotChatView.ScrollToBottomButton onClick={() => { follow(); void stick.scrollToBottom({ animation: "smooth", ignoreEscapes: true }); }} />
+      <CopilotChatView.ScrollToBottomButton onClick={() => { follow(); void stick.scrollToBottom({ animation: "instant" }); }} />
     </div>
   );
 }

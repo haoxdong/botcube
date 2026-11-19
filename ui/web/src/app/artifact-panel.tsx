@@ -121,7 +121,7 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
   const panel = { shown, open, seen, failures };
   return (
     <Panel.Provider value={panel}>
-      <ArtifactSplit accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
+      <ArtifactSplit phone={phone} accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
       {phone && kept && (
         <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
           <ArtifactView key={pathOf(kept)} shown={kept} heading={<span className="sent-file-kind"><Kind shown={kept} /></span>} />
@@ -153,7 +153,7 @@ function useAgentPublications(agent: AbstractAgent, seen: (artifact: Published) 
   }, [agent, seen]);
 }
 
-function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | null; close: () => void; children: ReactNode; accountId: string }) {
+function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: boolean; shown: Shown | null; close: () => void; children: ReactNode; accountId: string }) {
   const preference = `botcube.artifact-side.${accountId}`;
   const [position, setPosition] = useState<"left" | "right">("left");
   useEffect(() => {
@@ -175,7 +175,7 @@ function ArtifactSplit({ shown, close, children, accountId }: { shown: Shown | n
   // Motion's `layout` measures on every render; the chat column glides only for the Artifact panel.
   return (
     <ResizablePanelGroup orientation="horizontal" className="artifact-layout" data-side={position} dir={position === "left" ? "rtl" : "ltr"}>
-      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout="position" layoutDependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
+      <ResizablePanel id="chat" className="artifact-chat-panel" minSize="30%" style={{ overflow: "visible" }}><Layout className="artifact-chat-motion" layout={phone ? false : "position"} layoutDependency={`${isOpen} ${position}`} style={{ direction: "ltr" }}>{children}</Layout></ResizablePanel>
       <ResizableHandle className="resizable-handle" disabled={!isOpen} data-closed={!isOpen || undefined} />
       <ResizablePanel id="artifact" className="artifact-side-panel" style={{ overflow: "visible" }} panelRef={side} collapsible collapsedSize="0%" defaultSize="0%" minSize="25%"
         onResize={(size, _id, previous) => {
