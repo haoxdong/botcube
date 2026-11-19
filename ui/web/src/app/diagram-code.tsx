@@ -26,7 +26,7 @@ const codeOf = (children: CodeProps["children"]): string =>
     ? children
     : isValidElement<{ children?: unknown }>(children) && typeof children.props.children === "string" ? children.props.children : "";
 
-/** A diagram whose fence is still streaming: Mermaid draws it once, whole, when the fence closes. */
+/** streamdown 2.7.0's mermaid block, empty while its fence streams: Mermaid draws once it closes. */
 function PendingDiagram() {
   return (
     <div className="my-4 flex w-full flex-col rounded-xl border border-border" data-streamdown="mermaid-block" data-pending="">
