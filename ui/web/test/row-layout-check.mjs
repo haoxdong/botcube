@@ -9,10 +9,12 @@ export async function checkRowLayout(browser, screen = 'Chromium 1440×900') {
   try {
     const content = `<p>${'The long end moved while the front end held. '.repeat(15)}</p>`.repeat(12);
     const rows = `<div class="copilotKitAssistantMessage"><div class="cpk:prose"><div class="chat-markdown">${content}<div class="late-content"></div></div></div></div>`;
+    // Rows before the latest question are contained; the latest Turn's answer streams uncontained.
+    const list = `${rows.repeat(3)}<div class="copilotKitUserMessage"><p>The next question.</p></div>${rows}`;
     await page.setContent(`<style>${css.join('\n')}
       .sizing-reference, .sizing-reference * { contain: none !important; content-visibility: visible !important; }
-      .sizing-reference > :not(:last-child) { display: flow-root; }
-    </style><main class="copilotKitMessages">${rows.repeat(4)}</main><main class="copilotKitMessages sizing-reference">${rows.repeat(4)}</main>`);
+      .sizing-reference > :has(~ .copilotKitUserMessage) { display: flow-root; }
+    </style><main class="copilotKitMessages">${list}</main><main class="copilotKitMessages sizing-reference">${list}</main>`);
     /** @param {string} label */
     const measure = async (label) => {
       const actual = page.locator('.copilotKitMessages:not(.sizing-reference) > div');

@@ -4,8 +4,7 @@ import { useContext, useEffect, useLayoutEffect, useState, type PointerEvent as 
 import { LazyMotion, domMax, m } from "motion/react";
 import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
-import { Fade, Presence, useInstant } from "./collapse";
-import { RowCollapse } from "./conversation-thread";
+import { Fade, GridCollapse, Presence, useInstant } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import { sentFilesOf } from "./composer-files";
 import { MessageEntranceHistory } from "./message-entrance";
@@ -86,7 +85,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
       {...(shown || instant ? {} : { onAnimationComplete: onClosed })}
     >
       <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
-      <RowCollapse open={!sent} appear={false}>
+      <GridCollapse open={!sent} appear={false}>
         <div className="waiting-message-actions">
           <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
           <span className="waiting-message-swap">
@@ -101,7 +100,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
             </span>
           </span>
         </div>
-      </RowCollapse>
+      </GridCollapse>
     </m.div>
   );
 }

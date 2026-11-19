@@ -1,13 +1,10 @@
 import type { Message } from '@ag-ui/client';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { useLayoutEffect } from 'react';
-import { afterAll, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
+import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 
 import { Streamdown } from 'streamdown';
 import { KeptChat } from './kept-chat';
-
-vi.hoisted(() => vi.stubEnv('NEXT_PUBLIC_CONVERSATION_THREAD', '0'));
-afterAll(() => vi.unstubAllEnvs());
 
 const messages: Message[] = [
   { id: 'm1', role: 'user', content: 'Where did rates close?' },
@@ -49,8 +46,8 @@ const renderKept = () => {
   if (list === null) throw new Error('no message list');
   const content = list.closest('[style*="padding-bottom"]');
   if (!(content instanceof HTMLElement)) throw new Error('no padded content');
-  const scroller = content.closest('[style*="overflow: auto"]');
-  if (!(scroller instanceof HTMLElement)) throw new Error('no scroller');
+  const scroller = view.container.querySelector('.kept-chat-thread > div');
+  if (!(scroller instanceof HTMLElement) || !scroller.contains(content)) throw new Error('no scroller');
   return { view, list, content, scroller };
 };
 
@@ -113,7 +110,7 @@ it('adds Turns as its scroller grows past them', () => {
   let height = 250;
   rowsTall(100, () => height);
   const view = render(<KeptChat messages={tenTurns} disclaimer="" />);
-  const scroller = view.container.querySelector('[style*="overflow: auto"]');
+  const scroller = view.container.querySelector('.kept-chat-thread > div');
   if (scroller === null) throw new Error('no scroller');
 
   height = 500;
@@ -222,41 +219,15 @@ it("ends the messages the composer's height plus 32px above the bottom from the 
   expect(mounted).toBe('152px');
 });
 
-// On a desktop, 1px short of its end, where the chat surface's scroll view keeps its latest message, so that message
-// does not move as the chat surface takes over.
-it('with the Conversation flag off, opens at the latest message and follows growing messages', () => {
-  let scrollHeight = 900;
-  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
-  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
-  const { scroller } = renderKept();
-  expect(scroller.scrollTop).toBe(599);
-
-  scrollHeight = 1400;
-  const scrolled = scroller.firstElementChild;
-  if (scrolled === null) throw new Error('no scroll content');
-  resize(scrolled);
-
-  expect(scroller.scrollTop).toBe(1099);
-});
-
-// A phone's page is held by use-stick-to-bottom too, 1px short of its end, so the kept chat opens there.
-it('opens 1px short of the end of its messages on a phone, as the chat surface does', () => {
-  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query === '(max-width: 640px)', media: query, addEventListener: () => {}, removeEventListener: () => {} }) as unknown as MediaQueryList);
-  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(900);
-  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
-  const { scroller } = renderKept();
-  expect(scroller.scrollTop).toBe(599);
-});
-
 // The chat surface's own layout, which the cold-open check measures in a browser.
 it("lays out its scroll view and composer room as CopilotKit 1.77's chat view does", () => {
   const { view, scroller } = renderKept();
-  const scrolled = scroller.firstElementChild;
+  const scrolled = scroller.firstElementChild?.firstElementChild;
   if (!(scrolled instanceof HTMLElement)) throw new Error('no scroll content');
   const banner = view.container.querySelector('[style*="padding-bottom: var"]');
   if (!(banner instanceof HTMLElement)) throw new Error('no banner offset');
 
-  expect([scroller.style.height, scroller.style.width, scroller.style.overflow]).toEqual(['100%', '100%', 'auto']);
+  expect([scroller.style.height, scroller.style.width]).toEqual(['100%', '100%']);
   expect([scrolled.style.flex, scrolled.style.minHeight]).toEqual(['1 1 0%', '0']);
   expect(banner.style.paddingBottom).toBe('var(--copilotkit-license-banner-offset, 0px)');
 });

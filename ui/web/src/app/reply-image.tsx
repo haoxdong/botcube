@@ -74,7 +74,7 @@ export function ReplyImage({ src, alt, title }: ComponentProps<'img'>) {
               onLoad={({ currentTarget: image }: SyntheticEvent<HTMLImageElement>) => {
                 const natural = { width: image.naturalWidth, height: image.naturalHeight };
                 keepSize(key, natural);
-                if (!image.closest('[data-joined]')) setSize(natural);
+                setSize(natural);
                 setLoaded(true);
               }}
               src={shown.url}

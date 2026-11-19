@@ -12,7 +12,7 @@ import { ThoughtStep, worklogRows } from "./worklog";
 import { USER_MESSAGE_CLASS, fitBubbles } from "./bubble-width";
 import { MAIN_CHAT_COPY_MESSAGE_LIMIT } from "./main-chat-copy";
 import { OpenScheduledRun, ScheduledRunCard, scheduledRunOf, type ReachedScheduledRun } from "./scheduled-run-card";
-import { CONVERSATION_THREAD, ConversationThread } from "./conversation-thread";
+import { ConversationThread } from "./conversation-thread";
 
 type MarkdownState = { status: "ready"; Renderer: ComponentType<{ text: string }>; prepare: (texts: string[]) => Promise<void> | null } | { status: "error"; error: Error };
 let markdown: MarkdownState | undefined;
@@ -48,18 +48,6 @@ function KeptThread({ children, scroller }: KeptScrollerProps) {
     </ConversationThread>
   );
 }
-
-function KeptBox({ children, scroller }: KeptScrollerProps) {
-  return (
-    <div className="cpk:flex-1 cpk:max-h-full cpk:flex cpk:flex-col cpk:min-h-0">
-      <div ref={(element) => { scroller.current = element; }} style={{ height: "100%", width: "100%", scrollbarGutter: "stable both-edges", overflow: "auto" }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-const KeptScroller = CONVERSATION_THREAD ? KeptThread : KeptBox;
 
 export function preloadKeptChat(messages: readonly Message[]) {
   if (needsMarkdown(messages.slice(-MAIN_CHAT_COPY_MESSAGE_LIMIT))) void loadMarkdown();
@@ -156,23 +144,6 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
   // Stryker disable next-line ArrayDeclaration: any constant dependency list measures from mount on
   []);
 
-  // use-stick-to-bottom defers resize following by a frame; saved history must stay at its end on every paint.
-  useLayoutEffect(() => {
-    if (CONVERSATION_THREAD) return undefined;
-    const element = scroller.current;
-    // Stryker disable next-line OptionalChaining: the ref holds the scroller once mounted
-    const content = element?.firstElementChild;
-    // Stryker disable next-line ConditionalExpression,LogicalOperator,BooleanLiteral: the scroller and its content are mounted
-    if (!element || !content) return undefined;
-    const toEnd = () => {
-      element.scrollTop = element.scrollHeight - element.clientHeight - 1;
-    };
-    toEnd();
-    return resize([content], toEnd);
-  },
-  // Stryker disable next-line ArrayDeclaration: any constant dependency list scrolls from mount on
-  []);
-
   const growUntilOverflow = useRef(() => {});
   growUntilOverflow.current = () => {
     const element = scroller.current;
@@ -209,7 +180,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
     <OpenScheduledRun.Provider value={onOpenRun ?? null}>
     <div className="chat-wrapper">
       <div data-copilotkit className="copilotKitChat cpk:@container cpk:relative cpk:h-full cpk:flex cpk:flex-col chat-full-height">
-        <KeptScroller scroller={scroller}>{column}</KeptScroller>
+        <KeptThread scroller={scroller}>{column}</KeptThread>
         <div ref={composer} className="kept-chat-composer cpk:absolute cpk:bottom-0 cpk:left-0 cpk:right-0 cpk:z-20 cpk:pointer-events-none">
           <Presence>{composerAccessory && (
             <motionElement.div {...presenceMotion} className="cpk:max-w-3xl cpk:mx-auto cpk:px-4 cpk:@3xl:px-0">

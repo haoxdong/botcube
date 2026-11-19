@@ -4,8 +4,7 @@
 import { m as motionElement } from "motion/react";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { partialJSONParse } from "@copilotkit/shared";
-import { Presence, presenceMotion } from "./collapse";
-import { RowCollapse } from "./conversation-thread";
+import { GridCollapse, Presence, presenceMotion } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { AlignLeftIcon, BrainIcon, ChevronRightIcon, CircleXIcon, TimerIcon, type LucideIcon } from "lucide-react";
@@ -210,7 +209,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />
       </button>
-      <RowCollapse open={open} appear={advanceClock}>
+      <GridCollapse open={open} appear={advanceClock}>
         <div className="worklog-body">
           <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
             <Presence>{start && (
@@ -226,7 +225,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
             )}</Presence>
           </StepTimes.Provider>
         </div>
-      </RowCollapse>
+      </GridCollapse>
     </div>
   );
 }
@@ -264,7 +263,7 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
       </Head>
     </div>
   );
-  return grows ? <RowCollapse open>{step}</RowCollapse> : step;
+  return grows ? <GridCollapse open>{step}</GridCollapse> : step;
 }
 
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */

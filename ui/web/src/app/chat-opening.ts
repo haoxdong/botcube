@@ -1,10 +1,10 @@
 /** How long a chat that has laid out waits to open at its latest message before it opens anyway. */
-export const OPENING_MS = 1000;
+const OPENING_MS = 1000;
 /** As OPENING_MS, for a chat whose replies are still rendering. */
 const RENDERING_OPENING_MS = 3000;
 
 /** CopilotKit also styles its full-height content wrapper to scroll; skip it when it has no overflow. */
-export function scrollParent(element: Element): Element | null {
+function scrollParent(element: Element): Element | null {
   for (let parent = element.parentElement; parent !== null; parent = parent.parentElement) {
     if (/auto|scroll/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return parent;
   }
@@ -12,7 +12,7 @@ export function scrollParent(element: Element): Element | null {
   return page !== null && page.scrollHeight > page.clientHeight ? page : null;
 }
 
-export function messagesScroller(wrapper: Element | null): Element | null {
+function messagesScroller(wrapper: Element | null): Element | null {
   const list = wrapper?.querySelector('[data-testid="copilot-message-list"]');
   return list ? scrollParent(list) : null;
 }

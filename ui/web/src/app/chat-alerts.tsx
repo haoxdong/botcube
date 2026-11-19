@@ -1,8 +1,7 @@
 "use client";
 
 import { m } from "motion/react";
-import { Presence, presenceMotion } from "./collapse";
-import { RowCollapse } from "./conversation-thread";
+import { GridCollapse, Presence, presenceMotion } from "./collapse";
 import { LoadFailed } from "./load-state";
 
 export function ChatAlerts({ errors, failure }: {
@@ -12,6 +11,6 @@ export function ChatAlerts({ errors, failure }: {
   const messages = [...new Set(errors.filter((error): error is string => Boolean(error)))];
   return <>
     <Presence>{messages.map((message) => <m.p {...presenceMotion} key={message} className="chat-account-error" role="alert">{message}</m.p>)}</Presence>
-    <RowCollapse open={failure !== null}>{failure && <LoadFailed error={failure.error} onRetry={failure.retry} />}</RowCollapse>
+    <GridCollapse open={failure !== null}>{failure && <LoadFailed error={failure.error} onRetry={failure.retry} />}</GridCollapse>
   </>;
 }

@@ -4,7 +4,7 @@ import { Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "motion/react";
 
-import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Key, type ReactElement, type ComponentProps, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotKit, useCopilotKit } from "@copilotkit/react-core/v2";
 import {
   CopilotChat,
@@ -27,19 +27,11 @@ import { agentFiles } from "./agent-files";
 import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./scheduled-tasks";
 import { OpenScheduledRun, type ReachedScheduledRun } from "./scheduled-run-card";
 import { ReplyTurnRunning } from "./reply-turn";
-import { keepArtifactReading } from "./artifact-reading";
-import { NATIVE_READING, ReadingState } from "./native-reading";
-import { keepInPlace, holdReading, rowRead, useRowsLandOnce, viewTop, type ReadRow } from "./reading-hold";
-import { OPENING_MS, scrollParent, watchOpening } from "./chat-opening";
-import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
-import { useInitialStick, useRotationReading } from "./rotation-reading";
-import { useIsPhone } from "./phone-query";
-import { useStickToBottom, type StickToBottomInstance } from "use-stick-to-bottom";
+import { watchOpening } from "./chat-opening";
 import { webUiPlugin } from "@cartridge-ui";
 import { AssistantMessage, USER_MESSAGE } from "./reading-message";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
 import { Button } from "@/components/pill-button";
-import { zoomOf } from "@/lib/utils";
 import { ComposerFileChips, ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { AddMenu, FileDropOverlay, useFileDrop } from "./composer-attach";
 import { Composer } from "./composer";
@@ -47,12 +39,11 @@ import { ThoughtStep, ToolStep, worklogKey, worklogRows } from "./worklog";
 import { showsProposalCard } from "./worklog-tools";
 import { fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
-import { keepLateBoxes } from "./late-boxes";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { SHOWS_WAITING_STEERING, WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
 import { useAgentRunning } from "./agent-running";
-import { CONVERSATION_THREAD, ThreadScrollView } from "./conversation-thread";
+import { ThreadScrollView } from "./conversation-thread";
 
 const MotionButton = motionElement.create(Button);
 
@@ -258,110 +249,6 @@ const OpensAt = createContext<string | null>(null);
 const couldNotAnswer = (message: string): TurnFailure => ({ message: `The agent could not answer: ${message}` });
 const busyRefusal = z.object({ code: z.literal("SESSION_BUSY"), detail: z.string() });
 
-function eventsOf(scroller: Element): EventTarget {
-  return scroller === document.scrollingElement ? window : scroller;
-}
-
-// Element.scrollIntoView is one-shot; an opening history-row target must survive late reply and composer layout.
-function holdAtRow(wrapper: Element, id: string): () => void {
-  const started = performance.now();
-  let frame = 0;
-  const hold = (now: number) => {
-    const row = wrapper.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
-    const scroller = row && scrollParent(row);
-    if (row && scroller) {
-      const header = wrapper.closest(".app-shell")?.querySelector(".chat-header")?.getBoundingClientRect().bottom ?? 0;
-      scroller.scrollTop += (row.getBoundingClientRect().top - Math.max(viewTop(scroller), header)) / zoomOf(scroller);
-    }
-    if (now - started < OPENING_MS) frame = requestAnimationFrame(hold);
-  };
-  const release = () => {
-    cancelAnimationFrame(frame);
-    for (const type of USER_SCROLLS) window.removeEventListener(type, release, true);
-  };
-  for (const type of USER_SCROLLS) window.addEventListener(type, release, { capture: true, passive: true });
-  frame = requestAnimationFrame(hold);
-  return release;
-}
-const USER_SCROLLS = ["wheel", "touchstart", "pointerdown", "keydown"];
-
-const STICK_INSTANTLY = { initial: "instant", resize: "instant" } as const;
-
-function ScrollButton({ stick, inputHeight, resizing, follow }: { stick: StickToBottomInstance; inputHeight: number; resizing: boolean; follow: () => void }) {
-  const setReading = useContext(ReadingState)?.setActive;
-  const { isAtBottom } = stick;
-  useLayoutEffect(() => {
-    if (NATIVE_READING) setReading?.(!isAtBottom);
-  }, [setReading, isAtBottom]);
-  const hidden = isAtBottom || resizing;
-  return (
-    <div className="chat-page-jump" data-shown={hidden ? undefined : ""} inert={hidden} style={{ bottom: inputHeight + 16 }}>
-      <CopilotChatView.ScrollToBottomButton onClick={() => { follow(); void stick.scrollToBottom({ animation: "instant" }); }} />
-    </div>
-  );
-}
-
-type ScrollControlProps = { inputContainerHeight: number; isResizing: boolean; contentRef: RefObject<HTMLDivElement | null>; opened: RefObject<boolean>; followsLatest: () => boolean; follow: () => void };
-
-const NO_BUTTON = () => null;
-
-function DocumentStick({ inputContainerHeight, isResizing, contentRef, opened, followsLatest, follow }: ScrollControlProps) {
-  const opensAt = useContext(OpensAt);
-  const initial = useInitialStick(opened, followsLatest);
-  const stick = useStickToBottom({ ...STICK_INSTANTLY, initial: initial && opensAt === null ? "instant" : false });
-  const { scrollRef, scrollToBottom, contentRef: stickContent } = stick;
-  useScrollUpClosesKeyboard();
-  useLayoutEffect(() => {
-    if (!contentRef.current) throw new Error("The phone chat's page stick needs the chat's content before it");
-    stickContent(contentRef.current);
-    const root = document.documentElement;
-    scrollRef(root);
-    // Document scroll events target Document; the library accepts events targeted at its scroll element.
-    const scrolled = (event: Event) => {
-      if (event.target === document) root.dispatchEvent(new Event("scroll"));
-    };
-    document.addEventListener("scroll", scrolled, { passive: true });
-    return () => {
-      document.removeEventListener("scroll", scrolled);
-      scrollRef(null);
-      stickContent(null);
-    };
-  }, [scrollRef, stickContent, contentRef]);
-  useEffect(() => {
-    const resized = () => { void scrollToBottom({ animation: "instant", preserveScrollPosition: true }); };
-    window.addEventListener("resize", resized);
-    window.visualViewport?.addEventListener("resize", resized);
-    return () => {
-      window.removeEventListener("resize", resized);
-      window.visualViewport?.removeEventListener("resize", resized);
-    };
-  }, [scrollToBottom]);
-  return <ScrollButton stick={stick} inputHeight={inputContainerHeight + 16} resizing={isResizing} follow={follow} />;
-}
-
-function ChatScrollView(props: ComponentProps<typeof CopilotChatView.ScrollView>) {
-  const [reading, setReading] = useState(false);
-  const readingState = useMemo(() => ({ active: reading, setActive: setReading }), [reading]);
-  const opensAt = useContext(OpensAt);
-  const phone = useIsPhone();
-  const { attach, content, opened, followsLatest, follow, instance, options } = useRotationReading(phone, opensAt === null);
-  const controlProps = { inputContainerHeight: props.inputContainerHeight ?? 0, isResizing: props.isResizing ?? false, contentRef: content, opened, followsLatest, follow };
-  return (
-    <ReadingState.Provider value={readingState}>
-    <CopilotChatView.ScrollView
-      {...props}
-      {...options}
-      instance={instance}
-      className="chat-scroll-view"
-      scrollToBottomButton={NO_BUTTON}
-      feather={{ style: { display: "contents" }, children: phone ? <DocumentStick {...controlProps} /> : <ScrollButton stick={instance} inputHeight={controlProps.inputContainerHeight} resizing={controlProps.isResizing} follow={follow} /> }}
-    >
-      <div ref={attach} data-reading-active={NATIVE_READING && reading ? "" : undefined}>{props.children}</div>
-    </CopilotChatView.ScrollView>
-    </ReadingState.Provider>
-  );
-}
-
 const ConversationScrollView = (props: ComponentProps<typeof CopilotChatView.ScrollView>) => (
   <ThreadScrollView {...props} opensAt={useContext(OpensAt)} />
 );
@@ -393,11 +280,11 @@ function pageStart(elements: ReactElement[], end: number, messageIds: Set<string
 }
 
 const messageList = (list: HTMLDivElement | null) => {
-  const stops = CONVERSATION_THREAD ? [fitBubbles(list)] : [keepArtifactReading(list), fitBubbles(list), keepLateBoxes(list)];
-  return () => stops.forEach((stop) => stop?.());
+  const stop = fitBubbles(list);
+  return () => stop?.();
 };
 
-function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages: readonly { id: string }[]; list: RefObject<HTMLDivElement | null> }) {
+function MessageRows({ rows, messages }: { rows: ReactElement[]; messages: readonly { id: string }[] }) {
   const [firstKey, setFirstKey] = useState<Key | null>(null);
   const kept = firstKey === null ? -1 : rows.findIndex((row) => row.key === firstKey);
   const messageIds = new Set(messages.map(({ id }) => id));
@@ -410,26 +297,18 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
   const rowsRef = useRef({ rows, messageIds });
   rowsRef.current = { rows, messageIds };
   const earlier = useRef<HTMLDivElement>(null);
-  const reading = useRef<ReadRow | null>(null);
   const join = () => {
     const now = rowsRef.current;
     setFirstKey(now.rows[pageStart(now.rows, first, now.messageIds)]?.key ?? null);
   };
-  useRowsLandOnce(list, earlier, !CONVERSATION_THREAD && opensAt === null, first, join);
   useEffect(() => {
     const marker = earlier.current;
     if (first === 0 || marker === null) return undefined;
-    let reported = false;
     // A callback can carry several of the marker's changes, oldest first: on a loaded phone one held its going out of
     // view as a page joined and its coming back, and acting on the first left earlier history unloaded for good.
     const observer = new IntersectionObserver((entries) => {
       const entry = entries.at(-1);
-      const atStart = !reported;
-      reported = true;
       if (!entry?.isIntersecting || marker.closest("[inert], [hidden]") !== null) return;
-      const scroller = scrollParent(marker);
-      const list = marker.parentElement;
-      if (!CONVERSATION_THREAD && !(atStart && reading.current?.row.isConnected)) reading.current = scroller && list && rowRead(list, scroller);
       join();
     });
     observer.observe(marker);
@@ -443,17 +322,6 @@ function MessageRows({ rows, messages, list }: { rows: ReactElement[]; messages:
       observer.disconnect();
       uncovered.disconnect();
     };
-  }, [first]);
-  useLayoutEffect(() => {
-    const read = reading.current;
-    const list = earlier.current?.parentElement ?? read?.row.parentElement;
-    if (CONVERSATION_THREAD || read === null || list == null) return undefined;
-    if (NATIVE_READING) {
-      // Native anchoring does not land prepended history at scrollTop=0; retain the existing one-time pin.
-      keepInPlace(read);
-      return undefined;
-    }
-    return holdReading(read, list, eventsOf(read.scroller));
   }, [first]);
 
   return (
@@ -486,7 +354,7 @@ function ChatMessages(props: CopilotChatMessageViewProps) {
           return (
             <div ref={attachList} data-copilotkit data-testid="copilot-message-list" className="copilotKitMessages cpk:flex cpk:flex-col">
               <ReplyTurnRunning.Provider value={isRunning}>
-                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} list={list} />
+                <MessageRows rows={worklogRows(messageElements, messages, isRunning || onServer, { started: isRunning ? started : onServer })} messages={messages} />
               </ReplyTurnRunning.Provider>
               {interruptElement}
               <Presence>{isRunning && last?.role !== "reasoning" && (last?.role ?? "user") === "user" && !started && <motionElement.div {...presenceMotion} className="chat-pending-cursor"><CopilotChatMessageView.Cursor /></motionElement.div>}</Presence>
@@ -596,13 +464,6 @@ function ChatThread({
   useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
-  useEffect(() => {
-    const wrapper = wrapperRef.current;
-    if (CONVERSATION_THREAD || opensAt === null || wrapper === null) return undefined;
-    return holdAtRow(wrapper, opensAt);
-  },
-  // Stryker disable next-line ArrayDeclaration: a chat opens at its message once, as it mounts
-  []);
 
   const onOpenedRef = useRef(onOpened);
   onOpenedRef.current = onOpened;
@@ -726,7 +587,7 @@ function ChatThread({
 
 
   return (
-    <div className="chat-wrapper" data-native-reading={NATIVE_READING ? "" : undefined} ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
+    <div className="chat-wrapper" ref={wrapperRef} onKeyDown={stopOnEscapeNoMenuTook(composerStop)} {...fileDrop.handlers}>
       <FileDropOverlay open={fileDrop.over} />
       <Presence>{showWelcome && !running && !openingAttempted.current && <motionElement.div {...presenceMotion} className="chat-welcome"><WelcomeScreen userName={userName} /></motionElement.div>}</Presence>
       <ToolCallRenderer agent={agent} />
@@ -752,7 +613,7 @@ function ChatThread({
             className="chat-full-height"
             messageView={CHAT_MESSAGES}
             input={CHAT_INPUT}
-            scrollView={CONVERSATION_THREAD ? ConversationScrollView : ChatScrollView}
+            scrollView={ConversationScrollView}
             onError={(event) => {
               const error = "error" in event ? event.error : new Error("Chat content failed to load");
               if (error.name === "AbortError") return;

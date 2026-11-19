@@ -4,13 +4,8 @@ import { cloneElement, isValidElement, useEffect, useLayoutEffect, useRef, useSt
 import { CopilotChatView } from "@copilotkit/react-core/v2";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import { Conversation, ConversationContent } from "@/components/ui/conversation";
-import { Collapse, GridCollapse } from "./collapse";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
-
-export const CONVERSATION_THREAD = process.env.NEXT_PUBLIC_CONVERSATION_THREAD === "1";
-
-export const RowCollapse = CONVERSATION_THREAD ? GridCollapse : Collapse;
 
 const ROTATION_HOLD_MS = 400;
 

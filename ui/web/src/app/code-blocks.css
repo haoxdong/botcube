@@ -226,38 +226,3 @@
     color: var(--color-text);
   }
 }
-
-/* A diagram in a row that joined the history above the reader (late-boxes.ts) keeps one box from its row's first frame:
-   the height it last drew at, else streamdown's own placeholder height. streamdown's loading box, its placeholder, its
-   spinner and the drawing all take it, and streamdown fits the drawing to the box's max-height, so nothing above the
-   row read moves as the diagram draws. The box's padding and border add 26px; the block's header 32px more. */
-.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  height: calc(var(--diagram-height) + 26px);
-  overflow: hidden;
-}
-
-.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] [data-streamdown="mermaid"] {
-  max-height: var(--diagram-height);
-}
-
-.copilotKitAssistantMessage[data-joined] [class*="cpk:prose"] > div > .divide-y.rounded-xl {
-  height: calc(var(--diagram-height) + 58px);
-  margin-block: var(--space-16);
-}
-
-/* A diagram in a row that arrived under the history, a reply streaming in (late-boxes.ts), only grows: its box
-   stands at least as tall as it has been, the drawing centred in it, and streamdown's one-frame placeholder, the box's
-   only empty child, takes no 200px of its own, so it neither sets that floor nor drops away under the reader. */
-.copilotKitAssistantMessage[data-arrived] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-height: var(--diagram-floor);
-}
-
-.copilotKitAssistantMessage[data-arrived] [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child > :empty {
-  min-height: 0;
-}

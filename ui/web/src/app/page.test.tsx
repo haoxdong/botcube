@@ -45,7 +45,6 @@ const copyBoundary = vi.hoisted(() => ({ isolateRendering: false }));
 // The build's Chat Service, read as the page's modules load.
 vi.hoisted(() => {
   vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
-  vi.stubEnv('NEXT_PUBLIC_CONVERSATION_THREAD', undefined);
 });
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -517,6 +516,14 @@ const warmups = () => fetchMock.mock.calls
     if (typeof request.body !== 'string') throw new Error('warmup body is not a string');
     return [url, { ...request, body: request.body }] as const;
   });
+
+// use-stick-to-bottom sets its scroll element's overflow to auto only where the computed overflow reads visible, which happy-dom's never does.
+function threadScroller() {
+  const scroller = document.querySelector<HTMLElement>('.chat-scroll-view > div');
+  if (scroller === null) throw new Error('no thread scroll view');
+  scroller.style.overflowY = 'auto';
+  return scroller;
+}
 
 async function renderPage(state: AuthUiState = auth()) {
   cartridge.auth = state;
@@ -1821,7 +1828,7 @@ describe('the kept Main Chat over the chat as it opens', () => {
   const opening = () => document.querySelector('.app-chat-opening');
   // The chat's scroll view, 300px tall, over its content `height` px tall, scrolled `top` px down.
   const layOut = (height: () => number, top: () => number) => {
-    const scrollView = screen.getByTestId('copilot-scroll-view');
+    const scrollView = threadScroller();
     Object.defineProperty(scrollView, 'clientHeight', { configurable: true, value: 300 });
     Object.defineProperty(scrollView, 'scrollHeight', { configurable: true, get: height });
     Object.defineProperty(scrollView, 'scrollTop', { configurable: true, get: top });
@@ -1849,133 +1856,6 @@ describe('the kept Main Chat over the chat as it opens', () => {
     await renderPage(auth({ accountId: 'acct-first' }));
 
     expect(keptChat()?.querySelector('.worklog-title')).toHaveTextContent(/^Working · /);
-  });
-
-  it('with the Conversation flag unset, fills the old scroll view with history before opening', async () => {
-    copilot.rows = true;
-    vi.stubGlobal('IntersectionObserver', class {
-      observe() {}
-      disconnect() {}
-    });
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.dataset.testid === 'copilot-scroll-view' ? 500 : 800;
-    });
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.querySelectorAll('[data-message-row]').length * 100;
-    });
-    service.mainChat = {
-      id: 'main-1',
-      messages: Array.from({ length: 12 }, (_, index) => ({
-        id: `message-${index}`, role: index % 2 === 0 ? 'user' : 'assistant', content: `Message ${index}`,
-      })),
-    };
-
-    await renderPage(auth({ accountId: 'acct-first' }));
-    await frame();
-    await frame();
-
-    const scroller = await screen.findByTestId('copilot-scroll-view');
-    expect(scroller.querySelectorAll('[data-message-row]')).toHaveLength(8);
-    expect(scroller).toHaveTextContent('Message 10');
-  });
-
-  it('with the Conversation flag unset, holds the read line when earlier history joins', async () => {
-    copilot.rows = true;
-    const intersections = new Map<Element, IntersectionObserverCallback>();
-    vi.stubGlobal('IntersectionObserver', class {
-      constructor(private readonly callback: IntersectionObserverCallback) {}
-      observe(element: Element) { intersections.set(element, this.callback); }
-      disconnect() {}
-    });
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.dataset.testid === 'copilot-scroll-view' ? 300 : 1000;
-    });
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.querySelectorAll('[data-message-row]').length * 100;
-    });
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      const scroller = this.closest('[data-testid="copilot-scroll-view"]');
-      const rows = [...(scroller?.querySelectorAll('[data-message-row]') ?? [])];
-      const index = rows.indexOf(this);
-      if (this.hasAttribute('data-chat-earlier')) return new DOMRect(0, -(scroller?.scrollTop ?? 0), 600, 0);
-      return index >= 0
-        ? new DOMRect(0, index * 100 - (scroller?.scrollTop ?? 0), 600, 100)
-        : new DOMRect(0, 0, 600, this.dataset.testid === 'copilot-scroll-view' ? 300 : rows.length * 100);
-    });
-    service.mainChat = {
-      id: 'main-1',
-      messages: Array.from({ length: 12 }, (_, index) => ({
-        id: `message-${index}`, role: index % 2 === 0 ? 'user' : 'assistant', content: `Message ${index}`,
-      })),
-    };
-    await renderPage(auth({ accountId: 'acct-first' }));
-    await frame();
-    await frame();
-    const scroller = await screen.findByTestId('copilot-scroll-view');
-    let position = 0;
-    Object.defineProperty(scroller, 'scrollTop', {
-      configurable: true,
-      get: () => position,
-      set: (value: number) => { position = Math.max(0, Math.min(value, scroller.scrollHeight - scroller.clientHeight)); },
-    });
-    const read = present(scroller.querySelector('[data-message-row="message-10"]'), 'the read line');
-    expect(read.getBoundingClientRect().top).toBe(200);
-    const marker = present(scroller.querySelector('[data-chat-earlier]'), 'the earlier history marker');
-    const intersect = present(intersections.get(marker), 'the history observer');
-
-    await act(async () => { intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver); });
-
-    expect(scroller.querySelectorAll('[data-message-row]')).toHaveLength(8);
-    expect(scroller.scrollTop).toBe(400);
-    expect(read.getBoundingClientRect().top).toBe(200);
-  });
-
-  it('with the Conversation flag unset, reserves diagram space when a reply arrives', async () => {
-    await renderPage(auth({ accountId: 'acct-first' }));
-    await frame();
-    await frame();
-    const list = await screen.findByTestId('copilot-message-list');
-    const row = document.createElement('div');
-    row.className = 'copilotKitAssistantMessage';
-    row.dataset.messageId = 'diagram-reply';
-    const diagram = document.createElement('div');
-    diagram.dataset.streamdown = 'mermaid-block';
-    row.append(diagram);
-
-    await act(async () => { list.append(row); });
-
-    expect(diagram.style.getPropertyValue('--diagram-height')).toBe('200px');
-  });
-
-  it('with the Conversation flag unset, holds a visible artifact as its preceding words grow', async () => {
-    await renderPage(auth({ accountId: 'acct-first' }));
-    await frame();
-    await frame();
-    const scroller = await screen.findByTestId('copilot-scroll-view');
-    Object.defineProperties(scroller, {
-      clientHeight: { configurable: true, value: 500 },
-      scrollHeight: { configurable: true, value: 1000 },
-    });
-    vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 500));
-    const bubble = document.createElement('div');
-    bubble.className = 'artifact-reply-bubble';
-    bubble.dataset.artifactTurn = 'artifact-reply';
-    const words = document.createElement('div');
-    words.className = 'chat-markdown';
-    words.textContent = 'A summary';
-    const card = document.createElement('div');
-    card.className = 'artifact-card';
-    card.dataset.artifactId = 'rates';
-    let offset = 100;
-    vi.spyOn(card, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, offset - scroller.scrollTop, 400, 200));
-    bubble.append(words, card);
-    await act(async () => { screen.getByTestId('copilot-message-list').append(bubble); });
-
-    offset = 180;
-    await act(async () => { words.textContent = 'A summary that grew above the visible artifact'; });
-
-    expect(scroller.scrollTop).toBe(80);
-    expect(card.getBoundingClientRect().top).toBe(100);
   });
 
   it('lifts on the first frame when the chat has nothing to scroll', async () => {
@@ -2425,12 +2305,11 @@ describe('Main Chat', () => {
     expect(sidebar().getByRole('button', { name: 'Main Chat' })).toHaveClass('sidebar-nav-item', 'sidebar-nav-item-active');
   });
 
-  it('opens immediately at the latest message without virtualized history', async () => {
+  it('opens without virtualized history', async () => {
     service.mainChat = { id: 'main-1', messages: [{ id: 'm1', role: 'user', content: 'Earlier question' }] };
 
     await renderPage();
 
-    expect(screen.getByTestId('copilot-scroll-view')).toHaveAttribute('data-initial', 'instant');
     expect(screen.getByTestId('copilot-message-list')).not.toHaveAttribute('data-virtualized');
   });
 
@@ -2443,24 +2322,21 @@ describe('Main Chat', () => {
       await report(true);
     };
     const rows = () => [...document.querySelectorAll('[data-message-row]')].map((row) => row.getAttribute('data-message-row'));
-    const scrollView = () => screen.getByTestId('copilot-scroll-view');
+    const scrollView = threadScroller;
     const resized = new Set<() => void>();
-    const grow = () => act(async () => { for (const notify of [...resized]) notify(); });
-    // Each row 100px tall unless `height` says otherwise, laid out from the list's top, in a scroll view 300px tall: the
-    // row being read moves down by the rows joining above it. An app zoomed by `zoom` shows them `zoom` times as tall.
-    const layOut = (height: (row: string | null) => number = () => 100, zoom = 1) => {
+    // Each row 100px tall unless `height` says otherwise, laid out from the list's top, in a scroll view 300px tall.
+    const layOut = (height: (row: string | null) => number = () => 100) => {
       const all = () => [...document.querySelectorAll('[data-message-row]')];
       const sum = (laid: Element[]) => laid.reduce((total, row) => total + height(row.getAttribute('data-message-row')), 0);
       Object.defineProperty(scrollView(), 'clientHeight', { configurable: true, value: 300 });
       Object.defineProperty(scrollView(), 'scrollHeight', { configurable: true, get: () => sum(all()) });
-      Object.defineProperty(scrollView(), 'currentCSSZoom', { configurable: true, value: zoom });
       return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-        if (this === scrollView()) return { top: 0, bottom: 300 * zoom } as DOMRect;
-        if (this === all()[0]?.parentElement) return { top: -scrollView().scrollTop * zoom, bottom: (sum(all()) - scrollView().scrollTop) * zoom } as DOMRect;
+        if (this === scrollView()) return { top: 0, bottom: 300 } as DOMRect;
+        if (this === all()[0]?.parentElement) return { top: -scrollView().scrollTop, bottom: sum(all()) - scrollView().scrollTop } as DOMRect;
         const index = all().indexOf(this);
         const top = (index === -1 ? -100 : sum(all().slice(0, index))) - scrollView().scrollTop;
         const bottom = index === -1 ? top : top + height(this.getAttribute('data-message-row'));
-        return { top: top * zoom, bottom: bottom * zoom } as DOMRect;
+        return { top, bottom } as DOMRect;
       });
     };
 
@@ -2497,8 +2373,6 @@ describe('Main Chat', () => {
       expect(rows()).toHaveLength(4);
       await report(true);
       expect(rows()).toEqual(['m79', 'm80', 'm81', 'm82', 'm83', 'm84', 'm85', 'm86']);
-      // The scroll view, not its content wrapper, keeps the row being read in place.
-      expect(scrollView().scrollTop).toBe(400);
       layout.mockRestore();
       // The rows already laid out stay as they are.
       expect(copilot.rowMounts).toBe(8);
@@ -2574,86 +2448,6 @@ describe('Main Chat', () => {
       expect(rows()).toEqual(['m79', 'm80', 'm81', 'm82', 'm83', 'm84', 'm85', 'm86']);
     });
 
-    // An answer's markdown renders after its row joins, and grew it by up to 360px, moving the row being read.
-    it('keeps the row being read in place as the rows joined above it grow', async () => {
-      let rendered = false;
-      await renderPage();
-      layOut((row) => (rendered && ['m79', 'm81'].includes(row ?? '') ? 460 : 100));
-      await scrollToTop();
-      expect(scrollView().scrollTop).toBe(400);
-
-      rendered = true;
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(1120);
-    });
-
-    // The wide desktop zooms the app 1.4×: a row's rect is in the screen's pixels, the scroll in the scroll view's own,
-    // and the rows joining above moved the view 1.4× as far as they pushed the row being read.
-    it('keeps the row being read in place in an app the wide desktop zooms', async () => {
-      await renderPage();
-      layOut(undefined, 1.4);
-      await scrollToTop();
-
-      expect(scrollView().scrollTop).toBeCloseTo(400);
-    });
-
-    // The user scrolled to the top before the rows that joined last had rendered, and as they grew, the row
-    // the user had been reading below them, held in place, carried the view thousands of pixels down with it. The hold
-    // moves with the user's scroll to the row at the middle of where they scrolled.
-    it('holds the row at the middle of where the user scrolled as rows render above it, not the row they scrolled away from', async () => {
-      let rendered = false;
-      await renderPage();
-      layOut((row) => (rendered && ['m79', 'm81'].includes(row ?? '') ? 460 : 100));
-      await scrollToTop();
-      expect(scrollView().scrollTop).toBe(400);
-
-      scrollView().scrollTop = 0;
-      await act(async () => scrollView().dispatchEvent(new Event('scroll')));
-      rendered = true;
-      await grow();
-
-      // m81, the row under the middle of the 300px view, stays put as m79 above it grows by 360px; m81's own growth is
-      // below its top.
-      expect(scrollView().scrollTop).toBe(360);
-    });
-
-    // A row above grew in the frame the user's wheel turn scrolled, before the list's ResizeObserver ran: the scroll
-    // event took the grown layout for where the rows were, and nothing held the user's rows against the growth.
-    it('holds the rows the user scrolls to as a row above grows in the same frame as the scroll', async () => {
-      let grown = false;
-      await renderPage();
-      const top = () => rows()[0];
-      layOut((row) => (grown && row === top() ? 160 : 100));
-      await scrollToTop();
-      expect(scrollView().scrollTop).toBe(400);
-
-      grown = true;
-      scrollView().scrollTop = 300;
-      await act(async () => scrollView().dispatchEvent(new Event('scroll')));
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(360);
-    });
-
-    // The row that grew in the frame the user scrolled up lay between the row they reached and the row they had been
-    // reading: its growth, below the row they reached, moves nothing they see.
-    it('leaves the rows the user scrolls up to where they are as a row below them grows in the same frame', async () => {
-      let grown = false;
-      await renderPage();
-      const third = () => rows()[2];
-      layOut((row) => (grown && row === third() ? 460 : 100));
-      await scrollToTop();
-      expect(scrollView().scrollTop).toBe(400);
-
-      grown = true;
-      scrollView().scrollTop = 0;
-      await act(async () => scrollView().dispatchEvent(new Event('scroll')));
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(0);
-    });
-
     // The rows that joined last rendered nothing, so the top stayed in view, never came into view again, and
     // no earlier row joined however far the user scrolled.
     it('lays out earlier rows while the rows that joined leave the top in view', async () => {
@@ -2667,23 +2461,6 @@ describe('Main Chat', () => {
       expect(rows()).toHaveLength(12);
     });
 
-    // As rows joined again at once above rows that rendered nothing, the hold moved up to those rows, so the
-    // row the user was reading moved as they rendered after.
-    it('keeps the row being read in place as rows join again above rows that render nothing', async () => {
-      let rendered = false;
-      await renderPage();
-      layOut((row) => (['m79', 'm80', 'm81', 'm82'].includes(row ?? '') ? (rendered && row === 'm79' ? 50 : 0) : 100));
-      await scrollToTop();
-      await report(true);
-      expect(rows()).toHaveLength(12);
-      expect(scrollView().scrollTop).toBe(400);
-
-      rendered = true;
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(450);
-    });
-
     // At 440×956 a chat's 4 latest rows overflowed the scroll view by 20px, so its top stayed in view at the
     // bottom, where it opened, and no earlier row ever joined.
     it('lays out earlier rows while the user cannot scroll the top out of view, at the bottom of a barely overflowing chat', async () => {
@@ -2695,40 +2472,6 @@ describe('Main Chat', () => {
       await report(true);
 
       expect(rows()).toEqual(['m79', 'm80', 'm81', 'm82', 'm83', 'm84', 'm85', 'm86']);
-      expect(scrollView().scrollTop).toBe(420);
-    });
-
-    // At the chat's bottom, a row above the one being read shrank by a pixel as a row below grew by as much,
-    // and the hold scrolled the view up off its bottom. CopilotKit's scroll view took that for the user scrolling up and
-    // stopped keeping to its bottom, so as the rows' markdown rendered below, the view stayed 20,000px above it.
-    it('leaves the view at its bottom as a row above the one being read shrinks', async () => {
-      let rendered = false;
-      await renderPage();
-      layOut((row) => (rendered && row === 'm79' ? 99 : rendered && row === 'm86' ? 101 : 100));
-      // At its bottom as CopilotKit's scroll view keeps it, 1px short.
-      Object.defineProperty(scrollView(), 'clientHeight', { configurable: true, value: 379 });
-      scrollView().scrollTop = 20;
-      await report(true);
-      expect(scrollView().scrollTop).toBe(420);
-
-      rendered = true;
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(420);
-    });
-
-    // Above the bottom, the hold still follows a row above shrinking, as the user reads there.
-    it('keeps the row being read in place as a row above it shrinks, above the bottom', async () => {
-      let rendered = false;
-      await renderPage();
-      layOut((row) => (rendered && row === 'm79' ? 60 : 100));
-      await scrollToTop();
-      expect(scrollView().scrollTop).toBe(400);
-
-      rendered = true;
-      await grow();
-
-      expect(scrollView().scrollTop).toBe(360);
     });
 
     // Its latest rows not filling the scroll view, there is no scrolling up to the earlier ones.
