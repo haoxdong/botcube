@@ -3,11 +3,12 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { domAnimation, LazyMotion, m as motionElement, type AnimationDefinition } from "motion/react";
 import { Maximize2, X } from "lucide-react";
-import { useContext, useRef, useState, type ComponentProps } from "react";
+import { isValidElement, useContext, useRef, useState, type ComponentProps } from "react";
 import { defaultComponents, StreamdownContext, type StreamdownContextType } from "streamdown";
 
 import { Presence } from "./collapse";
 import { motionTokens } from "./motion-tokens";
+import { OpenFence } from "./reply-turn";
 
 type CodeProps = ComponentProps<typeof defaultComponents.code>;
 const Code = defaultComponents.code;
@@ -15,9 +16,24 @@ const CSS_FULLSCREEN = process.env.NEXT_PUBLIC_CSS_DIAGRAM_FULLSCREEN === "1";
 const opacity = { hidden: { opacity: 0 }, visible: { opacity: 1 } };
 
 export function ReplyCode(props: CodeProps) {
-  return props.className?.split(" ").includes("language-mermaid") && "data-block" in props
-    ? <DiagramCode {...props} />
-    : <Code {...props} />;
+  const open = useContext(OpenFence);
+  if (!props.className?.split(" ").includes("language-mermaid") || !("data-block" in props)) return <Code {...props} />;
+  return open !== null && codeOf(props.children).trimEnd() === open.trimEnd() ? <PendingDiagram /> : <DiagramCode {...props} />;
+}
+
+const codeOf = (children: CodeProps["children"]): string =>
+  typeof children === "string"
+    ? children
+    : isValidElement<{ children?: unknown }>(children) && typeof children.props.children === "string" ? children.props.children : "";
+
+/** A diagram whose fence is still streaming: Mermaid draws it once, whole, when the fence closes. */
+function PendingDiagram() {
+  return (
+    <div className="my-4 flex w-full flex-col rounded-xl border border-border" data-streamdown="mermaid-block" data-pending="">
+      <div className="flex items-center text-muted-foreground text-xs"><span className="ml-1 font-mono lowercase">mermaid</span></div>
+      <div />
+    </div>
+  );
 }
 
 function DiagramCode(props: CodeProps) {

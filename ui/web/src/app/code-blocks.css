@@ -50,6 +50,12 @@
   background: var(--color-fill);
 }
 
+/* Streamdown's loading boxes stand taller than a small diagram: the box stays empty until the diagram or its error is in,
+   so a diagram only grows as it draws, from the box a still-open fence shows. */
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child:not(:has([aria-label="Mermaid chart"] > svg, .bg-red-50)) > * {
+  display: none;
+}
+
 /* A reply's diagram is a still picture: zoom and pan, with their buttons, stay in the fullscreen view (the header's
    last button), which renders outside the message, so a scroll over the diagram scrolls the chat. streamdown's pan-zoom
    frame is `flex-col`, uncompiled here, so it is set as a column; its content box shrinks to the frame, which takes the

@@ -4,7 +4,7 @@ import { useContext } from "react";
 import { MARKDOWN_RENDERER, tableInProgress } from "./markdown";
 import { remarkRepairedBracketMath } from "./remark-bracket-math";
 import { rehypeReplyFiles } from "./reply-file-path";
-import { ReplyTurnRunning } from "./reply-turn";
+import { OpenFence, openFence, ReplyTurnRunning } from "./reply-turn";
 
 // Between sanitize, which would drop the mark rehypeReplyFiles gives a file card, and harden, the last, which would block
 // the bare paths it resolves.
@@ -15,13 +15,15 @@ const STREAMING_REPAIRS = { handlers: [tableInProgress] };
 export default function MarkdownRenderer({ content }: { content: string }) {
   const running = useContext(ReplyTurnRunning);
   return (
-    <CopilotChatAssistantMessage.MarkdownRenderer
+    <OpenFence.Provider value={running ? openFence(content) : null}>
+      <CopilotChatAssistantMessage.MarkdownRenderer
       {...MARKDOWN_RENDERER}
       className="chat-markdown"
       remarkPlugins={[...MARKDOWN_RENDERER.remarkPlugins, [remarkRepairedBracketMath, content]]}
       rehypePlugins={REPLY_REHYPE_PLUGINS}
       {...(running ? { remend: STREAMING_REPAIRS } : {})}
       content={content}
-    />
+      />
+    </OpenFence.Provider>
   );
 }
