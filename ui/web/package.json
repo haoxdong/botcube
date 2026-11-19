@@ -80,7 +80,7 @@
     "lucide-react": "^0.577.0",
     "marked": "18.0.14",
     "mimetext": "3.0.28",
-    "motion": "^14.9.0",
+    "motion": "^14.14.0",
     "next": "^16.4.5",
     "papaparse": "5.7.0",
     "pdfjs-dist": "^6.4.299",

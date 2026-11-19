@@ -26,7 +26,7 @@ export function useHeaderWorking(chatId: string | null, working: boolean) {
 // left: Motion re-renders the LayoutGroup then, and with no layoutDependency the capsule shrinks from that render.
 export const HeaderName = memo(function HeaderName({ name, working }: { name: string; working: boolean }) {
   const { move } = motionTokens();
-  const transition = { layout: { type: "spring" as const, visualDuration: move.duration, bounce: 0 } };
+  const transition = { layout: { ...move, visualDuration: move.visualDuration * 2 } };
   return (
     <LazyMotion features={domMax} strict><LayoutGroup>
       <motionElement.span layout transition={transition} className="chat-header-name">

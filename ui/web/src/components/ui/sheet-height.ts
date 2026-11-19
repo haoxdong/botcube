@@ -1,13 +1,13 @@
 import { animate } from 'motion/react';
 import { useLayoutEffect, useState } from 'react';
-import { motionTokens } from '../../app/motion-tokens';
+import { moveTween } from '../../app/motion-tokens';
 
 // CSS cannot interpolate auto-to-auto size; Base UI has no resize animation, and UI SDK beta.2 translates content snaps without interpolating box height.
 export function useSheetHeight(snapped: boolean) {
   const [popup, setPopup] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
-    if (snapped || popup === null || content === null || motionTokens().move.duration === 0) return;
+    if (snapped || popup === null || content === null || moveTween().duration === 0) return;
     let previous = Number.NaN;
     let animation: ReturnType<typeof animate> | undefined;
     const observer = new ResizeObserver(([entry]) => {
@@ -19,7 +19,7 @@ export function useSheetHeight(snapped: boolean) {
       if (previous === to) return;
       previous = to;
       animation?.stop();
-      animation = animate(popup, { height: to }, motionTokens().move);
+      animation = animate(popup, { height: to }, moveTween());
     });
     observer.observe(content);
     return () => {

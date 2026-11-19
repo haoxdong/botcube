@@ -439,6 +439,15 @@
   overflow: hidden;
 }
 
+.artifact-side[data-closing] > .artifact-view-motion {
+  overflow: visible;
+}
+
+.artifact-layout:has(.artifact-side[data-closing]) > .artifact-chat-panel {
+  position: relative;
+  z-index: 1;
+}
+
 @media (max-width: 640px) {
   .artifact-layout > .resizable-handle,
   .artifact-side-panel {

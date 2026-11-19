@@ -33,7 +33,8 @@ export function Presence({ children }: { children: ReactNode }) {
 
 export function Layout({ children, ...props }: HTMLMotionProps<"div">) {
   const { move } = motionTokens();
-  return <LazyMotion features={domMax} strict><m.div layout transition={{ layout: move }} {...props}>{Array.isArray(children) ? Children.toArray(children) : children}</m.div></LazyMotion>;
+  const box = <m.div layout transition={{ layout: move }} {...props}>{Array.isArray(children) ? Children.toArray(children) : children}</m.div>;
+  return move.visualDuration === 0 ? box : <LazyMotion features={domMax} strict>{box}</LazyMotion>;
 }
 
 export function Swap({ state, children, className, as = "div" }: { state: Key; children: ReactNode; className?: string; as?: Tag }) {
@@ -51,7 +52,7 @@ export function Swap({ state, children, className, as = "div" }: { state: Key; c
 export function useInstant() {
   const [instant] = useState(() => {
     const { move, quick } = motionTokens();
-    return move.duration === 0 && quick.duration === 0;
+    return move.visualDuration === 0 && quick.visualDuration === 0;
   });
   return instant;
 }

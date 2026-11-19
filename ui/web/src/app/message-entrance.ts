@@ -51,15 +51,15 @@ export class MessageEntrances {
 
 export const MessageEntranceHistory = createContext<MessageEntrances | null>(null);
 const MessageEntrance = createContext<Entrance>("arrival");
-const AT_REST = { opacity: 1, transform: "none" };
-const ARRIVING = { opacity: 0, transform: "translateY(6px)" };
+const AT_REST = { opacity: 1, y: 0 };
+const ARRIVING = { opacity: 0, y: 6 };
 
 export function useMessageEntrance(id: string, { artifacts = [], answer = false, hasContent = true }: { artifacts?: readonly string[]; answer?: boolean; hasContent?: boolean } = {}) {
   const history = useContext(MessageEntranceHistory);
   const entrance = useContext(MessageEntrance);
   const [root] = useState(() => Symbol());
   const replacement = answer && history?.replaces(artifacts, root) === true;
-  const [arrives] = useState(() => entrance === "arrival" && history?.messageEntrance(id) !== "history" && !replacement && motionTokens().move.duration > 0);
+  const [arrives] = useState(() => entrance === "arrival" && history?.messageEntrance(id) !== "history" && !replacement && motionTokens().move.visualDuration > 0);
   const controls = useAnimationControls();
   useLayoutEffect(() => {
     if (arrives) void controls.start({ ...AT_REST, transitionEnd: AT_REST }, motionTokens().move);

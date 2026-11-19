@@ -2,11 +2,11 @@
 
 import { contentToText, type AbstractAgent } from "@ag-ui/client";
 import { useRenderTool } from "@copilotkit/react-core/v2";
-import { m as motionElement } from "motion/react";
+import { AnimatePresence, domAnimation, LazyMotion, m as motionElement, useIsPresent } from "motion/react";
 import { Maximize2Icon, Minimize2Icon, PanelLeftIcon, PanelRightIcon, XIcon } from "lucide-react";
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch,
-  type ReactNode, type SetStateAction,
+  type ComponentProps, type ReactNode, type SetStateAction,
 } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { z } from "zod";
@@ -24,7 +24,7 @@ import { TYPES } from "./artifact-types";
 import type { ArtifactEdit, ViewerProps } from "./artifact-viewer";
 import { withStorage } from "./main-chat-copy";
 import { Layout } from "./collapse";
-import { Presence, presenceMotion } from "./collapse";
+import { motionTokens } from "./motion-tokens";
 import { useIsPhone } from "./phone-query";
 
 /** The harness `Artifact` tool's arguments (botcube_harness_deepagents/artifact.py). */
@@ -166,6 +166,7 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
   };
   const side = usePanelRef();
   const isOpen = shown !== null;
+  const { quick } = motionTokens();
   useEffect(() => {
     const panel = side.current;
     if (panel === null) throw new Error("The Artifact panel mounted without its imperative handle");
@@ -181,14 +182,19 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
         onResize={(size, _id, previous) => {
           if (isOpen && size.asPercentage === 0 && previous?.asPercentage) close();
         }}>
-        <Presence>{shown && (
-          <motionElement.div {...presenceMotion} layout={false} key={pathOf(shown)} className="artifact-side">
-            <Layout className="artifact-view-motion" layout={shown.full ? false : "position"} style={{ direction: "ltr" }}><ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} position={position} switchSide={switchSide} />} /></Layout>
-          </motionElement.div>
-        )}</Presence>
+        <LazyMotion features={domAnimation} strict><AnimatePresence mode="popLayout" initial={false}>{shown && (
+          <ArtifactSide key={pathOf(shown)} className="artifact-side" initial={quick.visualDuration === 0 ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ opacity: quick }}>
+            <Layout className="artifact-view-motion" layout={shown.full ? false : "position"} {...(shown.full ? { transformTemplate: () => "none" } : {})} style={{ direction: "ltr" }}><ArtifactView shown={shown} heading={<DesktopHeading shown={shown} />} controls={<DesktopControls shown={shown} position={position} switchSide={switchSide} />} /></Layout>
+          </ArtifactSide>
+        )}</AnimatePresence></LazyMotion>
       </ResizablePanel>
     </ResizablePanelGroup>
   );
+}
+
+function ArtifactSide(props: ComponentProps<typeof motionElement.div>) {
+  const present = useIsPresent();
+  return <motionElement.div {...props} inert={!present} data-closing={present ? undefined : ""} />;
 }
 
 function ArtifactResult({ result }: { result: string }) {

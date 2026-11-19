@@ -20,7 +20,8 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
   onEffortChange: (value: string) => void;
 }) {
   const instant = useInstant();
-  const transition = instant ? { duration: 0 } : { type: "spring", visualDuration: motionTokens().move.duration, bounce: 0 } satisfies Transition;
+  const move = motionTokens().move;
+  const transition = instant ? { duration: 0 } : { ...move, visualDuration: move.visualDuration * 2 } satisfies Transition;
   const pickerId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
