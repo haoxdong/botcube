@@ -79,17 +79,18 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     ? { revoke: (accountId: string) => credentialServiceCall(`${new URL(credentialServiceUrl).origin}/account/revoke`, invocationSecret ?? '', accountId,
       ACCOUNT_DELETION_SESSION, 'credential_revocation', 'Credential Service account revoke') }
     : null;
+  const planOwner = env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined;
   const testUserConnector = testUserConnectorRoutes({
     store,
     invocationSecret: credentialServiceUrl && invocationSecret ? invocationSecret : null,
-    ownerAccountId: env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined,
+    ownerAccountId: planOwner,
     copy: (testUserId, sessionId) => credentialServiceCall(`${(credentialServiceUrl ?? '').replace(/\/+$/, '')}/auth/test-user-copy`, invocationSecret ?? '', testUserId,
       sessionId, 'test_user_copy', 'Test User Connector copy'),
   });
   const plan = planModels({
     credentialServiceUrl: env.BOTCUBE_CREDENTIAL_SERVICE_URL,
     invocationSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
-    ownerAccountId: env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined,
+    ownerAccountId: planOwner,
     store,
   });
   return (history) => {
@@ -132,6 +133,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         .route('/', identity?.deletion ?? new Hono())
         .route('/', invocationSecret ? tokenIntrospectionRoutes({ sessions: store, invocationSecret }) : new Hono()),
       requester,
+      // Candidate prompts tune the bot on the plan owner's own Turns.
+      tunesPrompts: ({ owner }) => planOwner !== undefined && owner === planOwner,
       filingUserId: (owner) => filingUserId(bot.accountKey, owner),
       async scheduledRequester(owner) {
         const account = await accountStore.loadAccount(owner);

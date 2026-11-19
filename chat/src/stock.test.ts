@@ -356,6 +356,15 @@ describe("the stock Chat Service's Plan Usage", () => {
     expect(await signedOut.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([]);
   });
 
+  it('lets only the plan owner send candidate prompts', () => {
+    const service = (owner?: string) => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      ...(owner === undefined ? {} : { BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: owner }) })(history);
+
+    expect(service(PLAN_OWNER).tunesPrompts?.({ owner: PLAN_OWNER })).toBe(true);
+    expect(service(PLAN_OWNER).tunesPrompts?.({ owner: 'acct_someone_else' })).toBe(false);
+    expect(service().tunesPrompts?.({ owner: PLAN_OWNER })).toBe(false);
+  });
+
   it('fails loud when the plan catalog cannot be fetched, keeping the models last listed', async () => {
     const { service, accountStore } = await planUsage();
     expect(await service.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([model]);
