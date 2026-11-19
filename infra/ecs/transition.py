@@ -120,7 +120,8 @@ def refresh_runtime_spares(agentcore: Any = None, pause: Callable[[float], None]
     """A V1 AgentCore runtime starts its spare microVMs when a version is created, and replaces each one that ends.
     Without the NAT Gateway a microVM can't start, so a version created while Parked, or one whose spares ended
     while Parked, serves every session from a fresh microVM after unpark: a 30-36 s first frame.
-    With egress back, an update with the unchanged configuration makes a new version, which starts its spares."""
+    With egress back, an update with the unchanged configuration makes a new version, which starts its spares.
+    V2 restores from its existing snapshot and needs no new version on wake."""
     import boto3
     agentcore = agentcore or boto3.client('bedrock-agentcore-control')
     name = IDENTITY['aws']['agentCore']['runtime']
@@ -130,6 +131,9 @@ def refresh_runtime_spares(agentcore: Any = None, pause: Callable[[float], None]
         raise RuntimeError(f'expected one AgentCore runtime named {name}, found {len(found)}')
     runtime_id = found[0]['agentRuntimeId']
     current = agentcore.get_agent_runtime(agentRuntimeId=runtime_id)
+    if current.get('platformVersion') == 'V2' and current['status'] == 'READY':
+        print(f'{name} refresh skipped: V2 restores from its snapshot', flush=True)
+        return current
     agentcore.update_agent_runtime(agentRuntimeId=runtime_id, **runtime_update(name, current))
     deadline = time.monotonic() + timeout
     while True:
@@ -168,6 +172,9 @@ def await_spare_handoff(runtime: Mapping[str, Any], logs: Any = None, clock: Cal
     """A refreshed version starts its spares minutes after READY (4 min on 2026-11-05), and a chat before then waits
     about 29 s for a fresh microVM, so unpark reports Live after the first spare handoff, or after `timeout`
     with a warning. The runtime logs carry no version, so a spare handed off since the version's READY counts."""
+    if runtime.get('platformVersion') == 'V2':
+        print('Spare observation skipped: V2 has no spare pool', flush=True)
+        return
     import boto3
     logs = logs or boto3.client('logs')
     version, since = runtime['agentRuntimeVersion'], runtime['lastUpdatedAt'].timestamp()

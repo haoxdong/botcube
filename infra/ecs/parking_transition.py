@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
@@ -16,6 +16,7 @@ from egress_probe import RunningProbe
 
 
 class RuntimeSnapshot(TypedDict):
+    platformVersion: NotRequired[str]
     agentRuntimeId: str
     agentRuntimeVersion: str
     lastUpdatedAt: float
@@ -228,7 +229,7 @@ def prepare_live(state: TransitionState, cloudformation, probe) -> tuple[Transit
 
 def runtime_snapshot(runtime) -> RuntimeSnapshot:
     return {'agentRuntimeId': runtime['agentRuntimeId'], 'agentRuntimeVersion': runtime['agentRuntimeVersion'],
-            'lastUpdatedAt': runtime['lastUpdatedAt'].timestamp()}
+            'lastUpdatedAt': runtime['lastUpdatedAt'].timestamp(), 'platformVersion': runtime.get('platformVersion', 'V1')}
 
 
 def start(action, cloudformation, executions, ssm):

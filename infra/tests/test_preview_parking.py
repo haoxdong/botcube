@@ -529,6 +529,56 @@ class RuntimeSparesTests(unittest.TestCase):
         self.assertEqual(transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)['agentRuntimeVersion'], '205')
         self.assertEqual(agentcore.updates, [agentcore.configuration])
 
+    def test_v2_reuses_the_reported_ready_snapshot_without_update_or_wait(self):
+        agentcore = AgentCoreProduction()
+        agentcore.configuration['platformVersion'] = 'V2'
+        current = agentcore.get_agent_runtime('rt-1')
+        with patch.object(agentcore, 'get_agent_runtime', return_value=current) as get, patch('builtins.print') as printed:
+            pause = Mock(side_effect=AssertionError('V2 must not wait for a refresh'))
+            result = transition['refresh_runtime_spares'](agentcore, pause=pause)
+        self.assertIs(result, current)
+        self.assertEqual(result['agentRuntimeVersion'], '204')
+        self.assertEqual(agentcore.updates, [])
+        get.assert_called_once_with(agentRuntimeId='rt-1')
+        pause.assert_not_called()
+        self.assertIn('skipped: V2 restores from its snapshot', printed.call_args.args[0])
+
+    def test_reported_v1_platform_still_updates_and_waits_even_at_a_v2_era_version(self):
+        agentcore = AgentCoreProduction()
+        agentcore.version = '456'
+        current = agentcore.get_agent_runtime('rt-1')
+        updating = {**current, 'status': 'UPDATING'}
+        ready = {**current, 'agentRuntimeVersion': '457'}
+        with patch.object(agentcore, 'get_agent_runtime', side_effect=[current, updating, ready]):
+            pause = Mock()
+            result = transition['refresh_runtime_spares'](agentcore, pause=pause)
+        self.assertEqual(result['agentRuntimeVersion'], '457')
+        self.assertEqual(len(agentcore.updates), 1)
+        self.assertEqual(agentcore.updates[0]['platformVersion'], 'V1')
+        pause.assert_called_once_with(5)
+
+    def test_nonready_v2_still_fails_loud_without_updating(self):
+        for status in ('UPDATING', 'UPDATE_FAILED'):
+            with self.subTest(status=status):
+                agentcore = AgentCoreProduction(status=status)
+                agentcore.configuration['platformVersion'] = 'V2'
+                with self.assertRaisesRegex(RuntimeError, f'is {status}, not READY'):
+                    transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
+                self.assertEqual(agentcore.updates, [])
+
+    def test_v2_wake_snapshot_does_not_enter_the_v1_spare_observation(self):
+        from test_parking_lambda import load
+        agentcore = AgentCoreProduction(extra={'lastUpdatedAt': READY})
+        agentcore.configuration['platformVersion'] = 'V2'
+        with patch.object(agentcore, 'update_agent_runtime', side_effect=AssertionError('V2 must not update')):
+            current = transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
+        worker = load()
+        snapshot = worker.runtime_snapshot(current)
+        self.assertEqual(snapshot['platformVersion'], 'V2')
+        with patch('boto3.client', side_effect=AssertionError('V2 has no spare logs to inspect')):
+            worker.perform('spares', 'live', None, None, None, None, None, None,
+                           {'startedAt': READY.timestamp(), 'runtime': snapshot})
+
     def test_a_runtime_field_the_refresh_would_drop_fails_before_any_update(self):
         agentcore = AgentCoreProduction(extra={'newSetting': {'on': True}})
         with self.assertRaisesRegex(RuntimeError, 'would drop: newSetting'):
