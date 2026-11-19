@@ -363,17 +363,17 @@ def test_ineligible_preparation_reads_current_checkpoint(
     _turn(service, 'first')
     service.fed()
     fresh_warm_sessions(monkeypatch)
-    finish = serving._finish_preparation
+    checkpoint = serving.latest_checkpoint
 
-    async def failing(work: Any) -> None:
-        await finish(work)
+    async def failing(*args: Any, **kwargs: Any) -> Any:
+        await checkpoint(*args, **kwargs)
         raise RuntimeError('preparation failed')
 
     if reason == 'failed':
-        monkeypatch.setattr(serving, '_finish_preparation', failing)
+        monkeypatch.setattr(serving, 'latest_checkpoint', failing)
     prepared = _turn(service, '', warmup=True, preparationScope='startup' if reason == 'startup' else 'recorded')
     assert prepared[-1]['value']['outcome'] == ('failed' if reason == 'failed' else 'prepared')
-    monkeypatch.setattr(serving, '_finish_preparation', finish)
+    monkeypatch.setattr(serving, 'latest_checkpoint', checkpoint)
     if reason == 'write':
         asyncio.run(session_api.post_message('user-1', 'thread-1', 'New result', 'post-after-warmup'))
     memory.listed.clear()

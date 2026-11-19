@@ -32,14 +32,12 @@ class TurnFiles:
         self._excluded = tuple(excluded)
         self._claim = Lock()
         self._pull: Future[None] | None = None
-        self._prefetch: asyncio.Task[None] | None = None
         self.used = False
         self._failure: FilesMountError | None = None
 
     def prefetch(self) -> None:
-        if self._files is not None and self._prefetch is None:
-            self._prefetch = asyncio.create_task(asyncio.to_thread(self._ensure))
-            self._prefetch.add_done_callback(observe_efs_prefetch)
+        if self._files is not None:
+            self._start_pull()
 
     async def settle_prefetch(self) -> None:
         if self.used:
@@ -71,18 +69,23 @@ class TurnFiles:
     def _ensure(self) -> None:
         if self._files is None:
             return
+        pull = self._start_pull()
+        try:
+            pull.result(timeout=EFS_READY_TIMEOUT)
+        except TimeoutError as error:
+            self._failure = FilesMountError('Files mount readiness deadline exceeded')
+            raise self._failure from error
+
+    def _start_pull(self) -> Future[None]:
         with self._claim:
             owner = self._pull is None
             if self._pull is None:
                 self._pull = Future()
             pull = self._pull
         if owner:
+            pull.add_done_callback(observe_efs_prefetch)
             Thread(target=copy_context().run, args=(self._pull_files, pull), daemon=True).start()
-        try:
-            pull.result(timeout=EFS_READY_TIMEOUT)
-        except TimeoutError as error:
-            self._failure = FilesMountError('Files mount readiness deadline exceeded')
-            raise self._failure from error
+        return pull
 
     def _pull_files(self, pull: Future[None]) -> None:
         try:
@@ -96,7 +99,6 @@ class TurnFiles:
 
     async def arefresh(self) -> None:
         await self.settle_prefetch()
-        self._prefetch = None
         with self._claim:
             self._pull = None
         await self.aensure()
@@ -106,7 +108,7 @@ class TurnFiles:
             await finish_in_thread(self.ensure)
 
 
-def observe_efs_prefetch(work: asyncio.Task[None]) -> None:
+def observe_efs_prefetch(work: Future[None]) -> None:
     if not work.cancelled() and (error := work.exception()) is not None:
         logging.getLogger(__name__).warning('Files prefetch unavailable: %s', error)
 

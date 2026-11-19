@@ -11,7 +11,6 @@ from ag_ui.core import RunAgentInput
 
 from agentcore_fake import another_microvm
 from botcube_harness_deepagents import serving, session_memory
-from botcube_harness_deepagents.lazy_files import TurnFiles
 from botcube_harness_deepagents.memory import agentcore as memory_backend
 from test_serving import _Member, _memory_block, _memory_record, _ScopedMemory, _Service
 from test_serving import agentcore_memory as agentcore_memory
@@ -191,9 +190,8 @@ def test_warmup_retention_is_bounded_and_expired_results_are_removed(
     assert list(session_memory._warmups) == [('filing', 'new')]
 
 
-@pytest.mark.parametrize('delay', ['checkpoint', 'files'])
 def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
-    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch, delay: str,
+    service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = [1000.0]
     monkeypatch.setattr(session_memory, 'perf_counter', lambda: clock[0])
@@ -206,7 +204,7 @@ def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
         return result
     monkeypatch.setattr(session_memory, 'read_warmup', reading)
     from botcube_harness_deepagents.session_format import latest_checkpoint
-    checkpoint, ensure = latest_checkpoint, TurnFiles.aensure
+    checkpoint = latest_checkpoint
     delayed = False
     async def wait() -> None:
         nonlocal delayed
@@ -217,13 +215,7 @@ def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
     async def history(*args: Any) -> Any:
         await wait()
         return await checkpoint(*args)
-    async def files(self: Any) -> None:
-        await wait()
-        await ensure(self)
-    if delay == 'checkpoint':
-        monkeypatch.setattr(serving, 'latest_checkpoint', history)
-    else:
-        monkeypatch.setattr(TurnFiles, 'aensure', files)
+    monkeypatch.setattr(serving, 'latest_checkpoint', history)
     member: _Member = {'actor': 'actor-1', 'user': 'user-1', 'memory': True}
     assert service.turn('', warmup=True, **member)[-1]['value']['outcome'] == 'prepared'
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
@@ -237,11 +229,11 @@ def test_memory_read_age_is_not_reset_when_warmup_preparation_finishes(
 def test_cancelled_warmup_discards_completed_read_and_next_turn_loads_fresh(
     service: _Service, agentcore_memory: _ScopedMemory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    finish = serving._finish_preparation
-    async def cancelled(work: Any) -> None:
-        await finish(work)
+    read_warmup = session_memory.read_warmup
+    async def cancelled(*args: Any, **kwargs: Any) -> Any:
+        await read_warmup(*args, **kwargs)
         raise asyncio.CancelledError()
-    monkeypatch.setattr(serving, '_finish_preparation', cancelled)
+    monkeypatch.setattr(session_memory, 'read_warmup', cancelled)
     async def run() -> None:
         from agentcore_fake import turn_identity
         run_input = RunAgentInput(
@@ -255,7 +247,7 @@ def test_cancelled_warmup_discards_completed_read_and_next_turn_loads_fresh(
     assert service.client.portal is not None
     service.client.portal.call(run)
     assert session_memory._warmups == {}
-    monkeypatch.setattr(serving, '_finish_preparation', finish)
+    monkeypatch.setattr(session_memory, 'read_warmup', read_warmup)
     agentcore_memory.records.append(_memory_record('New memory', 'SemanticFacts-1', 'actor-1'))
     agentcore_memory.sts.memory_calls.clear()
     assert service.turn('hello', actor='actor-1', user='user-1', memory=True)[-1]['type'] == 'RUN_FINISHED'

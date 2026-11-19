@@ -1791,6 +1791,36 @@ def test_a_plain_answer_does_not_depend_on_an_unavailable_background_files_pull(
     assert _said(events) == 'Echo: hello'
 
 
+@pytest.mark.parametrize('startup', [False, True])
+def test_startup_and_first_chat_finish_while_files_mount_is_blocked(
+    service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch, startup: bool,
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+    workers: list[threading.Thread] = []
+
+    def mount(self: FilesMount, root: Path, excluded: object = ()) -> None:
+        workers.append(threading.current_thread())
+        entered.set()
+        assert release.wait(5)
+        (root / 'report.csv').write_text('mounted report')
+
+    monkeypatch.setattr(FilesMount, 'pull', mount)
+    try:
+        if startup:
+            prepared = service.turn('hello', warmup=True, preparationScope='startup', files=_files())
+            assert prepared[-1]['value']['outcome'] == 'prepared'
+        plain = service.turn('hello', files=_files())
+        assert entered.wait(1)
+        assert plain[-1]['type'] == 'RUN_FINISHED'
+        assert _said(plain) == 'Echo: hello'
+        assert not release.is_set()
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+
+
 def test_a_workspace_tool_whose_files_cannot_sync_fails_loudly(service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     def unavailable(*args: Any) -> None:
         raise FilesMountError('EFS unavailable')

@@ -39,6 +39,9 @@ def test_workspace_tools_share_one_mount_and_keep_edits(tmp_path: Path, monkeypa
 
     async def exercise() -> None:
         with turn_files(FilesMount.from_binding(binding()), tmp_path, ()) as readiness:
+            readiness.prefetch()
+            assert await asyncio.to_thread(entered.wait, 5)
+            assert not readiness.used
             tasks = [asyncio.create_task(LazyFilesMiddleware().awrap_tool_call(request(name), read))
                      for name in ('read_file', 'ls', 'write_file', 'execute')]
             assert await asyncio.to_thread(entered.wait, 5)

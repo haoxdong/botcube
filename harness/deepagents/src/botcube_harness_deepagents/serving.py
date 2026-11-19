@@ -96,7 +96,7 @@ from .files import (
 )
 from .files_mount import FilesMount, FilesMountError
 from .graph_stream import clock_events, complete_before_root_end
-from .lazy_files import TurnFiles, current_turn_files, turn_files
+from .lazy_files import TurnFiles, turn_files
 from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
@@ -498,8 +498,6 @@ class _SessionAgent(LangGraphAgent):
         )
 
     async def _model_output(self, event: Any, state: Any, lane: str, thought: _Thinking | None) -> AsyncGenerator[Any, None]:
-        if event['event'] == 'on_chat_model_start' and (files := current_turn_files()) is not None:
-            files.prefetch()
         async with aclosing(super()._handle_single_event(event, state)) as events:
             async for emitted in events:
                 if thought is not None and emitted.type in {EventType.TEXT_MESSAGE_START, EventType.TOOL_CALL_START}:
@@ -1029,11 +1027,9 @@ async def _prepare_agent(
                 if memory_warmup is not None:
                     memory_read = results[1]
 
-        pull = asyncio.create_task(
-            TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).aensure()
-        )
-        work = [pull, asyncio.create_task(read_history())] if reads_history else [pull]
-        await _finish_preparation(work)
+        TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).prefetch()
+        if reads_history:
+            await read_history()
         if reads_history and isinstance(saver, WarmSessionSaver):
             saver.finish_preparation(
                 _session_config(session), actor_id,
@@ -1045,18 +1041,6 @@ async def _prepare_agent(
         raise
     if memory_warmup is not None:
         session_memory.finish_warmup(session, memory_warmup, memory_read)
-
-
-async def _finish_preparation(work: list[asyncio.Task[Any]]) -> None:
-    try:
-        done, _ = await asyncio.wait(work, return_when=asyncio.FIRST_EXCEPTION)
-    finally:
-        # A failure stops the history read; the pull, mutating the workspace, ends before the lock is released.
-        for task in work[1:]:
-            task.cancel()
-        await asyncio.wait(work)
-    for task in [*done, *work]:
-        task.result()
 
 
 def _preparation_event(
@@ -1215,6 +1199,7 @@ class _SessionTurns:
                         return
                     put(event)
                 with turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
+                    readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
                     limited = await wait_for_turn(turn.work, deadline)
