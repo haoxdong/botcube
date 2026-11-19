@@ -101,8 +101,21 @@ export function offences(rules: string, tokens: string[]) {
 
 const filesIn = (root: string, name: RegExp) => readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((file) => name.test(file));
 
+const STOCK_DIRECTORY = path.join(import.meta.dirname, '../components/ui/');
+const MODIFIED_STOCK = new Set(
+  (JSON.parse(readFileSync(path.join(import.meta.dirname, '../../../../internal/ui-exceptions.json'), 'utf8')) as { file: string; pattern: string }[])
+    .filter((entry) => entry.pattern === 'stock component diff')
+    .map((entry) => path.join(import.meta.dirname, '../../../../..', entry.file)),
+);
+
+/** Whether `file` is shadcn's own file, unedited: `pnpm check:ui-exceptions` registers every other components/ui file as a
+ * `stock component diff`. Vendor code is not ours to restyle; the app's callers and CSS own its look and motion. */
+function isVerbatimStock(file: string) {
+  return file.startsWith(STOCK_DIRECTORY) && !MODIFIED_STOCK.has(file);
+}
+
 const componentLines = (root: string) =>
-  filesIn(root, /(?<!\.test|\.stories)\.tsx?$/).flatMap((file) =>
+  filesIn(root, /(?<!\.test|\.stories)\.tsx?$/).filter((file) => !isVerbatimStock(path.join(root, file))).flatMap((file) =>
     readFileSync(path.join(root, file), 'utf8')
       .split('\n')
       .map((line, i) => ({ file, line: i + 1, text: line.trim() }))

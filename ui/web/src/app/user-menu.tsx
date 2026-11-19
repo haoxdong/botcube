@@ -5,7 +5,7 @@ import { Swap, Presence, presenceMotion, Layout } from "./collapse";
 import { m as motionElement } from "motion/react";
 import { useRef, useState } from "react";
 import { Pencil } from "lucide-react";
-import { Popover } from "@base-ui/react/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { webUiPlugin } from "@cartridge-ui";
 import type { AuthUiState } from "../cartridge/index.js";
 import { Avatar } from "./avatar";
@@ -56,9 +56,9 @@ export function UserMenu({ expanded, auth, onLogout }: {
   );
 
   return (
-    <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (next) setEditing(false); }}>
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (next) setEditing(false); }}>
     <div className="user-menu">
-      <Popover.Trigger
+      <PopoverTrigger
         ref={triggerRef}
         className={`user-menu-trigger${open ? " menu-open" : ""}`}
         aria-label="Account"
@@ -66,10 +66,8 @@ export function UserMenu({ expanded, auth, onLogout }: {
       >
         <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={isPhone && expanded ? 29 : 28} />
         <Presence>{expanded && <motionElement.span {...presenceMotion} className="sidebar-nav-label">{firstName}</motionElement.span>}</Presence>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner className="standard-popup-positioner" side="top" align="start" sideOffset={8}>
-          <Popover.Popup render={<Layout layoutDependency={editing} />} className="user-menu-dropdown standard-popup" finalFocus={editing && isPhone ? false : triggerRef}>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="start" sideOffset={8} render={<Layout layoutDependency={editing} />} className="user-menu-dropdown standard-popup" finalFocus={editing && isPhone ? false : triggerRef}>
         <Swap state={editing && editor && !isPhone ? "editing" : "account"}>{editing && editor && !isPhone ? (
           editor
         ) : (
@@ -84,16 +82,14 @@ export function UserMenu({ expanded, auth, onLogout }: {
             close={() => setOpen(false)}
           />
         )}</Swap>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
+      </PopoverContent>
       {isPhone && editor && (
         <Sheet open={editing} onClose={() => setEditing(false)} title="Edit profile" container={null} finalFocus={triggerRef}>
           {editor}
         </Sheet>
       )}
     </div>
-    </Popover.Root>
+    </Popover>
   );
 }
 

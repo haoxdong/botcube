@@ -474,6 +474,9 @@
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   padding: var(--space-4) 0;
+  display: block;
+  font-size: inherit;
+  line-height: inherit;
   /* One width for the menu and Edit profile, so the editor replaces the menu in place */
   width: 260px;
   box-shadow: var(--shadow-float);
@@ -607,7 +610,8 @@
   z-index: 100;
 }
 
-.standard-popup-positioner {
+.standard-popup-positioner,
+[data-side]:has(> .user-menu-dropdown) {
   z-index: 300;
 }
 
