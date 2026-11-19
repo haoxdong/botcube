@@ -1,12 +1,15 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatServiceCartridge } from './cartridge.js';
 import { HttpError } from './http-error.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
+import type { StockOverrides } from './stock.js';
+import { testDeploymentConfig } from '../test/stock-bot.js';
 import type { AgentDocuments } from './agent-documents.js';
 import type { SessionMetadata } from './session-metadata.js';
 
-const cartridge: ChatServiceCartridge = {
+const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: 'live-view-test' };
+
+const overrides: StockOverrides = {
   corsOrigins: [],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
@@ -23,6 +26,7 @@ const cartridge: ChatServiceCartridge = {
     return sessionId === 'agent-computer-session' ? 'agent_computer-1' : undefined;
   },
   warmSession: async () => undefined,
+  recoverAccountDeletions: async () => undefined,
 };
 
 const unused = async (): Promise<never> => {
@@ -87,7 +91,7 @@ afterEach(() => {
 });
 
 const liveViewUrl = (sessionId: string) =>
-  createChatService(() => cartridge, config, sessionMetadata, agentDocuments).request(`/browser-live-view-url?session_id=${sessionId}`);
+  createChatService({ env, overrides }, config, sessionMetadata, agentDocuments).app.request(`/browser-live-view-url?session_id=${sessionId}`);
 
 describe('a browser live-view URL', () => {
   it('is presigned for the configured browser', async () => {
@@ -102,7 +106,7 @@ describe('a browser live-view URL', () => {
     expect(signed.searchParams.get('X-Amz-Expires')).toBe('300');
   });
 
-  it('is presigned for the browser the Cartridge names for the Session', async () => {
+  it('is presigned for the browser the bot names for the Session', async () => {
     const response = await liveViewUrl('agent-computer-session');
 
     const { signedUrl } = (await response.json()) as { signedUrl: string };
@@ -116,7 +120,7 @@ describe('a browser live-view URL', () => {
     expect(signedUrl).toContain('/sessions/session%2Fwith%3Freserved/live-view?');
   });
 
-  it('is refused when the Cartridge does not authorize the request', async () => {
+  it('is refused when the bot does not authorize the request', async () => {
     const response = await liveViewUrl('someone-elses');
 
     expect(response.status).toBe(401);

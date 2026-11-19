@@ -12,7 +12,7 @@ import { ecsTaskDraining } from './scheduled-runs.js';
 
 /**
  * The stock Chat Service's Agent Computer in its own AgentCore browser, AGENTCORE_AGENT_COMPUTER_BROWSER_ID (ADR 0077):
- * each Session's browser wakes from the account's browser profile with its Files mounted, as a Cartridge's does. It
+ * each Session's browser wakes from the account's browser profile with its Files mounted, as a bot's does. It
  * answers what `localAgentComputer` answers, so the stock Chat Service takes either.
  */
 export function managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains, accountKey }: {

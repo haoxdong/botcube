@@ -3,12 +3,16 @@ import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { loadDeployment } from 'botcube-deployment-config/load';
 import { accountCookies } from './account-cookies.js';
 import { accountDeletions, serviceHealthy } from './account-deletions.js';
+import type { AccountHistory } from './account-history.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
 import { agentDocumentTemplates } from './agent-documents.js';
-import type { CartridgeFactory } from './cartridge.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
+import type { CredentialSource } from './credential-source.js';
+import type { TaskStopSleep } from './task-stop.js';
+import type { TurnRouteSource } from './turn-preparation.js';
+import type { ScheduledRunSource } from './scheduled-runs.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
@@ -55,16 +59,42 @@ export function stockAccountStore(env: NodeJS.ProcessEnv, documents?: Pick<Dynam
   return new AccountStore(chatTable(env), { key: bot.accountKey, product: bot.agentIdentity.name }, documents);
 }
 
+/** BotCube's own Chat, composed from the Deployment Config and its bot settings: what the Chat Service's routes and scheduled runs call. */
+export interface StockChat extends TurnRouteSource, ScheduledRunSource {
+  /** The origins allowed when BOTCUBE_CORS_ORIGINS is unset; the local UI's (LOCAL_UI_ORIGINS) unless given. */
+  readonly corsOrigins?: readonly string[];
+  /** The bot's own routes (auth and account), mounted at the root. */
+  readonly routes: Hono;
+  /**
+   * Throw an HttpError unless the request may watch or take over this browser Session;
+   * answers the AgentCore browser it runs in when that is not AGENTCORE_BROWSER_ID.
+   */
+  authorizeBrowserLiveView(sessionId: string, c: Context): Promise<string | void>;
+  /** Discover durable authorized account deletions and enqueue their recovery without waiting for Session settlement. */
+  recoverAccountDeletions?(): Promise<void>;
+  /** The task is stopping: put every awake Agent Computer to sleep before it exits. */
+  sleepAgentComputers?(): TaskStopSleep;
+  /** The bot's Credential Sources, such as sign-in's client secret: each is read as the Chat Service starts, which an unreadable one stops. */
+  readonly startupCredentials?: readonly CredentialSource[];
+}
+
+export type StockOverrides = Omit<Partial<StockChat>, 'signInNeeded'> & {
+  /** `undefined`: a bot whose runs name no sign-in they may need. */
+  signInNeeded?: StockChat['signInNeeded'] | undefined;
+};
+
 export interface StockOptions {
   accountStore?: AccountStore;
   /** The page each local Agent Computer opens on; blank unless given. */
   startPage?: string;
   /** The local Agent Computer in place of the deploy's own, such as a test's that starts no browser. */
   agentComputer?: (computer: ReturnType<typeof localAgentComputer>) => ReturnType<typeof localAgentComputer>;
+  /** Hooks a test or acceptance check replaces on BotCube's own Chat, or a function of that Chat answering them. */
+  overrides?: StockOverrides | ((chat: StockChat) => StockOverrides);
 }
 
 /** BotCube's own Chat Service, composed from the Deployment Config and the bot settings it names (ADR 0091). */
-export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): CartridgeFactory {
+export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): (history: AccountHistory) => StockChat {
   const { config, bot } = deployment(env);
   if (bot.userTokenInShell === true && env.BOTCUBE_TURN_IDENTITY_KEYS === undefined) {
     throw new Error('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
@@ -116,7 +146,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       ...(credentialServiceUrl ? { credentialsReady: () => serviceHealthy(credentialServiceUrl) } : {}),
     });
     let filesRecovery: Promise<void> | undefined;
-    return {
+    const chat: StockChat = {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: bot.models,
       memory: bot.memory,
@@ -171,6 +201,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       sleepAgentComputers: computer.sleepAll,
       stopSessionComputer: computer.stopThread,
     };
+    const { signInNeeded, ...overrides } = typeof options.overrides === 'function' ? options.overrides(chat) : options.overrides ?? {};
+    return { ...chat, ...overrides, ...(signInNeeded === undefined ? {} : { signInNeeded }) };
   };
 }
 

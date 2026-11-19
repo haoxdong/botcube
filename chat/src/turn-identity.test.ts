@@ -21,7 +21,7 @@ const startedAtSeconds = Date.parse(turn.startedAt) / 1000;
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, scheduled: true, config: { turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
+  stack = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
 });
 afterAll(() => stack.stop());
 
@@ -60,7 +60,7 @@ describe('OIDC discovery', () => {
   });
 
   it('serves no discovery when the Chat Service has no Turn identity keys', async () => {
-    const bare = await startInProcess({ stock: true });
+    const bare = await startInProcess();
     try {
       expect((await bare.app.request('/.well-known/openid-configuration')).status).toBe(404);
       expect((await bare.app.request('/.well-known/jwks.json')).status).toBe(404);

@@ -7,7 +7,7 @@ let stack: InProcessStack | undefined;
 afterEach(async () => { await stack?.stop(); });
 
 async function claimed() {
-  stack = await startInProcess({ stock: true });
+  stack = await startInProcess();
   await stack.sessionMetadata.recordTurn('acct_guest-account', 'claimed', { filingUserId: filed('acct_guest-account'), title: 'claimed', provider: 'anthropic', allocation: true });
   await stack.history.transfer('acct_guest-account', 'acct_saved-account');
   return stack;

@@ -74,7 +74,7 @@ export function memoryLine(value: unknown): string {
   return text;
 }
 
-/** Per-account Agent Identity and Soul, each falling back to the Cartridge's template until edited. */
+/** Per-account Agent Identity and Soul, each falling back to the bot's template until edited. */
 export interface AgentDocuments {
   get(owner: string, templates: AgentDocumentSet): Promise<AgentDocumentSet>;
   save(owner: string, edit: AgentDocumentEdit): Promise<void>;

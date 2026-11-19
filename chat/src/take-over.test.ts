@@ -5,11 +5,11 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;
 const authorized: string[] = [];
-/** Sessions the Cartridge says run in a browser other than the configured one. */
+/** Sessions the bot says run in a browser other than the configured one. */
 const inAgentComputer = new Set<string>();
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true,
-    cartridge: {
+  stack = await startInProcess({
+    overrides: {
       // The managed Agent Computer: no Take-over routes of its own, so the Chat Service's serve its browsers.
       routes: new Hono(),
       authorizeBrowserLiveView: async (sessionId) => {
@@ -37,7 +37,7 @@ describe.each([
     expect(authorized).toContain(browser);
   });
 
-  it('changes the stream in the browser the Cartridge names for the Session', async () => {
+  it('changes the stream in the browser the bot names for the Session', async () => {
     const browser = stack.agentcore.startBrowser();
     inAgentComputer.add(browser);
 
@@ -63,7 +63,7 @@ describe.each([
     expect(await response.json()).toEqual({ detail: 'session_id must not be blank' });
   });
 
-  it('answers the Cartridge refusal for a browser the request may not control', async () => {
+  it('answers the bot refusal for a browser the request may not control', async () => {
     const response = await stack.app.request(`${route}?session_id=not-yours`, { method: 'POST' });
 
     expect(response.status).toBe(403);

@@ -160,7 +160,7 @@ function agentCoreAgentComputerBrowser(
 /**
  * The account's Agent Computer (ADR 0077 decisions 1 and 2): each Session gets its own
  * browser, woken from the account's browser profile with the account's Files mounted, and put to sleep when idle
- * after saving the profile after the Cartridge cleanup and keeping a last screenshot.
+ * after saving the profile after the bot's cleanup and keeping a last screenshot.
  * Running browsers and idle deadlines live in the shared chat table.
  */
 export function agentComputers({ browser, records, started, files, idleSeconds, draining = async () => false }: {

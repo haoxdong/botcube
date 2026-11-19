@@ -7,7 +7,7 @@ import { SessionDispatchPendingError } from './session-metadata.js';
 import { filed } from '../test/stock-bot.js';
 
 it.each([false, true])('waits for Stop dispatch acknowledgement and classifies its failure (delete fails: %s)', async (deleteFails) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   let release!: () => void;
   let entered!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });

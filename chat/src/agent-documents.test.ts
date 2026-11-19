@@ -18,7 +18,7 @@ const TEMPLATE_SOUL = 'Be brief.';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true });
+  stack = await startInProcess();
 });
 afterAll(() => stack.stop());
 
@@ -44,7 +44,7 @@ const as = (owner: string) => ({
 const forwarded = (threadId: string) => stack.agentcore.invocationFor(threadId).payload.forwardedProps;
 
 describe('Agent Identity and Soul', () => {
-  it("start as the Cartridge's templates and reach every Turn", async ({ onTestFinished }) => {
+  it("start as the bot's templates and reach every Turn", async ({ onTestFinished }) => {
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-03T22:00:00.250Z') });
     onTestFinished(() => { vi.useRealTimers(); });
     const user = as('acct_docs-template');
@@ -509,7 +509,7 @@ describe('Agent document deletion boundary probe', () => {
 });
 
 it('refuses an anonymous Memory addition before calling the session API', async () => {
-  const anonymous = await startInProcess({ stock: true, cartridge: { requester: async () => ({ owner: 'acct_anonymous-memory', anonymous: true }) } });
+  const anonymous = await startInProcess({ overrides: { requester: async () => ({ owner: 'acct_anonymous-memory', anonymous: true }) } });
   try {
     const response = await anonymous.app.request('/agent/memory', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
@@ -523,7 +523,7 @@ it('refuses an anonymous Memory addition before calling the session API', async 
 
 // The bot settings' Memory gate. A bot with Memory off keeps none: its routes refuse, and its Turns say so.
 it('refuses Memory and tells each Turn when the bot settings turn Memory off', async () => {
-  const forgetful = await startInProcess({ stock: true, cartridge: { memory: false } });
+  const forgetful = await startInProcess({ overrides: { memory: false } });
   try {
     const user = { 'x-test-owner': 'acct_memory-off' };
     expect((await forgetful.app.request('/agent/memory', { headers: user })).status).toBe(404);

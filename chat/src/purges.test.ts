@@ -13,7 +13,7 @@ const session = (sessionId: string): SessionSummary => ({
   updated_at: '2026-09-25T00:00:00Z',
 });
 
-/** The filing user ID the test Cartridge gives an account. */
+/** The filing user ID the test bot gives an account. */
 const filed = (owner: string) => `filed-${owner}`;
 
 const purgeOf = (sessionId: string) => [{ operation: 'purge', sessionId, userId: 'filed-acct_owner' }, 900];

@@ -9,7 +9,7 @@ const SESSION_HEADER = 'x-amzn-bedrock-agentcore-runtime-session-id';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ overrides: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 

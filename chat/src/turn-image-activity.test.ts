@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { startInProcess } from '../test/in-process.js';
 
 it.each([false, true])('records an answered image Turn in Activity when accompanying text is %s', async (withText) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const sessionId = 'image-activity';
   const content = [
     ...(withText ? [{ type: 'text', text: 'Describe this image' }] : []),
@@ -31,7 +31,7 @@ it.each([false, true])('records an answered image Turn in Activity when accompan
 });
 
 it('records an image-only Turn that ends in a run error as failed in Activity', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   stack.agentcore.script('failed-image', { kind: 'stream', frames: [
     'data: {"type":"RUN_STARTED","threadId":"failed-image","runId":"run"}',
     'data: {"type":"RUN_ERROR","message":"Model overloaded","code":"INTERNAL_ERROR"}',
@@ -57,7 +57,7 @@ it('records an image-only Turn that ends in a run error as failed in Activity', 
 });
 
 it.each([false, true])('retains both Activity entries for a full-history image follow-up with text %s', async (withText) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const firstMessage = { id: 'first-question', role: 'user', content: 'Analyze the first report' };
   const post = async (runId: string, messages: unknown[]) => {
     stack.agentcore.script('image-follow-up', { kind: 'stream', frames: [

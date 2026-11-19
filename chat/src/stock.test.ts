@@ -191,7 +191,7 @@ describe("the stock Chat Service's filing ID", () => {
       }),
     };
     const service = stockChatService(env);
-    const server = serveChatService(env, service);
+    const server = serveChatService(env);
     closers.push(() => new Promise((resolve) => { server.close(() => resolve()); }));
     await once(server, 'listening');
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

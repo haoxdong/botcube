@@ -1,4 +1,3 @@
-export type { CartridgeFactory, ChatServiceCartridge } from './cartridge.js';
 export type { AccountHistory } from './account-history.js';
 export type { AgentModel } from './models.js';
 export type { InvocationPayload } from './turn-preparation.js';

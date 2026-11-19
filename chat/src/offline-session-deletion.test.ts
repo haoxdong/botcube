@@ -10,9 +10,9 @@ it.each(['thread', 'account'])('reports offline %s deletion as unavailable while
     await deleteAccount();
     return c.body(null, 204);
   });
-  const stack = await startInProcess({ stock: true,
+  const stack = await startInProcess({
     config: { agentCore: null, localHarnessUrl: null },
-    cartridge: { routes },
+    overrides: { routes },
     invokeSessionApi: async (request) => {
       if (request.operation === 'purge') events.splice(0);
       return {};

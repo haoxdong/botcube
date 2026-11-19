@@ -8,7 +8,7 @@ import { filed } from '../test/stock-bot.js';
 // Each request acts as the account its x-account header names.
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ overrides: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 

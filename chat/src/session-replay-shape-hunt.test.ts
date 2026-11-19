@@ -6,7 +6,7 @@ it.each([
   { name: 'null messages', body: { messages: null }, expected: 503 },
   { name: 'empty conversation', body: { messages: [] }, expected: 200 },
 ])('classifies replay with $name without corrupting Turn metadata', async ({ body, expected }) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.allocate('acct_account-1', 'replay-shape');
     stack.agentcore.script('replay-shape', { kind: 'stream', frames: [

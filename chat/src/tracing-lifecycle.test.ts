@@ -2,9 +2,10 @@ import { defined } from '../test/defined.js';
 import { once } from 'node:events';
 import { Hono } from 'hono';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ChatServiceCartridge } from './cartridge.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { serveChatService } from './server.js';
+import type { StockOverrides } from './stock.js';
+import { testDeploymentConfig } from '../test/stock-bot.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 
 const lifecycle = vi.hoisted(() => ({ shutdown: vi.fn<() => Promise<void>>(), stop: undefined as (() => TaskStopSleep) | undefined }));
@@ -15,13 +16,13 @@ afterEach(() => {
   process.off('exit', reportUnsavedTurnSummaries);
 });
 
-const cartridge: ChatServiceCartridge = {
+const overrides: StockOverrides = {
   corsOrigins: [], agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'test', label: 'Test', provider: 'test' }], accountModels: async () => [], accountModel: async () => undefined,
   routes: new Hono(), requester: async () => ({ owner: 'owner' }),
   filingUserId: (owner) => owner, scheduledRequester: async (owner) => ({ owner }),
   signInNeeded: async () => null, invocationPayload: async (input) => ({ ...input, forwardedProps: input.forwardedProps ?? {} }),
-  credentialProps: [], authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined,
+  credentialProps: [], authorizeBrowserLiveView: async () => undefined, warmSession: async () => undefined, turnStarting: () => undefined, recoverAccountDeletions: async () => undefined,
 };
 
 it.each([false, true])('waits for the single tracing shutdown before task-stop settles with failure %s', async (failure) => {
@@ -32,7 +33,7 @@ it.each([false, true])('waits for the single tracing shutdown before task-stop s
   let reject: ((error: Error) => void) | undefined;
   const flushed = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
   lifecycle.shutdown.mockReset().mockReturnValue(flushed);
-  const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_HOST: '127.0.0.1', BOTCUBE_CHAT_TABLE: 'trace-test' }, () => cartridge);
+  const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_HOST: '127.0.0.1', BOTCUBE_CHAT_TABLE: 'trace-test', BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig() }, { overrides });
   await once(server, 'listening');
   const closed = once(server, 'close');
   const stop = defined(lifecycle.stop, 'task-stop callback')();

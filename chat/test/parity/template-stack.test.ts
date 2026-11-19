@@ -42,7 +42,7 @@ it('tears down scheduled Browsers after success, failed site access and recovery
     chatServiceCommand: inject('fakeSiteServiceCommand'),
     chatEnv: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), BOTCUBE_CHROMIUM_DIAGNOSTICS: '1', TEMPLATE_SITE_URL: siteUrl, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-secret' },
     harnessEnv: {
-      // The fake site's CLI reads the binding only the template Cartridge hands it, for now.
+      // The fake site's CLI reads the binding only the template's harness module hands it, for now.
       BOTCUBE_BOT_SETTINGS: '',
       BOTCUBE_CARTRIDGE_MODULE: 'botcube_always_on.harness',
       PATH: `${resolve('harness/deepagents/.tool-dist/bin')}:${bin}:${process.env.PATH ?? ''}`,

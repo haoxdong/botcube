@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 import { HttpError } from './http-error.js';
 
 it.each(['Main', 'Side'])('replays a failed first %s Turn when preparation never created a Session record', async (kind) => {
-  const stack = await startInProcess({ stock: true, cartridge: {
+  const stack = await startInProcess({ overrides: {
     invocationPayload: async () => { throw new HttpError(503, 'Local preparation failed'); },
   } });
   try {

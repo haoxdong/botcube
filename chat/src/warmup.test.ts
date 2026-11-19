@@ -9,7 +9,7 @@ const WARMUP_SESSION_ID = '__warmup__000000000000000000000000';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true });
+  stack = await startInProcess();
 });
 afterAll(() => stack.stop());
 afterEach(() => vi.restoreAllMocks());
@@ -143,7 +143,7 @@ describe('POST /warmup', () => {
     ['an empty threadId', '{"threadId":""}'],
     ['a threadId that is not a string', '{"threadId":42}'],
   ])('warms the placeholder Session given %s', async (_, body) => {
-    const target = await startInProcess({ stock: true });
+    const target = await startInProcess();
     try {
       const response = await postWarmup(target, body);
 
@@ -219,8 +219,8 @@ describe('POST /warmup', () => {
   });
 
   it("withholds a failed agent build's message that carries the Turn's credentials", async () => {
-    const signed = await startInProcess({ stock: true,
-      cartridge: {
+    const signed = await startInProcess({
+      overrides: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
       },
@@ -301,8 +301,8 @@ describe('POST /warmup', () => {
 
   it("withholds a malformed warmup frame that carries the Turn's credentials", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const signed = await startInProcess({ stock: true,
-      cartridge: {
+    const signed = await startInProcess({
+      overrides: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
       },
@@ -326,8 +326,8 @@ describe('POST /warmup', () => {
 
   it("reports a malformed warmup frame without quoting it, since it may carry the Turn's credentials JSON-escaped", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const signed = await startInProcess({ stock: true,
-      cartridge: {
+    const signed = await startInProcess({
+      overrides: {
         invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps, signedToken: 'v1.signed.token' } }),
         credentialProps: ['signedToken'],
       },
@@ -352,7 +352,7 @@ describe('POST /warmup', () => {
   it('reports a warmup the Runtime does not answer within the warmup timeout as 503', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const runtime = await new HttpFake(() => undefined).listen();
-    const target = await startInProcess({ stock: true,
+    const target = await startInProcess({
       config: { agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: runtime.url }, warmupTimeoutMs: 200 },
     });
     try {
@@ -377,7 +377,7 @@ describe('POST /warmup', () => {
 
   it('reports a warmup that cannot reach the Runtime as 503', async () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const unreachable = await startInProcess({ stock: true });
+    const unreachable = await startInProcess();
     await unreachable.agentcore.close();
     try {
       const response = await postWarmup(unreachable, '{}');
@@ -391,7 +391,7 @@ describe('POST /warmup', () => {
   });
 
   it('is skipped when no Runtime is configured', async () => {
-    const bare = await startInProcess({ stock: true, config: { agentCore: null } });
+    const bare = await startInProcess({ config: { agentCore: null } });
     try {
       const response = await postWarmup(bare, '{"threadId":"warm-skipped"}');
 
@@ -404,13 +404,13 @@ describe('POST /warmup', () => {
   });
 });
 
-describe("POST /warmup readies the Cartridge's side of the chat", () => {
+describe("POST /warmup readies the bot's side of the chat", () => {
   const warmed: [string, string][] = [];
   let release = () => {};
   let session: InProcessStack;
   beforeAll(async () => {
-    session = await startInProcess({ stock: true,
-      cartridge: {
+    session = await startInProcess({
+      overrides: {
         warmSession: async ({ owner }, sessionId) => {
           warmed.push([owner, sessionId]);
           if (sessionId === 'warm-refused-session') throw new HttpError(409, 'The computer is busy');
@@ -453,10 +453,10 @@ describe("POST /warmup readies the Cartridge's side of the chat", () => {
     expect(await response.json()).toEqual({ detail: 'The computer is busy' });
   });
 
-  it('answers an AgentCore failure without waiting for the Cartridge sibling', async () => {
+  it('answers an AgentCore failure without waiting for the bot sibling', async () => {
     let release = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
-    const target = await startInProcess({ stock: true, cartridge: { warmSession: () => held } });
+    const target = await startInProcess({ overrides: { warmSession: () => held } });
     await target.allocate('acct_account-1', 'warm-fail-fast');
     target.agentcore.script('warm-fail-fast', { kind: 'error', status: 500, body: '{}' });
     let answer: Response | undefined;

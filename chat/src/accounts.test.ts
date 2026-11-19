@@ -6,7 +6,7 @@ import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
 import { HttpError } from './http-error.js';
 
-/** Registration is the Cartridge's own; this one registers outright. */
+/** Registration is the bot's own; this one registers outright. */
 class RegisteringStore extends AccountStore {
   register(accountId: string): Promise<void> {
     return this.mutation(async (lease) => {
@@ -85,7 +85,7 @@ it("sends a signed-out browser to the identity provider's logout URL, so the nex
   expect(await (await routes.request('/account/session', { headers: { Cookie: session } })).json()).toMatchObject({ authenticated: false });
 });
 
-it("takes the Cartridge's preferred account, keeps its sign-in need and forgets it once deleted", async () => {
+it("takes the bot's preferred account, keeps its sign-in need and forgets it once deleted", async () => {
   const preferredId = { current: null as string | null };
   const { store, routes } = app(async () => preferredId.current);
   const { account } = await store.anonymousAccount(undefined);

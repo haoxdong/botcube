@@ -4,7 +4,6 @@ import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { SQSClient } from '@aws-sdk/client-sqs';
 import { Hono } from 'hono';
 import { DynamoDBAgentDocuments } from '../src/agent-documents.js';
-import type { CartridgeFactory, ChatServiceCartridge } from '../src/cartridge.js';
 import type { AccountHistory } from '../src/account-history.js';
 import { createChatService, type ChatServiceConfig } from '../src/server.js';
 import type { SessionApi } from '../src/session-api.js';
@@ -19,31 +18,19 @@ import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoAws, motoEndpoint } from './fakes/moto.js';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { stockChatService } from '../src/stock.js';
+import type { StockOverrides } from '../src/stock.js';
 import { TEST_ACCOUNT_KEY, TestAccounts, testDeploymentConfig } from './stock-bot.js';
 
-/** The account every request acts as, unless a test's Cartridge resolves another. */
-const OWNER = 'account-1';
-/** The account every request to BotCube's own Chat signs in as, unless the x-test-owner header names another. */
-const STOCK_OWNER = 'acct_account-1';
+/** The account every request signs in as, unless the x-test-owner header names another. */
+const OWNER = 'acct_account-1';
 
 export interface InProcessOptions {
   turnQuota?: TurnQuotaLimits;
   /** Another Chat Service instance uses this already-created table. */
   existingTable?: string;
   invokeSessionApi?: SessionApi;
-  /** Overrides of the test Cartridge, which acts for OWNER (or the x-test-owner header's account) and forwards each Turn as sent. */
-  cartridge?: Omit<Partial<ChatServiceCartridge>, 'signInNeeded'> & {
-    /** `undefined`: a bot whose runs name no sign-in they may need. */
-    signInNeeded?: ChatServiceCartridge['signInNeeded'] | undefined;
-  };
-  /** A Cartridge built from the account-history hooks, such as a bot's own, in place of the test Cartridge. */
-  cartridgeFactory?: CartridgeFactory;
-  /**
-   * Serve BotCube's own Chat on the test bot's Deployment Config, as production does, in place of the test Cartridge:
-   * each request signs in as STOCK_OWNER (or the x-test-owner header's account), and `cartridge` overrides apply on top.
-   */
-  stock?: boolean;
+  /** Hooks replaced on BotCube's own Chat, which serves the test bot's Deployment Config as production does. */
+  overrides?: StockOverrides;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
@@ -68,7 +55,7 @@ export interface InProcessStack {
   readonly sessionMetadata: DynamoDBSessionMetadata;
   /** This stack's own DynamoDB table and a client of it, for rows earlier versions wrote. */
   readonly table: { name: string; client: DynamoDBClient };
-  /** The account-history hooks the Chat Service handed the Cartridge. */
+  /** The account-history hooks the Chat Service handed the Chat. */
   readonly history: AccountHistory;
   /** The stack's schedules and run queue, when it has scheduled tasks. */
   readonly scheduler: SchedulerView | null;
@@ -89,33 +76,6 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const agentcore = await new FakeAgentCore().listen();
   const sessionApi = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
-  const { signInNeeded, ...overrides } = options.cartridge ?? {};
-  const cartridge: ChatServiceCartridge = {
-    corsOrigins: [],
-    agentDocuments: {
-      agentIdentity: { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' },
-      soul: 'Be brief.',
-    },
-    models: [
-      { key: 'quick', label: 'Quick', provider: 'anthropic' },
-      { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
-    ],
-    accountModels: async () => [{ key: 'plan', label: 'Plan', provider: 'openai' }],
-    accountModel: async (_requester, key) => (key === 'plan' ? { key: 'plan', label: 'Plan', provider: 'openai' } : undefined),
-    routes: new Hono(),
-    requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? OWNER }),
-    filingUserId: (owner) => `filed-${owner}`,
-    scheduledRequester: async (owner) => ({ owner }),
-    signInNeeded: async () => null,
-    invocationPayload: async (input) => ({ ...input, forwardedProps: { ...input.forwardedProps } }),
-    credentialProps: [],
-    authorizeBrowserLiveView: async () => undefined,
-    warmSession: async () => undefined,
-    stopSessionComputer: async () => undefined,
-    ...overrides,
-  };
-  if (signInNeeded !== undefined) cartridge.signInNeeded = signInNeeded;
-  else if (options.cartridge && 'signInNeeded' in options.cartridge) delete cartridge.signInNeeded;
   const config: ChatServiceConfig = {
     agentCore: { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: agentcore.url },
     localHarnessUrl: null,
@@ -137,19 +97,14 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     receive: (signal) => (stopped ? new Promise(() => undefined) : queue.receive(signal)),
     delete: (receipt) => queue.delete(receipt),
   };
-  let history: AccountHistory | undefined;
-  const accounts = options.stock === true ? new TestAccounts(table, DynamoDBDocumentClient.from(client)) : null;
-  const stock = accounts && stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table }, {
-    accountStore: accounts,
-    // The Agent Computer is an External Service: these tests start no browser.
-    agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),
-  });
-  let built: ChatServiceCartridge = cartridge;
-  const service = createChatService(
-    (hooks) => {
-      history = hooks;
-      built = stock ? { ...stock(hooks), ...overrides, ...(signInNeeded === undefined ? {} : { signInNeeded }) } : options.cartridgeFactory?.(hooks) ?? cartridge;
-      return built;
+  const accounts = new TestAccounts(table, DynamoDBDocumentClient.from(client));
+  const { app: service, chat, history } = createChatService(
+    {
+      env: { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table },
+      accountStore: accounts,
+      // The Agent Computer is an External Service: these tests start no browser.
+      agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),
+      overrides: options.overrides ?? {},
     },
     config,
     options.activity?.observe(sessionMetadata) ?? sessionMetadata,
@@ -160,15 +115,15 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   );
   // Each request arrives signed in as its test owner, through the test bot's session cookie; with no account
   // storage to sign in on, it arrives as a browser with no session would.
-  const app = accounts === null ? service : new Hono().all('*', async (c) => {
+  const app = new Hono().all('*', async (c) => {
     const headers = new Headers(c.req.raw.headers);
-    const token = await accounts.signIn(c.req.header('x-test-owner') ?? STOCK_OWNER).catch(() => null);
+    const token = await accounts.signIn(c.req.header('x-test-owner') ?? OWNER).catch(() => null);
     if (token !== null) headers.append('cookie', `${TEST_ACCOUNT_KEY}_session=${token}`);
     return service.fetch(new Request(c.req.raw, { headers }), c.env);
   });
   return {
     app,
-    history: history as AccountHistory,
+    history,
     agentcore,
     sessionApi,
     bedrock,
@@ -176,7 +131,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     table: { name: table, client },
     scheduler: runs && new SchedulerView(endpoint, runs),
     async allocate(owner, sessionId) {
-      await sessionMetadata.recordTurn(owner, sessionId, { filingUserId: built.filingUserId(owner), title: '', warmup: true, allocation: true });
+      await sessionMetadata.recordTurn(owner, sessionId, { filingUserId: chat.filingUserId(owner), title: '', warmup: true, allocation: true });
       return sessionId;
     },
     async stop() {

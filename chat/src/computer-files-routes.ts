@@ -7,7 +7,7 @@ import type { AccountFiles } from './files.js';
 import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
 
-/** The reusable UI routes; account authentication and sandbox ownership are supplied by the Cartridge. */
+/** The reusable UI routes; account authentication and sandbox ownership are supplied by the bot. */
 export function computerFilesRoutes({ requester, history, computers, files }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;

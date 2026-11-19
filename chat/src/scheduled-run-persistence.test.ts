@@ -78,7 +78,7 @@ async function changeReservedClaimBoundary(claimed: InProcessStack, boundary: st
 
 describe('scheduled persistence dispatch admission', () => {
   it('runs one first occurrence while an overlapping occurrence skips and stays skipped on redelivery', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
     const account = owner();
     let release!: () => void;
     const hold = new Promise<void>((resolve) => { release = resolve; });
@@ -134,7 +134,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it('keeps a task made one-off after a recurring run was queued, until its own time comes', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
     try {
       const account = owner();
       const call = (method: string, path: string, body: unknown) => isolated.app.request(path, { method,
@@ -171,7 +171,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it("retires a one-off on its redelivery when retiring failed after its run's post", async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
+    const isolated = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
     try {
       const account = owner();
       const response = await isolated.app.request('/scheduled-tasks', { method: 'POST',
@@ -219,7 +219,7 @@ describe('scheduled persistence dispatch admission', () => {
   });
 
   it.each(['valid transfer', 'original Main filing', 'missing original Main filing proof', 'concurrent replacements', 'deleted destination', 'further Claim', 'changed source Claim', 'missing moved task', 'paused moved task', 'missing original Main', 'fresh source delivery', 'missing same-owner task', 'paused same-owner task'] as const)('recovers the original reserved SQS delivery after its real scheduled task moves during Account Claim: %s', async (boundary) => {
-    const claimed = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => true });
+    const claimed = await startInProcess({ scheduled: true, scheduledDraining: async () => true });
     const source = owner();
     const destination = owner();
     const runs = defined(claimed.scheduler, 'the Claim stack schedules tasks');

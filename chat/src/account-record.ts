@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { AgentModel } from './models.js';
 
-/** How a Cartridge names its accounts: `key` names its cookies and session records, `product` its messages. */
+/** How a bot names its accounts: `key` names its cookies and session records, `product` its messages. */
 export interface AccountNaming {
   readonly key: string;
   readonly product: string;
@@ -45,7 +45,7 @@ export interface AccountDeletionIntent {
   status: 'authorized' | 'completed';
 }
 
-/** A token item's `record`: a session of kind `naming.key`, or a Cartridge's own kind of token. */
+/** A token item's `record`: a session of kind `naming.key`, or a bot's own kind of token. */
 export type TokenRecord = { accountId: string; createdAt: number; expiresAt: number; kind: string } & Record<string, unknown>;
 
 export type { Operation, PutOperation } from './guest-expiry.js';

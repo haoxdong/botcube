@@ -136,7 +136,7 @@ describe('CORS', () => {
     });
   }
 
-  it('allows the Cartridge dev origins with credentials by default', async () => {
+  it('allows the bot dev origins with credentials by default', async () => {
     for (const origin of ['http://localhost:3001', 'http://127.0.0.1:3001']) {
       // eslint-disable-next-line no-await-in-loop -- test cases run one at a time
       const response = await preflight(stack, origin);

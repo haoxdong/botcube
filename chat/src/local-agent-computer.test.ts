@@ -137,7 +137,7 @@ function newComputer({
   return computer;
 }
 
-/** The computer's routes with the Computer tab's, as a Cartridge mounts them. */
+/** The computer's routes with the Computer tab's, as a bot mounts them. */
 function computerApp(local: ReturnType<typeof localAgentComputer>, history: Pick<AccountHistory, 'owns'> = owning()) {
   const app = new Hono()
     .route('/', local.routes)

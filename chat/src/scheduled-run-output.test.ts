@@ -62,7 +62,7 @@ describe('a scheduled run', () => {
   // A card opens the run in its Side Chat: a run that never got there has nothing to open. Its own stack, since the
   // failed delivery stays on the queue and backs the poller off, which would hold up a later run.
   it('posts a run that failed before reaching its Side Chat with a run card that has nothing to open', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
+    const isolated = await startInProcess({ scheduled: true, overrides: {
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),
       accountModels: async (requester) => {
         if ('scheduled' in requester) throw new Error('The plan catalog is unavailable');

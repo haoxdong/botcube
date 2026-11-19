@@ -38,7 +38,7 @@ describe('production activity', () => {
 
   it('reports a Turn running from its mark to its end, and none once it ends', async () => {
     const activity = new ProductionActivity();
-    stack = await startInProcess({ stock: true, activity });
+    stack = await startInProcess({ activity });
     const during: number[] = [];
     stack.agentcore.scriptPrompt('Brief me', { kind: 'stream', frames: () => {
       during.push(activity.heartbeat().runningTurns);
@@ -60,7 +60,7 @@ describe('production activity', () => {
 
   it('stops counting a Turn whose client left before its response began, through the Node adapter', async () => {
     const activity = new ProductionActivity();
-    stack = await startInProcess({ stock: true, activity });
+    stack = await startInProcess({ activity });
     const ran: number[] = [];
     stack.agentcore.scriptPrompt('Hello', { kind: 'stream', frames: () => {
       ran.push(activity.heartbeat().runningTurns);
@@ -133,7 +133,7 @@ describe('production activity', () => {
   });
 
   it('writes its heartbeat to the chat table for the parking Lambda', async () => {
-    stack = await startInProcess({ stock: true });
+    stack = await startInProcess();
     const activity = new ProductionActivity(() => 42);
     const documents = DynamoDBDocumentClient.from(stack.table.client);
     const stop = activity.report(stack.table.name, documents);

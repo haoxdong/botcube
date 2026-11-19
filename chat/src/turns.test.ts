@@ -7,7 +7,7 @@ import { filed } from '../test/stock-bot.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true });
+  stack = await startInProcess();
 });
 afterAll(() => stack.stop());
 afterEach(() => vi.restoreAllMocks());
@@ -45,7 +45,7 @@ describe('a Turn', () => {
     let entered!: () => void;
     const waiting = new Promise<void>((resolve) => { release = resolve; });
     const preparing = new Promise<void>((resolve) => { entered = resolve; });
-    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async (input) => {
+    const target = await startInProcess({ overrides: { invocationPayload: async (input) => {
       entered();
       await waiting;
       return { ...input, forwardedProps: { ...input.forwardedProps } };
@@ -81,7 +81,7 @@ describe('a Turn', () => {
     let entered!: () => void;
     const waiting = new Promise<void>((resolve) => { release = resolve; });
     const preparing = new Promise<void>((resolve) => { entered = resolve; });
-    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async () => {
+    const target = await startInProcess({ overrides: { invocationPayload: async () => {
       entered();
       await waiting;
       throw new HttpError(503, 'Turn credentials unavailable');
@@ -114,7 +114,7 @@ describe('a Turn', () => {
 
   it('withholds newly issued payload credentials from a preparation failure on reload', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const target = await startInProcess({ stock: true, cartridge: {
+    const target = await startInProcess({ overrides: {
       credentialProps: ['testToken'],
       invocationPayload: async (input) => ({ ...input, forwardedProps: { testToken: 'issued-private-token' } }),
       browserLiveView: async () => { throw new Error('echo: issued-private-token'); },
@@ -151,7 +151,7 @@ describe('a Turn', () => {
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
+    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
     const id = kind === 'Main' ? (await (await target.app.request('/main-chat')).json()).id as string : await target.allocate('acct_account-1', 'failed-before-stream-side');
     const path = kind === 'Main' ? '/main-chat' : `/threads/${id}`;
     target.sessionApi.reply(id, 200, { messages: [] });
@@ -186,9 +186,9 @@ describe('a Turn', () => {
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end('data: {"type":"RUN_STARTED"}\n\ndata: {"type":"RUN_FINISHED"}\n\n');
       }).listen();
-      const target = await startInProcess({ stock: true,
+      const target = await startInProcess({
         config: { localHarnessUrl: local.url },
-        cartridge: { invocationPayload: async (input) => {
+        overrides: { invocationPayload: async (input) => {
           if (failing && mode === 'preparation') throw new HttpError(503, `Turn credentials unavailable: ${details}`);
           return { ...input, forwardedProps: { ...input.forwardedProps } };
         } },
@@ -268,7 +268,7 @@ describe('a Turn', () => {
       response.write('data: {"type":"RUN_STARTED"}\n\n');
       finish = () => response.end('data: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
+    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       await target.allocate('acct_account-1', 'session-midway');
@@ -325,7 +325,7 @@ describe('a Turn', () => {
     });
   });
 
-  it('carries the browser live-view event name the Cartridge picks', async () => {
+  it('carries the browser live-view event name the bot picks', async () => {
     await stack.allocate('acct_account-1', 'session-live-view');
     stack.agentcore.script('session-live-view', {
       kind: 'stream',
@@ -342,7 +342,7 @@ describe('a Turn', () => {
   });
 
   it('answers 503 when no Harness is configured', async () => {
-    const bare = await startInProcess({ stock: true, config: { agentCore: null } });
+    const bare = await startInProcess({ config: { agentCore: null } });
     try {
       const response = await postTurn(bare, turn('session-unconfigured'));
 
@@ -359,7 +359,7 @@ describe('a Turn', () => {
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end('data: {"type":"RUN_FINISHED"}\n\n');
     }).listen();
-    const target = await startInProcess({ stock: true, config: { localHarnessUrl: local.url } });
+    const target = await startInProcess({ config: { localHarnessUrl: local.url } });
     try {
       await target.allocate('acct_account-1', 'session-local');
       const response = await postTurn(target, turn('session-local'), { accept: 'application/json' });
@@ -388,9 +388,9 @@ describe('a Turn', () => {
     expect(stack.agentcore.invocations().filter((request) => request.body.includes('session-deleted'))).toHaveLength(1);
   });
 
-  it('tells the Cartridge it starts only once its Session took it', async () => {
+  it('tells the bot it starts only once its Session took it', async () => {
     const turnStarting = vi.fn();
-    const watched = await startInProcess({ stock: true, cartridge: { turnStarting } });
+    const watched = await startInProcess({ overrides: { turnStarting } });
     try {
       await watched.allocate('acct_account-1', 'session-starting');
       await (await postTurn(watched, turn('session-starting'))).text();
@@ -408,8 +408,8 @@ describe('a Turn', () => {
   it('whose Session cannot be recorded fails as a 500', async () => {
     const failure = new Error('no filing user');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const broken = await startInProcess({ stock: true,
-      cartridge: {
+    const broken = await startInProcess({
+      overrides: {
         filingUserId: () => {
           throw failure;
         },

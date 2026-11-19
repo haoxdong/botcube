@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { ChatServiceCartridge } from './cartridge.js';
 import { deploymentAdapters } from './deployment-adapters.js';
 import { serveChatService } from './server.js';
 
@@ -48,9 +47,7 @@ describe("the Chat Service's adapters", () => {
   });
 
   it('stop the Chat Service starting, before it listens, when the chosen kind is missing its environment', () => {
-    const cartridge = (): ChatServiceCartridge => { throw new Error('the Cartridge is built after the adapters'); };
-
-    expect(() => serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({ turnCredentials: { kind: 'assume-role' } }) }, cartridge))
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({ turnCredentials: { kind: 'assume-role' } }) }))
       .toThrow('turnCredentials.kind: assume-role needs BOTCUBE_USER_MEMORY_ROLE_ARN');
   });
 });

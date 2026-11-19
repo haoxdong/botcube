@@ -3,7 +3,7 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true });
+  stack = await startInProcess();
 });
 afterAll(() => stack.stop());
 

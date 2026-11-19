@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 
 it.each(['Main', 'Side', 'Existing Side'])('accepts a large pasted message in %s Chat without a metadata admission failure', async (kind) => {
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const content = 'Summarize this report.\n' + 'Report paragraph. '.repeat(25_000);
   try {
     const sessionId = kind === 'Main'

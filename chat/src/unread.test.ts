@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;
-beforeAll(async () => { stack = await startInProcess({ stock: true }); });
+beforeAll(async () => { stack = await startInProcess(); });
 afterAll(async () => { await stack.stop(); });
 
 it('lists unread completed chats and shares read acknowledgements across clients', async () => {

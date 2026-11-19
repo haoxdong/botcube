@@ -11,8 +11,8 @@ import { filed } from '../test/stock-bot.js';
 let stack: InProcessStack;
 const authorized: string[] = [];
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true,
-    cartridge: {
+  stack = await startInProcess({
+    overrides: {
       // The managed Agent Computer: no live-view routes of its own, so the Chat Service's serve its browsers.
       routes: new Hono(),
       authorizeBrowserLiveView: async (sessionId) => {
@@ -36,7 +36,7 @@ describe('GET /health', () => {
 
   it('is 503 when the Session Metadata table is missing', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const bare = await startInProcess({ stock: true, table: 'missing' });
+    const bare = await startInProcess({ table: 'missing' });
     try {
       const response = await bare.app.request('/health');
 
@@ -53,7 +53,7 @@ describe('GET /health', () => {
 });
 
 describe('GET /agent', () => {
-  it("names the Cartridge's agent and reports it online with a Runtime", async () => {
+  it("names the bot's agent and reports it online with a Runtime", async () => {
     const response = await stack.app.request('/agent');
 
     expect(response.status).toBe(200);
@@ -61,7 +61,7 @@ describe('GET /agent', () => {
   });
 
   it('reports the agent offline without a Runtime or local Harness', async () => {
-    const bare = await startInProcess({ stock: true, config: { agentCore: null } });
+    const bare = await startInProcess({ config: { agentCore: null } });
     try {
       expect(await (await bare.app.request('/agent')).json()).toEqual({ name: 'Test Bot', avatar: '', picture: null, status: 'offline' });
     } finally {
@@ -80,7 +80,7 @@ it('GET /ping is healthy', async () => {
 it('reports failed scheduled polling as unavailable through both health endpoints', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const failure = new Error('ECS DescribeTasks is unreachable');
-  const failed = await startInProcess({ stock: true, scheduled: true, scheduledDraining: async () => { throw failure; } });
+  const failed = await startInProcess({ scheduled: true, scheduledDraining: async () => { throw failure; } });
   try {
     const responses = await Promise.all(['/health', '/ping'].map((path) => failed.app.request(path)));
     expect(responses.map((response) => response.status)).toEqual([503, 503]);
@@ -123,7 +123,7 @@ describe('GET /browser-live-view-url', () => {
     expect(await response.json()).toEqual({ detail: 'session_id must not be blank' });
   });
 
-  it('answers the Cartridge refusal for a browser Session the request may not watch', async () => {
+  it('answers the bot refusal for a browser Session the request may not watch', async () => {
     const response = await stack.app.request('/browser-live-view-url?session_id=not-yours');
 
     expect(response.status).toBe(403);
@@ -133,8 +133,8 @@ describe('GET /browser-live-view-url', () => {
 
 describe('a request that fails', () => {
   it('with an HttpError answers its status and detail', async () => {
-    const refusing = await startInProcess({ stock: true,
-      cartridge: {
+    const refusing = await startInProcess({
+      overrides: {
         requester: async () => {
           throw new HttpError(401, 'Missing account cookie');
         },
@@ -153,8 +153,8 @@ describe('a request that fails', () => {
   it('with any other error answers 500 and logs it', async () => {
     const failure = new Error('boom');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const broken = await startInProcess({ stock: true,
-      cartridge: {
+    const broken = await startInProcess({
+      overrides: {
         requester: async () => {
           throw failure;
         },
@@ -174,7 +174,7 @@ describe('a request that fails', () => {
 
 describe('Account History Session ownership', () => {
   it.each(['DELETED', 'CLAIM'])('denies a started Main Chat while its owner has a %s fence', async (fence) => {
-    const isolated = await startInProcess({ stock: true });
+    const isolated = await startInProcess();
     try {
       const owner = 'acct_account-1';
       const sessionId = await isolated.sessionMetadata.mainChat(owner, filed(owner));
@@ -199,7 +199,7 @@ it('logs one chat_turn_timing line for a relayed Turn, timed to its last token',
   let now = 100;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
   const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-  const target = await startInProcess({ stock: true, cartridge: {
+  const target = await startInProcess({ overrides: {
     requester: async () => { now = 120; return { owner: 'acct_account-1' }; },
     invocationPayload: async (input) => { now = 190; return { ...input, forwardedProps: { ...input.forwardedProps } }; },
   } });
@@ -234,7 +234,7 @@ it('logs one chat_turn_timing line for a relayed Turn, timed to its last token',
 it('logs one failed chat_turn_timing line for a Turn whose preparation fails', async () => {
   const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async () => { throw new Error('payload failed'); } } });
+  const target = await startInProcess({ overrides: { invocationPayload: async () => { throw new Error('payload failed'); } } });
   try {
     await target.allocate('acct_account-1', '33333333-3333-4333-8333-333333333333');
     const response = await target.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -249,7 +249,7 @@ it('logs one failed chat_turn_timing line for a Turn whose preparation fails', a
 });
 
 it('forwards only the registered snapshot epoch', async () => {
-  const target = await startInProcess({ stock: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-proof' }] } } });
+  const target = await startInProcess({ config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-proof' }] } } });
   try {
     const threadId = await target.allocate('acct_account-1', crypto.randomUUID());
     const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
@@ -263,7 +263,7 @@ it('forwards only the registered snapshot epoch', async () => {
 
 it('hands the Harness the signed user token of the requester for the Turn, never one the client sent, expiring with the Turn', async () => {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-  const target = await startInProcess({ stock: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'test-user' }] } } });
+  const target = await startInProcess({ config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'test-user' }] } } });
   try {
     const threadId = await target.allocate('acct_account-1', crypto.randomUUID());
     const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
@@ -278,7 +278,7 @@ it('hands the Harness the signed user token of the requester for the Turn, never
 });
 
 it('forwards no user token without Turn identity keys to sign it', async () => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const threadId = await target.allocate('acct_account-1', crypto.randomUUID());
     const request = turnPost(threadId, [{ id: 'user', role: 'user', content: 'hello' }]);
@@ -293,7 +293,7 @@ const turnPost = (threadId: string, messages: unknown[]) => ({ method: 'POST', h
 
 it.each(['new', 'continuing'])('reads account documents independently of %s Session admission', async (kind) => {
   const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   const threadId = await target.allocate('acct_account-1', crypto.randomUUID());
   const admission = admissionGate<void>();
   let response: ReturnType<typeof target.app.request> | undefined;
@@ -323,7 +323,7 @@ describe('independent Turn admission', () => {
   it('keeps admission failure primary when the concurrent document read also fails', async () => {
     const { DynamoDBAgentDocuments } = await import('./agent-documents.js');
     const constructing = vi.fn(async (input) => input);
-    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: constructing } });
+    const target = await startInProcess({ overrides: { invocationPayload: constructing } });
     await target.allocate('acct_account-1', admissionInput.threadId);
     vi.spyOn(target.sessionMetadata, 'prepareTurn').mockRejectedValue(new HttpError(403, 'Admission refused'));
     const documentsError = new Error('Documents failed');
@@ -344,7 +344,7 @@ describe('independent Turn admission', () => {
     const constructing = vi.fn(async () => ({ ...admissionInput, ...await payload.promise }));
     const documents = admissionGate<never>();
     const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockImplementation(() => documents.promise);
-    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: constructing, credentialProps: ['token'] } });
+    const target = await startInProcess({ overrides: { invocationPayload: constructing, credentialProps: ['token'] } });
     await target.allocate('acct_account-1', admissionInput.threadId);
     const ending = vi.spyOn(target.sessionMetadata, 'turnEnded');
     const response = target.app.request('/', admissionPost);
@@ -372,7 +372,7 @@ it('preserves the first classified failure and reports a second preparation fail
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const constructing = vi.fn(() => payload.promise);
   const reading = vi.spyOn(DynamoDBAgentDocuments.prototype, 'get').mockImplementation(() => documents.promise);
-  const target = await startInProcess({ stock: true, cartridge: { invocationPayload: constructing } });
+  const target = await startInProcess({ overrides: { invocationPayload: constructing } });
   await target.allocate('acct_account-1', admissionInput.threadId);
   const ending = vi.spyOn(target.sessionMetadata, 'turnEnded');
   const response = target.app.request('/', admissionPost);
@@ -398,7 +398,7 @@ const openingPost = (threadId: string, runId: string) => ({ method: 'POST', head
   body: JSON.stringify({ threadId, runId, state: {}, messages: [], tools: [], context: [], forwardedProps: { opening: true, model: 'thorough' } }) });
 
 it('titles a Side Chat from the first user question after its opening', async () => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     await target.allocate('acct_account-1', 'opening-title');
     const greeting = await target.app.request('/', openingPost('opening-title', 'opening-title-run'));
@@ -414,7 +414,7 @@ it('titles a Side Chat from the first user question after its opening', async ()
 it.each(['main', 'side'])('replays a recorded pre-dispatch opening failure in %s Chat and accepts a follow-up', async (kind) => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   let fail = true;
-  const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async (input) => {
+  const target = await startInProcess({ overrides: { invocationPayload: async (input) => {
     if (fail) throw new Error('opening payload failed');
     return { ...input, forwardedProps: { ...input.forwardedProps } };
   } } });
@@ -439,7 +439,7 @@ it.each(['main', 'side'])('replays a recorded pre-dispatch opening failure in %s
 });
 
 it.each(['main', 'side'])('replays the successful opening in %s Chat and propagates checkpoint failures', async (kind) => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const main = await (await target.app.request('/main-chat')).json() as { id: string };
     const id = kind === 'main' ? main.id : await target.allocate('acct_account-1', 'successful-opening-side');
@@ -461,7 +461,7 @@ it.each(['main', 'side'])('replays the successful opening in %s Chat and propaga
 });
 
 it.each([{ kind: 'main', failure: 'http' }, { kind: 'side', failure: 'http' }, { kind: 'main', failure: 'stream' }, { kind: 'side', failure: 'stream' }])('replays an unwritten post-dispatch $failure opening failure in $kind Chat', async ({ kind, failure }) => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const main = await (await target.app.request('/main-chat')).json() as { id: string };
     const id = kind === 'main' ? main.id : await target.allocate('acct_account-1', 'rejected-opening-side');
@@ -483,7 +483,7 @@ it.each([{ kind: 'main', failure: 'http' }, { kind: 'side', failure: 'http' }, {
 });
 
 it.each([{ kind: 'main', opening: true }, { kind: 'side', opening: true }, { kind: 'main', opening: false }, { kind: 'side', opening: false }])('classifies an expired unwritten $kind Turn after process exit, opening=$opening', async ({ kind, opening }) => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const main = await (await target.app.request('/main-chat')).json() as { id: string };
     const id = kind === 'main' ? main.id : await target.allocate('acct_account-1', 'abandoned-side');
@@ -518,7 +518,7 @@ it.each([{ kind: 'main', opening: true }, { kind: 'side', opening: true }, { kin
 });
 
 it('reports fresh unwritten admissions as running and keeps settled missing checkpoints loud', async () => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const id = await target.allocate('acct_account-1', 'fresh-unwritten');
     const running = { runId: 'fresh-run', startedAt: new Date().toISOString() };
@@ -532,7 +532,7 @@ it('reports fresh unwritten admissions as running and keeps settled missing chec
 });
 
 it('refuses stale interrupted replay when a newer Turn wins settlement', async () => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const id = await target.allocate('acct_account-1', 'settlement-race');
     const old = { runId: 'old-run', startedAt: new Date(Date.now() - 3_600_001).toISOString() };
@@ -554,7 +554,7 @@ it('refuses stale interrupted replay when a newer Turn wins settlement', async (
 });
 
 it.each(['main', 'side'])('reloads an admitted %s opening before its first delta as running without a checkpoint', async (kind) => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     const { id: main } = await (await target.app.request('/main-chat')).json() as { id: string };
     const id = kind === 'main' ? main : await target.allocate('acct_account-1', 'opening-before-delta');
@@ -575,7 +575,7 @@ it.each(['main', 'side'])('reloads an admitted %s opening before its first delta
 });
 
 it('lists admitted titleless Side Chats while keeping warmup-only rows hidden and first-question titles writable', async () => {
-  const target = await startInProcess({ stock: true });
+  const target = await startInProcess();
   try {
     await target.allocate('acct_account-1', 'warmup-only');
     await target.allocate('acct_account-1', 'listed-opening');

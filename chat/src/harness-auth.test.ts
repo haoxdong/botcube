@@ -18,7 +18,7 @@ const key: JsonWebKey = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).
 describe('a Chat Service on the jwt-bearer Harness auth', () => {
   let stack: InProcessStack;
   beforeAll(async () => {
-    stack = await startInProcess({ stock: true, config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } } });
+    stack = await startInProcess({ config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } } });
   });
   afterAll(() => stack.stop());
 

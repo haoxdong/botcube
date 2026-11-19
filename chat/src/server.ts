@@ -10,7 +10,6 @@ import { Hono, type Context } from 'hono';
 import { DynamoDBAgentDocuments, type AgentDocuments } from './agent-documents.js';
 import { awsFetch, presignAwsUrl } from './aws.js';
 import { cspReportRoutes } from './csp-reports.js';
-import type { CartridgeFactory, ChatServiceCartridge } from './cartridge.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
@@ -35,7 +34,7 @@ import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type A
 import { turnRoutes } from './turn-routes.js';
 import { accountRoutes } from './account-routes.js';
 import { userTokenRoutes } from './user-token.js';
-import { stockChatService } from './stock.js';
+import { stockChatService, type StockChat, type StockOptions } from './stock.js';
 
 const LIVE_VIEW_URL_EXPIRES_SECONDS = 300;
 
@@ -50,12 +49,12 @@ export interface ChatServiceConfig {
   harnessAuth?: HarnessAuth;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
   localHarnessUrl: string | null;
-  /** BOTCUBE_CORS_ORIGINS; null keeps the Cartridge's defaults. */
+  /** BOTCUBE_CORS_ORIGINS; null keeps the bot's defaults. */
   corsOrigins: string[] | null;
   /** The AgentCore region and data-plane endpoint, for browser live-view URLs. */
   region: string;
   agentCoreEndpoint: string;
-  /** AGENTCORE_BROWSER_ID: the browser whose live views are presigned unless the Cartridge names another. */
+  /** AGENTCORE_BROWSER_ID: the browser whose live views are presigned unless the bot names another. */
   browserId: string;
   sessionApi: SessionApiConfig;
   /** How long a warmup waits for the Runtime to answer. */
@@ -92,8 +91,19 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): Ch
 const pathSegment = (value: string) =>
   encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
+/** The environment the stock Chat reads its Deployment Config and External Services from, and the options it is built with. */
+export type ChatDeployment = { env: NodeJS.ProcessEnv } & StockOptions;
+
+export interface ChatService {
+  readonly app: Hono;
+  /** BotCube's own Chat, as the Chat Service built it. */
+  readonly chat: StockChat;
+  /** The account-history hooks the Chat Service handed the Chat. */
+  readonly history: AccountHistory;
+}
+
 export function createChatService(
-  cartridgeFactory: CartridgeFactory,
+  deployment: ChatDeployment,
   config: ChatServiceConfig,
   sessionMetadata: SessionMetadata,
   agentDocuments: AgentDocuments,
@@ -101,13 +111,13 @@ export function createChatService(
   scheduled: { tasks: ScheduledTasks; queue: RunQueue; poll?: TableSchedules | undefined; draining: () => Promise<boolean>; parkHistory?: ParkHistory | undefined; onClose?: (stop: () => void) => void } | null = null,
   turnQuota: TurnQuota | null = null,
   draining: () => Promise<boolean> = scheduled?.draining ?? (async () => false),
-): Hono {
+): ChatService {
   const scheduledTasks = scheduled?.tasks ?? null;
   const turnIdentity = config.turnIdentity === undefined ? null : new TurnIdentity(config.turnIdentity);
   const bearer = harnessBearer(config.harnessAuth ?? { kind: 'sigv4' }, turnIdentity);
   const runtime = config.agentCore && agentCoreUpstream(config.agentCore, { bearer });
   const upstream = config.localHarnessUrl ? sessionLifecycle(localAgentUpstream(config.localHarnessUrl, { bearer })) : runtime && sessionLifecycle(runtime, runtime.stop);
-  const purge = purgeQueue(invokeSessionApi, (owner) => cartridge.filingUserId(owner), async (session) => {
+  const purge = purgeQueue(invokeSessionApi, (owner) => bot.filingUserId(owner), async (session) => {
     if (upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     await sessionMetadata.settleExpiredDispatches(session);
     if (config.localHarnessUrl) {
@@ -131,14 +141,14 @@ export function createChatService(
   const recoverPurges = async () => {
     try {
       await purgeSessions(await sessionMetadata.pendingPurges());
-      await cartridge.recoverAccountDeletions?.();
+      await bot.recoverAccountDeletions?.();
       recoveryError = undefined;
     } catch (error) {
       recoveryError = error;
       console.error('Session purge failed; durable cleanup recovery failed', error);
     }
   };
-  const sessions = sessionOperations(sessionMetadata, invokeSessionApi, agentDocuments, scheduledTasks, purgeSessions, (owner) => cartridge.filingUserId(owner));
+  const sessions = sessionOperations(sessionMetadata, invokeSessionApi, agentDocuments, scheduledTasks, purgeSessions, (owner) => bot.filingUserId(owner));
   const history: AccountHistory = {
     delete: sessions.removeOwner,
     transfer: async (source, destination) => {
@@ -148,7 +158,7 @@ export function createChatService(
     owns: (owner, sessionId) => sessionMetadata.owns(owner, sessionId),
     ownsMainChat: (owner, sessionId) => sessionMetadata.ownsMainChat(owner, sessionId),
   };
-  const cartridge = cartridgeFactory(history);
+  const bot = stockChatService(deployment.env, deployment)(history);
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
   const summarizeTurn = turnSummarizer(config.turnSummaryModel);
@@ -156,7 +166,7 @@ export function createChatService(
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { bot: cartridge, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
+    const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
     const unavailable = () => { scheduledRunsUnavailable = true; };
     const stopRuns = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, unavailable, async () => {
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
@@ -170,7 +180,7 @@ export function createChatService(
     });
   }
 
-  app.use(cors(config.corsOrigins ?? cartridge.corsOrigins ?? LOCAL_UI_ORIGINS));
+  app.use(cors(config.corsOrigins ?? bot.corsOrigins ?? LOCAL_UI_ORIGINS));
   // Cloudflare replaces an origin's 502 or 504 with its own page, which has no CORS headers, so the browser would
   // read only a network error; a 503 keeps the error's body and headers.
   app.use(async (c, next) => {
@@ -187,12 +197,12 @@ export function createChatService(
     return c.text('Internal Server Error', 500);
   });
   if (turnIdentity !== null) app.route('/', turnIdentityRoutes(turnIdentity));
-  if (turnIdentity !== null) app.route('/', userTokenRoutes(turnIdentity, (c) => cartridge.requester(c)));
-  app.route('/', cartridge.routes);
+  if (turnIdentity !== null) app.route('/', userTokenRoutes(turnIdentity, (c) => bot.requester(c)));
+  app.route('/', bot.routes);
 
 
   turnRoutes(app, {
-    bot: cartridge,
+    bot,
     stores: { sessionMetadata, agentDocuments },
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
     turns: { summarizeTurn, turnQuota, turnCredentials, userTokens: turnIdentity },
@@ -226,7 +236,7 @@ export function createChatService(
     return c.json({ status: 'Healthy' });
   });
 
-  accountRoutes(app, cartridge, sessionMetadata, agentDocuments, invokeSessionApi, sessions, scheduledTasks, upstream !== null);
+  accountRoutes(app, bot, sessionMetadata, agentDocuments, invokeSessionApi, sessions, scheduledTasks, upstream !== null);
 
   app.get('/browser-live-view-url', async (c) => {
     const sessionId = c.req.query('session_id');
@@ -234,7 +244,7 @@ export function createChatService(
       return c.json({ detail: [{ type: 'missing', loc: ['query', 'session_id'], msg: 'Field required' }] }, 422);
     }
     if (!sessionId.trim()) throw new HttpError(422, 'session_id must not be blank');
-    const browserId = (await cartridge.authorizeBrowserLiveView(sessionId, c)) || config.browserId;
+    const browserId = (await bot.authorizeBrowserLiveView(sessionId, c)) || config.browserId;
     const url =
       `${config.agentCoreEndpoint}/browser-streams/${pathSegment(browserId)}` +
       `/sessions/${pathSegment(sessionId)}/live-view`;
@@ -248,7 +258,7 @@ export function createChatService(
   const browserControl = (streamStatus: 'DISABLED' | 'ENABLED') => async (c: Context) => {
     const sessionId = c.req.query('session_id') ?? '';
     if (!sessionId.trim()) throw new HttpError(422, 'session_id must not be blank');
-    const browserId = (await cartridge.authorizeBrowserLiveView(sessionId, c)) || config.browserId;
+    const browserId = (await bot.authorizeBrowserLiveView(sessionId, c)) || config.browserId;
     const url = new URL(`${config.agentCoreEndpoint}/browsers/${pathSegment(browserId)}/sessions/streams/update`);
     url.searchParams.set('sessionId', sessionId);
     const response = await awsFetch('bedrock-agentcore', config.region, url.toString(), {
@@ -262,7 +272,7 @@ export function createChatService(
   app.post('/browser-take-over', browserControl('DISABLED'));
   app.post('/browser-hand-back', browserControl('ENABLED'));
 
-  return app;
+  return { app, chat: bot, history };
 }
 
 function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
@@ -274,7 +284,7 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
 }
 
 /** Serve the Chat Service, configured from the environment and the Deployment Config it names, on $PORT. */
-export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge: CartridgeFactory = stockChatService(env)): ServerType {
+export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
   // Listening first: every client, and the collector sidecar beside this container, sends through it.
   const proxyRelay = startProxyRelayFromEnv(env);
   proxyRelay?.catch((error: unknown) => {
@@ -292,9 +302,8 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge
   const metadata = new DynamoDBSessionMetadata(table);
   const draining = ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4);
   let stopScheduledRuns: (() => void) | undefined;
-  let built: ChatServiceCartridge | undefined;
-  const app = createChatService(
-    (history) => (built = cartridge(history)),
+  const { app, chat } = createChatService(
+    { ...options, env },
     config,
     activity?.observe(metadata) ?? metadata,
     new DynamoDBAgentDocuments(table),
@@ -315,7 +324,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge
   const startupCredentials = [
     ...(config.turnSummaryModel.kind === 'openai-compatible' ? [config.turnSummaryModel.endpoint.credential] : []),
     ...(tracing?.credential ? [tracing.credential] : []),
-    ...(built?.startupCredentials ?? []),
+    ...(chat.startupCredentials ?? []),
   ];
   Promise.all(startupCredentials.map((source) => source.get())).catch((error: unknown) => {
     console.error(`The Chat Service could not read a credential at startup: ${error instanceof Error ? error.message : String(error)}`);
@@ -323,7 +332,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge
   });
   let shutdown: Promise<void> | undefined;
   const stopTracing = () => shutdown ??= tracing?.shutdown() ?? Promise.resolve();
-  const webOrigins = config.corsOrigins ?? built?.corsOrigins ?? LOCAL_UI_ORIGINS;
+  const webOrigins = config.corsOrigins ?? chat.corsOrigins ?? LOCAL_UI_ORIGINS;
   const automation = (env.BOTCUBE_AUTOMATION_USER_AGENTS ?? '').split(',').filter(Boolean);
   const fetch: typeof app.fetch = (request, ...rest) => {
     if (activity !== null && isUserRequest(request, webOrigins, automation)) activity.userRequest();
@@ -333,7 +342,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge
   const server = serve({ fetch, port, hostname: env.BOTCUBE_CHAT_HOST || '0.0.0.0', websocket }, () =>
     console.log(`Chat Service listening on :${port}`),
   );
-  const sleepAgentComputers = built?.sleepAgentComputers?.bind(built);
+  const sleepAgentComputers = chat.sleepAgentComputers?.bind(chat);
   let taskStopping = false;
   const unregisterTaskStop = (sleepAgentComputers || tracing) && sleepComputersAtTaskStop(() => {
     taskStopping = true;

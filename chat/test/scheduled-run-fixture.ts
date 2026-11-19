@@ -19,9 +19,9 @@ export const turnSecrets = {
 export let stack: InProcessStack;
 export let scheduler: SchedulerView;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true,
+  stack = await startInProcess({
     scheduled: true,
-    cartridge: {
+    overrides: {
       credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],
       // A scheduled run acts for its owner with no request: say so in the payload.
       scheduledRequester: async (owner) => ({ owner, scheduled: true }),

@@ -8,9 +8,10 @@ import * as purges from './purges.js';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import type { AgentDocuments } from './agent-documents.js';
-import type { ChatServiceCartridge } from './cartridge.js';
 import type { AccountHistory } from './account-history.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
+import type { StockOverrides } from './stock.js';
+import { testDeploymentConfig } from '../test/stock-bot.js';
 import type { SessionApi } from './session-api.js';
 import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetadata } from './session-metadata.js';
 import { buildDirectAgent } from '../../ui/web/src/app/conversations.js';
@@ -67,8 +68,13 @@ async function localHarness(answer: (response: ServerResponse) => void) {
   return { url: await listening(server), received, closed };
 }
 
-const cartridge: ChatServiceCartridge = {
+const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: 'local-agent-test' };
+
+const bot: StockOverrides = {
   corsOrigins: [],
+  recoverAccountDeletions: async () => undefined,
+  turnStarting: () => undefined,
+  browserLiveView: async () => null,
   authorizeBrowserLiveView: async () => undefined,
   warmSession: async () => undefined,
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
@@ -115,7 +121,7 @@ const sessionMetadata: SessionMetadata = {
   turnStarted: async () => undefined,
 };
 
-// Every account keeps the Cartridge's templates.
+// Every account keeps the bot's templates.
 const agentDocuments: AgentDocuments = {
   get: async (_owner, templates) => templates,
   save: async () => undefined,
@@ -139,14 +145,13 @@ async function chatService(localHarnessUrl: string, options: {
   metadata?: SessionMetadata;
   invoke?: SessionApi;
   history?: (history: AccountHistory) => void;
-  cartridge?: Partial<ChatServiceCartridge>;
+  overrides?: StockOverrides;
   config?: Partial<ChatServiceConfig>;
 } = {}): Promise<string> {
   const turnSummaryModel = { kind: 'bedrock' as const, region: 'us-east-1', url: `${bedrock.url}/model/summary/converse` };
-  const app = createChatService((history) => {
-    options.history?.(history);
-    return { ...cartridge, ...options.cartridge };
-  }, { ...config, localHarnessUrl, turnSummaryModel, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, options.invoke);
+  const { app, history } = createChatService({ env, overrides: { ...bot, ...options.overrides } },
+    { ...config, localHarnessUrl, turnSummaryModel, ...options.config }, options.metadata ?? sessionMetadata, agentDocuments, options.invoke);
+  options.history?.(history);
   return listening(serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }));
 }
 
@@ -830,7 +835,7 @@ describe('a Turn against a local Harness', () => {
     const metadata = new DynamoDBSessionMetadata(table, new DynamoDBClient(motoAws()));
     const purged: string[] = [];
     const url = await chatService(agent.url, {
-      metadata, cartridge: { requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'owner-a' }) },
+      metadata, overrides: { requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'owner-a' }) },
       invoke: async (event) => { if (event.operation === 'purge') purged.push(event.userId); return {}; },
     });
     const threads: Record<string, string> = { 'owner-a': TURN.threadId, 'owner-b': `${TURN.threadId}-b` };

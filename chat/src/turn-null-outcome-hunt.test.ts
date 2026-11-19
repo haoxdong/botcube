@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 
 it.each([{ label: 'omitted', outcome: undefined }, { label: 'legacy null', outcome: null }])('settles successful RUN_FINISHED with $label outcome', async ({ outcome }) => {
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const sessionId = 'invalid-outcome';
   stack.agentcore.script(sessionId, { kind: 'stream', frames: [
     'data: {"type":"RUN_STARTED","threadId":"invalid-outcome","runId":"run"}',

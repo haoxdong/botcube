@@ -12,7 +12,7 @@ export interface AgentComputerBrowser {
   start(profileId: string | null, files: FilesMount): Promise<string>;
   /** The page as a JPEG data URL. */
   screenshot(sessionId: string): Promise<string>;
-  /** Run the Cartridge's trusted cleanup before a browser profile is saved. */
+  /** Run the bot's trusted cleanup before a browser profile is saved. */
   beforeProfileSave(sessionId: string): Promise<void>;
   /** Create the account's browser profile; answers its ID. */
   createProfile(accountId: string): Promise<string>;

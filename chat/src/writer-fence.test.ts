@@ -6,7 +6,7 @@ import { startInProcess } from '../test/in-process.js';
 import { SessionBusyError } from './session-metadata.js';
 
 it('waits for Main writers without fencing superseding user Turns, then fences only the external post', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const first = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -29,7 +29,7 @@ it('waits for Main writers without fencing superseding user Turns, then fences o
 });
 
 it('keeps an unknown external post fenced across Account Claim and releases only confirmed completion', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
@@ -45,7 +45,7 @@ it('keeps an unknown external post fenced across Account Claim and releases only
 });
 
 it('issues a trusted epoch and advances it after external mutation', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const first = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -62,7 +62,7 @@ it('issues a trusted epoch and advances it after external mutation', async () =>
 });
 
 it('reloads the epoch when a previously read Runtime admission resumes after an external post', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const initial = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -97,7 +97,7 @@ it('reloads the epoch when a previously read Runtime admission resumes after an 
 });
 
 it('keeps registered Runtime ownership under the filing identity after Account Claim', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -112,7 +112,7 @@ it('keeps registered Runtime ownership under the filing identity after Account C
 });
 
 it('retains a rejected Runtime writer until its exact stop is confirmed and releases recovery once', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -137,7 +137,7 @@ it('retains a rejected Runtime writer until its exact stop is confirmed and rele
 });
 
 it('keeps the external fence when coupled completion fails and never treats a different completion as committed', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
@@ -164,7 +164,7 @@ it('keeps the external fence when coupled completion fails and never treats a di
 });
 
 it('releases an external registration only when its caller proves Lambda was never submitted', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const post = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main', undefined, undefined, 'session-post');
@@ -181,7 +181,7 @@ it('releases an external registration only when its caller proves Lambda was nev
 });
 
 it('removes idle writer control only after durable Session purge completion', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
@@ -199,7 +199,7 @@ it('removes idle writer control only after durable Session purge completion', as
 
 
 it.each(['absent', 'failed'] as const)('retains rejected writers and releases an unsubmitted post after %s recovery', async (result) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const rejected = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -220,7 +220,7 @@ it.each(['absent', 'failed'] as const)('retains rejected writers and releases an
 });
 
 it('does not stop a rejected Main runtime while a newer writer is active', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const rejected = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');
@@ -234,7 +234,7 @@ it('does not stop a rejected Main runtime while a newer writer is active', async
 });
 
 it('retains a rejected writer and its count if its backup cannot be committed', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'main', { filingUserId: 'original', title: 'Main', allocation: true });
     const writer = await stack.sessionMetadata.beginDispatch('acct_account-1', 'main');

@@ -8,7 +8,7 @@ interface ProfileStore {
   updateProfile(accountId: string, profile: { displayName: string }): Promise<ProfileAccount>;
   savePhoto(accountId: string, photo: Picture | null): Promise<void>;
 }
-/** Profile routes use the Cartridge's trusted account session. */
+/** Profile routes use the bot's trusted account session. */
 export function accountProfileRoutes({ signedInAccount, store }: { signedInAccount(c: Context): Promise<ProfileAccount>; store(): ProfileStore }): Hono {
   const routes = new Hono();
   const profile = async (account: ProfileAccount) => {

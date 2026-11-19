@@ -18,9 +18,9 @@ const eventsAfter = (...frames: Record<string, unknown>[]) => {
   return frames.map((frame) => after(liveView, [frame]).join(''));
 };
 
-it('opens the actual Cartridge browser once after a Turn starts and still recognizes a later close', () => {
-  const view = new LiveViewInjector('cartridge-browser');
-  expect(after(view, [{ type: 'RUN_STARTED' }])).toEqual([opened('cartridge-browser')]);
+it('opens the actual bot browser once after a Turn starts and still recognizes a later close', () => {
+  const view = new LiveViewInjector('bot-browser');
+  expect(after(view, [{ type: 'RUN_STARTED' }])).toEqual([opened('bot-browser')]);
   expect(after(view, [{ type: 'RUN_STARTED' }])).toEqual([]);
   expect(after(view, [content('Browser closed')])).toEqual([closed]);
 });

@@ -485,7 +485,7 @@ describe('a scheduled run', () => {
 
   it('hands the Harness a signed user token for the owner that expires with the run, as a chat Turn does', async () => {
     const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
-    const signed = await startInProcess({ stock: true, scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
+    const signed = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: 'https://chat.example.com', keys: [{ ...privateKey.export({ format: 'jwk' }), kid: 'scheduled-user' }] } } });
     const account = owner();
     try {
       await signed.sessionMetadata.mainChat(account, filed(account));
@@ -507,7 +507,7 @@ describe('a scheduled run', () => {
   });
 
   it('ends on its own outcome for a bot that names no sign-in its runs may need', async () => {
-    const plain = await startInProcess({ stock: true, scheduled: true, cartridge: { signInNeeded: undefined } });
+    const plain = await startInProcess({ scheduled: true, overrides: { signInNeeded: undefined } });
     const account = owner();
     try {
       await plain.sessionMetadata.mainChat(account, filed(account));
@@ -529,7 +529,7 @@ describe('a scheduled run', () => {
   });
 
   it('retires a one-off under the claiming account when Account Claim moves it mid-run', async () => {
-    const claimed = await startInProcess({ stock: true, scheduled: true });
+    const claimed = await startInProcess({ scheduled: true });
     const source = owner();
     const destination = owner();
     const originalMain = await claimed.sessionMetadata.mainChat(source, filed(source));
@@ -562,7 +562,7 @@ describe('a scheduled run', () => {
   });
 
   it('dispatches an accepted scheduled Turn after Account Claim moves its Session and task', async () => {
-    const claimed = await startInProcess({ stock: true, scheduled: true });
+    const claimed = await startInProcess({ scheduled: true });
     const source = owner();
     const destination = owner();
     const originalMain = await claimed.sessionMetadata.mainChat(source, filed(source));
@@ -612,7 +612,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['accepted', 'destination deleted', 'replaced post', 'Claim starts during admission'] as const)('preserves the accepted Main Chat post through Account Claim: %s', async (outcome) => {
-    const claimed = await startInProcess({ stock: true, scheduled: true });
+    const claimed = await startInProcess({ scheduled: true });
     const source = owner();
     const destination = owner();
     const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
@@ -680,7 +680,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['accepted', 'destination deleted', 'moves during admission'] as const)('preserves the accepted Main Chat post while Account Claim is still moving: %s', async (outcome) => {
-    const claimed = await startInProcess({ stock: true, scheduled: true });
+    const claimed = await startInProcess({ scheduled: true });
     const source = owner();
     const destination = owner();
     const main = ((await (await claimed.app.request('/main-chat', { headers: { 'x-test-owner': source } })).json()) as { id: string }).id;
@@ -873,7 +873,7 @@ describe('a scheduled run', () => {
   });
 
   it('records a scheduled Side Chat and clears its running Turn when its payload fails', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
+    const isolated = await startInProcess({ scheduled: true, overrides: {
       invocationPayload: async () => { throw new Error('Computer capability is unavailable'); },
     } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -907,7 +907,7 @@ describe('a scheduled run', () => {
 
   // Scheduler deleted the one-off's schedule when it fired, so it can never run again: once the Main Chat has heard, it goes.
   it('retires a one-off task whose run failed once its failure reaches the Main Chat, still failing its delivery', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true, cartridge: {
+    const isolated = await startInProcess({ scheduled: true, overrides: {
       invocationPayload: async () => { throw new Error('Computer capability is unavailable'); },
     } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -956,7 +956,7 @@ describe('a scheduled run', () => {
   });
 
   it.each(['interrupt', 'cancelled'] as const)('posts a %s outcome as failed rather than an answer', async (type) => {
-    const isolated = await startInProcess({ stock: true, scheduled: true });
+    const isolated = await startInProcess({ scheduled: true });
     const account = owner();
     const call = (path: string, body?: unknown) => isolated.app.request(path, {
       method: body === undefined ? 'GET' : 'POST',

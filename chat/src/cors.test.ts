@@ -6,7 +6,7 @@ const UI = 'https://ui.example.com';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, config: { corsOrigins: [UI] } });
+  stack = await startInProcess({ config: { corsOrigins: [UI] } });
 });
 afterAll(() => stack.stop());
 
@@ -135,9 +135,9 @@ describe('a cross-origin request', () => {
 
 describe('the allowed origins', () => {
   it.each(['http://localhost:3001', 'http://127.0.0.1:3001'])(
-    'include the local web UI at %s for a Cartridge that allows it',
+    'include the local web UI at %s for a bot that allows it',
     async (origin) => {
-      const local = await startInProcess({ stock: true, cartridge: { corsOrigins: LOCAL_UI_ORIGINS } });
+      const local = await startInProcess({ overrides: { corsOrigins: LOCAL_UI_ORIGINS } });
       try {
         const response = await local.app.request('/threads', {
           method: 'OPTIONS',
@@ -151,27 +151,27 @@ describe('the allowed origins', () => {
     },
   );
 
-  it("are the Cartridge's defaults when BOTCUBE_CORS_ORIGINS is unset", async () => {
-    const defaults = await startInProcess({ stock: true, cartridge: { corsOrigins: ['https://cartridge.example.com'] } });
+  it("are the bot's defaults when BOTCUBE_CORS_ORIGINS is unset", async () => {
+    const defaults = await startInProcess({ overrides: { corsOrigins: ['https://bot.example.com'] } });
     try {
-      const allowed = await defaults.app.request('/ping', { headers: { origin: 'https://cartridge.example.com' } });
+      const allowed = await defaults.app.request('/ping', { headers: { origin: 'https://bot.example.com' } });
       const other = await defaults.app.request('/ping', { headers: { origin: UI } });
 
-      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://cartridge.example.com');
+      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://bot.example.com');
       expect(other.headers.has('access-control-allow-origin')).toBe(false);
     } finally {
       await defaults.stop();
     }
   });
 
-  it("replace the Cartridge's defaults when BOTCUBE_CORS_ORIGINS is set", async () => {
-    const overridden = await startInProcess({ stock: true,
-      cartridge: { corsOrigins: ['https://cartridge.example.com'] },
+  it("replace the bot's defaults when BOTCUBE_CORS_ORIGINS is set", async () => {
+    const overridden = await startInProcess({
+      overrides: { corsOrigins: ['https://bot.example.com'] },
       config: { corsOrigins: [UI] },
     });
     try {
       const response = await overridden.app.request('/ping', {
-        headers: { origin: 'https://cartridge.example.com' },
+        headers: { origin: 'https://bot.example.com' },
       });
 
       expect(response.headers.has('access-control-allow-origin')).toBe(false);

@@ -9,7 +9,7 @@ import { filed } from '../test/stock-bot.js';
 // Each request acts as the account its x-account header names.
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ overrides: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -69,7 +69,7 @@ describe('Turn preparation cleanup', () => {
   });
 
   it('relays a classified run error when recording RUN_STARTED fails, then clears its preparing mark', async () => {
-    const target = await startInProcess({ stock: true });
+    const target = await startInProcess();
     const failure = new Error('start metadata unavailable');
     const started = vi.spyOn(target.sessionMetadata, 'turnStarted').mockRejectedValue(failure);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -106,7 +106,7 @@ describe('Turn preparation cleanup', () => {
         finish = () => response.end('data: {"type":"RUN_ERROR","code":"TURN_STOPPED","message":"The Turn was stopped"}\n\n');
       }
     }).listen();
-    const target = await startInProcess({ stock: true, config: { localHarnessUrl: upstream.url }, cartridge: { invocationPayload: async (input) => {
+    const target = await startInProcess({ config: { localHarnessUrl: upstream.url }, overrides: { invocationPayload: async (input) => {
       entered(); await waiting;
       return { ...input, forwardedProps: { ...input.forwardedProps } };
     } } });
@@ -150,7 +150,7 @@ describe('Turn preparation cleanup', () => {
   it.each([false, true])('preserves the preparation error when cleanup failure is %s', async (cleanupFails) => {
     const preparationError = new HttpError(403, 'Turn credentials denied');
     const cleanupError = new Error('running mark store unavailable');
-    const target = await startInProcess({ stock: true, cartridge: { invocationPayload: async () => { throw preparationError; } } });
+    const target = await startInProcess({ overrides: { invocationPayload: async () => { throw preparationError; } } });
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const ended = vi.spyOn(target.sessionMetadata, 'turnEnded');
     if (cleanupFails) ended.mockRejectedValue(cleanupError);
@@ -186,7 +186,7 @@ describe('Turn preparation cleanup', () => {
   });
 });
 
-describe('the Cartridge account-history ownership hook', () => {
+describe('the bot account-history ownership hook', () => {
   it('recognizes a Session the account started through a Turn', async () => {
     await chat('hook-owner', 'hook-owned');
 

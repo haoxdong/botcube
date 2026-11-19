@@ -12,15 +12,15 @@ import { ScheduledTasks } from './scheduled-tasks.js';
 import { schedulerConfigFromEnv } from './scheduler.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
-import type { AccountHistory } from './account-history.js';
 import { createChatService } from './server.js';
+import { testDeploymentConfig } from '../test/stock-bot.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 
 let stack: InProcessStack;
 let scheduler: SchedulerView;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, scheduled: true });
+  stack = await startInProcess({ scheduled: true });
   scheduler = defined(stack.scheduler, 'the stack schedules tasks');
 });
 afterAll(() => stack.stop());
@@ -341,9 +341,9 @@ describe('POST /scheduled-tasks', () => {
     let resume!: () => void;
     const admitted = new Promise<void>((resolve) => { admit = resolve; });
     const paused = new Promise<void>((resolve) => { resume = resolve; });
-    const deleting = await startInProcess({ stock: true,
+    const deleting = await startInProcess({
       scheduled: true,
-      cartridge: {
+      overrides: {
         requester: async () => {
           admit();
           await paused;
@@ -707,7 +707,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
   });
 
   it('deletes from its original group when the configured group is missing', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true });
+    const isolated = await startInProcess({ scheduled: true });
     const view = defined(isolated.scheduler, 'the stack schedules tasks');
     const account = owner();
     const proposalId = randomUUID();
@@ -739,7 +739,7 @@ describe('DELETE /scheduled-tasks/:id', () => {
   });
 
   it('deletes from the original group after configuration changes to another existing group', async () => {
-    const isolated = await startInProcess({ stock: true, scheduled: true });
+    const isolated = await startInProcess({ scheduled: true });
     const view = defined(isolated.scheduler, 'the stack schedules tasks');
     const account = owner();
     const call = (method: string, path: string, body?: object) => isolated.app.request(path, {
@@ -965,7 +965,7 @@ describe("an account's scheduled tasks", () => {
 describe('a Chat Service without scheduled tasks', () => {
   let unscheduled: InProcessStack;
   beforeAll(async () => {
-    unscheduled = await startInProcess({ stock: true });
+    unscheduled = await startInProcess();
   });
   afterAll(() => unscheduled.stop());
 
@@ -1061,11 +1061,10 @@ describe('ScheduledTasks', () => {
 
   function serviceForTasks(account: string, tasks: ScheduledTasks, queue: import("./scheduled-runs.js").RunQueue = { receive: () => new Promise(() => undefined), delete: async () => undefined }, runtime = false) {
     let stop: () => void = () => undefined;
-    let history: AccountHistory | undefined;
-    const app = createChatService(
-      (hooks) => {
-        history = hooks;
-        return {
+    const { app, history } = createChatService(
+      {
+        env: { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table },
+        overrides: {
           corsOrigins: [],
           agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },
           models: [{ key: 'test', label: 'Test', provider: 'test' }],
@@ -1079,7 +1078,8 @@ describe('ScheduledTasks', () => {
           signInNeeded: async () => null,
           authorizeBrowserLiveView: async () => undefined,
           warmSession: async () => undefined, stopSessionComputer: async () => undefined,
-        };
+          turnStarting: () => undefined, browserLiveView: async () => null, recoverAccountDeletions: async () => undefined,
+        },
       },
       {
         agentCore: runtime ? { arn: RUNTIME_ARN, region: 'us-east-1', endpoint: stack.agentcore.url } : null, localHarnessUrl: null, corsOrigins: null,
@@ -1097,7 +1097,7 @@ describe('ScheduledTasks', () => {
         onClose: (close) => { stop = close; },
       },
     );
-    return { app, history: defined(history, 'the Chat Service Account History'), stop: () => stop() };
+    return { app, history, stop: () => stop() };
   }
 
   it.each(['Scheduler refusal', 'unknown schedule group'] as const)('keeps scheduled work healthy across a persistent retirement failure from %s', async (failureKind) => {

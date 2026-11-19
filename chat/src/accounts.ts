@@ -19,7 +19,7 @@ export interface SignIn {
 export interface AccountRoutesOptions<A extends Account> {
   store: () => AccountStore<A>;
   cookies: AccountCookies;
-  /** The Cartridge's own fields of `GET /account/session`. */
+  /** The bot's own fields of `GET /account/session`. */
   session?: (account: A) => Record<string, unknown>;
   /** The Agent Profile's Sign-ins tab: the sites the account's agent is signed in to. */
   signIns: (account: A) => Promise<SignIn[]>;
@@ -48,7 +48,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
 
 
   /**
-   * The account a request acts for: the Cartridge's `preferred` pick given the signed-in account,
+   * The account a request acts for: the bot's `preferred` pick given the signed-in account,
    * else the signed-in account, else the browser's anonymous one. Only the Chat Service resolves
    * identity (ADR 0068 §4): a request without an account fails here instead of running under a shared one.
    */

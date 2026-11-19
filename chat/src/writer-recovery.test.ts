@@ -5,7 +5,7 @@ import { startInProcess } from '../test/in-process.js';
 import { filed } from '../test/stock-bot.js';
 
 it('acknowledges only exact proved writers', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'proof-session', { filingUserId: filed('original'), title: 'Original history', allocation: true });
@@ -27,7 +27,7 @@ it('acknowledges only exact proved writers', async () => {
 });
 
 it.each(['filing_user_id', 'session_id', 'writer_succeeded'] as const)('keeps a mismatched %s writer proof pending', async (field) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'proof-session', { filingUserId: filed('original'), title: 'Original', allocation: true });
@@ -45,7 +45,7 @@ it.each(['filing_user_id', 'session_id', 'writer_succeeded'] as const)('keeps a 
 });
 
 it.each(['ledger', 'registration'] as const)('rolls back both successful post facts when the %s condition fails', async (failure) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     const mainChat = await stack.sessionMetadata.mainChat('acct_account-1', filed('original'));

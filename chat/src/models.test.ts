@@ -9,7 +9,7 @@ const PLAN = { key: 'plan', label: 'Plan', provider: 'openai' };
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, cartridge: {
+  stack = await startInProcess({ overrides: {
     accountModels: async () => [PLAN],
     accountModel: async (_requester, key) => (key === PLAN.key ? PLAN : undefined),
   } });
@@ -31,7 +31,7 @@ const postTurn = (body: string) =>
   stack.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
 
 describe("an account's allowed models", () => {
-  it("are the account's own models, then the Cartridge's, each in its order", async () => {
+  it("are the account's own models, then the bot's, each in its order", async () => {
     const response = await stack.app.request('/agent/models');
 
     expect(response.status).toBe(200);
@@ -44,9 +44,9 @@ describe("an account's allowed models", () => {
     });
   });
 
-  it('are the ones the Cartridge gives the requesting account', async () => {
-    const perAccount = await startInProcess({ stock: true,
-      cartridge: {
+  it('are the ones the bot gives the requesting account', async () => {
+    const perAccount = await startInProcess({
+      overrides: {
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
         accountModels: async ({ owner }) => (owner === 'acct_account-with-plan' ? [{ key: 'plan', label: 'Plan', provider: 'openai' }] : []),
       },
@@ -69,7 +69,7 @@ describe("an account's allowed models", () => {
     const accountModels = vi.fn(async () => {
       throw new HttpError(502, 'The plan catalog is unavailable');
     });
-    const failing = await startInProcess({ stock: true, cartridge: {
+    const failing = await startInProcess({ overrides: {
       accountModels,
       accountModel: async (_requester, key) => (key === PLAN.key ? PLAN : undefined),
     } });
@@ -77,8 +77,8 @@ describe("an account's allowed models", () => {
       const post = (threadId: string, forwardedProps: Record<string, unknown>) =>
         failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, forwardedProps) });
 
-      await Promise.all(['session-cartridge-model', 'session-account-model', 'session-default-model'].map((id) => failing.allocate('acct_account-1', id)));
-      const named = await post('session-cartridge-model', { model: 'thorough' });
+      await Promise.all(['session-bot-model', 'session-account-model', 'session-default-model'].map((id) => failing.allocate('acct_account-1', id)));
+      const named = await post('session-bot-model', { model: 'thorough' });
       const plan = await post('session-account-model', { model: 'plan' });
       await Promise.all([named.text(), plan.text()]);
       expect([named.status, plan.status]).toEqual([200, 200]);
@@ -102,8 +102,8 @@ describe("an account's allowed models", () => {
     }
   });
 
-  it('exposes Cartridge choices while preserving a classified catalog refusal', async () => {
-    const failing = await startInProcess({ stock: true, cartridge: { accountModels: async () => { throw new HttpError(503, 'Plan Usage was revoked'); } } });
+  it('exposes bot choices while preserving a classified catalog refusal', async () => {
+    const failing = await startInProcess({ overrides: { accountModels: async () => { throw new HttpError(503, 'Plan Usage was revoked'); } } });
     try {
       const response = await failing.app.request('/agent/models');
       expect(response.status).toBe(503);
@@ -117,9 +117,9 @@ describe("an account's allowed models", () => {
     } finally { await failing.stop(); }
   });
 
-  it('are served only to a request the Cartridge resolves an account for', async () => {
-    const refusing = await startInProcess({ stock: true,
-      cartridge: {
+  it('are served only to a request the bot resolves an account for', async () => {
+    const refusing = await startInProcess({
+      overrides: {
         requester: async () => {
           throw new HttpError(401, 'Sign in first');
         },
@@ -315,10 +315,10 @@ describe('platform model parity', () => {
     expect(sseFrames(await response.text()).map(frameData)).toEqual([runError]);
   });
 
-  it('run an Anthropic Turn naming a Cartridge model while the plan can no longer refresh, without asking for the catalog', async () => {
+  it('run an Anthropic Turn naming a bot model while the plan can no longer refresh, without asking for the catalog', async () => {
     const accountModels = vi.fn(async () => { throw new HttpError(503, 'Plan catalog revoked'); });
-    const failing = await startInProcess({ stock: true, cartridge: { accountModels } });
-    const threadId = 'session-cartridge-with-revoked-plan';
+    const failing = await startInProcess({ overrides: { accountModels } });
+    const threadId = 'session-bot-model-with-revoked-plan';
     await failing.allocate('acct_account-1', threadId);
     try {
       const response = await failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, { model: 'quick' }) });

@@ -15,7 +15,7 @@ const parkHistory: ParkHistory = {
 };
 
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, scheduled: true, parkHistory });
+  stack = await startInProcess({ scheduled: true, parkHistory });
 });
 afterAll(() => stack.stop());
 

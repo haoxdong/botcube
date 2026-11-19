@@ -6,7 +6,7 @@ import { startInProcess } from '../test/in-process.js';
 import { filed } from '../test/stock-bot.js';
 
 it.each(['thread', 'account'] as const)('finishes deleting an empty pre-cutover Session through %s deletion', async (deletion) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   const sessionId = 'untracked-empty';
   try {
@@ -41,7 +41,7 @@ const preCutoverHistories = [
 ];
 
 it.each(preCutoverHistories)('finishes deleting a pre-cutover chat with history %j', async (extra) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   try {
     await documents.send(new PutCommand({ TableName: stack.table.name, Item: {
@@ -61,7 +61,7 @@ it.each(preCutoverHistories)('finishes deleting a pre-cutover chat with history 
 });
 
 it.each(['namespaced', 'legacy'])('retains the %s writer gate across replacement-task recovery', async (registry) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const documents = DynamoDBDocumentClient.from(stack.table.client);
   const sessionId = 'empty-with-writer';
   try {

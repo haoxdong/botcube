@@ -27,7 +27,7 @@ type LocalComputerState =
 const ASLEEP: LocalComputerState = { state: 'asleep', screenshot: null };
 
 /**
- * BotCube's default Agent Computer, for a Cartridge with no AgentCore browser: each Session
+ * BotCube's default Agent Computer, for a bot with no AgentCore browser: each Session
  * gets its own headless Chromium on this Chat Service's host, opened on `startPage`, with a
  * private profile deleted when it sleeps. The agent reaches it through the same tokened,
  * filtered CDP channel as an AgentCore Agent Computer. It runs the Chromium `findChromium`

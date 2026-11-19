@@ -9,15 +9,18 @@ import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
-import type { ChatServiceCartridge } from './cartridge.js';
 import { serveChatService } from './server.js';
+import type { StockOverrides } from './stock.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { credentialSource } from './credential-source.js';
+import { testDeploymentConfig } from '../test/stock-bot.js';
 
-const cartridge: ChatServiceCartridge = {
-  corsOrigins: ['https://cartridge.example.com'],
+const DEPLOYMENT_CONFIG = testDeploymentConfig();
+
+const overrides: StockOverrides = {
+  corsOrigins: ['https://bot.example.com'],
   agentDocuments: { agentIdentity: { name: 'Test Bot', character: '', vibe: '', avatar: '' }, soul: '' },
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
   accountModels: async () => [], accountModel: async () => undefined,
@@ -30,6 +33,7 @@ const cartridge: ChatServiceCartridge = {
   credentialProps: [],
   authorizeBrowserLiveView: async () => undefined,
   warmSession: async () => undefined,
+  turnStarting: () => undefined, recoverAccountDeletions: async () => undefined, browserLiveView: async () => null,
 };
 
 // Each finished Turn is summarized after its stream ends, so the summary model outlives every test.
@@ -82,7 +86,7 @@ async function allocatedTable(sessionId: string): Promise<string> {
 async function serve(env: NodeJS.ProcessEnv): Promise<string> {
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const server: ServerType = serveChatService({ AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, () => cartridge);
+  const server: ServerType = serveChatService({ BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, { overrides });
   closers.push(async () => {
     await new Promise((resolve) => server.close(resolve));
   });
@@ -120,12 +124,12 @@ describe('the Chat Service served from the environment', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
     const server = serveChatService({
-      PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(),
+      PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, BOTCUBE_CHAT_TABLE: await newTable(),
       BOTCUBE_SCHEDULE_GROUP: 'test-group',
       BOTCUBE_SCHEDULER_ROLE_ARN: 'arn:aws:iam::123456789012:role/scheduler',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: 'arn:aws:sqs:us-east-1:123456789012:runs',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/123456789012/runs',
-    }, () => cartridge);
+    }, { overrides });
     closers.push(async () => {
       if (server.listening) await new Promise((resolve) => server.close(resolve));
     });
@@ -140,7 +144,7 @@ describe('the Chat Service served from the environment', () => {
 
   describe('stops at startup, naming the seam and the source, on a credential it cannot read', () => {
     const absent = `/nonexistent/botcube-${Math.random().toString(36).slice(2)}`;
-    async function exitsWith(cartridgeOf: () => ChatServiceCartridge, env: NodeJS.ProcessEnv): Promise<string> {
+    async function exitsWith(botOverrides: StockOverrides, env: NodeJS.ProcessEnv): Promise<string> {
       const failed = new Promise<string>((resolve) => {
         vi.spyOn(console, 'error').mockImplementation((message: unknown) => {
           if (String(message).startsWith('The Chat Service could not read a credential at startup')) resolve(String(message));
@@ -149,7 +153,7 @@ describe('the Chat Service served from the environment', () => {
       const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
       vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
       vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(), ...env }, cartridgeOf);
+      const server = serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, BOTCUBE_CHAT_TABLE: await newTable(), ...env }, { overrides: botOverrides });
       closers.push(async () => {
         if (server.listening) await new Promise((resolve) => server.close(resolve));
       });
@@ -163,12 +167,12 @@ describe('the Chat Service served from the environment', () => {
         BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent } }),
         BOTCUBE_TURN_SUMMARY_MODEL: 'example-summary',
       };
-      expect(await exitsWith(() => cartridge, env)).toContain(`models credential (file ${absent}): ENOENT`);
+      expect(await exitsWith(overrides, env)).toContain(`models credential (file ${absent}): ENOENT`);
     });
 
-    it("the Cartridge's own, such as sign-in's client secret", async () => {
+    it("the bot's own, such as sign-in's client secret", async () => {
       const startupCredentials = [credentialSource('identity.clients.0.clientSecret', { kind: 'file', path: absent })];
-      expect(await exitsWith(() => ({ ...cartridge, startupCredentials }), {})).toContain(`identity.clients.0.clientSecret credential (file ${absent}): ENOENT`);
+      expect(await exitsWith({ ...overrides, startupCredentials }, {})).toContain(`identity.clients.0.clientSecret credential (file ${absent}): ENOENT`);
     });
   });
 
@@ -298,7 +302,7 @@ describe('the Chat Service served from the environment', () => {
     expect(consoleWarn).not.toHaveBeenCalled();
   });
 
-  it('allows the trimmed BOTCUBE_CORS_ORIGINS in place of the Cartridge defaults', async () => {
+  it('allows the trimmed BOTCUBE_CORS_ORIGINS in place of the bot defaults', async () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await newTable(),
@@ -309,16 +313,16 @@ describe('the Chat Service served from the environment', () => {
 
     expect(await allowed('https://a.example.com')).toBe('https://a.example.com');
     expect(await allowed('https://b.example.com')).toBe('https://b.example.com');
-    expect(await allowed('https://cartridge.example.com')).toBeNull();
+    expect(await allowed('https://bot.example.com')).toBeNull();
     expect(await allowed('')).toBeNull();
   });
 
-  it('allows the Cartridge default origins without BOTCUBE_CORS_ORIGINS', async () => {
+  it('allows the bot default origins without BOTCUBE_CORS_ORIGINS', async () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
-    const response = await fetch(`${url}/ping`, { headers: { origin: 'https://cartridge.example.com' } });
+    const response = await fetch(`${url}/ping`, { headers: { origin: 'https://bot.example.com' } });
 
-    expect(response.headers.get('access-control-allow-origin')).toBe('https://cartridge.example.com');
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://bot.example.com');
   });
 
   it('presigns live views of the AGENTCORE_BROWSER_ID browser in AGENTCORE_REGION', async () => {

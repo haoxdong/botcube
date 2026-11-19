@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 
 it('clears a failed Turn running mark when the streamed error exceeds a metadata item', async () => {
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const sessionId = 'large-stream-error';
   const message = 'Provider error details\n' + 'x'.repeat(410_000);
   stack.agentcore.script(sessionId, { kind: 'stream', frames: [

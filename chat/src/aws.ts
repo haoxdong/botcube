@@ -5,7 +5,7 @@ import type { Dispatcher } from 'undici';
 import { dispatcherFetch } from './dispatcher-fetch.js';
 
 // The Chat Service is the AWS credential boundary (ADR 0068): every AWS call a
-// Cartridge makes goes through these signers, with the task's credentials.
+// bot makes goes through these signers, with the task's credentials.
 const credentials = defaultProvider();
 
 const signer = (service: string, region: string) => new SignatureV4({ service, region, credentials, sha256: Sha256 });

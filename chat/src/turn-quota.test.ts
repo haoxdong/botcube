@@ -23,7 +23,7 @@ async function turn(target: InProcessStack, id: string, owner = 'acct_alice-acco
 }
 
 it('refuses an Account across IPs before dispatch and leaves reads available', async () => {
-  stack = await startInProcess({ stock: true, turnQuota: { anonymous: 1, claimed: 2, ip: 3 } });
+  stack = await startInProcess({ turnQuota: { anonymous: 1, claimed: 2, ip: 3 } });
   expect((await turn(stack, 'first')).response.status).toBe(200);
   const refused = await turn(stack, 'second', 'acct_alice-account', '192.0.2.2');
   expect(refused.response.status).toBe(429);
@@ -41,16 +41,16 @@ it('refuses an Account across IPs before dispatch and leaves reads available', a
 });
 
 it('limits an IP across Accounts without charging an Account for a refused Turn', async () => {
-  stack = await startInProcess({ stock: true, turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
+  stack = await startInProcess({ turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
   expect((await turn(stack, 'ip-first')).response.status).toBe(200);
   expect((await turn(stack, 'ip-refused', 'acct_bob-account')).response.status).toBe(429);
   expect((await turn(stack, 'ip-new', 'acct_bob-account', '192.0.2.2')).response.status).toBe(200);
 });
 
 it('grants the claimed Account tier only from server-resolved identity', async () => {
-  stack = await startInProcess({ stock: true,
+  stack = await startInProcess({
     turnQuota: { anonymous: 1, claimed: 2, ip: 5 },
-    cartridge: { requester: async () => ({ owner: 'acct_claimed-account', rateTier: 'authenticated' }) },
+    overrides: { requester: async () => ({ owner: 'acct_claimed-account', rateTier: 'authenticated' }) },
   });
   expect((await turn(stack, 'claimed-first', 'acct_claimed-account')).response.status).toBe(200);
   expect((await turn(stack, 'claimed-second', 'acct_claimed-account')).response.status).toBe(200);
@@ -60,7 +60,7 @@ it('grants the claimed Account tier only from server-resolved identity', async (
 
 it('starts a fresh window even while expired counters await cleanup', async () => {
   const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-24T12:00:10Z'));
-  stack = await startInProcess({ stock: true, turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
+  stack = await startInProcess({ turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
   expect((await turn(stack, 'window-first')).response.status).toBe(200);
   const refused = await turn(stack, 'window-refused');
   expect(refused.response.status).toBe(429);
@@ -70,14 +70,14 @@ it('starts a fresh window even while expired counters await cleanup', async () =
 });
 
 it('admits only one concurrent Turn into the last Account slot', async () => {
-  stack = await startInProcess({ stock: true, turnQuota: { anonymous: 1, claimed: 2, ip: 5 } });
+  stack = await startInProcess({ turnQuota: { anonymous: 1, claimed: 2, ip: 5 } });
   const results = await Promise.all([turn(stack, 'race-first'), turn(stack, 'race-second')]);
   expect(results.map(({ response }) => response.status).sort()).toEqual([200, 429]);
   expect(stack.agentcore.invocations()).toHaveLength(1);
 });
 
 it('fails closed with a classified error when quota storage is unavailable', async () => {
-  stack = await startInProcess({ stock: true, turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
+  stack = await startInProcess({ turnQuota: { anonymous: 1, claimed: 2, ip: 1 } });
   // Only the quota's counters are unreachable: the account still signs in from the same table.
   const send = DynamoDBDocumentClient.prototype.send;
   vi.spyOn(DynamoDBDocumentClient.prototype, 'send').mockImplementation(function (this: DynamoDBDocumentClient, command: Parameters<DynamoDBDocumentClient['send']>[0]) {
@@ -95,8 +95,8 @@ it('fails closed with a classified error when quota storage is unavailable', asy
 
 it('shares admission counters across independent Chat Service instances', async () => {
   const limits = { anonymous: 1, claimed: 2, ip: 5 };
-  stack = await startInProcess({ stock: true, turnQuota: limits });
-  const other = await startInProcess({ stock: true, existingTable: stack.table.name, turnQuota: limits });
+  stack = await startInProcess({ turnQuota: limits });
+  const other = await startInProcess({ existingTable: stack.table.name, turnQuota: limits });
   try {
     expect((await turn(stack, 'task-first')).response.status).toBe(200);
     expect((await turn(other, 'task-second')).response.status).toBe(429);

@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 import { filed } from '../test/stock-bot.js';
 
 it.each([true, false])('forwards owned steering without starting a Turn (accepted: %s)', async (accepted) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'steer-session', { filingUserId: filed('owner'), title: 'Steering', allocation: true });
     stack.agentcore.script('steer-session', { kind: 'stream', frames: [`data: ${JSON.stringify({ type: 'CUSTOM', name: 'STEERING_ACCEPTED', value: { accepted } })}`] });
@@ -21,7 +21,7 @@ it.each([true, false])('forwards owned steering without starting a Turn (accepte
 });
 
 it('logs a steering message that missed its Turn', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   const info = vi.spyOn(console, 'info');
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'steer-session', { filingUserId: filed('owner'), title: 'Steering', allocation: true });
@@ -35,7 +35,7 @@ it('logs a steering message that missed its Turn', async () => {
 });
 
 it('rejects another owner and malformed steering before dispatch', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_someone-else', 'private', { filingUserId: filed('other'), title: 'Private', allocation: true });
     const send = (body: unknown) => stack.app.request('/threads/private/steer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -46,7 +46,7 @@ it('rejects another owner and malformed steering before dispatch', async () => {
 });
 
 it.each([true, false])('forwards an owned steering withdrawal and returns its receipt (withdrawn: %s)', async (withdrawn) => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_account-1', 'steer-session', { filingUserId: filed('owner'), title: 'Steering', allocation: true });
     stack.agentcore.script('steer-session', { kind: 'stream', frames: [`data: ${JSON.stringify({ type: 'CUSTOM', name: 'STEERING_WITHDRAWN', value: { withdrawn } })}`] });
@@ -61,7 +61,7 @@ it.each([true, false])('forwards an owned steering withdrawal and returns its re
 });
 
 it('rejects withdrawing steering from another owner before dispatch', async () => {
-  const stack = await startInProcess({ stock: true });
+  const stack = await startInProcess();
   try {
     await stack.sessionMetadata.recordTurn('acct_someone-else', 'private', { filingUserId: filed('other'), title: 'Private', allocation: true });
     expect((await stack.app.request('/threads/private/steer/message', { method: 'DELETE' })).status).toBe(404);

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import type { AccountStore } from '../../src/account-store.js';
-import { serveChatService, type CartridgeFactory } from '../../src/index.js';
+import { serveChatService } from '../../src/index.js';
 import { signCredentialServiceInvocation } from '../../src/credential-service-token.js';
-import { stockAccountStore, stockChatService } from '../../src/stock.js';
+import { stockAccountStore } from '../../src/stock.js';
 
 /**
  * The stock Chat Service with a stand-in product's own sign-in: the fake site's, which the agent reaches
@@ -12,24 +12,6 @@ import { stockAccountStore, stockChatService } from '../../src/stock.js';
 const env = process.env;
 const SIGN_IN_NEEDED = 'Template site sign-in needed.';
 const accountStore = stockAccountStore(env);
-const stock = stockChatService(env, {
-  accountStore,
-  ...(env.TEMPLATE_SITE_URL ? { startPage: new URL('/login', env.TEMPLATE_SITE_URL).href } : {}),
-});
-
-const factory: CartridgeFactory = (history) => {
-  const service = stock(history);
-  const owner = async (c: Context) => (await service.requester(c)).owner;
-  return {
-    ...service,
-    routes: new Hono().route('/', service.routes).route('/', siteSignIn(owner, accountStore)),
-    signInNeeded: async (account, outputs) => {
-      if (!outputs.some((output) => output.split('\n').some((line) => line === SIGN_IN_NEEDED || line === `[stderr] ${SIGN_IN_NEEDED}`))) return null;
-      await accountStore.markSignInNeeded(account);
-      return SIGN_IN_NEEDED;
-    },
-  };
-};
 
 async function credentialService(account: string, path: string, method: string, scope?: string): Promise<{ status: string }> {
   const secret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '';
@@ -73,4 +55,15 @@ function siteSignIn(owner: (c: Context) => Promise<string>, store: AccountStore)
   return routes;
 }
 
-serveChatService(process.env, factory);
+serveChatService(env, {
+  accountStore,
+  ...(env.TEMPLATE_SITE_URL ? { startPage: new URL('/login', env.TEMPLATE_SITE_URL).href } : {}),
+  overrides: (chat) => ({
+    routes: new Hono().route('/', chat.routes).route('/', siteSignIn(async (c) => (await chat.requester(c)).owner, accountStore)),
+    signInNeeded: async (account, outputs) => {
+      if (!outputs.some((output) => output.split('\n').some((line) => line === SIGN_IN_NEEDED || line === `[stderr] ${SIGN_IN_NEEDED}`))) return null;
+      await accountStore.markSignInNeeded(account);
+      return SIGN_IN_NEEDED;
+    },
+  }),
+});

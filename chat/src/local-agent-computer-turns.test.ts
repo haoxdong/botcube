@@ -18,7 +18,7 @@ it.each(['missing', 'starting'] as const)(
       requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'acct_account-1' }),
       env: { BOTCUBE_CHROMIUM_PATH: executable },
     });
-    const stack = await startInProcess({ stock: true, cartridge: {
+    const stack = await startInProcess({ overrides: {
       routes: computer.routes,
       invocationPayload: async (input, { owner }) => ({
         ...input,

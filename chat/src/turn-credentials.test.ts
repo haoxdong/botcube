@@ -15,7 +15,7 @@ beforeAll(async () => {
   vi.stubEnv('AWS_REGION', 'us-east-1');
   vi.stubEnv('AWS_ACCESS_KEY_ID', AWS_ACCESS_KEY_ID);
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', AWS_SECRET_ACCESS_KEY);
-  stack = await startInProcess({ stock: true, config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
+  stack = await startInProcess({ config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
 });
 afterAll(async () => {
   await stack.stop();

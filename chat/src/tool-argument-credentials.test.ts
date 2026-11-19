@@ -6,7 +6,7 @@ import { defined } from '../test/defined.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ stock: true, cartridge: {
+  stack = await startInProcess({ overrides: {
     invocationPayload: async (input) => ({ ...input, forwardedProps: { signedToken: 'private-token' } }),
     credentialProps: ['signedToken'],
   } });

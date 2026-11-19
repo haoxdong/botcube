@@ -3,8 +3,8 @@ import { startInProcess } from '../test/in-process.js';
 
 async function turnWith(tunesPrompts: boolean | undefined, candidates: Record<string, unknown>) {
   const seen: Record<string, unknown>[] = [];
-  const stack = await startInProcess({ stock: true,
-    cartridge: {
+  const stack = await startInProcess({
+    overrides: {
       invocationPayload: async (input) => {
         seen.push(input.forwardedProps as Record<string, unknown>);
         return { ...input, forwardedProps: { ...(input.forwardedProps as Record<string, unknown>) } };
@@ -37,7 +37,7 @@ describe.each(['agentSystemPrompt', 'cartridgeSystemPrompt'])('a candidate %s', 
     expect(seen).toEqual([{ [prop]: candidate }]);
   });
 
-  it.each([undefined, false])('is refused before a Session opens when the Cartridge does not let the requester tune prompts: %s', async (tunesPrompts) => {
+  it.each([undefined, false])('is refused before a Session opens when the bot does not let the requester tune prompts: %s', async (tunesPrompts) => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { status, body, seen, session } = await turnWith(tunesPrompts, { [prop]: 'Candidate prompt.' });
 
