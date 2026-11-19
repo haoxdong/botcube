@@ -191,7 +191,7 @@ describe("the stock Chat Service's filing ID", () => {
       }),
     };
     const service = stockChatService(env);
-    const server = serveChatService(service, env);
+    const server = serveChatService(env, service);
     closers.push(() => new Promise((resolve) => { server.close(() => resolve()); }));
     await once(server, 'listening');
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -413,7 +413,7 @@ describe("the stock Chat Service's Plan Usage", () => {
     };
     const { account: { accountId: owner } } = await stockAccountStore(base).anonymousAccount(undefined);
     const env = { ...base, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: owner };
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     try {
       await once(server, 'listening');
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -508,7 +508,7 @@ describe("the stock Chat Service's account deletion", () => {
     const refused = await testUser('acct_stock_delete_refused');
     refusing.add('acct_stock_delete_refused');
     const store = stockAccountStore(env);
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     try {
       await once(server, 'listening');
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -547,7 +547,7 @@ describe("the stock Chat Service's account deletion", () => {
     await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${bearer}`, sk: 'META',
       record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
     copies.length = 0;
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     try {
       await once(server, 'listening');
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -596,7 +596,7 @@ describe("the stock Chat Service's account deletion", () => {
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
     };
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     await once(server, 'listening');
     return {
       url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
@@ -632,7 +632,7 @@ describe("the stock Chat Service's account deletion", () => {
     const store = stockAccountStore(env);
     // Its last Files credential ran out two days ago, past the grace day.
     await store.retireFiles('acct_stock_files_retired', null, Date.now() - 2 * DAY_MS);
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     try {
       await once(server, 'listening');
       await vi.waitFor(async () => expect([existsSync(retired), await store.pendingFilesCleanup()]).toEqual([false, []]));
@@ -738,7 +738,7 @@ describe('a signed-in User deleting their own account', () => {
       BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: config,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: INTROSPECTION_SECRET,
     };
-    const server = serveChatService(stockChatService(env), env);
+    const server = serveChatService(env);
     await once(server, 'listening');
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     return { url, store: stockAccountStore(env), browser: () => new Browser(url), close: () => new Promise<void>((resolve) => server.close(() => resolve())) };

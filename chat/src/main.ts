@@ -1,3 +1,3 @@
-import { serveStockChatService } from './stock.js';
+import { serveChatService } from './server.js';
 
-serveStockChatService();
+serveChatService();

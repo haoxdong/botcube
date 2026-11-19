@@ -50,7 +50,7 @@ describe("the Chat Service's adapters", () => {
   it('stop the Chat Service starting, before it listens, when the chosen kind is missing its environment', () => {
     const cartridge = (): ChatServiceCartridge => { throw new Error('the Cartridge is built after the adapters'); };
 
-    expect(() => serveChatService(cartridge, { PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({ turnCredentials: { kind: 'assume-role' } }) }))
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({ turnCredentials: { kind: 'assume-role' } }) }, cartridge))
       .toThrow('turnCredentials.kind: assume-role needs BOTCUBE_USER_MEMORY_ROLE_ARN');
   });
 });

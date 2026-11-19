@@ -18,7 +18,6 @@ import { localAgentComputer } from './local-agent-computer.js';
 import { managedAgentComputer } from './managed-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
 import { planModels } from './plan-models.js';
-import { serveChatService } from './server.js';
 import { testUserConnectorRoutes } from './test-user-connector.js';
 import { tokenIntrospectionRoutes } from './token-introspection.js';
 
@@ -171,5 +170,3 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   };
 }
 
-/** Serve the stock Chat Service on $PORT. */
-export const serveStockChatService = (env: NodeJS.ProcessEnv = process.env) => serveChatService(stockChatService(env), env);

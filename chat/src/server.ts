@@ -35,6 +35,7 @@ import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type A
 import { turnRoutes } from './turn-routes.js';
 import { accountRoutes } from './account-routes.js';
 import { userTokenRoutes } from './user-token.js';
+import { stockChatService } from './stock.js';
 
 const LIVE_VIEW_URL_EXPIRES_SECONDS = 300;
 
@@ -272,8 +273,8 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
   return ssmParkHistory(parameter, productName);
 }
 
-/** Serve the Chat Service with this Cartridge, configured from the environment, on $PORT. */
-export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.ProcessEnv = process.env): ServerType {
+/** Serve the Chat Service, configured from the environment and the Deployment Config it names, on $PORT. */
+export function serveChatService(env: NodeJS.ProcessEnv = process.env, cartridge: CartridgeFactory = stockChatService(env)): ServerType {
   // Listening first: every client, and the collector sidecar beside this container, sends through it.
   const proxyRelay = startProxyRelayFromEnv(env);
   proxyRelay?.catch((error: unknown) => {

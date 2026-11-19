@@ -48,4 +48,4 @@ const factory: CartridgeFactory = (history) => ({
   authorizeBrowserLiveView: async () => undefined,
   warmSession: async () => {},
 });
-serveChatService(factory);
+serveChatService(process.env, factory);

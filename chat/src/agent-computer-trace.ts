@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { WebSocket } from 'ws';
-import type { CdpMessage } from './index.js';
+import type { CdpMessage } from './cdp-filter.js';
 
 type Fields = Record<string, string | number | boolean | null>;
 export type ComputerTrace = (event: string, fields?: Fields) => void;

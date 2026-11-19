@@ -73,4 +73,4 @@ function siteSignIn(owner: (c: Context) => Promise<string>, store: AccountStore)
   return routes;
 }
 
-serveChatService(factory);
+serveChatService(process.env, factory);

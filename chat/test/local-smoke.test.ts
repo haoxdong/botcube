@@ -3,7 +3,6 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, expect, it, vi } from 'vitest';
 import { serveChatService } from '../src/server.js';
 import { fileURLToPath } from 'node:url';
-import { stockChatService } from '../src/stock.js';
 import { FakeAgentCore } from './fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
@@ -40,7 +39,7 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     vi.unstubAllEnvs();
   });
   const taskStops = process.listenerCount('SIGTERM');
-  const server = serveChatService(stockChatService(env), env);
+  const server = serveChatService(env);
   cleanup.push(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     expect(process.listenerCount('SIGTERM')).toBe(taskStops);

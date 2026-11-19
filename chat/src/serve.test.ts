@@ -82,7 +82,7 @@ async function allocatedTable(sessionId: string): Promise<string> {
 async function serve(env: NodeJS.ProcessEnv): Promise<string> {
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const server: ServerType = serveChatService(() => cartridge, { AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env });
+  const server: ServerType = serveChatService({ AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, () => cartridge);
   closers.push(async () => {
     await new Promise((resolve) => server.close(resolve));
   });
@@ -119,13 +119,13 @@ describe('the Chat Service served from the environment', () => {
     });
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
-    const server = serveChatService(() => cartridge, {
+    const server = serveChatService({
       PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(),
       BOTCUBE_SCHEDULE_GROUP: 'test-group',
       BOTCUBE_SCHEDULER_ROLE_ARN: 'arn:aws:iam::123456789012:role/scheduler',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: 'arn:aws:sqs:us-east-1:123456789012:runs',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/123456789012/runs',
-    });
+    }, () => cartridge);
     closers.push(async () => {
       if (server.listening) await new Promise((resolve) => server.close(resolve));
     });
@@ -149,7 +149,7 @@ describe('the Chat Service served from the environment', () => {
       const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
       vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
       vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      const server = serveChatService(cartridgeOf, { PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(), ...env });
+      const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(), ...env }, cartridgeOf);
       closers.push(async () => {
         if (server.listening) await new Promise((resolve) => server.close(resolve));
       });
