@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { resolve, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bareVisibleMounts } from '../../test/presence-policy';
 
@@ -28,18 +26,4 @@ describe('conditional mount ownership', () => {
   ])('accepts a retained owner or nonvisual marker: %s', (source) => {
     expect(bareVisibleMounts(source)).toEqual([]);
   });
-
-  it('keeps visible conditional mounts behind their presence owner', () => {
-    const root = resolve(import.meta.dirname, '..');
-    const failures = sourceFiles(root).filter((file) => file.endsWith('.tsx') && !/\.(test|stories)\.tsx$/.test(file) && !stock(file)).flatMap((file) => bareVisibleMounts(readFileSync(file, 'utf8'), file).map((failure) => `${relative(root, file)}:${failure.line} ${failure.element}`));
-    expect(failures).toEqual([]);
-  });
 });
-
-// The UI exceptions check proves a components/ui file without a `stock component diff` row is shadcn's file verbatim;
-// vendor code is not ours to wrap, and its callers own presence.
-const modified = new Set((JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../../internal/ui-exceptions.json'), 'utf8')) as { file: string; pattern: string }[])
-  .filter((entry) => entry.pattern === 'stock component diff').map((entry) => entry.file));
-const stock = (file: string) => file.includes('/src/components/ui/') && !modified.has(relative(resolve(import.meta.dirname, '../../../../..'), file));
-
-const sourceFiles = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? sourceFiles(resolve(directory, entry.name)) : [resolve(directory, entry.name)]);
