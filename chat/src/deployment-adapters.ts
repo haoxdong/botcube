@@ -1,4 +1,4 @@
-import { deploymentConfig, type DeploymentConfig } from 'botcube-deployment-config';
+import { deploymentSections, type DeploymentConfig } from 'botcube-deployment-config';
 import { loadDeployment } from 'botcube-deployment-config/load';
 import type { HarnessAuth } from 'botcube-deployment-config/seams';
 
@@ -13,7 +13,7 @@ export interface DeploymentAdapters {
   schedules: DeploymentConfig['schedules'];
 }
 
-const ADAPTER_SECTIONS = deploymentConfig.pick({ harnessAuth: true, turnCredentials: true, schedules: true });
+const ADAPTER_SECTIONS = deploymentSections.pick({ harnessAuth: true, turnCredentials: true, schedules: true });
 
 /**
  * The adapters the Chat Service runs on: each section's `kind` in the Deployment Config at BOTCUBE_DEPLOYMENT_CONFIG,

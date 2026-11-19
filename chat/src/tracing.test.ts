@@ -1,9 +1,23 @@
 import { defined } from '../test/defined.js';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { telemetryDeployment } from 'botcube-deployment-config/telemetry';
 import { expect, it } from 'vitest';
+
+/** Node strips the sources' types but keeps their `.js` import specifiers, which name the `.ts` file beside them. */
+const TS_IMPORTS = `
+  import { registerHooks } from 'node:module';
+  registerHooks({ resolve(specifier, context, next) {
+    try { return next(specifier, context); } catch (error) {
+      if (!/^\\.\\.?\\/.*\\.js$/.test(specifier)) throw error;
+      return next(specifier.replace(/\\.js$/, '.ts'), context);
+    }
+  } });`;
 
 it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown', async () => {
   const bodies: Buffer[] = [];
@@ -18,9 +32,8 @@ it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown
     });
   });
   await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
-  const child = spawn(process.execPath, ['--input-type=module', '-e', `
-    import { startChatTracing } from './src/tracing.ts';
-    import { registerTracingTurn } from './src/tracing.ts';
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
+    const { startChatTracing, registerTracingTurn } = await import('./src/tracing.ts');
     const sdk = startChatTracing();
     const { trace } = await import('@opentelemetry/api');
     const finish = registerTracingTurn();
@@ -55,4 +68,50 @@ it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown
     collector.closeAllConnections();
     await new Promise<void>((resolve) => collector.close(() => resolve()));
   }
+});
+
+it("exports to the Deployment Config's OTLP Endpoint with its credential as the bearer and its headers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'telemetry-token-'));
+  const path = join(dir, 'telemetry-token');
+  writeFileSync(path, 'collector-token\n');
+  const received: IncomingHttpHeaders[] = [];
+  const collector = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      received.push(request.headers);
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`;
+  const deployed = telemetryDeployment({ kind: 'otlp', url, credential: { kind: 'file', path }, headers: { 'x-tenant': 'botcube-example' } });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
+    const { startChatTracing } = await import('./src/tracing.ts');
+    const sdk = startChatTracing();
+    const { trace } = await import('@opentelemetry/api');
+    trace.getTracer('test').startSpan('authenticated export probe').end();
+    await sdk.shutdown();
+  `], {
+    cwd: new URL('..', import.meta.url),
+    env: { ...process.env, ...deployed.chatService, OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+  const watchdog = setTimeout(() => child.kill('SIGKILL'), 5_000);
+  try {
+    const [code] = await once(child, 'close');
+    expect({ code, stderr }).toEqual({ code: 0, stderr: '' });
+    expect(received).toEqual([expect.objectContaining({ authorization: 'Bearer collector-token', 'x-tenant': 'botcube-example' })]);
+  } finally {
+    clearTimeout(watchdog);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    collector.closeAllConnections();
+    await new Promise<void>((resolve) => collector.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it('exports nothing under none telemetry', () => {
+  expect(telemetryDeployment({ kind: 'none' }).chatService).toEqual({});
 });

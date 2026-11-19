@@ -300,6 +300,18 @@ test('Chat exports Turn traces through a bounded local ADOT collector to the exi
   });
 });
 
+test('an optional External Service set to none creates nothing for it: no collector, X-Ray, run queue, schedule group or live view grant', () => {
+  const template = synth(undefined, false, privateSubnets, { telemetry: { kind: 'none', environment: {}, secretArns: [] }, schedules: 'none', liveView: 'none' });
+  const task = named(template, 'ChatServiceTask5').Properties;
+  expect(task.ContainerDefinitions.map((container: { Name: string }) => container.Name)).toEqual(['chat-service']);
+  const granted = JSON.stringify(named(template, 'ChatServiceTaskTaskRoleDefaultPolicy').Properties.PolicyDocument);
+  for (const action of ['xray:', 'scheduler:', 'sqs:', 'ConnectBrowserLiveViewStream']) expect(granted).not.toContain(action);
+  template.resourceCountIs('AWS::SQS::Queue', 0);
+  template.resourceCountIs('AWS::Scheduler::ScheduleGroup', 0);
+  const environment = task.ContainerDefinitions[0].Environment.map(({ Name }: { Name: string }) => Name);
+  expect(environment.filter((name: string) => /^OTEL_(TRACES|EXPORTER)|^BOTCUBE_SCHEDULE/.test(name))).toEqual([]);
+});
+
 test('the Chat Service container serves port 8123 on Linux x86-64 with its full environment and 30 days of logs (ADR 0085)', () => {
   const template = synth();
   const task = named(template, 'ChatServiceTask5').Properties;
@@ -316,8 +328,8 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
       { Name: 'AGENTCORE_BROWSER_ID', Value: 'aws.browser.v1' },
       { Name: 'BOTCUBE_CHAT_TABLE', Value: { 'Fn::ImportValue': 'Storage:ExportsOutputRefChatTable7A2D1C242A7F282B' } },
       { Name: 'BOTCUBE_CORS_ORIGINS', Value: 'https://example.com,https://web.example.com' },
-      { Name: 'OTEL_TRACES_EXPORTER', Value: 'otlp' },
       { Name: 'OTEL_LOG_LEVEL', Value: 'error' },
+      { Name: 'OTEL_TRACES_EXPORTER', Value: 'otlp' },
       { Name: 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', Value: 'http://127.0.0.1:4318/v1/traces' },
       { Name: 'PORT', Value: '8123' },
       { Name: 'BOTCUBE_SCHEDULE_GROUP', Value: 'test-scheduled-tasks' },

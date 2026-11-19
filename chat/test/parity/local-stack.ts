@@ -1,17 +1,17 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
-import { CreateSecretCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { loadDeployment } from '../../../deployment-config/load.js';
-import { MODELS_ENV, modelsDeployment } from '../../../deployment-config/models.js';
+import { modelsDeployment } from '../../../deployment-config/models.js';
 import { proxyEnvironment } from '../../../deployment-config/environment.js';
+import { telemetryDeployment } from '../../../deployment-config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
 import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
-import { startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
+import { freePort, startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
 import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
 import { motoEndpoint } from '../fakes/moto.js';
 import { FakeJwtAuthorizer } from '../fakes/jwt-authorizer.js';
@@ -101,25 +101,18 @@ export async function startLocalStack(options: {
   const models = deployment.config.models;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
   const harnessAuth = deployment.config.harnessAuth;
-  const egress = await egressStandIns(deployment.config);
+  const egress = await egressStandIns(deployment.config, home);
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
     await Promise.all([...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close()]);
     await rm(home, { recursive: true, force: true });
   };
   try {
-    // The models endpoint's stand-in, its API key in moto's Secrets Manager, for both the Chat Service and the Harness.
-    const modelsEnv = {
-      ...modelsDeployment(models)?.environment,
-      ...(openAICompatible ? {
-        [MODELS_ENV.baseUrl]: `${openAICompatible.url}/v1`,
-        [MODELS_ENV.apiKeySecretArn]: await createSecret(dynamodbEndpoint, `models-api-key-${table}`, openAICompatible.apiKey),
-        AWS_ENDPOINT_URL_SECRETS_MANAGER: dynamodbEndpoint,
-        AWS_ACCESS_KEY_ID,
-        AWS_SECRET_ACCESS_KEY,
-        AWS_EC2_METADATA_DISABLED: 'true',
-      } : {}),
-    };
+    // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for both the Chat Service and
+    // the Harness; the Endpoint's headers are the Deployment Config's own.
+    const modelsEnv = openAICompatible && models.kind === 'openai-compatible'
+      ? modelsDeployment({ ...models, url: `${openAICompatible.url}/v1`, credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) } })?.environment
+      : undefined;
     Object.assign(pythonEnv, egress?.environment, modelsEnv, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
@@ -140,7 +133,7 @@ export async function startLocalStack(options: {
       }).then((running) => { harnessProcess = running; processes.push(running); return new URL(running.url).origin; }),
       start(`${BIN}/botcube-session-api`, pythonEnv, '/ping', 'Uvicorn running on http://0.0.0.0:'),
     ]);
-    if (harnessAuth.kind === 'jwt-bearer') authorizer = await new FakeJwtAuthorizer(harness, harnessAuth.audience).listen();
+    if (harnessAuth.kind === 'jwt-bearer') authorizer = await new FakeJwtAuthorizer(harness, harnessAuth.clients.map(({ clientId }) => clientId)).listen();
     const harnessUrl = authorizer?.url ?? harness;
     const url = await start(
       options.chatServiceCommand ?? CHAT_SERVICE_COMMAND,
@@ -170,11 +163,11 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: scheduledRuns.queueArn,
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
-        BOTCUBE_DEPLOYMENT_CONFIG: deploymentPath,
         ...egress?.chatEnvironment,
         ...modelsEnv,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
+        BOTCUBE_DEPLOYMENT_CONFIG: await chatDeploymentConfig(deploymentPath, deployment.config, home),
       },
       '/',
       'Chat Service listening on :',
@@ -200,34 +193,65 @@ interface EgressStandIns {
   readonly chatEnvironment: Record<string, string>;
 }
 
-/** The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector, and the environment the deploy derives. */
-async function egressStandIns(config: DeploymentConfig | undefined): Promise<EgressStandIns | undefined> {
+/**
+ * The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
+ * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the environment the deploy
+ * derives. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service and the Harness
+ * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
+ */
+async function egressStandIns(config: DeploymentConfig | undefined, home: string): Promise<EgressStandIns | undefined> {
   const proxy = config?.proxy;
-  if (proxy === undefined) return undefined;
-  const otlpEndpoint = config?.telemetry?.otlpEndpoint;
-  const telemetry = otlpEndpoint === undefined ? undefined : { otlpEndpoint, collector: await new FakeOtlpCollector().listen() };
-  const standIn = await new FakeForwardProxy(telemetry ? { [new URL(telemetry.otlpEndpoint).host]: telemetry.collector.url } : {}).listen();
-  const environment = {
-    ...proxyEnvironment({ proxy: { ...proxy, url: standIn.url } }),
-    ...(telemetry ? { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: telemetry.otlpEndpoint } : {}),
+  if (proxy === undefined || proxy.kind === 'none') return undefined;
+  const otlp = config?.telemetry.kind === 'otlp' ? config.telemetry : undefined;
+  const collector = otlp && await new FakeOtlpCollector(otlp.credential ? `Bearer ${STAND_IN_TELEMETRY_TOKEN}` : undefined).listen();
+  const standIn = await new FakeForwardProxy(
+    otlp && collector ? { [new URL(otlp.url).host]: collector.url } : {},
+    proxy.credential ? `Bearer ${STAND_IN_PROXY_TOKEN}` : undefined,
+  ).listen();
+  const telemetry = otlp && telemetryDeployment({
+    ...otlp,
+    ...(otlp.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_TELEMETRY_TOKEN, 'telemetry-token') } } : {}),
+  });
+  const offline = {
+    proxy: {
+      ...proxy,
+      url: standIn.url,
+      ...(proxy.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_PROXY_TOKEN, 'proxy-token') } as const } : {}),
+    },
   };
   return {
     proxy: standIn,
-    collector: telemetry?.collector,
-    environment,
-    chatEnvironment: { ...environment, ...(telemetry ? { OTEL_TRACES_EXPORTER: 'otlp' } : {}) },
+    collector,
+    environment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness },
+    chatEnvironment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService },
   };
 }
 
-/** A secret in moto's Secrets Manager holding `value`, by its ARN. */
-async function createSecret(endpoint: string, name: string, value: string): Promise<string> {
-  const client = new SecretsManagerClient({ region: 'us-east-1', endpoint, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } });
-  try {
-    const { ARN } = await client.send(new CreateSecretCommand({ Name: name, SecretString: value }));
-    return required(ARN, "the created secret's ARN");
-  } finally {
-    client.destroy();
-  }
+const STAND_IN_TELEMETRY_TOKEN = 'stand-in-telemetry-token';
+const STAND_IN_PROXY_TOKEN = 'stand-in-proxy-token';
+
+/** A file in `home` holding `value`, by its path. */
+async function keyFile(home: string, value: string, name = 'models-api-key'): Promise<string> {
+  const path = join(home, name);
+  await writeFile(path, `${value}\n`, { mode: 0o600 });
+  return path;
+}
+
+/** The OIDC client secret the stand-in provider takes, in place of the one the Deployment Config's source names. */
+const STAND_IN_CLIENT_SECRET = 'stand-in-client-secret';
+
+/**
+ * The Deployment Config the Chat Service reads: the one at `path`, its sign-in client secret a file in `home` as a
+ * secret injector mounts it, so no Secrets Manager is needed offline; unchanged without an OIDC identity.
+ */
+async function chatDeploymentConfig(path: string, config: DeploymentConfig, home: string): Promise<string> {
+  if (config.identity.kind !== 'oidc') return path;
+  const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
+  const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+  const identity = { ...config.identity, clients: config.identity.clients.map(({ clientId }) => ({ clientId, clientSecret })) };
+  const standIn = join(home, 'deployment-config.json');
+  await writeFile(standIn, JSON.stringify({ ...file, bot: resolve(dirname(path), config.bot), identity }));
+  return standIn;
 }
 
 /** What the CDK hands the Chat Service for the Deployment Config's Turn credentials adapter, with moto as STS. */

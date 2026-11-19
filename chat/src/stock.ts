@@ -121,6 +121,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         }
         await deletions.recover();
       },
+      startupCredentials: identity?.credentials ?? [],
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
       accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()

@@ -15,6 +15,7 @@ from .invocation import (
     verify_credential_service_invocation,
 )
 from .provider import CredentialProvider, UpstreamRefusal
+from .proxy_relay import start_proxy_relay_from_env
 
 _LOG = logging.getLogger(__name__)
 
@@ -91,6 +92,8 @@ def request_context(invocation: CredentialServiceInvocation, method: str, path: 
 def create_app(settings: CredentialServiceSettings, providers: Sequence[CredentialProvider[Any]]) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        # The OpenAI relay and the sign-in socket reach the operator's proxy through this process's relay.
+        start_proxy_relay_from_env()
         async with AsyncExitStack() as cleanup:
             for provider in providers:
                 cleanup.push_async_callback(provider.aclose)

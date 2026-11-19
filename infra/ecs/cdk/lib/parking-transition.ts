@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ArnFormat, AssetHashType, Duration, Stack } from 'aws-cdk-lib';
+import { ArnFormat, AssetHashType, DockerImage, Duration, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -11,7 +11,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import type { DeployIdentity } from './production-identity.js';
 
-export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity) {
+export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, imageRegistry?: string) {
   const { ecs, agentCore } = identity.aws;
   const worker = new lambda.Function(stack, 'Transition', {
     functionName: `${ecs.parking.functionName}-transition`,
@@ -19,7 +19,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     timeout: Duration.minutes(15), memorySize: 512,
     environment: { PYTHONPATH: '/var/task/ecs', CARTRIDGE_DEPLOY_ROOT: '/var/task/cartridge', CARTRIDGE_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
-      image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+      image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
         fs.mkdirSync(path.join(outputDir, 'cartridge'), { recursive: true });
         fs.writeFileSync(path.join(outputDir, 'cartridge/identity.json'), JSON.stringify(identity));

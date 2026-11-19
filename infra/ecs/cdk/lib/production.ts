@@ -63,7 +63,7 @@ export interface ProductionOptions {
   serving?: (serving: Serving) => void;
   originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
     'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
-    'securityGroupName' | 'connectionLogsBucketName' | 'existingConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
+    'securityGroupName' | 'connectionLogsBucketName' | 'suppliedConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
       agentNetworkSecurityGroupName?: string;
       agentComputerSecurityGroupName?: string;
       agentComputerBrowserRoleName?: string;
@@ -88,15 +88,17 @@ export interface ProductionOptions {
   models?: ModelsDeployment;
   /** The Deployment Config's `turnCredentials.kind`; absent is the default, `web-identity`. */
   turnCredentials?: 'web-identity' | 'assume-role';
-  /** An `oidc` Deployment Config's `identity.clientSecret`, which the Chat Service reads as BOTCUBE_OIDC_CLIENT_SECRET. */
-  oidcClientSecret?: { secretArn: string };
+  /** The secrets the Chat Service's credential sources read. */
+  chatSecretArns?: readonly string[];
   repositoryRoot: string;
   /** The active Cartridge's deploy directory (`CARTRIDGE_DEPLOY_ROOT`). */
   deployRoot: string;
   /** The Cartridge's deploy identity, as `cartridgeIdentity` reads it. */
   identity: DeployIdentity;
-  /** The Deployment Config names `existing.network`, which brings its own egress in place of the identity's `privateEgress`. */
-  existingNetwork?: boolean;
+  /** The registry, mirroring ECR Public's paths, every image comes from. */
+  imageRegistry?: string;
+  /** The Deployment Config names `supplied.network`, which brings its own egress in place of the identity's `privateEgress`. */
+  suppliedNetwork?: boolean;
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
     input: OriginInput;
@@ -115,12 +117,45 @@ function latencyMoments(deployRoot: string): string[] {
   });
 }
 
+function grantSecrets(chat: PreviewChatService, arns: readonly string[] = []) {
+  if (arns.length) chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...arns] }));
+}
+
+function addSmokePolicy(origin: PreviewOriginStack, identity: DeployIdentity, storage: ChatStorageStack, runtimeArn: string) {
+  new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
+    roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
+    statements: [
+      ...(storage.chatTableSupplied ? [] : [
+        new iam.PolicyStatement({
+          actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'],
+          resources: [storage.chatTable.tableArn],
+          conditions: {
+            'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['PAID_EXECUTION#origin-smoke'] },
+            Null: { 'dynamodb:LeadingKeys': 'false' },
+          },
+        }),
+        new iam.PolicyStatement({
+          actions: ['dynamodb:UpdateItem'], resources: [storage.chatTable.tableArn],
+          conditions: {
+            'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['SESSIONS#acct_*'] },
+            Null: { 'dynamodb:LeadingKeys': 'false' },
+          },
+        }),
+      ]),
+      new iam.PolicyStatement({
+        actions: ['bedrock-agentcore:StopRuntimeSession'],
+        resources: [runtimeArn, `${runtimeArn}/runtime-endpoint/DEFAULT`],
+      }),
+    ],
+  });
+}
+
 /** Every stack of the ECS CDK app (ADR 0065). */
 export function defineProduction(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   const storage = createChatStorage(app, options);
-  const egress = ownedEgress(app, identity, options.existingNetwork ?? false, options.permissionsBoundary);
+  const egress = ownedEgress(app, identity, options.suppliedNetwork ?? false, options.permissionsBoundary);
   const health = new ApiHealthStack(app, 'ApiHealth', {
     env, stackName: identity.aws.ecs.apiHealth.stackName, alarmName: identity.aws.ecs.apiHealth.alarmName,
     hostname: new URL(identity.domains.chatService).hostname, alertsTopicName: identity.aws.ecs.alertsTopicName,
@@ -139,7 +174,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   }
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
-  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, identity);
+  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableSupplied, identity, options.imageRegistry);
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(parking).apply(options.permissionsBoundary);
   const origin = createServingOrigin(app, options, input, health, egress, parking.wakeUrl);
   const chat = new PreviewChatService(origin, 'ChatService', {
@@ -158,35 +193,12 @@ export function defineProduction(app: App, options: ProductionOptions) {
     // aws-cdk-lib's Table declares `T | undefined` getters where ITable declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
     chatTable: storage.chatTable as ITable,
+    chatTableSupplied: storage.chatTableSupplied,
     image: images.chat,
     ...withoutDeploymentConfig(options.chat),
   });
   addDeploymentConfig(chat.container, options.chat?.deploymentConfig);
-  const smokeRuntimeArn = options.chat?.runtimeArn ?? input.runtimeArn;
-  new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
-    roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
-    statements: [
-      new iam.PolicyStatement({
-        actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'],
-        resources: [storage.chatTable.tableArn],
-        conditions: {
-          'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['PAID_EXECUTION#origin-smoke'] },
-          Null: { 'dynamodb:LeadingKeys': 'false' },
-        },
-      }),
-      new iam.PolicyStatement({
-        actions: ['dynamodb:UpdateItem'], resources: [storage.chatTable.tableArn],
-        conditions: {
-          'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['SESSIONS#acct_*'] },
-          Null: { 'dynamodb:LeadingKeys': 'false' },
-        },
-      }),
-      new iam.PolicyStatement({
-        actions: ['bedrock-agentcore:StopRuntimeSession'],
-        resources: [smokeRuntimeArn, `${smokeRuntimeArn}/runtime-endpoint/DEFAULT`],
-      }),
-    ],
-  });
+  addSmokePolicy(origin, identity, storage, options.chat?.runtimeArn ?? input.runtimeArn);
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
     parameterName: identity.aws.agentCore.runtimeNetworkParameter, stringValue: agentNetwork.securityGroupId,
@@ -203,7 +215,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
   if (options.turnCredentials === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
-  addOidcClientSecret(origin, chat, options.oidcClientSecret);
+  grantSecrets(chat, options.chatSecretArns);
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.originConfig);
@@ -228,7 +240,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,
     paths: publicPaths(credentialConfig),
     chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [], rawHostname,
-    corsOrigins: identity.domains.corsOrigins, chatTable: storage.chatTable as ITable,
+    corsOrigins: identity.domains.corsOrigins, chatTable: storage.chatTable as ITable, chatTableSupplied: storage.chatTableSupplied,
   });
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
   for (const task of [chat.task, credentials.task]) {
@@ -273,11 +285,13 @@ export function defineProduction(app: App, options: ProductionOptions) {
   addTurnSummaryModel(origin, chat, options);
 }
 
-/** Where Turn summaries run: the Deployment Config's OpenAI-compatible endpoint, its API key read from its secret, or Bedrock. */
+/** Where Turn summaries run: the Deployment Config's OpenAI-compatible Endpoint, granted the secret its credential is read from if any, or Bedrock. */
 function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
   if (options.models) {
     for (const [name, value] of Object.entries(options.models.environment)) chat.container.addEnvironment(name, value);
-    chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [options.models.apiKeySecretArn] }));
+    if (options.models.secretArns.length) {
+      chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...options.models.secretArns] }));
+    }
     return;
   }
   const summaryModel = options.turnSummaryModel ?? TURN_SUMMARY_MODEL;
@@ -392,16 +406,9 @@ function assumeUserMemoryRole(origin: PreviewOriginStack, chat: PreviewChatServi
   chat.container.addEnvironment('BOTCUBE_USER_MEMORY_ROLE_ARN', roleArn);
 }
 
-/** The `oidc` identity adapter's client secret, read by the Chat Service as BOTCUBE_OIDC_CLIENT_SECRET. */
 function publicPaths({ publicPaths: paths }: DeployIdentity['aws']['ecs']['credentialService']): string[] {
   if (!paths?.length) throw new Error('Deploy identity aws.ecs.credentialService.publicPaths: required with publicHostname');
   return paths;
-}
-
-function addOidcClientSecret(origin: PreviewOriginStack, chat: PreviewChatService, secret: { secretArn: string } | undefined) {
-  if (secret === undefined) return;
-  const clientSecret = SecretsManagerSecret.fromSecretCompleteArn(origin, 'OidcClientSecret', secret.secretArn);
-  chat.container.addSecret('BOTCUBE_OIDC_CLIENT_SECRET', Secret.fromSecretsManager(clientSecret));
 }
 
 function addFilesPolicy(origin: PreviewOriginStack, chat: PreviewChatService) {

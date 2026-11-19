@@ -1,5 +1,5 @@
 import { createPrivateKey, generateKeyPairSync, type JsonWebKey } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,12 +15,10 @@ afterAll(() => Promise.all(stacks.map((stack) => stack.stop())));
 
 const deploymentConfig = (example: string) => fileURLToPath(new URL(`../../../examples/${example}/deployment-config.json`, import.meta.url));
 
-// The deploy fills it from the enterprise example's identity.clientSecret; the public example has none to read.
-const BOTCUBE_OIDC_CLIENT_SECRET = 'enterprise-client-secret';
 
 /** The example deployed offline, its External Services on their stand-ins, after one Turn and its summary. */
 async function conversation(example: string) {
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig(example), chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET } });
+  const stack = await startLocalStack({ deploymentConfig: deploymentConfig(example) });
   stacks.push(stack);
   const browser = stack.browser();
   await browser.openAccountSession();
@@ -62,6 +60,8 @@ describe('the public and the enterprise example', () => {
     // The agent's model by its key in the bot settings, then the summary model the Deployment Config names.
     expect(endpoint.models()).toEqual(['echo', 'example-summary']);
     expect(endpoint.summarizedTurns()).toEqual(summarized);
+    // The Deployment Config's header reaches the endpoint on the Turn and on its summary.
+    expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example']);
   });
 });
 
@@ -70,7 +70,7 @@ const wallClock = (instant: Date, timeZone: string) => new Intl.DateTimeFormat('
 }).format(instant).replace(' ', 'T');
 
 it.each(['UTC', 'Asia/Kolkata'])('fires a scheduled task on time in %s in the enterprise example, from the table poller into the run queue', { timeout: 120_000 }, async (timezone) => {
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET }, scheduling: true });
+  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), scheduling: true });
   stacks.push(stack);
   const browser = stack.browser();
   await browser.openAccountSession();
@@ -97,7 +97,7 @@ it.each(['UTC', 'Asia/Kolkata'])('fires a scheduled task on time in %s in the en
 
 it("refuses an enterprise Harness invocation without the Chat Service's bearer token", { timeout: 120_000 }, async () => {
   const key = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-key' };
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET, BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([key]) } });
+  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), chatEnv: { BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([key]) } });
   stacks.push(stack);
   const signed = (audience: string, signingKey: JsonWebKey = key) => new SignJWT({})
     .setProtectedHeader({ alg: 'ES256', kid: 'test-key' }).setIssuer(PUBLIC_ORIGIN).setAudience(audience).setIssuedAt().setExpirationTime('5m')
@@ -117,15 +117,25 @@ it("refuses an enterprise Harness invocation without the Chat Service's bearer t
   expect((await invoke(`Bearer ${await signed('sts.amazonaws.com')}`)).status).toBe(401);
 });
 
-it('stops the enterprise example without its OIDC client secret, naming the field', { timeout: 60_000 }, async () => {
-  await expect(startLocalStack({ deploymentConfig: deploymentConfig('enterprise') }))
-    .rejects.toThrow('identity.clientSecret: BOTCUBE_OIDC_CLIENT_SECRET is not set');
+it("stops the enterprise example on sign-in's old client secret field, naming it", { timeout: 60_000 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'old-identity-'));
+  try {
+    const path = join(dir, 'deployment-config.json');
+    const { identity } = JSON.parse(await readFile(deploymentConfig('enterprise'), 'utf8')) as { identity: { issuer: string } };
+    const secretArn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret';
+    await writeFile(path, JSON.stringify({ bot: './bot.json', identity: { kind: 'oidc', issuer: identity.issuer, clientId: 'botcube', clientSecret: { secretArn } } }));
+    await expect(startLocalStack({ chatEnv: { BOTCUBE_DEPLOYMENT_CONFIG: path } })).rejects.toThrow(`Deployment Config ${path}: identity.clientSecret: Unrecognized key`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-it("sends the enterprise example's traces to its collector through its proxy", { timeout: 120_000 }, async () => {
+it("sends the enterprise example's traces to its authenticated collector through its authenticating proxy", { timeout: 120_000 }, async () => {
   const path = deploymentConfig('enterprise');
-  const collectorHost = new URL(required(loadDeployment(path).config.telemetry, 'enterprise telemetry').otlpEndpoint).host;
-  const stack = await startLocalStack({ deploymentConfig: path, chatEnv: { BOTCUBE_OIDC_CLIENT_SECRET, OTEL_BSP_SCHEDULE_DELAY: '100' } });
+  const { telemetry } = loadDeployment(path).config;
+  if (telemetry.kind !== 'otlp') throw new Error('The enterprise example exports to its own collector');
+  const collectorHost = new URL(telemetry.url).host;
+  const stack = await startLocalStack({ deploymentConfig: path, chatEnv: { OTEL_BSP_SCHEDULE_DELAY: '100' } });
   stacks.push(stack);
   const { proxy, collector } = required(stack.egress, "the enterprise example's proxy");
   const browser = stack.browser();
@@ -137,6 +147,10 @@ it("sends the enterprise example's traces to its collector through its proxy", {
   await traces.waitForRequests(() => traces.received('Chat Turn'));
   expect(traces.received('botcube-chat')).toBe(true);
   expect(new Set(proxy.hosts())).toEqual(new Set([collectorHost]));
+  // Each request carried the proxy Endpoint's credential, through each process's relay, and its header.
+  expect(new Set(proxy.requests.map(({ headers }) => [headers['proxy-authorization'], headers['x-egress-route']].join(' ')))).toEqual(
+    new Set(['Bearer stand-in-proxy-token botcube-example']),
+  );
 });
 
 it('stops startup on a Deployment Config with an unknown adapter, naming the field', { timeout: 60_000 }, async () => {

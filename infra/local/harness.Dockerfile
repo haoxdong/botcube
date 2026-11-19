@@ -1,17 +1,16 @@
-# syntax=docker/dockerfile:1
 # BotCube's local Harness image, with no bot: a bot's image builds FROM it (examples/bot/Dockerfile).
-ARG PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.13-slim
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:latest
-FROM ${UV_IMAGE} AS uv
-FROM public.ecr.aws/docker/library/node:24-bookworm-slim AS browser
+ARG REGISTRY=public.ecr.aws
+FROM ${REGISTRY}/docker/library/node:24-bookworm-slim AS browser
 WORKDIR /opt/browser
 COPY harness/deepagents/browser/ ./
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
   npm ci --omit=dev --ignore-scripts && node install.mjs /opt/browser && rm -rf node_modules
-FROM ${PYTHON_IMAGE}
+FROM ${REGISTRY}/docker/library/python:3.13-slim
 
-COPY --from=uv /uv /usr/local/bin/uv
+RUN --mount=type=secret,id=build_ca \
+  if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+  pip install --no-cache-dir uv==0.12.19
 COPY --from=browser /opt/browser/ /opt/browser/
 RUN ARCH=$(dpkg --print-architecture) && \
   if [ "$ARCH" = "arm64" ]; then BIN=agent-browser-linux-arm64; else BIN=agent-browser-linux-x64; fi && \

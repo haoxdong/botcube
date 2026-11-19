@@ -10,8 +10,8 @@ import { optionalPhysicalName } from './physical-name.js';
 export interface ScheduledRunsProps {
   clusterName: string;
   scheduledRunsQueue?: sqs.IQueue;
-  /** The Deployment Config's `schedules` adapter: EventBridge Scheduler (the default), or the Chat Service polling its table. */
-  schedules?: 'eventbridge-scheduler' | 'table-poller';
+  /** The Deployment Config's `schedules` adapter: EventBridge Scheduler (the default), the Chat Service polling its table, or none. */
+  schedules?: 'eventbridge-scheduler' | 'table-poller' | 'none';
   scheduledRunsQueueName?: string;
   scheduledRunsFailedQueueName?: string;
   scheduledRunsRoleName?: string;
@@ -23,6 +23,7 @@ export interface ScheduledRunsProps {
 
 /** Scheduled tasks: each task's schedule sends its run to a queue the Chat Service polls. */
 export function addScheduledRuns(scope: Construct, origin: Stack, task: ecs.FargateTaskDefinition, container: ecs.ContainerDefinition, props: ScheduledRunsProps): void {
+  if (props.schedules === 'none') return;
   const runs = props.scheduledRunsQueue ?? new sqs.Queue(scope, 'ScheduledRuns', {
     ...optionalPhysicalName('queueName', props.scheduledRunsQueueName),
     // Longer than a run's stream, so a run in progress is not delivered twice.

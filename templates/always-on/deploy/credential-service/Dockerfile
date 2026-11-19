@@ -1,13 +1,14 @@
-# syntax=docker/dockerfile:1
 # Build from the repository root. Public clones pass BOTCUBE_ROOT=.
-ARG PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.13-slim
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.19
-FROM ${UV_IMAGE} AS uv
+ARG REGISTRY=public.ecr.aws
+ARG PYTHON_IMAGE=${REGISTRY}/docker/library/python:3.13-slim
 FROM ${PYTHON_IMAGE}
 ARG BOTCUBE_ROOT=botcube
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=uv /uv /usr/local/bin/uv
+# uv from PyPI, so every image comes from the one registry.
+RUN --mount=type=secret,id=build_ca \
+  if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+  pip install --no-cache-dir uv==0.12.19
 COPY ${BOTCUBE_ROOT}/credential-service/ /opt/botcube/credential-service/
 COPY ${BOTCUBE_ROOT}/templates/always-on/ /opt/botcube/templates/always-on/
 WORKDIR /opt/botcube/templates/always-on

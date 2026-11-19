@@ -4,7 +4,7 @@ import type * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
-import type { HarnessAuth, ModelsDeployment } from '../../../../deployment-config/seams.js' with {
+import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../deployment-config/seams.js' with {
   'resolution-mode': 'import',
 };
 
@@ -13,42 +13,52 @@ const RUNTIME_REMOVED_ACTION =
 
 /** Bedrock model invocation, which a Runtime whose models run elsewhere does not keep. */
 const BEDROCK_MODEL_ACTION = /^bedrock:(InvokeModel|InvokeModelWithResponseStream|CountTokens)$/i;
+const XRAY_ACTION = /^xray:(PutTraceSegments|PutTelemetryRecords)$/i;
 
 /**
  * The Runtime role keeps no Memory access: a Turn reaches Memory only with its tagged credentials (ADR 0067 §8).
- * Nor does it keep Bedrock's models when the Deployment Config puts them elsewhere.
+ * Nor does it keep Bedrock's models when the Deployment Config puts them elsewhere, or X-Ray, which `@aws/agentcore-cdk`
+ * always grants, when its telemetry is `none`.
  */
-function restrictRuntimePolicy(stack: Stack, role: iam.IRole, models: ModelsDeployment | undefined): void {
+function restrictRuntimePolicy(
+  stack: Stack,
+  role: iam.IRole,
+  models: ModelsDeployment | undefined,
+  telemetry: RuntimeTelemetry | undefined
+): void {
   if (!(role instanceof iam.Role)) return;
   const policy = role.node.findChild('DefaultPolicy').node.defaultChild;
   if (!(policy instanceof iam.CfnPolicy)) throw new Error('Runtime DefaultPolicy must be an IAM CfnPolicy');
-  const document = stack.resolve(policy.policyDocument) as {
-    Version: string;
-    Statement: Array<{ Action: string | string[]; Effect: string; [key: string]: unknown }>;
-  };
+  const document = policyDocument(stack.resolve(policy.policyDocument), policy.node.path);
   policy.policyDocument = {
     ...document,
     Statement: document.Statement.flatMap(statement => {
       const actions = [statement.Action]
         .flat()
-        .filter(action => !RUNTIME_REMOVED_ACTION.test(action) && !(models && BEDROCK_MODEL_ACTION.test(action)));
+        .filter((action): action is string => typeof action === 'string')
+        .filter(
+          action =>
+            !RUNTIME_REMOVED_ACTION.test(action) &&
+            !(models && BEDROCK_MODEL_ACTION.test(action)) &&
+            !(telemetry?.kind === 'none' && XRAY_ACTION.test(action))
+        );
       return actions.length ? [{ ...statement, Action: actions.length === 1 ? actions[0] : actions }] : [];
     }),
   };
 }
 
-/** The Runtime admits only bearer tokens the Chat Service signs for this audience (AgentCore's inbound JWT authorizer). */
+/** The Runtime admits only bearer tokens the Chat Service signs for one of its audiences, the Trust's clients (AgentCore's inbound JWT authorizer). */
 function jwtAuthorizer(
-  audience: string,
+  audiences: string[],
   issuer: string | undefined
 ): bedrockagentcore.CfnRuntime.AuthorizerConfigurationProperty {
   if (issuer === undefined) throw new Error('A JWT bearer Harness auth needs the Chat Service issuer');
   return {
-    customJwtAuthorizer: { discoveryUrl: `${issuer}/.well-known/openid-configuration`, allowedAudience: [audience] },
+    customJwtAuthorizer: { discoveryUrl: `${issuer}/.well-known/openid-configuration`, allowedAudience: audiences },
   };
 }
 
-/** The agent's models run on the Deployment Config's OpenAI-compatible endpoint, its API key read from its secret. */
+/** The agent's models run on the Deployment Config's OpenAI-compatible Endpoint, granted the secret its credential is read from if any. */
 type AgentCoreRuntime =
   ReturnType<AgentCoreApplication['environments']['values']> extends Iterator<infer E>
     ? E extends { runtime: infer R }
@@ -58,13 +68,15 @@ type AgentCoreRuntime =
 function applyModelsEndpoint(runtime: AgentCoreRuntime, models: ModelsDeployment | undefined): void {
   if (!models) return;
   for (const [name, value] of Object.entries(models.environment)) runtime.addEnvironmentVariable(name, value);
-  runtime.role.addToPrincipalPolicy(
-    new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [models.apiKeySecretArn] })
-  );
+  if (models.secretArns.length)
+    runtime.role.addToPrincipalPolicy(
+      new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...models.secretArns] })
+    );
 }
 
 /**
- * The Deployment Config's wiring on one Runtime: where its models run and who may invoke it. Absent, `harnessAuth` is
+ * The Deployment Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
+ * credential is read from. Absent, `harnessAuth` is
  * SigV4; a JWT bearer is checked against the Chat Service's OIDC discovery at `chatServiceIssuer`, whatever the Turn
  * credentials adapter.
  */
@@ -76,19 +88,23 @@ export function applyDeploymentSeams(
     models?: ModelsDeployment | undefined;
     harnessAuth?: HarnessAuth | undefined;
     chatServiceIssuer?: string | undefined;
+    telemetry?: RuntimeTelemetry | undefined;
   }
 ): void {
   applyModelsEndpoint(runtime, props.models);
   if (props.harnessAuth?.kind === 'jwt-bearer')
-    cfnRuntime.authorizerConfiguration = jwtAuthorizer(props.harnessAuth.audience, props.chatServiceIssuer);
-  restrictRuntimePolicy(stack, runtime.role, props.models);
+    cfnRuntime.authorizerConfiguration = jwtAuthorizer(
+      props.harnessAuth.clients.map(({ clientId }) => clientId),
+      props.chatServiceIssuer
+    );
+  restrictRuntimePolicy(stack, runtime.role, props.models, props.telemetry);
 }
 
 /**
- * Encrypt each image repository with an existing key. `@aws/agentcore-cdk` always creates the repository's own key,
- * so the key is removed, and the repository and the Runtime role's (already resolved) policy name the existing one.
+ * Encrypt each image repository with a supplied key, which carries its own grants. `@aws/agentcore-cdk` always creates
+ * the repository's own key and grants it in the Runtime role's (already resolved) policy, so the key and its grants go.
  */
-export function useImageKey(stack: Stack, keyArn: string): void {
+export function useSuppliedImageKey(stack: Stack, keyArn: string): void {
   const repositories = stack.node
     .findAll()
     .filter((child): child is ecr.CfnRepository => child instanceof ecr.CfnRepository);
@@ -102,10 +118,40 @@ export function useImageKey(stack: Stack, keyArn: string): void {
     for (const policy of stack.node
       .findAll()
       .filter((child): child is iam.CfnPolicy => child instanceof iam.CfnPolicy)) {
-      const document = JSON.stringify(stack.resolve(policy.policyDocument));
-      if (document.includes(created))
-        policy.policyDocument = JSON.parse(document.split(created).join(JSON.stringify(keyArn)));
+      const document: unknown = stack.resolve(policy.policyDocument);
+      if (JSON.stringify(document).includes(created))
+        policy.policyDocument = withoutResource(policyDocument(document, policy.node.path), created);
     }
     owner.node.tryRemoveChild('EncryptionKey');
   }
+}
+
+interface PolicyDocument {
+  Statement: Record<string, unknown>[];
+}
+
+function policyDocument(document: unknown, path: string): PolicyDocument {
+  if (
+    typeof document === 'object' &&
+    document !== null &&
+    'Statement' in document &&
+    Array.isArray(document.Statement) &&
+    document.Statement.every(
+      (statement): statement is Record<string, unknown> => typeof statement === 'object' && statement !== null
+    )
+  ) {
+    return { ...document, Statement: document.Statement };
+  }
+  throw new Error(`${path}: its policy document has no Statement list`);
+}
+
+/** The document with `resource` (as resolved JSON) taken out of every statement, and a statement left with none dropped. */
+function withoutResource(document: PolicyDocument, resource: string): PolicyDocument {
+  const Statement = document.Statement.flatMap(statement => {
+    const resources = [statement.Resource].flat();
+    if (!resources.some(each => JSON.stringify(each) === resource)) return [statement];
+    const kept = resources.filter(each => JSON.stringify(each) !== resource);
+    return kept.length ? [{ ...statement, Resource: kept.length === 1 ? kept[0] : kept }] : [];
+  });
+  return { ...document, Statement };
 }

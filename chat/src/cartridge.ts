@@ -1,5 +1,6 @@
 import type { RunAgentInput } from '@ag-ui/client';
 import type { Context, Hono } from 'hono';
+import type { CredentialSource } from './credential-source.js';
 import type { TaskStopSleep } from './task-stop.js';
 
 /** The name, character, vibe, and avatar (an emoji, or empty for the name's initial) a user gives their agent. */
@@ -134,6 +135,8 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   recoverAccountDeletions?(): Promise<void>;
   /** The task is stopping: put every awake Agent Computer to sleep before it exits. */
   sleepAgentComputers?(): TaskStopSleep;
+  /** The Cartridge's Credential Sources, such as sign-in's client secret: each is read as the Chat Service starts, which an unreadable one stops. */
+  readonly startupCredentials?: readonly CredentialSource[];
   stopSessionComputer?(owner: string, sessionId: string): Promise<void>;
 }
 

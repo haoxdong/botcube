@@ -14,8 +14,8 @@ import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-pla
 import { scaleSessionApi } from './session-api-scaling';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
-import { applyDeploymentSeams, useImageKey } from './runtime-seams';
-import type { HarnessAuth, ModelsDeployment } from '../../../../deployment-config/seams.js' with {
+import { applyDeploymentSeams, useSuppliedImageKey } from './runtime-seams';
+import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../deployment-config/seams.js' with {
   'resolution-mode': 'import',
 };
 import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
@@ -102,10 +102,12 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   /** Name for the fallback group created when securityGroups are omitted. */
   runtimeSecurityGroupName?: string;
   kmsKey?: kms.IKey;
-  /** An existing key, by ARN, to encrypt Memory with instead of `kmsKey`. */
-  memoryKeyArn?: string;
-  /** An existing key, by ARN, to encrypt the bot's image repository with instead of the one its construct creates. */
-  imageKeyArn?: string;
+  /** A supplied Memory key, by ARN; no role is granted it. */
+  suppliedMemoryKeyArn?: string;
+  /** A supplied image repository key, by ARN; no role is granted it. */
+  suppliedImageKeyArn?: string;
+  /** The registry, mirroring ECR Public's paths, images are built FROM. */
+  imageRegistry?: string;
   /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (Deployment Config plain parameters). */
   runtimeEnvironment?: Record<string, string>;
   permissionsBoundary?: iam.IManagedPolicy;
@@ -139,6 +141,8 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   harnessAuth?: HarnessAuth;
   /** The Deployment Config's `models` section off Bedrock, as `modelsDeployment` in botcube/deployment-config gives it; absent, Bedrock. */
   models?: ModelsDeployment | undefined;
+  /** The Deployment Config's `telemetry`; absent, X-Ray. */
+  telemetry?: RuntimeTelemetry | undefined;
 }
 
 function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
@@ -152,16 +156,22 @@ function validateRuntimeLifecycle(props: AgentCoreStackProps): void {
   }
 }
 
-const memoryKeyArn = (props: AgentCoreStackProps): string | undefined => props.kmsKey?.keyArn ?? props.memoryKeyArn;
+const registryArgs = ({ imageRegistry }: AgentCoreStackProps): { REGISTRY?: string } =>
+  imageRegistry ? { REGISTRY: imageRegistry } : {};
+
+const memoryKeyArn = (props: AgentCoreStackProps): string | undefined =>
+  props.kmsKey?.keyArn ?? props.suppliedMemoryKeyArn;
 
 function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
   const { executionRole } = props;
   const keyArn = memoryKeyArn(props);
   return {
     ...props.spec,
-    runtimes: executionRole
-      ? props.spec.runtimes.map(runtime => ({ ...runtime, executionRoleArn: executionRole.roleArn }))
-      : props.spec.runtimes,
+    runtimes: props.spec.runtimes.map(runtime => ({
+      ...runtime,
+      customDockerBuildArgs: { ...runtime.customDockerBuildArgs, ...registryArgs(props) },
+      ...(executionRole ? { executionRoleArn: executionRole.roleArn } : {}),
+    })),
     memories: keyArn
       ? props.spec.memories.map(memory => ({ ...memory, encryptionKeyArn: keyArn }))
       : props.spec.memories,
@@ -185,7 +195,7 @@ export class AgentCoreStack extends Stack {
 
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
     if (props.vpc && props.runtimeNetwork) throw new Error('Choose vpc or runtimeNetwork, not both');
-    if (props.kmsKey && props.memoryKeyArn) throw new Error('Choose kmsKey or memoryKeyArn, not both');
+    if (props.kmsKey && props.suppliedMemoryKeyArn) throw new Error('Choose kmsKey or suppliedMemoryKeyArn, not both');
     if (!props.vpc && (props.subnets || props.securityGroups))
       throw new Error('subnets and securityGroups require vpc');
     const { physicalIdentity, privateNatBrowser } = props;
@@ -204,7 +214,7 @@ export class AgentCoreStack extends Stack {
 
     this.configureMemories(props);
     this.configureRuntimes(props);
-    if (props.imageKeyArn) useImageKey(this, props.imageKeyArn);
+    if (props.suppliedImageKeyArn) useSuppliedImageKey(this, props.suppliedImageKeyArn);
 
     // The Runtime role has no browser access: the agent reaches its Session's Agent
     // Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
@@ -219,14 +229,14 @@ export class AgentCoreStack extends Stack {
 
   private configureMemories(props: AgentCoreStackProps): void {
     const { physicalIdentity } = props;
-    const keyArn = memoryKeyArn(props);
+    const grantedKeyArn = props.kmsKey?.keyArn;
     for (const memory of this.application.memories.values()) {
-      if (keyArn) {
+      if (grantedKeyArn) {
         for (const role of memory.node.findAll().filter((child): child is iam.Role => child instanceof iam.Role)) {
           role.addToPrincipalPolicy(
             new iam.PolicyStatement({
               actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
-              resources: [keyArn],
+              resources: [grantedKeyArn],
             })
           );
         }
@@ -268,7 +278,13 @@ export class AgentCoreStack extends Stack {
       env.runtime.addEnvironmentVariable('BOTCUBE_WORKSPACE', `${storage}/files`);
       for (const [name, value] of Object.entries(props.runtimeEnvironment ?? {}))
         env.runtime.addEnvironmentVariable(name, value);
-      configureRuntimeTelemetry(this, `${env.node.id}LogRetention`, cfnRuntime.attrAgentRuntimeId, env.runtime.role);
+      configureRuntimeTelemetry(
+        this,
+        `${env.node.id}LogRetention`,
+        cfnRuntime.attrAgentRuntimeId,
+        env.runtime.role,
+        props.telemetry ?? { kind: 'xray', secretArns: [] }
+      );
       env.runtime.addEnvironmentVariable('BOTCUBE_COMPRESS_CHECKPOINTS', checkpointCompression.valueAsString);
       if (props.runtimeNetwork) applyRuntimeNetwork(cfnRuntime, props.runtimeNetwork);
       applyDeploymentSeams(this, env.runtime, cfnRuntime, props);
@@ -346,6 +362,7 @@ export class AgentCoreStack extends Stack {
       functionName: identity.sessionApiFunction,
       code: lambda.DockerImageCode.fromImageAsset(codeLocation, {
         file: 'session-api.Dockerfile',
+        buildArgs: registryArgs(props),
         exclude: ['tools'],
         platform: Platform.LINUX_ARM64,
       }),

@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from botcube_harness_deepagents import llm
+from botcube_harness_deepagents.credential_source import CredentialSourceError
+
+pytestmark = pytest.mark.integration
+
+
+class StandIn:
+    """An OpenAI-compatible endpoint answering each chat completion with `Echo: <text>`, after any gateway failures."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self.gateway_failures: list[int] = []
+        stand_in = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+            def do_POST(self) -> None:
+                body = json.loads(self.rfile.read(int(self.headers['content-length'])))
+                stand_in.requests.append({'path': self.path, 'headers': {k.lower(): v for k, v in self.headers.items()}, 'body': body})
+                if stand_in.gateway_failures:
+                    self._send(stand_in.gateway_failures.pop(0), 'application/json', b'{"error":{"message":"gateway"}}')
+                    return
+                text = f"Echo: {body['messages'][-1]['content']}"
+                chunk = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': 'stop'}]}
+                self._send(200, 'text/event-stream', f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode())
+
+            def _send(self, status: int, content_type: str, payload: bytes) -> None:
+                self.send_response(status)
+                self.send_header('content-type', content_type)
+                self.send_header('content-length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.url = f'http://127.0.0.1:{self.server.server_port}/v1'
+
+
+@pytest.fixture
+def stand_in() -> Iterator[StandIn]:
+    server = StandIn()
+    thread = threading.Thread(target=server.server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.server.shutdown()
+
+
+@pytest.fixture
+def deployed(stand_in: StandIn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """The environment the deploy gives the Harness for the enterprise example's models Endpoint, at the stand-in."""
+    key = tmp_path / 'models-api-key'
+    key.write_text('sk-mounted\n')
+    endpoint = {'url': stand_in.url, 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'}}
+    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps(endpoint))
+    monkeypatch.setenv('BOTCUBE_TURN_SUMMARY_MODEL', 'example-summary')
+    llm.models_endpoint.cache_clear()
+    yield key
+    llm.models_endpoint.cache_clear()
+
+
+def _reply(model_key: str = 'echo') -> str:
+    return str(asyncio.run(llm.build_model(model=model_key).ainvoke('Hello, who are you?')).content)
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_reaches_the_endpoint_with_its_credential_and_headers(stand_in: StandIn) -> None:
+    assert _reply() == 'Echo: Hello, who are you?'
+
+    [request] = stand_in.requests
+    assert request['path'] == '/v1/chat/completions'
+    assert request['body']['model'] == 'echo'
+    assert request['headers']['authorization'] == 'Bearer sk-mounted'
+    assert request['headers']['x-tenant'] == 'botcube-example'
+
+
+@pytest.mark.usefixtures('deployed')
+@pytest.mark.parametrize('status', [502, 503, 504])
+def test_a_turn_retries_a_gateway_failure_before_the_first_byte(stand_in: StandIn, status: int) -> None:
+    stand_in.gateway_failures.extend([status, status])
+
+    assert _reply() == 'Echo: Hello, who are you?'
+    assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_after_three_gateway_failures(stand_in: StandIn) -> None:
+    import openai
+
+    stand_in.gateway_failures.extend([503, 503, 503])
+    with pytest.raises(openai.InternalServerError):
+        _reply()
+    assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+@pytest.mark.parametrize('status', [500, 429])
+def test_a_turn_fails_on_other_errors_without_retrying(stand_in: StandIn, status: int) -> None:
+    import openai
+
+    stand_in.gateway_failures.append(status)
+    with pytest.raises(openai.APIStatusError):
+        _reply()
+    assert len(stand_in.requests) == 1
+
+
+def test_startup_fails_naming_the_seam_and_source_when_the_credential_cannot_be_read(deployed: Path) -> None:
+    deployed.unlink()
+    with pytest.raises(CredentialSourceError, match=f'^models credential \\(file {deployed}\\): '):
+        llm.models_endpoint()
+
+
+def test_startup_fails_on_an_endpoint_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps({'url': 'https://models.example.com/v1', 'apiKey': 'sk-live'}))
+    llm.models_endpoint.cache_clear()
+    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_ENDPOINT: unknown field apiKey$"):
+        llm.models_endpoint()
+    llm.models_endpoint.cache_clear()

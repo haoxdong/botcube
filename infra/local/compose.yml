@@ -12,8 +12,7 @@ services:
       context: ../..
       dockerfile: infra/local/harness.Dockerfile
       args: &harness-build-args
-        PYTHON_IMAGE: ${BOTCUBE_LOCAL_PYTHON_IMAGE:-public.ecr.aws/docker/library/python:3.13-slim}
-        UV_IMAGE: ${BOTCUBE_LOCAL_UV_IMAGE:-ghcr.io/astral-sh/uv:latest}
+        REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     depends_on:
       - dynamodb
     environment: &dynamodb-environment
@@ -126,7 +125,7 @@ services:
       context: ../..
       dockerfile: infra/local/chat.Dockerfile
       args:
-        NODE_IMAGE: ${BOTCUBE_LOCAL_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}
+        REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     depends_on:
       harness:
         condition: service_healthy
@@ -151,7 +150,7 @@ services:
       context: ../..
       dockerfile: infra/local/ui.Dockerfile
       args:
-        NODE_IMAGE: ${BOTCUBE_LOCAL_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}
+        REGISTRY: ${BOTCUBE_LOCAL_REGISTRY:-public.ecr.aws}
     environment:
       NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1

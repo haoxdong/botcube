@@ -252,7 +252,8 @@ def test_an_openai_compatible_turn_with_no_model_fails_instead_of_sending_the_be
 ) -> None:
     from botcube_harness_deepagents import llm
 
-    monkeypatch.setattr(llm, 'openai_compatible_endpoint', lambda: llm.OpenAICompatibleEndpoint(base_url='https://models.example.com/v1', api_key='sk-test'))
+    endpoint = llm.ModelsEndpoint(base_url='https://models.example.com/v1', headers={}, credential=llm.credential_source('models', {'kind': 'file', 'path': '/unread'}))
+    monkeypatch.setattr(llm, 'models_endpoint', lambda: endpoint)
     monkeypatch.setitem(sys.modules, 'langchain_openai', _fake_module('langchain_openai', ChatOpenAI=kwargs_recorder))
     monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
 

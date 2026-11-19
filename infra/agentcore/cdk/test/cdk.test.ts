@@ -434,6 +434,23 @@ test('grants the runtime role tracing and no browser access (ADR 0075 decision 5
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toMatch(/Browser/);
 });
 
+test('grants the runtime role no X-Ray when telemetry is none, and keeps it otherwise', () => {
+  const runtimePolicies = (telemetry?: { kind: 'none' | 'xray'; secretArns: string[] }) =>
+    JSON.stringify(
+      Template.fromStack(
+        new AgentCoreStack(new cdk.App(), 'RuntimeTelemetryStack', {
+          env: { account: '123456789012', region: 'us-east-1' },
+          spec: readProjectSpec(DEPLOY_ROOT),
+          physicalIdentity: PHYSICAL_IDENTITY,
+          telemetry,
+        })
+      ).findResources('AWS::IAM::Policy')
+    );
+
+  expect(runtimePolicies({ kind: 'none', secretArns: [] })).not.toContain('xray:');
+  expect(runtimePolicies({ kind: 'xray', secretArns: [] })).toContain('xray:PutTraceSegments');
+});
+
 test('caps the lifecycle of the runtime the stack deploys (ADR 0029)', () => {
   const stack = new AgentCoreStack(new cdk.App(), 'RuntimeLifecycleStack', {
     spec: readProjectSpec(DEPLOY_ROOT),

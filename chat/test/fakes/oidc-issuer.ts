@@ -13,6 +13,8 @@ export class StandInOidcIssuer {
   private readonly users = new Map<string, string>();
   /** The `auth_time` each User's ID tokens carry, in seconds; undefined leaves the claim out. */
   readonly authenticatedAt = new Map<string, number | undefined>();
+  /** The client secret each token request carried, by HTTP Basic or in its form, in order. */
+  readonly clientSecrets: string[] = [];
 
   async listen(): Promise<this> {
     await this.server.issuer.keys.generate('RS256');
@@ -28,6 +30,7 @@ export class StandInOidcIssuer {
       const authTime = this.authenticatedAt.has(user) ? this.authenticatedAt.get(user) : Math.floor(Date.now() / 1000);
       Object.assign(token.payload, { sub: user, name: `Stand-in ${user}`, ...(authTime === undefined ? {} : { auth_time: authTime }) });
     });
+    this.server.service.on('beforeResponse', (_: unknown, req: TokenRequest) => this.clientSecrets.push(clientSecret(req)));
     await this.server.start(0, '127.0.0.1');
     // oauth2-mock-server names a loopback issuer `localhost`, which can resolve to ::1, where it does not listen.
     this.server.issuer.url = `http://127.0.0.1:${this.server.address().port}`;
@@ -43,4 +46,15 @@ export class StandInOidcIssuer {
   close(): Promise<void> {
     return this.server.stop();
   }
+}
+
+interface TokenRequest {
+  body?: Record<string, unknown>;
+  headers?: Record<string, string | undefined>;
+}
+
+function clientSecret({ body, headers }: TokenRequest): string {
+  const basic = /^Basic (.+)$/.exec(headers?.authorization ?? '')?.[1];
+  if (basic) return decodeURIComponent(Buffer.from(basic, 'base64').toString('utf8').split(':')[1] ?? '');
+  return typeof body?.client_secret === 'string' ? body.client_secret : '';
 }

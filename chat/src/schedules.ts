@@ -14,13 +14,14 @@ export interface ChatScheduling {
   poll?: TableSchedules;
 }
 
-/** Scheduled tasks on the Deployment Config's `schedules` adapter; null while an EventBridge Scheduler deployment has no run queue. */
+/** Scheduled tasks on the Deployment Config's `schedules` adapter; null under `none`, or while an EventBridge Scheduler deployment has no run queue. */
 export function chatScheduling(
   schedules: DeploymentConfig['schedules'],
   env: NodeJS.ProcessEnv,
   table: string,
   clients: { dynamodb?: DynamoDBClient; sqs?: SQSClient; scheduler?: SchedulerClient } = {},
 ): ChatScheduling | null {
+  if (schedules.kind === 'none') return null;
   if (schedules.kind === 'eventbridge-scheduler') {
     const config = schedulerConfigFromEnv(env);
     return config && { tasks: new ScheduledTasks(table, config, clients.dynamodb, clients.scheduler), queue: sqsRunQueue(config.queueUrl, clients.sqs) };

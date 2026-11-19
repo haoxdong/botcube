@@ -17,7 +17,7 @@ const key: JsonWebKey = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).
 describe('a Chat Service on the jwt-bearer Harness auth', () => {
   let stack: InProcessStack;
   beforeAll(async () => {
-    stack = await startInProcess({ config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', audience: 'botcube-harness' } } });
+    stack = await startInProcess({ config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } } });
   });
   afterAll(() => stack.stop());
 
@@ -52,6 +52,6 @@ describe('Harness auth configuration', () => {
   );
 
   it('stops startup on a JWT bearer with no Turn identity keys to sign it', () => {
-    expect(() => harnessBearer({ kind: 'jwt-bearer', audience: 'botcube-harness' }, null)).toThrow('harnessAuth.kind: jwt-bearer signs with the Turn identity keys');
+    expect(() => harnessBearer({ kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] }, null)).toThrow('harnessAuth.kind: jwt-bearer signs with the Turn identity keys');
   });
 });

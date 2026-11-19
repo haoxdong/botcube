@@ -1,4 +1,6 @@
-import type { DeploymentConfig } from './schema.js';
+import { z } from 'zod';
+import { type DeploymentConfig } from './schema.js';
+import { endpoint, jsonFromEnv, type Endpoint } from './blocks.js';
 import type { ModelsDeployment, ModelsEnv } from './seams.js';
 
 /**
@@ -6,10 +8,8 @@ import type { ModelsDeployment, ModelsEnv } from './seams.js';
  * Deployment Config, and neither process reads the file. Unset, both run on Bedrock.
  */
 export const MODELS_ENV = {
-  /** Set: every model but Plan Usage's runs on this OpenAI-compatible endpoint. */
-  baseUrl: 'BOTCUBE_MODELS_BASE_URL',
-  /** The Secrets Manager secret holding the endpoint's API key, which each process reads at startup. */
-  apiKeySecretArn: 'BOTCUBE_MODELS_API_KEY_SECRET_ARN',
+  /** Set: every model but Plan Usage's runs on this OpenAI-compatible Endpoint, as JSON: its url, credential and headers. */
+  endpoint: 'BOTCUBE_MODELS_ENDPOINT',
   /** The model each finished Turn is summarized on. */
   turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL',
 } as const satisfies ModelsEnv;
@@ -17,12 +17,20 @@ export const MODELS_ENV = {
 /** How this `models` section is deployed; undefined on Bedrock, the default. */
 export function modelsDeployment(models: DeploymentConfig['models']): ModelsDeployment | undefined {
   if (models.kind === 'bedrock') return undefined;
+  const { url, credential, headers } = models;
   return {
     environment: {
-      [MODELS_ENV.baseUrl]: models.baseUrl,
-      [MODELS_ENV.apiKeySecretArn]: models.apiKey.secretArn,
+      [MODELS_ENV.endpoint]: JSON.stringify({ url, credential, ...(headers ? { headers } : {}) }),
       [MODELS_ENV.turnSummaryModel]: models.turnSummaryModel,
     },
-    apiKeySecretArn: models.apiKey.secretArn,
+    secretArns: credential.kind === 'secret' ? [credential.secretArn] : [],
   };
+}
+
+/** The deployed Endpoint takes a stand-in on this machine over http; the Deployment Config itself takes only https. */
+const deployedEndpoint = endpoint.extend({ url: z.url({ protocol: /^https?$/ }) });
+
+/** The models Endpoint the deploy set, or undefined on Bedrock; throws naming the variable and the bad field. */
+export function modelsEndpointFromEnv(env: NodeJS.ProcessEnv): Endpoint | undefined {
+  return jsonFromEnv(env, MODELS_ENV.endpoint, deployedEndpoint);
 }

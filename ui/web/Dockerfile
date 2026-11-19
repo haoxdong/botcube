@@ -1,7 +1,7 @@
-# syntax=docker/dockerfile:1
 # Build context: the BotCube directory (the public clone root).
-ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-bookworm-slim
-ARG STATIC_IMAGE=public.ecr.aws/docker/library/nginx:stable-alpine
+ARG REGISTRY=public.ecr.aws
+ARG NODE_IMAGE=${REGISTRY}/docker/library/node:24-bookworm-slim
+ARG STATIC_IMAGE=${REGISTRY}/docker/library/nginx:stable-alpine
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace/botcube
 COPY . ./

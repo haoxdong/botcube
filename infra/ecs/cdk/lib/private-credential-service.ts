@@ -72,12 +72,12 @@ export interface PrivateCredentialServiceProps {
   image: ecs.ContainerImage;
   /** The Vault: one Durable Credential per (accountId, provider) (ADR 0078 decision 3). */
   tableName: string;
-  /** An existing vault table to use instead of creating `tableName`. */
-  existingVaultTableName?: string;
-  /** An existing key to encrypt the vault with instead of creating one. */
-  existingVaultKeyArn?: string;
-  /** An existing RSA_2048 ENCRYPT_DECRYPT key for the Sign-in Sheet instead of creating one. */
-  existingSheetKeyArn?: string;
+  /** A supplied vault table, with its grants, to use instead of creating `tableName`: the task is granted nothing on it. */
+  suppliedVaultTableName?: string;
+  /** A supplied key, with its grants, to encrypt the vault with instead of creating one: the task is granted nothing on it. */
+  suppliedVaultKeyArn?: string;
+  /** A supplied RSA_2048 ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
+  suppliedSheetKeyArn?: string;
   namespaceName: string;
   alertsTopicName: string;
   port: number;
@@ -127,7 +127,7 @@ export class PrivateCredentialService extends Construct {
     const key = vaultKey(this, props, task);
     const sheetKey = signInSheetKey(this, props, task);
     const vault = (id: string, tableName: string, sortKey?: string) => {
-      if (props.existingVaultTableName) return dynamodb.Table.fromTableName(this, id, props.existingVaultTableName);
+      if (props.suppliedVaultTableName) return dynamodb.Table.fromTableName(this, id, props.suppliedVaultTableName);
       const table = new dynamodb.Table(this, id, {
         tableName,
         partitionKey: { name: 'accountId', type: dynamodb.AttributeType.STRING },
@@ -150,7 +150,7 @@ export class PrivateCredentialService extends Construct {
     };
     const table = vault('ProviderVault', props.tableName, 'provider');
     // UpdateItem takes a rotating credential's refresh lease (ADR 0078 decision 4).
-    table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem');
+    if (!props.suppliedVaultTableName) table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem');
     // Sign-in Sheet entry and session seeding: find a browser Session's automation stream and drive it.
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:GetBrowserSession', 'bedrock-agentcore:ConnectBrowserAutomationStream'],
@@ -274,10 +274,11 @@ function denyDecryptToOthers(key: kms.Key, task: ecs.TaskDefinition) {
   }));
 }
 
-/** The vault's key: the one passed in, an existing one by ARN, or a new one only the task may decrypt with. */
+/** The vault's key: the one passed in, a supplied one by ARN, or a new one only the task may decrypt with. */
 function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
-  if (props.kmsKey && props.existingVaultKeyArn) throw new Error('Choose kmsKey or existingVaultKeyArn, not both');
-  const importedKey = props.kmsKey ?? (props.existingVaultKeyArn ? kms.Key.fromKeyArn(scope, 'VaultKey', props.existingVaultKeyArn) : undefined);
+  if (props.kmsKey && props.suppliedVaultKeyArn) throw new Error('Choose kmsKey or suppliedVaultKeyArn, not both');
+  if (props.suppliedVaultKeyArn) return kms.Key.fromKeyArn(scope, 'VaultKey', props.suppliedVaultKeyArn);
+  const importedKey = props.kmsKey;
   // An imported key's policy is its owner's: the task role is granted the key, and the key's own deny is theirs to keep.
   if (importedKey) {
     task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], resources: [importedKey.keyArn] }));
@@ -289,13 +290,9 @@ function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: 
   return key;
 }
 
-/** The Sign-in Sheet's RSA key: an existing one by ARN, or a new one only the task may decrypt with. */
+/** The Sign-in Sheet's RSA key: a supplied one by ARN, or a new one only the task may decrypt with. */
 function signInSheetKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
-  if (props.existingSheetKeyArn) {
-    const imported = kms.Key.fromKeyArn(scope, 'SheetKey', props.existingSheetKeyArn);
-    task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['kms:GetPublicKey', 'kms:Decrypt'], resources: [imported.keyArn] }));
-    return imported;
-  }
+  if (props.suppliedSheetKeyArn) return kms.Key.fromKeyArn(scope, 'SheetKey', props.suppliedSheetKeyArn);
   const sheetKey = new kms.Key(scope, 'SheetKey', {
     keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
     removalPolicy: RemovalPolicy.RETAIN,

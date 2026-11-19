@@ -11,7 +11,7 @@ export class FakeJwtAuthorizer extends HttpFake {
   private issuer: Promise<{ issuer: string; keys: JWTVerifyGetKey }> | undefined;
   private discoveryUrl: string | undefined;
 
-  constructor(harnessUrl: string, allowedAudience: string) {
+  constructor(harnessUrl: string, allowedAudience: string[]) {
     super(async (request, response) => {
       const token = /^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ''))?.[1];
       if (token === undefined || !(await this.admits(token, allowedAudience))) {
@@ -38,7 +38,7 @@ export class FakeJwtAuthorizer extends HttpFake {
     this.issuer = undefined;
   }
 
-  private async admits(token: string, audience: string): Promise<boolean> {
+  private async admits(token: string, audience: string[]): Promise<boolean> {
     if (this.discoveryUrl === undefined) return false;
     const { issuer, keys } = await (this.issuer ??= discover(this.discoveryUrl));
     try {

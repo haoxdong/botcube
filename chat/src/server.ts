@@ -1,5 +1,6 @@
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
+import { startProxyRelayFromEnv } from './proxy-relay.js';
 import { chatTable } from './config.js';
 import { assumeRoleTurnCredentials } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
@@ -271,6 +272,12 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
 
 /** Serve the Chat Service with this Cartridge, configured from the environment, on $PORT. */
 export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.ProcessEnv = process.env): ServerType {
+  // Listening first: every client, and the collector sidecar beside this container, sends through it.
+  const proxyRelay = startProxyRelayFromEnv(env);
+  proxyRelay?.catch((error: unknown) => {
+    console.error('The proxy relay could not start', error);
+    process.exit(1);
+  });
   const adapters = deploymentAdapters(env);
   const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
@@ -302,6 +309,15 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
   // ws types `noServer` as `boolean | undefined`, which exactOptionalPropertyTypes keeps from matching.
   const websocket = { server: new WebSocketServer({ noServer: true }) as unknown as WebSocketServerLike };
   const tracing = startChatTracing(env);
+  const startupCredentials = [
+    ...(config.turnSummaryModel.kind === 'openai-compatible' ? [config.turnSummaryModel.endpoint.credential] : []),
+    ...(tracing?.credential ? [tracing.credential] : []),
+    ...(built?.startupCredentials ?? []),
+  ];
+  Promise.all(startupCredentials.map((source) => source.get())).catch((error: unknown) => {
+    console.error(`The Chat Service could not read a credential at startup: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });
   let shutdown: Promise<void> | undefined;
   const stopTracing = () => shutdown ??= tracing?.shutdown() ?? Promise.resolve();
   const webOrigins = config.corsOrigins ?? built?.corsOrigins ?? LOCAL_UI_ORIGINS;
@@ -328,6 +344,7 @@ export function serveChatService(cartridge: CartridgeFactory, env: NodeJS.Proces
   });
   process.on('exit', reportUnsavedTurnSummaries);
   server.once('close', () => {
+    void proxyRelay?.then((relay) => relay.close(), () => undefined);
     stopScheduledRuns?.();
     void stopTracing().catch((error: unknown) => { console.error('Chat tracing shutdown failed', error); });
     unregisterTaskStop?.();

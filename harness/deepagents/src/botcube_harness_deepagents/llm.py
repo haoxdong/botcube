@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import functools
+import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -14,6 +16,7 @@ from langchain_core.outputs import ChatGenerationChunk
 from opentelemetry import baggage, propagate
 
 from . import aws_clients, turn_timing
+from .credential_source import CredentialSource, credential_source
 from .definition import ModelRelay
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
@@ -29,9 +32,13 @@ DEFAULT_EFFORT = 'medium'
 DEFAULT_MAX_TOKENS = 128
 # A model on the account's ChatGPT plan, named by its slug in the plan's catalog (ADR 0078).
 PLAN_MODEL_PREFIX = 'openai-plan:'
-# The Deployment Config's `models` section, as the deploy hands it over: `MODELS_ENV` in botcube/deployment-config.
-MODELS_BASE_URL_ENV = 'BOTCUBE_MODELS_BASE_URL'
-MODELS_API_KEY_SECRET_ENV = 'BOTCUBE_MODELS_API_KEY_SECRET_ARN'
+# The Deployment Config's `models` Endpoint, as JSON the deploy hands over: `MODELS_ENV` in botcube/deployment-config.
+MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
+ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers'})
+# The Endpoint's one retry rule (ADR 0091), as botcube/chat's `endpoint.ts` keeps it: a gateway's answer before any body.
+RETRIED_STATUSES = frozenset({502, 503, 504})
+ENDPOINT_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 0.2
 # The `type` of the classified Plan Usage errors the Credential Service relay answers.
 PLAN_USAGE_ERROR_TYPE = 'plan_usage'
 
@@ -92,7 +99,7 @@ def build_model(
     """
     selected_model = resolve_model(model)
 
-    if not selected_model.startswith(PLAN_MODEL_PREFIX) and (endpoint := openai_compatible_endpoint()) is not None:
+    if not selected_model.startswith(PLAN_MODEL_PREFIX) and (endpoint := models_endpoint()) is not None:
         # Every model but Plan Usage's runs on the endpoint, by its key in the bot settings; the Bedrock default is no key there.
         key = model or os.environ.get('BOTCUBE_MODEL')
         if not key:
@@ -140,39 +147,65 @@ def build_model(
 
 
 @dataclass(frozen=True)
-class OpenAICompatibleEndpoint:
-    """The Deployment Config's `models` section on an OpenAI-compatible endpoint (ADR 0091)."""
+class ModelsEndpoint:
+    """The Deployment Config's `models` section on an OpenAI-compatible Endpoint (ADR 0091)."""
 
     base_url: str
-    api_key: str = field(repr=False)
+    headers: Mapping[str, str]
+    credential: CredentialSource = field(repr=False)
 
 
 @functools.cache
-def openai_compatible_endpoint() -> OpenAICompatibleEndpoint | None:
-    """The endpoint the deploy names in `BOTCUBE_MODELS_*`, its API key read from Secrets Manager once; None on Bedrock."""
-    base_url = os.getenv(MODELS_BASE_URL_ENV, '').strip().rstrip('/')
-    secret_arn = os.getenv(MODELS_API_KEY_SECRET_ENV, '').strip()
-    if not base_url and not secret_arn:
+def models_endpoint() -> ModelsEndpoint | None:
+    """The Endpoint the deploy names in `BOTCUBE_MODELS_ENDPOINT`, its credential read once now so startup fails on it; None on Bedrock."""
+    raw = os.getenv(MODELS_ENDPOINT_ENV, '').strip()
+    if not raw:
         return None
-    if not base_url or not secret_arn:
-        raise RuntimeError(f'An OpenAI-compatible models endpoint needs both {MODELS_BASE_URL_ENV} and {MODELS_API_KEY_SECRET_ENV}')
-    parts = secret_arn.split(':')
-    if len(parts) < 7 or parts[2] != 'secretsmanager':
-        raise RuntimeError(f'{MODELS_API_KEY_SECRET_ENV} is not a Secrets Manager secret ARN: {secret_arn}')
-    client = aws_clients.session().client('secretsmanager', region_name=parts[3])
-    api_key = client.get_secret_value(SecretId=secret_arn).get('SecretString')
-    if not api_key:
-        raise RuntimeError(f'The secret {MODELS_API_KEY_SECRET_ENV} names holds no string')
-    return OpenAICompatibleEndpoint(base_url=base_url, api_key=api_key)
+    try:
+        config = json.loads(raw)
+    except ValueError:
+        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: not JSON') from None
+    if unknown := sorted(set(config) - ENDPOINT_FIELDS):
+        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: unknown field {", ".join(unknown)}')
+    if missing := sorted({'url', 'credential'} - set(config)):
+        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: missing field {", ".join(missing)}')
+    endpoint = ModelsEndpoint(
+        base_url=config['url'].rstrip('/'),
+        headers=dict(config.get('headers') or {}),
+        credential=credential_source('models', config['credential']),
+    )
+    endpoint.credential.get()
+    return endpoint
 
 
-def _openai_compatible_model(key: str, endpoint: OpenAICompatibleEndpoint, max_tokens: int | None) -> Any:
+def _endpoint_client() -> Any:
+    """The HTTP client of an Endpoint's model: it retries 502, 503 and 504, which a gateway answers before any body."""
+    import httpx
+    import openai
+
+    class EndpointClient(openai.DefaultAsyncHttpxClient):
+        async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+            for attempt in range(1, ENDPOINT_ATTEMPTS):
+                response = await super().send(request, **kwargs)
+                if response.status_code not in RETRIED_STATUSES:
+                    return response
+                await response.aclose()
+                await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
+            return await super().send(request, **kwargs)
+
+    return EndpointClient()
+
+
+def _openai_compatible_model(key: str, endpoint: ModelsEndpoint, max_tokens: int | None) -> Any:
     from langchain_openai import ChatOpenAI
 
     model = ChatOpenAI(
         model=key,
         base_url=endpoint.base_url,
-        api_key=endpoint.api_key,
+        api_key=lambda: endpoint.credential.get().value,
+        default_headers=dict(endpoint.headers),
+        http_async_client=_endpoint_client(),
+        max_retries=0,
         max_completion_tokens=DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens,
         streaming=True,
         stream_usage=True,

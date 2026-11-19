@@ -20,11 +20,15 @@ const EXAMPLE_BOT = {
 const THEME = { agentBody: '#f5d0a9', agentOutline: '#d9915a', agentDeep: '#9a5a2b', agentDeepest: '#4a2810' };
 
 const DEFAULT_SECTIONS = {
+  allowCommandCredentials: false,
   identity: { kind: 'botcube-accounts' },
   models: { kind: 'bedrock' },
   harnessAuth: { kind: 'sigv4' },
   turnCredentials: { kind: 'web-identity' },
   schedules: { kind: 'eventbridge-scheduler' },
+  liveView: { kind: 'agentcore-browser' },
+  telemetry: { kind: 'xray' },
+  proxy: { kind: 'none' },
 };
 
 function configFile(config: unknown, bot: unknown = EXAMPLE_BOT): string {
@@ -37,25 +41,31 @@ function configFile(config: unknown, bot: unknown = EXAMPLE_BOT): string {
 
 const ENTERPRISE_MODELS = {
   kind: 'openai-compatible',
-  baseUrl: 'https://models.example.com/v1',
-  apiKey: { secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key' },
+  url: 'https://models.example.com/v1',
+  credential: { kind: 'file', path: '/run/secrets/botcube/models-api-key' },
+  headers: { 'x-tenant': 'botcube-example' },
   turnSummaryModel: 'example-summary',
 };
 
+const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
+const COMMAND = { kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'] };
+
+const OIDC_CLIENT_SECRET = { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' };
 const OIDC = {
   kind: 'oidc',
   issuer: 'https://login.example.com',
-  clientId: 'botcube',
-  clientSecret: { secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' },
+  clients: [{ clientId: 'botcube', clientSecret: OIDC_CLIENT_SECRET }],
 };
 
 /** Where the enterprise example leaves the defaults, one section per seam. */
 const ENTERPRISE_SECTIONS = {
   identity: OIDC,
   models: ENTERPRISE_MODELS,
-  harnessAuth: { kind: 'jwt-bearer', audience: 'botcube-harness' },
+  harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] },
   turnCredentials: { kind: 'assume-role' },
   schedules: { kind: 'table-poller' },
+  telemetry: { kind: 'otlp' },
+  proxy: { kind: 'forward' },
 };
 
 describe('the examples', () => {
@@ -70,52 +80,155 @@ describe('the examples', () => {
 
   it('the public example creates its own resources and talks to the internet directly', () => {
     const { config } = loadDeployment(example('public'));
-    expect([config.existing, config.telemetry, config.proxy]).toEqual([undefined, undefined, undefined]);
+    expect([config.supplied, config.proxy]).toEqual([undefined, { kind: 'none' }]);
+    expect(config.imageRegistry).toBe('public.ecr.aws');
   });
 
-  it('the enterprise example brings its own resources, collector and proxy', () => {
+  it('the enterprise example supplies its own resources, collector, proxy and image mirror', () => {
     const { config } = loadDeployment(example('enterprise'));
-    expect(Object.keys(config.existing ?? {})).toEqual(['network', 'kmsKeys', 'tables', 'buckets']);
-    expect(config.telemetry).toEqual({ otlpEndpoint: 'http://otel-collector.example.com:4318/v1/traces' });
-    expect(config.proxy).toEqual({ url: 'http://proxy.example.com:3128', noProxy: ['.amazonaws.com'] });
+    expect(Object.keys(config.supplied ?? {})).toEqual(['network', 'kmsKeys', 'tables', 'buckets']);
+    expect(config.imageRegistry).toBe('mirror.example.com/ecr-public');
+    expect(config.telemetry).toEqual({
+      kind: 'otlp',
+      url: 'http://otel-collector.example.com:4318/v1/traces',
+      credential: { kind: 'file', path: '/run/secrets/botcube/telemetry-token' },
+      headers: { 'x-tenant': 'botcube-example' },
+    });
+    expect(config.proxy).toEqual({
+      kind: 'forward',
+      url: 'http://proxy.example.com:3128',
+      noProxy: ['.amazonaws.com'],
+      credential: { kind: 'file', path: '/run/secrets/botcube/proxy-token' },
+      headers: { 'x-egress-route': 'botcube-example' },
+    });
   });
 });
 
 describe('a Deployment Config', () => {
+  it("stops on a bot whose settings watch the live view the deployment turns off, naming both", () => {
+    const path = configFile({ bot: './bot.json', liveView: { kind: 'none' } });
+    expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: liveView: none, but the bot settings turn agentComputer.liveBrowser on`);
+    const off = configFile({ bot: './bot.json', liveView: { kind: 'none' } }, { ...EXAMPLE_BOT, agentComputer: { ...EXAMPLE_BOT.agentComputer, liveBrowser: false } });
+    expect(loadDeployment(off).config.liveView).toEqual({ kind: 'none' });
+  });
+
   it('opens every missing section on its default adapter', () => {
-    expect(loadDeployment(configFile({ bot: './bot.json' })).config).toEqual({ bot: './bot.json', ...DEFAULT_SECTIONS });
+    expect(loadDeployment(configFile({ bot: './bot.json' })).config).toEqual({ bot: './bot.json', ...DEFAULT_SECTIONS, imageRegistry: 'public.ecr.aws' });
   });
 
   it.each<[string, object, string]>([
     ['an unknown key', { bot: './bot.json', identty: { kind: 'botcube-accounts' } }, 'identty: Unrecognized key'],
     ['an unknown key in a section', { bot: './bot.json', schedules: { kind: 'eventbridge-scheduler', table: 'x' } }, 'schedules.table: Unrecognized key'],
     ['an unknown kind', { bot: './bot.json', models: { kind: 'vertex' } }, "models.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'"],
-    ['an OpenAI-compatible endpoint without its API key', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, apiKey: undefined } }, 'models.apiKey: '],
-    ['an API key written in place of its secret', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, apiKey: 'sk-live' } }, 'models.apiKey: '],
-    ['an OpenAI-compatible endpoint over plain HTTP', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, baseUrl: 'http://models.example.com/v1' } }, 'models.baseUrl: '],
+    ['the deleted API key field', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, apiKey: { secretArn: SECRET_ARN } } }, 'models.apiKey: Unrecognized key'],
+    ['an OpenAI-compatible endpoint without its credential', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: undefined } }, 'models.credential: '],
+    ['an API key written in place of its source', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: 'sk-live' } }, 'models.credential: '],
+    ['an unknown credential source', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { kind: 'vault', path: 'x' } } },
+      "models.credential.kind: Invalid discriminator value. Expected 'secret' | 'file' | 'command'"],
+    ['an unknown field on a credential source', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { kind: 'file', path: '/run/key', format: 'json' } } },
+      'models.credential.format: Unrecognized key'],
+    ['a secret named by something other than its ARN', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { kind: 'secret', secretArn: 'models-api-key' } } },
+      'models.credential.secretArn: '],
+    ['a credential file by a relative path', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { kind: 'file', path: 'secrets/key' } } },
+      'models.credential.path: '],
+    ['a command with no program', { bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, credential: { kind: 'command', command: [] } } },
+      'models.credential.command.0: '],
+    ['a botcube models credential', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: { kind: 'botcube', audience: 'models' } } },
+      'models.credential: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
+    ['a botcube OIDC client secret', { bot: './bot.json', identity: { kind: 'oidc', issuer: 'https://login.example.com', clients: [{ clientId: 'botcube', clientSecret: { kind: 'botcube', audience: 'login.example.com' } }] } },
+      'identity.clients.0.clientSecret: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
+    ['a command source without the opt-in',{ bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: COMMAND } },
+      'models.credential: A command credential runs only when allowCommandCredentials is true'],
+    ['a header that is not a header name', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, headers: { 'x tenant': 'a' } } }, 'models.headers.x tenant: '],
+    ['an authorization header beside the credential', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, headers: { Authorization: 'Bearer sk-live' } } },
+      'models.headers.Authorization: The credential sets Authorization'],
+    ['an OpenAI-compatible endpoint over plain HTTP', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } }, 'models.url: '],
     ['an OpenAI-compatible endpoint without a turn summary model', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, turnSummaryModel: undefined } }, 'models.turnSummaryModel: '],
     ['a section without its kind', { bot: './bot.json', harnessAuth: {} }, "harnessAuth.kind: Invalid discriminator value. Expected 'sigv4' | 'jwt-bearer'"],
-    ['a JWT bearer without its audience', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer' } }, 'harnessAuth.audience: '],
+    ['a JWT bearer without its client', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer' } }, 'harnessAuth.clients: '],
+    ['a JWT bearer on the old audience field', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], audience: 'botcube-harness' } },
+      'harnessAuth.audience: Unrecognized key'],
+    ['a JWT bearer from an issuer other than BotCube', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', issuer: 'https://login.example.com', clients: [{ clientId: 'botcube-harness' }] } },
+      'harnessAuth.issuer: '],
     ...['sts.amazonaws.com', 'botcube-user', 'botcube-chat-service'].map(audience => [
-      `a JWT bearer on the reserved audience ${audience}`, { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', audience } },
-      `harnessAuth.audience: The Harness audience ${audience} is reserved for another kind of BotCube token`,
+      `a JWT bearer on the reserved audience ${audience}`, { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }, { clientId: audience }] } },
+      `harnessAuth.clients.1.clientId: The Harness audience ${audience} is reserved for another kind of BotCube token`,
     ] as const),
     ['a missing bot settings file reference', {}, 'bot: '],
-    ['an OIDC provider without its client secret', { bot: './bot.json', identity: { ...OIDC, clientSecret: undefined } }, 'identity.clientSecret: '],
-    ['a client secret given as its value', { bot: './bot.json', identity: { ...OIDC, clientSecret: 's3cret' } }, 'identity.clientSecret: '],
+    ['an OIDC provider without its client secret', { bot: './bot.json', identity: { ...OIDC, clients: [{ clientId: 'botcube' }] } }, 'identity.clients.0.clientSecret: '],
+    ['a client secret given as its value', { bot: './bot.json', identity: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: 's3cret' }] } }, 'identity.clients.0.clientSecret: '],
+    ['a client secret named by its ARN alone', { bot: './bot.json', identity: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: { secretArn: OIDC_CLIENT_SECRET.secretArn } }] } },
+      'identity.clients.0.clientSecret.kind: '],
+    ['an OIDC provider with no client', { bot: './bot.json', identity: { ...OIDC, clients: [] } }, 'identity.clients.0: '],
+    ['a sign-in client listed twice', { bot: './bot.json', identity: { ...OIDC, clients: [...OIDC.clients, ...OIDC.clients] } },
+      'identity.clients.1.clientId: Client botcube is already identity.clients.0.clientId'],
+    ...['clientId', 'clientSecret'].map(field => [
+      `the old identity.${field} field`, { bot: './bot.json', identity: { ...OIDC, [field]: field === 'clientId' ? 'botcube' : { secretArn: OIDC_CLIENT_SECRET.secretArn } } },
+      `identity.${field}: Unrecognized key`,
+    ] as const),
+    ['a command client secret without the opt-in', { bot: './bot.json', identity: { ...OIDC, clients: [{ clientId: 'botcube', clientSecret: COMMAND }] } },
+      'identity.clients.0.clientSecret: A command credential runs only when allowCommandCredentials is true'],
     ['an OIDC issuer over http beyond this machine', { bot: './bot.json', identity: { ...OIDC, issuer: 'http://login.example.com' } }, 'identity.issuer: '],
-    ['an unknown existing resource', { bot: './bot.json', existing: { queues: {} } }, 'existing.queues: Unrecognized key'],
-    ['a KMS key that is not an ARN', { bot: './bot.json', existing: { kmsKeys: { vault: 'alias/vault' } } }, 'existing.kmsKeys.vault: '],
+    ['an unknown supplied resource', { bot: './bot.json', supplied: { queues: {} } }, 'supplied.queues: Unrecognized key'],
+    ['the old existing section', { bot: './bot.json', existing: {} }, 'existing: Unrecognized key'],
+    ['a KMS key that is not an ARN', { bot: './bot.json', supplied: { kmsKeys: { vault: 'alias/vault' } } }, 'supplied.kmsKeys.vault: '],
     [
       "another table's stream",
-      { bot: './bot.json', existing: { tables: { chat: { tableName: 'chat', streamArn: 'arn:aws:dynamodb:us-east-1:000000000000:table/other/stream/2026' } } } },
-      "existing.tables.chat.streamArn: The stream is table other's, not chat's",
+      { bot: './bot.json', supplied: { tables: { chat: { tableName: 'chat', streamArn: 'arn:aws:dynamodb:us-east-1:000000000000:table/other/stream/2026' } } } },
+      "supplied.tables.chat.streamArn: The stream is table other's, not chat's",
     ],
-    ['a proxy that is not an http(s) URL', { bot: './bot.json', proxy: { url: 'socks5://proxy:1080' } }, 'proxy.url: '],
-    ['an OTLP endpoint with no URL', { bot: './bot.json', telemetry: {} }, 'telemetry.otlpEndpoint: '],
+    ['a proxy that is not an http(s) URL', { bot: './bot.json', proxy: { kind: 'forward', url: 'socks5://proxy:1080' } }, 'proxy.url: '],
+    ['a proxy in the old shape, with no kind', { bot: './bot.json', proxy: { url: 'http://proxy:3128' } }, 'proxy.kind: '],
+    ['a Proxy-Authorization header beside the proxy credential', { bot: './bot.json', proxy: { kind: 'forward', url: 'http://proxy:3128', headers: { 'Proxy-Authorization': 'Basic x' } } },
+      'proxy.headers.Proxy-Authorization: The credential sets Proxy-Authorization'],
+    ...([
+      ['a secret', { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:000000000000:secret:proxy-token' }],
+      ['a command', COMMAND],
+      ['a botcube', { kind: 'botcube', audience: 'proxy' }],
+    ] satisfies [string, object][]).map(([kind, credential]): [string, object, string] => [
+      `${kind} proxy credential`,
+      { bot: './bot.json', allowCommandCredentials: true, proxy: { kind: 'forward', url: 'http://proxy:3128', credential } },
+      'proxy.credential: A proxy credential is read from a file; any other source would reach out through the proxy it authenticates',
+    ]),
+    ['an image registry given as a URL', { bot: './bot.json', imageRegistry: 'https://mirror.example.com' }, 'imageRegistry: Expected a registry host and optional path'],
+    ['an image registry with a trailing slash', { bot: './bot.json', imageRegistry: 'mirror.example.com/' }, 'imageRegistry: Expected a registry host and optional path'],
+    ['an OTLP endpoint with no URL', { bot: './bot.json', telemetry: { kind: 'otlp' } }, 'telemetry.url: '],
+    ['the old telemetry.otlpEndpoint field', { bot: './bot.json', telemetry: { otlpEndpoint: 'http://collector:4318/v1/traces' } }, 'telemetry.kind: '],
+    ['an authorization header beside the telemetry credential', { bot: './bot.json', telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', headers: { authorization: 'Bearer x' } } },
+      'telemetry.headers.authorization: The credential sets Authorization'],
+    ['a botcube telemetry credential', { bot: './bot.json', telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: { kind: 'botcube', audience: 'collector' } } },
+      'telemetry.credential: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
+    ['a command telemetry credential without the opt-in', { bot: './bot.json', telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND } },
+      'telemetry.credential: A command credential runs only when allowCommandCredentials is true'],
   ])('stops on %s and names the field', (_, config, field) => {
     const path = configFile(config);
     expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: ${field}`);
+  });
+
+  it.each([
+    ['a Secrets Manager secret', { kind: 'secret', secretArn: SECRET_ARN }],
+    ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/models-api-key' }],
+  ])('gives the models endpoint its credential from %s', (_, credential) => {
+    const models = { ...ENTERPRISE_MODELS, credential };
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+  });
+
+  it('takes a second sign-in client as a list entry', () => {
+    const clients = [...OIDC.clients, { clientId: 'botcube-mobile', clientSecret: { kind: 'file', path: '/run/secrets/botcube/mobile-client-secret' } }];
+    expect(loadDeployment(configFile({ bot: './bot.json', identity: { ...OIDC, clients } })).config.identity).toMatchObject({ clients });
+  });
+
+  it('runs an opted-in command for the models credential, 30 s at most unless it says otherwise', () => {
+    const config = loadDeployment(configFile({ bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, credential: COMMAND } })).config;
+    expect(config).toMatchObject({ allowCommandCredentials: true, models: { credential: { ...COMMAND, timeoutSeconds: 30 } } });
+  });
+
+  it.each([
+    ['a Secrets Manager secret', OIDC_CLIENT_SECRET],
+    ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/oidc-client-secret' }],
+  ])('signs Users in with the OIDC client secret from %s', (_, clientSecret) => {
+    const identity = { ...OIDC, clients: [{ clientId: 'botcube', clientSecret }] };
+    expect(loadDeployment(configFile({ bot: './bot.json', identity })).config.identity).toEqual(identity);
   });
 
   it('takes a stand-in OIDC issuer over http on this machine', () => {

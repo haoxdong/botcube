@@ -1,7 +1,7 @@
-# syntax=docker/dockerfile:1
 # Build context: botcube/harness/deepagents/
 # The active Cartridge stages its tool bundle before this generic image builds.
-FROM public.ecr.aws/docker/library/rust:1.88-slim-bookworm AS efs-utils
+ARG REGISTRY=public.ecr.aws
+FROM ${REGISTRY}/docker/library/rust:1.88-slim-bookworm AS efs-utils
 RUN --mount=type=secret,id=build_ca,mode=0444 \
     if [ -f /run/secrets/build_ca ]; then \
       export CURL_CA_BUNDLE=/run/secrets/build_ca APT_CONFIG=/tmp/efs-build-apt.conf CARGO_HTTP_CAINFO=/run/secrets/build_ca; \
@@ -13,7 +13,7 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
     mkdir /efs-utils && tar -xzf /tmp/efs.tar.gz -C /efs-utils --strip-components=1 && \
     cd /efs-utils && ./build-deb.sh
 
-FROM public.ecr.aws/docker/library/python:3.13-slim AS base
+FROM ${REGISTRY}/docker/library/python:3.13-slim AS base
 COPY --from=efs-utils /efs-utils/build/amazon-efs-utils*.deb /tmp/
 
 # Node.js for a Cartridge CLI + AWS CLI for agent-browser credential resolution
@@ -31,8 +31,10 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
     ln -s /usr/bin/fdfind /usr/local/bin/fd && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && rm -f /tmp/botcube-build-apt.conf
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# uv from PyPI, so every image comes from the one registry.
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    pip install --no-cache-dir uv==0.12.19
 ENV UV_COMPILE_BYTECODE=1
 
 WORKDIR /opt/python-tools

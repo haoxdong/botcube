@@ -708,20 +708,31 @@ describe('a signed-in User deleting their own account', () => {
   const EXAMPLE_BOT = fileURLToPath(new URL('../../examples/bot/bot.json', import.meta.url));
   const UI = 'http://localhost:3001/';
   const INTROSPECTION_SECRET = 'stand-in-invocation-secret';
+  const CLIENT_SECRET = 'stand-in-client-secret';
+  /** A second client, such as a mobile app's, which a sign-in names to use. */
+  const SECOND_CLIENT = { clientId: 'botcube-mobile', secret: 'stand-in-mobile-client-secret' };
   let issuer: StandInOidcIssuer;
   let config: string;
   beforeAll(async () => {
     issuer = await new StandInOidcIssuer().listen();
-    const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { identity: Record<string, unknown> };
-    config = join(mkdtempSync(join(tmpdir(), 'stock-oidc-')), 'deployment-config.json');
-    writeFileSync(config, JSON.stringify({ bot: EXAMPLE_BOT, identity: { ...enterprise.identity, issuer: issuer.url } }));
+    const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { identity: { clients: { clientId: string }[] } };
+    const dir = mkdtempSync(join(tmpdir(), 'stock-oidc-'));
+    config = join(dir, 'deployment-config.json');
+    // The client secret as a secret injector mounts it, in place of the example's Secrets Manager secret.
+    writeFileSync(join(dir, 'client-secret'), `${CLIENT_SECRET}\n`);
+    writeFileSync(join(dir, 'mobile-client-secret'), `${SECOND_CLIENT.secret}\n`);
+    const clients = [
+      ...enterprise.identity.clients.map(({ clientId }) => ({ clientId, clientSecret: { kind: 'file', path: join(dir, 'client-secret') } })),
+      { clientId: SECOND_CLIENT.clientId, clientSecret: { kind: 'file', path: join(dir, 'mobile-client-secret') } },
+    ];
+    writeFileSync(config, JSON.stringify({ bot: EXAMPLE_BOT, identity: { ...enterprise.identity, issuer: issuer.url, clients } }));
   });
   afterAll(async () => { await issuer.close(); });
 
   async function oidcService(table: string, endpoint: string) {
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
-      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: config, BOTCUBE_OIDC_CLIENT_SECRET: 'stand-in-client-secret',
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: config,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: INTROSPECTION_SECRET,
     };
     const server = serveChatService(stockChatService(env), env);
@@ -777,6 +788,35 @@ describe('a signed-in User deleting their own account', () => {
 
       expect([answer.status, await answer.json()]).toEqual([200, { active: true, sub: accountId, exp: expect.any(Number) }]);
       expect((await introspect('not-signed')).status).toBe(401);
+    });
+  });
+
+  it("redeems the User's sign-in code with the client secret its Credential Source reads", async () => {
+    await withService(async (service) => {
+      issuer.clientSecrets.length = 0;
+      await signIn(service.browser(), 'ada');
+
+      expect(issuer.clientSecrets).toEqual([CLIENT_SECRET]);
+    });
+  });
+
+  it('signs in with the second client when the sign-in names it, and redeems the code with that client', async () => {
+    await withService(async (service) => {
+      issuer.clientSecrets.length = 0;
+      const browser = service.browser();
+      const login = await browser.get(`/auth/oidc/login?client=${SECOND_CLIENT.clientId}&return_to=${encodeURIComponent(UI)}`);
+      const authorize = new URL(login.headers.get('location') ?? '');
+
+      expect(authorize.searchParams.get('client_id')).toBe(SECOND_CLIENT.clientId);
+      expect((await throughProvider(browser, authorize, 'ada')).status).toBe(302);
+      expect(issuer.clientSecrets).toEqual([SECOND_CLIENT.secret]);
+    });
+  });
+
+  it('refuses a sign-in naming a client the Deployment Config does not list', async () => {
+    await withService(async (service) => {
+      const login = await service.browser().get(`/auth/oidc/login?client=unlisted&return_to=${encodeURIComponent(UI)}`);
+      expect([login.status, await login.json()]).toEqual([400, { detail: 'client is not a sign-in client of this bot' }]);
     });
   });
 

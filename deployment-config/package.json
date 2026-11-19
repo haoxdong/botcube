@@ -7,12 +7,14 @@
   },
   "exports": {
     ".": "./schema.ts",
+    "./blocks": "./blocks.ts",
     "./load": "./load.ts",
     "./parse": "./parse.ts",
     "./footprint": "./footprint.ts",
     "./models": "./models.ts",
     "./seams": "./seams.d.ts",
-    "./environment": "./environment.ts"
+    "./environment": "./environment.ts",
+    "./telemetry": "./telemetry.ts"
   },
   "scripts": {
     "emit": "node emit.ts",

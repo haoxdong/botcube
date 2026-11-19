@@ -3,15 +3,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { App } from 'aws-cdk-lib';
-import { proxyEnvironment } from '../../../../deployment-config/environment.js';
+import { commandCredentialOptIn, proxyEnvironment } from '../../../../deployment-config/environment.js';
 import { loadDeployment } from '../../../../deployment-config/load.js';
 import { modelsDeployment } from '../../../../deployment-config/models.js';
 import type { DeploymentConfig } from '../../../../deployment-config/schema.js';
+import { telemetryDeployment } from '../../../../deployment-config/telemetry.js';
 import { addAgentCoreStacks } from '../../../agentcore/cdk/lib/agentcore-app.js';
 import { loadDeployConfig } from '../../../agentcore/cdk/lib/deploy-config.js';
 import { cartridgeIdentity } from '../lib/cartridge.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { defineProduction, type ProductionOptions } from '../lib/production.js';
+import { placeLambdasInNetwork } from '../lib/supplied-network.js';
 
 /** The examples' deploy names and AgentCore spec, still in the Always On deploy directory until it moves under them. */
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../templates/always-on/deploy');
@@ -38,34 +40,42 @@ interface ExampleOptions {
 export async function defineExample(app: App, configPath: string, options: ExampleOptions): Promise<void> {
   const { config } = loadDeployment(configPath);
   const deploymentConfig = imageDeploymentConfig(configPath, config.bot);
-  const network = config.existing?.network;
+  const network = config.supplied?.network;
   const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
   const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(cartridgeIdentity(EXAMPLE_DEPLOY_ROOT))), network);
   const environment = proxyEnvironment(config);
-  const otlpEndpoint = config.telemetry?.otlpEndpoint;
-  const { kmsKeys, tables, buckets } = config.existing ?? {};
+  // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
+  const commandOptIn = commandCredentialOptIn(config, process.env);
+  const telemetry = telemetryDeployment(config.telemetry);
+  const { kmsKeys, tables, buckets } = config.supplied ?? {};
   const seams = seamWiring(config);
   defineProduction(app, {
     ...seams.production,
-    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, existingNetwork: network !== undefined,
+    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, suppliedNetwork: network !== undefined, imageRegistry: config.imageRegistry,
     origin: options.origin?.(identity),
-    ...(tables?.chat ? { storage: { existingChatTable: tables.chat } } : {}),
-    ...(buckets?.connectionLogs ? { originConfig: { existingConnectionLogsBucketName: buckets.connectionLogs } } : {}),
-    chat: { ...seams.chat, deploymentConfig, proxyEnvironment: environment, ...(otlpEndpoint ? { otlpEndpoint } : {}) },
+    ...(tables?.chat ? { storage: { suppliedChatTable: tables.chat } } : {}),
+    ...(buckets?.connectionLogs ? { originConfig: { suppliedConnectionLogsBucketName: buckets.connectionLogs } } : {}),
+    chat: {
+      ...seams.chat, deploymentConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: config.imageRegistry,
+      telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: telemetry.chatService, secretArns: telemetry.secretArns },
+    },
     credentials: {
-      environment,
-      ...(tables?.vault ? { existingVaultTableName: tables.vault.tableName } : {}),
-      ...(kmsKeys?.vault ? { existingVaultKeyArn: kmsKeys.vault } : {}),
-      ...(kmsKeys?.sheet ? { existingSheetKeyArn: kmsKeys.sheet } : {}),
+      environment: proxyEnvironment(config),
+      ...(tables?.vault ? { suppliedVaultTableName: tables.vault.tableName } : {}),
+      ...(kmsKeys?.vault ? { suppliedVaultKeyArn: kmsKeys.vault } : {}),
+      ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet } : {}),
     },
   });
   const agentCore = await loadDeployConfig(EXAMPLE_DEPLOY_ROOT, process.cwd());
   addAgentCoreStacks(app, { ...agentCore, identity: inNetwork(agentCore.identity, network) }, options.commit, {
     ...seams.agentCore,
-    runtimeEnvironment: { ...environment, ...(otlpEndpoint ? { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: otlpEndpoint } : {}) },
-    ...(kmsKeys?.memory ? { memoryKeyArn: kmsKeys.memory } : {}),
-    ...(kmsKeys?.images ? { imageKeyArn: kmsKeys.images } : {}),
+    imageRegistry: config.imageRegistry,
+    runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn },
+    telemetry: { kind: config.telemetry.kind, secretArns: telemetry.secretArns },
+    ...(kmsKeys?.memory ? { suppliedMemoryKeyArn: kmsKeys.memory } : {}),
+    ...(kmsKeys?.images ? { suppliedImageKeyArn: kmsKeys.images } : {}),
   }, config.turnCredentials.kind);
+  if (network) placeLambdasInNetwork(app, { vpcId: network.vpcId, privateSubnetIds: network.privateSubnets.map(({ subnetId }) => subnetId) });
 }
 
 /**
@@ -96,20 +106,23 @@ function seamWiring(config: DeploymentConfig) {
     production: {
       ...(models ? { models } : {}),
       turnCredentials: config.turnCredentials.kind,
-      ...(config.identity.kind === 'oidc' ? { oidcClientSecret: config.identity.clientSecret } : {}),
+      chatSecretArns:
+        config.identity.kind === 'oidc'
+          ? config.identity.clients.flatMap(({ clientSecret }) => (clientSecret.kind === 'secret' ? [clientSecret.secretArn] : []))
+          : [],
     } satisfies Partial<ProductionOptions>,
-    chat: { harnessAuth: config.harnessAuth, schedules: config.schedules.kind } satisfies ProductionOptions['chat'],
+    chat: { harnessAuth: config.harnessAuth, schedules: config.schedules.kind, liveView: config.liveView.kind } satisfies ProductionOptions['chat'],
     agentCore: { ...(models ? { models } : {}), harnessAuth: config.harnessAuth },
   };
 }
 
-type Network = NonNullable<NonNullable<DeploymentConfig['existing']>['network']>;
+type Network = NonNullable<NonNullable<DeploymentConfig['supplied']>['network']>;
 interface NetworkIdentity {
   aws: { agentCore: { privateNatBrowser?: { subnets: { id: string; availabilityZone: string }[] } }; credentialService?: { vpcId: string }; ecs?: { publicSubnets: unknown[] } };
 }
 
 /**
- * The identity with its VPC and subnets replaced by the existing network's: the origin load balancer in its public
+ * The identity with its VPC and subnets replaced by the supplied network's: the origin load balancer in its public
  * subnets; the services, browsers and Runtime in its private ones.
  */
 function inNetwork<Identity extends NetworkIdentity>(identity: Identity, network: Network | undefined): Identity {

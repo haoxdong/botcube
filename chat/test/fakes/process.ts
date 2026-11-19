@@ -30,7 +30,7 @@ const PORT_ATTEMPTS = 3;
  */
 export const BIND_ADDRESS = '0.0.0.0';
 
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, BIND_ADDRESS, resolve));
   const address = server.address();

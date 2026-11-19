@@ -14,7 +14,11 @@ export function loadDeployment(path: string): Deployment {
   const config = parsed(deploymentConfig, readJson(path, source, `${source}: no file`), source);
   const botPath = resolve(dirname(path), config.bot);
   const botSource = `Bot settings ${botPath}`;
-  return { config, bot: parseBotSettings(readJson(botPath, botSource, `${source}: bot: no file at ${botPath}`), botSource) };
+  const bot = parseBotSettings(readJson(botPath, botSource, `${source}: bot: no file at ${botPath}`), botSource);
+  if (config.liveView.kind === 'none' && bot.agentComputer.liveBrowser) {
+    throw new DeploymentConfigError(`${source}: liveView: none, but the bot settings turn agentComputer.liveBrowser on`);
+  }
+  return { config, bot };
 }
 
 function readJson(path: string, source: string, missing: string): unknown {

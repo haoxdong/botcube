@@ -34,7 +34,7 @@
     "cdk.out",
     "dist",
     "test/footprint.test.ts",
-    "test/existing-resources.test.ts",
+    "test/supplied-resources.test.ts",
     "test/chat-deployment-config.test.ts",
     "test/example-fixture.ts",
     "test/user-memory-trust.test.ts"

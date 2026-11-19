@@ -122,6 +122,12 @@ describe('a deployment on the default schedules adapter', () => {
   });
 });
 
+describe('a deployment with schedules turned off', () => {
+  it('offers no scheduled tasks, even with a run queue in its environment', () => {
+    expect(chatScheduling({ kind: 'none' }, { BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: queueUrl }, table, clients)).toBeNull();
+  });
+});
+
 describe('a deployment on the table poller', () => {
   afterEach(() => {
     vi.unstubAllEnvs();

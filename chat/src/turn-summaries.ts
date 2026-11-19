@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { MODELS_ENV } from 'botcube-deployment-config/models';
+import { MODELS_ENV, modelsEndpointFromEnv } from 'botcube-deployment-config/models';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
+import { endpoint, type Endpoint } from './endpoint.js';
 import { SessionDeletedError, type TurnActivity, type TurnSummary } from './session-metadata.js';
 
 /** A finished Turn as the summary model reads it: the user's request and the agent's last answer. */
@@ -20,13 +20,11 @@ export interface BedrockSummaryModel {
   url: string;
 }
 
-/** The summary model on an OpenAI-compatible endpoint (the Deployment Config's `models` section, ADR 0091). */
+/** The summary model on an OpenAI-compatible Endpoint (the Deployment Config's `models` section, ADR 0091). */
 export interface OpenAICompatibleSummaryModel {
   kind: 'openai-compatible';
-  /** The endpoint's chat completions URL. */
-  url: string;
+  endpoint: Endpoint;
   model: string;
-  apiKey: () => Promise<string>;
 }
 
 /** Where the summary model is called. */
@@ -41,22 +39,18 @@ You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
 /**
- * The summary model the environment names: an OpenAI-compatible endpoint when the deploy sets the Deployment Config's
- * `models` section (`MODELS_ENV`), else Bedrock. Throws naming a missing variable.
+ * The summary model the environment names: an OpenAI-compatible Endpoint when the deploy sets the Deployment Config's
+ * `models` section (`MODELS_ENV`), else Bedrock. Throws naming a missing or bad variable.
  */
 export function turnSummaryModelFromEnv(env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
-  const baseUrl = env[MODELS_ENV.baseUrl]?.replace(/\/+$/, '');
-  const secretArn = env[MODELS_ENV.apiKeySecretArn];
+  const models = modelsEndpointFromEnv(env);
   const model = env[MODELS_ENV.turnSummaryModel];
-  if (baseUrl || secretArn) {
-    if (!baseUrl || !secretArn) {
-      throw new Error(`An OpenAI-compatible models endpoint needs both ${MODELS_ENV.baseUrl} and ${MODELS_ENV.apiKeySecretArn}`);
-    }
+  if (models) {
     if (!model) throw new Error(`An OpenAI-compatible models endpoint needs ${MODELS_ENV.turnSummaryModel}, the model Turn summaries run on`);
-    return { kind: 'openai-compatible', url: `${baseUrl}/chat/completions`, model, apiKey: secretString(env, secretArn) };
+    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model };
   }
-  const endpoint = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
-  return { kind: 'bedrock', region, url: `${endpoint}/model/${encodeURIComponent(model || MODEL_ID)}/converse` };
+  const bedrock = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
+  return { kind: 'bedrock', region, url: `${bedrock}/model/${encodeURIComponent(model || MODEL_ID)}/converse` };
 }
 
 /** The summarizer for this summary model. */
@@ -65,31 +59,6 @@ export function turnSummarizer(model: TurnSummaryModel): TurnSummarizer {
     case 'bedrock': return bedrockTurnSummarizer(model);
     case 'openai-compatible': return openAICompatibleTurnSummarizer(model);
   }
-}
-
-/**
- * A Secrets Manager secret's string, read in the secret's own region with the Chat Service's AWS credentials on first
- * use and kept; a failed read is tried again on the next use.
- */
-function secretString(env: NodeJS.ProcessEnv, secretArn: string): () => Promise<string> {
-  const region = secretArn.split(':')[3];
-  if (!region) throw new Error(`${MODELS_ENV.apiKeySecretArn} is not a secret ARN: ${secretArn}`);
-  const endpoint = env.AWS_ENDPOINT_URL_SECRETS_MANAGER;
-  let reading: Promise<string> | undefined;
-  const read = async () => {
-    const client = new SecretsManagerClient({ region, ...(endpoint ? { endpoint } : {}) });
-    try {
-      const { SecretString } = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
-      if (!SecretString) throw new Error('The models API key secret holds no string');
-      return SecretString;
-    } finally {
-      client.destroy();
-    }
-  };
-  return () => (reading ??= read().catch((error: unknown) => {
-    reading = undefined;
-    throw error;
-  }));
 }
 
 const SUMMARY_PARAMETERS = {
@@ -104,11 +73,11 @@ const SUMMARY_PARAMETERS = {
 type ChatCompletion = { choices?: { message?: { tool_calls?: { function?: { name?: unknown; arguments?: unknown } }[] } }[] };
 
 /** The summary model on an OpenAI-compatible endpoint, answering with the same forced tool as on Bedrock. */
-export function openAICompatibleTurnSummarizer({ url, model, apiKey }: OpenAICompatibleSummaryModel): TurnSummarizer {
+export function openAICompatibleTurnSummarizer({ endpoint, model }: OpenAICompatibleSummaryModel): TurnSummarizer {
   return async (turn) => {
-    const response = await fetch(url, {
+    const response = await endpoint.fetch('/chat/completions', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${await apiKey()}` },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model,
         messages: [

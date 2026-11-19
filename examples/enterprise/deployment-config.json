@@ -4,23 +4,35 @@
   "identity": {
     "kind": "oidc",
     "issuer": "https://login.example.com",
-    "clientId": "botcube",
-    "clientSecret": {
-      "secretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret"
-    }
+    "clients": [
+      {
+        "clientId": "botcube",
+        "clientSecret": {
+          "kind": "secret",
+          "secretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret"
+        }
+      }
+    ]
   },
   "models": {
     "kind": "openai-compatible",
-    "baseUrl": "https://models.example.com/v1",
-    "apiKey": {
-      "secretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key"
+    "url": "https://models.example.com/v1",
+    "credential": {
+      "kind": "file",
+      "path": "/run/secrets/botcube/models-api-key"
     },
+    "headers": { "x-tenant": "botcube-example" },
     "turnSummaryModel": "example-summary"
   },
-  "harnessAuth": { "kind": "jwt-bearer", "audience": "botcube-harness" },
+  "harnessAuth": {
+    "kind": "jwt-bearer",
+    "issuer": "botcube",
+    "clients": [{ "clientId": "botcube-harness" }]
+  },
   "turnCredentials": { "kind": "assume-role" },
   "schedules": { "kind": "table-poller" },
-  "existing": {
+  "imageRegistry": "mirror.example.com/ecr-public",
+  "supplied": {
     "network": {
       "vpcId": "vpc-fixtureenterprise",
       "publicSubnets": [
@@ -64,10 +76,22 @@
     }
   },
   "telemetry": {
-    "otlpEndpoint": "http://otel-collector.example.com:4318/v1/traces"
+    "kind": "otlp",
+    "url": "http://otel-collector.example.com:4318/v1/traces",
+    "credential": {
+      "kind": "file",
+      "path": "/run/secrets/botcube/telemetry-token"
+    },
+    "headers": { "x-tenant": "botcube-example" }
   },
   "proxy": {
+    "kind": "forward",
     "url": "http://proxy.example.com:3128",
-    "noProxy": [".amazonaws.com"]
+    "noProxy": [".amazonaws.com"],
+    "credential": {
+      "kind": "file",
+      "path": "/run/secrets/botcube/proxy-token"
+    },
+    "headers": { "x-egress-route": "botcube-example" }
   }
 }

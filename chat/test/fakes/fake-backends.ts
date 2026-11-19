@@ -169,13 +169,20 @@ const completionText = (content: ChatCompletionsRequest['messages'][number]['con
 /**
  * An OpenAI-compatible endpoint (the Deployment Config's `openai-compatible` models), at `<url>/v1`: it answers a
  * forced `turn_summary` with `turnSummary`, and any other request as BotCube's echo model does, streamed when asked.
- * It accepts only `apiKey` and records every request.
+ * It accepts only `apiKey` and records every request, headers included.
  */
 export class FakeOpenAICompatible extends HttpFake {
   turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
+  /** The statuses the next requests are answered with before any body, as a gateway in front of the models fails. */
+  readonly gatewayFailures: number[] = [];
 
   constructor(readonly apiKey: string) {
     super((request, response) => {
+      const failure = this.gatewayFailures.shift();
+      if (failure !== undefined) {
+        sendJson(response, failure, { error: { message: `fake gateway HTTP ${failure}` } });
+        return;
+      }
       if (request.method !== 'POST' || request.path !== '/v1/chat/completions') {
         sendJson(response, 404, { error: { message: `No route ${request.method} ${request.path}` } });
         return;

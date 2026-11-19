@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
 # Build from the repository root. Public clones pass BOTCUBE_ROOT=.
-ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-bookworm-slim
+ARG REGISTRY=public.ecr.aws
+ARG NODE_IMAGE=${REGISTRY}/docker/library/node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS build
 ARG BOTCUBE_ROOT=botcube
 WORKDIR /workspace/botcube

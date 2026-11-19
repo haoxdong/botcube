@@ -14,7 +14,11 @@ import type { Construct } from 'constructs';
 export interface ProductionParkingProps extends StackProps {
   parkingPath: string;
   identity: DeployIdentity;
+  /** The registry the transition's bundling image comes from, a mirror of Amazon ECR Public's paths; absent, ECR Public. */
+  imageRegistry?: string | undefined;
   chatTable: ITable;
+  /** The operator supplied the chat table with its grants: the functions are granted nothing on it or its stream. */
+  chatTableSupplied: boolean;
   parkStateParameter: string;
   hostname: string;
   parking: { slotBucket: string; originSlotKey: string };
@@ -41,23 +45,23 @@ export class ProductionParkingStack extends Stack {
       environment: { CHAT_TABLE: chatTable.tableName, HEALTH_URL: `https://${props.hostname}/health`, ...environment },
       logGroup: new logs.LogGroup(this, `${handler}Logs`, { logGroupName: `/aws/lambda/${name}`, retention: logs.RetentionDays.ONE_MONTH }),
     });
-    const items = (actions: string[]) => new iam.PolicyStatement({
+    const grantItems = (fn: lambda.Function, actions: string[]) => props.chatTableSupplied || fn.addToRolePolicy(new iam.PolicyStatement({
       actions, resources: [chatTable.tableArn], conditions: { 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': [PARTITION] } },
-    });
+    }));
 
     const wake = fn(`${props.functionName}-wake`, 'wake', {});
     (wake.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 5;
-    wake.addToRolePolicy(items(['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem']));
+    grantItems(wake, ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:PutItem']);
     const url = wake.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
-    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity);
+    const transition = parkingTransition(this, join(props.parkingPath, '../..'), props.identity, props.imageRegistry);
     const dispatcher = fn(props.functionName, 'dispatcher', {
       PARK_STATE_PARAMETER: props.parkStateParameter,
       SLOT_BUCKET: props.parking.slotBucket,
       ORIGIN_SLOT_KEY: props.parking.originSlotKey,
       TRANSITION_FUNCTION: transition.functionName,
     });
-    dispatcher.addToRolePolicy(items(['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']));
+    grantItems(dispatcher, ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']);
     dispatcher.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ssm:GetParameter'], resources: [this.formatArn({ service: 'ssm', resource: `parameter${props.parkStateParameter}` })],
     }));
@@ -68,13 +72,16 @@ export class ProductionParkingStack extends Stack {
     dispatcher.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [`arn:${this.partition}:s3:::${props.parking.slotBucket}`] }));
     (dispatcher.node.defaultChild as lambda.CfnFunction).reservedConcurrentExecutions = 1;
     transition.grantInvoke(dispatcher);
-    dispatcher.addEventSource(new DynamoEventSource(chatTable, {
+    const dispatches = {
       startingPosition: lambda.StartingPosition.LATEST, retryAttempts: 0, batchSize: 1,
       filters: [lambda.FilterCriteria.filter({
         eventName: lambda.FilterRule.isEqual('INSERT'),
         dynamodb: { Keys: { pk: { S: lambda.FilterRule.isEqual(PARTITION) }, sk: { S: lambda.FilterRule.beginsWith('DISPATCH#') } } },
       })],
-    }));
+    };
+    // DynamoEventSource grants the stream read; a supplied table's stream carries that grant itself.
+    if (props.chatTableSupplied) dispatcher.addEventSourceMapping('SuppliedChatTableDispatches', { ...dispatches, eventSourceArn: chatTable.tableStreamArn });
+    else dispatcher.addEventSource(new DynamoEventSource(chatTable, dispatches));
     new events.Rule(this, 'IdleCheck', {
       enabled: props.autoPark,
       schedule: events.Schedule.rate(Duration.minutes(5)),
@@ -87,11 +94,11 @@ export class ProductionParkingStack extends Stack {
   }
 }
 
-export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, identity: DeployIdentity): ProductionParkingStack {
+export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, chatTableSupplied: boolean, identity: DeployIdentity, imageRegistry?: string): ProductionParkingStack {
   const { functionName, autoPark, slotBucket, originSlotKey } = identity.aws.ecs.parking;
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
     parkingPath: join(cubeRoot, 'infra/ecs/parking'), hostname: new URL(identity.domains.chatService).hostname,
-    chatTable, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity,
+    chatTable, chatTableSupplied, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, imageRegistry,
   });
 }

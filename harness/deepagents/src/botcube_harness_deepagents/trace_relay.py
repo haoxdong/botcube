@@ -21,6 +21,8 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 from opentelemetry.proto.trace.v1.trace_pb2 import Status
 
+from .telemetry_credential import telemetry_credential
+
 log = logging.getLogger(__name__)
 
 _TRACES_PATH = '/v1/traces'
@@ -77,6 +79,18 @@ class _RelayServer(ThreadingHTTPServer):
         log.exception('Trace relay could not count failed CLI calls in, or forward, an export from %s', client_address)
 
 
+def _telemetry_bearer() -> Callable[[AWSRequest], None] | None:
+    """The telemetry Endpoint's credential as the bearer, when the deploy set one; otherwise exports are SigV4-signed."""
+    source = telemetry_credential()
+    if source is None:
+        return None
+
+    def authorize(request: AWSRequest) -> None:
+        request.headers['Authorization'] = f'Bearer {source.get().value}'
+
+    return authorize
+
+
 @cache
 def harness_trace_relay() -> str | None:
     """The relay's traces endpoint, started once and only when this process exports its own traces over OTLP."""
@@ -85,11 +99,13 @@ def harness_trace_relay() -> str | None:
     return start_trace_relay()
 
 
-def start_trace_relay() -> str:
-    """Serve an OTLP/HTTP endpoint on loopback that forwards each export, SigV4-signed, to the runtime's trace endpoint.
-
-    The runtime's X-Ray endpoint rejects unsigned exports, and a shell command's Node exporter cannot sign.
-    """
+def _upstream() -> tuple[str, Callable[[AWSRequest], None]]:
+    endpoint = os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
+    bearer = _telemetry_bearer()
+    if bearer is not None:
+        if not endpoint:
+            raise RuntimeError('The trace relay sends the telemetry credential only to OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, which is unset')
+        return endpoint, bearer
     session = Session()
     # botocore alone reads only AWS_DEFAULT_REGION; ADOT resolves AWS_REGION first.
     region = os.environ.get('AWS_REGION') or session.get_config_variable('region')
@@ -97,8 +113,16 @@ def start_trace_relay() -> str:
     if not region or credentials is None:
         raise RuntimeError('The trace relay needs an AWS region and AWS credentials to sign trace exports')
     # ADOT sets this to the region's X-Ray endpoint when agent observability is on.
-    endpoint = os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT') or f'https://xray.{region}.amazonaws.com/v1/traces'
-    signer = SigV4Auth(credentials, 'xray', region)
+    return endpoint or f'https://xray.{region}.amazonaws.com/v1/traces', SigV4Auth(credentials, 'xray', region).add_auth
+
+
+def start_trace_relay() -> str:
+    """Serve an OTLP/HTTP endpoint on loopback that forwards each export, authorized, to the runtime's trace endpoint.
+
+    The runtime's X-Ray endpoint rejects unsigned exports, and a shell command's Node exporter cannot sign. With the
+    telemetry Endpoint's credential set, the relay sends it as the bearer and needs no AWS identity.
+    """
+    endpoint, authorize = _upstream()
     upstream = URLLib3Session()
 
     origin = endpoint.removesuffix(urlsplit(endpoint).path)
@@ -125,7 +149,7 @@ def start_trace_relay() -> str:
             # A trace export failure is the Harness's error, not the command's: answering first keeps it out of the
             # command's exit status and off the agent's tool result.
             self._respond_accepted()
-            signer.add_auth(request)
+            authorize(request)
             response = upstream.send(request.prepare())
             if response.status_code >= 300:
                 log.error('Trace relay export to %s failed: %s %s', endpoint, response.status_code, response.content[:500])

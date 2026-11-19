@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import time
 import urllib.request
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from typing import ClassVar
 
@@ -132,3 +134,49 @@ def test_relay_forwards_a_traces_export_it_cannot_count_and_logs_why(
     assert [forwarded['body'] for forwarded in upstream] == [body]
     [counting] = [record for record in caplog.records if 'could not count' in record.getMessage()]
     assert counting.exc_info is not None
+
+
+def test_relay_sends_the_telemetry_credential_as_the_bearer_in_place_of_sigv4(
+    upstream: list[dict[str, str | bytes]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    token = tmp_path / 'telemetry-token'
+    token.write_text('collector-token\n')
+    monkeypatch.setenv('BOTCUBE_TELEMETRY_CREDENTIAL', json.dumps({'kind': 'file', 'path': str(token)}))
+    relay = start_trace_relay().removesuffix('/v1/traces')
+    request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
+
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.status == 200
+    for _ in range(50):
+        if upstream:
+            break
+        time.sleep(0.05)
+
+    [forwarded] = upstream
+    assert forwarded['authorization'] == 'Bearer collector-token'
+
+
+def test_relay_sends_the_telemetry_credential_without_aws_credentials(
+    upstream: list[dict[str, str | bytes]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # An `otlp` collector's bearer needs no AWS identity, and the local stack's Harness has none.
+    for name in ('AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('AWS_CONFIG_FILE', str(tmp_path / 'no-config'))
+    monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(tmp_path / 'no-credentials'))
+    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
+    token = tmp_path / 'telemetry-token'
+    token.write_text('collector-token\n')
+    monkeypatch.setenv('BOTCUBE_TELEMETRY_CREDENTIAL', json.dumps({'kind': 'file', 'path': str(token)}))
+    relay = start_trace_relay().removesuffix('/v1/traces')
+    request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
+
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.status == 200
+    for _ in range(50):
+        if upstream:
+            break
+        time.sleep(0.05)
+
+    [forwarded] = upstream
+    assert forwarded['authorization'] == 'Bearer collector-token'

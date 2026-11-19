@@ -101,7 +101,7 @@ from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
     build_model,
-    openai_compatible_endpoint,
+    models_endpoint,
     resolve_effort,
     resolve_model,
 )
@@ -115,6 +115,7 @@ from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
 )
+from .proxy_relay import start_proxy_relay_from_env
 from .scheduled_tasks import propose_scheduled_task
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 from .shell_backend import WorkerShellBackend
@@ -1456,13 +1457,15 @@ def _prime_snapshot() -> None:
 def main() -> None:
     import uvicorn
 
+    # Listening before any client connects: every client, and every command the agent runs, sends through it.
+    start_proxy_relay_from_env()
     importlib.import_module('openai.resources.responses')
     if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
         restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     # A models endpoint lacking its key fails startup, not a Turn.
-    openai_compatible_endpoint()
+    models_endpoint()
     if _cartridge is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
         if bot := bot_from_env(module_name):

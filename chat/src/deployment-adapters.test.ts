@@ -27,9 +27,9 @@ describe("the Chat Service's adapters", () => {
   });
 
   it("take the Harness auth from the Deployment Config's kind, not the environment", () => {
-    const path = deploymentConfig({ harnessAuth: { kind: 'jwt-bearer', audience: 'botcube-harness' } });
+    const path = deploymentConfig({ harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }] } });
 
-    expect(deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: path }).harnessAuth).toEqual({ kind: 'jwt-bearer', audience: 'botcube-harness' });
+    expect(deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: path }).harnessAuth).toEqual({ kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] });
     expect(deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({}), BOTCUBE_HARNESS_AUTH: 'jwt-bearer' }).harnessAuth).toEqual({ kind: 'sigv4' });
   });
 

@@ -1,15 +1,25 @@
 // A declaration file: the CDK packages' rootDir admits declaration files from outside it, but no source.
 
-export type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; audience: string };
+export type HarnessAuth = { kind: 'sigv4' } | { kind: 'jwt-bearer'; issuer: 'botcube'; clients: [HarnessClient, ...HarnessClient[]] };
+/** A Harness bearer's audience, which the Runtime's JWT authorizer allows. */
+export interface HarnessClient {
+  clientId: string;
+}
 
 export interface ModelsDeployment {
   readonly environment: Readonly<Record<string, string>>;
-  readonly apiKeySecretArn: string;
+  /** The Secrets Manager secrets its credential is read from, which each process reading it is granted. */
+  readonly secretArns: readonly string[];
+}
+
+export interface RuntimeTelemetry {
+  readonly kind: 'xray' | 'otlp' | 'none';
+  /** The Secrets Manager secrets its credential is read from, which the Runtime is granted. */
+  readonly secretArns: readonly string[];
 }
 
 export interface ModelsEnv {
-  readonly baseUrl: 'BOTCUBE_MODELS_BASE_URL';
-  readonly apiKeySecretArn: 'BOTCUBE_MODELS_API_KEY_SECRET_ARN';
+  readonly endpoint: 'BOTCUBE_MODELS_ENDPOINT';
   readonly turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL';
 }
 

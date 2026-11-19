@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
+import { credentialSource, endpoint, endpointHeaders, headersBeside, oidcIssuer, trust, type CredentialSource } from 'botcube-deployment-config/blocks';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
 // Every object is strict, so an unknown key fails startup instead of being ignored.
@@ -72,27 +73,18 @@ export const botSettings = z
     });
   });
 
-/** A secret the deployment reads at startup; its value never appears in the Deployment Config. */
-export const secretReference = z
-  .strictObject({ secretArn: z.string().regex(/^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+$/) })
-  .describe('A Secrets Manager secret, by ARN.');
-
 // Each section lists its adapters, the open default first; a missing section is the default.
 const kindOnly = <Kind extends string>(kind: Kind) => z.strictObject({ kind: z.literal(kind) });
 
-const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost']);
-const oidcIssuer = z.url().refine((issuer) => {
-  const { protocol, hostname } = new URL(issuer);
-  return protocol === 'https:' || (protocol === 'http:' && LOOPBACK.has(hostname));
-}, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
 const identity = z.discriminatedUnion('kind', [
   kindOnly('botcube-accounts'),
   z.strictObject({
     kind: z.literal('oidc'),
-    issuer: oidcIssuer.describe("The provider's issuer URL, where its OpenID configuration is discovered."),
-    clientId: z.string().min(1),
-    clientSecret: secretReference,
+    ...trust(
+      oidcIssuer.describe("The provider's issuer URL, where its OpenID configuration is discovered."),
+      z.strictObject({ clientId: z.string().min(1), clientSecret: credentialSource.describe("The client's secret, which redeems sign-in codes.") }),
+    ),
     logoutUrl: z.url({ protocol: /^https$/ }).optional().describe(
       "Where signing out sends the browser, so the provider ends its own session and the next sign-in prompts again; for a provider whose discovery names no end_session_endpoint.",
     ),
@@ -100,14 +92,18 @@ const identity = z.discriminatedUnion('kind', [
       type: z.string().regex(/^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$/, 'Expected a CloudFormation resource type such as AWS::Service::Resource'),
       name: z.string().min(1),
     })).optional().describe("The AWS resources the deployment runs the provider on, beside BotCube's own, which the footprint lists."),
-  }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE.'),
+  }).superRefine(({ clients }, context) => {
+    clients.forEach(({ clientId }, index) => {
+      const first = clients.findIndex((other) => other.clientId === clientId);
+      if (first !== index) context.addIssue({ code: 'custom', path: ['clients', index, 'clientId'], message: `Client ${clientId} is already identity.clients.${first}.clientId` });
+    });
+  }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE: with the first client, or the one a sign-in names.'),
 ]);
 const models = z.discriminatedUnion('kind', [
   kindOnly('bedrock'),
-  z.strictObject({
+  endpoint.extend({
     kind: z.literal('openai-compatible'),
-    baseUrl: z.url({ protocol: /^https$/ }).describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
-    apiKey: secretReference.describe("The endpoint's API key."),
+    url: endpoint.shape.url.describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
     turnSummaryModel: z.string().min(1).describe('The model on the endpoint that summarizes each finished Turn for the Activity.'),
   }).describe("Every model on an OpenAI-compatible endpoint, by its key in the bot settings; Plan Usage models still run through the Credential Service."),
 ]);
@@ -126,9 +122,14 @@ const harnessAuth = z.discriminatedUnion('kind', [
   kindOnly('sigv4'),
   z.strictObject({
     kind: z.literal('jwt-bearer'),
-    audience: z.string().min(1)
-      .refine((audience) => !RESERVED_AUDIENCES.includes(audience), { error: (issue) => reservedAudienceError(String(issue.input)) })
-      .describe("The `aud` of Chat's tokens, which the Runtime's JWT authorizer allows."),
+    ...trust(
+      z.literal('botcube').default('botcube').describe('The Chat Service at its public origin, the one issuer whose keys sign the bearer.'),
+      z.strictObject({
+        clientId: z.string().min(1)
+          .refine((audience) => !RESERVED_AUDIENCES.includes(audience), { error: (issue) => reservedAudienceError(String(issue.input)) })
+          .describe("An `aud` the Runtime's JWT authorizer allows; Chat signs for the first."),
+      }),
+    ),
   }).describe("Chat signs a short-lived bearer token with its Turn identity keys, as the issuer at its public origin; the AgentCore Runtime's JWT authorizer checks it."),
 ]);
 /** Fails to compile when the schema and the `HarnessAuth` seam drift apart. */
@@ -141,6 +142,11 @@ const turnCredentials = z.discriminatedUnion('kind', [
 const schedules = z.discriminatedUnion('kind', [
   kindOnly('eventbridge-scheduler'),
   z.strictObject({ kind: z.literal('table-poller') }).describe('The Chat Service polls its own table and sends each due run to the run queue.'),
+  kindOnly('none').describe('No scheduled tasks: the Chat Service offers none, and no queue, schedule group or scheduler grant is created.'),
+]);
+const liveView = z.discriminatedUnion('kind', [
+  kindOnly('agentcore-browser').describe("The Agent Computer's browser streams its live view from AgentCore Browser to the User."),
+  kindOnly('none').describe('No live view: bot settings may not turn agentComputer.liveBrowser on, and the Chat Service is granted no live view stream.'),
 ]);
 
 // Plain parameters (ADR 0091): no seam and no `kind`; each points at something the integrator already runs.
@@ -151,7 +157,7 @@ const tableName = z.string().regex(/^[a-zA-Z0-9_.-]{3,255}$/);
 const bucketName = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
 const STREAM_ARN = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/([a-zA-Z0-9_.-]+)\/stream\/.+$/;
 
-const existing = z
+const supplied = z
   .strictObject({
     network: z
       .strictObject({
@@ -160,7 +166,7 @@ const existing = z
         privateSubnets: z
           .array(subnet.extend({ cidrBlock: z.string().min(1) }))
           .min(2)
-          .describe("The services' and browsers' subnets, which must already reach the internet or the proxy."),
+          .describe("The services', browsers' and Lambdas' subnets, which must already reach the internet; the proxy carries only the services' own traffic."),
       })
       .optional()
       .describe("A network that brings its own egress: BotCube creates, routes and parks no NAT in it, so the deploy identity names no aws.ecs.privateEgress."),
@@ -193,33 +199,85 @@ const existing = z
       context.addIssue({ code: 'custom', path: ['tables', 'chat', 'streamArn'], message: `The stream is table ${streamTable}'s, not ${chat.tableName}'s` });
     }
   })
-  .describe('Resources BotCube imports instead of creating; each one left out, it creates.');
+  .describe("Resources the operator supplies, with their grants, instead of BotCube creating them: BotCube creates neither a supplied resource nor a policy on it, and `botcube footprint` lists the grants each one needs. Each one left out, BotCube creates and grants.");
+
+const imageRegistry = z
+  .string()
+  .regex(/^[a-z0-9.-]+(:\d+)?(\/[a-z0-9._-]+)*$/, 'Expected a registry host and optional path, such as mirror.example.com/ecr-public')
+  .default('public.ecr.aws')
+  .describe("The registry every image BotCube pulls comes from, a mirror of Amazon ECR Public's paths: the services' sidecars and every image BotCube builds FROM.");
 
 const httpUrl = z.url({ protocol: /^https?$/ });
 
-const telemetry = z.strictObject({
-  otlpEndpoint: httpUrl.describe('The OTLP/HTTP traces endpoint the services export to, such as http://collector:4318/v1/traces.'),
-});
+const telemetry = z.discriminatedUnion('kind', [
+  kindOnly('xray').describe("AWS X-Ray, through each service's collector."),
+  z.strictObject({
+    kind: z.literal('otlp'),
+    url: httpUrl.describe('The OTLP/HTTP traces endpoint the services export to, such as http://collector:4318/v1/traces.'),
+    credential: credentialSource.optional().describe('Sent as `Authorization: Bearer <value>`; absent, exports are unauthenticated.'),
+    headers: endpointHeaders,
+  }).describe("The operator's own OTLP collector, an Endpoint both services export to directly."),
+  kindOnly('none').describe('No traces leave the services, and no collector or X-Ray grant is created.'),
+]);
 
-const proxy = z.strictObject({
-  url: httpUrl.describe('The forward proxy outbound HTTP and HTTPS go through, as HTTP_PROXY and HTTPS_PROXY.'),
-  noProxy: z
-    .array(z.string().min(1))
-    .optional()
-    .describe('Hosts and domain suffixes reached directly, as NO_PROXY; loopback and the AWS metadata addresses always are.'),
-});
+const proxy = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('forward'),
+    url: httpUrl.describe('The forward proxy outbound HTTP and HTTPS go through, as HTTP_PROXY and HTTPS_PROXY.'),
+    noProxy: z
+      .array(z.string().min(1))
+      .optional()
+      .describe('Hosts and domain suffixes reached directly, as NO_PROXY; loopback and the AWS metadata addresses always are.'),
+    credential: credentialSource
+      .refine((source) => source.kind === 'file', 'A proxy credential is read from a file; any other source would reach out through the proxy it authenticates')
+      .optional()
+      .describe("A file, sent as `Proxy-Authorization: Bearer <value>` on each tunnel and request, read again as it rotates; absent, the proxy takes none."),
+    headers: headersBeside('Proxy-Authorization', 'each tunnel and request the proxy carries'),
+  }).describe("The operator's forward proxy, an Endpoint the Chat Service, the Harness and the commands it runs reach the internet through."),
+  kindOnly('none').describe('Outbound traffic goes direct.'),
+]);
 
-export const deploymentConfig = z.strictObject({
+/** The Deployment Config's sections, for a process that reads some of them; `deploymentConfig` checks the whole file. */
+export const deploymentSections = z.strictObject({
   $schema: schemaReference,
   bot: z.string().min(1).describe('The bot settings file, relative to this file.'),
+  allowCommandCredentials: z
+    .boolean()
+    .default(false)
+    .describe('Whether a credential may come from a command, which then runs as the service; whoever can edit this file chooses that command.'),
   identity: identity.default({ kind: 'botcube-accounts' }).describe('How Users sign in.'),
   models: models.default({ kind: 'bedrock' }).describe('Where the agent and turn summaries reach their models.'),
   harnessAuth: harnessAuth.default({ kind: 'sigv4' }).describe('How Chat authenticates to the Harness.'),
   turnCredentials: turnCredentials.default({ kind: 'web-identity' }).describe("How each Turn gets its User's AWS credentials."),
   schedules: schedules.default({ kind: 'eventbridge-scheduler' }).describe('What fires scheduled tasks.'),
-  existing: existing.optional(),
-  telemetry: telemetry.optional().describe('Where traces go; absent, AWS X-Ray.'),
-  proxy: proxy.optional().describe('The proxy outbound traffic goes through; absent, it goes direct.'),
+  liveView: liveView.default({ kind: 'agentcore-browser' }).describe("How the User watches the Agent Computer's browser."),
+  supplied: supplied.optional(),
+  imageRegistry,
+  telemetry: telemetry.default({ kind: 'xray' }).describe('Where traces go.'),
+  proxy: proxy.default({ kind: 'none' }).describe('The proxy outbound traffic goes through.'),
+});
+
+type CredentialField = [path: (string | number)[], source: CredentialSource];
+
+/** Every Credential Source the Deployment Config names, by its path. */
+export function credentialFields({ identity, models, telemetry, proxy }: z.output<typeof deploymentSections>): CredentialField[] {
+  return [
+    ...(proxy.kind === 'forward' && proxy.credential ? [[['proxy', 'credential'], proxy.credential] satisfies CredentialField] : []),
+    ...(telemetry.kind === 'otlp' && telemetry.credential ? [[['telemetry', 'credential'], telemetry.credential] satisfies CredentialField] : []),
+    ...(identity.kind === 'oidc' ? identity.clients.map(({ clientSecret }, index): CredentialField => [['identity', 'clients', index, 'clientSecret'], clientSecret]) : []),
+    ...(models.kind === 'openai-compatible' ? [[['models', 'credential'], models.credential] satisfies CredentialField] : []),
+  ];
+}
+
+export const deploymentConfig = deploymentSections.superRefine((config, context) => {
+  for (const [path, source] of credentialFields(config)) {
+    if (source.kind === 'command' && !config.allowCommandCredentials) {
+      context.addIssue({ code: 'custom', path, message: 'A command credential runs only when allowCommandCredentials is true' });
+    }
+    if (source.kind === 'botcube') {
+      context.addIssue({ code: 'custom', path, message: 'A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one' });
+    }
+  }
 });
 
 export type BotSettings = z.output<typeof botSettings>;

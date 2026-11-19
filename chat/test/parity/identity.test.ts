@@ -39,7 +39,6 @@ beforeAll(async () => {
   await writeFile(path, JSON.stringify({ ...config, bot: EXAMPLE_BOT, identity: { ...config.identity, issuer: issuer.url } }));
   stack = await startLocalStack({ chatEnv: {
     BOTCUBE_DEPLOYMENT_CONFIG: path,
-    BOTCUBE_OIDC_CLIENT_SECRET: 'stand-in-client-secret',
     BOTCUBE_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
     BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([botcubeKey]),
   } });

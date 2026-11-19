@@ -6,22 +6,25 @@ import { Construct } from 'constructs';
 export interface ChatStorageProps extends StackProps {
   chatTable?: ITable;
   tableName?: string;
-  /** An existing chat table to import instead of creating one; parking reads its NEW_IMAGE stream. */
-  existingChatTable?: { tableName: string; streamArn: string };
+  /** A supplied chat table to import instead of creating one, with its grants: BotCube grants nothing on it. Parking reads its NEW_IMAGE stream. */
+  suppliedChatTable?: { tableName: string; streamArn: string };
 }
 
 /** Durable shared Chat Service storage: the chat table, and every account's Files (ADR 0077). */
 export class ChatStorageStack extends Stack {
   readonly chatTable: Table | ITable;
+  /** The operator supplied the chat table with its grants, so no BotCube policy names it. */
+  readonly chatTableSupplied: boolean;
   /** The EFS file system that replaces S3 Files for every account's Files; each account is `/accounts/<hash>`. */
   readonly filesEfs: efs.CfnFileSystem;
 
   constructor(scope: Construct, id: string, props: ChatStorageProps) {
     super(scope, id, props);
     if (props.chatTable && props.tableName !== undefined) throw new Error('Choose chatTable and tableName separately: an imported table owns its name');
-    if (props.existingChatTable && (props.chatTable || props.tableName !== undefined)) throw new Error('An existing chat table owns its name; omit chatTable and tableName');
-    const existing = props.existingChatTable;
-    this.chatTable = props.chatTable ?? (existing ? Table.fromTableAttributes(this, 'ChatTable', { tableName: existing.tableName, tableStreamArn: existing.streamArn }) : undefined) ?? new Table(this, 'ChatTable', {
+    if (props.suppliedChatTable && (props.chatTable || props.tableName !== undefined)) throw new Error('A supplied chat table owns its name; omit chatTable and tableName');
+    const supplied = props.suppliedChatTable;
+    this.chatTableSupplied = supplied !== undefined;
+    this.chatTable = props.chatTable ?? (supplied ? Table.fromTableAttributes(this, 'ChatTable', { tableName: supplied.tableName, tableStreamArn: supplied.streamArn }) : undefined) ?? new Table(this, 'ChatTable', {
       tableName: props.tableName ?? 'chat',
       partitionKey: { name: 'pk', type: AttributeType.STRING },
       sortKey: { name: 'sk', type: AttributeType.STRING },

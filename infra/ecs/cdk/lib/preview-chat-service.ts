@@ -30,8 +30,13 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   environment?: Record<string, string>;
   /** The proxy variables every container gets: the Chat Service and its collector, and a product's own tasks. */
   proxyEnvironment?: Record<string, string>;
-  /** The OTLP/HTTP traces endpoint the collector sidecar exports to; absent, X-Ray. */
-  otlpEndpoint?: string;
+  /**
+   * The Deployment Config's `telemetry` adapter; absent, X-Ray through a collector sidecar. `otlp` exports straight to
+   * its Endpoint with `environment`, granted `secretArns`; `none` creates no collector, grant or exporter.
+   */
+  telemetry?: { kind: 'xray' } | { kind: 'otlp' | 'none'; environment: Readonly<Record<string, string>>; secretArns: readonly string[] };
+  /** The Deployment Config's Agent Computer `liveView` adapter; `none` grants no live view stream. */
+  liveView?: 'agentcore-browser' | 'none';
   metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
   taskFamily?: string;
   taskRoleName?: string;
@@ -80,6 +85,10 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** The session API alias the AgentCore stack keeps initialized. */
   sessionApiAlias: string;
   chatTable: dynamodb.ITable;
+  /** The operator supplied the chat table with its grants: the task role is granted nothing on it. */
+  chatTableSupplied?: boolean;
+  /** The registry the sidecars are pulled from, a mirror of Amazon ECR Public's paths; absent, ECR Public. */
+  imageRegistry?: string;
   image: ecs.ContainerImage;
 }
 
@@ -137,7 +146,7 @@ export class PreviewChatService extends Construct {
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
     nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
-    props.chatTable.grantReadWriteData(task.taskRole);
+    if (!props.chatTableSupplied) props.chatTable.grantReadWriteData(task.taskRole);
     const harnessAuth: HarnessAuth = props.harnessAuth ?? { kind: 'sigv4' };
     grantRuntimeInvocation(task, props.runtimeArn, harnessAuth);
     // The Chat Service reaches Memory only through the session API; a Turn reaches it with its own tagged credentials.
@@ -148,10 +157,11 @@ export class PreviewChatService extends Construct {
     const sessionApiArn = `${sessionApiFunctionArn}:${props.sessionApiAlias}`;
     task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['lambda:InvokeFunction'], resources: [sessionApiArn] }));
     const browserId = props.browserId ?? 'aws.browser.v1';
-    task.addToTaskRolePolicy(new iam.PolicyStatement({
+    if (props.liveView !== 'none') task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:ConnectBrowserLiveViewStream'],
       resources: [browserLiveViewArn(origin, browserId)],
     }));
+    const telemetry = props.telemetry ?? { kind: 'xray' };
     // Read-only and limited to this cluster's tasks: each task describes itself, so a deploy's draining task stops taking scheduled runs.
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['ecs:DescribeTasks'],
@@ -172,44 +182,20 @@ export class PreviewChatService extends Construct {
         AGENTCORE_BROWSER_ID: browserId,
         BOTCUBE_CHAT_TABLE: props.chatTable.tableName,
         BOTCUBE_CORS_ORIGINS: props.corsOrigins.join(','),
-        OTEL_TRACES_EXPORTER: 'otlp',
         OTEL_LOG_LEVEL: 'error',
-        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://127.0.0.1:4318/v1/traces',
+        ...(telemetry.kind === 'xray'
+          ? { OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://127.0.0.1:4318/v1/traces' }
+          : telemetry.environment),
         PORT: String(port),
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: props.logStreamPrefix ?? 'chat-service', logGroup }),
       // Allow task-stop cleanup before ECS sends SIGKILL.
       stopTimeout: Duration.seconds(props.containerStopTimeoutSeconds ?? 120),
     });
-    // The collector batches the Chat Service's spans and exports them to X-Ray, or to the deployment's own collector.
-    const [exporter, exporterConfig] = props.otlpEndpoint
-      ? ['otlphttp', { traces_endpoint: props.otlpEndpoint }]
-      : ['awsxray', { region: origin.region }];
-    const collector = task.addContainer('otel-collector', {
-      image: ecs.ContainerImage.fromRegistry('public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0'),
-      essential: false,
-      memoryLimitMiB: 256,
-      memoryReservationMiB: 128,
-      command: ['--config=env:OTEL_CONFIG'],
-      environment: {
-        ...props.proxyEnvironment,
-        AWS_REGION: origin.region,
-        GOMEMLIMIT: '200MiB',
-        OTEL_CONFIG: JSON.stringify({
-          receivers: { otlp: { protocols: { http: { endpoint: '127.0.0.1:4318' } } } },
-          processors: {
-            memory_limiter: { check_interval: '1s', limit_mib: 192, spike_limit_mib: 32 },
-            batch: { timeout: '1s', send_batch_size: 64, send_batch_max_size: 128 },
-          },
-          exporters: { [exporter]: exporterConfig },
-          service: { pipelines: { traces: { receivers: ['otlp'], processors: ['memory_limiter', 'batch'], exporters: [exporter] } } },
-        }),
-      },
-      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'otel-collector', logGroup }),
-      stopTimeout: Duration.seconds(30),
-    });
-    this.container.addContainerDependencies({ container: collector, condition: ecs.ContainerDependencyCondition.START });
-    task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'], resources: ['*'] }));
+    if (telemetry.kind === 'xray') addXrayCollector(task, this.container, origin, logGroup, props.proxyEnvironment, props.imageRegistry);
+    else if (telemetry.secretArns.length) {
+      task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...telemetry.secretArns] }));
+    }
     addScheduledRuns(this, origin, task, this.container, props);
     const service = this.service = new ecs.FargateService(this, 'Service', {
       // aws-cdk-lib's Cluster declares `T | undefined` getters where ICluster declares `prop?: T`,
@@ -382,4 +368,33 @@ function preserveTarget(service: ecs.FargateService, target: elb.ApplicationTarg
   // Preserve the provided origin's former listener target instead of replacing it.
   if (providedOrigin) (target.node.defaultChild as elb.CfnTargetGroup).overrideLogicalId('OriginHttpsChatServiceGroup7CF46779');
   service.node.addDependency(target);
+}
+
+/** X-Ray, the default telemetry: a collector sidecar batches the Chat Service's spans and exports them, X-Ray granted. */
+function addXrayCollector(task: ecs.FargateTaskDefinition, container: ecs.ContainerDefinition, origin: Stack, logGroup: logs.ILogGroup, proxyEnvironment: Record<string, string> | undefined, imageRegistry: string | undefined): void {
+  const collector = task.addContainer('otel-collector', {
+    image: ecs.ContainerImage.fromRegistry(`${imageRegistry ?? 'public.ecr.aws'}/aws-observability/aws-otel-collector:v0.50.0`),
+    essential: false,
+    memoryLimitMiB: 256,
+    memoryReservationMiB: 128,
+    command: ['--config=env:OTEL_CONFIG'],
+    environment: {
+      ...proxyEnvironment,
+      AWS_REGION: origin.region,
+      GOMEMLIMIT: '200MiB',
+      OTEL_CONFIG: JSON.stringify({
+        receivers: { otlp: { protocols: { http: { endpoint: '127.0.0.1:4318' } } } },
+        processors: {
+          memory_limiter: { check_interval: '1s', limit_mib: 192, spike_limit_mib: 32 },
+          batch: { timeout: '1s', send_batch_size: 64, send_batch_max_size: 128 },
+        },
+        exporters: { awsxray: { region: origin.region } },
+        service: { pipelines: { traces: { receivers: ['otlp'], processors: ['memory_limiter', 'batch'], exporters: ['awsxray'] } } },
+      }),
+    },
+    logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'otel-collector', logGroup }),
+    stopTimeout: Duration.seconds(30),
+  });
+  container.addContainerDependencies({ container: collector, condition: ecs.ContainerDependencyCondition.START });
+  task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords'], resources: ['*'] }));
 }

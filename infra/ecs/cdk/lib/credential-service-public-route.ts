@@ -20,6 +20,8 @@ export interface CredentialServicePublicRoute {
   /** The bot's UI origins, which call the service cross-origin with BotCube's signed user token. */
   corsOrigins: readonly string[];
   chatTable: ITable;
+  /** The operator supplied the chat table with its grants: the service is granted nothing on it. */
+  chatTableSupplied: boolean;
   /** The partition-key prefixes of the Chat table rows the service may read and write; none, no access. */
   chatTableKeyPrefixes: readonly string[];
   /** A host the service serves at every path, such as a product's raw service origin. */
@@ -34,7 +36,7 @@ export function publishCredentialService(origin: PreviewOriginStack, credentials
     credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_HOST', route.rawHostname);
     credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_RPC_PATH', route.rpcPath);
   }
-  if (route.chatTableKeyPrefixes.length) credentials.task.addToTaskRolePolicy(new iam.PolicyStatement({
+  if (route.chatTableKeyPrefixes.length && !route.chatTableSupplied) credentials.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['dynamodb:GetItem', 'dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:DeleteItem', 'dynamodb:UpdateItem', 'dynamodb:ConditionCheckItem'], resources: [route.chatTable.tableArn],
     conditions: {
       'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': route.chatTableKeyPrefixes.map(prefix => `${prefix}*`) },

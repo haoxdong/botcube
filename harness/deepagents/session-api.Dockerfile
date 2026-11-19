@@ -1,10 +1,12 @@
-# syntax=docker/dockerfile:1
 # Build context: botcube/harness/deepagents/
 # The session API function (ADR 0067 §5): the Harness package without the
 # Sandbox's tools, served by Lambda's Python runtime interface.
-FROM public.ecr.aws/lambda/python:3.13
+ARG REGISTRY=public.ecr.aws
+FROM ${REGISTRY}/lambda/python:3.13
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN --mount=type=secret,id=build_ca \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    pip install --no-cache-dir uv==0.12.19
 
 ENV PYTHONPATH=/opt/session-api/.venv/lib/python3.13/site-packages
 WORKDIR /opt/session-api

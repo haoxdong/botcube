@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1
-ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-slim
+ARG REGISTRY=public.ecr.aws
+ARG NODE_IMAGE=${REGISTRY}/docker/library/node:24-slim
 FROM ${NODE_IMAGE}
 
 WORKDIR /workspace/botcube

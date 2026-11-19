@@ -14,6 +14,7 @@ import { serveChatService } from './server.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
+import { credentialSource } from './credential-source.js';
 
 const cartridge: ChatServiceCartridge = {
   corsOrigins: ['https://cartridge.example.com'],
@@ -135,6 +136,40 @@ describe('the Chat Service served from the environment', () => {
     await new Promise((resolve) => server.close(resolve));
 
     expect(signal.aborted).toBe(true);
+  });
+
+  describe('stops at startup, naming the seam and the source, on a credential it cannot read', () => {
+    const absent = `/nonexistent/botcube-${Math.random().toString(36).slice(2)}`;
+    async function exitsWith(cartridgeOf: () => ChatServiceCartridge, env: NodeJS.ProcessEnv): Promise<string> {
+      const failed = new Promise<string>((resolve) => {
+        vi.spyOn(console, 'error').mockImplementation((message: unknown) => {
+          if (String(message).startsWith('The Chat Service could not read a credential at startup')) resolve(String(message));
+        });
+      });
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      const server = serveChatService(cartridgeOf, { PORT: '0', BOTCUBE_CHAT_TABLE: await newTable(), ...env });
+      closers.push(async () => {
+        if (server.listening) await new Promise((resolve) => server.close(resolve));
+      });
+      const message = await failed;
+      expect(exit).toHaveBeenCalledWith(1);
+      return message;
+    }
+
+    it("the models Endpoint's", async () => {
+      const env = {
+        BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent } }),
+        BOTCUBE_TURN_SUMMARY_MODEL: 'example-summary',
+      };
+      expect(await exitsWith(() => cartridge, env)).toContain(`models credential (file ${absent}): ENOENT`);
+    });
+
+    it("the Cartridge's own, such as sign-in's client secret", async () => {
+      const startupCredentials = [credentialSource('identity.clients.0.clientSecret', { kind: 'file', path: absent })];
+      expect(await exitsWith(() => ({ ...cartridge, startupCredentials }), {})).toContain(`identity.clients.0.clientSecret credential (file ${absent}): ENOENT`);
+    });
   });
 
   it('listens on $PORT and says so', async () => {
