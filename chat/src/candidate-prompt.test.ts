@@ -29,12 +29,17 @@ async function turnWith(tunesPrompts: boolean | undefined, candidates: Record<st
   }
 }
 
-describe.each(['agentSystemPrompt', 'cartridgeSystemPrompt'])('a candidate %s', (prop) => {
+// The Harness reads a candidate bot prompt under both names until it reads only `botSystemPrompt`.
+const forwardedAs = (prop: string, candidate: string) => prop === 'agentSystemPrompt'
+  ? { [prop]: candidate }
+  : { botSystemPrompt: candidate, cartridgeSystemPrompt: candidate };
+
+describe.each(['agentSystemPrompt', 'botSystemPrompt', 'cartridgeSystemPrompt'])('a candidate %s', (prop) => {
   it.each(['Candidate prompt.', ''])('reaches the Harness for the prompt tuner: %j', async (candidate) => {
     const { status, seen } = await turnWith(true, { [prop]: candidate });
 
     expect(status).toBe(200);
-    expect(seen).toEqual([{ [prop]: candidate }]);
+    expect(seen).toEqual([forwardedAs(prop, candidate)]);
   });
 
   it.each([undefined, false])('is refused before a Session opens when the bot does not let the requester tune prompts: %s', async (tunesPrompts) => {

@@ -5,6 +5,7 @@ import { agentDocumentEdit, type AgentDocumentSet, type AgentDocuments } from '.
 import { botMemory, type TurnRouteSource } from './turn-preparation.js';
 import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
+import { aliasBotSystemPrompt, requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
@@ -86,18 +87,10 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
   const { summarizeTurn, turnQuota, turnCredentials: credentialSource, userTokens } = turns;
   const warming = warmingSessions();
 
-  const requireCandidatePrompts = (forwardedProps: Record<string, unknown> | undefined, requester: Requester) => {
-    for (const prop of ['agentSystemPrompt', 'cartridgeSystemPrompt']) {
-      const candidate = forwardedProps?.[prop];
-      if (candidate === undefined) continue;
-      if (bot.tunesPrompts?.(requester) !== true) throw new HttpError(403, `${prop} is only for the prompt tuner`);
-      if (typeof candidate !== 'string') throw new HttpError(422, `${prop} must be text`);
-    }
-  };
-
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
     for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...bot.credentialProps, ...(bot.identityProps ?? [])]) delete forwardedProps[prop];
+    aliasBotSystemPrompt(forwardedProps);
     const preparing = bot.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
       captureCredentials?.(turnCredentials(payload.forwardedProps, bot.credentialProps));
       return payload;
@@ -128,7 +121,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       const initialMessages = structuredClone(input.messages);
       const held = takeHeldIds(input.forwardedProps ?? {});
       const model = await requireAllowedModel(input, bot, requester);
-      requireCandidatePrompts(input.forwardedProps, requester);
+      requireCandidatePrompts(input.forwardedProps, requester, bot);
       const traffic = trafficMarker(input.forwardedProps?.traffic, c.req.header('user-agent'));
       timing.model = model.key;
       timing.mark('model');

@@ -692,11 +692,16 @@ def test_a_candidate_system_prompt_runs_without_the_users_memory_soul_or_identit
     assert agent.graph.store is None
 
 
+def _candidate(prop: str, prompt: str) -> dict[str, Any]:
+    return {prop: prompt}
+
+
+@pytest.mark.parametrize('prop', ['botSystemPrompt', 'cartridgeSystemPrompt'])
 def test_a_candidate_cartridge_prompt_replaces_the_cartridge_instructions_for_its_turn_only(
-    service: _Service, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, monkeypatch: pytest.MonkeyPatch, prop: str,
 ) -> None:
     monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
-    service.turn('delegate: say: checked', cartridgeSystemPrompt='Candidate instructions.')
+    service.turn('delegate: say: checked', **_candidate(prop, 'Candidate instructions.'))
     service.turn('hello again')
 
     main, subagent, _, default = service.recorder.prompts
@@ -707,11 +712,12 @@ def test_a_candidate_cartridge_prompt_replaces_the_cartridge_instructions_for_it
     assert default.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.')
 
 
+@pytest.mark.parametrize('prop', ['botSystemPrompt', 'cartridgeSystemPrompt'])
 def test_empty_candidate_prompts_run_the_turn_without_the_agent_prompt_or_cartridge_instructions(
-    service: _Service, monkeypatch: pytest.MonkeyPatch,
+    service: _Service, monkeypatch: pytest.MonkeyPatch, prop: str,
 ) -> None:
     monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
-    events = service.turn('delegate: say: checked', agentSystemPrompt='', cartridgeSystemPrompt='')
+    events = service.turn('delegate: say: checked', agentSystemPrompt='', **_candidate(prop, ''))
 
     assert _tool_output(events) == 'checked'
     main, subagent, _ = service.recorder.prompts

@@ -925,7 +925,8 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         thread_id=input_data.thread_id,
         invocation_prompt=_opening_prompt(input_data, auth.system_prompt),
         agent_system_prompt=forwarded.get('agentSystemPrompt', AGENT_SYSTEM_PROMPT),
-        cartridge_system_prompt=forwarded.get('cartridgeSystemPrompt'),
+        # A deployed Chat Service may send the candidate bot prompt only as `cartridgeSystemPrompt`.
+        cartridge_system_prompt=forwarded.get('botSystemPrompt', forwarded.get('cartridgeSystemPrompt')),
         environment=auth.environment,
         model_relay=auth.model_relay,
         documents=documents,
