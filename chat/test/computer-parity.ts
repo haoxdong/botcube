@@ -55,7 +55,7 @@ export async function computerParity() {
     computers: { state: (owner, id) => computers.state(owner, id), wake: (owner, id) => computers.wake(owner, id) },
     files: () => files,
   }));
-  const stack = await startInProcess({ cartridge: {
+  const stack = await startInProcess({ stock: true, cartridge: {
     routes,
     authorizeBrowserLiveView: async (id, c) => {
       const owner = c.req.header('x-test-owner');

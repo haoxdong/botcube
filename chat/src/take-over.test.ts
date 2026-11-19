@@ -1,3 +1,4 @@
+import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HttpError } from './http-error.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
@@ -7,8 +8,10 @@ const authorized: string[] = [];
 /** Sessions the Cartridge says run in a browser other than the configured one. */
 const inAgentComputer = new Set<string>();
 beforeAll(async () => {
-  stack = await startInProcess({
+  stack = await startInProcess({ stock: true,
     cartridge: {
+      // The managed Agent Computer: no Take-over routes of its own, so the Chat Service's serve its browsers.
+      routes: new Hono(),
       authorizeBrowserLiveView: async (sessionId) => {
         if (sessionId === 'not-yours') throw new HttpError(403, 'Not your browser Session');
         authorized.push(sessionId);

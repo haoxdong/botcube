@@ -158,11 +158,12 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     runs && runQueue && { tasks: new ScheduledTasks(table, runs, client, new SchedulerClient(aws)), queue: runQueue, draining: options.scheduledDraining ?? (async () => false), parkHistory: options.parkHistory },
     options.turnQuota ? new TurnQuota(table, client, options.turnQuota) : null,
   );
-  // Each request arrives signed in as its test owner, through the test bot's session cookie.
+  // Each request arrives signed in as its test owner, through the test bot's session cookie; with no account
+  // storage to sign in on, it arrives as a browser with no session would.
   const app = accounts === null ? service : new Hono().all('*', async (c) => {
     const headers = new Headers(c.req.raw.headers);
-    const token = await accounts.signIn(c.req.header('x-test-owner') ?? STOCK_OWNER);
-    headers.append('cookie', `${TEST_ACCOUNT_KEY}_session=${token}`);
+    const token = await accounts.signIn(c.req.header('x-test-owner') ?? STOCK_OWNER).catch(() => null);
+    if (token !== null) headers.append('cookie', `${TEST_ACCOUNT_KEY}_session=${token}`);
     return service.fetch(new Request(c.req.raw, { headers }), c.env);
   });
   return {

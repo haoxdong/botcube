@@ -4,9 +4,15 @@ import { HttpError } from './http-error.js';
 import { accountDefaultModel } from './models.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
+// The account's own model, as a plan grants one: the stock Chat's account models are its plan's.
+const PLAN = { key: 'plan', label: 'Plan', provider: 'openai' };
+
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true, cartridge: {
+    accountModels: async () => [PLAN],
+    accountModel: async (_requester, key) => (key === PLAN.key ? PLAN : undefined),
+  } });
 });
 afterAll(() => stack.stop());
 
@@ -39,10 +45,10 @@ describe("an account's allowed models", () => {
   });
 
   it('are the ones the Cartridge gives the requesting account', async () => {
-    const perAccount = await startInProcess({
+    const perAccount = await startInProcess({ stock: true,
       cartridge: {
         models: [{ key: 'quick', label: 'Quick', provider: 'anthropic' }],
-        accountModels: async ({ owner }) => (owner === 'account-with-plan' ? [{ key: 'plan', label: 'Plan', provider: 'openai' }] : []),
+        accountModels: async ({ owner }) => (owner === 'acct_account-with-plan' ? [{ key: 'plan', label: 'Plan', provider: 'openai' }] : []),
       },
     });
     try {
@@ -51,8 +57,8 @@ describe("an account's allowed models", () => {
           models: { key: string }[];
         };
 
-      expect((await listed('account-with-plan')).models.map(({ key }) => key)).toEqual(['plan', 'quick']);
-      expect((await listed('account-without-plan')).models.map(({ key }) => key)).toEqual(['quick']);
+      expect((await listed('acct_account-with-plan')).models.map(({ key }) => key)).toEqual(['plan', 'quick']);
+      expect((await listed('acct_account-without-plan')).models.map(({ key }) => key)).toEqual(['quick']);
     } finally {
       await perAccount.stop();
     }
@@ -63,12 +69,15 @@ describe("an account's allowed models", () => {
     const accountModels = vi.fn(async () => {
       throw new HttpError(502, 'The plan catalog is unavailable');
     });
-    const failing = await startInProcess({ cartridge: { accountModels } });
+    const failing = await startInProcess({ stock: true, cartridge: {
+      accountModels,
+      accountModel: async (_requester, key) => (key === PLAN.key ? PLAN : undefined),
+    } });
     try {
       const post = (threadId: string, forwardedProps: Record<string, unknown>) =>
         failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, forwardedProps) });
 
-      await Promise.all(['session-cartridge-model', 'session-account-model', 'session-default-model'].map((id) => failing.allocate('account-1', id)));
+      await Promise.all(['session-cartridge-model', 'session-account-model', 'session-default-model'].map((id) => failing.allocate('acct_account-1', id)));
       const named = await post('session-cartridge-model', { model: 'thorough' });
       const plan = await post('session-account-model', { model: 'plan' });
       await Promise.all([named.text(), plan.text()]);
@@ -94,7 +103,7 @@ describe("an account's allowed models", () => {
   });
 
   it('exposes Cartridge choices while preserving a classified catalog refusal', async () => {
-    const failing = await startInProcess({ cartridge: { accountModels: async () => { throw new HttpError(503, 'Plan Usage was revoked'); } } });
+    const failing = await startInProcess({ stock: true, cartridge: { accountModels: async () => { throw new HttpError(503, 'Plan Usage was revoked'); } } });
     try {
       const response = await failing.app.request('/agent/models');
       expect(response.status).toBe(503);
@@ -109,7 +118,7 @@ describe("an account's allowed models", () => {
   });
 
   it('are served only to a request the Cartridge resolves an account for', async () => {
-    const refusing = await startInProcess({
+    const refusing = await startInProcess({ stock: true,
       cartridge: {
         requester: async () => {
           throw new HttpError(401, 'Sign in first');
@@ -130,7 +139,7 @@ describe("an account's allowed models", () => {
 describe('a Turn naming a model', () => {
   it.each(['quick', 'thorough', 'plan'])('run a Turn naming %s', async (model) => {
     const threadId = `session-named-${model}`;
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
 
     const response = await postTurn(turn(threadId, { model, effort: 'high' }));
 
@@ -144,7 +153,7 @@ describe('a Turn naming a model', () => {
 
 
   it('reaches the Harness with a listed model', async () => {
-    await stack.allocate('account-1', 'session-listed-model');
+    await stack.allocate('acct_account-1', 'session-listed-model');
     const response = await postTurn(turn('session-listed-model', { model: 'thorough' }));
 
     expect(response.status).toBe(200);
@@ -170,7 +179,7 @@ describe('a Turn naming a model', () => {
   });
 
   it("runs without one on the account's default, which it names to the Harness", async () => {
-    await stack.allocate('account-1', 'session-no-model');
+    await stack.allocate('acct_account-1', 'session-no-model');
     const response = await postTurn(turn('session-no-model', {}));
 
     expect(response.status).toBe(200);
@@ -184,7 +193,7 @@ describe("a Session's provider", () => {
   const turnsOf = (threadId: string) => stack.agentcore.invocations().filter(({ body }) => body.includes(threadId));
 
   it("is recorded from its first Turn's model", async () => {
-    await stack.allocate('account-1', 'session-provider-first');
+    await stack.allocate('acct_account-1', 'session-provider-first');
     const response = await postTurn(turn('session-provider-first', { model: 'plan' }));
 
     expect(response.status).toBe(200);
@@ -193,7 +202,7 @@ describe("a Session's provider", () => {
   });
 
   it("is the account's default model's when its first Turn names none", async () => {
-    await stack.allocate('account-1', 'session-provider-default');
+    await stack.allocate('acct_account-1', 'session-provider-default');
     const response = await postTurn(turn('session-provider-default', {}));
 
     expect(response.status).toBe(200);
@@ -202,7 +211,7 @@ describe("a Session's provider", () => {
   });
 
   it('is named when the Main Chat is replayed', async () => {
-    const owner = { 'x-test-owner': 'account-main-chat-provider' };
+    const owner = { 'x-test-owner': 'acct_account-main-chat-provider' };
     const { id } = (await (await stack.app.request('/main-chat', { headers: owner })).json()) as { id: string };
     await (
       await stack.app.request('/', {
@@ -221,7 +230,7 @@ describe("a Session's provider", () => {
   });
 
   it("takes a later Turn on another of the provider's models", async () => {
-    await stack.allocate('account-1', 'session-provider-same');
+    await stack.allocate('acct_account-1', 'session-provider-same');
     await (await postTurn(turn('session-provider-same', { model: 'quick' }))).text();
 
     const response = await postTurn(turn('session-provider-same', { model: 'thorough' }));
@@ -249,7 +258,7 @@ describe("a Session's provider", () => {
       'Model "plan" is from openai; this Session runs on anthropic models',
     ],
   ])('refuses a later Turn naming %s before the Harness hears of it', async (_, threadId, first, later, provider, detail) => {
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
     await (await postTurn(turn(threadId, { model: first }))).text();
 
     const response = await postTurn(turn(threadId, later));
@@ -279,7 +288,7 @@ describe("an account's default model", () => {
 describe('platform model parity', () => {
   it.each(['us.anthropic.claude-opus-4-6-v1', 'opus-unlisted', 'sonnet-5.5', 'opus-5.5'])('refuse unavailable picker model %s before the Harness hears of it', async (model) => {
     const threadId = `session-picker-refused-${model}`;
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
 
     const response = await postTurn(turn(threadId, { model }));
 
@@ -290,7 +299,7 @@ describe('platform model parity', () => {
     expect(stack.agentcore.invocations().filter(({ body }) => body.includes(threadId))).toEqual([]);
   });  it("end a plan Turn with the Harness's classified Plan Usage error, as it named it", async () => {
     const threadId = 'session-classified-plan-error';
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
     const runError = {
       type: 'RUN_ERROR',
       message:
@@ -308,9 +317,9 @@ describe('platform model parity', () => {
 
   it('run an Anthropic Turn naming a Cartridge model while the plan can no longer refresh, without asking for the catalog', async () => {
     const accountModels = vi.fn(async () => { throw new HttpError(503, 'Plan catalog revoked'); });
-    const failing = await startInProcess({ cartridge: { accountModels } });
+    const failing = await startInProcess({ stock: true, cartridge: { accountModels } });
     const threadId = 'session-cartridge-with-revoked-plan';
-    await failing.allocate('account-1', threadId);
+    await failing.allocate('acct_account-1', threadId);
     try {
       const response = await failing.app.request('/', { method: 'POST', headers: { 'content-type': 'application/json' }, body: turn(threadId, { model: 'quick' }) });
       expect(response.status).toBe(200);
