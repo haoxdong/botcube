@@ -7,13 +7,11 @@ the index of each user's Sessions. It stores no Session content: the Agent
 Service's record is the only copy (ADR 0067), and the Chat Service replays and
 purges a Session through the Harness's session API.
 
-Applications compose it with a required `ChatServiceCartridge` (`src/cartridge.ts`):
-a product entry point calls `serveChatService(factory)` and bundles the result. The
-Cartridge supplies its auth and account routes, the account that owns a request's
-Sessions, the user ID an account's Sessions are filed under, payload enrichment,
-and browser-session authorization; the factory receives the account-history hooks
-(deletion and Account Claim transfer). The Chat Service mounts those routes at the
-root; it contains no bot-specific auth defaults.
+`serveChatService()` builds BotCube's own Chat from the Deployment Config that
+`BOTCUBE_DEPLOYMENT_CONFIG` names and its bot settings ([`src/stock.ts`](src/stock.ts),
+ADR 0091): sign-in and account routes, the account that owns a request's Sessions,
+the user ID they are filed under, the Turn payload, and the Agent Computer. It holds
+no bot-specific code.
 
 Set `BOTCUBE_CHAT_TABLE` (default `chat`) and `AWS_DEFAULT_REGION`
 (default `us-east-1`). The service uses the AWS credential chain. For local

@@ -93,15 +93,13 @@ process resumes the same Session. Like AgentCore, it addresses a Session by (use
 Session ID): each user ID gets its own SQLite file. AgentCore supplies its own implementations
 of the same three slots.
 
-## Chat Service, tools, and deployment Cartridge contract
+## Chat Service
 
-A Cartridge's Chat Service half is a TypeScript package whose entry point passes a
-`CartridgeFactory` (`chat/src/cartridge.ts`) to `serveChatService`; a bundler
-binds it at build time (the [stock Chat Service](chat/src/stock.ts) needs none). The Chat Service mounts
-the Cartridge's routes, delegates request identity, Session ownership, filing IDs,
-invocation-payload policy and live-view authorization, hands the Cartridge its
-account-history hooks, and keeps Session Metadata private. The generic Chat Service
-contains no product routes or identity, and no harness-library code.
+The Chat Service is configured, not extended: `serveChatService()` builds BotCube's
+own Chat from the Deployment Config and bot settings ([`chat/src/stock.ts`](chat/src/stock.ts)).
+It keeps Session Metadata private and contains no product code or harness-library code.
+
+## Tools and deployment Cartridge contract
 
 Container tool installation is owned by the Cartridge's `deploy/stage-tools.sh`
 hook. Deployment names and provider values live under the Cartridge's `deploy/`
