@@ -34,7 +34,10 @@ DEFAULT_MAX_TOKENS = 128
 PLAN_MODEL_PREFIX = 'openai-plan:'
 # The Deployment Config's `models` Endpoint, as JSON the deploy hands over: `MODELS_ENV` in botcube/deployment-config.
 MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
-ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers'})
+ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'cacheMarkers'})
+CLAUDE_CACHE_MARKERS = 'claude'
+CACHE_MARKER = {'type': 'ephemeral'}
+MARKED_LATEST_MESSAGES = 2
 RETRIED_STATUSES = frozenset({502, 503, 504})
 ENDPOINT_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 0.2
@@ -152,6 +155,7 @@ class ModelsEndpoint:
     base_url: str
     headers: Mapping[str, str]
     credential: CredentialSource = field(repr=False)
+    cache_markers: bool = False
 
 
 @functools.cache
@@ -168,10 +172,14 @@ def models_endpoint() -> ModelsEndpoint | None:
         raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: unknown field {", ".join(unknown)}')
     if missing := sorted({'url', 'credential'} - set(config)):
         raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: missing field {", ".join(missing)}')
+    markers = config.get('cacheMarkers')
+    if markers is not None and markers != CLAUDE_CACHE_MARKERS:
+        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: cacheMarkers {markers!r} is not {CLAUDE_CACHE_MARKERS!r}')
     endpoint = ModelsEndpoint(
         base_url=config['url'].rstrip('/'),
         headers=dict(config.get('headers') or {}),
         credential=credential_source('models', config['credential']),
+        cache_markers=markers == CLAUDE_CACHE_MARKERS,
     )
     endpoint.credential.get()
     return endpoint
@@ -210,6 +218,14 @@ def _endpoint_client() -> Any:
     return EndpointClient()
 
 
+def _mark_cache_breakpoint(message: dict[str, Any]) -> None:
+    content = message.get('content')
+    if isinstance(content, str) and content:
+        message['content'] = [{'type': 'text', 'text': content, 'cache_control': CACHE_MARKER}]
+    elif isinstance(content, list) and content and content[-1].get('type') == 'text':
+        content[-1] = {**content[-1], 'cache_control': CACHE_MARKER}
+
+
 def _dropped_before_response(error: BaseException | None) -> bool:
     import httpx
 
@@ -223,7 +239,18 @@ def _dropped_before_response(error: BaseException | None) -> bool:
 def _openai_compatible_model(key: str, endpoint: ModelsEndpoint, max_tokens: int | None) -> Any:
     from langchain_openai import ChatOpenAI
 
-    model = ChatOpenAI(
+    class EndpointModel(ChatOpenAI):
+        def _get_request_payload(self, input_: Any, **kwargs: Any) -> dict[str, Any]:
+            payload = super()._get_request_payload(input_, **kwargs)
+            if endpoint.cache_markers:
+                messages = payload['messages']
+                if messages and messages[0].get('role') == 'system':
+                    _mark_cache_breakpoint(messages[0])
+                for message in messages[-MARKED_LATEST_MESSAGES:]:
+                    _mark_cache_breakpoint(message)
+            return payload
+
+    model = EndpointModel(
         model=key,
         base_url=endpoint.base_url,
         api_key=lambda: endpoint.credential.get().value,

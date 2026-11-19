@@ -788,6 +788,11 @@
               "type": "string",
               "minLength": 1,
               "description": "The model on the endpoint that summarizes each finished Turn for the Activity."
+            },
+            "cacheMarkers": {
+              "type": "string",
+              "const": "claude",
+              "description": "Set to `claude` behind a gateway in front of Claude, so the Harness marks the system prompt and the latest messages with `cache_control` and repeated input is billed at the cached rate. Unset, no request carries a marker."
             }
           },
           "required": ["url", "credential", "kind", "turnSummaryModel"],

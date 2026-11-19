@@ -54,6 +54,13 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
     expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'x-tenant': 'botcube-example' });
   });
 
+  it('keep working on an Endpoint whose cache markers only the Harness writes', async () => {
+    expect(await summarize(deployed({ cacheMarkers: 'claude' }))).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
+
+    expect(endpoint.summarizedTurns()).toEqual([turn]);
+    expect(endpoint.requests[0]?.body).not.toContain('cache_control');
+  });
+
   it.each([502, 503, 504])('retry an HTTP %i before the first byte', async (status) => {
     endpoint.gatewayFailures.push(status, status);
 

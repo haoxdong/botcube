@@ -180,6 +180,8 @@ describe('a Deployment Config', () => {
       'models.headers.Authorization: The credential sets Authorization'],
     ['an OpenAI-compatible endpoint over plain HTTP', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } }, 'models.url: '],
     ['an OpenAI-compatible endpoint without a turn summary model', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, turnSummaryModel: undefined } }, 'models.turnSummaryModel: '],
+    ['cache markers in a format BotCube does not write', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, cacheMarkers: 'openai' } }, 'models.cacheMarkers: '],
+    ['cache markers turned on as a flag', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, cacheMarkers: true } }, 'models.cacheMarkers: '],
     ['a section without its kind', { bot: './bot.json', harnessAuth: {} }, "harnessAuth.kind: Invalid discriminator value. Expected 'sigv4' | 'jwt-bearer'"],
     ['a JWT bearer without its client', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer' } }, 'harnessAuth.clients: '],
     ['a JWT bearer on the old audience field', { bot: './bot.json', harnessAuth: { kind: 'jwt-bearer', clients: [{ clientId: 'botcube-harness' }], audience: 'botcube-harness' } },
@@ -256,6 +258,12 @@ describe('a Deployment Config', () => {
     ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/models-api-key' }],
   ])('gives the models endpoint its credential from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+  });
+
+  it('marks Claude cache breakpoints on the models endpoint only when the operator turns them on', () => {
+    expect(loadDeployment(configFile({ bot: './bot.json', models: ENTERPRISE_MODELS })).config.models).not.toHaveProperty('cacheMarkers');
+    const models = { ...ENTERPRISE_MODELS, cacheMarkers: 'claude' };
     expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
   });
 

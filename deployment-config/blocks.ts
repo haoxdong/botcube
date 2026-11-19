@@ -75,6 +75,8 @@ export const endpoint = z.strictObject({
   headers: endpointHeaders,
 });
 export type Endpoint = z.output<typeof endpoint>;
+export const cacheMarkers = z.literal('claude')
+  .describe("Set to `claude` behind a gateway in front of Claude, so the Harness marks the system prompt and the latest messages with `cache_control` and repeated input is billed at the cached rate. Unset, no request carries a marker.");
 
 export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 

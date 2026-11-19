@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from botcube_harness_deepagents import llm
+from botcube_harness_deepagents import llm, turn_timing
 from botcube_harness_deepagents.credential_source import CredentialSourceError
 
 pytestmark = pytest.mark.integration
@@ -25,6 +26,7 @@ class StandIn:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.gateway_failures: list[int] = []
+        self.usage: dict[str, Any] = {'prompt_tokens': 26, 'completion_tokens': 4, 'total_tokens': 30}
         self.drops: list[str] = []
         stand_in = self
 
@@ -46,7 +48,8 @@ class StandIn:
                     self.connection.shutdown(socket.SHUT_RDWR)
                     self.close_connection = True
                     return
-                text = f"Echo: {body['messages'][-1]['content']}"
+                content = body['messages'][-1]['content']
+                text = 'Echo: ' + (content if isinstance(content, str) else ''.join(part['text'] for part in content))
                 if drop == 'mid-response':
                     started = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': None}]}
                     self.send_response(200)
@@ -56,8 +59,10 @@ class StandIn:
                     self.wfile.flush()
                     self._reset()
                     return
-                chunk = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': 'stop'}]}
-                self._send(200, 'text/event-stream', f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode())
+                chunks = [{'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': 'stop'}]}]
+                if body.get('stream_options', {}).get('include_usage'):
+                    chunks.append({'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [], 'usage': stand_in.usage})
+                self._send(200, 'text/event-stream', ''.join(f'data: {json.dumps(chunk)}\n\n' for chunk in chunks).encode() + b'data: [DONE]\n\n')
 
             def _reset(self) -> None:
                 self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
@@ -85,11 +90,16 @@ def stand_in() -> Iterator[StandIn]:
 
 
 @pytest.fixture
-def deployed(stand_in: StandIn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+def endpoint_settings() -> dict[str, Any]:
+    return {}
+
+
+@pytest.fixture
+def deployed(stand_in: StandIn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint_settings: dict[str, Any]) -> Iterator[Path]:
     """The environment the deploy gives the Harness for the enterprise example's models Endpoint, at the stand-in."""
     key = tmp_path / 'models-api-key'
     key.write_text('sk-mounted\n')
-    endpoint = {'url': stand_in.url, 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'}}
+    endpoint = {'url': stand_in.url, 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'}, **endpoint_settings}
     monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps(endpoint))
     monkeypatch.setenv('BOTCUBE_TURN_SUMMARY_MODEL', 'example-summary')
     llm.models_endpoint.cache_clear()
@@ -246,6 +256,83 @@ def test_a_turn_fails_on_other_errors_without_retrying(stand_in: StandIn, status
     with pytest.raises(openai.APIStatusError):
         _reply()
     assert len(stand_in.requests) == 1
+
+
+CONVERSATION = [
+    SystemMessage('You are BotCube.'),
+    HumanMessage('List the files.'),
+    AIMessage('', tool_calls=[{'id': 'call-1', 'name': 'ls', 'args': {}}]),
+    ToolMessage('notes.md', tool_call_id='call-1'),
+    AIMessage('There is one file, notes.md.'),
+    HumanMessage('Read it.'),
+]
+MARKER = {'type': 'ephemeral'}
+
+
+def _converse(messages: list[Any]) -> str:
+    return str(asyncio.run(llm.build_model(model='echo').ainvoke(messages)).content)
+
+
+@pytest.mark.usefixtures('deployed')
+@pytest.mark.parametrize('endpoint_settings', [{'cacheMarkers': 'claude'}])
+def test_cache_markers_land_on_the_system_prompt_and_the_latest_messages(stand_in: StandIn) -> None:
+    assert _converse(CONVERSATION) == 'Echo: Read it.'
+
+    [request] = stand_in.requests
+    assert request['body']['messages'] == [
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': MARKER}]},
+        {'role': 'user', 'content': 'List the files.'},
+        {'role': 'assistant', 'content': None, 'tool_calls': [{'type': 'function', 'id': 'call-1', 'function': {'name': 'ls', 'arguments': '{}'}}]},
+        {'role': 'tool', 'content': 'notes.md', 'tool_call_id': 'call-1'},
+        {'role': 'assistant', 'content': [{'type': 'text', 'text': 'There is one file, notes.md.', 'cache_control': MARKER}]},
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Read it.', 'cache_control': MARKER}]},
+    ]
+
+
+@pytest.mark.usefixtures('deployed')
+@pytest.mark.parametrize('endpoint_settings', [{'cacheMarkers': 'claude'}])
+def test_cache_markers_mark_a_tool_result_but_not_a_call_with_no_text(stand_in: StandIn) -> None:
+    _converse(CONVERSATION[:4])
+
+    [request] = stand_in.requests
+    assert [message.get('content') for message in request['body']['messages']] == [
+        [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': MARKER}],
+        'List the files.',
+        None,
+        [{'type': 'text', 'text': 'notes.md', 'cache_control': MARKER}],
+    ]
+
+
+@pytest.mark.usefixtures('deployed')
+def test_no_request_carries_a_cache_marker_unless_the_operator_turns_them_on(stand_in: StandIn) -> None:
+    _converse(CONVERSATION)
+
+    [request] = stand_in.requests
+    assert 'cache_control' not in json.dumps(request['body'])
+    assert request['body']['messages'][0] == {'role': 'system', 'content': 'You are BotCube.'}
+
+
+@pytest.mark.usefixtures('deployed')
+def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports(stand_in: StandIn) -> None:
+    stand_in.usage = {'prompt_tokens': 26, 'completion_tokens': 4, 'total_tokens': 30, 'prompt_tokens_details': {'cached_tokens': 20}}
+
+    async def turn() -> dict[str, Any]:
+        timing = turn_timing.TurnTiming('run', 'session', 'echo', warmup=False, receipt=turn_timing.perf_counter())
+        with turn_timing.use(timing):
+            await llm.build_model(model='echo').ainvoke(CONVERSATION)
+        return timing.record(turn_timing.perf_counter(), 'finished')
+
+    record = asyncio.run(turn())
+    assert (record['inputTokens'], record['cachedInputTokens']) == (26, 20)
+
+
+def test_startup_fails_on_cache_markers_it_cannot_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': '/run/key'}, 'cacheMarkers': 'openai'}
+    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps(endpoint))
+    llm.models_endpoint.cache_clear()
+    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_ENDPOINT: cacheMarkers 'openai' is not 'claude'$"):
+        llm.models_endpoint()
+    llm.models_endpoint.cache_clear()
 
 
 def test_startup_fails_naming_the_seam_and_source_when_the_credential_cannot_be_read(deployed: Path) -> None:
