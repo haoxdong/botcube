@@ -1109,7 +1109,7 @@ const ENV = {
   BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY: ' agent-computer/chrome-policy.json ',
 };
 const FILES = filesOf(ACCOUNT);
-const client = (env: NodeJS.ProcessEnv = ENV) => agentComputerBrowserFromEnv(env, { profileOmitsCookieDomains: ['site.example'] })();
+const client = (env: NodeJS.ProcessEnv = ENV) => agentComputerBrowserFromEnv(env, { profileOmitsCookieDomains: ['site.example'], accountKey: 'acme' })();
 
 describe('the AgentCore browser of Agent Computers', () => {
   beforeEach(() => {
@@ -1156,6 +1156,57 @@ describe('the AgentCore browser of Agent Computers', () => {
       await Promise.all([first.sleepAll().slept, replacement.sleepAll().slept]);
       vi.useRealTimers();
     }
+  });
+
+  // The deploy grants SaveBrowserSessionProfile only on `browser-profile/<accountKey>_*`.
+  const PROFILE_UNDER_GRANT = 'acme_8300e9d12ce55ca979c3e7e01a8f7facab49-a1b2c3';
+  const profileRequests = (requests: { url: string; method: string }[]) => requests
+    .filter(({ url }) => url.includes('/browser-profiles'))
+    .map(({ url, method }) => `${method} ${url.replace(/^https?:\/\/[^/]+/, '')}`);
+  const managed = (store: AccountResources) => agentComputers({
+    browser: client, records: () => store, started: async () => {},
+    files: () => ({ mount: async (accountId: string) => filesOf(accountId) }) as AccountFiles,
+    idleSeconds: IDLE_SECONDS,
+  });
+
+  it("saves a first sleep into a profile named under the bot's account key", async () => {
+    const { requests } = agentCore({ streamStatus: 'ENABLED', answers: { '/browser-profiles': Response.json({ profileId: PROFILE_UNDER_GRANT }) } });
+    const store = new AccountResources('chat', memoryDocuments());
+    const computers = managed(store);
+
+    vi.useFakeTimers();
+    try {
+      await computers.wake(ACCOUNT, 'chat-1');
+      await idle();
+    } finally {
+      await computers.sleepAll().slept;
+      vi.useRealTimers();
+    }
+
+    expect(requests.find(({ url }) => url.endsWith('/browser-profiles'))?.body).toMatchObject({ name: 'acme_8300e9d12ce55ca979c3e7e01a8f7facab49' });
+    expect(profileRequests(requests)).toContain(`PUT /browser-profiles/${PROFILE_UNDER_GRANT}/save`);
+    expect(await store.agentComputer(ACCOUNT)).toMatchObject({ profileId: PROFILE_UNDER_GRANT });
+  });
+
+  it('loads the profile an earlier Chat saved for the account and sleeps back into it', async () => {
+    const { requests } = agentCore({ streamStatus: 'ENABLED' });
+    const store = new AccountResources('chat', memoryDocuments());
+    await store.saveAgentComputer(ACCOUNT, { profileId: PROFILE_UNDER_GRANT });
+    const computers = managed(store);
+
+    vi.useFakeTimers();
+    try {
+      await computers.wake(ACCOUNT, 'chat-1');
+      await idle();
+    } finally {
+      await computers.sleepAll().slept;
+      vi.useRealTimers();
+    }
+
+    expect(requests.find(({ url }) => url.endsWith('/sessions/start'))?.body).toMatchObject({
+      name: 'acme-agent-computer', profileConfiguration: { profileIdentifier: PROFILE_UNDER_GRANT },
+    });
+    expect(profileRequests(requests)).toEqual([`PUT /browser-profiles/${PROFILE_UNDER_GRANT}/save`]);
   });
 
   it.each([403, 429, 503])('retains its durable browser when AgentCore control returns HTTP %s', async (status) => {
@@ -1216,13 +1267,13 @@ describe('the AgentCore browser of Agent Computers', () => {
     };
     expect(requests.map(({ body }) => body)).toEqual([
       {
-        name: 'botcube-agent-computer',
+        name: 'acme-agent-computer',
         sessionTimeoutSeconds: 28_800,
         profileConfiguration: { profileIdentifier: 'profile-1' },
         ...filesAsDownloads,
         clientToken: expect.any(String),
       },
-      { name: 'botcube-agent-computer', sessionTimeoutSeconds: 28_800, ...filesAsDownloads, clientToken: expect.any(String) },
+      { name: 'acme-agent-computer', sessionTimeoutSeconds: 28_800, ...filesAsDownloads, clientToken: expect.any(String) },
     ]);
   });
 
@@ -1248,7 +1299,7 @@ describe('the AgentCore browser of Agent Computers', () => {
         method: 'PUT',
         contentType: 'application/json',
         body: {
-          name: 'botcube_8300e9d12ce55ca979c3e7e01a8f7facab49',
+          name: 'acme_8300e9d12ce55ca979c3e7e01a8f7facab49',
           clientToken: PROFILE_REQUEST_DIGEST,
         },
       },

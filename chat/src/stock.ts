@@ -92,7 +92,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     };
     // The managed AgentCore browser when the deploy names one; a local Chromium only when it names none.
     const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
-      ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains })
+      ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
       : localAgentComputer({ history, requester, env, startPage: options.startPage });
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({ store, deleteAccount: lifecycle.deleteAccount });

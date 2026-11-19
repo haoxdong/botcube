@@ -17,26 +17,25 @@ import { sweepEvery } from './task-drain.js';
 const DEFAULT_IDLE_SECONDS = 600;
 /** AgentCore's ceiling: a browser the Chat Service lost track of stops on its own by then. */
 const SESSION_TIMEOUT_SECONDS = 8 * 60 * 60;
-const SESSION_NAME = 'botcube-agent-computer';
 /**
  * The display the live view draws (its 1280x720 default): a narrow pane shrinks page text 1.5x less than at 1920x1080,
  * and AgentCore's own default, 1456x819, would leave the rest black.
  */
 const VIEWPORT = { width: 1280, height: 720 };
 
-/** A browser profile name AgentCore accepts, one per account. */
-const profileName = (accountId: string, profilePrefix: string) =>
-  `${profilePrefix}_${createHash('sha256').update(accountId).digest('hex').slice(0, 36)}`;
+/** A browser profile name AgentCore accepts, one per account, under the bot's `accountKey`: the deploy grants `<accountKey>_*`. */
+const profileName = (accountId: string, accountKey: string) =>
+  `${accountKey}_${createHash('sha256').update(accountId).digest('hex').slice(0, 36)}`;
 
 /**
  * The Agent Computer's own AgentCore browser, AGENTCORE_AGENT_COMPUTER_BROWSER_ID: its
  * execution role mounts Files, which the sign-in browser's must not (ADR 0077).
  */
-export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { profileOmitsCookieDomains, sessionName = SESSION_NAME, profilePrefix = 'botcube' }: {
+export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { profileOmitsCookieDomains, accountKey }: {
   /** The bot settings' `agentComputer.profileOmitsCookieDomains`. */
   profileOmitsCookieDomains: readonly string[];
-  sessionName?: string;
-  profilePrefix?: string;
+  /** The bot settings' `accountKey`, which names each account's browser profile and the browser session. */
+  accountKey: string;
 }): () => AgentComputerBrowser {
   return () => {
     const browserId = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim();
@@ -52,7 +51,7 @@ export function agentComputerBrowserFromEnv(env: NodeJS.ProcessEnv, { profileOmi
       );
     }
     const control = (env.AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL || `https://bedrock-agentcore-control.${config.region}.amazonaws.com`).replace(/\/+$/, '');
-    return agentCoreAgentComputerBrowser(new BrowserSessions(config), control, { bucket: policy.bucket, prefix: policy.prefix }, { profileOmitsCookieDomains, sessionName, profilePrefix });
+    return agentCoreAgentComputerBrowser(new BrowserSessions(config), control, { bucket: policy.bucket, prefix: policy.prefix }, { profileOmitsCookieDomains, accountKey });
   };
 }
 
@@ -75,7 +74,7 @@ function agentCoreAgentComputerBrowser(
   controlEndpoint: string,
   /** The Chrome policy file (deploy/agent-computer) that downloads into the Files mount. */
   policy: { bucket: string; prefix: string },
-  { profileOmitsCookieDomains, sessionName, profilePrefix }: { profileOmitsCookieDomains: readonly string[]; sessionName: string; profilePrefix: string },
+  { profileOmitsCookieDomains, accountKey }: { profileOmitsCookieDomains: readonly string[]; accountKey: string },
 ): AgentComputerBrowser {
   const { region, endpoint, browserId } = sessions.config;
 
@@ -94,7 +93,7 @@ function agentCoreAgentComputerBrowser(
     browserId,
     start: (profileId, files) =>
       sessions.start({
-        name: sessionName,
+        name: `${accountKey}-agent-computer`,
         sessionTimeoutSeconds: SESSION_TIMEOUT_SECONDS,
         viewPort: VIEWPORT,
         ...(profileId === null ? {} : { profileConfiguration: { profileIdentifier: profileId } }),
@@ -113,7 +112,7 @@ function agentCoreAgentComputerBrowser(
       }),
     beforeProfileSave: (sessionId) => sessions.withBrowser(sessionId, (cdp) => forgetCookies(cdp, profileOmitsCookieDomains)),
     async createProfile(accountId) {
-      const name = profileName(accountId, profilePrefix);
+      const name = profileName(accountId, accountKey);
       // The client token is the account's, so a retry after a lost answer gets the same profile.
       const clientToken = createHash('sha256').update(`browser-profile:${accountId}`).digest('hex');
       const response = await send(`${controlEndpoint}/browser-profiles`, { name, clientToken }, 'CreateBrowserProfile');

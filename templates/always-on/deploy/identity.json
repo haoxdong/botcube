@@ -12,7 +12,7 @@
       "sessionApiFunction": "bot-cube-session-api",
       "agentComputerBrowser": {
         "name": "bot_cube_agent_computer_managed",
-        "profileNamePrefix": "bot_cube_"
+        "profileNamePrefix": "template_"
       },
       "privateNatBrowser": {
         "name": "bot_cube_provider_link",

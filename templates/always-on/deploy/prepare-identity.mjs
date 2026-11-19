@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (path) => JSON.parse(readFileSync(join(root, path), 'utf8'));
-// The one input: the Agent Identity in the example's bot settings.
+// The inputs: the Agent Identity and the account key in the example's bot settings.
 const BOT_SETTINGS = '../../examples/bot/bot.json';
-const name = read(BOT_SETTINGS).agentIdentity?.name;
+const { agentIdentity, accountKey } = read(BOT_SETTINGS);
+const name = agentIdentity?.name;
 if (typeof name !== 'string' || !/^[A-Za-z][A-Za-z0-9]*(?:[ -][A-Za-z0-9]+)*$/.test(name)) {
   throw new Error('Bot name must start with a letter and contain only words separated by spaces or hyphens.');
 }
@@ -24,7 +25,6 @@ const nameFields =
   "aws.agentCore.memory": "botcube_memory",
   "aws.agentCore.sessionApiFunction": "botcube-session-api",
   "aws.agentCore.agentComputerBrowser.name": "botcube_agent_computer_managed",
-  "aws.agentCore.agentComputerBrowser.profileNamePrefix": "botcube_",
   "aws.agentCore.privateNatBrowser.name": "botcube_provider_link",
   "aws.agentCore.privateNatBrowser.extension.prefix": "botcube/browser-extensions/provider-user-agent/v2.zip",
   "aws.ecs.privateNamespace": "botcube.internal",
@@ -77,6 +77,8 @@ for (const [path, pattern] of Object.entries({ ...nameFields, ...runtimeFields }
   const owner = parts.reduce((value, part) => value[part], deployment);
   owner[key] = path in runtimeFields ? pattern : pattern.replaceAll('BOTCUBE', upper).replace(/botcube(?=_)/g, underscore).replaceAll('botcube', kebab);
 }
+// Stock Chat names each Account's browser profile `<accountKey>_<hash>`; the deploy grants this prefix.
+deployment.aws.agentCore.agentComputerBrowser.profileNamePrefix = `${accountKey}_`;
 const agentcore = read('deploy/agentcore/agentcore.json');
 agentcore.name = underscore.replaceAll('_', '');
 agentcore.tags['agentcore:project-name'] = kebab;

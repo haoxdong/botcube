@@ -13,7 +13,7 @@ import { ecsTaskDraining } from './scheduled-runs.js';
  * each Session's browser wakes from the account's browser profile with its Files mounted, as a Cartridge's does. It
  * answers what `localAgentComputer` answers, so the stock Chat Service takes either.
  */
-export function managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains }: {
+export function managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains, accountKey }: {
   history: Pick<AccountHistory, 'owns' | 'ownsMainChat'>;
   requester: (c: Context) => Promise<Requester>;
   env: NodeJS.ProcessEnv;
@@ -21,8 +21,10 @@ export function managedAgentComputer({ history, requester, env, store, files, pr
   files: () => AccountFiles;
   /** The bot settings' `agentComputer.profileOmitsCookieDomains`. */
   profileOmitsCookieDomains: readonly string[];
+  /** The bot settings' `accountKey`. */
+  accountKey: string;
 }) {
-  const browser = agentComputerBrowserFromEnv(env, { profileOmitsCookieDomains });
+  const browser = agentComputerBrowserFromEnv(env, { profileOmitsCookieDomains, accountKey });
   const computers = agentComputers({
     browser,
     records: store,
