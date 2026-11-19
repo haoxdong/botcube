@@ -159,6 +159,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
               await plan.planAccountId(requester.owner, model))
             : {}),
           ...(await computer.forwardedProps(requester.owner, input.threadId)),
+          // The account's Files, mounted as the agent's working directory.
+          ...(filesConfigured(env) ? { files: await files().mountBinding(requester.owner) } : {}),
         },
       }),
       credentialProps: ['credentialServiceInvocationToken', 'agentComputerCdpUrl'],

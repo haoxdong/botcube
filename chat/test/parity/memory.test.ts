@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser } from './browser.js';
-import { startStack, type Stack } from './stack.js';
+import { filingUserId } from '../../src/filing-user-id.js';
+import { PARITY_BOT, startStack, type Stack } from './stack.js';
 
 let stack: Stack;
 beforeAll(async () => {
@@ -8,7 +9,7 @@ beforeAll(async () => {
 });
 afterAll(() => stack.stop());
 
-const filingUserId = (accountId: string) => accountId;
+const filed = (accountId: string) => filingUserId(PARITY_BOT.accountKey, accountId);
 
 const COPPER = { id: 'mem-copper', text: 'Trades copper futures' };
 const PARIS = { id: 'mem-paris', text: 'Lives in Paris' };
@@ -18,7 +19,7 @@ async function rememberingBrowser(...lines: { id: string; text: string }[]): Pro
   const browser = stack.browser();
   const { accountId } = await browser.openAccountSession();
   stack.sessionApi.memories.set(
-    filingUserId(accountId),
+    filed(accountId),
     lines.map((line) => ({ ...line })),
   );
   return browser;

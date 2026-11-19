@@ -10,6 +10,7 @@ import { motoEndpoint } from '../fakes/moto.js';
 import { BIND_ADDRESS, startOnFreePort } from '../fakes/process.js';
 import { Browser } from './browser.js';
 import { FakeEfs } from './fake-efs.js';
+import { testDeploymentConfig } from '../stock-bot.js';
 
 export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 
@@ -20,6 +21,13 @@ interface StackOptions {
 }
 
 export type Stack = Awaited<ReturnType<typeof startStack>>;
+
+/** The parity bot's settings: the template's identity on the Echo model. */
+export const PARITY_BOT = {
+  agentIdentity: { name: 'BotCube', character: 'A template agent', avatar: '🧊' },
+  accountKey: 'template',
+  models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+};
 
 export async function startStack(options: StackOptions = {}) {
   const endpoint = motoEndpoint();
@@ -41,12 +49,15 @@ export async function startStack(options: StackOptions = {}) {
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     AWS_REGION: 'us-east-1', AWS_DEFAULT_REGION: 'us-east-1', AWS_EC2_METADATA_DISABLED: 'true',
     AWS_ENDPOINT_URL_DYNAMODB: endpoint, BOTCUBE_CHAT_TABLE: name,
+    BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(PARITY_BOT),
     BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
     AWS_ENDPOINT_URL_STS: endpoint,
     ...files.environment,
     ...(options.agentcore === 'unconfigured' ? {} : {
       AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
+      // The managed Agent Computer, as a deploy runs it; the fake AgentCore starts no browser, so a Turn's start only logs.
+      AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'parity-browser',
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agentcoreUrl,
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL: agentcoreUrl,
     }),

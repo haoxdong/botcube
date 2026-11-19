@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser } from './browser.js';
-import { startStack, type Stack } from './stack.js';
+import { filingUserId } from '../../src/filing-user-id.js';
+import { PARITY_BOT, startStack, type Stack } from './stack.js';
 
 let stack: Stack;
 beforeAll(async () => {
@@ -16,7 +17,7 @@ interface ThreadSummary {
   turn_completed_at?: string;
 }
 
-const filingUserId = (accountId: string) => accountId;
+const filed = (accountId: string) => filingUserId(PARITY_BOT.accountKey, accountId);
 
 async function chattingBrowser(): Promise<{ browser: Browser; accountId: string }> {
   const browser = stack.browser();
@@ -111,7 +112,7 @@ describe('GET /threads/{id}', () => {
     expect(stack.sessionApi.events()).toContainEqual({
       operation: 'get',
       sessionId: replayed,
-      userId: filingUserId(accountId),
+      userId: filed(accountId),
     });
   });
 
@@ -160,7 +161,7 @@ describe('DELETE /threads/{id}', () => {
     expect((await browser.get(`/threads/${deleted}`)).status).toBe(404);
     await expect
       .poll(() => stack.sessionApi.events(), { timeout: 10_000 })
-      .toContainEqual({ operation: 'purge', sessionId: deleted, userId: filingUserId(accountId) });
+      .toContainEqual({ operation: 'purge', sessionId: deleted, userId: filed(accountId) });
   });
 
   it('refuses a new Turn in a deleted Session', async () => {

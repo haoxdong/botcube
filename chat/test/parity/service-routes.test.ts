@@ -58,8 +58,9 @@ describe('POST /warmup', () => {
     expect((await browser.delete(`/threads/${threadId}`)).status).toBe(204);
     const before = stack.agentcore.invocations().length;
     const response = await browser.post('/warmup', { threadId });
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ error: 'AgentCore warmup failed' });
+    // The Agent Computer refuses a deleted Session before AgentCore is asked to warm it.
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ detail: 'This account does not own the Session' });
     expect(stack.agentcore.invocations().length).toBe(before);
   });
 

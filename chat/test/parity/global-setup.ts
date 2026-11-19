@@ -16,9 +16,9 @@ declare module 'vitest' {
 export default async function setup(project: TestProject) {
   const directory = await mkdtemp(join(tmpdir(), 'chat-parity-service-'));
   const bundle = async (source: string) => {
-    const entry = join(directory, source.replace(/\.ts$/, '.js'));
+    const entry = join(directory, source.replace(/^.*\//, '').replace(/\.ts$/, '.js'));
     await build({
-      entryPoints: [fileURLToPath(new URL(`./${source}`, import.meta.url))],
+      entryPoints: [fileURLToPath(new URL(source, import.meta.url))],
       outfile: entry,
       bundle: true,
       platform: 'node',
@@ -27,7 +27,7 @@ export default async function setup(project: TestProject) {
     });
     return `node ${entry}`;
   };
-  const [parity, fakeSite] = await Promise.all([bundle('service.ts'), bundle('fake-site-service.ts')]);
+  const [parity, fakeSite] = await Promise.all([bundle('../../src/main.ts'), bundle('./fake-site-service.ts')]);
   project.provide('parityServiceCommand', parity);
   project.provide('fakeSiteServiceCommand', fakeSite);
   const stop = await setupMoto(project);
