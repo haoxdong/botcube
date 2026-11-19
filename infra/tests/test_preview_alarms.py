@@ -4,6 +4,8 @@ from datetime import UTC
 from typing import Any
 from unittest.mock import Mock
 
+import pytest
+
 from deploy_script_support import load_deploy_script
 
 alarms = load_deploy_script('preview_alarms', 'verify-alarms.py')
@@ -90,3 +92,45 @@ class PreviewAlarmsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_configuration_only_accepts_cold_telemetry_without_polling(monkeypatch, tmp_path):
+    import json
+    import sys
+    client = Mock()
+    client.describe_alarms.return_value = {'MetricAlarms': configured()}
+    monkeypatch.setattr(alarms.boto3, 'client', lambda _name: client)
+    monkeypatch.setattr(alarms.time, 'sleep', lambda _seconds: pytest.fail('configuration must not wait'))
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    output = tmp_path / 'outputs.json'
+    output.write_text(json.dumps({alarms.load_identity()['aws']['ecs']['previewOriginStackName']: OUTPUTS}))
+    monkeypatch.setattr(sys, 'argv', ['verify-alarms', str(output), '--configuration-only'])
+    alarms.main()
+    client.get_metric_statistics.assert_not_called()
+    client.get_paginator.assert_not_called()
+    evidence = json.loads((tmp_path / 'preview-alarm-configuration-evidence.json').read_text())
+    assert evidence['configurationVerified'] is True
+    assert evidence['telemetryVerified'] is False
+
+
+def test_monitoring_still_fails_at_the_existing_600_second_deadline(monkeypatch, tmp_path):
+    import json
+    import sys
+    now = [0]
+    client = Mock()
+    values = configured()
+    for alarm in values:
+        alarm['StateValue'] = 'OK'
+    client.describe_alarms.return_value = {'MetricAlarms': values}
+    client.get_metric_statistics.return_value = {'Datapoints': []}
+    monkeypatch.setattr(alarms.boto3, 'client', lambda _name: client)
+    monkeypatch.setattr(alarms.time, 'monotonic', lambda: now[0])
+    def sleep(seconds):
+        now[0] += seconds
+    monkeypatch.setattr(alarms.time, 'sleep', sleep)
+    output = tmp_path / 'outputs.json'
+    output.write_text(json.dumps({alarms.load_identity()['aws']['ecs']['previewOriginStackName']: OUTPUTS}))
+    monkeypatch.setattr(sys, 'argv', ['verify-alarms', str(output)])
+    with pytest.raises(RuntimeError, match='within ten minutes'):
+        alarms.main()
+    assert now[0] == 600

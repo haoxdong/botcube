@@ -150,8 +150,8 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
   for (const metric of ['ExecutionsFailed', 'ExecutionsTimedOut', 'ExecutionsAborted']) {
     parking.hasResourceProperties('AWS::CloudWatch::Alarm', {
       Metrics: Match.arrayWith([
-        Match.objectLike({ Expression: 'primary + backup' }),
-        ...['TransitionStateMachine', 'PartialModeBackstop'].map(prefix => Match.objectLike({
+        Match.objectLike({ Expression: 'primary + backup + monitoring' }),
+        ...['TransitionStateMachine', 'PartialModeBackstop', 'MonitoringProof'].map(prefix => Match.objectLike({
           MetricStat: Match.objectLike({ Metric: Match.objectLike({ MetricName: metric,
             Dimensions: [{ Name: 'StateMachineArn', Value: { Ref: Match.stringLikeRegexp(`^${prefix}`) } }],
           }) }),
@@ -160,6 +160,15 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
       Threshold: 1, EvaluationPeriods: 1, AlarmActions: [{ 'Fn::Join': Match.anyValue() }],
     });
   }
+  const monitoring = Object.values(parking.findResources('AWS::StepFunctions::StateMachine'))
+    .find(resource => resource.Properties.StateMachineName === `${functionName}-monitoring`);
+  expect(monitoring).toBeDefined();
+  const definition = JSON.stringify(monitoring);
+  for (const expected of ['EstablishMonitoring', 'ReportMonitoringFailure', 'MonitoringFailed',
+    'sns:publish', 'Production monitoring proof failed', 'TimeoutSeconds', '660', '720', 'CausePath', 'ErrorPath']) {
+    expect(definition).toContain(expected);
+  }
+  expect(definition).not.toContain('Retry');
   parking.resourceCountIs('AWS::CloudWatch::Alarm', 3);
   const machine = Object.values(parking.findResources('AWS::StepFunctions::StateMachine'))[0];
   expect(JSON.stringify(machine)).toContain('TransientServiceError');

@@ -1,9 +1,9 @@
 """Read-only deployed alarm acceptance; never logs SNS endpoints."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import sys
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -103,11 +103,22 @@ def alarm_states(alarms: Sequence[MetricAlarmTypeDef]) -> dict[str, str]:
 
 
 def main():
-    outputs = json.loads(Path(sys.argv[1]).read_text())[load_identity()['aws']['ecs']['previewOriginStackName']]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('outputs')
+    parser.add_argument('--configuration-only', action='store_true')
+    args = parser.parse_args()
+    outputs = json.loads(Path(args.outputs).read_text())[load_identity()['aws']['ecs']['previewOriginStackName']]
     cw, sns = boto3.client('cloudwatch'), boto3.client('sns')
     names = [f"{outputs['ClusterName']}-preview-{suffix}" for suffix in expected_alarms(outputs)]
     alarms = cw.describe_alarms(AlarmNames=names)['MetricAlarms']
     expected = verify_configuration(outputs, alarms)
+    if args.configuration_only:
+        configuration_report = {'configurationVerified': True, 'telemetryVerified': False,
+                  'verifiedAt': datetime.now(UTC).isoformat()}
+        path = Path(os.environ.get('RUNNER_TEMP', '.')) / 'preview-alarm-configuration-evidence.json'
+        path.write_text(json.dumps(configuration_report, indent=2) + '\n')
+        print(json.dumps(configuration_report))
+        return
     # A new task's first metrics can take several minutes to appear.
     deadline = time.monotonic() + 600
     while True:

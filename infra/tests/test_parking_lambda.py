@@ -48,6 +48,11 @@ class CloudFormation:
         return {'StackId': request['StackName']}
 
 
+@pytest.fixture(autouse=True)
+def monitoring_environment(monkeypatch):
+    monkeypatch.setenv('MONITORING_STATE_MACHINE', 'monitoring-machine')
+
+
 def load():
     spec = importlib.util.spec_from_file_location('parking_transition', DEPLOY_ECS / 'parking_transition.py')
     assert spec and spec.loader
@@ -105,6 +110,7 @@ class Production(CloudFormation):
         self.effects = []
         self.stored = 'parked' if parked else 'live'
         self.probe = Probe(self)
+        self.monitoring = []
 
     def describe_stacks(self, *, StackName):
         return {'Stacks': [self.stacks[StackName]]}
@@ -142,7 +148,13 @@ class Production(CloudFormation):
 
     def advance(self, module, state):
         return module.handler(state, None, cloudformation=self, ssm=self, verify=self.verify,
-                              capacity=self.capacity, refresh=self.refresh, spares=self.spares, probe=self.probe)
+                              capacity=self.capacity, refresh=self.refresh, spares=self.spares, probe=self.probe, executions=self)
+
+    def start_execution(self, **request):
+        assert self.stored == 'live'
+        self.monitoring.append(request)
+        self.effects.append('monitor live')
+        return {'executionArn': 'monitoring-execution'}
 
     def complete(self, module, action):
         state = {'mode': action, 'op': 'advance'} if action in module.STEPS else {'action': action, 'op': 'advance'}
@@ -186,7 +198,7 @@ def test_wake_starts_both_stacks_without_waiting_for_nat_completion():
 
 @pytest.mark.parametrize(('action', 'parked', 'effects'), [
     ('unpark', True, ['bot-cube-private-egress', 'bot-cube-preview-origin', 'capacity live', 'refresh',
-                      'bot-cube-preview-origin', 'bot-cube-api-health', 'verify live', 'verify live', 'verify live', 'spares', 'store live']),
+                      'bot-cube-preview-origin', 'bot-cube-api-health', 'verify live', 'verify live', 'verify live', 'spares', 'store live', 'monitor live']),
     ('park', False, ['bot-cube-api-health', 'bot-cube-preview-origin', 'capacity parked',
                     'bot-cube-private-egress', 'verify parked', 'store parked']),
 ])
@@ -558,7 +570,7 @@ def load_without_owned_egress(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(('action', 'parked', 'effects'), [
     ('unpark', True, ['capacity live', 'refresh', 'bot-cube-preview-origin', 'bot-cube-api-health',
-                      'verify live', 'verify live', 'verify live', 'spares', 'store live']),
+                      'verify live', 'verify live', 'verify live', 'spares', 'store live', 'monitor live']),
     ('park', False, ['bot-cube-api-health', 'bot-cube-preview-origin', 'capacity parked', 'verify parked', 'store parked']),
 ])
 def test_a_deployment_without_owned_egress_parks_and_unparks_without_a_nat(monkeypatch, tmp_path, action, parked, effects):
@@ -684,3 +696,125 @@ def test_park_probe_drain_fails_loud_after_60_seconds(monkeypatch):
     with pytest.raises(RuntimeError, match='probe drain exceeded 60 seconds'):
         world.advance(module, state)
     assert 'bot-cube-private-egress' not in world.effects
+
+
+def test_live_finishes_before_monitoring_observation_and_binds_the_wake(monkeypatch, tmp_path):
+    world, module = Production(True), load()
+    result = world.complete(module, 'live')
+    assert 'alarm-configuration' in module.STEPS['live']
+    assert 'alarm-proof' not in module.STEPS['live']
+    assert result['done'] and world.stored == 'live'
+    assert result['monitoringExecutionArn'] == 'monitoring-execution'
+    assert len(world.monitoring) == 1
+    request = world.monitoring[0]
+    assert request['stateMachineArn'] == 'monitoring-machine'
+    payload = json.loads(request['input'])
+    assert payload['op'] == 'monitor'
+    assert payload['wakeStartedAt'] == result['startedAt']
+    assert payload['outputs'] == {'bot-cube-preview-origin': {}}
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    calls = []
+    def pending(name, arguments):
+        calls.append((name, json.loads(Path(arguments[0]).read_text())))
+        raise RuntimeError('metrics did not arrive within ten minutes')
+    monkeypatch.setattr(module, 'invoke_script', pending)
+    with pytest.raises(RuntimeError, match='within ten minutes'):
+        module.handler(payload, None, cloudformation=object(), ssm=object())
+    assert calls == [('verify-alarms', payload['outputs'])]
+    assert world.stored == 'live'
+    assert world.effects[-2:] == ['store live', 'monitor live']
+    assert module.production_state(world, 'live') == {'state': 'live'}
+
+
+def test_monitoring_launch_failure_is_loud_after_live_publication():
+    world, module = Production(True), load()
+    def unavailable(**request):
+        raise RuntimeError('monitoring launch unavailable')
+    world.start_execution = unavailable
+    with pytest.raises(RuntimeError, match='monitoring launch unavailable'):
+        world.complete(module, 'live')
+    assert world.stored == 'live'
+
+
+def test_alarm_configuration_failure_prevents_live_and_continuation():
+    world, module = Production(True), load()
+    def verify(target, **kwargs):
+        if kwargs.get('step') == 'alarm-configuration':
+            raise RuntimeError('alarm configuration drift')
+    module.verify_production = verify
+    state = {'mode': 'live', 'op': 'advance', 'index': module.STEPS['live'].index('alarm-configuration')}
+    with pytest.raises(RuntimeError, match='alarm configuration drift'):
+        module.handler(state, None, cloudformation=world, ssm=world, executions=world)
+    assert world.stored == 'parked'
+    assert world.monitoring == []
+
+
+def test_monitoring_success_returns_evidence_without_writing_state(monkeypatch, tmp_path):
+    module = load()
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    calls = []
+    monkeypatch.setattr(module, 'invoke_script', lambda name, arguments: calls.append((name, arguments)))
+    result = module.handler({'op': 'monitor', 'wakeStartedAt': 123.5,
+                             'outputs': {'bot-cube-preview-origin': {'ClusterName': 'original-cluster'}}},
+                            None, cloudformation=object(), ssm=object())
+    assert result['monitoringEstablished'] is True
+    assert result['wakeStartedAt'] == 123.5
+    assert calls[0][0] == 'verify-alarms'
+    assert json.loads(Path(calls[0][1][0]).read_text()) == {
+        'bot-cube-preview-origin': {'ClusterName': 'original-cluster'}}
+
+
+@pytest.mark.parametrize('succeeds', [True, False])
+def test_real_alarm_verifier_handoff_is_cold_before_live_and_bounded_after(monkeypatch, tmp_path, succeeds):
+    import time
+
+    import boto3
+
+    from test_preview_alarms import OUTPUTS, configured
+    world, module = Production(True), load()
+    describe = world.describe_stacks
+    def stacks(**request):
+        result = describe(**request)
+        result['Stacks'][0]['Outputs'] = [{'OutputKey': key, 'OutputValue': value} for key, value in OUTPUTS.items()]
+        return result
+    world.describe_stacks = stacks
+    now = [0]
+    metric_calls = []
+    class CloudWatch:
+        def describe_alarms(self, **request):
+            values = configured()
+            for alarm in values:
+                alarm['StateValue'] = 'OK'
+            return {'MetricAlarms': values}
+        def get_metric_statistics(self, **request):
+            metric_calls.append(request)
+            return {'Datapoints': [{}] if succeeds and now[0] >= 150 else []}
+    class Secrets:
+        def get_secret_value(self, **request):
+            return {'SecretString': 'fixture-only'}
+    class Subscriptions:
+        def get_paginator(self, name):
+            return self
+        def paginate(self, **request):
+            return [{'Subscriptions': []}]
+    clients = {'cloudwatch': CloudWatch(), 'sns': Subscriptions(), 'secretsmanager': Secrets()}
+    monkeypatch.setattr(boto3, 'client', lambda service: clients[service])
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+    def sleep(seconds):
+        now[0] += seconds
+    monkeypatch.setattr(time, 'sleep', sleep)
+    module.verify_production('live', world, 'alarm-configuration', {})
+    assert metric_calls == [] and now[0] == 0
+    world.complete(module, 'live')
+    assert world.stored == 'live' and metric_calls == []
+    payload = json.loads(world.monitoring[0]['input'])
+    assert payload['outputs']['bot-cube-preview-origin'] == OUTPUTS
+    if succeeds:
+        assert module.handler(payload, None)['monitoringEstablished'] is True
+        assert now[0] == 150
+    else:
+        with pytest.raises(RuntimeError, match='within ten minutes'):
+            module.handler(payload, None)
+        assert now[0] == 600
+    assert metric_calls and world.stored == 'live'

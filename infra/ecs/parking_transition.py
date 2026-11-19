@@ -34,6 +34,7 @@ class TransitionState(TypedDict, total=False):
     probeDrainStartedAt: float
     runtime: RuntimeSnapshot
     probe: RunningProbe
+    monitoringExecutionArn: str
 
 IDENTITY = load_identity()
 OWNED_EGRESS = IDENTITY['aws']['ecs'].get('privateEgress')
@@ -49,7 +50,7 @@ STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step not in ('egr
     'parked': ('health', 'origin', 'capacity', 'probe-drain', 'egress', 'verify', 'store'),
     'egress': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
     'credential': ('health', 'egress', 'origin', 'capacity', 'verify', 'store'),
-    'live': ('prepare', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-proof', 'spares', 'store'),
+    'live': ('prepare', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-configuration', 'spares', 'store'),
 }.items()}
 SPARE_DEADLINE_SECONDS = 285
 SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
@@ -76,6 +77,8 @@ def handler(event, context, **ports):
 
 def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None, probe=None):
     import boto3
+    if event.get('op') == 'monitor':
+        return establish_monitoring(event)
     cloudformation = cloudformation or boto3.client('cloudformation')
     if event.get('op') == 'backstop':
         return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'))
@@ -87,7 +90,7 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
         raise ValueError(f'Unknown transition {event}')
     if event['op'] == 'start':
         return start(action, cloudformation, executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'))
-    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe)
+    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe, executions)
 
 
 def production_state(cloudformation, stored):
@@ -117,7 +120,7 @@ def mode_parameter(stack):
     raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
 
 
-def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe) -> TransitionState:
+def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe, executions=None) -> TransitionState:
     index = event.get('index', 0)
     if index == 0 and 'startedAt' not in event:
         preflight(cloudformation, action)
@@ -140,8 +143,30 @@ def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refre
             state['runtime'] = runtime_snapshot(runtime)
     done = index == len(STEPS[action]) - 1
     result: TransitionState = {**state, 'index': index + 1, 'started': False, 'waiting': False, 'done': done}
+    if done:
+        result = finish_transition(action, result, cloudformation, executions)
     print(json.dumps({'action': action, 'step': step, 'seconds': round(time.time() - state['startedAt'], 1), 'done': done}))
     return result
+
+
+def finish_transition(action, state: TransitionState, cloudformation, executions) -> TransitionState:
+    import boto3
+    if action != 'live':
+        return state
+    outputs = stack_outputs(cloudformation)
+    request = {'op': 'monitor', 'wakeStartedAt': state['startedAt'],
+               'outputs': {STACKS['origin']: outputs[STACKS['origin']]}}
+    result = (executions or boto3.client('stepfunctions')).start_execution(
+        stateMachineArn=os.environ['MONITORING_STATE_MACHINE'],
+        name='wake-' + str(state['startedAt']).replace('.', '-'), input=json.dumps(request))
+    return {**state, 'monitoringExecutionArn': result['executionArn']}
+
+
+def establish_monitoring(event):
+    path = Path(os.environ['RUNNER_TEMP']) / 'monitoring-outputs.json'
+    path.write_text(json.dumps(event['outputs']))
+    invoke_script('verify-alarms', [str(path)])
+    return {'wakeStartedAt': event['wakeStartedAt'], 'monitoringEstablished': True}
 
 
 def step_dependencies(state: TransitionState, action, step, cloudformation, probe) -> tuple[TransitionState, bool | None]:
@@ -292,7 +317,7 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
         if target in ('live', 'parked'):
             (ssm or boto3.client('ssm')).put_parameter(
                 Name=IDENTITY['ssm']['parkState'] + '/backstop', Value='none', Type='String', Overwrite=True)
-    elif step in ('verify', 'origin-proof', 'alarm-proof'):
+    elif step in ('verify', 'origin-proof', 'alarm-configuration'):
         (verify or verify_production)(target, **({} if verify else {'cloudformation': cloudformation, 'step': step, 'state': state}))
     elif step == 'capacity':
         if capacity:
@@ -334,8 +359,8 @@ def verify_production(target, cloudformation, step, state: TransitionState):
     elif step == 'origin-proof':
         invoke_script('verify-origin', ['production', str(output_path)])
         invoke_script('verify-origin', ['verify', str(output_path)])
-    elif step == 'alarm-proof':
-        invoke_script('verify-alarms', [str(output_path)])
+    elif step == 'alarm-configuration':
+        invoke_script('verify-alarms', [str(output_path), '--configuration-only'])
 
 
 def invoke_script(name, arguments):
