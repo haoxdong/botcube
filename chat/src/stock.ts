@@ -11,6 +11,7 @@ import { computerFilesRoutes } from './computer-files-routes.js';
 import { chatTable } from './config.js';
 import { signCredentialServiceInvocation, turnCredentialBinding } from './credential-service-token.js';
 import { accountFilesFromEnv, filesConfigured } from './files.js';
+import { filingUserId } from './filing-user-id.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { managedAgentComputer } from './managed-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
@@ -96,11 +97,19 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       : localAgentComputer({ history, requester, env, startPage: options.startPage });
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({ store, deleteAccount: lifecycle.deleteAccount });
+    let filesRecovery: Promise<void> | undefined;
     return {
       agentDocuments: agentDocumentTemplates({ ...bot.agentIdentity, soul: bot.soul }),
       models: bot.models,
       memory: bot.memory,
-      recoverAccountDeletions: () => deletions.recover(),
+      async recoverAccountDeletions() {
+        if (filesConfigured(env)) {
+          filesRecovery ??= Promise.resolve().then(() => files().recoverCleanup()).catch((error: unknown) => {
+            console.error('Files cleanup failed; retired-account cleanup remains pending', error);
+          }).finally(() => { filesRecovery = undefined; });
+        }
+        await deletions.recover();
+      },
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
       accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()
@@ -112,8 +121,13 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         .route('/', identity?.deletion ?? new Hono())
         .route('/', invocationSecret ? tokenIntrospectionRoutes({ sessions: store, invocationSecret }) : new Hono()),
       requester,
-      filingUserId: (owner) => owner,
-      scheduledRequester: async (owner) => ({ owner }),
+      filingUserId: (owner) => filingUserId(bot.accountKey, owner),
+      async scheduledRequester(owner) {
+        const account = await accountStore.loadAccount(owner);
+        if (account === null) throw new Error(`Scheduled run for a missing ${bot.agentIdentity.name} account ${owner}`);
+        if (account.deletionOperationId !== undefined) throw new HttpError(409, 'Account deletion is pending');
+        return { owner, anonymous: account.status === 'anonymous' };
+      },
       invocationPayload: async (input, requester, model) => ({
         ...input,
         forwardedProps: {

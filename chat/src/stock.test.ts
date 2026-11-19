@@ -6,9 +6,10 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunAgentInput } from '@ag-ui/client';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { StandInOidcIssuer } from '../test/fakes/oidc-issuer.js';
@@ -17,6 +18,9 @@ import { Browser } from '../test/parity/browser.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } from './credential-service-token.js';
 import { directoryOf } from './files-shared.js';
+import { filingUserId } from './filing-user-id.js';
+import { assertReservedMainIdentity } from './scheduled-run-delivery.js';
+import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { serveChatService } from './server.js';
 import { HttpError, type AccountHistory } from './cartridge.js';
 import { AccountStore } from './account-store.js';
@@ -124,7 +128,7 @@ describe('the stock Chat Service', () => {
     expect(cookie).toMatch(/^template_account_id=acct_/);
     const requester = await (await route.request('/requester', { headers: { Cookie: cookie } })).json() as { owner: string };
     expect(requester).toEqual({ owner: (await session.json() as { accountId: string }).accountId, anonymous: true });
-    expect(service.filingUserId(requester.owner)).toBe(requester.owner);
+    expect(service.filingUserId(requester.owner)).toBe(filingUserId('template', requester.owner));
     expect(await (await route.request('/account/sign-ins', { headers: { Cookie: cookie } })).json()).toEqual({ signIns: [] });
     expect(await service.invocationPayload(turn({ model: 'echo' }), requester, service.models[0])).toEqual({
       ...turn({ model: 'echo' }),
@@ -153,6 +157,73 @@ describe('the stock Chat Service', () => {
   });
 });
 
+describe("the stock Chat Service's filing ID", () => {
+  const closers: (() => Promise<void>)[] = [];
+  afterEach(async () => {
+    await Promise.all(closers.splice(0).map((close) => close()));
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the Memory, Turns and scheduled Main Chat an earlier Chat filed under the bot's account key", async () => {
+    const sessionApi = new FakeSessionApi();
+    const harness = new HttpFake((_, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end('data: {"type":"RUN_FINISHED"}\n\n');
+    });
+    await Promise.all([sessionApi.listen(), harness.listen()]);
+    closers.push(() => sessionApi.close(), () => harness.close());
+    const table = `chat-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(motoEndpoint(), table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const env = {
+      PORT: '0',
+      BOTCUBE_CHAT_TABLE: table,
+      BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
+      BOTCUBE_LOCAL_HARNESS_URL: harness.url,
+      BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
+        agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' },
+        accountKey: 'quill',
+        models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+        memory: true,
+      }),
+    };
+    const service = stockChatService(env);
+    const server = serveChatService(service, env);
+    closers.push(() => new Promise((resolve) => { server.close(() => resolve()); }));
+    await once(server, 'listening');
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const session = await fetch(`${url}/account/session`);
+    const cookie = session.headers.get('set-cookie')?.split(';')[0] ?? '';
+    const { accountId: owner } = await session.json() as { accountId: string };
+    // What the earlier Chat filed: its Memory and Main Chat under quill_<hex>.
+    const filed = filingUserId('quill', owner);
+    sessionApi.memories.set(filed, [{ id: 'memory-1', text: 'Prefers short answers' }]);
+    const client = new DynamoDBClient(motoAws());
+    closers.push(async () => { client.destroy(); });
+    const metadata = new DynamoDBSessionMetadata(table, client);
+    const mainChat = await metadata.mainChat(owner, filed);
+
+    expect(await (await fetch(`${url}/agent/memory`, { headers: { Cookie: cookie } })).json()).toEqual({
+      lines: [{ id: 'memory-1', text: 'Prefers short answers' }],
+    });
+    const { id: sideChat } = await (await fetch(`${url}/threads`, { method: 'POST', headers: { Cookie: cookie } })).json() as { id: string };
+    const turn = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ threadId: sideChat, runId: 'run-1', state: {}, messages: [{ id: 'm1', role: 'user', content: 'hello' }], tools: [], context: [], forwardedProps: { model: 'echo' } }),
+    });
+    expect(await turn.text()).toBe('data: {"type":"RUN_FINISHED"}\n\n');
+    const invocations = harness.requests.filter(({ path }) => path === '/invocations').map(({ body }) => JSON.parse(String(body)) as RunAgentInput);
+    expect(invocations.map(({ threadId, forwardedProps }) => [threadId, forwardedProps.sessionUserId])).toContainEqual([sideChat, filed]);
+    const scheduled = service(history).filingUserId(owner);
+    expect(await metadata.mainChat(owner, scheduled)).toBe(mainChat);
+    // A delivery reserved for the Main Chat checks the filing ID the scheduled run carries.
+    await expect(assertReservedMainIdentity(metadata, 'earlier-owner', owner, mainChat, scheduled)).resolves.toBeUndefined();
+  });
+});
+
 describe("the stock Chat Service's Agent Computer", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -160,6 +231,7 @@ describe("the stock Chat Service's Agent Computer", () => {
   });
 
   it('prepares a Session in the managed AgentCore browser when one is configured, never looking for Chromium', async () => {
+    const lookups = chromium.lookups;
     vi.stubEnv('AWS_ACCESS_KEY_ID', 'AKIDEXAMPLE');
     vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'secret');
     vi.stubEnv('AWS_SESSION_TOKEN', '');
@@ -186,7 +258,7 @@ describe("the stock Chat Service's Agent Computer", () => {
     await service.warmSession({ owner: 'acct_owner' }, 'session-1');
 
     await vi.waitFor(() => expect(requests).toContain('http://agentcore.test/browsers/agent-computer-browser/sessions/get?sessionId=browser-1'));
-    expect(chromium.lookups).toBe(0);
+    expect(chromium.lookups).toBe(lookups);
     await service.sleepAgentComputers?.().slept;
   });
 });
@@ -469,6 +541,42 @@ describe("the stock Chat Service's account deletion", () => {
     vi.setSystemTime(GUEST_START.getTime() + 31 * DAY_MS);
     return { accountId, table, endpoint };
   }
+
+  it("finishes on startup a retired account's Files cleanup an earlier Chat left pending", async () => {
+    const endpoint = motoEndpoint();
+    const table = `stock-files-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(endpoint, table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+    const env = { PORT: '0', AWS_REGION: 'us-east-1', BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, ...efsFiles() };
+    const retired = join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_files_retired')));
+    mkdirSync(retired);
+    writeFileSync(join(retired, 'left.txt'), 'left');
+    const store = stockAccountStore(env);
+    // Its last Files credential ran out two days ago, past the grace day.
+    await store.retireFiles('acct_stock_files_retired', null, Date.now() - 2 * DAY_MS);
+    const server = serveChatService(stockChatService(env), env);
+    try {
+      await once(server, 'listening');
+      await vi.waitFor(async () => expect([existsSync(retired), await store.pendingFilesCleanup()]).toEqual([false, []]));
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('refuses a scheduled run for a missing account, or one whose deletion is pending', async () => {
+    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE };
+    const documents = memoryDocuments();
+    const service = stockChatService(env, { accountStore: stockAccountStore(env, documents) })(history);
+    const route = new Hono().route('/', service.routes);
+    const { accountId } = await (await route.request('/account/session')).json() as { accountId: string };
+
+    expect(await service.scheduledRequester(accountId)).toEqual({ owner: accountId, anonymous: true });
+    await expect(service.scheduledRequester('acct_missing')).rejects.toThrow('Scheduled run for a missing BotCube account acct_missing');
+    const pending = await documents.send(new GetCommand({ TableName: 'chat', Key: { pk: `ACCOUNT#${accountId}`, sk: 'META' } }));
+    await documents.send(new PutCommand({ TableName: 'chat', Item: { ...pending.Item, record: { ...pending.Item?.record, deletionOperationId: 'op-1' } } }));
+    await expect(service.scheduledRequester(accountId)).rejects.toMatchObject({ status: 409, detail: 'Account deletion is pending' });
+  });
 
   it("revokes an expired Guest's credentials and erases the Guest at the next sweep", async () => {
     try {
