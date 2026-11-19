@@ -13,9 +13,9 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
  * filed into it: its filing ID and, after Account Claim, its owner's actor
  * (`ownerActorId`), under which the claiming account's Turns file (ADR 0067 §8).
  * Only an anonymous account is claimed, into a registered one that is never
- * claimed in turn, so these two are all. One at a time keeps this process within
- * AgentCore's account-wide delete rate; the session API paces each purge to the
- * per-Session rate.
+ * claimed in turn, so these two are all. Background purges run one at a time;
+ * account erasure waits only for its own Sessions. The session API paces each
+ * purge to the per-Session rate.
  *
  * The documented transient choke point for purges (ADR 0030): nobody waits on a
  * background purge, and the UI no longer lists the Session to delete it again.
@@ -110,13 +110,13 @@ export function purgeQueue(
   };
   return Object.assign(enqueue, {
     wait(sessions: SessionPurge[]) {
-      const result = tail.then(async () => {
+      const result = (async () => {
         for (const session of sessions) {
           // eslint-disable-next-line no-await-in-loop -- account erasure must settle each producer before Files erasure
           await erase(session);
         }
-      });
-      tail = result.catch((error: unknown) => { console.error('Session purge failed; account history deletion remains pending', error); });
+      })();
+      void result.catch((error: unknown) => { console.error('Session purge failed; account history deletion remains pending', error); });
       return result;
     },
   });

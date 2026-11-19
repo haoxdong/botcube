@@ -32,6 +32,54 @@ afterEach(() => {
 });
 
 describe('a background Session purge', () => {
+  it('completes account erasure without waiting for unrelated queued purges', async () => {
+    const completed: string[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const invoke: SessionApi = async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      if (event.sessionId === 'unrelated') await blocked;
+      return {};
+    };
+    const queue = purgeQueue(invoke, filed, async () => undefined, [], async ({ session_id }) => {
+      completed.push(session_id);
+    });
+    queue([session('unrelated'), session('also-unrelated')]);
+    await vi.advanceTimersByTimeAsync(0);
+    const erasure = queue.wait([{ ...session('account-session'), filing_user_id: 'filed-other-owner' }]);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect([...completed]).toEqual(['account-session']);
+      await erasure;
+    } finally {
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      await erasure;
+    }
+    expect(completed).toEqual(['account-session', 'unrelated', 'also-unrelated']);
+  });
+
+  it('rejects account erasure when its writer cannot stop, without blocking background purges', async () => {
+    const failure = new Error('writer still running');
+    const erased: string[] = [];
+    const completed: string[] = [];
+    const queue = purgeQueue(async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      erased.push(event.sessionId);
+      return {};
+    }, filed, async ({ session_id }) => {
+      if (session_id === 'account-session') throw failure;
+    }, [], async ({ session_id }) => { completed.push(session_id); });
+
+    await expect(queue.wait([session('account-session')])).rejects.toBe(failure);
+    queue([session('unrelated')]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(erased).toEqual(['unrelated']);
+    expect(completed).toEqual(['unrelated']);
+    expect(consoleError).toHaveBeenCalledWith('Session purge failed; account history deletion remains pending', failure);
+  });
+
   it('purges each Session in turn, starting the next once the last is done', async () => {
     const done: (() => void)[] = [];
     const invoke = vi.fn<SessionApi>(() => new Promise((resolve) => done.push(() => resolve({}))));

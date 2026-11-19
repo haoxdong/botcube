@@ -1262,10 +1262,15 @@ describe('purge recovery across task replacement', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const stop = vi.fn(async () => { throw new RuntimeAdmissionUnprovedError(); });
     const erase = vi.fn(async () => ({}));
-    const queue = purgeQueue(erase, filed => filed, stop, [], job => metadata.completePurge(job), job => metadata.retainUnprovedPurge(job));
+    let retained!: () => void;
+    const retention = new Promise<void>(resolve => { retained = resolve; });
+    const queue = purgeQueue(erase, filed => filed, stop, [], job => metadata.completePurge(job), async job => {
+      await metadata.retainUnprovedPurge(job);
+      retained();
+    });
     const before = await items();
     queue(await metadata.pendingPurges());
-    await queue.wait([]);
+    await retention;
     expect(errors).toHaveBeenCalledTimes(1);
     expect(erase).not.toHaveBeenCalled();
     const after = await items();
@@ -1282,9 +1287,14 @@ describe('purge recovery across task replacement', () => {
     await replacement.fence('other', 'new-session');
     const pending = await replacement.pendingPurges();
     expect(pending).toMatchObject([{ session_id: 'new-session' }]);
-    const restarted = purgeQueue(erase, filed => filed, stop, [], job => replacement.completePurge(job), job => replacement.retainUnprovedPurge(job));
+    let retainedAgain!: () => void;
+    const replacementRetention = new Promise<void>(resolve => { retainedAgain = resolve; });
+    const restarted = purgeQueue(erase, filed => filed, stop, [], job => replacement.completePurge(job), async job => {
+      await replacement.retainUnprovedPurge(job);
+      retainedAgain();
+    });
     restarted(pending);
-    await restarted.wait([]);
+    await replacementRetention;
     expect(errors.mock.calls.at(-1)?.[0]).toBe('Session purge failed; the Session stays fenced. session_id=new-session');
     errors.mockRestore();
   });
