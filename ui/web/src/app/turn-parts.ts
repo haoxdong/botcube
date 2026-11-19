@@ -95,13 +95,29 @@ function shownCallsOf(turn: readonly TurnMessage[], artifacts: ReadonlySet<strin
   return shown;
 }
 
+/** `intoAnswer` for an ended Turn, keeping the answer itself where it is. */
+function intoAnswerOf(turn: readonly TurnMessage[], answer: TurnMessage | undefined, published: ReadonlyMap<string, Published>): ReturnType<typeof intoAnswer> {
+  if (answer === undefined) return { moved: new Set<string>(), folded: new Set<string>(), cards: [] };
+  const into = intoAnswer(turn, published);
+  into.moved.delete(answer.id);
+  into.folded.delete(answer.id);
+  return into;
+}
+
+/** A Turn's answer: its last answer once shown, else, once ended, its latest message that published. */
+function answerOf(turn: readonly TurnMessage[], answers: readonly TurnMessage[], running: boolean, published: ReadonlyMap<string, Published>): TurnMessage | undefined {
+  if (answers.length > 0 || running) return answers.at(-1);
+  return turn.findLast((m) => m.role === "assistant" && m.toolCalls?.some(({ id }) => published.has(id)));
+}
+
 /**
  * Each message's part in its Turn, and the Artifacts each answer shows. The answers are the Turn's texts after its last
  * tool call, each its own bubble; a text before a call is a note, unless no text follows the last call: then the Turn's
  * last text that calls no tool is its answer. While the last Turn runs they show only while its latest message is one: a
  * note reads as an answer until its tool call arrives. A proposed schedule and its result show too. An Artifact the
  * Turn published shows as a card in its last answer's bubble, else under its latest successful publish, once the Turn
- * ends, so streaming words never move it. A refused publish, a list and a read are work: the Worklog keeps them.
+ * ends, so streaming words never move it; a running answer gets an empty card list, so its bubble is the same throughout.
+ * A refused publish, a list and a read are work: the Worklog keeps them.
  * A scheduled run's card, which the Chat Service posts to the Main Chat with no question before it, is no Turn's work:
  * it ends the Turn before it and shows on its own.
  */
@@ -115,18 +131,13 @@ export function partsOf(messages: readonly TurnMessage[], isRunning: boolean): {
     const answered = !running || answers.at(-1) === turn.at(-1);
     const artifacts = publishesIn(turn);
     const shownCalls = shownCallsOf(turn, running ? new Set() : artifacts.shown);
-    const answer = running ? undefined : answers.at(-1)
-      ?? turn.findLast((m) => m.role === "assistant" && m.toolCalls?.some(({ id }) => artifacts.published.has(id)));
-    const { moved, folded, cards: answerCards } = answer === undefined ? { moved: new Set<string>(), folded: new Set<string>(), cards: [] } : intoAnswer(turn, artifacts.published);
-    if (answer !== undefined) {
-      moved.delete(answer.id);
-      folded.delete(answer.id);
-    }
+    const answer = answerOf(turn, answered ? answers : [], running, artifacts.published);
+    const { moved, folded, cards: answerCards } = running ? { moved: new Set<string>(), folded: new Set<string>(), cards: [] } : intoAnswerOf(turn, answer, artifacts.published);
     for (const m of turn) {
       const shown = (answered && answers.includes(m)) || (m.toolCalls?.some(({ id }) => shownCalls.has(id)) ?? false) || shownCalls.has(m.toolCallId ?? "");
       parts.set(m.id, moved.has(m.id) ? "card" : shown && !folded.has(m.id) ? "shown" : "work");
     }
-    if (answer !== undefined && answerCards.length > 0) cards.set(answer.id, answerCards);
+    if (answer !== undefined && (running ? artifacts.published.size > 0 : answerCards.length > 0)) cards.set(answer.id, answerCards);
     turn = [];
   };
   for (const message of messages) {

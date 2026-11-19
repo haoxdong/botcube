@@ -205,7 +205,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   const diagnosticView = timeline?.steps.find(step => step.kind !== "start")?.id ?? id;
   if (children === undefined) return <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id}><div className="worklog-head">{title}</div></div>;
   return (
-    <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined}>
+    <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined} data-chosen={current || undefined}>
       <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, phase, asked })}>
         {title}
         <ChevronRightIcon className="worklog-chevron" aria-hidden />

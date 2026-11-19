@@ -18,10 +18,13 @@ it('keeps published Artifacts in the Worklog while the Turn runs, then shows the
   const answer = { id: 'answer', role: 'assistant', content: 'Here are both pages.' };
   for (const turn of [messages, [...messages, answer]]) {
     const running = partsOf(turn, true);
-    expect(running.cards.size).toBe(0);
     expect(['first', 'second', 'revision'].map((id) => running.parts.get(id))).toEqual(['work', 'work', 'work']);
   }
-  expect(partsOf([...messages, answer], true).parts.get('answer')).toBe('shown');
+  expect(partsOf(messages, true).cards.size).toBe(0);
+  // The streaming answer is already the bubble its cards will join, so it keeps one layout when they arrive.
+  const streaming = partsOf([...messages, answer], true);
+  expect([...streaming.cards]).toEqual([['answer', []]]);
+  expect(streaming.parts.get('answer')).toBe('shown');
 
   const answered = partsOf([...messages, answer], false);
   expect([...answered.cards]).toEqual([['answer', [

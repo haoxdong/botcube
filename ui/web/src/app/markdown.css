@@ -131,6 +131,11 @@
   margin-top: var(--space-8);
 }
 
+/* A short answer can end inside its Worklog's own fold: its cards wait the fold out, so they paint once, in place. */
+.worklog:not([data-chosen]):has(> .collapsible[data-closing]) + * .artifact-card {
+  display: none;
+}
+
 .worklog-head {
   display: inline-flex;
   align-items: center;

@@ -352,11 +352,13 @@
   margin: var(--space-16) 0 !important;
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child {
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :first-child,
+.copilotKitAssistantMessage > [class*="cpk:prose"] > .artifact-reply-bubble > .chat-markdown > :first-child {
   margin-top: 0 !important;
 }
 
-.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child {
+.copilotKitAssistantMessage > [class*="cpk:prose"] > div > :last-child,
+.copilotKitAssistantMessage > [class*="cpk:prose"] > .artifact-reply-bubble > .chat-markdown > :last-child {
   margin-bottom: 0 !important;
 }
 
