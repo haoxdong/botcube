@@ -447,10 +447,16 @@ describe("the stock Chat Service's account deletion", () => {
   // The Credential Service's Vault: the accounts it holds credentials for, and those whose revoke it refuses.
   const vault = new Set<string>();
   const refusing = new Set<string>();
+  // The Connectors the Credential Service copied to Test Users, and the operator session each ran under.
+  const copies: { accountId: string; sessionId: string }[] = [];
   const credentialService = new HttpFake((request, response) => {
     const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
     if (invocation === null || request.headers['x-botcube-account-id'] !== invocation.accountId) {
       return sendJson(response, 401, { detail: 'Invalid Credential Service invocation token' });
+    }
+    if (`${request.method} ${request.path}` === 'POST /auth/test-user-copy' && invocation.scope === 'test_user_copy') {
+      copies.push({ accountId: invocation.accountId, sessionId: String(request.headers['x-botcube-session-id']) });
+      return sendJson(response, 200, { status: 'copied' });
     }
     if (`${request.method} ${request.path}` !== 'POST /account/revoke' || invocation.scope !== 'credential_revocation') {
       return sendJson(response, 404, { detail: 'Not Found' });
@@ -510,6 +516,59 @@ describe("the stock Chat Service's account deletion", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();
     }
+  });
+
+  it("copies the owner's Connector to a live Test User for the operator, and for no one else", async () => {
+    const endpoint = motoEndpoint();
+    const table = `stock-connector-${Math.random().toString(36).slice(2)}`;
+    await createChatTable(endpoint, table);
+    vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
+    const env = {
+      PORT: '0', AWS_REGION: 'us-east-1', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: 'acct_owner',
+    };
+    const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
+    const accountId = 'acct_stock_connector';
+    const bearer = 'test_stock_connector';
+    await documents.send(new PutCommand({ TableName: table, Item: { pk: `ACCOUNT#${accountId}`, sk: 'META',
+      record: { version: 1, accountId, status: 'test', rateTier: 'test', createdAt: 1, updatedAt: 1 } } }));
+    await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${bearer}`, sk: 'META',
+      record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
+    copies.length = 0;
+    const server = serveChatService(stockChatService(env), env);
+    try {
+      await once(server, 'listening');
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const copy = (headers: Record<string, string>) => fetch(`${url}/operator/test-user/connector`, { method: 'POST', headers });
+      const operator = (owner: string, scope = 'test_user_copy') =>
+        `Bearer ${signCredentialServiceInvocation(SECRET, owner, 'operator-run', { scope })}`;
+
+      expect((await copy({ 'x-botcube-test-user': bearer })).status).toBe(401);
+      expect((await copy({ authorization: operator('acct_owner', 'credential_revocation'), 'x-botcube-test-user': bearer })).status).toBe(401);
+      expect((await copy({ authorization: operator('acct_other'), 'x-botcube-test-user': bearer })).status).toBe(403);
+      expect((await copy({ authorization: operator('acct_owner'), 'x-botcube-test-user': 'test_unknown' })).status).toBe(401);
+      expect(copies).toEqual([]);
+
+      const copied = await copy({ authorization: operator('acct_owner'), 'x-botcube-test-user': bearer });
+      expect([copied.status, await copied.json()]).toEqual([201, { status: 'stored' }]);
+      expect(copies).toEqual([{ accountId, sessionId: 'operator-run' }]);
+      // The copy signs the Test User in nowhere: it still has no public login session.
+      expect((await fetch(`${url}/auth/logout`, { method: 'POST', headers: { 'x-botcube-test-user': bearer } })).status).toBe(403);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('refuses every Test User Connector copy while the Credential Service is unbound', async () => {
+    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: 'acct_owner' };
+    const route = new Hono()
+      .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 401 : 500))
+      .route('/', stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history).routes);
+    const response = await route.request('/operator/test-user/connector', { method: 'POST', headers: {
+      authorization: `Bearer ${signCredentialServiceInvocation(SECRET, 'acct_owner', 'operator-run', { scope: 'test_user_copy' })}`,
+    } });
+    expect([response.status, await response.json()]).toEqual([401, { detail: 'Test User copying needs an operator token' }]);
   });
 
   async function guestService(table: string, endpoint: string) {

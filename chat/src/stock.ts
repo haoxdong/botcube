@@ -17,20 +17,21 @@ import { managedAgentComputer } from './managed-agent-computer.js';
 import { oidcIdentity } from './oidc-sign-in.js';
 import { planModels } from './plan-models.js';
 import { serveChatService } from './server.js';
+import { testUserConnectorRoutes } from './test-user-connector.js';
 import { tokenIntrospectionRoutes } from './token-introspection.js';
 
 const ACCOUNT_DELETION_SESSION = 'account-deletion';
 const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
 
-/** Revoke every credential the Credential Service holds for the account, at every provider. */
-async function revokeAccountCredentials(url: string, secret: string, accountId: string): Promise<void> {
-  const token = signCredentialServiceInvocation(secret, accountId, ACCOUNT_DELETION_SESSION, { scope: 'credential_revocation' });
-  const response = await fetch(`${new URL(url).origin}/account/revoke`, {
+/** POST to the Credential Service as the account, under an invocation of the given scope. */
+async function credentialServiceCall(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<void> {
+  const token = signCredentialServiceInvocation(secret, accountId, sessionId, { scope });
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
       'x-botcube-account-id': accountId,
-      'x-botcube-session-id': ACCOUNT_DELETION_SESSION,
+      'x-botcube-session-id': sessionId,
       'content-type': 'application/json',
     },
     body: '{}',
@@ -38,7 +39,7 @@ async function revokeAccountCredentials(url: string, secret: string, accountId: 
   }).catch((error: unknown) => {
     throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
   });
-  if (!response.ok) throw new HttpError(503, `Credential Service account revoke failed with HTTP ${response.status}`);
+  if (!response.ok) throw new HttpError(503, `${failure} failed with HTTP ${response.status}`);
 }
 
 function deployment(env: NodeJS.ProcessEnv) {
@@ -74,8 +75,17 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
   const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;
   const credentials = credentialServiceUrl
-    ? { revoke: (accountId: string) => revokeAccountCredentials(credentialServiceUrl, env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '', accountId) }
+    // Revoke every credential the Credential Service holds for the account, at every provider.
+    ? { revoke: (accountId: string) => credentialServiceCall(`${new URL(credentialServiceUrl).origin}/account/revoke`, invocationSecret ?? '', accountId,
+      ACCOUNT_DELETION_SESSION, 'credential_revocation', 'Credential Service account revoke') }
     : null;
+  const testUserConnector = testUserConnectorRoutes({
+    store,
+    invocationSecret: credentialServiceUrl && invocationSecret ? invocationSecret : null,
+    ownerAccountId: env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined,
+    copy: (testUserId, sessionId) => credentialServiceCall(`${(credentialServiceUrl ?? '').replace(/\/+$/, '')}/auth/test-user-copy`, invocationSecret ?? '', testUserId,
+      sessionId, 'test_user_copy', 'Test User Connector copy'),
+  });
   const plan = planModels({
     credentialServiceUrl: env.BOTCUBE_CREDENTIAL_SERVICE_URL,
     invocationSecret: env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET ?? '',
@@ -117,6 +127,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
         .route('/', computerFilesRoutes({ requester, history, computers: computer, files: () => files() }))
         .route('/account/plan-usage/openai', plan.routes)
         .route('/', accounts.routes)
+        .route('/', testUserConnector)
         .route('/', identity?.routes ?? new Hono())
         .route('/', identity?.deletion ?? new Hono())
         .route('/', invocationSecret ? tokenIntrospectionRoutes({ sessions: store, invocationSecret }) : new Hono()),
