@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
+import { DeleteTableCommand, DynamoDBClient, GetItemCommand } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { CreateScheduleGroupCommand, DeleteScheduleCommand, ListSchedulesCommand, SchedulerClient, SchedulerServiceException, ValidationException } from '@aws-sdk/client-scheduler';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
 import { SchedulerView, createScheduledRuns, type ScheduledRuns } from '../test/fakes/scheduler.js';
@@ -24,6 +24,10 @@ beforeAll(async () => {
   scheduler = defined(stack.scheduler, 'the stack schedules tasks');
 });
 afterAll(() => stack.stop());
+beforeEach(async () => {
+  await stack.table.client.send(new DeleteTableCommand({ TableName: stack.table.name }));
+  await createChatTable(motoEndpoint(), stack.table.name);
+});
 
 const MORNING_BRIEF = {
   title: 'Morning brief',
