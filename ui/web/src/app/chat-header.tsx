@@ -1,7 +1,7 @@
 "use client";
 
 import { LayoutGroup, LazyMotion, domMax, m as motionElement } from "motion/react";
-import { useEffect, useState, type RefObject } from "react";
+import { memo, useEffect, useState, type RefObject } from "react";
 
 import { Avatar } from "./avatar";
 import { Presence, presenceMotion } from "./collapse";
@@ -22,21 +22,22 @@ export function useHeaderWorking(chatId: string | null, working: boolean) {
   return chatId !== null && (working || heldFor === chatId);
 }
 
-export function HeaderName({ name, working }: { name: string; working: boolean }) {
+// Memoised, the capsule measures its layout only when its name or status changes, or when "is working" has faded and
+// left: Motion re-renders the LayoutGroup then, and with no layoutDependency the capsule shrinks from that render.
+export const HeaderName = memo(function HeaderName({ name, working }: { name: string; working: boolean }) {
   const { move } = motionTokens();
-  const layoutDependency = `${name}:${working}`;
   const transition = { layout: { type: "spring" as const, visualDuration: move.duration, bounce: 0 } };
   return (
     <LazyMotion features={domMax} strict><LayoutGroup>
-      <motionElement.span layout layoutDependency={layoutDependency} transition={transition} className="chat-header-name">
-        <motionElement.span layout="position" layoutDependency={layoutDependency} transition={transition} className="chat-header-label">
+      <motionElement.span layout transition={transition} className="chat-header-name">
+        <motionElement.span layout="position" transition={transition} className="chat-header-label">
           {name}
           <Presence>{working && <motionElement.span {...presenceMotion} layout={false} className="chat-header-status">is working</motionElement.span>}</Presence>
         </motionElement.span>
       </motionElement.span>
     </LayoutGroup></LazyMotion>
   );
-}
+});
 
 export function ChatHeader({ opener, working, ready, chatId, open, picture, emoji, name }: {
   opener: RefObject<HTMLButtonElement | null>;
