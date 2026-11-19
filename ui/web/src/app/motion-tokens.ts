@@ -18,11 +18,3 @@ export function motionTokens() {
     quick: spring(seconds(style, "--motion-quick")),
   };
 }
-
-// A spring chasing a target that moves mid-flight sank below it or, restarted from rest, lagged and snapped; this tween does neither.
-export function moveTween() {
-  if (typeof document === "undefined") return { duration: 0 };
-  const style = getComputedStyle(document.documentElement);
-  const curve = /cubic-bezier\(([^)]*)\)/.exec(style.getPropertyValue("--ease"))?.[1]?.split(",").map(Number);
-  return { duration: seconds(style, "--motion-move"), ...(curve?.length === 4 ? { ease: curve as [number, number, number, number] } : {}) };
-}

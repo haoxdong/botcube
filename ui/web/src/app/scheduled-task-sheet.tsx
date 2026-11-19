@@ -311,8 +311,8 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
       />
       <div className="settings-group">
         <RepeatRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} />
-        <Collapse open={frequency === "interval"}><EveryRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} /></Collapse>
-        <Collapse open={frequency === "weekly"}>
+        <Collapse open={frequency === "interval"} appear={false}><EveryRow value={draft.repeat} disabled={saving} onChange={(repeat) => set({ repeat })} /></Collapse>
+        <Collapse open={frequency === "weekly"} appear={false}>
           <SelectRow label="Day" value={draft.repeat.day} disabled={saving} onChange={(day) => set({ repeat: { ...draft.repeat, day: day as Weekday } })}>
             {WEEKDAYS.map((day, index) => (
               <option key={day} value={day}>
@@ -321,7 +321,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
             ))}
           </SelectRow>
         </Collapse>
-        <Collapse open={["daily", "weekdays", "weekly", "once"].includes(frequency)}><WhenRow label="Time" time={frequency !== "once"} value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} /></Collapse>
+        <Collapse open={["daily", "weekdays", "weekly", "once"].includes(frequency)} appear={false}><WhenRow label="Time" time={frequency !== "once"} value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} /></Collapse>
         <Presence>{frequency === "custom" && (
           <motionElement.div {...presenceMotion} className="settings-row">
             <span>Schedule</span>
@@ -331,7 +331,7 @@ function TaskEditForm({ task, models, modelsFailed, runsOn, notices, onChange, o
       </div>
       <More open={draft.more} onToggle={() => set({ more: !draft.more })}>
         <div className="settings-group">
-          <Collapse open={frequency !== "once"}>
+          <Collapse open={frequency !== "once"} appear={false}>
             <>
               <WhenRow label="Starts" value={draft.starts} timezone={task.timezone} disabled={saving} onChange={(starts) => set({ starts })} />
               <EndsRow value={draft.ends} counted={countedWall("ending" in save ? save.ending : undefined, task.timezone)} timezone={task.timezone} disabled={saving} onChange={(ends) => set({ ends })} />
