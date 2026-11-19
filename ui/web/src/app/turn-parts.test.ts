@@ -7,27 +7,32 @@ const publish = (id: string, file: string, version = 1): TurnMessage[] => [
   { id: `${id}-result`, role: 'tool', toolCallId: `${id}-call`, content: JSON.stringify({ id: file, type: null, title: file, description: '', version, path: `/artifacts/${file}.versions/${version}.html` }) },
 ];
 
-it('groups published Artifacts while the Turn runs and moves the same group into its answer', () => {
+// A card shown while the Turn runs moves when the answer's words stream in above it.
+it('keeps published Artifacts in the Worklog while the Turn runs, then shows them once under its answer', () => {
   const messages = [
     { id: 'question', role: 'user', content: 'Publish two pages' },
     ...publish('first', 'one'),
     ...publish('second', 'two'),
     ...publish('revision', 'one', 2),
   ];
-  const streaming = partsOf(messages, true);
-  expect([...streaming.cards.values()]).toEqual([[
+  const answer = { id: 'answer', role: 'assistant', content: 'Here are both pages.' };
+  for (const turn of [messages, [...messages, answer]]) {
+    const running = partsOf(turn, true);
+    expect(running.cards.size).toBe(0);
+    expect(['first', 'second', 'revision'].map((id) => running.parts.get(id))).toEqual(['work', 'work', 'work']);
+  }
+  expect(partsOf([...messages, answer], true).parts.get('answer')).toBe('shown');
+
+  const answered = partsOf([...messages, answer], false);
+  expect([...answered.cards]).toEqual([['answer', [
     { id: 'one', type: null, title: 'one', description: '', version: 2, path: '/artifacts/one.versions/2.html' },
     { id: 'two', type: null, title: 'two', description: '', version: 1, path: '/artifacts/two.versions/1.html' },
-  ]]);
-  expect(streaming.parts.get('first')).toBe('card');
-  expect(streaming.parts.get('second')).toBe('card');
-  expect(streaming.parts.get('revision')).toBe('shown');
+  ]]]);
+  expect(['first', 'second', 'revision'].map((id) => answered.parts.get(id))).toEqual(['card', 'card', 'card']);
 
-  for (const running of [true, false]) {
-    const answered = partsOf([...messages, { id: 'answer', role: 'assistant', content: 'Here are both pages.' }], running);
-    expect(answered.cards.get('answer')).toEqual([...streaming.cards.values()][0]);
-    expect(answered.parts.get('revision')).toBe('card');
-  }
+  const unanswered = partsOf(messages, false);
+  expect([...unanswered.cards.keys()]).toEqual(['revision']);
+  expect(unanswered.parts.get('revision')).toBe('shown');
 });
 
 it('keeps refused and pending calls out of the published group without losing their work', () => {
@@ -40,8 +45,8 @@ it('keeps refused and pending calls out of the published group without losing th
     ] },
     { id: 'refused-result', role: 'tool', toolCallId: 'refused-call', content: 'Error: no file at /missing.html' },
   ];
-  const streaming = partsOf(messages, true);
-  expect(streaming.cards.get('first')?.map(({ id }) => id)).toEqual(['one']);
-  expect(streaming.parts.get('mixed')).toBe('shown');
-  expect(streaming.parts.get('refused-result')).toBe('work');
+  const ended = partsOf(messages, false);
+  expect(ended.cards.get('first')?.map(({ id }) => id)).toEqual(['one']);
+  expect(ended.parts.get('mixed')).toBe('shown');
+  expect(ended.parts.get('refused-result')).toBe('work');
 });

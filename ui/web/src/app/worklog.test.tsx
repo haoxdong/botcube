@@ -634,7 +634,7 @@ describe("a Worklog's step times", () => {
     verify(2, ['2s']);
     view.rerender(<StepsChat messages={[question, thought, publication]} running />);
     verify(2, ['2s', '0s']);
-    expect(screen.getByTestId('card-publication-a')).toBeVisible();
+    expect(screen.queryByTestId('card-publication-a')).toBeNull();
     act(() => { vi.advanceTimersByTime(2000); });
     verify(4, ['2s', '2s']);
     const continued = [question, thought, publication, publicationResult, query];

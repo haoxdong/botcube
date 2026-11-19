@@ -100,8 +100,8 @@ function shownCallsOf(turn: readonly TurnMessage[], artifacts: ReadonlySet<strin
  * tool call, each its own bubble; a text before a call is a note, unless no text follows the last call: then the Turn's
  * last text that calls no tool is its answer. While the last Turn runs they show only while its latest message is one: a
  * note reads as an answer until its tool call arrives. A proposed schedule and its result show too. An Artifact the
- * Turn published shows as a card in its last answer's bubble, or grouped under its latest successful publish
- * until that answer shows. A refused publish, a list and a read are work: the agent recovers from them, and the Worklog keeps them.
+ * Turn published shows as a card in its last answer's bubble, else under its latest successful publish, once the Turn
+ * ends, so streaming words never move it. A refused publish, a list and a read are work: the Worklog keeps them.
  * A scheduled run's card, which the Chat Service posts to the Main Chat with no question before it, is no Turn's work:
  * it ends the Turn before it and shows on its own.
  */
@@ -111,10 +111,11 @@ export function partsOf(messages: readonly TurnMessage[], isRunning: boolean): {
   let turn: TurnMessage[] = [];
   const close = (last: boolean) => {
     const answers = answersOf(turn);
-    const answered = !(last && isRunning) || answers.at(-1) === turn.at(-1);
+    const running = last && isRunning;
+    const answered = !running || answers.at(-1) === turn.at(-1);
     const artifacts = publishesIn(turn);
-    const shownCalls = shownCallsOf(turn, artifacts.shown);
-    const answer = (answered ? answers.at(-1) : undefined)
+    const shownCalls = shownCallsOf(turn, running ? new Set() : artifacts.shown);
+    const answer = running ? undefined : answers.at(-1)
       ?? turn.findLast((m) => m.role === "assistant" && m.toolCalls?.some(({ id }) => artifacts.published.has(id)));
     const { moved, folded, cards: answerCards } = answer === undefined ? { moved: new Set<string>(), folded: new Set<string>(), cards: [] } : intoAnswer(turn, artifacts.published);
     if (answer !== undefined) {
