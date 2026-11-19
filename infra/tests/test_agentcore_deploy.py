@@ -56,9 +56,16 @@ def install_aws(
             'agentRuntimeId': 'runtime-fixture', 'agentRuntimeVersion': '7',
             'agentRuntimeArn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/runtime-fixture',
             'status': 'READY', 'platformVersion': 'V2',
+            'agentRuntimeArtifact': {'containerConfiguration': {'containerUri': '123456789012.dkr.ecr.us-east-1.amazonaws.com/runtime:current'}},
         },
         ('bedrock-agentcore-control', 'get-agent-runtime-endpoint', '--agent-runtime-id', 'runtime-fixture', '--endpoint-name', 'DEFAULT'): {
             'status': 'READY', 'liveVersion': '7',
+        },
+        ('bedrock-agentcore-control', 'list-agent-runtime-endpoints', '--agent-runtime-id', 'runtime-fixture'): {
+            'runtimeEndpoints': [{'name': 'DEFAULT', 'liveVersion': '7'}],
+        },
+        ('ecr', 'describe-images', '--registry-id', '123456789012', '--repository-name', 'runtime', '--image-ids', '[{"imageTag": "current"}]'): {
+            'imageDetails': [{'imageDigest': 'sha256:resolved'}],
         },
     }
 
@@ -93,12 +100,16 @@ def test_executes_stack_only_changes_and_verifies_updated_commit(
         'list-stack-resources', 'describe-change-set', 'describe-stacks',
         'execute-change-set', 'wait', 'list-stack-resources', 'describe-stacks',
         'get-agent-runtime', 'get-agent-runtime-endpoint',
+        'list-agent-runtime-endpoints', 'get-agent-runtime', 'describe-images',
     ]
     assert json.loads(proof.read_text()) == {
         'stack': 'fixture-stack', 'changeSetArn': ARN, 'executed': True,
         'commit': 'fixture-commit',
         'runtimeArn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/runtime-fixture',
         'runtimeVersion': '7', 'status': 'READY', 'platformVersion': 'V2', 'rollback': None,
+        'endpointImages': [{'endpoint': 'DEFAULT', 'runtimeVersion': '7',
+                            'imageUri': '123456789012.dkr.ecr.us-east-1.amazonaws.com/runtime:current',
+                            'imageDigest': 'sha256:resolved'}],
         'protectedResources': {
             'Runtime': ['AWS::BedrockAgentCore::Runtime', 'runtime-fixture'],
             'Memory': ['AWS::BedrockAgentCore::Memory', 'memory-fixture'],

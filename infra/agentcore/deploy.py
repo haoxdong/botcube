@@ -153,9 +153,70 @@ def deploy(stack: str, name: str, commit: str, evidence: str) -> None:
         "rollback": rollback,
         "status": status,
         "protectedResources": after,
+        "endpointImages": verify_endpoint_images(runtime),
     }
     Path(evidence).write_text(json.dumps(proof, indent=2) + "\n")
     print(json.dumps(proof))
+
+
+def verify_endpoint_images(runtime_id: str) -> list[dict[str, str]]:
+    inventory = aws(
+        "bedrock-agentcore-control",
+        "list-agent-runtime-endpoints",
+        "--agent-runtime-id",
+        runtime_id,
+    )
+    proof = []
+    for endpoint in inventory["runtimeEndpoints"]:
+        versions = {
+            endpoint[key]
+            for key in ("liveVersion", "targetVersion")
+            if endpoint.get(key)
+        }
+        if not versions:
+            raise ValueError(f"Endpoint {endpoint['name']} has no image version")
+        for version in sorted(versions):
+            state = aws(
+                "bedrock-agentcore-control",
+                "get-agent-runtime",
+                "--agent-runtime-id",
+                runtime_id,
+                "--agent-runtime-version",
+                version,
+            )
+            image = state["agentRuntimeArtifact"]["containerConfiguration"][
+                "containerUri"
+            ]
+            registry, reference = image.split("/", 1)
+            if "@" in reference:
+                repository, digest = reference.split("@", 1)
+                image_id = {"imageDigest": digest}
+            else:
+                repository, tag = reference.rsplit(":", 1)
+                image_id = {"imageTag": tag}
+            result = aws(
+                "ecr",
+                "describe-images",
+                "--registry-id",
+                registry.split(".")[0],
+                "--repository-name",
+                repository,
+                "--image-ids",
+                json.dumps([image_id]),
+            )
+            if len(result.get("imageDetails", [])) != 1:
+                raise ValueError(
+                    f"Endpoint {endpoint['name']} version {version} image does not resolve: {image}"
+                )
+            proof.append(
+                {
+                    "endpoint": endpoint["name"],
+                    "runtimeVersion": version,
+                    "imageUri": image,
+                    "imageDigest": result["imageDetails"][0]["imageDigest"],
+                }
+            )
+    return proof
 
 
 def verify_runtime(runtime_id: str, version: str, platform: str, endpoint_name: str = "DEFAULT") -> tuple[str, str]:
