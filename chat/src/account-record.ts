@@ -14,6 +14,7 @@ export interface Account {
   status: 'anonymous' | 'registered' | 'test';
   rateTier: string;
   deletionOperationId?: string;
+  testConnectorOwner?: string;
   /** The profile: seeded from the first login-capable Sign-in, then the user's; its photo is an item of its own. */
   displayName?: string;
   lastActiveAt?: number;

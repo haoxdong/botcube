@@ -561,8 +561,15 @@ describe("the stock Chat Service's account deletion", () => {
       const copied = await copy({ authorization: operator('acct_owner'), 'x-botcube-test-user': bearer });
       expect([copied.status, await copied.json()]).toEqual([201, { status: 'stored' }]);
       expect(copies).toEqual([{ accountId, sessionId: 'operator-run' }]);
+      const copiedAccount = await documents.send(new GetCommand({ TableName: table, Key: { pk: `ACCOUNT#${accountId}`, sk: 'META' }, ConsistentRead: true }));
+      expect(copiedAccount.Item?.record).toMatchObject({ status: 'test', testConnectorOwner: 'acct_owner' });
+      const reverseKey = { pk: 'ACCOUNT#acct_owner', sk: `TEST_USER#${accountId}` };
+      expect((await documents.send(new GetCommand({ TableName: table, Key: reverseKey, ConsistentRead: true }))).Item).toMatchObject({ testUserId: accountId });
       // The copy signs the Test User in nowhere: it still has no public login session.
       expect((await fetch(`${url}/auth/logout`, { method: 'POST', headers: { 'x-botcube-test-user': bearer } })).status).toBe(403);
+      expect((await fetch(`${url}/operator/test-user`, { method: 'DELETE', headers: { 'x-botcube-test-user': bearer } })).status).toBe(204);
+      expect((await documents.send(new GetCommand({ TableName: table, Key: reverseKey, ConsistentRead: true }))).Item).toBeUndefined();
+      expect(await stockAccountStore(env).loadAccount(accountId)).toBeNull();
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();

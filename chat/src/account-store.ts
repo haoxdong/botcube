@@ -94,6 +94,18 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     return item === undefined ? null : { ...(item.record as A) };
   }
 
+  recordTestConnector(accountId: string, ownerAccountId: string): Promise<void> {
+    return this.mutation(async (lease) => {
+      const account = await this.requireAccount(accountId);
+      if (account.status !== 'test') throw new AccountStoreError('Only Test Users can hold a test Linked Account');
+      account.testConnectorOwner = ownerAccountId;
+      account.updatedAt = nowSeconds();
+      await this.commit(lease, [this.put(this.accountItem(account)), this.put({
+        ...itemKey(`ACCOUNT#${ownerAccountId}`, `TEST_USER#${accountId}`), testUserId: accountId,
+      })]);
+    });
+  }
+
   async operatorTestUser(bearer: string): Promise<A | null> {
     if (!bearer.startsWith('test_')) return null;
     const record = await this.session(bearer);
@@ -513,7 +525,10 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
 
   /** The account's Sign-in items, which its deletion frees for other accounts. */
   protected signInDeletes(account: A): Operation[] {
-    return account.openaiIdentity ? [this.delete(`OPENAI#${account.openaiIdentity}`)] : [];
+    return [
+      ...(account.openaiIdentity ? [this.delete(`OPENAI#${account.openaiIdentity}`)] : []),
+      ...(account.testConnectorOwner ? [this.delete(`ACCOUNT#${account.testConnectorOwner}`, `TEST_USER#${account.accountId}`)] : []),
+    ];
   }
 
   deleteAccount(accountId: string): Promise<boolean> {

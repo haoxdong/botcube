@@ -36,7 +36,9 @@ export function testUserConnectorRoutes<A extends Account>({ store, invocationSe
     await store().accountDeletionLock(account.accountId, async () => {
       const current = await store().operatorTestUser(bearer);
       if (current === null) throw new HttpError(401, 'Invalid operator Test User token');
-      await copy(current.accountId, operator(token).sessionId);
+      const invocation = operator(token);
+      await copy(current.accountId, invocation.sessionId);
+      await store().recordTestConnector(current.accountId, invocation.accountId);
     });
     return c.json({ status: 'stored' }, 201);
   });
