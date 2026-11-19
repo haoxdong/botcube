@@ -122,8 +122,10 @@
   margin-top: var(--space-12);
 }
 
-/* With the body's 12px bottom margin, the answer starts 20px under the last step; under a closed header, 8px. */
-.worklog + .copilotKitAssistantMessage {
+/* With the body's 12px bottom margin, the answer starts 20px under the last step; under a closed header, 8px. An answer
+   with Artifact cards is the same: CopilotKit wraps one it renders through children in a `display: contents` row. */
+.worklog + .copilotKitAssistantMessage,
+.worklog + [data-copilotkit] > .copilotKitAssistantMessage {
   margin-top: var(--space-8);
 }
 
