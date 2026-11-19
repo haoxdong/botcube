@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import socket
+import struct
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,11 +20,13 @@ pytestmark = pytest.mark.integration
 
 
 class StandIn:
-    """An OpenAI-compatible endpoint answering each chat completion with `Echo: <text>`, after any gateway failures."""
+    """An OpenAI-compatible endpoint answering each chat completion with `Echo: <text>`, after any gateway failures and dropped connections."""
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.gateway_failures: list[int] = []
+        # How the next requests' connections drop: `before-response` before any byte, `mid-response` after the first chunk.
+        self.drops: list[str] = []
         stand_in = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -34,9 +39,28 @@ class StandIn:
                 if stand_in.gateway_failures:
                     self._send(stand_in.gateway_failures.pop(0), 'application/json', b'{"error":{"message":"gateway"}}')
                     return
+                drop = stand_in.drops.pop(0) if stand_in.drops else None
+                if drop == 'before-response':
+                    self._reset()
+                    return
                 text = f"Echo: {body['messages'][-1]['content']}"
+                if drop == 'mid-response':
+                    started = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': None}]}
+                    self.send_response(200)
+                    self.send_header('content-type', 'text/event-stream')
+                    self.end_headers()
+                    self.wfile.write(f'data: {json.dumps(started)}\n\n'.encode())
+                    self.wfile.flush()
+                    self._reset()
+                    return
                 chunk = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': 'stop'}]}
                 self._send(200, 'text/event-stream', f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode())
+
+            def _reset(self) -> None:
+                """Drops the connection with a TCP reset, as a gateway or load balancer cuts it."""
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                self.connection.close()
+                self.close_connection = True
 
             def _send(self, status: int, content_type: str, payload: bytes) -> None:
                 self.send_response(status)
@@ -93,6 +117,52 @@ def test_a_turn_retries_a_gateway_failure_before_the_first_byte(stand_in: StandI
 
     assert _reply() == 'Echo: Hello, who are you?'
     assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_retries_a_connection_dropped_before_the_response(stand_in: StandIn) -> None:
+    stand_in.drops.extend(['before-response', 'before-response'])
+
+    assert _reply() == 'Echo: Hello, who are you?'
+    assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_after_three_dropped_connections(stand_in: StandIn) -> None:
+    import openai
+
+    stand_in.drops.extend(['before-response', 'before-response', 'before-response'])
+    with pytest.raises(openai.APIConnectionError):
+        _reply()
+    assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_once_on_a_stream_dropped_mid_response(stand_in: StandIn) -> None:
+    import httpx
+
+    stand_in.drops.append('mid-response')
+    streamed = io.StringIO()
+
+    async def stream() -> None:
+        async for chunk in llm.build_model(model='echo').astream('Hello, who are you?'):
+            streamed.write(str(chunk.content))
+
+    with pytest.raises(httpx.TransportError):
+        asyncio.run(stream())
+    assert streamed.getvalue() == 'Echo: Hello, who are you?'
+    assert len(stand_in.requests) == 1
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_once_on_a_body_dropped_mid_response_without_streaming(stand_in: StandIn) -> None:
+    import openai
+
+    stand_in.drops.append('mid-response')
+    model = llm.build_model(model='echo').model_copy(update={'streaming': False})
+    with pytest.raises(openai.APIConnectionError):
+        asyncio.run(model.ainvoke('Hello, who are you?'))
+    assert len(stand_in.requests) == 1
 
 
 @pytest.mark.usefixtures('deployed')

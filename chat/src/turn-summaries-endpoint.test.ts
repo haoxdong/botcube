@@ -17,6 +17,7 @@ beforeAll(async () => {
 beforeEach(() => {
   endpoint.requests.length = 0;
   endpoint.gatewayFailures.length = 0;
+  endpoint.drops.length = 0;
 });
 afterAll(async () => {
   await endpoint.close();
@@ -60,6 +61,27 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
 
     await expect(summarize(deployed())).rejects.toThrow('The summary model answered HTTP 503');
     expect(endpoint.requests).toHaveLength(3);
+  });
+
+  it('retry a connection dropped before the response', async () => {
+    endpoint.drops.push('before-response', 'before-response');
+
+    expect(await summarize(deployed())).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
+    expect(endpoint.requests).toHaveLength(3);
+  });
+
+  it('fail after three dropped connections', async () => {
+    endpoint.drops.push('before-response', 'before-response', 'before-response');
+
+    await expect(summarize(deployed())).rejects.toThrow('fetch failed');
+    expect(endpoint.requests).toHaveLength(3);
+  });
+
+  it('fail once on a response dropped after it started', async () => {
+    endpoint.drops.push('mid-response');
+
+    await expect(summarize(deployed())).rejects.toThrow();
+    expect(endpoint.requests).toHaveLength(1);
   });
 
   it.each([500, 429, 401])('fail on an HTTP %i without retrying', async (status) => {

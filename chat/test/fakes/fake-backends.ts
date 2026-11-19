@@ -175,12 +175,24 @@ export class FakeOpenAICompatible extends HttpFake {
   turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
   /** The statuses the next requests are answered with before any body, as a gateway in front of the models fails. */
   readonly gatewayFailures: number[] = [];
+  /** How the next requests' connections drop, with a TCP reset: before any response byte, or after the response started. */
+  readonly drops: ('before-response' | 'mid-response')[] = [];
 
   constructor(readonly apiKey: string) {
     super((request, response) => {
       const failure = this.gatewayFailures.shift();
       if (failure !== undefined) {
         sendJson(response, failure, { error: { message: `fake gateway HTTP ${failure}` } });
+        return;
+      }
+      const drop = this.drops.shift();
+      if (drop === 'before-response') {
+        response.socket?.resetAndDestroy();
+        return;
+      }
+      if (drop === 'mid-response') {
+        response.writeHead(200, { 'content-type': 'application/json', 'content-length': '1024' });
+        response.write('{"id":"chatcmpl-1","object":"chat.completion",', () => response.socket?.resetAndDestroy());
         return;
       }
       if (request.method !== 'POST' || request.path !== '/v1/chat/completions') {

@@ -35,7 +35,7 @@ PLAN_MODEL_PREFIX = 'openai-plan:'
 # The Deployment Config's `models` Endpoint, as JSON the deploy hands over: `MODELS_ENV` in botcube/deployment-config.
 MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
 ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers'})
-# The Endpoint's one retry rule (ADR 0091), as botcube/chat's `endpoint.ts` keeps it: a gateway's answer before any body.
+# The Endpoint's one retry rule (ADR 0091), as botcube/chat's `endpoint.ts` keeps it: an answer before any body, a gateway's or a dropped connection's.
 RETRIED_STATUSES = frozenset({502, 503, 504})
 ENDPOINT_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 0.2
@@ -179,19 +179,41 @@ def models_endpoint() -> ModelsEndpoint | None:
 
 
 def _endpoint_client() -> Any:
-    """The HTTP client of an Endpoint's model: it retries 502, 503 and 504, which a gateway answers before any body."""
+    """The HTTP client of an Endpoint's model: it retries an answer that comes before any body, and nothing after one.
+
+    That answer is a gateway's 502, 503 or 504, or a connection that resets, is refused or times out connecting before
+    the response starts. The body is read only after the last attempt, so a body that drops fails the Turn once.
+    """
     import httpx
     import openai
 
+    dropped_connection = (httpx.NetworkError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
+
     class EndpointClient(openai.DefaultAsyncHttpxClient):
-        async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
-            for attempt in range(1, ENDPOINT_ATTEMPTS):
-                response = await super().send(request, **kwargs)
-                if response.status_code not in RETRIED_STATUSES:
-                    return response
-                await response.aclose()
+        async def send(self, request: httpx.Request, *, stream: bool = False, **kwargs: Any) -> httpx.Response:
+            response = await self._answer(request, **kwargs)
+            if not stream:
+                try:
+                    await response.aread()
+                except BaseException:
+                    await response.aclose()
+                    raise
+            return response
+
+        async def _answer(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    response = await super().send(request, stream=True, **kwargs)
+                except dropped_connection:
+                    if attempt == ENDPOINT_ATTEMPTS:
+                        raise
+                else:
+                    if response.status_code not in RETRIED_STATUSES or attempt == ENDPOINT_ATTEMPTS:
+                        return response
+                    await response.aclose()
                 await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
-            return await super().send(request, **kwargs)
 
     return EndpointClient()
 
