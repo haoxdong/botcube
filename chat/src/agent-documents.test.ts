@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { crc32, deflateSync } from 'node:zlib';
 import { DeleteTableCommand, DynamoDBClient, ResourceNotFoundException, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
@@ -9,14 +10,15 @@ import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
+import { filed } from '../test/stock-bot.js';
 
-// The test Cartridge's templates (botcube/chat/test/in-process.ts).
-const TEMPLATE_IDENTITY = { name: 'Test Bot', character: 'A test agent', vibe: 'Plain', avatar: '' };
+// The test bot's templates (botcube/chat/test/stock-bot.ts), its vibe the bot settings' default.
+const TEMPLATE_IDENTITY = { name: 'Test Bot', character: 'A test agent', vibe: 'Direct, precise, and calm', avatar: '' };
 const TEMPLATE_SOUL = 'Be brief.';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true });
 });
 afterAll(() => stack.stop());
 
@@ -45,23 +47,25 @@ describe('Agent Identity and Soul', () => {
   it("start as the Cartridge's templates and reach every Turn", async ({ onTestFinished }) => {
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-03T22:00:00.250Z') });
     onTestFinished(() => { vi.useRealTimers(); });
-    const user = as('docs-template');
+    const user = as('acct_docs-template');
 
     expect(await (await user.request('/agent/identity')).json()).toEqual(TEMPLATE_IDENTITY);
     expect(await (await user.request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
     expect(await (await user.request('/agent')).json()).toEqual({ name: 'Test Bot', avatar: '', picture: null, status: 'online' });
     await user.turn('docs-template-turn');
     expect(forwarded('docs-template-turn')).toEqual({
-      sessionUserId: 'filed-docs-template',
+      sessionUserId: filed('acct_docs-template'),
       turnStartedAt: '2026-11-03T22:00:00.250Z',
       agentIdentity: TEMPLATE_IDENTITY,
       soul: TEMPLATE_SOUL,
-      model: 'plan',
+      model: 'quick',
+      // The local Agent Computer's CDP endpoint for this Session.
+      agentComputerCdpUrl: expect.stringMatching(/^ws:\/\//),
     });
   });
 
   it("the user's edits reach the profile and the next Turn, for that account only", async () => {
-    const user = as('docs-edited');
+    const user = as('acct_docs-edited');
     const renamed = { name: 'Quill', character: 'A careful analyst', vibe: 'Dry', avatar: '🪶' };
 
     expect((await user.put('/agent/identity', renamed)).status).toBe(204);
@@ -70,7 +74,7 @@ describe('Agent Identity and Soul', () => {
     expect(await (await user.request('/agent')).json()).toEqual({ name: 'Quill', avatar: '🪶', picture: null, status: 'online' });
     await user.turn('docs-edited-turn');
     expect(forwarded('docs-edited-turn')).toMatchObject({ agentIdentity: renamed, soul: 'Answer in haiku.' });
-    expect(await (await as('docs-other').request('/agent/identity')).json()).toEqual(TEMPLATE_IDENTITY);
+    expect(await (await as('acct_docs-other').request('/agent/identity')).json()).toEqual(TEMPLATE_IDENTITY);
   });
 
   it.each([
@@ -80,7 +84,7 @@ describe('Agent Identity and Soul', () => {
     ['/agent/soul', { content: null }, 'Soul content must be a string'],
     ['/agent/soul', 'not json', 'Soul content must be a string'],
   ])('refuses a malformed edit to %s', async (path, body, detail) => {
-    const user = as('docs-malformed');
+    const user = as('acct_docs-malformed');
 
     const response = await user.request(path, {
       method: 'PUT',
@@ -94,7 +98,7 @@ describe('Agent Identity and Soul', () => {
   });
 
   it("saves the agent's own edits from its Turn stream and relays them to the UI", async () => {
-    const user = as('docs-agent-edit');
+    const user = as('acct_docs-agent-edit');
     const identityEdit = { document: 'agentIdentity', content: { ...TEMPLATE_IDENTITY, name: 'Quill' } };
     const soulEdit = { document: 'soul', content: 'Answer in haiku.' };
     stack.agentcore.script('docs-agent-edit-turn', {
@@ -123,7 +127,7 @@ describe('Agent Identity and Soul', () => {
     ['memory', { document: 'memory', content: 'x' }, 'The edit names no agent document'],
     ['none', null, 'The edit names no agent document'],
   ])('fails the Turn loudly on an agent edit it cannot save (%s)', async (label, value, reason) => {
-    const user = as('docs-agent-bad-edit');
+    const user = as('acct_docs-agent-bad-edit');
     const threadId = `docs-agent-bad-edit-${label}`;
     stack.agentcore.script(threadId, {
       kind: 'stream',
@@ -140,26 +144,38 @@ describe('Agent Identity and Soul', () => {
   });
 
   it("are deleted with the account, beside its Sessions' purge", async () => {
-    const user = as('docs-deleted');
+    const user = as('acct_docs-deleted');
     await user.put('/agent/soul', { content: 'Answer in haiku.' });
     await user.turn('docs-deleted-turn');
 
-    await stack.history.delete('docs-deleted');
+    await stack.history.delete('acct_docs-deleted');
 
     expect(await (await user.request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
     await eventually(() =>
-      expect(stack.sessionApi.events()).toContainEqual({ operation: 'purge', sessionId: 'docs-deleted-turn', userId: 'filed-docs-deleted' }),
+      expect(stack.sessionApi.events()).toContainEqual({ operation: 'purge', sessionId: 'docs-deleted-turn', userId: filed('acct_docs-deleted') }),
     );
   });
 });
 
-// A 1x1 PNG.
-const PICTURE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-const pictureOf = async (user: ReturnType<typeof as>) => ((await (await user.request('/agent')).json()) as { picture: unknown }).picture;
-const PICTURE_BYTES = {
-  contentType: 'image/png',
-  data: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+/** A PNG chunk: length, type, data and the CRC of type and data. */
+const pngChunk = (type: string, data: Buffer) => {
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, crc]);
 };
+// A 1x1 transparent PNG, built here rather than carried as an encoded blob.
+const PNG = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  pngChunk('IHDR', Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0])),
+  pngChunk('IDAT', deflateSync(Buffer.from([0, 0, 0, 0, 0]))),
+  pngChunk('IEND', Buffer.alloc(0)),
+]);
+const PICTURE = `data:image/png;base64,${PNG.toString('base64')}`;
+const pictureOf = async (user: ReturnType<typeof as>) => ((await (await user.request('/agent')).json()) as { picture: unknown }).picture;
+const PICTURE_BYTES = { contentType: 'image/png', data: PNG };
 
 /** The public document owner over the run's DynamoDB endpoint, with the existing fixture credentials. */
 const pictureDocuments = (table: string, endpoint = motoEndpoint()) => {
@@ -175,7 +191,7 @@ const pictureDocuments = (table: string, endpoint = motoEndpoint()) => {
 describe("The agent's picture", () => {
 
   it('rejects a late picture upload after account-history deletion without recreating the image', async () => {
-    const user = as('picture-delete-race');
+    const user = as('acct_picture-delete-race');
     let entered!: () => void;
     let release!: () => void;
     const started = new Promise<void>((resolve) => { entered = resolve; });
@@ -191,7 +207,7 @@ describe("The agent's picture", () => {
     }, { highWaterMark: 0 });
     const request = new Request('http://localhost/agent/picture', {
       method: 'PUT',
-      headers: { 'x-test-owner': 'picture-delete-race', 'content-type': 'application/json' },
+      headers: { 'x-test-owner': 'acct_picture-delete-race', 'content-type': 'application/json' },
       body,
       duplex: 'half',
     } as RequestInit & { duplex: 'half' });
@@ -201,7 +217,7 @@ describe("The agent's picture", () => {
         started,
         upload.then(() => { throw new Error('The upload completed before reading its picture body'); }),
       ]);
-      await stack.history.delete('picture-delete-race');
+      await stack.history.delete('acct_picture-delete-race');
       release();
       const response = await upload;
       expect(await pictureOf(user)).toBeNull();
@@ -277,7 +293,7 @@ describe("The agent's picture", () => {
   });
 
   it('stays out of the Agent Identity every Turn carries', async () => {
-    const user = as('picture-turn');
+    const user = as('acct_picture-turn');
     await user.put('/agent/picture', { picture: PICTURE });
 
     await user.turn('picture-turn-turn');
@@ -287,10 +303,10 @@ describe("The agent's picture", () => {
   });
 
   it('is deleted with the account', async () => {
-    const user = as('picture-deleted');
+    const user = as('acct_picture-deleted');
     await user.put('/agent/picture', { picture: PICTURE });
 
-    await stack.history.delete('picture-deleted');
+    await stack.history.delete('acct_picture-deleted');
 
     expect(await pictureOf(user)).toBeNull();
   });
@@ -300,7 +316,7 @@ describe("The agent's picture", () => {
     ['no picture', {}],
     ['no JSON', 'not json'],
   ])('refuses %s', async (_, body) => {
-    const user = as('picture-malformed');
+    const user = as('acct_picture-malformed');
 
     const response = await user.request('/agent/picture', {
       method: 'PUT',
@@ -315,7 +331,7 @@ describe("The agent's picture", () => {
 
 describe('Memory', () => {
   const remembering = (owner: string) => {
-    stack.sessionApi.memories.set(`filed-${owner}`, [
+    stack.sessionApi.memories.set(filed(owner), [
       { id: 'mem-copper', text: 'Trades copper' },
       { id: 'mem-paris', text: 'Lives in Paris' },
     ]);
@@ -323,7 +339,7 @@ describe('Memory', () => {
   };
 
   it("reads the account's Memory lines from the session API", async () => {
-    const user = remembering('memory-read');
+    const user = remembering('acct_memory-read');
 
     expect(await (await user.request('/agent/memory')).json()).toEqual({
       lines: [
@@ -331,11 +347,11 @@ describe('Memory', () => {
         { id: 'mem-paris', text: 'Lives in Paris' },
       ],
     });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory', userId: 'filed-memory-read' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory', userId: filed('acct_memory-read') });
   });
 
   it('adds a line to the account Memory through Pending Memory', async () => {
-    const user = remembering('memory-added');
+    const user = remembering('acct_memory-added');
     const response = await user.request('/agent/memory', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'Prefers jasmine tea' }),
@@ -346,26 +362,26 @@ describe('Memory', () => {
     expect(await (await user.request('/agent/memory')).json()).toEqual({ lines: [
       line, { id: 'mem-copper', text: 'Trades copper' }, { id: 'mem-paris', text: 'Lives in Paris' },
     ] });
-    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory-add', userId: 'filed-memory-added', text: 'Prefers jasmine tea' });
+    expect(stack.sessionApi.events()).toContainEqual({ operation: 'memory-add', userId: filed('acct_memory-added'), text: 'Prefers jasmine tea' });
   });
 
   it('edits and deletes lines through the session API', async () => {
-    const user = remembering('memory-edited');
+    const user = remembering('acct_memory-edited');
 
     expect((await user.put('/agent/memory/mem-paris', { text: 'Lives in London' })).status).toBe(204);
     expect((await user.request('/agent/memory/mem-copper', { method: 'DELETE' })).status).toBe(204);
 
     expect(stack.sessionApi.events()).toEqual(
       expect.arrayContaining([
-        { operation: 'memory-edit', userId: 'filed-memory-edited', recordId: 'mem-paris', text: 'Lives in London' },
-        { operation: 'memory-delete', userId: 'filed-memory-edited', recordId: 'mem-copper' },
+        { operation: 'memory-edit', userId: filed('acct_memory-edited'), recordId: 'mem-paris', text: 'Lives in London' },
+        { operation: 'memory-delete', userId: filed('acct_memory-edited'), recordId: 'mem-copper' },
       ]),
     );
     expect(await (await user.request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
   });
 
   it('answers 404 for a delete or edit of a line Memory does not have', async () => {
-    const user = remembering('memory-missing');
+    const user = remembering('acct_memory-missing');
 
     const response = await user.request('/agent/memory/mem-gold', { method: 'DELETE' });
 
@@ -375,7 +391,7 @@ describe('Memory', () => {
   });
 
   it('surfaces a failed deletion with the session API diagnostics', async () => {
-    const user = remembering('memory-upstream-failure');
+    const user = remembering('acct_memory-upstream-failure');
     const diagnostics = { error: 'Memory unavailable', stackTrace: ['at memory_delete (/var/task/session_api.py:3484)'] };
     const originalFetch = globalThis.fetch;
     const transport = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
@@ -393,7 +409,7 @@ describe('Memory', () => {
       expect(errors).toHaveBeenCalledWith('DELETE /agent/memory/mem-copper failed', expect.objectContaining({
         status: 503, detail: 'Session API returned HTTP 503', cause: diagnostics,
       }));
-      expect(stack.sessionApi.memories.get('filed-memory-upstream-failure')).toHaveLength(2);
+      expect(stack.sessionApi.memories.get(filed('acct_memory-upstream-failure'))).toHaveLength(2);
     } finally {
       transport.mockRestore();
       errors.mockRestore();
@@ -401,7 +417,7 @@ describe('Memory', () => {
   });
 
   it.each([{ text: '' }, { text: ' \n' }, { text: null }, 'not json'])('refuses the line %j without asking the session API', async (body) => {
-    const user = remembering('memory-malformed');
+    const user = remembering('acct_memory-malformed');
 
     const response = await user.request('/agent/memory/mem-paris', {
       method: 'PUT',
@@ -411,15 +427,15 @@ describe('Memory', () => {
 
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({ detail: 'A Memory line must be non-blank text' });
-    expect(stack.sessionApi.events()).not.toContainEqual(expect.objectContaining({ userId: 'filed-memory-malformed' }));
+    expect(stack.sessionApi.events()).not.toContainEqual(expect.objectContaining({ userId: filed('acct_memory-malformed') }));
   });
 });
 
 
 describe('bounded document recovery probes', () => {
   it('keeps concurrent Soul, Identity and Memory updates in one account without losing fields', async () => {
-    const user = as('probe-concurrent');
-    stack.sessionApi.memories.set('filed-probe-concurrent', [{ id: 'line', text: 'old' }]);
+    const user = as('acct_probe-concurrent');
+    stack.sessionApi.memories.set(filed('acct_probe-concurrent'), [{ id: 'line', text: 'old' }]);
     const responses = await Promise.all([
       user.put('/agent/soul', { content: 'Concurrent instructions' }),
       user.put('/agent/identity', { ...TEMPLATE_IDENTITY, name: 'Concurrent Agent' }),
@@ -428,12 +444,12 @@ describe('bounded document recovery probes', () => {
     expect(responses.map((response) => response.status)).toEqual([204, 204, 204]);
     await user.turn('probe-concurrent-turn');
     expect(forwarded('probe-concurrent-turn')).toMatchObject({ soul: 'Concurrent instructions', agentIdentity: { name: 'Concurrent Agent' } });
-    expect(stack.sessionApi.memories.get('filed-probe-concurrent')).toEqual([{ id: 'line', text: 'new' }]);
-    expect(await (await as('probe-concurrent-other').request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
+    expect(stack.sessionApi.memories.get(filed('acct_probe-concurrent'))).toEqual([{ id: 'line', text: 'new' }]);
+    expect(await (await as('acct_probe-concurrent-other').request('/agent/soul')).json()).toEqual({ content: TEMPLATE_SOUL });
   });
 
   it('reports a failed Soul save and allows an explicit subsequent retry without changing the prior document', async () => {
-    const user = as('probe-save-recovery');
+    const user = as('acct_probe-save-recovery');
     expect((await user.put('/agent/soul', { content: 'Prior instructions' })).status).toBe(204);
     const failure = vi.spyOn(DynamoDBAgentDocuments.prototype, 'save').mockRejectedValueOnce(new Error('storage unavailable'));
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -456,7 +472,7 @@ describe('Agent document deletion boundary probe', () => {
     ['/agent/soul', { content: 'Private resurrected instructions' }, { content: TEMPLATE_SOUL }],
     ['/agent/identity', { ...TEMPLATE_IDENTITY, name: 'Private resurrected identity' }, TEMPLATE_IDENTITY],
   ])('rejects an admitted edit to %s whose body completes after account purge without recreating the document', async (path, edit, template) => {
-    const owner = `probe-document-delete-race-${path.split('/').at(-1)}`;
+    const owner = `acct_probe-document-delete-race-${path.split('/').at(-1)}`;
     const user = as(owner);
     await user.put('/agent/soul', { content: 'Private old instructions' });
     let entered!: () => void;
@@ -484,7 +500,7 @@ describe('Agent document deletion boundary probe', () => {
       expect(await (await user.request(path)).json()).toEqual(template);
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({ detail: 'Account history is deleted' });
-      expect(await (await as('probe-unrelated-owner').request(path)).json()).toEqual(template);
+      expect(await (await as('acct_probe-unrelated-owner').request(path)).json()).toEqual(template);
     } finally {
       release();
       await save;
@@ -493,7 +509,7 @@ describe('Agent document deletion boundary probe', () => {
 });
 
 it('refuses an anonymous Memory addition before calling the session API', async () => {
-  const anonymous = await startInProcess({ cartridge: { requester: async () => ({ owner: 'anonymous-memory', anonymous: true }) } });
+  const anonymous = await startInProcess({ stock: true, cartridge: { requester: async () => ({ owner: 'acct_anonymous-memory', anonymous: true }) } });
   try {
     const response = await anonymous.app.request('/agent/memory', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
@@ -507,9 +523,9 @@ it('refuses an anonymous Memory addition before calling the session API', async 
 
 // The bot settings' Memory gate. A bot with Memory off keeps none: its routes refuse, and its Turns say so.
 it('refuses Memory and tells each Turn when the bot settings turn Memory off', async () => {
-  const forgetful = await startInProcess({ cartridge: { memory: false } });
+  const forgetful = await startInProcess({ stock: true, cartridge: { memory: false } });
   try {
-    const user = { 'x-test-owner': 'memory-off' };
+    const user = { 'x-test-owner': 'acct_memory-off' };
     expect((await forgetful.app.request('/agent/memory', { headers: user })).status).toBe(404);
     const added = await forgetful.app.request('/agent/memory', {
       method: 'POST', headers: { ...user, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Prefers tea' }),
@@ -518,7 +534,7 @@ it('refuses Memory and tells each Turn when the bot settings turn Memory off', a
     expect(await added.json()).toEqual({ detail: 'Memory is off for this bot' });
     expect(forgetful.sessionApi.events()).toEqual([]);
 
-    await forgetful.allocate('memory-off', 'memory-off-turn');
+    await forgetful.allocate('acct_memory-off', 'memory-off-turn');
     await (await forgetful.app.request('/', {
       method: 'POST',
       headers: { ...user, 'content-type': 'application/json' },
