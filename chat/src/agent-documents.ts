@@ -1,9 +1,22 @@
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
-import type { AgentDocumentSet, AgentIdentity } from './cartridge.js';
 import { HttpError } from './http-error.js';
 import { ownerFenceKey } from './session-metadata.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
+
+/** The name, character, vibe, and avatar (an emoji, or empty for the name's initial) a user gives their agent. */
+export interface AgentIdentity {
+  name: string;
+  character: string;
+  vibe: string;
+  avatar: string;
+}
+
+/** An account's Agent Identity and Soul; the bot settings' are the templates every account starts from. */
+export interface AgentDocumentSet {
+  agentIdentity: AgentIdentity;
+  soul: string;
+}
 
 /** The CUSTOM event the Harness streams when the agent edits one of its documents. */
 export const AGENT_DOCUMENT_EDITED = 'botcube:agent-document-edited';

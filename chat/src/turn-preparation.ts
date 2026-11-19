@@ -2,8 +2,19 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { SessionBusyError, type PreparedTurn, type TurnFailure } from './session-metadata.js';
 import { sessionAccessError } from './sessions.js';
 import { persistedTurnError, turnErrorDetails } from './turn-stream.js';
-import type { AgentDocumentSet } from './cartridge.js';
+import type { AgentDocumentSet } from './agent-documents.js';
 import { HttpError } from './http-error.js';
+
+/** The JSON body an upstream Harness receives for one Turn. */
+export type InvocationPayload = Record<string, unknown> & {
+  forwardedProps: Record<string, unknown>;
+};
+
+/** Tells a Turn's Harness the bot settings' Memory gate; only the Chat Service sets it, never a client. */
+export function botMemory(forwardedProps: Record<string, unknown>, settings: { memory?: boolean | undefined }): void {
+  if (settings.memory === false) forwardedProps.botMemory = false;
+  else delete forwardedProps.botMemory;
+}
 
 export async function turnAccessError(error: unknown, documents: Promise<PromiseSettledResult<AgentDocumentSet>[]>, templates: AgentDocumentSet): Promise<unknown> {
   if (!(error instanceof SessionBusyError)) return sessionAccessError(error);

@@ -7,7 +7,7 @@ import {
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { AccountStoreError, OpenAIIdentityTaken, Lease } from './account-resources.js';
-import type { AgentModel } from './cartridge.js';
+import type { AgentModel } from './models.js';
 import { GuestExpiry } from './guest-expiry.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
 import {

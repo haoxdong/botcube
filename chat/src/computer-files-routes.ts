@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { ArtifactSave } from './artifact-save.js';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import type { AccountFiles } from './files.js';

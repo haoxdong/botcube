@@ -1,5 +1,5 @@
 import type { AccountStore } from './account-store.js';
-import type { AgentModel } from './cartridge.js';
+import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
 import { signCredentialServiceInvocation } from './credential-service-token.js';
 import { isRecord } from './payload.js';

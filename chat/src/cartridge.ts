@@ -1,51 +1,12 @@
 import type { RunAgentInput } from '@ag-ui/client';
 import type { Context, Hono } from 'hono';
+import type { AccountHistory } from './account-history.js';
+import type { AgentDocumentSet } from './agent-documents.js';
+import type { AgentModel } from './models.js';
+import type { InvocationPayload } from './turn-preparation.js';
 import type { CredentialSource } from './credential-source.js';
 import type { Requester } from './requester.js';
 import type { TaskStopSleep } from './task-stop.js';
-
-/** The name, character, vibe, and avatar (an emoji, or empty for the name's initial) a user gives their agent. */
-export interface AgentIdentity {
-  name: string;
-  character: string;
-  vibe: string;
-  avatar: string;
-}
-
-/** An account's Agent Identity and Soul; a Cartridge's are the templates every account starts from. */
-export interface AgentDocumentSet {
-  agentIdentity: AgentIdentity;
-  soul: string;
-}
-
-/** A model an account may run its Turns on; a Turn names it by `key` in `forwardedProps.model`. */
-export interface AgentModel {
-  readonly key: string;
-  readonly label: string;
-  readonly description?: string | undefined;
-  /** Whose model it is: a Session's Turns all run on its first Turn's provider, so its history never mixes two. */
-  readonly provider: string;
-}
-
-/** The JSON body an upstream Harness receives for one Turn. */
-export type InvocationPayload = Record<string, unknown> & {
-  forwardedProps: Record<string, unknown>;
-};
-
-/**
- * What the Chat Service does to an account's Sessions when the Cartridge's
- * account flows change the account; handed to the Cartridge when it is built.
- */
-export interface AccountHistory {
-  /** Fence every owned Session and wait for proven Runtime settlement and purge before downstream account erasure. */
-  delete(accountId: string): Promise<void>;
-  /** Account Claim: the destination account owns the source account's Sessions from now on. */
-  transfer(sourceAccountId: string, destinationAccountId: string): Promise<void>;
-  /** Whether the account owns this Session: one it has started and that is not being purged. */
-  owns(accountId: string, sessionId: string): Promise<boolean>;
-  /** Whether this is the account's assigned Main Chat, even before its first Turn; allocation-free and false when the Session or account is fenced. */
-  ownsMainChat(accountId: string, sessionId: string): Promise<boolean>;
-}
 
 /**
  * The Chat Service half of a Cartridge: the product's extension points into the
@@ -130,12 +91,6 @@ export interface ChatServiceCartridge<R extends Requester = Requester> {
   /** The Cartridge's Credential Sources, such as sign-in's client secret: each is read as the Chat Service starts, which an unreadable one stops. */
   readonly startupCredentials?: readonly CredentialSource[];
   stopSessionComputer?(owner: string, sessionId: string): Promise<void>;
-}
-
-/** Tells a Turn's Harness the bot settings' Memory gate; only the Chat Service sets it, never a client. */
-export function botMemory(forwardedProps: Record<string, unknown>, cartridge: Pick<ChatServiceCartridge, 'memory'>): void {
-  if (cartridge.memory === false) forwardedProps.botMemory = false;
-  else delete forwardedProps.botMemory;
 }
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */

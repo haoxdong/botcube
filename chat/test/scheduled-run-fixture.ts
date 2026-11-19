@@ -1,7 +1,7 @@
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import type { Message } from '@ag-ui/client';
 import { afterAll, beforeAll, expect } from 'vitest';
-import type { AgentModel } from '../src/cartridge.js';
+import type { AgentModel } from '../src/models.js';
 import { defined } from './defined.js';
 import { eventually } from './eventually.js';
 import type { UpstreamScript } from './fakes/fake-agentcore.js';

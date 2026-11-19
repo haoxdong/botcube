@@ -8,7 +8,7 @@ import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-ser
 import { Hono, type Context } from 'hono';
 import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
 import { localAgentComputer } from './local-agent-computer.js';

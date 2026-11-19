@@ -1,9 +1,25 @@
 import type { RunAgentInput } from '@ag-ui/client';
-import type { AgentModel, ChatServiceCartridge } from './cartridge.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 
-type ModelSource<R extends Requester> = Pick<ChatServiceCartridge<R>, 'models' | 'accountModels' | 'accountModel'>;
+/** A model an account may run its Turns on; a Turn names it by `key` in `forwardedProps.model`. */
+export interface AgentModel {
+  readonly key: string;
+  readonly label: string;
+  readonly description?: string | undefined;
+  /** Whose model it is: a Session's Turns all run on its first Turn's provider, so its history never mixes two. */
+  readonly provider: string;
+}
+
+/** Where a Turn's models come from: the bot settings' own, and the ones an account may also run. */
+export interface ModelSource<R extends Requester = Requester> {
+  /** The bot settings' models, which every account may run; the first is the default. */
+  readonly models: readonly [AgentModel, ...AgentModel[]];
+  /** The models this account may also run, such as its plan's; `refresh` asks for them afresh. */
+  accountModels(requester: R, options?: { refresh?: boolean }): Promise<readonly AgentModel[]>;
+  /** The account model `key` names, or undefined when the account may not run it. */
+  accountModel(requester: R, key: string): Promise<AgentModel | undefined>;
+}
 
 /** Every model the account may run its Turns on: the account's own first (the one a client selects), then the Cartridge's. */
 export async function accountModelList<R extends Requester>(cartridge: ModelSource<R>, requester: R, options?: { refresh?: boolean }): Promise<AgentModel[]> {
@@ -18,7 +34,7 @@ export function accountDefaultModel(models: readonly AgentModel[]): AgentModel {
 }
 
 /** The model `key` names: the Cartridge's, else the account's; a 422 when it names neither. */
-export async function namedModel<R extends Requester>(cartridge: Pick<ChatServiceCartridge<R>, 'models' | 'accountModel'>, requester: R, key: unknown): Promise<AgentModel> {
+export async function namedModel<R extends Requester>(cartridge: Pick<ModelSource<R>, 'models' | 'accountModel'>, requester: R, key: unknown): Promise<AgentModel> {
   const named = cartridge.models.find((model) => model.key === key) ?? (typeof key === 'string' ? await cartridge.accountModel(requester, key) : undefined);
   if (named === undefined) throw new HttpError(422, `Model ${JSON.stringify(key)} is not available to this account`);
   return named;

@@ -12,7 +12,7 @@ import { ScheduledTasks } from './scheduled-tasks.js';
 import { schedulerConfigFromEnv } from './scheduler.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { createChatService } from './server.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';

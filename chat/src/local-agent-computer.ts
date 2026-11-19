@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';

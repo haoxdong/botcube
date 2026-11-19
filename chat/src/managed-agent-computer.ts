@@ -4,7 +4,7 @@ import { agentComputerBrowserFromEnv, agentComputerIdleSeconds, agentComputers }
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import { agentComputerStartedFromEnv } from './agent-computer-started.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import type { AccountFiles } from './files.js';

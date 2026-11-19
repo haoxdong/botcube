@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { AgentModel } from './cartridge.js';
+import type { AgentModel } from './models.js';
 
 /** How a Cartridge names its accounts: `key` names its cookies and session records, `product` its messages. */
 export interface AccountNaming {

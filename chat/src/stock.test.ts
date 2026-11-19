@@ -22,7 +22,7 @@ import { filingUserId } from './filing-user-id.js';
 import { assertReservedMainIdentity } from './scheduled-run-delivery.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { serveChatService } from './server.js';
-import type { AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { AccountStore } from './account-store.js';
 import { stockAccountStore, stockChatService } from './stock.js';
