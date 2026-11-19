@@ -25,6 +25,11 @@
       "required": ["name", "character"],
       "additionalProperties": false
     },
+    "accountKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Names the bot's Sessions and its `<key>_session` and `<key>_account_id` cookies; every stored Account is written under it. Changing it after the first deploy signs every User out and loses Guests' Accounts."
+    },
     "soul": {
       "description": "The agent's Soul; absent, BotCube's own.",
       "type": "string",
@@ -162,6 +167,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["agentIdentity", "models"],
+  "required": ["agentIdentity", "accountKey", "models"],
   "additionalProperties": false
 }

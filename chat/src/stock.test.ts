@@ -19,6 +19,7 @@ import { signCredentialServiceInvocation, verifyCredentialServiceInvocation } fr
 import { directoryOf } from './files-shared.js';
 import { serveChatService } from './server.js';
 import { HttpError, type AccountHistory } from './cartridge.js';
+import { AccountStore } from './account-store.js';
 import { stockAccountStore, stockChatService } from './stock.js';
 
 /** How often a Chat looked for a local Chromium. */
@@ -50,6 +51,7 @@ describe('the stock Chat Service', () => {
   it('takes its Agent Identity, Soul and models from the bot settings its Deployment Config names', () => {
     const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
       agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' },
+      accountKey: 'quill',
       soul: 'Write plainly.',
       models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }],
     }) })(history);
@@ -61,6 +63,7 @@ describe('the stock Chat Service', () => {
   it.each([[undefined, true], [false, false]])('takes its Memory gate from the bot settings (memory %j)', (memory, kept) => {
     const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
       agentIdentity: { name: 'Quill', character: 'A drafting agent' },
+      accountKey: 'quill',
       models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
       ...(memory === undefined ? {} : { memory }),
     }) })(history);
@@ -69,12 +72,12 @@ describe('the stock Chat Service', () => {
   });
 
   it('stops before serving when its bot settings are wrong, naming the field', () => {
-    const path = deploymentConfig({ agentIdentity: { name: 'Quill' }, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
+    const path = deploymentConfig({ agentIdentity: { name: 'Quill' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
     expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Bot settings ${join(path, '..', 'bot.json')}: agentIdentity.character: `);
   });
 
   it('stops before serving a bot that wants the user token in its shell when there are no Turn identity keys to sign it', () => {
-    const path = deploymentConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }], userTokenInShell: true });
+    const path = deploymentConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }], userTokenInShell: true });
 
     expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
     expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path, BOTCUBE_TURN_IDENTITY_KEYS: '[]' })).not.toThrow();
@@ -86,6 +89,25 @@ describe('the stock Chat Service', () => {
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
     expect(await service.accountModels({ owner: 'owner' })).toEqual([]);
     await expect(service.accountModel({ owner: 'owner' }, 'openai-plan:gpt-5.5')).resolves.toBeUndefined();
+  });
+
+  it("keeps signed in the sessions an earlier Chat minted under the bot's account key", async () => {
+    const env = { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
+      agentIdentity: { name: 'Acme', character: 'A test bot' }, accountKey: 'acme', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
+    }) };
+    const documents = memoryDocuments();
+    const accountId = 'acct_earlier_chat_000000000';
+    await documents.send(new PutCommand({
+      TableName: 'chat', Item: { pk: `ACCOUNT#${accountId}`, sk: 'META', record: { accountId, status: 'registered', displayName: 'Ada', rateTier: 'authenticated', version: 1, createdAt: 1, updatedAt: 1 } },
+    }));
+    const token = await new AccountStore('chat', { key: 'acme', product: 'Acme' }, documents).createSession(accountId);
+
+    const accountStore = stockAccountStore(env, documents);
+    const route = new Hono().route('/', stockChatService(env, { accountStore })(history).routes);
+
+    expect((await accountStore.liveSession(token))?.account.accountId).toBe(accountId);
+    const profile = await route.request('/account/profile', { headers: { Cookie: `acme_session=${token}` } });
+    expect([profile.status, await profile.json()]).toEqual([200, { displayName: 'Ada', photoUrl: null }]);
   });
 
   it("files each request under the browser's account and forwards the Turn with its Agent Computer", async () => {

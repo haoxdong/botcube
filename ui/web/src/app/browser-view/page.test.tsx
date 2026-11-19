@@ -5,6 +5,7 @@ vi.mock('@cartridge-ui', () => ({ webUiPlugin: { config: { agentName: 'Quill' } 
 
 const settings = vi.hoisted(() => ({
   agentIdentity: { name: 'Quill', character: 'A drafting agent' },
+  accountKey: 'quill',
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
   agentComputer: { enabled: true, liveBrowser: false },
 }));

@@ -18,8 +18,6 @@ import { planModels } from './plan-models.js';
 import { serveChatService } from './server.js';
 import { tokenIntrospectionRoutes } from './token-introspection.js';
 
-const ACCOUNT_KEY = 'template';
-const cookies = accountCookies(ACCOUNT_KEY);
 const ACCOUNT_DELETION_SESSION = 'account-deletion';
 const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
 
@@ -49,8 +47,10 @@ function deployment(env: NodeJS.ProcessEnv) {
 }
 
 /** The accounts of the bot its Deployment Config names, in BOTCUBE_CHAT_TABLE. */
-export const stockAccountStore = (env: NodeJS.ProcessEnv, documents?: Pick<DynamoDBDocumentClient, 'send'>) =>
-  new AccountStore(chatTable(env), { key: ACCOUNT_KEY, product: deployment(env).bot.agentIdentity.name }, documents);
+export function stockAccountStore(env: NodeJS.ProcessEnv, documents?: Pick<DynamoDBDocumentClient, 'send'>) {
+  const { bot } = deployment(env);
+  return new AccountStore(chatTable(env), { key: bot.accountKey, product: bot.agentIdentity.name }, documents);
+}
 
 export interface StockOptions {
   accountStore?: AccountStore;
@@ -66,6 +66,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   }
   const accountStore = options.accountStore ?? stockAccountStore(env);
   const store = () => accountStore;
+  const cookies = accountCookies(bot.accountKey);
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
   const files = accountFilesFromEnv(env, store);
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;

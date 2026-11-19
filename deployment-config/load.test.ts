@@ -10,6 +10,7 @@ const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/dep
 
 const EXAMPLE_BOT = {
   agentIdentity: { name: 'BotCube', character: 'A template agent', avatar: '🧊' },
+  accountKey: 'template',
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
   skills: ['skills/computer'],
   memory: true,
@@ -143,6 +144,8 @@ describe('a Deployment Config', () => {
 describe('bot settings', () => {
   it.each([
     ['a missing Agent Identity name', { ...EXAMPLE_BOT, agentIdentity: { character: 'A template agent' } }, 'agentIdentity.name: '],
+    ['a missing account key', (({ accountKey: _, ...bot }) => bot)(EXAMPLE_BOT), 'accountKey: '],
+    ['an account key that cannot name a cookie', { ...EXAMPLE_BOT, accountKey: 'Acme Bot' }, 'accountKey: '],
     ['an unknown key', { ...EXAMPLE_BOT, colour: 'blue' }, 'colour: Unrecognized key'],
     ['no models', { ...EXAMPLE_BOT, models: [] }, 'models.0: Invalid input: expected object, received undefined'],
     ['two models with one key', { ...EXAMPLE_BOT, models: [...EXAMPLE_BOT.models, { key: 'echo', label: 'Echo again', provider: 'echo' }] }, 'models.1.key: Model key "echo" is already models.0.key'],
@@ -168,8 +171,8 @@ describe('bot settings', () => {
   });
 
   it("leave out the Web UI's, for BotCube's colours, a Memory and the Agent Computer without its live browser", () => {
-    const { agentIdentity, models } = EXAMPLE_BOT;
-    const { bot } = loadDeployment(configFile({ bot: './bot.json' }, { agentIdentity, models }));
+    const { agentIdentity, accountKey, models } = EXAMPLE_BOT;
+    const { bot } = loadDeployment(configFile({ bot: './bot.json' }, { agentIdentity, accountKey, models }));
     expect(bot).not.toHaveProperty('theme');
     expect(bot).toMatchObject({ memory: true, agentComputer: { enabled: true, liveBrowser: false, profileOmitsCookieDomains: [] } });
   });

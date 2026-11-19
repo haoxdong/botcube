@@ -5,6 +5,7 @@
     "character": "A template agent",
     "avatar": "🧊"
   },
+  "accountKey": "template",
   "models": [{ "key": "echo", "label": "Echo", "provider": "echo" }],
   "skills": ["skills/computer"],
   "memory": true,

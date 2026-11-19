@@ -32,6 +32,7 @@ def _bot(root: Path, **settings: Any) -> Path:
     path = root / 'bot.json'
     path.write_text(json.dumps({
         'agentIdentity': {'name': 'Cubey', 'character': 'A test bot'},
+        'accountKey': 'cubey',
         'models': [{'key': 'sonnet-4.6', 'label': 'Sonnet', 'provider': 'anthropic'}, {'key': 'opus-4.6', 'label': 'Opus', 'provider': 'anthropic'}],
         'skills': ['skills/greeting'],
         **settings,

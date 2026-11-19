@@ -41,6 +41,10 @@ export const botSettings = z
       character: z.string().min(1),
       avatar: z.string().optional().describe("An emoji; absent, the UI shows the name's initial."),
     }),
+    accountKey: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]*$/)
+      .describe("Names the bot's Sessions and its `<key>_session` and `<key>_account_id` cookies; every stored Account is written under it. Changing it after the first deploy signs every User out and loses Guests' Accounts."),
     soul: z.string().min(1).optional().describe("The agent's Soul; absent, BotCube's own."),
     instructions: z
       .string()
