@@ -14,6 +14,8 @@
 
 .grid-collapse {
   display: grid;
+  /* One column the container's width: an auto column grows to nowrap content and pushes it past a phone. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
   transition:
     grid-template-rows var(--motion-move) var(--ease),

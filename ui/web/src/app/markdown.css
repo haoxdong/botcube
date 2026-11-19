@@ -117,6 +117,8 @@
 /* WebKit clamps the scroll whenever the list gets shorter. */
 .worklog {
   --worklog-indent: 26px;
+  --worklog-ink: 0.6px;
+  --worklog-icon-lift: -1.35px;
   min-height: calc(var(--font-small) * var(--leading-loose) + 2 * var(--space-4));
 }
 
@@ -238,7 +240,7 @@ button.worklog-head {
   font-weight: var(--weight-regular);
 }
 
-/* A step: icon, one truncating line, and a chevron right after it where it opens. The row stands 7px over its size
+/* A step: icon, one truncating line, and its time. The row stands 7px over its size
    (20px on a desktop, 22px on a phone): the hover pill reaches 2px over and under it and 6px past the icon, and an
    equal negative margin takes that back out of the layout. Everything in the row inherits the header's muted colour, so the hover darkens it all at once. */
 .worklog-step {
@@ -269,14 +271,25 @@ button.worklog-step-head {
     }
 }
 
+/* The icon's slot keeps every row's words at one start. Its icon is only its ink (worklog-tools.ts): 1px in, its left
+   edge meets the ink of the notes' first letter, and the lift takes its middle from the line's to its capitals'. */
 .worklog-step-icon {
+  display: flex;
   flex: none;
+  align-items: center;
   width: 14px;
-  height: 14px;
 }
 
-.worklog-step[data-state="failed"] .worklog-step-icon {
-  color: var(--color-red);
+.worklog-step-icon svg {
+  margin-left: 1px;
+  translate: 0 var(--worklog-icon-lift);
+}
+
+/* Measured from pixels: the phone's larger type needs less lift. */
+@media (max-width: 640px) {
+  .worklog {
+    --worklog-icon-lift: -0.35px;
+  }
 }
 
 .worklog-step-label {
@@ -287,35 +300,12 @@ button.worklog-step-head {
   white-space: nowrap;
 }
 
-/* Code font is for code only: a search query, a helper's brief or a plan item reads in sans. */
-.worklog-step-object {
-  margin-left: 6px;
-  line-height: 1;
-}
-
-.worklog-step-object:not([data-prose]) {
-  font-family: var(--font-code);
-  font-size: var(--font-code-size);
-}
-
 /* Every step's time sits in one right-aligned column; the label truncates before it. */
 .worklog-step-time {
   flex: none;
   margin-left: auto;
   padding-left: var(--space-8);
   font-variant-numeric: tabular-nums;
-}
-
-.worklog-step-title::before {
-  content: "·";
-  margin: 0 6px;
-}
-
-.worklog-step-chevron {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  margin-left: -6px;
 }
 
 /* One live line shimmers, colourless: the thought or call under way while the Worklog is open, else the Turn's clock.

@@ -1289,8 +1289,9 @@ it('scrolls the phone chat with the page, up under the status bar, under no band
   // above reads it).
   expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-shell:has\(> \.chat-header\) \{\s*margin-top: calc\(-1 \* var\(--app-safe-top\)\);/);
   // WebKit's scroll anchoring moved the page 103px up the chat as it opened, which the chat took for the user's scroll
-  // and stopped keeping to its bottom: the chat keeps its own place, as on desktop (.copilotKitMessages).
-  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-chat \{\s*display: flex;\s*flex-direction: column;\s*overflow: visible;\s*\/\*[^*]*\*\/\s*overflow-anchor: none;/);
+  // and stopped keeping to its bottom, and 582px to its end as the sidebar opened: the page keeps its own
+  // place, as the chat does on desktop (.copilotKitMessages).
+  expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*html \{\s*overflow-anchor: none;\s*\}/);
   // The kept Main Chat stays on the screen at its latest message while the opening chat, laid out unseen under it, grows
   // and scrolls the page to its own: neither moves as the chat takes over. The cold open check measures them.
   expect(sheet).toMatch(/@media \(max-width: 640px\) \{[^@]*\.app-chat \.kept-chat \{\s*position: fixed;\s*inset: 0 var\(--app-safe-right\) var\(--app-safe-bottom\) var\(--app-safe-left\);\s*\}\s*\.app-chat \.kept-chat :is\(\.chat-wrapper, \.copilotKitChat\) \{\s*height: 100%;/);

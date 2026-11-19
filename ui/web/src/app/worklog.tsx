@@ -7,8 +7,8 @@ import { partialJSONParse } from "@copilotkit/shared";
 import { GridCollapse, Presence, presenceMotion } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
-import { AlignLeftIcon, BrainIcon, ChevronRightIcon, CircleXIcon, TimerIcon, type LucideIcon } from "lucide-react";
-import { argumentOf, lookOf } from "./worklog-tools";
+import { RiArrowRightSLine } from "@remixicon/react";
+import { argumentOf, ICONS, lookOf, type StepIcon } from "./worklog-tools";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 import { partsOf, PROPOSAL, type Part, type TurnMessage } from "./turn-parts";
@@ -207,20 +207,20 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
     <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined} data-chosen={current || undefined}>
       <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, phase, asked })}>
         {title}
-        <ChevronRightIcon className="worklog-chevron" aria-hidden />
+        <RiArrowRightSLine className="worklog-chevron" aria-hidden />
       </button>
       <GridCollapse open={open} appear={advanceClock}>
         <div className="worklog-body">
           <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
             <Presence>{start && (
               <motionElement.div {...presenceMotion} key="start">
-                <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon={TimerIcon} label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
+                <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon="start" label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
               </motionElement.div>
             )}</Presence>
             {children}
             <Presence>{answer && (
               <motionElement.div {...presenceMotion} key="answer">
-                <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon={AlignLeftIcon} label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
+                <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon="answer" label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
               </motionElement.div>
             )}</Presence>
           </StepTimes.Provider>
@@ -231,16 +231,16 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
 }
 
 /**
- * One step of a Turn's work: an icon, then one line that truncates, with a chevron after it when it opens to a `sheet`
- * over the chat, and its time in the right-hand column. Live, its words shimmer, and the Worklog's head stands still.
+ * One step of a Turn's work: an icon, then one line that truncates, and its time in the right-hand column. A step that
+ * opens to a `sheet` over the chat is a button. Live, its words shimmer, and the Worklog's head stands still.
  * Arriving live (`id` first seen), it grows in.
  */
-function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, sheet }: {
+function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: {
   id?: string | undefined;
   diagnosticId?: string | undefined;
   kind: "start" | "thought" | "tool" | "answer";
   state: "live" | "done" | "failed" | "stopped";
-  icon: LucideIcon;
+  icon: StepIcon;
   label: ReactNode;
   time?: string | undefined;
   sheet?: { open: boolean; show: () => void } | undefined;
@@ -251,15 +251,18 @@ function Step({ id, diagnosticId = id, kind, state, icon: Icon, label, time, she
   useEffect(() => {
     if (live && id !== undefined) arrive(id);
   }, [id, live]);
-  const Shown = state === "failed" ? CircleXIcon : Icon;
-  const icon = <Shown className="worklog-step-icon" strokeWidth={1.75} aria-hidden />;
+  const shown = state === "failed" ? "failed" : icon;
+  const { Icon, ink: [x, y, width, height], scale } = ICONS[shown];
   const words = <span className="worklog-step-label">{label}</span>;
   const column = <span className="worklog-step-time">{time}</span>;
   const Head = sheet ? "button" : "div";
   const step = (
     <div className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
       <Head type={sheet ? "button" : undefined} className="worklog-step-head" onClick={sheet?.show} aria-haspopup={sheet ? "dialog" : undefined} aria-expanded={sheet?.open}>
-        {icon}{words}<ChevronRightIcon className="worklog-step-chevron" style={{ display: sheet ? undefined : "none" }} aria-hidden />{column}
+        <span className="worklog-step-icon">
+          <Icon viewBox={`${x} ${y} ${width} ${height}`} data-icon={shown} style={{ width: `calc(${width * scale} * var(--worklog-ink))`, height: `calc(${height * scale} * var(--worklog-ink))` }} aria-hidden />
+        </span>
+        {words}{column}
       </Head>
     </div>
   );
@@ -309,8 +312,9 @@ function TimedToolStep({ id, name, params, status: reported, output: result }: T
     <>
       {status === "stopped" && "Stopped · "}
       <span className="worklog-step-verb">{status === "running" ? running : done}</span>
+      {argument && " "}
       <Presence>{argument && (
-        <motionElement.span {...presenceMotion} className="worklog-step-object" data-prose={prose}>
+        <motionElement.span {...presenceMotion} className="worklog-step-object">
           {argument}
         </motionElement.span>
       )}</Presence>
@@ -341,13 +345,14 @@ export function ThoughtStep({ message, isRunning, isLatest }: { message: TurnMes
   const label = (
     <>
       <span className="worklog-step-verb">{live ? "Thinking" : "Thought"}</span>
+      {title && " · "}
       <Presence>{title && <motionElement.span {...presenceMotion} className="worklog-step-title">{title}</motionElement.span>}</Presence>
     </>
   );
   const sheet = words ? { open, show: () => { preloadStepSheet(); setOpened(true); setOpen(true); } } : undefined;
   return (
     <>
-      <Step id={message.id} kind="thought" state={live ? "live" : "done"} icon={BrainIcon} label={label} time={time} sheet={sheet} />
+      <Step id={message.id} kind="thought" state={live ? "live" : "done"} icon="thought" label={label} time={time} sheet={sheet} />
       <Suspense fallback={null}>{opened && <StepSheet open={open} onClose={() => setOpen(false)} title={time ? `Thought · ${time}` : "Thought"} summary={words} heading={title} />}</Suspense>
     </>
   );

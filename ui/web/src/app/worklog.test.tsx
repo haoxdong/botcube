@@ -380,7 +380,7 @@ describe('a tool step', () => {
   it('reads a running command by its verb and the command exactly as run', () => {
     const { container } = render(<ToolStep name="execute" params={{ command: 'acme search "Japan"', timeout: null }} status="running" output={undefined} />);
 
-    expect(container).toHaveTextContent(/^Runningacme search "Japan"$/);
+    expect(container).toHaveTextContent(/^Running acme search "Japan"$/);
   });
 
   it("opens a failed command to a sheet titled by its tool: the full command, its exit code, and its output without the trailer", async () => {
@@ -393,7 +393,7 @@ describe('a tool step', () => {
         output={'[stderr] Specify one or more comma-separated fields for `--json`\n[Command failed with exit code 1]'}
       />,
     );
-    expect(container.querySelector('.lucide-circle-x')).not.toBeNull();
+    expect(container.querySelector('svg[data-icon="failed"]')).not.toBeNull();
     const step = screen.getByRole('button', { name: /^Ran/ });
     expect(step).toHaveAttribute('aria-haspopup', 'dialog');
 
@@ -456,14 +456,14 @@ describe('a tool step', () => {
       <ToolStep name="execute" params={{ command: 'cat log' }} status="complete" output={'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]'} />,
     );
 
-    expect(container.querySelector('.lucide-circle-x')).toBeNull();
-    expect(container.querySelector('.lucide-square-terminal')).not.toBeNull();
+    expect(container.querySelector('svg[data-icon="failed"]')).toBeNull();
+    expect(container.querySelector('svg[data-icon="ran"]')).not.toBeNull();
   });
 
   it('marks a stopped call', () => {
     const { container } = render(<ToolStep name="task" params={{ description: 'Compare research' }} status="stopped" output={undefined} />);
 
-    expect(container).toHaveTextContent(/^Stopped · Asked a helperCompare research$/);
+    expect(container).toHaveTextContent(/^Stopped · Asked a helper Compare research$/);
   });
 
   it('marks a call a stopped Turn cut as stopped once replayed, opening to its input alone', async () => {
@@ -471,7 +471,7 @@ describe('a tool step', () => {
       <ToolStep name="execute" params={{ command: 'sleep 30; echo slept' }} status="complete" output="Tool call 'execute' with id 'call_dl0u' was interrupted before completion." />,
     );
 
-    expect(container).toHaveTextContent(/^Stopped · Ransleep 30; echo slept$/);
+    expect(container).toHaveTextContent(/^Stopped · Ran sleep 30; echo slept$/);
     expect(container.querySelector('.worklog-step')).toHaveAttribute('data-state', 'stopped');
     fireEvent.click(screen.getByRole('button', { name: /^Stopped · Ran/ }));
     expect(sections(await screen.findByRole('dialog', { name: 'Terminal' }))).toEqual([['Command', 'sleep 30; echo slept']]);
@@ -703,7 +703,7 @@ describe("a Worklog's step times", () => {
     </CopilotChatConfigurationProvider></CopilotKitProvider>);
     fireEvent.click(head());
     expect(document.querySelectorAll('[data-step-id="mixed-query"]')).toHaveLength(1);
-    expect(stepRows()).toEqual([['Artifact', '2s'], ['Rancompare rates', '2s'], ['Answered', '4s']]);
+    expect(stepRows()).toEqual([['Artifact', '2s'], ['Ran compare rates', '2s'], ['Answered', '4s']]);
     fireEvent.click(head());
     expect(screen.queryByRole('button', { name: 'Rates chart' })).toBeNull();
   });
@@ -714,7 +714,7 @@ describe("a Worklog's step times", () => {
     const question = { id: `${prefix}-u`, role: 'user', content: 'Compare rates', ...stamp(0, 0) };
     const tool = { id: `${prefix}-a`, role: 'assistant', content: '', toolCalls: [call(`${prefix}-c`, 'execute', { command: 'compare rates' })], ...stamp(0, 0) };
     const view = render(<StepsChat messages={[question, tool]} running />);
-    expect(stepRows()).toEqual([['Runningcompare rates', '2s']]);
+    expect(stepRows()).toEqual([['Running compare rates', '2s']]);
     view.unmount();
     vi.setSystemTime(START + 3341000);
     const result = { id: `${prefix}-t`, role: 'tool', toolCallId: `${prefix}-c`, content: 'Compared', ...(stampedResult ? stamp(0, 0.2) : {}) };
@@ -722,7 +722,7 @@ describe("a Worklog's step times", () => {
     render(<StepsChat messages={[question, tool, result, answer]} />);
     expect(head()).toHaveTextContent(/^Worked for 49s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Rancompare rates', '2s'], ['Answered', '47s']]);
+    expect(stepRows()).toEqual([['Ran compare rates', '2s'], ['Answered', '47s']]);
   });
 
   it.each([false, true])('keeps the displayed minimum when final timestamps arrive late, previously finished %s', async (alreadyFinished) => {
@@ -733,13 +733,13 @@ describe("a Worklog's step times", () => {
     const result = { id: `${prefix}-t`, role: 'tool', toolCallId: `${prefix}-c`, content: 'Done', ...stamp(0, 0.2) };
     const answer = { id: `${prefix}-answer`, role: 'assistant', content: 'Rates compared' };
     const view = render(<StepsChat messages={[question, tool]} running />);
-    expect(stepRows()).toEqual([['Runningrates', '5s']]);
+    expect(stepRows()).toEqual([['Running rates', '5s']]);
     if (alreadyFinished) view.rerender(<StepsChat messages={[question, tool, result, answer]} />);
     const recorded = { ...answer, ...stamp(0.2, 4.4) };
     view.rerender(<StepsChat messages={[question, tool, result, recorded]} />);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+    expect(stepRows()).toEqual([['Ran rates', '5s'], ['Answered', '0s']]);
     view.unmount();
     vi.resetModules();
     const restored = await import('./worklog');
@@ -748,7 +748,7 @@ describe("a Worklog's step times", () => {
     </restored.Worklog>);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+    expect(stepRows()).toEqual([['Ran rates', '5s'], ['Answered', '0s']]);
   });
 
   it('keeps a replayed final timestamp while the interactive client briefly reports running', () => {
@@ -785,7 +785,7 @@ describe("a Worklog's step times", () => {
     </restored.Worklog>);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+    expect(stepRows()).toEqual([['Ran rates', '5s'], ['Answered', '0s']]);
   });
 
   it('keeps a valid legacy completion minimum when its final timestamp arrives', async () => {
@@ -806,7 +806,7 @@ describe("a Worklog's step times", () => {
     </restored.Worklog>);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranrates', '5s'], ['Answered', '0s']]);
+    expect(stepRows()).toEqual([['Ran rates', '5s'], ['Answered', '0s']]);
   });
 
   it('keeps seconds on their rows when replay corrects the Turn start by a fraction', () => {
@@ -820,9 +820,9 @@ describe("a Worklog's step times", () => {
     const second = { id: 'fraction-origin-a2', role: 'assistant', content: '', toolCalls: [call('fraction-origin-c2', 'execute', { command: 'second' })], ...stamp(0.4, 0.4) };
     view.rerender(chat([question, first, result, second]));
     act(() => { vi.advanceTimersByTime(600); });
-    expect(stepRows()).toEqual([['Ranfirst', '0s'], ['Runningsecond', '1s']]);
+    expect(stepRows()).toEqual([['Ran first', '0s'], ['Running second', '1s']]);
     view.rerender(chat([{ ...question, ...stamp(-0.4, -0.4) }, first, result, second]));
-    expect(stepRows()).toEqual([['Ranfirst', '0s'], ['Runningsecond', '1s']]);
+    expect(stepRows()).toEqual([['Ran first', '0s'], ['Running second', '1s']]);
     expect(head()).toHaveTextContent(/^Working · 1s$/);
   });
 
@@ -850,7 +850,7 @@ describe("a Worklog's step times", () => {
     view.rerender(<StepsChat messages={[question, tool, result]} />);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranrates', '5s']]);
+    expect(stepRows()).toEqual([['Ran rates', '5s']]);
   });
 
   it('keeps displayed tool time when the earlier server Turn start arrives', () => {
@@ -861,7 +861,7 @@ describe("a Worklog's step times", () => {
     expect(head()).toHaveTextContent(/^Working · 6s$/);
     view.rerender(<TurnStart.Provider value={new Date(START).toISOString()}><StepsChat messages={[question, tool]} running /></TurnStart.Provider>);
     expect(head()).toHaveTextContent(/^Working · 9s$/);
-    expect(stepRows()).toEqual([['Started up', '3s'], ['Runningrates', '6s']]);
+    expect(stepRows()).toEqual([['Started up', '3s'], ['Running rates', '6s']]);
   });
 
   it('refreshes Turn time immediately on reconnect after a paused browser clock', () => {
@@ -874,7 +874,7 @@ describe("a Worklog's step times", () => {
       window.dispatchEvent(new Event('online'));
     });
     expect(head()).toHaveTextContent(/^Working · 5s$/);
-    expect(stepRows()).toEqual([['Runningrates', '5s']]);
+    expect(stepRows()).toEqual([['Running rates', '5s']]);
   });
 
   it('retains step times on a reload mid-Turn after delayed replay', async () => {
@@ -883,7 +883,7 @@ describe("a Worklog's step times", () => {
     const tool = { id: 'reload-live-a', role: 'assistant', content: '', toolCalls: [call('reload-live-first', 'execute', { command: 'first' }), call('reload-live-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
     const view = render(<StepsChat messages={[question, tool]} running />);
     act(() => { vi.advanceTimersByTime(5000); });
-    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+    expect(stepRows()).toEqual([['Running first', '5s'], ['Running second', '0s']]);
     view.unmount();
     vi.setSystemTime(START + 9000);
     vi.resetModules();
@@ -893,10 +893,10 @@ describe("a Worklog's step times", () => {
       <reloaded.ToolStep id="reload-live-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
       <reloaded.ToolStep id="reload-live-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
     </reloaded.Worklog>);
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '4s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '4s']]);
     expect(head()).toHaveTextContent(/^Working · 9s$/);
     act(() => { vi.advanceTimersByTime(1000); });
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '5s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '5s']]);
   });
 
   it('retains completed step allocations when reload replaces the message view key', async () => {
@@ -905,7 +905,7 @@ describe("a Worklog's step times", () => {
     const tool = { id: 'view-reload-live', role: 'assistant', content: '', toolCalls: [call('view-reload-first', 'execute', { command: 'first' }), call('view-reload-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
     const view = render(<StepsChat messages={[question, tool]} running />);
     act(() => { vi.advanceTimersByTime(5000); });
-    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+    expect(stepRows()).toEqual([['Running first', '5s'], ['Running second', '0s']]);
     view.unmount();
     vi.setSystemTime(START + 9000);
     vi.resetModules();
@@ -916,7 +916,7 @@ describe("a Worklog's step times", () => {
       <reloaded.ToolStep id="view-reload-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
       <reloaded.ToolStep id="view-reload-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
     </reloaded.Worklog>);
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '4s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '4s']]);
     expect(head()).toHaveTextContent(/^Working · 9s$/);
     act(() => { vi.advanceTimersByTime(1000); });
     restored.unmount();
@@ -926,7 +926,7 @@ describe("a Worklog's step times", () => {
       <again.ToolStep id="view-reload-first" name="execute" params={{ command: 'first' }} status="complete" output="Done" />
       <again.ToolStep id="view-reload-second" name="execute" params={{ command: 'second' }} status="running" output={undefined} />
     </again.Worklog>);
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '5s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '5s']]);
     expect(head()).toHaveTextContent(/^Working · 10s$/);
   });
 
@@ -940,9 +940,9 @@ describe("a Worklog's step times", () => {
     const second = { id: 'forward-a2', role: 'assistant', content: '', toolCalls: [call('forward-c2', 'execute', { command: 'second' })], ...stamp(2, 2) };
     view.rerender(<StepsChat messages={[question, first, result, second]} running />);
     act(() => { vi.advanceTimersByTime(3000); });
-    expect(stepRows()).toEqual([['Ranfirst', '2s'], ['Runningsecond', '3s']]);
+    expect(stepRows()).toEqual([['Ran first', '2s'], ['Running second', '3s']]);
     view.rerender(<StepsChat messages={[question, first, { ...result, ...stamp(0, 5) }, second]} running />);
-    expect(stepRows()).toEqual([['Ranfirst', '2s'], ['Runningsecond', '3s']]);
+    expect(stepRows()).toEqual([['Ran first', '2s'], ['Running second', '3s']]);
     expect(head()).toHaveTextContent(/^Working · 5s$/);
   });
 
@@ -955,9 +955,9 @@ describe("a Worklog's step times", () => {
     act(() => { vi.advanceTimersByTime(2000); });
     view.rerender(chat([question, tool]));
     act(() => { vi.advanceTimersByTime(3000); });
-    expect(stepRows()).toEqual([['Started up', '2s'], ['Runningrates', '3s']]);
+    expect(stepRows()).toEqual([['Started up', '2s'], ['Running rates', '3s']]);
     view.rerender(chat([{ ...question, ...stamp(0, 0) }, { ...tool, ...stamp(0, 0) }]));
-    expect(stepRows()).toEqual([['Started up', '2s'], ['Runningrates', '3s']]);
+    expect(stepRows()).toEqual([['Started up', '2s'], ['Running rates', '3s']]);
     expect(head()).toHaveTextContent(/^Working · 5s$/);
   });
 
@@ -967,13 +967,13 @@ describe("a Worklog's step times", () => {
     const tools = { id: 'delayed-a', role: 'assistant', content: '', toolCalls: [call('delayed-first', 'execute', { command: 'first' }), call('delayed-second', 'execute', { command: 'second' })], ...stamp(0, 0) };
     const view = render(<StepsChat messages={[question, tools]} running />);
     act(() => { vi.advanceTimersByTime(5000); });
-    expect(stepRows()).toEqual([['Runningfirst', '5s'], ['Runningsecond', '0s']]);
+    expect(stepRows()).toEqual([['Running first', '5s'], ['Running second', '0s']]);
 
     const result = { id: 'delayed-t', role: 'tool', toolCallId: 'delayed-first', content: 'Done', ...stamp(0, 0.2) };
     view.rerender(<StepsChat messages={[question, tools, result]} running />);
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '0s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '0s']]);
     act(() => { vi.advanceTimersByTime(1000); });
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Runningsecond', '1s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Running second', '1s']]);
     expect(head()).toHaveTextContent(/^Working · 6s$/);
     view.unmount();
     vi.resetModules();
@@ -984,7 +984,7 @@ describe("a Worklog's step times", () => {
       <reloaded.ToolStep id="delayed-second" name="execute" params={{ command: 'second' }} status="complete" output="Done" />
     </reloaded.Worklog>);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ranfirst', '5s'], ['Ransecond', '1s']]);
+    expect(stepRows()).toEqual([['Ran first', '5s'], ['Ran second', '1s']]);
     expect(head()).toHaveTextContent(/^Worked for 6s$/);
   });
 
@@ -1000,7 +1000,7 @@ describe("a Worklog's step times", () => {
     for (const tool of [...calls].reverse()) {
       results.push({ id: `${tool.id}-result`, role: 'tool', toolCallId: tool.id, content: 'Done', ...stamp(0, 5) });
       view.rerender(<StepsChat messages={[question, tools, ...results]} running />);
-      expect(stepRows().map(([label]) => label?.replace(/^Running|^Ran/, ''))).toEqual(order);
+      expect(stepRows().map(([label]) => label?.replace(/^(Running|Ran) /, ''))).toEqual(order);
       expect(stepRows().map(([, time]) => time)).toEqual(['5s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s', '0s']);
     }
     view.rerender(<StepsChat messages={[question, tools, ...results]} />);
@@ -1054,21 +1054,21 @@ describe("a Worklog's step times", () => {
     const thought = { id: 'fraction-r', role: 'reasoning', content: 'Plan', ...stamp(0, 0.6) };
     const search = { id: 'fraction-a', role: 'assistant', content: '', toolCalls: [call('fraction-c', 'web_search', { query: 'Fed' })], ...stamp(0.6, 0.6) };
     const view = render(<StepsChat messages={[question, thought, search]} running />);
-    expect(stepRows()).toEqual([['Thought', '1s'], ['Searching the webFed', '0s']]);
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searching the web Fed', '0s']]);
 
     act(() => { vi.setSystemTime(START + 1300); });
     const result = { id: 'fraction-t', role: 'tool', toolCallId: 'fraction-c', content: 'Found', ...stamp(0.6, 1.3) };
     view.rerender(<StepsChat messages={[question, thought, search, result]} running />);
 
-    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the web Fed', '0s']]);
     expect(head()).toHaveTextContent(/^Working · 1s$/);
     view.rerender(<StepsChat messages={[question, thought, search, result]} />);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the web Fed', '0s']]);
     view.unmount();
     render(<StepsChat messages={[question, thought, search, result]} />);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the webFed', '0s']]);
+    expect(stepRows()).toEqual([['Thought', '1s'], ['Searched the web Fed', '0s']]);
     expect(head()).toHaveTextContent(/^Worked for 1s$/);
   });
 
@@ -1078,23 +1078,23 @@ describe("a Worklog's step times", () => {
     const tools = { id: 'parallel-live-a', role: 'assistant', content: '', toolCalls: [call('parallel-live-slow', 'execute', { command: 'sleep 5' }), call('parallel-live-fast', 'execute', { command: 'true' })], ...stamp(0, 0) };
     const view = render(<StepsChat messages={[question, tools]} running />);
     act(() => { vi.advanceTimersByTime(2000); });
-    expect(stepRows()).toEqual([['Runningsleep 5', '2s'], ['Runningtrue', '0s']]);
+    expect(stepRows()).toEqual([['Running sleep 5', '2s'], ['Running true', '0s']]);
 
     const fast = { id: 'parallel-live-result', role: 'tool', toolCallId: 'parallel-live-fast', content: '', ...stamp(0, 2) };
     view.rerender(<StepsChat messages={[question, tools, fast]} running />);
 
-    expect(stepRows()).toEqual([['Runningsleep 5', '2s'], ['Rantrue', '0s']]);
+    expect(stepRows()).toEqual([['Running sleep 5', '2s'], ['Ran true', '0s']]);
     expect(head()).toHaveTextContent(/^Working · 2s$/);
     act(() => { vi.advanceTimersByTime(3000); });
     const slow = { id: 'parallel-live-slow-result', role: 'tool', toolCallId: 'parallel-live-slow', content: '', ...stamp(0, 5) };
     view.rerender(<StepsChat messages={[question, tools, fast, slow]} />);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ransleep 5', '5s'], ['Rantrue', '0s']]);
+    expect(stepRows()).toEqual([['Ran sleep 5', '5s'], ['Ran true', '0s']]);
     expect(head()).toHaveTextContent(/^Worked for 5s$/);
     view.unmount();
     render(<StepsChat messages={[question, tools, fast, slow]} />);
     fireEvent.click(head());
-    expect(stepRows()).toEqual([['Ransleep 5', '5s'], ['Rantrue', '0s']]);
+    expect(stepRows()).toEqual([['Ran sleep 5', '5s'], ['Ran true', '0s']]);
   });
 
   it('gives every step one line and a time, rounding so the steps sum exactly to the header, after a reload', () => {
@@ -1104,10 +1104,10 @@ describe("a Worklog's step times", () => {
     expect(head()).toHaveTextContent(/^Worked for 36s$/);
     expect(stepRows()).toEqual([
       ['Started up', '6s'],
-      ['ThoughtPlanning the search', '9s'],
-      ['Searched the webFed minutes October 2026', '5s'],
+      ['Thought · Planning the search', '9s'],
+      ['Searched the web Fed minutes October 2026', '5s'],
       ['Thought', '2s'],
-      [`Ran${longCommand}`, '3s'],
+      [`Ran ${longCommand}`, '3s'],
       ['Answered', '11s'],
     ]);
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(36);
@@ -1117,7 +1117,7 @@ describe("a Worklog's step times", () => {
     render(<StepsChat messages={timed('quick', 0.4)} />);
     fireEvent.click(head());
 
-    expect(stepRows()[0]).toEqual(['ThoughtPlanning the search', '15s']);
+    expect(stepRows()[0]).toEqual(['Thought · Planning the search', '15s']);
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(36);
     expect(head()).toHaveTextContent(/^Worked for 36s$/);
   });
@@ -1137,7 +1137,7 @@ describe("a Worklog's step times", () => {
     fireEvent.click(head());
 
     expect(screen.queryByRole('button', { name: /^Thought 2s$/ })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /^Thought Planning the search/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Thought · Planning the search/ }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Thought · 9s' });
     expect(dialog.querySelector('.step-section-label')).toHaveTextContent(/^Reasoning$/);
@@ -1151,7 +1151,7 @@ describe("a Worklog's step times", () => {
     render(<StepsChat messages={[question, thought, calls, { id: 'rs', role: 'tool', toolCallId: 'slow', content: '', ...stamp(15.3, 21.2) }, { id: 'rq', role: 'tool', toolCallId: 'quick', content: '', ...stamp(15.3, 17.2) }, answer]} />);
     fireEvent.click(head());
 
-    expect(stepRows().slice(2, 4)).toEqual([['Ransleep 5', '6s'], ['Rantrue', '0s']]);
+    expect(stepRows().slice(2, 4)).toEqual([['Ran sleep 5', '6s'], ['Ran true', '0s']]);
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(36);
   });
 
@@ -1161,14 +1161,14 @@ describe("a Worklog's step times", () => {
     render(<StepsChat messages={[{ ...question, metadata: undefined }, ...rest]} />);
     fireEvent.click(head());
 
-    expect(stepRows()[0]).toEqual(['ThoughtPlanning the search', '9s']);
+    expect(stepRows()[0]).toEqual(['Thought · Planning the search', '9s']);
     expect(stepRows().reduce((sum, [, time]) => sum + secondsIn(time), 0)).toBe(29);
   });
 
   it("renders a thought heading in bold and copies the original provider Markdown", async () => {
     render(<StepsChat messages={timed('plain')} />);
     fireEvent.click(head());
-    fireEvent.click(screen.getByRole('button', { name: /^Thought Planning the search/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Thought · Planning the search/ }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Thought · 9s' });
     const detail = dialog.querySelector('.step-section-text');
@@ -1240,7 +1240,7 @@ describe("a Worklog's step times", () => {
     </TurnStart.Provider>);
     act(() => { vi.advanceTimersByTime(2000); });
     expect(head()).toHaveTextContent(/^Working · 2s$/);
-    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+    expect(stepRows()).toEqual([['Searching the web Fed minutes', '2s']]);
   });
 
   it('keeps the live tool time when only its row remounts after a paused clock', () => {
@@ -1259,7 +1259,7 @@ describe("a Worklog's step times", () => {
     act(() => { vi.setSystemTime(START + 2000); });
     view.rerender(chat(true));
     expect(head()).toHaveTextContent(/^Working · 2s$/);
-    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+    expect(stepRows()).toEqual([['Searching the web Fed minutes', '2s']]);
   });
 
   it.each(['tool', 'thought'] as const)('gives elapsed time to the live tool after a completed %s without a visible clock', (kind) => {
@@ -1281,10 +1281,10 @@ describe("a Worklog's step times", () => {
     </TurnStart.Provider>);
     act(() => { vi.advanceTimersByTime(2000); });
     expect(head()).toHaveTextContent(/^Working · 2s$/);
-    expect(stepRows()).toEqual([['Searching the webFed minutes', '2s']]);
+    expect(stepRows()).toEqual([['Searching the web Fed minutes', '2s']]);
     act(() => { vi.advanceTimersByTime(1000); });
     expect(head()).toHaveTextContent(/^Working · 3s$/);
-    expect(stepRows()).toEqual([['Searching the webFed minutes', '3s']]);
+    expect(stepRows()).toEqual([['Searching the web Fed minutes', '3s']]);
   });
 
   it('counts the running step up live, its steps summing to "Working" all along, from the Chat Service\'s start', () => {
@@ -1306,7 +1306,7 @@ describe("a Worklog's step times", () => {
 
     at(2, [question, thought]);
     at(8, [question, thought, search]);
-    expect(stepRows()).toEqual([['Started up', '2s'], ['ThoughtPlanning the search', '6s'], ['Searching the webFed minutes October 2026', '1s']]);
+    expect(stepRows()).toEqual([['Started up', '2s'], ['Thought · Planning the search', '6s'], ['Searching the web Fed minutes October 2026', '1s']]);
     expect(head()).toHaveTextContent(/^Working · 9s$/);
     at(12, [question, thought, search, result]);
     expect(sum()).toBe(13);
@@ -1327,9 +1327,9 @@ it('shows every summary part and opens the last multi-sentence thought intact', 
     { id: 'multipart-a', role: 'assistant', content: 'hello', ...stamp(3, 4) },
   ]} />);
   fireEvent.click(head());
-  expect(screen.getByRole('button', { name: /^Thought Compare funding paths/ })).toBeVisible();
-  expect(screen.getByRole('button', { name: /^Thought Check the tax branch/ })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: /^Thought Verify the final result/ }));
+  expect(screen.getByRole('button', { name: /^Thought · Compare funding paths/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: /^Thought · Check the tax branch/ })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /^Thought · Verify the final result/ }));
   const dialog = await screen.findByRole('dialog');
   expect(dialog.querySelector('.step-section-text')).toHaveTextContent('Verify the final result');
   expect(dialog.querySelector('.step-section-text')).toHaveTextContent('The second part belongs to the next item. Its final sentence must survive replay.');
@@ -1343,7 +1343,7 @@ it('renders a completed Thought heading with a literal internal asterisk in bold
     { id: 'star-a', role: 'assistant', content: 'Targets audited.', ...stamp(1, 2) },
   ]} />);
   fireEvent.click(head());
-  fireEvent.click(screen.getByRole('button', { name: /^Thought Expressing E\* targets/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Thought · Expressing E\* targets/ }));
   const dialog = await screen.findByRole('dialog');
   const detail = dialog.querySelector('.step-section-text');
   await waitFor(() => expect(detail?.querySelector('strong, [data-streamdown="strong"]')).toHaveTextContent('Expressing E* targets'));
@@ -1368,7 +1368,7 @@ it('canonical boundaries keep a completed tool gap stable in a fresh saved view'
   act(() => { vi.advanceTimersByTime(800); });
   question = { ...question, metadata: { ...question.metadata, worklog_clock: { version: 1, at: START + 1000 } } };
   view.rerender(<StepsChat messages={[question, first, firstResult]} running />);
-  expect(stepRows()).toEqual([['Ranfirst', '1s']]);
+  expect(stepRows()).toEqual([['Ran first', '1s']]);
   act(() => { vi.advanceTimersByTime(800); });
   view.rerender(<StepsChat messages={[question, first, firstResult, second]} running />);
   act(() => { vi.advanceTimersByTime(200); });
@@ -1434,7 +1434,7 @@ it('canonical boundaries leave overlapping time with the first parallel call', (
   const answer = { id: 'canonical-parallel-answer', role: 'assistant', content: 'Compared', ...stamp(5, 5) };
   render(<StepsChat messages={[question, tools, fast, slow, answer]} />);
   fireEvent.click(head());
-  expect(stepRows().slice(0, 2)).toEqual([['Ranslow', '5s'], ['Ranfast', '0s']]);
+  expect(stepRows().slice(0, 2)).toEqual([['Ran slow', '5s'], ['Ran fast', '0s']]);
   expect(head()).toHaveTextContent(/^Worked for 5s$/);
 });
 

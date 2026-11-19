@@ -53,13 +53,16 @@
     min-height: 100dvh;
   }
 
+  /* The page keeps its own place: WebKit's scroll anchoring moved it up the opening chat, which took that for the
+     user's scroll, and to its end as the sidebar opened, even with the chat opted out. */
+  html {
+    overflow-anchor: none;
+  }
+
   .app-chat {
     display: flex;
     flex-direction: column;
     overflow: visible;
-    /* The chat keeps its own place on the page (PageScrollControls, MessageRows): WebKit's scroll anchoring moved the page
-       up the opening chat, which took it for the user's scroll. */
-    overflow-anchor: none;
   }
 
   .app-chat .chat-wrapper,

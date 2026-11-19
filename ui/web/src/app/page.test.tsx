@@ -9113,7 +9113,7 @@ describe('tool calls', () => {
 
     const { container } = renderToolCall({ status: 'executing', parameters: { limit: 5, command: 'ls -la', cwd: '/tmp' } });
 
-    expect(container).toHaveTextContent(/^Runningls -la$/);
+    expect(container).toHaveTextContent(/^Running ls -la$/);
   });
 
   it.each([
@@ -9139,17 +9139,17 @@ describe('tool calls', () => {
   });
 
   it.each([
-    ['failed', 'Command failed: open. Exit code: 1\n[Command failed with exit code 1]', 'lucide-circle-x', 'lucide-square-terminal'],
-    ['failed and was truncated', 'partial\n[Command failed with exit code 126]\n[Output was truncated due to size limits]', 'lucide-circle-x', 'lucide-square-terminal'],
-    ['succeeded', 'ok\n[Command succeeded with exit code 0]', 'lucide-square-terminal', 'lucide-circle-x'],
-    ['succeeded after quoting a failure', 'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]', 'lucide-square-terminal', 'lucide-circle-x'],
+    ['failed', 'Command failed: open. Exit code: 1\n[Command failed with exit code 1]', 'failed', 'ran'],
+    ['failed and was truncated', 'partial\n[Command failed with exit code 126]\n[Output was truncated due to size limits]', 'failed', 'ran'],
+    ['succeeded', 'ok\n[Command succeeded with exit code 0]', 'ran', 'failed'],
+    ['succeeded after quoting a failure', 'log\n[Command failed with exit code 1]\n[Command succeeded with exit code 0]', 'ran', 'failed'],
   ])('marks a command that %s by its exit code trailer', async (_case, result, shown, hidden) => {
     await renderPage();
 
     const { container } = renderToolCall({ status: 'complete', result });
 
-    expect(container.querySelector(`.${shown}`)).not.toBeNull();
-    expect(container.querySelector(`.${hidden}`)).toBeNull();
+    expect(container.querySelector(`svg[data-icon="${shown}"]`)).not.toBeNull();
+    expect(container.querySelector(`svg[data-icon="${hidden}"]`)).toBeNull();
     expect(container).toHaveTextContent(/^Ran$/);
   });
 
