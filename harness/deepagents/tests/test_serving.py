@@ -2814,9 +2814,12 @@ def test_a_failed_checkpoint_write_fails_its_turn_loud_and_the_next_turn_answers
 
     events = service.turn('one', session='runtime-session-1')
 
-    assert events[-1] == {
-        'type': 'RUN_ERROR', 'message': 'Transient checkpoint persistence failure', 'code': 'INTERNAL_ERROR',
+    assert events[-1]['error'] == {
+        'message': 'Transient checkpoint persistence failure', 'code': 'CHECKPOINT_WRITE_FAILED',
     }
+    assert sum(event.get('type') == 'RUN_FINISHED' for event in events) == 1
+    failed_next = service.turn('report the failed checkpoint', session='runtime-session-1')
+    assert failed_next[-1]['code'] == 'CHECKPOINT_WRITE_FAILED'
     recovered = service.turn('two', session='runtime-session-1')
     assert recovered[-1]['type'] == 'RUN_FINISHED'
     assert _said(recovered) == 'Echo: two'
@@ -3040,10 +3043,12 @@ def test_a_new_turn_whose_record_cannot_be_written_fails_loud(
 
     events = service.turn('First question', session='runtime-session-1')
 
-    assert events[-1] == {
-        'type': 'RUN_ERROR', 'message': 'Initial record publication failed', 'code': 'INTERNAL_ERROR',
+    assert events[-1]['error'] == {
+        'message': 'Initial record publication failed', 'code': 'CHECKPOINT_WRITE_FAILED',
     }
-    assert not any(event['type'] == 'RUN_FINISHED' for event in events)
+    assert sum(event.get('type') == 'RUN_FINISHED' for event in events) == 1
+    failed_next = service.turn('report the failed record', session='runtime-session-1')
+    assert failed_next[-1]['code'] == 'CHECKPOINT_WRITE_FAILED'
 
 
 def test_claimed_session_keeps_its_filing_record_on_the_in_memory_backend(

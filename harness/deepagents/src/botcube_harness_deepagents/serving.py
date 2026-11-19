@@ -39,7 +39,6 @@ from ag_ui.core import (
     ReasoningStartEvent,
     RunAgentInput,
     RunErrorEvent,
-    RunFinishedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
 )
@@ -58,6 +57,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_config
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.memory import InMemoryStore
 from opentelemetry import baggage, trace
 from opentelemetry import context as otel_context
@@ -95,7 +95,7 @@ from .files import (
     pop_files_mount,
 )
 from .files_mount import FilesMount, FilesMountError
-from .graph_stream import clock_events, complete_before_root_end
+from .graph_stream import answering_model_step, clock_events, drain_after_answer
 from .lazy_files import TurnFiles, turn_files
 from .llm import (
     PLAN_MODEL_PREFIX,
@@ -127,6 +127,7 @@ from .turn_lifetime import invocation_deadline, wait_for_turn
 from .turn_memory import TurnFeed, TurnFeedError, collecting_turn_feeds
 from .turn_state import (
     AnsweredToolResultsMiddleware,
+    CheckpointWriteError,
     _OpenReply,
     _session_config,
     _stopped,
@@ -315,7 +316,7 @@ class _AgentKey(NamedTuple):
 
 
 def _error_code(error: Exception) -> str:
-    if isinstance(error, (PlanUsageError, FilesMountError)):
+    if isinstance(error, (PlanUsageError, FilesMountError, CheckpointWriteError)):
         return error.code
     if agentcore_memory_backend.is_access_denied(error):
         return 'MEMORY_ACCESS_DENIED'
@@ -349,9 +350,12 @@ class _SessionAgent(LangGraphAgent):
         super().__init__(**kwargs)
         self._model_lane: str | None = None
         self._thinking: dict[str, _Thinking] = {}
+        self._early_answer = False
+        self._used_tools = False
 
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         self._asked = None
+        self._used_tools = False
         try:
             source = super()._handle_stream_events(input)
             timed = clock_events(source, lambda: self._model_lane, canonical=(input.forwarded_props or {}).get('worklog_clock') == 1)
@@ -362,6 +366,7 @@ class _SessionAgent(LangGraphAgent):
                     if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                         for closed in self._close_thoughts():
                             yield closed
+                    self._used_tools |= event.type == EventType.TOOL_CALL_START
                     yield event
                     if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
                         break
@@ -394,6 +399,7 @@ class _SessionAgent(LangGraphAgent):
         if root and event.get('event') == 'on_chain_stream' and isinstance(chunk, dict) and '__interrupt__' in chunk:
             self._interrupted = True
         ended = root and event.get('event') == 'on_chain_end'
+        ended |= self._early_answer and not self._used_tools and answering_model_step(event)
         if ended:
             self._graph_ended_at = perf_counter()
         async with aclosing(self._handle_model_event(event, state)) as events:
@@ -556,7 +562,10 @@ class _SessionAgent(LangGraphAgent):
         with turn_timing.phase('state_preparation'):
             prepared = await super().prepare_stream(input, agent_state, config)
         if (source := prepared.get('stream')) is not None:
-            prepared['stream'] = self._graph_stream = complete_before_root_end(source)
+            self._early_answer = (isinstance(self.graph, CompiledStateGraph)
+                                  and not self.graph.interrupt_before_nodes and not self.graph.interrupt_after_nodes
+                                  and not (self.config or {}).get('callbacks'))
+            prepared['stream'] = self._graph_stream = drain_after_answer(source, early=self._early_answer)
         return prepared
 
     def langgraph_default_merge_state(self, state: Any, messages: list[Any], input: RunAgentInput) -> Any:
@@ -1146,8 +1155,6 @@ class _SessionTurns:
         try:
             while (event := await queue.get()) is not self._end:
                 yield event
-                if event.type == EventType.RUN_FINISHED:
-                    return
             run.result()
         finally:
             turn.stop()
@@ -1190,26 +1197,18 @@ class _SessionTurns:
                     return
                 reply = _OpenReply()
 
-                completion: RunFinishedEvent | None = None
-
-                def publish(event: Any) -> None:
-                    nonlocal completion
-                    turn.observe(event)
-                    if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
-                        completion = event
-                        return
-                    put(event)
                 with turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
                     readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
+                        publish = partial(turn.publish, put=put, files=readiness)
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
-                    limited = await wait_for_turn(turn.work, deadline)
+                    limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
                     try:
                         await readiness.settle_prefetch()
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            await import_finished_files(files, root, readiness.used, completion, reply.text, _require_cartridge().skills)
+                            await import_finished_files(files, root, readiness.used, turn.completion, reply.text, _require_cartridge().skills)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
@@ -1218,15 +1217,15 @@ class _SessionTurns:
                 if turn.work.cancelled():
                     _settle_finished_reuse(saver, False)
                     await reply.finish_cancelled(agent, session, input_data, put, limited=limited and not turn.stopped)
-                elif completion is not None:
-                    await reply.keep_failed(completion, agent, session, put)
-                    put(completion)
+                elif turn.completion is not None:
+                    await reply.keep_failed(turn.completion, agent, session, put)
+                    turn.release(put)
                     self._feed(session, turn, feeds)
                     _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
         except Exception as failure:
             _settle_finished_reuse(saver, False)
-            if turn.finished:
-                self._flush_failures[session] = failure
+            if (deferred := turn.failure_after_answer(failure)) is not None:
+                self._flush_failures[session] = deferred
             raise
         finally:
             active_steering.reset(steering_token)
@@ -1329,6 +1328,7 @@ async def _invocation_frames(
     error: RunErrorEvent | None = None
     stream_error: RunErrorEvent | None = None
     finished = False
+    terminal_sent = False
     calls = FailedCalls()
     reply = _OpenReply()
     observe = reply.watching(lambda event: None)
@@ -1345,6 +1345,7 @@ async def _invocation_frames(
                     frame = _timed_frame(event, encoder, timing)
                     if isinstance(event, RunErrorEvent):
                         stream_error = event
+                    terminal_sent |= event.type == EventType.RUN_FINISHED
                     yield frame
                 finished = stream_error is None
             except (
@@ -1362,7 +1363,8 @@ async def _invocation_frames(
                 yield encoder.encode(error := RunErrorEvent(message=str(e), code=e.code))
             except Exception as e:
                 log.exception('Error during AG-UI event streaming')
-                yield encoder.encode(error := RunErrorEvent(message=str(e), code=_error_code(e)))
+                error = RunErrorEvent(message=str(e), code=CheckpointWriteError.code if terminal_sent else _error_code(e))
+                yield _invocation_failure_frame(error, encoder, terminal_sent, run_input)
         if error is not None and timing.warmup:
             yield encoder.encode(_preparation_event(run_input, 'failed', error))
     finally:
@@ -1371,6 +1373,14 @@ async def _invocation_frames(
             turn_output.retain(reply.text, environment)
         failure = error or stream_error
         timing.finish(_invocation_status(finished, failure))
+
+
+def _invocation_failure_frame(error: RunErrorEvent, encoder: EventEncoder, terminal_sent: bool, run: RunAgentInput) -> str:
+    if not terminal_sent:
+        return encoder.encode(error)
+    value = {'error': {'code': error.code, 'message': error.message}, 'runId': run.run_id, 'sessionId': run.thread_id}
+    log.error(json.dumps({'event': 'checkpoint_write_failed_after_finish', **value}))
+    return 'event: error\ndata: ' + json.dumps(value, separators=(',', ':')) + '\n\n'
 
 
 def _timed_frame(event: Any, encoder: EventEncoder, timing: turn_timing.TurnTiming) -> str:

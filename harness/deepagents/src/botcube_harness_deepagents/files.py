@@ -11,7 +11,7 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
 
-from ag_ui.core import EventType, RunFinishedEvent
+from ag_ui.core import EventType, RunErrorEvent, RunFinishedEvent
 
 from .files_mount import FilesMount
 
@@ -67,7 +67,7 @@ def import_linked_files(root: Path, answer: str, excluded: Iterable[str], filesy
 
 
 async def import_finished_files(
-    files: FilesMount | None, root: Path, ready: bool, completion: RunFinishedEvent | None, answer: str, skills: Iterable[str],
+    files: FilesMount | None, root: Path, ready: bool, completion: RunFinishedEvent | RunErrorEvent | None, answer: str, skills: Iterable[str],
 ) -> None:
     """After a finished Turn, copies each file its answer links into Files, so a link to a saved file opens."""
     if files is None or not ready or completion is None or completion.type != EventType.RUN_FINISHED:

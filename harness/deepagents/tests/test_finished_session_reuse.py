@@ -145,8 +145,10 @@ def test_checkpoint_failure_never_promotes_finished_reuse(
         return result
 
     monkeypatch.setattr(memory, 'create_event', lose_reply)
-    assert _turn(service, 'failed')[-1]['type'] == 'RUN_ERROR'
+    failed = _turn(service, 'failed')
+    assert failed[-1]['error']['code'] == 'CHECKPOINT_WRITE_FAILED'
     monkeypatch.setattr(memory, 'create_event', create)
+    assert _turn(service, 'report the failed checkpoint')[-1]['code'] == 'CHECKPOINT_WRITE_FAILED'
     memory.listed.clear()
     assert _turn(service, 'recovered')[-1]['type'] == 'RUN_FINISHED'
     assert sum(memory.listed.values()) > 0

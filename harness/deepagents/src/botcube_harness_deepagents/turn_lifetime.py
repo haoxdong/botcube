@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import time
+from collections.abc import Callable
 
 from .definition import ModelRelay
 
@@ -19,14 +20,20 @@ def invocation_deadline(relay: ModelRelay | None) -> float | None:
     return asyncio.get_running_loop().time() + expires_at - time.time() - 60
 
 
-async def wait_for_turn(work: asyncio.Task[None], deadline: float | None) -> bool:
+async def wait_for_turn(work: asyncio.Task[None], deadline: float | None, *, finished: Callable[[], bool] = lambda: False) -> bool:
     remaining = None if deadline is None else deadline - asyncio.get_running_loop().time()
+    if finished():
+        await asyncio.wait([work])
+        return False
     if remaining is not None and remaining <= 0:
         work.cancel()
         await asyncio.wait([work])
         return True
     done, _ = await asyncio.wait([work], timeout=remaining)
     if done:
+        return False
+    if finished():
+        await asyncio.wait([work])
         return False
     work.cancel()
     await asyncio.wait([work])

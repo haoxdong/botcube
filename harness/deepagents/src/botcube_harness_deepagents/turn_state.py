@@ -40,9 +40,14 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from . import message_times
 from .conversation import MESSAGE_TIMES
+from .lazy_files import TurnFiles
 from .steering import PendingSteering
 
 log = logging.getLogger(__name__)
+
+
+class CheckpointWriteError(RuntimeError):
+    code = 'CHECKPOINT_WRITE_FAILED'
 
 
 async def _turn_events(
@@ -65,16 +70,36 @@ class _Turn:
     run_id: str
     steering: PendingSteering = field(default_factory=PendingSteering)
     work: asyncio.Task[None] | None = None
+    response_finished: bool = False
+    used_tools: bool = False
+    completion: RunFinishedEvent | RunErrorEvent | None = None
     stopped: bool = False
     finished: bool = False
     interrupted: bool = False
 
-    def observe(self, event: Any) -> None:
+    def publish(self, event: Any, *, put: Callable[[Any], None], files: TurnFiles) -> None:
+        self.used_tools |= event.type == EventType.TOOL_CALL_START
         if event.type == EventType.CUSTOM and getattr(event, 'name', None) == 'on_interrupt':
             self.interrupted = True
         if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
             self.finished = event.type == EventType.RUN_FINISHED
             self.interrupted |= getattr(getattr(event, 'outcome', None), 'type', None) == 'interrupt'
+            self.completion = event
+            if self.finished and not self.interrupted and not self.used_tools and not files.used:
+                self.release(put)
+            return
+        put(event)
+
+    def release(self, put: Callable[[Any], None]) -> None:
+        if not self.response_finished:
+            assert self.completion is not None
+            self.response_finished = True
+            put(self.completion)
+
+    def failure_after_answer(self, error: Exception) -> Exception | None:
+        if not self.finished:
+            return None
+        return CheckpointWriteError(str(error)) if self.response_finished else error
 
     def finished_without_interruption(self, agent: LangGraphAgent) -> bool:
         return (self.finished and not self.stopped and not self.interrupted

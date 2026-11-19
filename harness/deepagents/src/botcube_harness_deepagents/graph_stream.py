@@ -6,6 +6,7 @@ from contextlib import aclosing
 from typing import Any
 
 from ag_ui.core import EventType, StateDeltaEvent
+from langchain_core.messages import AIMessage
 from langchain_core.runnables.schema import StreamEvent
 
 from . import message_times
@@ -55,15 +56,16 @@ async def _paced_events(source: AsyncGenerator[Any, None], lane: Callable[[], st
 
     producer = asyncio.create_task(_produce_events(source, lane, clock, queue))
     pending = asyncio.create_task(queue.get())
+    terminal = False
     try:
         while True:
             ready, _ = await asyncio.wait({producer, pending}, timeout=1, return_when=asyncio.FIRST_COMPLETED)
             if pending in ready:
                 event = pending.result()
-                if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
-                    await producer
+                terminal = event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}
                 yield event
-                if event.type in {EventType.RUN_FINISHED, EventType.RUN_ERROR}:
+                if terminal:
+                    await producer
                     return
                 pending = asyncio.create_task(queue.get())
             elif producer in ready:
@@ -74,7 +76,10 @@ async def _paced_events(source: AsyncGenerator[Any, None], lane: Callable[[], st
                 yield None
     finally:
         pending.cancel()
-        producer.cancel()
+        if terminal:
+            await producer
+        else:
+            producer.cancel()
         await asyncio.gather(pending, producer, return_exceptions=True)
 
 
@@ -122,13 +127,35 @@ def _clock_boundary(event: Any, clock: message_times.TurnClock) -> list[Any]:
     return [event]
 
 
-async def complete_before_root_end(source: AsyncGenerator[StreamEvent, None]) -> AsyncGenerator[StreamEvent, None]:
-    terminal: StreamEvent | None = None
+def answering_model_step(event: StreamEvent) -> bool:
+    if event.get('parent_ids') != [] or event['event'] != 'on_chain_stream':
+        return False
+    chunk = event.get('data', {}).get('chunk')
+    if isinstance(chunk, tuple):
+        if chunk[0] != ():
+            return False
+        chunk = chunk[-1]
+    if not isinstance(chunk, dict) or not isinstance(chunk.get('model'), dict):
+        return False
+    messages = chunk['model'].get('messages', [])
+    return bool(messages and isinstance(messages[-1], AIMessage) and not messages[-1].tool_calls)
+
+
+async def drain_after_answer(source: AsyncGenerator[StreamEvent, None], *, early: bool) -> AsyncGenerator[StreamEvent, None]:
+    terminal = False
+    held: StreamEvent | None = None
     async with aclosing(source):
-        async for event in source:
-            if event.get('parent_ids') == [] and event['event'] == 'on_chain_end':
-                terminal = event
-            else:
+        try:
+            async for event in source:
+                terminal |= event.get('parent_ids') == [] and event['event'] == 'on_chain_end'
+                terminal |= early and answering_model_step(event)
+                if event.get('parent_ids') == [] and event['event'] == 'on_chain_end' and not early:
+                    held = event
+                    continue
                 yield event
-    if terminal is not None:
-        yield terminal
+        finally:
+            if terminal:
+                async for _ in source:
+                    pass
+    if held is not None:
+        yield held

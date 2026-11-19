@@ -184,3 +184,28 @@ def test_an_expired_invocation_keeps_the_user_message_and_streams_a_complete_ans
         ]
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('already_finished', [False, True])
+def test_a_finished_responses_checkpoint_survives_the_invocation_deadline(already_finished: bool) -> None:
+    from botcube_harness_deepagents.turn_lifetime import wait_for_turn
+
+    async def exercise() -> None:
+        release = asyncio.Event()
+        acknowledged = already_finished
+        async def store() -> None:
+            await release.wait()
+        work = asyncio.create_task(store())
+        waiting = asyncio.create_task(wait_for_turn(work, asyncio.get_running_loop().time() + 0.01,
+                                                   finished=lambda: acknowledged))
+        await asyncio.sleep(0)
+        acknowledged = True
+        await asyncio.sleep(0.02)
+        try:
+            assert not work.cancelled()
+            assert not waiting.done()
+        finally:
+            release.set()
+        assert await waiting is False
+
+    asyncio.run(exercise())
