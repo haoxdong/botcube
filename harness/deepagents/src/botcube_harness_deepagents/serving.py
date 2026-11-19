@@ -1425,12 +1425,11 @@ def _prime_snapshot() -> None:
                 model=_SNAPSHOT_MODEL, thread_id=_SNAPSHOT_ID, model_relay=relay,
             ))
             model = build_model(model=_SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
-            # Prime lazy imports and /etc/os-release access before the V2 snapshot; answer in-process.
             asyncio.run(answer_once(model, _SNAPSHOT_ID))
         agentcore_memory_backend.prime_memory_client(AGENTCORE_REGION)
         region = os.environ.get('AWS_REGION') or AGENTCORE_REGION
         aws_clients.prime(region)
-        if os.getenv('BOTCUBE_RESTORE_PRIME') == '1' and AGENTCORE_MEMORY_ID:
+        if AGENTCORE_MEMORY_ID:
             agentcore_memory_backend.prime_spare(AGENTCORE_MEMORY_ID, region)
     finally:
         _AGENTS.clear()

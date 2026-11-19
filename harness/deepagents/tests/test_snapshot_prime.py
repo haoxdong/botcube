@@ -94,21 +94,23 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
     assert state['cached'] == [0, 0, 0, 0]
     assert state['network'] == 0
     assert state['memoryUnbound']
+    assert state['spareUnbound']
     if restore_enabled == '1':
-        assert state['spareUnbound']
         assert state['transportVerifyPaths'] == [state['preparedBundle']] * 4
-    else:
-        assert not state['spareUnbound']
 
 
-def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_no_files(tmp_path: Path) -> None:
-    # A V2 restore pays ~38 ms per file access the snapshot never made, so the first request's lazy imports,
-    # the SDK's platform probe and botocore's data files must already have been read.
+@pytest.mark.parametrize('restore_enabled', ['0', '1'])
+def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_no_files(
+    tmp_path: Path, restore_enabled: str,
+) -> None:
+    aws_config = tmp_path / 'aws-config'
+    aws_config.write_text('[default]\nregion = us-east-1\n')
     program = textwrap.dedent('''
         import asyncio
         import json
         import socket
         import sys
+        from datetime import UTC, datetime, timedelta
         from zoneinfo import ZoneInfo
 
         def forbidden(*args, **kwargs):
@@ -127,13 +129,32 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
             environment_cache_key=lambda environment: (),
         ))
         serving._prime_snapshot()
+        memory = serving.agentcore_memory_backend
+        from botocore.awsrequest import AWSResponse
+        from botocore.compat import HTTPHeaders
+
+        class Body:
+            def stream(self, **kwargs):
+                yield b'{"events": []}'
+
+        signed = []
+        def answer(request, **kwargs):
+            signed.append((request.headers['Authorization'].decode(),
+                           request.headers['X-Amz-Security-Token'].decode()))
+            return AWSResponse(request.url, 200, HTTPHeaders(), Body())
+
+        identity = {
+            'actorId': 'turn', 'filingActorId': 'turn', 'sessionId': 'turn', 'writesPrefix': '/turn',
+            'turnId': 'turn', 'accessKeyId': 'turn-key', 'secretAccessKey': 'turn-secret',
+            'sessionToken': 'turn-token', 'expiration': (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        }
 
         imported = []
         from importlib.machinery import PathFinder
         searched = PathFinder.find_spec
         PathFinder.find_spec = classmethod(lambda cls, name, *args: imported.append(f'search {name}') or searched(name, *args))
         sys.addaudithook(lambda event, args: imported.append(f'{event} {args[0]}') if event in (
-            'import', 'open', 'os.listdir', 'os.scandir') and not str(args[0]).endswith('.aws/config') else None)
+            'import', 'open', 'os.listdir', 'os.scandir') else None)
         relay = ModelRelay(base_url='https://turn.invalid/v1', token='turn', headers={}, session_id='turn')
         agent = serving._get_agent(actor_id='turn', session_user_id='turn', persistent_memory=True,
                                    model=serving._SNAPSHOT_MODEL, thread_id='turn', model_relay=relay)
@@ -142,13 +163,28 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         extract_graph_structure(agent.graph)
         model = serving.build_model(model=serving._SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
         asyncio.run(answer_once(model, 'turn'))
-        serving.agentcore_memory_backend.prime_memory_client(serving.AGENTCORE_REGION)
+        _, store = memory.turn_memory('snapshot-memory', identity, region_name=serving.AGENTCORE_REGION,
+                                      run_id='turn', turn=memory.next_turn())
+        store.client.meta.events.register_first('before-send.bedrock-agentcore.ListEvents', answer)
+        assert store.client.list_events(memoryId=store.memory_id, actorId='turn', sessionId='turn')['events'] == []
+        assert 'Credential=turn-key/' in signed[-1][0] and signed[-1][1] == 'turn-token'
+        try:
+            memory.turn_memory('snapshot-memory', {**identity, 'sessionId': 'other-session'},
+                               region_name=serving.AGENTCORE_REGION, run_id='other', turn=memory.next_turn())
+        except memory.MemorySandboxError:
+            pass
+        else:
+            raise AssertionError('a restored Memory client must refuse another sandbox')
         ZoneInfo('America/New_York')
         print(json.dumps(sorted(set(imported))))
     ''')
     result = subprocess.run(
         [sys.executable, '-c', program], capture_output=True, text=True, timeout=120, check=False,
-        env={**os.environ, 'BOTCUBE_WORKSPACE': str(tmp_path), 'AGENTCORE_MEMORY_ID': ''},
+        env={**os.environ, 'BOTCUBE_WORKSPACE': str(tmp_path), 'AGENTCORE_MEMORY_ID': 'snapshot-memory',
+             'BOTCUBE_RESTORE_PRIME': restore_enabled, 'AWS_CONFIG_FILE': str(aws_config),
+             'AWS_ACCESS_KEY_ID': '', 'AWS_SECRET_ACCESS_KEY': '', 'AWS_SESSION_TOKEN': '', 'AWS_PROFILE': 'default',
+             'AWS_SHARED_CREDENTIALS_FILE': str(tmp_path / 'no-credentials'),
+             'AWS_CONTAINER_CREDENTIALS_FULL_URI': 'http://127.0.0.1:9/credentials', 'AWS_DEFAULT_REGION': 'us-east-1'},
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []

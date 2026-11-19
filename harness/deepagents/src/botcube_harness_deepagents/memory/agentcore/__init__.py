@@ -201,7 +201,9 @@ def prime_spare(memory_id: str, region_name: str) -> None:
     issued = Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(minutes=1)
     signing = _TurnCredentials({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
     signing.sandbox = None
-    store = build_store(memory_id, region_name=region_name)
+    store = AgentCoreMemoryStore(
+        memory_id=memory_id, region_name=region_name, aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
+    )
     store.client = _memory_client(signing, store.client)
     _SPARE = store, signing
 
