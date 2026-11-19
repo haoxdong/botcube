@@ -75,11 +75,9 @@ COPY artifact-check/skills/ ./skills/
 ENV BOTCUBE_ARTIFACT_CHECK=/opt/artifact-check/src/cli.mjs
 
 # BotCube's Harness image, with no bot: a bot's image builds FROM it with its settings and skills (examples/bot/Dockerfile).
-# The Cartridge contract it still imports is staged in .tool-dist/cartridge-contract/ for now.
 FROM base AS harness
 
 WORKDIR /opt/harness
-COPY .tool-dist/cartridge-contract/ /cartridge/
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \

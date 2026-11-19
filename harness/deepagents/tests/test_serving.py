@@ -31,7 +31,6 @@ from typing import Any, NoReturn, TypedDict
 import boto3
 import pytest
 import uvicorn
-from botcube_cartridge import HarnessDefinition
 from botocore.exceptions import ClientError
 from deepagents.middleware.filesystem import EXECUTE_TOOL_DESCRIPTION
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
@@ -72,6 +71,7 @@ from botcube_harness_deepagents import (
     session_memory,
 )
 from botcube_harness_deepagents.conversation import reasoning_blocks
+from botcube_harness_deepagents.definition import HarnessDefinition
 from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
@@ -226,7 +226,6 @@ def _definition(prepared: list[Path]) -> HarnessDefinition:
         system_prompt='',
         prepare_invocation=_prepare_invocation,
         prepare_root=prepare_root,
-        build_shell_env=lambda environment: {**environment, 'DEFINITION_MARKER': 'from-definition'},
         session_id_env_var='TEST_SESSION_ID',
         # A rotating token keeps its agent: only the account selects the cached agent.
         environment_cache_key=lambda environment: tuple(
@@ -546,11 +545,11 @@ def test_the_sandbox_is_the_home_directory_the_cartridge_prepared(service: _Serv
     assert '/prepared.txt' in _tool_output(events)
 
 
-def test_the_sandbox_shell_sees_the_invocation_definition_and_process_environment(service: _Service) -> None:
-    command = 'run: echo "$ACCOUNT $DEFINITION_MARKER $INHERITED_MARKER"'
+def test_the_sandbox_shell_sees_the_invocation_and_process_environment(service: _Service) -> None:
+    command = 'run: echo "$ACCOUNT $INHERITED_MARKER"'
     events = service.turn(command, env={'ACCOUNT': 'acct-1'})
 
-    assert _tool_output(events) == 'acct-1 from-definition from-process\n\n[Command succeeded with exit code 0]'
+    assert _tool_output(events) == 'acct-1 from-process\n\n[Command succeeded with exit code 0]'
 
 
 def test_the_sandbox_shell_carries_the_logical_session_id(service: _Service) -> None:

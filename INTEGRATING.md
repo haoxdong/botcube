@@ -94,10 +94,10 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 
 Use [the template Harness definition](templates/always-on/src/botcube_always_on/harness.py) as the starting point. The `botcube.cartridge` Python entry point supplies skills, agent copy, invocation identity, shell validation and environment, root preparation, and the session variable. The Harness adapts these values to DeepAgents. Your Cartridge does not import the agent framework.
 
-Import `HarnessDefinition`, `InvocationAuth`, and `ModelRelay` from the shared
-[`botcube-cartridge` package](cartridge/README.md). Declare it as a runtime
-dependency of your Cartridge. The template and product Cartridge use the same
-definitions; keep sign-in, skills, and model policy in your own Cartridge.
+Import `HarnessDefinition`, `InvocationAuth`, and `ModelRelay` from the Harness's
+[definition module](harness/deepagents/src/botcube_harness_deepagents/definition.py),
+which imports no agent framework. The Harness image provides it; keep sign-in,
+skills, and model policy in your own Cartridge.
 
 The [stock Chat Service](chat/src/stock.ts) needs no Chat Cartridge: it composes itself from the Deployment Config that `BOTCUBE_DEPLOYMENT_CONFIG` names and the bot settings it points to.
 

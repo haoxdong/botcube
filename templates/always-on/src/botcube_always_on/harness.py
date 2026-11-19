@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
-from botcube_cartridge import (
+# The Harness image this is installed into provides the Harness package.
+from botcube_harness_deepagents.definition import (
     HarnessDefinition,
     InvocationAuth,
     environment_cache_key,
-    install_skill,
     openai_model_relay,
 )
 
@@ -42,7 +43,13 @@ _SKILLS = '/skills/'
 
 
 def _prepare_root(root: Path) -> None:
-    install_skill(root, _SKILLS, 'template', _PACKAGE_ROOT / 'skills' / 'SKILL.md')
+    """Copy the template skill into the root, unless the root already holds it, such as the checkout it came from."""
+    source = _PACKAGE_ROOT / 'skills' / 'SKILL.md'
+    target = root / _SKILLS.strip('/') / 'template' / 'SKILL.md'
+    if source.resolve() == target.resolve():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
 CARTRIDGE = HarnessDefinition(

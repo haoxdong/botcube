@@ -23,9 +23,11 @@ describe('BotCube template Cartridge', () => {
     expect(existsSync(
       resolve(botcube, 'templates/always-on/src/botcube_always_on/local_harness.py'),
     )).toBe(false);
-    expect(readFileSync(
+    const harness = readFileSync(
       resolve(botcube, 'templates/always-on/src/botcube_always_on/harness.py'),
       'utf8',
-    )).not.toContain('botcube_harness_deepagents');
+    );
+    // Only the Harness's plain definition types, which import no agent framework.
+    expect(harness.match(/botcube_harness_deepagents[\w.]*/g)).toEqual(['botcube_harness_deepagents.definition']);
   });
 });

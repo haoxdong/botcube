@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Neutral template Cartridge for BotCube."
 requires-python = ">=3.11"
 dependencies = [
-  "botcube-cartridge",
     "botcube-credential-service",
     "uvicorn[standard]>=0.54.0",
 ]
@@ -26,7 +25,6 @@ dev = [
 ]
 
 [tool.uv.sources]
-botcube-cartridge = { path = "../../cartridge", editable = true }
 botcube-harness-deepagents = { path = "../../harness/deepagents", editable = true }
 botcube-credential-service = { path = "../../credential-service", editable = true }
 

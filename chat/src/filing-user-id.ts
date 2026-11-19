@@ -4,8 +4,7 @@ const MAX_LENGTH = 255;
 
 /**
  * The Harness user ID an Account's Sessions are filed under: `<prefix>_` + the ID's UTF-8 hex,
- * or `<prefix>_sha256_` + its SHA-256 when that is too long. The Harness's `filing_user_id`
- * (botcube_cartridge) derives the same ID, so the two must agree byte for byte.
+ * or `<prefix>_sha256_` + its SHA-256 when that is too long.
  */
 export function filingUserId(prefix: string, accountId: string): string {
   const raw = accountId.trim();

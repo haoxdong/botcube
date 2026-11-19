@@ -10,7 +10,6 @@ from typing import Any
 
 import pytest
 from ag_ui.core import EventType, RunAgentInput
-from botcube_cartridge import InvocationAuth, ModelRelay
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_core.tools import tool
@@ -18,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.definition import InvocationAuth, ModelRelay
 from conftest import ToolBindableFakeMessagesModel
 
 EPOCH = 1_700_000_000

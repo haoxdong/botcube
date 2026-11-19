@@ -9,12 +9,12 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from botcube_cartridge import ModelRelay
 from langchain_core.messages import HumanMessage
 from langchain_core.outputs import LLMResult
 from langchain_core.tools import tool
 
 from botcube_harness_deepagents import turn_timing
+from botcube_harness_deepagents.definition import ModelRelay
 from botcube_harness_deepagents.llm import build_model
 from conftest import ToolBindableFakeModel
 from relay_fake import RECORDED_STREAM, RelayReply, serving_relay

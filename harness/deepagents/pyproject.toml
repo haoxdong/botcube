@@ -5,7 +5,6 @@ description = "Deep Agents implementation of the BotCube Harness contract."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "botcube-cartridge",
   "aiosqlite>=0.22.1",
   "aws-opentelemetry-distro>=0.21.0",
   "opentelemetry-instrumentation-langchain>=0.62.4",
@@ -45,9 +44,6 @@ dev = [
 contract-pins = [
   "strands-agents-tools==0.8.12",
 ]
-
-[tool.uv.sources]
-botcube-cartridge = { path = "../../cartridge", editable = true }
 
 [tool.ty.environment]
 python-version = "3.11"

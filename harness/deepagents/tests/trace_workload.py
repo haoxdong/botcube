@@ -16,7 +16,6 @@ import langsmith.utils
 import pytest
 from ag_ui.core import RunAgentInput, UserMessage
 from ag_ui_langgraph import LangGraphAgent
-from botcube_cartridge import HarnessDefinition
 from deepagents.backends import LocalShellBackend
 from langchain.agents import AgentState
 from langchain_core.language_models import BaseChatModel
@@ -34,6 +33,7 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from botcube_harness_deepagents import serving, trace_relay, turn_timing
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.definition import HarnessDefinition
 from conftest import ToolBindableFakeMessagesModel, prepared
 
 

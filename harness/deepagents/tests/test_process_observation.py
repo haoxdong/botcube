@@ -28,14 +28,14 @@ def test_process_observations_join_handoff_health_and_first_handler_without_payl
         socket.getaddrinfo = forbidden
         import httpx
         import uvicorn
-        from botcube_cartridge import HarnessDefinition
+        from botcube_harness_deepagents.definition import HarnessDefinition
         from botcube_harness_deepagents import serving
         from opentelemetry import trace
         from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
         serving.configure_harness_definition(HarnessDefinition(
             skills=[], agent_name='diagnostic-fixture', system_prompt='',
-            prepare_invocation=forbidden, prepare_root=forbidden, build_shell_env=forbidden,
+            prepare_invocation=forbidden, prepare_root=forbidden,
             session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
         ))
         logging.basicConfig(level=logging.INFO, format='%(message)s')

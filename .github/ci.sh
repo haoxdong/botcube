@@ -4,9 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 suite=${CI_SUITE:-all}
-python_packages=(cartridge credential-service harness/deepagents harness/deepagents/tools templates/always-on infra)
+python_packages=(credential-service harness/deepagents harness/deepagents/tools templates/always-on infra)
 case "$suite" in
-  all|node|cdk|cartridge|credential-service|harness/deepagents|harness/deepagents/tools|templates/always-on|infra) ;;
+  all|node|cdk|credential-service|harness/deepagents|harness/deepagents/tools|templates/always-on|infra) ;;
   *) echo "Unknown CI_SUITE: $suite" >&2; exit 2 ;;
 esac
 

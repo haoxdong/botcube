@@ -45,7 +45,6 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from ag_ui_langgraph import LangGraphAgent
-from botcube_cartridge import HarnessDefinition, InvocationAuth, ModelRelay
 from deepagents.backends import LocalShellBackend
 from deepagents.middleware._utils import append_to_system_message
 from fastapi import FastAPI, Request
@@ -87,6 +86,7 @@ from .agent_documents import (
 from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
 from .conversation import conversation, reasoning_chunk
+from .definition import HarnessDefinition, InvocationAuth, ModelRelay
 from .files import (
     FilesBindingError,
     excluded_paths,
@@ -225,8 +225,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
         return WorkerShellBackend(
             root_dir=root,
             virtual_mode=True,
-            env={**definition.build_shell_env(environment), 'PYTHONDONTWRITEBYTECODE': '1'},
-            command_prefixes=definition.shell_command_prefixes,
+            env={**environment, 'PYTHONDONTWRITEBYTECODE': '1'},
             trace_relay_endpoint=harness_trace_relay(),
             inherit_env=True,
         )

@@ -5,7 +5,7 @@ import base64
 import json
 import time
 
-from botcube_cartridge import ModelRelay
+from .definition import ModelRelay
 
 
 def invocation_deadline(relay: ModelRelay | None) -> float | None:

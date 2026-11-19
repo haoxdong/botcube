@@ -1,7 +1,6 @@
 import { expect, it } from 'vitest';
 import { filingUserId } from './filing-user-id.js';
 
-// Values from the Harness half, botcube_cartridge.filing_user_id.
 it('is the account ID in UTF-8 hex', () => {
   expect(filingUserId('template', 'acct_tëst12345')).toBe('template_616363745f74c3ab73743132333435');
 });

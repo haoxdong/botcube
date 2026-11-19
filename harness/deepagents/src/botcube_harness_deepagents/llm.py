@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from botcube_cartridge import ModelRelay
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import SimpleChatModel
 from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
@@ -15,6 +14,7 @@ from langchain_core.outputs import ChatGenerationChunk
 from opentelemetry import baggage, propagate
 
 from . import aws_clients, turn_timing
+from .definition import ModelRelay
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
 AVAILABLE_MODELS: dict[str, str] = {

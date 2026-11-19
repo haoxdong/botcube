@@ -161,10 +161,7 @@ def _run_worker(request: Request) -> Result:
 class WorkerShellBackend(LocalShellBackend):
     """deepagents' local shell, run in a per-command worker process."""
 
-    def __init__(self, *, command_prefixes: tuple[str, ...] = (), trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
-        # `command_prefixes` is accepted and ignored: every command is named and has its stdin stripped
-        # generically. It stays only until Cartridges stop passing `shell_command_prefixes`, then goes.
-        del command_prefixes
+    def __init__(self, *, trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._trace_relay_endpoint = trace_relay_endpoint
         # Every user token a command ever ran with. One left in the workspace stays usable after the next

@@ -1,7 +1,9 @@
-import shutil
+"""What the Harness serves a bot with: its invocation identity, model relay, shell and skills."""
+
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -58,7 +60,7 @@ def environment_cache_key(*per_turn_keys: str) -> EnvironmentCacheKey:
 
 @dataclass(frozen=True)
 class HarnessDefinition:
-    """Framework-neutral Cartridge inputs consumed by any BotCube Harness."""
+    """The bot the Harness serves: its skills, agent name, invocation identity, root and shell environment keys."""
 
     skills: Sequence[str]
     agent_name: str
@@ -66,36 +68,4 @@ class HarnessDefinition:
     prepare_root: Callable[[Path], object]
     session_id_env_var: str
     environment_cache_key: EnvironmentCacheKey
-    build_shell_env: Callable[[Mapping[str, str]], dict[str, str]] = dict
     system_prompt: str = ''
-    # Ignored: the Harness labels every command span and strips every command's stdin itself.
-    # Kept only until Cartridges stop setting it, then removed.
-    shell_command_prefixes: tuple[str, ...] = ()
-
-
-def install_skill(root: Path, skills: str, name: str, source: Path) -> None:
-    """Copy a skill's `SKILL.md` into the root, under the skills directory a `HarnessDefinition` names.
-
-    A root that already holds `source` there, such as the checkout it came from, is left alone.
-    """
-    target = root / skills.strip('/') / name / 'SKILL.md'
-    if source.resolve() == target.resolve():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-
-
-_FILING_USER_ID_MAX_LENGTH = 255
-
-
-def filing_user_id(prefix: str, account_id: str) -> str:
-    """The user ID an Account's Sessions and Memory are filed under.
-
-    `<prefix>_` + the ID's UTF-8 hex, or `<prefix>_sha256_` + its SHA-256 when that is too long.
-    The Chat Service's `filingUserId` derives the same ID, so the two must agree byte for byte.
-    """
-    encoded = account_id.encode('utf-8')
-    filed = f'{prefix}_{encoded.hex()}'
-    if len(filed) <= _FILING_USER_ID_MAX_LENGTH:
-        return filed
-    return f'{prefix}_sha256_{sha256(encoded).hexdigest()}'

@@ -18,7 +18,6 @@ jobs:
         include:
           - suite: node
           - suite: cdk
-          - suite: cartridge
           - suite: credential-service
           - suite: harness/deepagents
           - suite: harness/deepagents/tools

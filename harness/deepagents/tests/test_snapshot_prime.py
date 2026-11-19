@@ -34,7 +34,7 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         socket.getaddrinfo = forbidden
 
         import uvicorn
-        from botcube_cartridge import HarnessDefinition
+        from botcube_harness_deepagents.definition import HarnessDefinition
         from botcube_harness_deepagents import aws_clients, restore_prime, serving
 
         prepared_root = Path(sys.argv[1]).parent / 'restore'
@@ -44,7 +44,7 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
         serving.configure_harness_definition(HarnessDefinition(
             skills=[], agent_name='snapshot-fixture', system_prompt='Fixture instructions.',
             prepare_invocation=forbidden, prepare_root=lambda root: roots.append(str(root)),
-            build_shell_env=lambda environment: {}, session_id_env_var='TEST_SESSION_ID',
+            session_id_env_var='TEST_SESSION_ID',
             environment_cache_key=lambda environment: (),
         ))
         built = []
@@ -116,14 +116,14 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         socket.socket.connect = forbidden
         socket.getaddrinfo = forbidden
 
-        from botcube_cartridge import HarnessDefinition, ModelRelay
+        from botcube_harness_deepagents.definition import HarnessDefinition, ModelRelay
         from botcube_harness_deepagents import serving
         from botcube_harness_deepagents.snapshot_build import answer_once
 
         serving.configure_harness_definition(HarnessDefinition(
             skills=[], agent_name='snapshot-fixture', system_prompt='Fixture instructions.',
             prepare_invocation=forbidden, prepare_root=lambda root: None,
-            build_shell_env=lambda environment: {}, session_id_env_var='TEST_SESSION_ID',
+            session_id_env_var='TEST_SESSION_ID',
             environment_cache_key=lambda environment: (),
         ))
         serving._prime_snapshot()

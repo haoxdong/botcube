@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
-from botcube_cartridge import InvocationAuth
+from .definition import InvocationAuth
 
 
 def with_agent_computer(auth: InvocationAuth, forwarded: dict[str, Any], session: tuple[str, str]) -> InvocationAuth:

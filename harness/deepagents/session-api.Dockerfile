@@ -8,7 +8,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 ENV PYTHONPATH=/opt/session-api/.venv/lib/python3.13/site-packages
 WORKDIR /opt/session-api
-COPY .tool-dist/cartridge-contract/ /cartridge/
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=secret,id=build_ca \
     if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \

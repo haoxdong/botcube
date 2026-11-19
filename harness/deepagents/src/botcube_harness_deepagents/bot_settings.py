@@ -15,14 +15,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from botcube_cartridge import (
+from jsonschema import Draft202012Validator, ValidationError
+
+from .definition import (
     HarnessDefinition,
     InvocationAuth,
     environment_cache_key,
     openai_model_relay,
 )
-from jsonschema import Draft202012Validator, ValidationError
-
 from .memory.agentcore import turn_actor
 
 # The shell variable OpenTelemetry SDKs read resource attributes from, so a CLI's spans name the Turn's User and traffic.

@@ -17,7 +17,7 @@ def test_first_plan_model_needs_no_sdk_resource_imports_after_runtime_is_ready()
             import sys
 
             import uvicorn
-            from botcube_cartridge import HarnessDefinition, ModelRelay
+            from botcube_harness_deepagents.definition import HarnessDefinition, ModelRelay
             from botcube_harness_deepagents import serving
             from botcube_harness_deepagents.llm import build_model
 
@@ -28,7 +28,6 @@ def test_first_plan_model_needs_no_sdk_resource_imports_after_runtime_is_ready()
             serving.configure_harness_definition(HarnessDefinition(
                 skills=[], agent_name='bootstrap-test', system_prompt='',
                 prepare_invocation=forbidden, prepare_root=forbidden,
-                build_shell_env=forbidden,
                 session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
             ))
 
@@ -76,7 +75,7 @@ def test_first_memory_exchange_needs_no_sts_client_build_after_readiness() -> No
             import uvicorn
             from botocore import UNSIGNED
             from botocore.stub import Stubber
-            from botcube_cartridge import HarnessDefinition
+            from botcube_harness_deepagents.definition import HarnessDefinition
             from botcube_harness_deepagents import serving
             from botcube_harness_deepagents.memory import agentcore
 
@@ -87,7 +86,6 @@ def test_first_memory_exchange_needs_no_sts_client_build_after_readiness() -> No
             serving.configure_harness_definition(HarnessDefinition(
                 skills=[], agent_name='bootstrap-test', system_prompt='',
                 prepare_invocation=forbidden, prepare_root=forbidden,
-                build_shell_env=forbidden,
                 session_id_env_var='TEST_SESSION_ID', environment_cache_key=forbidden,
             ))
             building = boto3.client

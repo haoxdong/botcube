@@ -8,7 +8,6 @@ ARG BOTCUBE_ROOT=botcube
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /usr/local/bin/uv
-COPY ${BOTCUBE_ROOT}/cartridge/ /opt/botcube/cartridge/
 COPY ${BOTCUBE_ROOT}/credential-service/ /opt/botcube/credential-service/
 COPY ${BOTCUBE_ROOT}/templates/always-on/ /opt/botcube/templates/always-on/
 WORKDIR /opt/botcube/templates/always-on

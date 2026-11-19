@@ -233,7 +233,6 @@ name = "botcube-always-on"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "botcube-cartridge" },
     { name = "botcube-credential-service" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -249,7 +248,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "botcube-cartridge", editable = "../../cartridge" },
     { name = "botcube-credential-service", editable = "../../credential-service" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
@@ -259,19 +257,6 @@ dev = [
     { name = "botcube-harness-deepagents", editable = "../../harness/deepagents" },
     { name = "moto", extras = ["dynamodb", "kms", "scheduler", "sqs", "server"], specifier = ">=5" },
     { name = "mutmut", specifier = "==3.8.1" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ty", specifier = "==0.0.99" },
-]
-
-[[package]]
-name = "botcube-cartridge"
-version = "0.1.0"
-source = { editable = "../../cartridge" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ty", specifier = "==0.0.99" },
 ]
@@ -320,7 +305,6 @@ dependencies = [
     { name = "ag-ui-protocol" },
     { name = "aiosqlite" },
     { name = "aws-opentelemetry-distro" },
-    { name = "botcube-cartridge" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "deepagents" },
@@ -346,7 +330,6 @@ requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=1.0.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "aws-opentelemetry-distro", specifier = ">=0.21.0" },
-    { name = "botcube-cartridge", editable = "../../cartridge" },
     { name = "boto3", specifier = ">=1.43.108" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "deepagents", specifier = "==0.7.22" },

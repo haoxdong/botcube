@@ -54,9 +54,8 @@ def test_large_tool_results_stay_readable_but_out_of_files(
 
 @pytest.fixture
 def configured_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalShellBackend:
-    from botcube_cartridge import HarnessDefinition
-
     from botcube_harness_deepagents import serving
+    from botcube_harness_deepagents.definition import HarnessDefinition
 
     monkeypatch.delenv('PYTHONDONTWRITEBYTECODE', raising=False)
     monkeypatch.setattr(serving, '_cartridge', None)
