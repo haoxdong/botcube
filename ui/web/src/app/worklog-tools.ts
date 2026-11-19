@@ -1,31 +1,27 @@
 import {
-  RiBookOpenLine, RiBrain2Line, RiCalendarLine, RiChat4Line, RiCloseLine, RiFileTextLine, RiFolderLine, RiGlobalLine, RiListUnordered,
-  RiPencilLine, RiRobot2Line, RiSearchLine, RiShutDownLine, RiTerminalLine, RiToolsLine, type RemixiconComponentType,
+  RiBookOpenLine, RiBrain2Line, RiCalendarLine, RiChat4Line, RiCloseCircleLine, RiFileTextLine, RiFolderLine, RiGlobalLine,
+  RiListUnordered, RiPencilLine, RiRobot2Line, RiSearchLine, RiShutDownLine, RiTerminalLine, RiToolsLine,
 } from "@remixicon/react";
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
 
-/**
- * Each Worklog icon with its drawn ink in Remix's 24-unit box (x, y, width, height) and its optical scale. A step's icon
- * shows only its ink, at 0.6px a unit times its scale, so every drawing reads about 12px and the ✕ about 10px, and its
- * left edge and centre are the ink's own. The ink boxes are measured, not matched on path data.
- */
+/** Each Worklog step's Remix icon, stock and whole: every one draws at one size, so they share Remix's even weight. */
 export const ICONS = {
-  ran: { Icon: RiTerminalLine, ink: [2.51, 4.93, 18.49, 16.07], scale: 1.08 },
-  read: { Icon: RiBookOpenLine, ink: [2, 3, 20, 20], scale: 1 },
-  edited: { Icon: RiPencilLine, ink: [3, 2.92, 17.97, 17.97], scale: 1.11 },
-  listed: { Icon: RiFolderLine, ink: [2, 3, 20, 18], scale: 1 },
-  searched: { Icon: RiSearchLine, ink: [2, 2, 20.31, 20.31], scale: 1 },
-  web: { Icon: RiGlobalLine, ink: [2, 2, 20, 20], scale: 1 },
-  helper: { Icon: RiRobot2Line, ink: [0, 0.5, 24, 20.5], scale: 0.85 },
-  plan: { Icon: RiListUnordered, ink: [3, 3.5, 18, 16.9], scale: 1.11 },
-  schedule: { Icon: RiCalendarLine, ink: [2, 1, 20, 20], scale: 1 },
-  artifact: { Icon: RiFileTextLine, ink: [3, 2, 18, 20], scale: 1 },
-  tool: { Icon: RiToolsLine, ink: [3, 3.07, 17.29, 17.29], scale: 1.16 },
-  thought: { Icon: RiBrain2Line, ink: [2, 2, 20, 20], scale: 1 },
-  start: { Icon: RiShutDownLine, ink: [2, 2, 20, 20], scale: 1 },
-  answer: { Icon: RiChat4Line, ink: [2, 3, 20, 19.5], scale: 1 },
-  failed: { Icon: RiCloseLine, ink: [5.64, 5.64, 12.73, 12.73], scale: 1.34 },
-} satisfies Record<string, { Icon: RemixiconComponentType; ink: readonly [number, number, number, number]; scale: number }>;
+  ran: RiTerminalLine,
+  read: RiBookOpenLine,
+  edited: RiPencilLine,
+  listed: RiFolderLine,
+  searched: RiSearchLine,
+  web: RiGlobalLine,
+  helper: RiRobot2Line,
+  plan: RiListUnordered,
+  schedule: RiCalendarLine,
+  artifact: RiFileTextLine,
+  tool: RiToolsLine,
+  thought: RiBrain2Line,
+  start: RiShutDownLine,
+  answer: RiChat4Line,
+  failed: RiCloseCircleLine,
+};
 
 export type StepIcon = keyof typeof ICONS;
 

@@ -252,7 +252,7 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
     if (live && id !== undefined) arrive(id);
   }, [id, live]);
   const shown = state === "failed" ? "failed" : icon;
-  const { Icon, ink: [x, y, width, height], scale } = ICONS[shown];
+  const Icon = ICONS[shown];
   const words = <span className="worklog-step-label">{label}</span>;
   const column = <span className="worklog-step-time">{time}</span>;
   const Head = sheet ? "button" : "div";
@@ -260,7 +260,7 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
     <div className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
       <Head type={sheet ? "button" : undefined} className="worklog-step-head" onClick={sheet?.show} aria-haspopup={sheet ? "dialog" : undefined} aria-expanded={sheet?.open}>
         <span className="worklog-step-icon">
-          <Icon viewBox={`${x} ${y} ${width} ${height}`} data-icon={shown} style={{ width: `calc(${width * scale} * var(--worklog-ink))`, height: `calc(${height * scale} * var(--worklog-ink))` }} aria-hidden />
+          <Icon data-icon={shown} aria-hidden />
         </span>
         {words}{column}
       </Head>

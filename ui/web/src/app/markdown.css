@@ -117,8 +117,6 @@
 /* WebKit clamps the scroll whenever the list gets shorter. */
 .worklog {
   --worklog-indent: 26px;
-  --worklog-ink: 0.6px;
-  --worklog-icon-lift: -1.35px;
   min-height: calc(var(--font-small) * var(--leading-loose) + 2 * var(--space-4));
 }
 
@@ -271,25 +269,18 @@ button.worklog-step-head {
     }
 }
 
-/* The icon's slot keeps every row's words at one start. Its icon is only its ink (worklog-tools.ts): 1px in, its left
-   edge meets the ink of the notes' first letter, and the lift takes its middle from the line's to its capitals'. */
+/* Every step's stock Remix icon at one size, whole, so all keep Remix's even weight: its box is its own width,
+   centred on the step's line, and one shared 1px lift sets it on the words at every width. */
 .worklog-step-icon {
   display: flex;
   flex: none;
   align-items: center;
-  width: 14px;
 }
 
 .worklog-step-icon svg {
-  margin-left: 1px;
-  translate: 0 var(--worklog-icon-lift);
-}
-
-/* Measured from pixels: the phone's larger type needs less lift. */
-@media (max-width: 640px) {
-  .worklog {
-    --worklog-icon-lift: -0.35px;
-  }
+  width: 15px;
+  height: 15px;
+  translate: 0 -1px;
 }
 
 .worklog-step-label {
