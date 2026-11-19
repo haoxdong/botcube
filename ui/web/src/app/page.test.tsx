@@ -6710,13 +6710,13 @@ describe('agent profile', () => {
     expect(panel.getByText('Failed to load the models: 503')).toBeInTheDocument();
   });
 
-  it.each([undefined, 'plan', 'sonnet'])('selects a server-provided Cartridge model during a catalog outage from %s', async (model) => {
+  it.each([undefined, 'plan', 'sonnet'])('selects a server-provided bot model during a catalog outage from %s', async (model) => {
     service.scheduled = [{ ...MORNING_BRIEF, ...(model === undefined ? {} : { model }) }];
     await renderPage();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/agent/models' ? answer(503, {
         detail: 'Plan Usage was revoked',
-        cartridgeModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
+        botModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
       }) : chatService(url, init),
     );
     const task = await openScheduled();
@@ -6742,13 +6742,13 @@ describe('agent profile', () => {
     expect(panel.getByText('Failed to load the models: 503: Plan Usage was revoked')).toBeInTheDocument();
   });
 
-  it('keeps the account default after choosing then undoing a Cartridge choice during an outage', async () => {
+  it('keeps the account default after choosing then undoing a bot choice during an outage', async () => {
     service.scheduled = [MORNING_BRIEF];
     await renderPage();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/agent/models' ? answer(503, {
         detail: 'Plan Usage was revoked',
-        cartridgeModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
+        botModels: [{ key: 'sonnet', label: 'Sonnet', provider: 'anthropic' }],
       }) : chatService(url, init),
     );
     const task = await openScheduled();

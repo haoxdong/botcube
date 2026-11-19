@@ -193,7 +193,7 @@ export function ScheduledPanel({
       listTasks(chatServiceUrl).then(setTasks, (failure: Error) => setError(failure.message));
       fetchAgentModels({ chatServiceUrl }).then(setModels, (failure: Error) => {
         setModelsError(failure.message);
-        if (failure instanceof ModelCatalogError) setModels(failure.cartridgeModels);
+        if (failure instanceof ModelCatalogError) setModels(failure.botModels);
       });
     },
     // Stryker disable next-line ArrayDeclaration: the Chat Service URL never changes, so any list loads once per open

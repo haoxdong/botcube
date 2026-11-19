@@ -92,6 +92,10 @@ describe("an account's allowed models", () => {
       expect(await unnamed.json()).toEqual({ detail: 'The plan catalog is unavailable' });
       expect(await listed.json()).toEqual({
         detail: 'The plan catalog is unavailable',
+        botModels: [
+          { key: 'quick', label: 'Quick', provider: 'anthropic' },
+          { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
+        ],
         cartridgeModels: [
           { key: 'quick', label: 'Quick', provider: 'anthropic' },
           { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
@@ -109,6 +113,10 @@ describe("an account's allowed models", () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({
         detail: 'Plan Usage was revoked',
+        botModels: [
+          { key: 'quick', label: 'Quick', provider: 'anthropic' },
+          { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
+        ],
         cartridgeModels: [
           { key: 'quick', label: 'Quick', provider: 'anthropic' },
           { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },

@@ -83,9 +83,9 @@ export interface AgentModel {
   provider: string;
 }
 
-/** A failed account catalog, with independently available server-owned Cartridge choices. */
+/** A failed account catalog, with independently available server-owned bot choices. */
 export class ModelCatalogError extends Error {
-  constructor(message: string, readonly cartridgeModels: AgentModel[] | null) {
+  constructor(message: string, readonly botModels: AgentModel[] | null) {
     super(message);
   }
 }
@@ -124,15 +124,17 @@ export async function fetchAgentModels({
   const response = await fetchImpl(`${chatServiceUrl}/agent/models`, { cache: "no-store", credentials: "include" });
   if (!response.ok) {
     if (response.status === 502 || response.status === 503) {
-      let body: { detail?: string; cartridgeModels?: AgentModel[] } | undefined;
+      let body: { detail?: string; botModels?: AgentModel[]; cartridgeModels?: AgentModel[] } | undefined;
       try {
         body = await response.json() as typeof body;
       } catch (cause) {
         throw new Error(`Failed to load the models: ${response.status}: invalid catalog error response`, { cause });
       }
+      // A deployed Chat Service sends the bot choices only as `cartridgeModels`.
+      const botModels = body?.botModels ?? body?.cartridgeModels;
       throw new ModelCatalogError(
         `Failed to load the models: ${response.status}${body?.detail ? `: ${body.detail}` : ""}`,
-        Array.isArray(body?.cartridgeModels) ? body.cartridgeModels : null,
+        Array.isArray(botModels) ? botModels : null,
       );
     }
     throw new Error(`Failed to load the models: ${response.status}`);

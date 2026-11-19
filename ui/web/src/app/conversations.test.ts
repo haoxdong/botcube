@@ -671,14 +671,23 @@ describe('a Stop', () => {
 
 
 describe('model catalog refusals', () => {
-  it.each([502, 503])('retains HTTP %s and its cause with explicit Cartridge choices', async (status) => {
+  it.each([502, 503])('retains HTTP %s and its cause with explicit bot choices', async (status) => {
     const choices = [{ key: 'quick', label: 'Quick', provider: 'anthropic' }];
     const failure = await fetchAgentModels({ chatServiceUrl: SERVICE, fetchImpl: async () =>
-      Response.json({ detail: 'Plan Usage was revoked', cartridgeModels: choices }, { status }),
+      Response.json({ detail: 'Plan Usage was revoked', botModels: choices, cartridgeModels: [] }, { status }),
     }).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ModelCatalogError);
     expect((failure as ModelCatalogError).message).toBe(`Failed to load the models: ${status}: Plan Usage was revoked`);
-    expect((failure as ModelCatalogError).cartridgeModels).toEqual([{ key: 'quick', label: 'Quick', provider: 'anthropic' }]);
+    expect((failure as ModelCatalogError).botModels).toEqual([{ key: 'quick', label: 'Quick', provider: 'anthropic' }]);
+  });
+
+  it('reads bot choices a Chat Service sends under the old name', async () => {
+    const choices = [{ key: 'quick', label: 'Quick', provider: 'anthropic' }];
+    const failure = await fetchAgentModels({ chatServiceUrl: SERVICE, fetchImpl: async () =>
+      Response.json({ detail: 'Plan Usage was revoked', cartridgeModels: choices }, { status: 503 }),
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ModelCatalogError);
+    expect((failure as ModelCatalogError).botModels).toEqual([{ key: 'quick', label: 'Quick', provider: 'anthropic' }]);
   });
 
   it('keeps an unauthenticated refusal separate from catalog choices', async () => {
