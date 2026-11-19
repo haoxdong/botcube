@@ -35,7 +35,6 @@ PLAN_MODEL_PREFIX = 'openai-plan:'
 # The Deployment Config's `models` Endpoint, as JSON the deploy hands over: `MODELS_ENV` in botcube/deployment-config.
 MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
 ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers'})
-# The Endpoint's one retry rule (ADR 0091), as botcube/chat's `endpoint.ts` keeps it: an answer before any body, a gateway's or a dropped connection's.
 RETRIED_STATUSES = frozenset({502, 503, 504})
 ENDPOINT_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 0.2
@@ -179,15 +178,8 @@ def models_endpoint() -> ModelsEndpoint | None:
 
 
 def _endpoint_client() -> Any:
-    """The HTTP client of an Endpoint's model: it retries an answer that comes before any body, and nothing after one.
-
-    That answer is a gateway's 502, 503 or 504, or a connection that resets, is refused or times out connecting before
-    the response starts. The body is read only after the last attempt, so a body that drops fails the Turn once.
-    """
     import httpx
     import openai
-
-    dropped_connection = (httpx.NetworkError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
     class EndpointClient(openai.DefaultAsyncHttpxClient):
         async def send(self, request: httpx.Request, *, stream: bool = False, **kwargs: Any) -> httpx.Response:
@@ -206,8 +198,8 @@ def _endpoint_client() -> Any:
                 attempt += 1
                 try:
                     response = await super().send(request, stream=True, **kwargs)
-                except dropped_connection:
-                    if attempt == ENDPOINT_ATTEMPTS:
+                except httpx.TransportError as error:
+                    if attempt == ENDPOINT_ATTEMPTS or not _dropped_before_response(error):
                         raise
                 else:
                     if response.status_code not in RETRIED_STATUSES or attempt == ENDPOINT_ATTEMPTS:
@@ -216,6 +208,16 @@ def _endpoint_client() -> Any:
                 await asyncio.sleep(RETRY_DELAY_SECONDS * attempt)
 
     return EndpointClient()
+
+
+def _dropped_before_response(error: BaseException | None) -> bool:
+    import httpx
+
+    if isinstance(error, (httpx.ConnectTimeout, ConnectionResetError, ConnectionRefusedError)):
+        return True
+    if isinstance(error, BaseExceptionGroup):
+        return all(_dropped_before_response(each) for each in error.exceptions)
+    return error is not None and _dropped_before_response(error.__cause__ or error.__context__)
 
 
 def _openai_compatible_model(key: str, endpoint: ModelsEndpoint, max_tokens: int | None) -> Any:

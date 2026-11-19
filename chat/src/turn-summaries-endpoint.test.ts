@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { modelsDeployment } from 'botcube-deployment-config/models';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { errors } from 'undici';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
 import { turnSummarizer, turnSummaryModelFromEnv } from './turn-summaries.js';
 
@@ -18,6 +20,9 @@ beforeEach(() => {
   endpoint.requests.length = 0;
   endpoint.gatewayFailures.length = 0;
   endpoint.drops.length = 0;
+});
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 afterAll(async () => {
   await endpoint.close();
@@ -77,6 +82,27 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
     expect(endpoint.requests).toHaveLength(3);
   });
 
+  it('retry a refused connection', async () => {
+    const attempts = vi.spyOn(globalThis, 'fetch');
+
+    await expect(summarize(deployed({ url: `${await closedPort()}/v1` }))).rejects.toMatchObject({ cause: { code: 'ECONNREFUSED' } });
+    expect(attempts).toHaveBeenCalledTimes(3);
+  });
+
+  it('retry a connect timeout', async () => {
+    const attempts = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed', { cause: new errors.ConnectTimeoutError() }));
+
+    await expect(summarize(deployed())).rejects.toMatchObject({ cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } });
+    expect(attempts).toHaveBeenCalledTimes(3);
+  });
+
+  it('fail without retrying a connection closed before the response', async () => {
+    endpoint.drops.push('closed-before-response');
+
+    await expect(summarize(deployed())).rejects.toMatchObject({ cause: { code: 'UND_ERR_SOCKET' } });
+    expect(endpoint.requests).toHaveLength(1);
+  });
+
   it('fail once on a response dropped after it started', async () => {
     endpoint.drops.push('mid-response');
 
@@ -107,3 +133,12 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
     expect(() => turnSummaryModelFromEnv(env, 'us-east-1')).toThrow('models credential (command /usr/local/bin/token-broker): a command credential runs only when BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1');
   });
 });
+
+async function closedPort(): Promise<string> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  if (address === null || typeof address === 'string') throw new Error('expected a TCP address');
+  return `http://127.0.0.1:${address.port}`;
+}

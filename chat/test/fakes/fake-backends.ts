@@ -175,8 +175,8 @@ export class FakeOpenAICompatible extends HttpFake {
   turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
   /** The statuses the next requests are answered with before any body, as a gateway in front of the models fails. */
   readonly gatewayFailures: number[] = [];
-  /** How the next requests' connections drop, with a TCP reset: before any response byte, or after the response started. */
-  readonly drops: ('before-response' | 'mid-response')[] = [];
+  /** How the next requests' connections drop: reset before any response byte, closed before it, or reset after the response started. */
+  readonly drops: ('before-response' | 'closed-before-response' | 'mid-response')[] = [];
 
   constructor(readonly apiKey: string) {
     super((request, response) => {
@@ -188,6 +188,10 @@ export class FakeOpenAICompatible extends HttpFake {
       const drop = this.drops.shift();
       if (drop === 'before-response') {
         response.socket?.resetAndDestroy();
+        return;
+      }
+      if (drop === 'closed-before-response') {
+        response.socket?.end();
         return;
       }
       if (drop === 'mid-response') {

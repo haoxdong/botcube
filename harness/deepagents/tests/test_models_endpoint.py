@@ -25,7 +25,6 @@ class StandIn:
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.gateway_failures: list[int] = []
-        # How the next requests' connections drop: `before-response` before any byte, `mid-response` after the first chunk.
         self.drops: list[str] = []
         stand_in = self
 
@@ -43,6 +42,10 @@ class StandIn:
                 if drop == 'before-response':
                     self._reset()
                     return
+                if drop == 'closed-before-response':
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                    self.close_connection = True
+                    return
                 text = f"Echo: {body['messages'][-1]['content']}"
                 if drop == 'mid-response':
                     started = {'id': 'c1', 'object': 'chat.completion.chunk', 'model': body['model'], 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': text}, 'finish_reason': None}]}
@@ -57,7 +60,6 @@ class StandIn:
                 self._send(200, 'text/event-stream', f'data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n'.encode())
 
             def _reset(self) -> None:
-                """Drops the connection with a TCP reset, as a gateway or load balancer cuts it."""
                 self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
                 self.connection.close()
                 self.close_connection = True
@@ -135,6 +137,66 @@ def test_a_turn_fails_after_three_dropped_connections(stand_in: StandIn) -> None
     with pytest.raises(openai.APIConnectionError):
         _reply()
     assert len(stand_in.requests) == 3
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_without_retrying_a_connection_closed_before_the_response(stand_in: StandIn) -> None:
+    import openai
+
+    stand_in.drops.append('closed-before-response')
+    with pytest.raises(openai.APIConnectionError):
+        _reply()
+    assert len(stand_in.requests) == 1
+
+
+@pytest.fixture
+def refusing_url() -> str:
+    with socket.socket() as closed:
+        closed.bind(('127.0.0.1', 0))
+        port = closed.getsockname()[1]
+    return f'http://127.0.0.1:{port}/v1/chat/completions'
+
+
+@pytest.fixture
+def unaccepting_url() -> Iterator[str]:
+    """A listener whose accept queue is full, so a new connection never completes."""
+    with socket.socket() as listener, socket.socket() as queued:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(0)
+        queued.connect(listener.getsockname())
+        yield f'http://127.0.0.1:{listener.getsockname()[1]}/v1/chat/completions'
+
+
+def _attempts(url: str) -> tuple[int, type[BaseException]]:
+    import httpx
+
+    client = llm._endpoint_client()
+    attempts: list[httpx.Request] = []
+
+    async def attempted(request: httpx.Request) -> None:
+        attempts.append(request)
+
+    client.event_hooks['request'].append(attempted)
+
+    async def send() -> None:
+        async with client:
+            await client.post(url, json={}, timeout=httpx.Timeout(5, connect=0.05))
+
+    with pytest.raises(httpx.TransportError) as failure:
+        asyncio.run(send())
+    return len(attempts), failure.type
+
+
+def test_the_endpoint_retries_a_refused_connection(refusing_url: str) -> None:
+    import httpx
+
+    assert _attempts(refusing_url) == (3, httpx.ConnectError)
+
+
+def test_the_endpoint_retries_a_connect_timeout(unaccepting_url: str) -> None:
+    import httpx
+
+    assert _attempts(unaccepting_url) == (3, httpx.ConnectTimeout)
 
 
 @pytest.mark.usefixtures('deployed')
