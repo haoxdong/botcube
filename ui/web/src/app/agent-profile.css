@@ -544,5 +544,4 @@
 .sign-in-status { align-self: start; grid-area: status; }
 .sign-in-actions { display: flex; gap: var(--space-8); grid-area: actions; margin-top: var(--space-8); }
 .sign-in-actions button:disabled { opacity: 0.5; cursor: default; }
-.sign-in-warning,
 .sign-in-error { margin: 0; color: var(--color-red); font-size: var(--font-small); }

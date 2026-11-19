@@ -4,7 +4,7 @@ import { DeleteTableCommand, DynamoDBClient, ResourceNotFoundException, Transact
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';

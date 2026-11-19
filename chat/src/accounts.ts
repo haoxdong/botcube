@@ -4,7 +4,8 @@ import { clearCookie } from './account-cookies.js';
 import { accountProfileRoutes } from './account-profile.js';
 import type { Account } from './account-record.js';
 import type { AccountStore } from './account-store.js';
-import { HttpError, type AccountHistory } from './cartridge.js';
+import type { AccountHistory } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { AccountFiles } from './files.js';
 
 /** A site the agent is signed in to, as `GET /account/sign-ins` lists it. */

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
-import { HttpError, type AccountHistory, type Requester } from './cartridge.js';
+import type { AccountHistory } from './cartridge.js';
+import { HttpError } from './http-error.js';
+import type { Requester } from './requester.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import { agentComputerIdleSeconds } from './agent-computer.js';
 import type { TaskStopSleep } from './task-stop.js';

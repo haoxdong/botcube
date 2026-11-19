@@ -5601,7 +5601,7 @@ describe('agent profile', () => {
   it('lists the sites the sign-in provider reports in the built-in Sign-ins tab, and opens its sign-in', async () => {
     const signIn = vi.fn();
     await renderPage(auth({
-      signIns: { signIn, signOut: vi.fn(), confirmSignOut: vi.fn(), cancelSignOut: vi.fn(), warning: null, busy: false, error: null, revision: 0 },
+      signIns: { signIn, signOut: vi.fn(), busy: false, error: null, revision: 0 },
     }));
     await userEvent.click(avatar());
 
@@ -7035,7 +7035,7 @@ describe('agent profile', () => {
   ])("%s the sign-in provider's Sign-in Sheet when a Computer request fails and the provider says a sign-in is needed", async (_opens, needed, sheets) => {
     const signIn = vi.fn();
     await renderPage(auth({
-      signIns: { signIn, needsSignIn: () => needed, signOut: vi.fn(), confirmSignOut: vi.fn(), cancelSignOut: vi.fn(), warning: null, busy: false, error: null, revision: 0 },
+      signIns: { signIn, needsSignIn: () => needed, signOut: vi.fn(), busy: false, error: null, revision: 0 },
     }));
     await userEvent.click(avatar());
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));

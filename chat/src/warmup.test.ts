@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN } from '../test/fakes/stack.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';

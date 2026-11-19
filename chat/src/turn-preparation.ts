@@ -2,7 +2,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { SessionBusyError, type PreparedTurn, type TurnFailure } from './session-metadata.js';
 import { sessionAccessError } from './sessions.js';
 import { persistedTurnError, turnErrorDetails } from './turn-stream.js';
-import { HttpError, type AgentDocumentSet } from './cartridge.js';
+import type { AgentDocumentSet } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 export async function turnAccessError(error: unknown, documents: Promise<PromiseSettledResult<AgentDocumentSet>[]>, templates: AgentDocumentSet): Promise<unknown> {
   if (!(error instanceof SessionBusyError)) return sessionAccessError(error);

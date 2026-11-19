@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { picture, pictureUrl, type Picture } from './pictures.js';
 import { jsonPayload } from './payload.js';
 interface ProfileAccount { accountId: string; displayName?: string; }

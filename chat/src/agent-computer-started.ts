@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { TurnIdentity, turnIdentityConfigFromEnv } from './turn-identity.js';
 import { USER_TOKEN_AUDIENCE } from './user-token.js';
 

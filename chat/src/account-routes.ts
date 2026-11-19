@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import { agentIdentity, memoryLine, soul, type AgentDocuments } from './agent-documents.js';
-import { HttpError, type ChatServiceCartridge } from './cartridge.js';
+import type { ChatServiceCartridge } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { isRecord } from './payload.js';
 import { picture, pictureUrl } from './pictures.js';
 import { accountModelList, namedModel } from './models.js';

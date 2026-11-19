@@ -1,5 +1,7 @@
 import type { RunAgentInput } from '@ag-ui/client';
-import { HttpError, type AgentModel, type ChatServiceCartridge, type Requester } from './cartridge.js';
+import type { AgentModel, ChatServiceCartridge } from './cartridge.js';
+import { HttpError } from './http-error.js';
+import type { Requester } from './requester.js';
 
 type ModelSource<R extends Requester> = Pick<ChatServiceCartridge<R>, 'models' | 'accountModels' | 'accountModel'>;
 

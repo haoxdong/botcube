@@ -4,7 +4,7 @@ import { memoryDocuments } from '../test/memory-documents.js';
 import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 /** Registration is the Cartridge's own; this one registers outright. */
 class RegisteringStore extends AccountStore {

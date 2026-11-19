@@ -1,6 +1,7 @@
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
-import { HttpError, type AgentDocumentSet, type AgentIdentity } from './cartridge.js';
+import type { AgentDocumentSet, AgentIdentity } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { ownerFenceKey } from './session-metadata.js';
 import { pictureFromItem, pictureItem, type Picture } from './pictures.js';
 

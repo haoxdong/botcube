@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { AccountResources } from '../src/account-resources.js';
 import { agentComputers, type AgentComputerBrowser } from '../src/agent-computer.js';
 import { BrowserSessionEnded } from '../src/browser-sessions.js';
-import { HttpError } from '../src/cartridge.js';
+import { HttpError } from '../src/http-error.js';
 import { computerFilesRoutes } from '../src/computer-files-routes.js';
 import type { AccountFiles } from '../src/files.js';
 import { memoryDocuments } from './memory-documents.js';

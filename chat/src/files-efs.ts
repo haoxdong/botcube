@@ -8,7 +8,7 @@ import {
 } from '@aws-sdk/client-efs';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { saveArtifact } from './artifact-save.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import {
   FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS,
   directoryOf, fileDestination, filePath, freeName,

@@ -2,7 +2,7 @@ import { ScheduledExecution, scheduledSessionKey } from './scheduled-execution.j
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, TransactWriteCommand, UpdateCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { ScheduledTaskRun } from './scheduled-tasks.js';
 
 interface ScheduledPostIdentity {

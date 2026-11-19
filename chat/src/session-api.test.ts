@@ -2,7 +2,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { FakeSessionApi } from '../test/fakes/fake-backends.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { sessionApi, type SessionApi } from './session-api.js';
 
 const EVENT: Parameters<SessionApi>[0] = { operation: 'get', sessionId: 'session-1', userId: 'filed-account-1' };

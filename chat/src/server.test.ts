@@ -3,7 +3,7 @@ import { decodeJwt, jwtVerify } from 'jose';
 import { defined } from '../test/defined.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;

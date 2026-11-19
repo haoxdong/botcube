@@ -5,7 +5,7 @@ import { ScheduledBrowserAdmissionError } from './account-resources.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentCoreEndpointFromEnv } from './upstream.js';
 import { awsFetch } from './aws.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { BrowserSessions, BrowserSessionEnded } from './browser-sessions.js';
 import type { Cdp } from './cdp.js';
 import type { RunningAgentComputer, AgentComputerStream } from './account-resources.js';

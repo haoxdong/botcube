@@ -1,6 +1,6 @@
 import { ecsCleanupWorker } from './files-cleanup-worker.js';
 import { filesPoolManifest, s3PoolAccessPoints } from './files-pool-manifest.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { accountFilesEfs, efsAccessPoints, stsMountCredentials } from './files-efs.js';
 import type { AccountFiles, FilesRecords } from './files-shared.js';
 

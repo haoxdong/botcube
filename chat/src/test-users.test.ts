@@ -4,7 +4,7 @@ import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountStore } from './account-store.js';
 import { accountRoutes } from './accounts.js';
 import { accountCookies } from './account-cookies.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 
 it('allows an operator Test User to check isolation without a public login or Sign-in', async () => {

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {

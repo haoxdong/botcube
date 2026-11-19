@@ -1,6 +1,6 @@
 import pLimit from 'p-limit';
 import { awsFetch } from './aws.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 /**
  * A request to the session API (ADR 0067 §5), which reads and purges a Session's record,

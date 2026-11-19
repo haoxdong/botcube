@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { upgradeWebSocket } from '@hono/node-server';
 import type { WSContext } from 'hono/ws';
 import { computerTrace, traceSelector, traceFailure, traceClose } from './agent-computer-trace.js';

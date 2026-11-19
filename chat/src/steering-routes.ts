@@ -1,7 +1,8 @@
 import { assertIdleContinuable } from './sessions.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
-import { HttpError, type ChatServiceCartridge } from './cartridge.js';
+import type { ChatServiceCartridge } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { SessionMetadata } from './session-metadata.js';
 import type { sessionLifecycle } from './session-lifecycle.js';
 import { readTurnEvents } from './turn-events.js';

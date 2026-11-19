@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { startInProcess } from '../test/in-process.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 it.each(['Main', 'Side'])('replays a failed first %s Turn when preparation never created a Session record', async (kind) => {
   const stack = await startInProcess({ cartridge: {

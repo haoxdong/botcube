@@ -1,5 +1,5 @@
 import type { Hono } from 'hono';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_FIELD = 500;

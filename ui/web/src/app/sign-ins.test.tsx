@@ -43,12 +43,9 @@ const render = (props: Partial<Parameters<typeof SignInsList>[0]>) =>
     React.createElement(SignInsList, {
       signIns: [],
       error: null,
-      warning: null,
       busy: false,
       onSignIn: () => {},
       onSignOut: () => {},
-      onConfirmSignOut: () => {},
-      onCancelSignOut: () => {},
       ...props,
     }),
   );
@@ -78,13 +75,6 @@ describe('SignInsList', () => {
     expect(html).toContain('<span class="status-pill sign-in-status">Not linked</span>');
     expect(html).not.toContain('sign-in-username');
     expect(buttons(html)).toEqual(['Sign in']);
-  });
-
-  it('asks the user to confirm the last-Sign-in warning before signing out', () => {
-    const html = render({ signIns: [site('linked', 'ann@example.com')], warning: 'This is your last login-capable Sign-in.' });
-
-    expect(html).toContain('<p class="sign-in-warning" role="alert">This is your last login-capable Sign-in.</p>');
-    expect(buttons(html)).toEqual(['Sign out anyway', 'Cancel']);
   });
 
   it('disables the actions while one runs, and says why one failed', () => {
@@ -119,8 +109,7 @@ describe('Sign-ins tab refresh', () => {
         chatServiceUrl: 'http://chat.test',
         control: {
           revision,
-          signIn: () => {}, signOut: () => {}, confirmSignOut: () => {}, cancelSignOut: () => {},
-          warning: null, error: null, busy: false,
+          signIn: () => {}, signOut: () => {}, error: null, busy: false,
         },
       }),
     ));
@@ -154,8 +143,7 @@ describe('Sign-ins a product lists itself', () => {
         chatServiceUrl: 'http://chat.test',
         control: {
           revision: 0, load,
-          signIn: () => {}, signOut: () => {}, confirmSignOut: () => {}, cancelSignOut: () => {},
-          warning: null, error: null, busy: false,
+          signIn: () => {}, signOut: () => {}, error: null, busy: false,
         },
       })));
       expect(container.querySelector('.sign-in-status')?.textContent).toBe('Linked');

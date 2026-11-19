@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { frameData, sseFrames } from '../test/parity/browser.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { accountDefaultModel } from './models.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 

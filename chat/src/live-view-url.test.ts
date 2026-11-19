@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HttpError, type ChatServiceCartridge } from './cartridge.js';
+import type { ChatServiceCartridge } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
 import type { AgentDocuments } from './agent-documents.js';
 import type { SessionMetadata } from './session-metadata.js';

@@ -94,8 +94,8 @@ export function TemplateAuthProvider({ chatServiceUrl, children }: AuthProviderP
   const account = oidc === null
     ? { status: accountId ? 'authed' as const : status === 'error' ? 'error' as const : 'loading' as const, login: signIn, logout: unlink }
     : { status: oidc.authenticated ? 'authed' as const : 'unauthed' as const, login: () => oidcLogin(chatServiceUrl), logout };
-  // BotCube's Sign-ins tab lists the site from the Chat Service; the template signs in and out with no warning to confirm.
-  const signIns: SignInsControl = { signIn, signOut: unlink, confirmSignOut: unlink, cancelSignOut: () => {}, warning: null, busy, error, revision };
+  // BotCube's Sign-ins tab lists the site from the Chat Service.
+  const signIns: SignInsControl = { signIn, signOut: unlink, busy, error, revision };
   return <>
     {children({ sessionStatus: accountId ? 'ready' : status === 'error' ? 'error' : 'loading', accountId, ...account, error, relink: signIn,
       composerAccessory: signInNeeded ? (

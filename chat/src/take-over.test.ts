@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;

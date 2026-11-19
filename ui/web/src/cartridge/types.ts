@@ -14,11 +14,6 @@ export interface SignInsControl {
   /** Opens the Sign-in Sheet, for a first sign-in or a re-link. */
   signIn: () => void;
   signOut: () => void;
-  /** Confirms a sign-out the Chat Service warned about. */
-  confirmSignOut: () => void;
-  cancelSignOut: () => void;
-  /** The Chat Service's last-Sign-in warning, awaiting the user's confirmation. */
-  warning: string | null;
   busy: boolean;
   error: string | null;
   /** Bumped by each completed sign-in or sign-out, so the list reloads. */

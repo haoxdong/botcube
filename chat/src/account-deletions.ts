@@ -1,6 +1,6 @@
 import type { Account, AccountDeletionIntent } from './account-record.js';
 import type { AccountStore } from './account-store.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 type DeletionStore<A extends Account> = Pick<AccountStore<A>,
   'accountDeletionLock' | 'accountDeletion' | 'loadAccount' | 'completeAccountDeletion' | 'pendingAccountDeletions' | 'expireGuests'>;

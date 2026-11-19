@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { SessionConcurrencyError, SessionBusyError, SessionClaimError, SessionDeletedError, SessionUnissuedError } from './session-metadata.js';
 import { assertContinuable, oneIdSession, SessionReadOnlyError } from './session-identity.js';
 import type { AgentDocuments } from './agent-documents.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { ScheduledTasks } from './scheduled-tasks.js';
 import { SessionNotFoundError, type SessionApi } from './session-api.js';
 import type { SessionMetadata, SessionPurge, SessionSummary } from './session-metadata.js';

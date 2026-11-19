@@ -4,7 +4,7 @@ import type { DeploymentConfig } from 'botcube-deployment-config';
 import * as client from 'openid-client';
 import { clearCookie, type AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 

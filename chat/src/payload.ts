@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { Context } from 'hono';
 
 /** An optional JSON-object body: no body is null. */

@@ -7,7 +7,7 @@ import { readDraft } from 'botcube-artifact-check/email-schema';
 import { readRecord, type VersionRecord } from 'botcube-artifact-check/record';
 import type { Sheet } from 'botcube-artifact-check/sheet';
 import { z } from 'zod';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 /** A User's save of an Artifact edited in place (ADR 0087): the edited files of `version`, by their path in the Source. */
 export const ArtifactSave = z.object({

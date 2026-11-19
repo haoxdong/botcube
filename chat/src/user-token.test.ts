@@ -6,7 +6,7 @@ import { memoryDocuments } from '../test/memory-documents.js';
 import { accountCookies } from './account-cookies.js';
 import { AccountStore } from './account-store.js';
 import { accountRoutes } from './accounts.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { TurnIdentity } from './turn-identity.js';
 import { forwardUserToken } from './user-token.js';
 

@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
 import { SessionWriterRecoveryError } from './session-writers.js';
 import type { ScheduledDelivery, ScheduledRunStore } from './scheduled-run-store.js';

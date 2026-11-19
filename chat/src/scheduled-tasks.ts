@@ -22,7 +22,7 @@ import {
   type CreateScheduleCommandInput,
 } from '@aws-sdk/client-scheduler';
 import { isScheduledInstant, nextRateTick, nextScheduledRun } from './schedule-time.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { ScheduledRunCard } from './session-api.js';
 import type { SchedulerConfig, Schedules } from './scheduler.js';
 

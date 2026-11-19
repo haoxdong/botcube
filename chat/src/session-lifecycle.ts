@@ -1,5 +1,5 @@
 import { decodeJwt } from 'jose';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import type { SessionPurge, RegisteredDispatch } from './session-metadata.js';
 import type { Upstream } from './upstream.js';
 

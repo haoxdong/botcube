@@ -95,7 +95,7 @@ export class FakeAgentCore extends HttpFake {
   invocations(): RecordedRequest[] { return this.requests.filter((request) => request.path.startsWith('/runtimes/') && request.path.includes('/invocations')); }
 }
 
-export function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, response: ServerResponse): void {
+function playRuntime(script: UpstreamScript, forwardedProps: Record<string, unknown>, response: ServerResponse): void {
   if (script.kind === 'error') {
     if (script.body === null) {
       response.writeHead(script.status, { 'content-length': '1000' });

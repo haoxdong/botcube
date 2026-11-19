@@ -1,7 +1,7 @@
 import type { FilesCleanupClaim } from './files-cleanup-worker.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactSave, SavedArtifact } from './artifact-save.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 /** Where every Agent Computer browser mounts its account's Files; Chrome's download directory (deploy/agent-computer). */
 export const FILES_MOUNT_PATH = '/mnt/files';

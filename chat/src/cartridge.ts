@@ -1,6 +1,7 @@
 import type { RunAgentInput } from '@ag-ui/client';
 import type { Context, Hono } from 'hono';
 import type { CredentialSource } from './credential-source.js';
+import type { Requester } from './requester.js';
 import type { TaskStopSleep } from './task-stop.js';
 
 /** The name, character, vibe, and avatar (an emoji, or empty for the name's initial) a user gives their agent. */
@@ -24,15 +25,6 @@ export interface AgentModel {
   readonly description?: string | undefined;
   /** Whose model it is: a Session's Turns all run on its first Turn's provider, so its history never mixes two. */
   readonly provider: string;
-}
-
-/** The account that sent a request, as the Cartridge resolved it from the request. */
-export interface Requester {
-  /** The Account tier resolved by the Cartridge, never supplied by the client. */
-  readonly rateTier?: string;
-  /** The account that owns the requester's Sessions: the one its Turns are filed under. */
-  readonly owner: string;
-  readonly anonymous?: boolean;
 }
 
 /** The JSON body an upstream Harness receives for one Turn. */
@@ -148,14 +140,3 @@ export function botMemory(forwardedProps: Record<string, unknown>, cartridge: Pi
 
 /** Builds a Cartridge once the Chat Service can offer it the account-history hooks. */
 export type CartridgeFactory<R extends Requester = Requester> = (history: AccountHistory) => ChatServiceCartridge<R>;
-
-/** A client-facing failure, answered as `{"detail": ...}`, the shape the UI reads. */
-export class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly detail: string,
-    readonly code?: string,
-  ) {
-    super(detail);
-  }
-}

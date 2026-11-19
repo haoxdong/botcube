@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 export interface TurnQuotaLimits {
   anonymous: number;

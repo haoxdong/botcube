@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import type { FilesRecords } from './files-shared.js';
 import type { AccessPoints } from './files-efs.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 export const filesPoolSlots = z.array(z.object({
   arn: z.string().regex(/^arn:[a-z-]+:elasticfilesystem:[a-z0-9-]+:[0-9]{12}:access-point\/fsap-[a-z0-9]+$/),

@@ -27,17 +27,14 @@ interface SignInsListProps {
   /** Null until loaded. */
   signIns: SignIn[] | null;
   error: string | null;
-  warning: string | null;
   busy: boolean;
   /** Sign in and Re-link both open the Sign-in Sheet. */
   onSignIn: () => void;
   onSignOut: () => void;
-  onConfirmSignOut: () => void;
-  onCancelSignOut: () => void;
 }
 
 /** The Agent Profile's Sign-ins tab: each site the agent can sign in to, its status, and what the user can do. */
-export function SignInsList({ signIns, error, warning, busy, ...actions }: SignInsListProps) {
+export function SignInsList({ signIns, error, busy, ...actions }: SignInsListProps) {
   return (
     <div className="sign-ins">
       <Swap state={signIns === null ? 'loading' : 'loaded'}>
@@ -50,13 +47,8 @@ export function SignInsList({ signIns, error, warning, busy, ...actions }: SignI
               <span className="sign-in-name">{signIn.name}</span>
               <Fade open={signIn.username != null} className="sign-in-username">{signIn.username}</Fade>
               <StatusPill className="sign-in-status" tone={STATUS_TONES[signIn.status]}>{STATUS_LABELS[signIn.status]}</StatusPill>
-              <Swap state={warning !== null ? 'confirm-sign-out' : signIn.status} className="sign-in-actions">
-                {warning !== null ? (
-                  <>
-                    <Button type="button" disabled={busy} onClick={actions.onConfirmSignOut}>Sign out anyway</Button>
-                    <Button type="button" disabled={busy} onClick={actions.onCancelSignOut}>Cancel</Button>
-                  </>
-                ) : signIn.status === 'not_linked' ? (
+              <Swap state={signIn.status} className="sign-in-actions">
+                {signIn.status === 'not_linked' ? (
                   <Button type="button" disabled={busy} onClick={actions.onSignIn}>Sign in</Button>
                 ) : (
                   <>
@@ -72,7 +64,6 @@ export function SignInsList({ signIns, error, warning, busy, ...actions }: SignI
         </ul>
       )}
       </Swap>
-      <Collapse open={warning !== null}>{warning !== null && <p className="sign-in-warning" role="alert">{warning}</p>}</Collapse>
       <Collapse open={error !== null}>{error !== null && <p className="sign-in-error" role="alert">{error}</p>}</Collapse>
     </div>
   );
@@ -105,12 +96,9 @@ export function SignInsTab({ chatServiceUrl, control }: { chatServiceUrl: string
     <SignInsList
       signIns={signIns}
       error={control.error ?? loadError}
-      warning={control.warning}
       busy={control.busy}
       onSignIn={control.signIn}
       onSignOut={control.signOut}
-      onConfirmSignOut={control.confirmSignOut}
-      onCancelSignOut={control.cancelSignOut}
     />
   );
 }

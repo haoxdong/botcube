@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Account } from './account-record.js';
 import type { AccountStore } from './account-store.js';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { verifyCredentialServiceInvocation } from './credential-service-token.js';
 
 interface TestUserConnectorOptions<A extends Account> {

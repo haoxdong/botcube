@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { Hono, type Context } from 'hono';
 import { OpenAIIdentityTaken } from './account-resources.js';
 import { verifyCredentialServiceInvocation } from './credential-service-token.js';

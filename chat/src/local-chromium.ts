@@ -3,7 +3,7 @@ import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { availableParallelism, cpus, freemem, loadavg, tmpdir, totalmem } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 import { Cdp } from './cdp.js';
 
 export class ComputerStartupCancelled extends HttpError {

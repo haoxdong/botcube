@@ -1,4 +1,4 @@
-import { HttpError } from './cartridge.js';
+import { HttpError } from './http-error.js';
 
 /** A small image an account keeps, such as its agent's picture: its bytes and their image type. */
 export interface Picture {
