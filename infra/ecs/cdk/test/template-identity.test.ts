@@ -100,6 +100,28 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
     .filter(({ Action }) => Action === 'ssm:GetParameterHistory');
   expect(parkReads.map(({ Resource }) => JSON.stringify(Resource))).toEqual([expect.stringContaining(`:parameter${identity.ssm.parkState}"`)]);
 });
+
+test('a waking Credential Service passes its ALB health check as fast as Chat', () => {
+  const { root, deployRoot, app } = fixture();
+  const published = { ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, credentialService: {
+    ...identity.aws.ecs.credentialService, publicHostname: 'service.example.com', publicPaths: ['/sheets'],
+  } } } };
+  defineProduction(app, {
+    repositoryRoot: root, deployRoot, identity: published, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    origin: {
+      input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      commit: 'local-fixture',
+    },
+  });
+  const groups = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, false).findResources('AWS::ElasticLoadBalancingV2::TargetGroup');
+  const credential = Object.entries(groups).filter(([id]) => id.startsWith('CredentialService')).map(([, group]) => group.Properties);
+  expect(credential).toEqual([expect.objectContaining({
+    HealthCheckPath: '/health', Matcher: { HttpCode: '200' },
+    HealthCheckIntervalSeconds: 5, HealthCheckTimeoutSeconds: 4, HealthyThresholdCount: 2, UnhealthyThresholdCount: 6,
+  })]);
+});
+
 test.each([true, false])('parks idle production and wakes it from the paused page with parked=%s', parked => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {

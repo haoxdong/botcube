@@ -47,7 +47,12 @@ export function publishCredentialService(origin: PreviewOriginStack, credentials
   if (!origin.alb) return;
   const target = new elb.ApplicationTargetGroup(credentials, 'PublicTarget', {
     vpc: credentials.service.cluster.vpc, port: route.port, protocol: elb.ApplicationProtocol.HTTP, targetType: elb.TargetType.IP,
-    healthCheck: { path: '/health', healthyHttpCodes: '200' }, deregistrationDelay: Duration.seconds(30),
+    // A wake waits on this check; at the 30-second default it took 83 s after the service was listening.
+    healthCheck: {
+      path: '/health', healthyHttpCodes: '200', interval: Duration.seconds(5), timeout: Duration.seconds(4),
+      healthyThresholdCount: 2, unhealthyThresholdCount: 6,
+    },
+    deregistrationDelay: Duration.seconds(30),
   });
   credentials.service.attachToApplicationTargetGroup(target);
   new elb.ApplicationListenerRule(credentials, 'PublicRoute', {
