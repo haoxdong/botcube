@@ -6,6 +6,7 @@ import type { HarnessAuth } from 'botcube-deployment-config/seams';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { harnessBearer } from './harness-auth.js';
 import { TurnIdentity } from './turn-identity.js';
+import { filed } from '../test/stock-bot.js';
 
 const ISSUER = 'https://chat.example.com';
 
@@ -17,13 +18,13 @@ const key: JsonWebKey = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).
 describe('a Chat Service on the jwt-bearer Harness auth', () => {
   let stack: InProcessStack;
   beforeAll(async () => {
-    stack = await startInProcess({ config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } } });
+    stack = await startInProcess({ stock: true, config: { turnIdentity: { issuer: ISSUER, keys: [key] }, harnessAuth: { kind: 'jwt-bearer', issuer: 'botcube', clients: [{ clientId: 'botcube-harness' }] } } });
   });
   afterAll(() => stack.stop());
 
   it('invokes the AgentCore Runtime with its own bearer token for the Harness audience, not SigV4', async () => {
     const sessionId = randomUUID();
-    await stack.sessionMetadata.recordTurn('account-1', sessionId, { filingUserId: 'filed-account-1', title: 'Bearer', allocation: true });
+    await stack.sessionMetadata.recordTurn('acct_account-1', sessionId, { filingUserId: filed('acct_account-1'), title: 'Bearer', allocation: true });
 
     const response = await stack.app.request('/', {
       method: 'POST', headers: { 'content-type': 'application/json' },

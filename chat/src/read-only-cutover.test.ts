@@ -2,13 +2,14 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from '@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
+import { filed } from '../test/stock-bot.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SESSION_HEADER = 'x-amzn-bedrock-agentcore-runtime-session-id';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -22,7 +23,7 @@ const turn = (account: string, threadId: string) => post(account, '/', {
 });
 
 async function preCutoverChat(account: string, sessionId: string, main = false): Promise<void> {
-  const binding = { filing_user_id: `filed-${account}`, runtime_binding: 'runtime-00000000-0000-4000-8000-000000000000', runtime_generation: 'tracked-v1', read_only: true };
+  const binding = { filing_user_id: filed(account), runtime_binding: 'runtime-00000000-0000-4000-8000-000000000000', runtime_generation: 'tracked-v1', read_only: true };
   await documents().send(new PutCommand({ TableName: stack.table.name, Item: {
     pk: `SESSIONS#${account}`, sk: `SESSION#${sessionId}`, session_id: sessionId, ...binding,
     title: 'Before the cutover', created_at: '2026-10-01T00:00:00.000000+00:00', updated_at: '2026-10-01T00:00:00.000000+00:00', provider: 'openai',

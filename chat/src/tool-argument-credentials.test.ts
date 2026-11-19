@@ -6,7 +6,7 @@ import { defined } from '../test/defined.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: {
+  stack = await startInProcess({ stock: true, cartridge: {
     invocationPayload: async (input) => ({ ...input, forwardedProps: { signedToken: 'private-token' } }),
     credentialProps: ['signedToken'],
   } });
@@ -20,7 +20,7 @@ const message = (arguments_: string) => ({ id: 'm', role: 'assistant', content: 
 
 async function publicTurn(events: Record<string, unknown>[], messages: unknown[] = []): Promise<{ body: string; toolArgs: unknown[] }> {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const threadId = await stack.allocate('account-1', `credential-json-${Math.random()}`);
+  const threadId = await stack.allocate('acct_account-1', `credential-json-${Math.random()}`);
   stack.agentcore.script(threadId, { kind: 'stream', frames: [
     { type: 'RUN_STARTED', threadId, runId: 'r' }, ...events, { type: 'RUN_FINISHED', threadId, runId: 'r' },
   ].map((event) => `data: ${JSON.stringify(event)}`) });

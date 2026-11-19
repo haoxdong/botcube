@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 
 it('clears a failed Turn running mark when the streamed error exceeds a metadata item', async () => {
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const sessionId = 'large-stream-error';
   const message = 'Provider error details\n' + 'x'.repeat(410_000);
   stack.agentcore.script(sessionId, { kind: 'stream', frames: [
@@ -11,7 +11,7 @@ it('clears a failed Turn running mark when the streamed error exceeds a metadata
     `data: ${JSON.stringify({ type: 'RUN_ERROR', code: 'PROVIDER_ERROR', message })}`,
   ] });
   try {
-    await stack.allocate('account-1', sessionId);
+    await stack.allocate('acct_account-1', sessionId);
     const response = await stack.app.request('/', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threadId: sessionId, runId: 'run', state: {},
@@ -19,7 +19,7 @@ it('clears a failed Turn running mark when the streamed error exceeds a metadata
     });
     const streamFailure = await response.text().then(() => null, (error: unknown) => error);
     expect.soft(streamFailure).toBeNull();
-    const metadata = await stack.sessionMetadata.get('account-1', sessionId);
+    const metadata = await stack.sessionMetadata.get('acct_account-1', sessionId);
     expect.soft(metadata).not.toHaveProperty('turn_running_since');
     expect.soft(metadata).toMatchObject({ turn_failure: { runId: 'run', code: 'PROVIDER_ERROR' } });
     stack.sessionApi.reply(sessionId, 200, { messages: [] });

@@ -3,12 +3,12 @@ import { startInProcess } from '../test/in-process.js';
 
 it.each(['Main', 'Side', 'Existing Side'])('accepts a large pasted message in %s Chat without a metadata admission failure', async (kind) => {
   const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const content = 'Summarize this report.\n' + 'Report paragraph. '.repeat(25_000);
   try {
     const sessionId = kind === 'Main'
       ? ((await (await stack.app.request('/main-chat')).json()) as { id: string }).id
-      : await stack.allocate('account-1', 'large-first-message');
+      : await stack.allocate('acct_account-1', 'large-first-message');
     if (kind === 'Existing Side') {
       const first = await stack.app.request('/', {
         method: 'POST', headers: { 'content-type': 'application/json' },

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { startInProcess } from '../test/in-process.js';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
+import { filed } from '../test/stock-bot.js';
 
 describe('Turn summary settlement after RUN_FINISHED', () => {
   it.each([
@@ -24,11 +25,11 @@ describe('Turn summary settlement after RUN_FINISHED', () => {
         output: { message: { content: [{ toolUse: { name: 'turn_summary', input: { title: 'Compared rates', summary: 'Compared the yields' } } }] } },
       });
     }).listen();
-    const stack = await startInProcess({ config: { turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: model.url } } });
+    const stack = await startInProcess({ stock: true, config: { turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: model.url } } });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     try {
-      await stack.allocate('account-1', 'summary-lifecycle');
+      await stack.allocate('acct_account-1', 'summary-lifecycle');
       const response = await stack.app.request('/', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -58,16 +59,16 @@ describe('Turn summary settlement after RUN_FINISHED', () => {
       }
       if (deleted) {
         expect((await stack.app.request('/threads/summary-lifecycle')).status).toBe(404);
-        expect(await stack.sessionMetadata.turnSummaries('filed-account-1')).toEqual([]);
+        expect(await stack.sessionMetadata.turnSummaries(filed('acct_account-1'))).toEqual([]);
       } else if (modelFails) {
-        expect(await stack.sessionMetadata.turnSummaries('filed-account-1')).toMatchObject([
+        expect(await stack.sessionMetadata.turnSummaries(filed('acct_account-1'))).toMatchObject([
           { failed: 'The Turn summary could not be made: The summary model answered HTTP 500' },
         ]);
         expect(await (await stack.app.request('/threads/summary-lifecycle')).json()).toMatchObject({
           failure: { code: 'TURN_SUMMARY_FAILED' },
         });
       } else {
-        expect(await stack.sessionMetadata.turnSummaries('filed-account-1')).toMatchObject([
+        expect(await stack.sessionMetadata.turnSummaries(filed('acct_account-1'))).toMatchObject([
           { title: 'Compared rates', summary: 'Compared the yields' },
         ]);
       }

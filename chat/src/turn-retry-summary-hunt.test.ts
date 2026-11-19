@@ -18,7 +18,7 @@ it('retains the newer retry Activity summary when the earlier attempt summary ar
     if (title === 'Old attempt') { releaseOld = answer; oldReady(); }
     else answer();
   }).listen();
-  const stack = await startInProcess({ config: { turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: summary.url } } });
+  const stack = await startInProcess({ stock: true, config: { turnSummaryModel: { kind: 'bedrock', region: 'us-east-1', url: summary.url } } });
   let oldWritten!: () => void;
   let newWritten!: () => void;
   const oldSaved = new Promise<void>((resolve) => { oldWritten = resolve; });
@@ -44,7 +44,7 @@ it('retains the newer retry Activity summary when the earlier attempt summary ar
     await response.text();
   };
   try {
-    await stack.allocate('account-1', 'retry-summary');
+    await stack.allocate('acct_account-1', 'retry-summary');
     await post('old-run');
     await oldSummarizing;
     await post('retry-run');

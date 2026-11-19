@@ -18,9 +18,14 @@ import { FakeAgentCore } from './fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from './fakes/fake-backends.js';
 import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoAws, motoEndpoint } from './fakes/moto.js';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { stockChatService } from '../src/stock.js';
+import { TEST_ACCOUNT_KEY, TestAccounts, testDeploymentConfig } from './stock-bot.js';
 
 /** The account every request acts as, unless a test's Cartridge resolves another. */
 const OWNER = 'account-1';
+/** The account every request to BotCube's own Chat signs in as, unless the x-test-owner header names another. */
+const STOCK_OWNER = 'acct_account-1';
 
 export interface InProcessOptions {
   turnQuota?: TurnQuotaLimits;
@@ -34,6 +39,11 @@ export interface InProcessOptions {
   };
   /** A Cartridge built from the account-history hooks, such as a bot's own, in place of the test Cartridge. */
   cartridgeFactory?: CartridgeFactory;
+  /**
+   * Serve BotCube's own Chat on the test bot's Deployment Config, as production does, in place of the test Cartridge:
+   * each request signs in as STOCK_OWNER (or the x-test-owner header's account), and `cartridge` overrides apply on top.
+   */
+  stock?: boolean;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
   /** Session Metadata table: created (default) or missing. */
@@ -128,10 +138,18 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     delete: (receipt) => queue.delete(receipt),
   };
   let history: AccountHistory | undefined;
-  const app = createChatService(
+  const accounts = options.stock === true ? new TestAccounts(table, DynamoDBDocumentClient.from(client)) : null;
+  const stock = accounts && stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table }, {
+    accountStore: accounts,
+    // The Agent Computer is an External Service: these tests start no browser.
+    agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),
+  });
+  let built: ChatServiceCartridge = cartridge;
+  const service = createChatService(
     (hooks) => {
       history = hooks;
-      return options.cartridgeFactory?.(hooks) ?? cartridge;
+      built = stock ? { ...stock(hooks), ...overrides } : options.cartridgeFactory?.(hooks) ?? cartridge;
+      return built;
     },
     config,
     options.activity?.observe(sessionMetadata) ?? sessionMetadata,
@@ -140,6 +158,13 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     runs && runQueue && { tasks: new ScheduledTasks(table, runs, client, new SchedulerClient(aws)), queue: runQueue, draining: options.scheduledDraining ?? (async () => false), parkHistory: options.parkHistory },
     options.turnQuota ? new TurnQuota(table, client, options.turnQuota) : null,
   );
+  // Each request arrives signed in as its test owner, through the test bot's session cookie.
+  const app = accounts === null ? service : new Hono().all('*', async (c) => {
+    const headers = new Headers(c.req.raw.headers);
+    const token = await accounts.signIn(c.req.header('x-test-owner') ?? STOCK_OWNER);
+    headers.append('cookie', `${TEST_ACCOUNT_KEY}_session=${token}`);
+    return service.fetch(new Request(c.req.raw, { headers }), c.env);
+  });
   return {
     app,
     history: history as AccountHistory,
@@ -150,7 +175,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
     table: { name: table, client },
     scheduler: runs && new SchedulerView(endpoint, runs),
     async allocate(owner, sessionId) {
-      await sessionMetadata.recordTurn(owner, sessionId, { filingUserId: cartridge.filingUserId(owner), title: '', warmup: true, allocation: true });
+      await sessionMetadata.recordTurn(owner, sessionId, { filingUserId: built.filingUserId(owner), title: '', warmup: true, allocation: true });
       return sessionId;
     },
     async stop() {

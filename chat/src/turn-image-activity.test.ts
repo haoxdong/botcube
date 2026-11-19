@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { startInProcess } from '../test/in-process.js';
 
 it.each([false, true])('records an answered image Turn in Activity when accompanying text is %s', async (withText) => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const sessionId = 'image-activity';
   const content = [
     ...(withText ? [{ type: 'text', text: 'Describe this image' }] : []),
@@ -14,7 +14,7 @@ it.each([false, true])('records an answered image Turn in Activity when accompan
     'data: {"type":"RUN_FINISHED","threadId":"image-activity","runId":"run"}',
   ] });
   try {
-    await stack.allocate('account-1', sessionId);
+    await stack.allocate('acct_account-1', sessionId);
     const response = await stack.app.request('/', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threadId: sessionId, runId: 'run', state: {},
@@ -22,7 +22,7 @@ it.each([false, true])('records an answered image Turn in Activity when accompan
     });
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('The image shows a blue circle.');
-    expect(await stack.sessionMetadata.get('account-1', sessionId)).not.toHaveProperty('turn_running_since');
+    expect(await stack.sessionMetadata.get('acct_account-1', sessionId)).not.toHaveProperty('turn_running_since');
     await vi.waitFor(async () => {
       const activity = await (await stack.app.request('/activity')).json() as { tasks: unknown[] };
       expect(activity.tasks).toHaveLength(1);
@@ -31,13 +31,13 @@ it.each([false, true])('records an answered image Turn in Activity when accompan
 });
 
 it('records an image-only Turn that ends in a run error as failed in Activity', async () => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   stack.agentcore.script('failed-image', { kind: 'stream', frames: [
     'data: {"type":"RUN_STARTED","threadId":"failed-image","runId":"run"}',
     'data: {"type":"RUN_ERROR","message":"Model overloaded","code":"INTERNAL_ERROR"}',
   ] });
   try {
-    await stack.allocate('account-1', 'failed-image');
+    await stack.allocate('acct_account-1', 'failed-image');
     const response = await stack.app.request('/', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ threadId: 'failed-image', runId: 'run', state: {},
@@ -52,12 +52,12 @@ it('records an image-only Turn that ends in a run error as failed in Activity', 
         tasks: [{ summary: '', failed: 'Model overloaded', completedAt: expect.any(String) }],
       });
     });
-    expect(await stack.sessionMetadata.get('account-1', 'failed-image')).not.toHaveProperty('turn_running_since');
+    expect(await stack.sessionMetadata.get('acct_account-1', 'failed-image')).not.toHaveProperty('turn_running_since');
   } finally { await stack.stop(); }
 });
 
 it.each([false, true])('retains both Activity entries for a full-history image follow-up with text %s', async (withText) => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const firstMessage = { id: 'first-question', role: 'user', content: 'Analyze the first report' };
   const post = async (runId: string, messages: unknown[]) => {
     stack.agentcore.script('image-follow-up', { kind: 'stream', frames: [
@@ -74,7 +74,7 @@ it.each([false, true])('retains both Activity entries for a full-history image f
   };
   const activity = async () => (await (await stack.app.request('/activity')).json()) as { tasks: { title: string }[] };
   try {
-    await stack.allocate('account-1', 'image-follow-up');
+    await stack.allocate('acct_account-1', 'image-follow-up');
     stack.bedrock.turnSummary = { title: 'First task', summary: 'First report analyzed' };
     await post('first', [firstMessage]);
     await vi.waitFor(async () => { expect((await activity()).tasks).toMatchObject([{ title: 'First task' }]); });

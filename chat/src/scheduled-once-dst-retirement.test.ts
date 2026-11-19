@@ -6,7 +6,7 @@ import { eventually } from '../test/eventually.js';
 it('retires a completed one-off at its real instant after the spring DST change', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2027-03-13T12:00:00.000Z'));
-  const stack = await startInProcess({ scheduled: true });
+  const stack = await startInProcess({ stock: true, scheduled: true });
   const scheduler = defined(stack.scheduler, 'scheduled queue');
   const request = (path: string, body?: object) => stack.app.request(path, {
     method: body === undefined ? 'GET' : 'POST',

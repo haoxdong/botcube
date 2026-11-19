@@ -6,9 +6,9 @@ it.each([
   { name: 'null messages', body: { messages: null }, expected: 503 },
   { name: 'empty conversation', body: { messages: [] }, expected: 200 },
 ])('classifies replay with $name without corrupting Turn metadata', async ({ body, expected }) => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   try {
-    await stack.allocate('account-1', 'replay-shape');
+    await stack.allocate('acct_account-1', 'replay-shape');
     stack.agentcore.script('replay-shape', { kind: 'stream', frames: [
       'data: {"type":"RUN_STARTED","threadId":"replay-shape","runId":"run"}',
       'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"answer","delta":"Done"}',
@@ -25,7 +25,7 @@ it.each([
     const replay = await stack.app.request('/threads/replay-shape');
     expect.soft(replay.status).toBe(expected);
     if (expected === 200) expect(await replay.json()).toMatchObject({ messages: [], running: false });
-    const metadata = await stack.sessionMetadata.get('account-1', 'replay-shape');
+    const metadata = await stack.sessionMetadata.get('acct_account-1', 'replay-shape');
     expect(metadata).toMatchObject({ turn_latest_run_id: 'run' });
     expect(metadata).not.toHaveProperty('turn_running_since');
     expect(metadata).not.toHaveProperty('turn_failure');

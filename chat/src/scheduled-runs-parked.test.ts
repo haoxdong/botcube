@@ -15,11 +15,11 @@ const parkHistory: ParkHistory = {
 };
 
 beforeAll(async () => {
-  stack = await startInProcess({ scheduled: true, parkHistory });
+  stack = await startInProcess({ stock: true, scheduled: true, parkHistory });
 });
 afterAll(() => stack.stop());
 
-const owner = () => `owner-${Math.random().toString(36).slice(2)}`;
+const owner = () => `acct_owner-${Math.random().toString(36).slice(2)}`;
 const request = (account: string, path: string, body?: unknown) =>
   stack.app.request(path, {
     method: body === undefined ? 'GET' : 'POST',

@@ -38,7 +38,7 @@ describe('production activity', () => {
 
   it('reports a Turn running from its mark to its end, and none once it ends', async () => {
     const activity = new ProductionActivity();
-    stack = await startInProcess({ activity });
+    stack = await startInProcess({ stock: true, activity });
     const during: number[] = [];
     stack.agentcore.scriptPrompt('Brief me', { kind: 'stream', frames: () => {
       during.push(activity.heartbeat().runningTurns);
@@ -46,9 +46,9 @@ describe('production activity', () => {
         .map((frame) => `data: ${JSON.stringify(frame)}`);
     } });
 
-    await stack.allocate('activity-owner', 'activity-chat');
+    await stack.allocate('acct_activity-owner', 'activity-chat');
     const response = await stack.app.request('/', {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': 'activity-owner' },
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-test-owner': 'acct_activity-owner' },
       body: JSON.stringify({ threadId: 'activity-chat', runId: 'activity-run', state: {}, messages: [{ id: 'm1', role: 'user', content: 'Brief me' }], tools: [], context: [], forwardedProps: { model: 'quick' } }),
     });
     await response.text();
@@ -60,14 +60,14 @@ describe('production activity', () => {
 
   it('stops counting a Turn whose client left before its response began, through the Node adapter', async () => {
     const activity = new ProductionActivity();
-    stack = await startInProcess({ activity });
+    stack = await startInProcess({ stock: true, activity });
     const ran: number[] = [];
     stack.agentcore.scriptPrompt('Hello', { kind: 'stream', frames: () => {
       ran.push(activity.heartbeat().runningTurns);
       return [{ type: 'RUN_STARTED' }, { type: 'TEXT_MESSAGE_CHUNK', messageId: 'a1', role: 'assistant', delta: 'Hey.' }, { type: 'RUN_FINISHED' }]
         .map((frame) => `data: ${JSON.stringify(frame)}`);
     } });
-    await stack.allocate('abandon-owner', 'abandon-chat');
+    await stack.allocate('acct_abandon-owner', 'abandon-chat');
     const { app } = stack;
     let arrived!: () => void;
     const received = new Promise<void>((resolve) => { arrived = resolve; });
@@ -80,7 +80,7 @@ describe('production activity', () => {
     const server = await new Promise<ServerType>((resolve) => { const started = serve({ fetch, port: 0, hostname: '127.0.0.1' }, () => resolve(started)); });
     try {
       const { port } = server.address() as AddressInfo;
-      const client = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/', headers: { 'content-type': 'application/json', 'x-test-owner': 'abandon-owner' } });
+      const client = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/', headers: { 'content-type': 'application/json', 'x-test-owner': 'acct_abandon-owner' } });
       client.on('error', () => undefined);
       client.end(JSON.stringify({ threadId: 'abandon-chat', runId: 'abandon-run', state: {}, messages: [{ id: 'm1', role: 'user', content: 'Hello' }], tools: [], context: [], forwardedProps: { model: 'quick' } }));
       await received;
@@ -88,7 +88,7 @@ describe('production activity', () => {
 
       await vi.waitFor(() => expect(ran).toEqual([1]));
       await vi.waitFor(() => expect(activity.heartbeat()).toMatchObject({ runningTurns: 0, runningTurnIds: [] }));
-      await vi.waitFor(async () => expect((await defined(stack, 'the stack').sessionMetadata.get('abandon-owner', 'abandon-chat'))?.turn_running_since).toBeUndefined());
+      await vi.waitFor(async () => expect((await defined(stack, 'the stack').sessionMetadata.get('acct_abandon-owner', 'abandon-chat'))?.turn_running_since).toBeUndefined());
     } finally {
       await new Promise((resolve) => { server.close(resolve); });
     }
@@ -133,7 +133,7 @@ describe('production activity', () => {
   });
 
   it('writes its heartbeat to the chat table for the parking Lambda', async () => {
-    stack = await startInProcess();
+    stack = await startInProcess({ stock: true });
     const activity = new ProductionActivity(() => 42);
     const documents = DynamoDBDocumentClient.from(stack.table.client);
     const stop = activity.report(stack.table.name, documents);

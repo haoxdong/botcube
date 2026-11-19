@@ -15,10 +15,10 @@ it.each(['missing', 'starting'] as const)(
       await writeFile(executable, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
     const computer = localAgentComputer({
       history: { owns: async () => true, ownsMainChat: async () => false },
-      requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'account-1' }),
+      requester: async (c) => ({ owner: c.req.header('x-test-owner') ?? 'acct_account-1' }),
       env: { BOTCUBE_CHROMIUM_PATH: executable },
     });
-    const stack = await startInProcess({ cartridge: {
+    const stack = await startInProcess({ stock: true, cartridge: {
       routes: computer.routes,
       invocationPayload: async (input, { owner }) => ({
         ...input,
@@ -29,7 +29,7 @@ it.each(['missing', 'starting'] as const)(
       browserLiveView: computer.browserLiveView,
     } });
     const threadId = `ordinary-${kind}`;
-    await stack.allocate('account-1', threadId);
+    await stack.allocate('acct_account-1', threadId);
     stack.agentcore.script(threadId, { kind: 'stream', frames: [
       'data: {"type":"RUN_STARTED"}',
       'data: {"type":"TEXT_MESSAGE_START","messageId":"answer","role":"assistant"}',
@@ -55,7 +55,7 @@ it.each(['missing', 'starting'] as const)(
       expect(stack.agentcore.invocationFor(threadId).payload.forwardedProps.agentComputerCdpUrl)
         .toMatch(/^ws:\/\/127\.0\.0\.1:8123\/agent-computer\/cdp\?token=/);
       if (kind === 'missing') {
-        await expect(computer.state('account-1', threadId)).rejects.toMatchObject({
+        await expect(computer.state('acct_account-1', threadId)).rejects.toMatchObject({
           status: 503,
           detail: `Agent Computer failed to start: Chromium is not installed at ${executable} (ENOENT): install it or set BOTCUBE_CHROMIUM_PATH`,
         });

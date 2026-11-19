@@ -6,7 +6,7 @@ const UI = 'https://ui.example.com';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ config: { corsOrigins: [UI] } });
+  stack = await startInProcess({ stock: true, config: { corsOrigins: [UI] } });
 });
 afterAll(() => stack.stop());
 
@@ -101,7 +101,7 @@ describe('a cross-origin request', () => {
 
   // Cloudflare replaces an origin's 502 with its own page, without these headers.
   it('from an allowed origin reads a failed warmup as 503, with credentialed access', async () => {
-    await stack.allocate('account-1', 'cors-warmup');
+    await stack.allocate('acct_account-1', 'cors-warmup');
     stack.agentcore.script('cors-warmup', { kind: 'stream', frames: ['data: {"type":"RUN_ERROR","message":"Files could not be mounted","code":"FILES_MOUNT"}'] });
 
     const response = await stack.app.request('/warmup', {
@@ -137,7 +137,7 @@ describe('the allowed origins', () => {
   it.each(['http://localhost:3001', 'http://127.0.0.1:3001'])(
     'include the local web UI at %s for a Cartridge that allows it',
     async (origin) => {
-      const local = await startInProcess({ cartridge: { corsOrigins: LOCAL_UI_ORIGINS } });
+      const local = await startInProcess({ stock: true, cartridge: { corsOrigins: LOCAL_UI_ORIGINS } });
       try {
         const response = await local.app.request('/threads', {
           method: 'OPTIONS',
@@ -152,7 +152,7 @@ describe('the allowed origins', () => {
   );
 
   it("are the Cartridge's defaults when BOTCUBE_CORS_ORIGINS is unset", async () => {
-    const defaults = await startInProcess({ cartridge: { corsOrigins: ['https://cartridge.example.com'] } });
+    const defaults = await startInProcess({ stock: true, cartridge: { corsOrigins: ['https://cartridge.example.com'] } });
     try {
       const allowed = await defaults.app.request('/ping', { headers: { origin: 'https://cartridge.example.com' } });
       const other = await defaults.app.request('/ping', { headers: { origin: UI } });
@@ -165,7 +165,7 @@ describe('the allowed origins', () => {
   });
 
   it("replace the Cartridge's defaults when BOTCUBE_CORS_ORIGINS is set", async () => {
-    const overridden = await startInProcess({
+    const overridden = await startInProcess({ stock: true,
       cartridge: { corsOrigins: ['https://cartridge.example.com'] },
       config: { corsOrigins: [UI] },
     });

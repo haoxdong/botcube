@@ -3,7 +3,7 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true });
 });
 afterAll(() => stack.stop());
 
@@ -62,7 +62,7 @@ describe('a Turn whose lists are malformed', () => {
 
 describe('a Turn with null optional fields', () => {
   it('forwards its tools, context and tool calls without them', async () => {
-    await stack.allocate('account-1', 'session-nulls');
+    await stack.allocate('acct_account-1', 'session-nulls');
     const response = await postTurn(
       JSON.stringify({
         ...TURN,
@@ -95,7 +95,7 @@ describe('a Turn with null optional fields', () => {
 
 describe('a Turn with optional forwardedProps', () => {
   it.each([['omitted', undefined], ['null', null], ['empty', {}]])('accepts %s forwardedProps and forwards its message to the Harness', async (name, forwardedProps) => {
-    const threadId = await stack.allocate('account-1', `session-forwarded-props-${name}`);
+    const threadId = await stack.allocate('acct_account-1', `session-forwarded-props-${name}`);
     const response = await postTurn(JSON.stringify({ ...TURN, threadId, forwardedProps }));
 
     expect(response.status).toBe(200);

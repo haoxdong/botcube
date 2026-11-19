@@ -59,6 +59,8 @@ export interface StockOptions {
   accountStore?: AccountStore;
   /** The page each local Agent Computer opens on; blank unless given. */
   startPage?: string;
+  /** The local Agent Computer in place of the deploy's own, such as a test's that starts no browser. */
+  agentComputer?: (computer: ReturnType<typeof localAgentComputer>) => ReturnType<typeof localAgentComputer>;
 }
 
 /** BotCube's own Chat Service, composed from the Deployment Config and the bot settings it names (ADR 0091). */
@@ -106,7 +108,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     // The managed AgentCore browser when the deploy names one; a local Chromium only when it names none.
     const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
       ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
-      : localAgentComputer({ history, requester, env, startPage: options.startPage });
+      : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage }));
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({
       store, deleteAccount: lifecycle.deleteAccount,

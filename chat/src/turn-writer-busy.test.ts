@@ -3,6 +3,7 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
 import { SessionBusyError } from './session-metadata.js';
 import { sessionAccessError } from './sessions.js';
+import { filed } from '../test/stock-bot.js';
 
 const nextTurn = (stack: InProcessStack, sessionId: string, signal?: AbortSignal) => stack.app.request('/', {
   method: 'POST', headers: { 'content-type': 'application/json' },
@@ -12,9 +13,9 @@ const nextTurn = (stack: InProcessStack, sessionId: string, signal?: AbortSignal
 });
 
 async function previousWriter(stack: InProcessStack, kind: 'runtime' | 'session-post') {
-  await stack.allocate('account-1', 'writer-busy');
-  await stack.sessionMetadata.recordTurn('account-1', 'writer-busy', { filingUserId: 'filed-account-1', title: 'First reply' });
-  return stack.sessionMetadata.beginDispatch('account-1', 'writer-busy', undefined, undefined, kind);
+  await stack.allocate('acct_account-1', 'writer-busy');
+  await stack.sessionMetadata.recordTurn('acct_account-1', 'writer-busy', { filingUserId: filed('acct_account-1'), title: 'First reply' });
+  return stack.sessionMetadata.beginDispatch('acct_account-1', 'writer-busy', undefined, undefined, kind);
 }
 
 function observeWait() {
@@ -25,7 +26,7 @@ function observeWait() {
 }
 
 it('answers the next Turn while the previous Runtime writer remains registered', async () => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   try {
     const writer = await previousWriter(stack, 'runtime');
     const response = await nextTurn(stack, 'writer-busy');
@@ -36,7 +37,7 @@ it('answers the next Turn while the previous Runtime writer remains registered',
 });
 
 it('waits for the exclusive writer, answers the second Turn and reopens without a saved failure', async () => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const { waiting, logged } = observeWait();
   try {
     const writer = await previousWriter(stack, 'session-post');
@@ -60,7 +61,7 @@ it('waits for the exclusive writer, answers the second Turn and reopens without 
 });
 
 it.each(['cancelled', 'deadline', 'deleted'] as const)('ends a %s wait without dispatching or saving an unmapped busy message', async (outcome) => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const { waiting, logged } = observeWait();
   const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   const client = new AbortController();
@@ -72,7 +73,7 @@ it.each(['cancelled', 'deadline', 'deleted'] as const)('ends a %s wait without d
     if (outcome === 'cancelled') client.abort();
     if (outcome === 'deadline') vi.setSystemTime(Date.now() + 61_000);
     if (outcome === 'deleted') {
-      await stack.sessionMetadata.fence('account-1', 'writer-busy');
+      await stack.sessionMetadata.fence('acct_account-1', 'writer-busy');
       await defined(writer.markSucceeded, 'post completion')('session-post');
       await writer();
     }
@@ -115,7 +116,7 @@ it.each([
   ['Pebble', 'Pebble is still posting a scheduled task. Send your message again in a minute.'],
   ['', 'Still posting a scheduled task. Send your message again in a minute.'],
 ])('uses the configured agent name %j in a scheduled-post refusal', async (name, detail) => {
-  const stack = await startInProcess({ cartridge: { agentDocuments: {
+  const stack = await startInProcess({ stock: true, cartridge: { agentDocuments: {
     agentIdentity: { name, character: 'A template agent', vibe: 'Plain', avatar: '' }, soul: 'Be brief.',
   } } });
   const { waiting, logged } = observeWait();
@@ -134,7 +135,7 @@ it.each([
 });
 
 it('uses the edited Agent Identity name already loaded for the Turn', async () => {
-  const stack = await startInProcess();
+  const stack = await startInProcess({ stock: true });
   const { waiting, logged } = observeWait();
   const client = new AbortController();
   try {

@@ -3,7 +3,7 @@ import { startInProcess } from '../test/in-process.js';
 
 async function turnWith(tunesPrompts: boolean | undefined, candidates: Record<string, unknown>) {
   const seen: Record<string, unknown>[] = [];
-  const stack = await startInProcess({
+  const stack = await startInProcess({ stock: true,
     cartridge: {
       invocationPayload: async (input) => {
         seen.push(input.forwardedProps as Record<string, unknown>);
@@ -13,7 +13,7 @@ async function turnWith(tunesPrompts: boolean | undefined, candidates: Record<st
     },
   });
   try {
-    if (tunesPrompts === true) await stack.allocate('account-1', `candidate-prompt-${String(tunesPrompts)}`);
+    if (tunesPrompts === true) await stack.allocate('acct_account-1', `candidate-prompt-${String(tunesPrompts)}`);
     const response = await stack.app.request('/', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

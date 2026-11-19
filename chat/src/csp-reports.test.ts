@@ -4,7 +4,7 @@ import { startInProcess, type InProcessStack } from '../test/in-process.js';
 // The web UI's Content Security Policy sends its violation reports here.
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess();
+  stack = await startInProcess({ stock: true });
 });
 afterAll(() => stack.stop());
 afterEach(() => vi.restoreAllMocks());

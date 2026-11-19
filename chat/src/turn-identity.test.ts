@@ -6,6 +6,7 @@ import type { InvocationPayload } from '../test/fakes/fake-agentcore.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { TurnIdentity, turnIdentityConfigFromEnv } from './turn-identity.js';
+import { filed } from '../test/stock-bot.js';
 
 const ISSUER = 'https://chat.example.com';
 
@@ -15,12 +16,12 @@ function privateJwk(kid: string): JsonWebKey {
 
 const current = privateJwk('key-2026-10');
 const next = privateJwk('key-2026-11');
-const turn = { actorId: 'filed-account-1', filingActorId: 'filed-anon-7', sessionId: '3f2b8c1e-5d4a-4f6b-9c2d-1a2b3c4d5e6f', startedAt: '2026-10-11T12:00:00.000Z' };
+const turn = { actorId: filed('acct_account-1'), filingActorId: filed('anon-7'), sessionId: '3f2b8c1e-5d4a-4f6b-9c2d-1a2b3c4d5e6f', startedAt: '2026-10-11T12:00:00.000Z' };
 const startedAtSeconds = Date.parse(turn.startedAt) / 1000;
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ scheduled: true, config: { turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
+  stack = await startInProcess({ stock: true, scheduled: true, config: { turnIdentity: { issuer: ISSUER, keys: [current, next] } } });
 });
 afterAll(() => stack.stop());
 
@@ -59,7 +60,7 @@ describe('OIDC discovery', () => {
   });
 
   it('serves no discovery when the Chat Service has no Turn identity keys', async () => {
-    const bare = await startInProcess();
+    const bare = await startInProcess({ stock: true });
     try {
       expect((await bare.app.request('/.well-known/openid-configuration')).status).toBe(404);
       expect((await bare.app.request('/.well-known/jwks.json')).status).toBe(404);
@@ -82,14 +83,14 @@ describe('Turn identity JWT', () => {
     expect(payload).toEqual({
       iss: ISSUER,
       aud: 'sts.amazonaws.com',
-      sub: 'filed-account-1',
+      sub: filed('acct_account-1'),
       iat: startedAtSeconds,
       exp: startedAtSeconds + 3600,
       jti: expect.stringMatching(/^[0-9a-f-]{36}$/),
       'https://aws.amazon.com/tags': {
         principal_tags: {
-          actorId: ['filed-account-1'],
-          filingActorId: ['filed-anon-7'],
+          actorId: [filed('acct_account-1')],
+          filingActorId: [filed('anon-7')],
           sessionId: ['3f2b8c1e-5d4a-4f6b-9c2d-1a2b3c4d5e6f'],
           // The snapshot checkpointer's writes-session prefix (`_writes_session_prefix`) without its trailing dash.
           writesPrefix: ['lgw-3d005e2ccf2461767eb01d780463736c'],
@@ -147,10 +148,10 @@ const asOwner = (owner: string, path: string, body: unknown) => stack.app.reques
 
 describe('Turn identity forwarding', () => {
   it("hands each Turn the Chat Service's own identity under the Session's filing ID, and withholds a stream that carries it", async () => {
-    const owner = `owner-${randomUUID()}`;
+    const owner = `acct_owner-${randomUUID()}`;
     const sessionId = randomUUID();
     // A claimed Session: filed under the account it started on.
-    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'filed-original', title: 'Claimed', allocation: true });
+    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: filed('original'), title: 'Claimed', allocation: true });
     stack.agentcore.script(sessionId, { kind: 'stream', frames: (props) => [
       'data: {"type":"RUN_STARTED"}', `data: ${JSON.stringify({ type: 'RUN_ERROR', message: `STS refused ${String(props.turnIdentity)}` })}`,
     ] });
@@ -161,27 +162,27 @@ describe('Turn identity forwarding', () => {
     });
 
     const { payload } = stack.agentcore.invocationFor(sessionId);
-    expect(await forwardedTags(payload)).toMatchObject({ actorId: [`filed-${owner}`], filingActorId: ['filed-original'], sessionId: [sessionId] });
+    expect(await forwardedTags(payload)).toMatchObject({ actorId: [filed(owner)], filingActorId: [filed('original')], sessionId: [sessionId] });
     const body = await response.text();
     expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
     expect(body).not.toContain(payload.forwardedProps.turnIdentity as string);
   });
 
   it('hands a named warmup the identity its history read needs', async () => {
-    const owner = `owner-${randomUUID()}`;
+    const owner = `acct_owner-${randomUUID()}`;
     const sessionId = randomUUID();
-    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: 'filed-original', title: 'Warm', allocation: true });
+    await stack.sessionMetadata.recordTurn(owner, sessionId, { filingUserId: filed('original'), title: 'Warm', allocation: true });
 
     const response = await asOwner(owner, '/warmup', { threadId: sessionId });
 
     expect(response.status).toBe(200);
     const { payload } = stack.agentcore.invocationFor(sessionId);
     expect(payload.forwardedProps.warmup).toBe(true);
-    expect(await forwardedTags(payload)).toMatchObject({ actorId: [`filed-${owner}`], filingActorId: ['filed-original'], sessionId: [sessionId] });
+    expect(await forwardedTags(payload)).toMatchObject({ actorId: [filed(owner)], filingActorId: [filed('original')], sessionId: [sessionId] });
   });
 
   it("hands a scheduled run the identity of its owner's Side Chat", async () => {
-    const owner = `owner-${randomUUID()}`;
+    const owner = `acct_owner-${randomUUID()}`;
     const prompt = `Brief me ${randomUUID()}`;
     const created = await asOwner(owner, '/scheduled-tasks', { title: 'Brief', prompt, schedule: 'rate(1 day)', timezone: 'UTC', proposalId: prompt });
     const { id } = await created.json() as { id: string };
@@ -191,7 +192,7 @@ describe('Turn identity forwarding', () => {
     const invocation = await vi.waitFor(() => defined(stack.agentcore.invocations()
       .map((request) => JSON.parse(request.body) as InvocationPayload & { messages: { content: unknown }[] })
       .find((payload) => payload.messages.at(-1)?.content === prompt), 'the scheduled invocation'), { timeout: 10_000 });
-    expect(await forwardedTags(invocation)).toMatchObject({ actorId: [`filed-${owner}`], filingActorId: [`filed-${owner}`], sessionId: [invocation.threadId] });
+    expect(await forwardedTags(invocation)).toMatchObject({ actorId: [filed(owner)], filingActorId: [filed(owner)], sessionId: [invocation.threadId] });
   });
 });
 

@@ -13,9 +13,9 @@ it.each([
   ['dispatch', ['None', 'TransactionConflict', 'ValidationError', 'None', 'None'], 500],
   ['dispatch', ['ConditionalCheckFailed', 'TransactionConflict', 'None', 'None', 'None'], 410],
 ] as const)('classifies %s contention without retrying or blocking sibling Sessions (%j)', async (phase, codes, status) => {
-  const stack = await startInProcess();
-  await Promise.all(['rejected', 'left', 'right'].map((id) => stack.allocate('account-1', id)));
-  const allocated = await stack.sessionMetadata.get('account-1', 'rejected');
+  const stack = await startInProcess({ stock: true });
+  await Promise.all(['rejected', 'left', 'right'].map((id) => stack.allocate('acct_account-1', id)));
+  const allocated = await stack.sessionMetadata.get('acct_account-1', 'rejected');
   let rejected = 0;
   stack.table.client.middlewareStack.add((next, context) => async (args) => {
     const input = args.input as TransactWriteCommandInput;
@@ -46,7 +46,7 @@ it.each([
     if (phase === 'dispatch') {
       stack.sessionApi.reply('rejected', 200, { messages: [] });
       expect(await (await stack.app.request('/threads/rejected')).json()).toMatchObject({ running: false });
-    } else expect(await stack.sessionMetadata.get('account-1', 'rejected')).toEqual(allocated);
+    } else expect(await stack.sessionMetadata.get('acct_account-1', 'rejected')).toEqual(allocated);
   } finally {
     await stack.stop();
   }

@@ -2,13 +2,14 @@ import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { defined } from '../test/defined.js';
+import { filed } from '../test/stock-bot.js';
 
 // A runtime session is one microVM, so a warmup only helps the Turn that reuses its session ID.
 const SESSION_HEADER = 'x-amzn-bedrock-agentcore-runtime-session-id';
 
 let stack: InProcessStack;
 beforeAll(async () => {
-  stack = await startInProcess({ cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
+  stack = await startInProcess({ stock: true, cartridge: { requester: async (c) => ({ owner: defined(c.req.header('x-account'), 'an x-account header') }) } });
 });
 afterAll(() => stack.stop());
 
@@ -61,7 +62,7 @@ describe('a warmup and the Turn after it use the same Sandbox', () => {
 
   it('in a Main Chat moved off a pre-cutover Session, warmed before the page reads it', async () => {
     const old = '0d9c8b7a-6f5e-4d3c-9b2a-1f0e9d8c7b6a';
-    const binding = { filing_user_id: 'filed-route-moved', runtime_binding: 'runtime-00000000-0000-4000-8000-000000000000', runtime_generation: 'tracked-v1', read_only: true };
+    const binding = { filing_user_id: filed('route-moved'), runtime_binding: 'runtime-00000000-0000-4000-8000-000000000000', runtime_generation: 'tracked-v1', read_only: true };
     const documents = DynamoDBDocumentClient.from(stack.table.client);
     await documents.send(new PutCommand({ TableName: stack.table.name, Item: {
       pk: 'SESSIONS#route-moved', sk: `SESSION#${old}`, session_id: old, ...binding, title: 'Before the cutover',
