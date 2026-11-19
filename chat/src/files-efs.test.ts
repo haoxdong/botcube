@@ -74,6 +74,8 @@ describe('EFS account Files', () => {
     await put(HASH, 'report.csv', 'a,b');
     await put(HASH, 'charts/q3.png', 'png');
     await put(HASH, '.uploads/abc', 'partial');
+    await put(HASH, '.git/config', 'git config');
+    await put(HASH, 'charts/.git/objects/ab/cdef', 'git object');
     await put(HASH, 'botcube-harness/.state/x', 'mine');
     await put('ffffffffffffffffffffffffffffffff', 'theirs.txt');
     const listed = await files.list(ACCOUNT);

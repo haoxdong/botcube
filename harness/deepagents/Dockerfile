@@ -22,13 +22,17 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
       export CURL_CA_BUNDLE=/run/secrets/build_ca NODE_EXTRA_CA_CERTS=/run/secrets/build_ca APT_CONFIG=/tmp/botcube-build-apt.conf; \
       printf 'Acquire::https::CaInfo "/run/secrets/build_ca";\n' > "$APT_CONFIG"; \
     fi; \
-    apt-get update && apt-get install -y --no-install-recommends /tmp/amazon-efs-utils*.deb nfs-common openssl curl ca-certificates unzip p7zip-full bc ripgrep fd-find sqlite3 poppler-utils librsvg2-bin \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/amazon-efs-utils*.deb nfs-common openssl curl ca-certificates unzip p7zip-full bc ripgrep fd-find git sqlite3 poppler-utils librsvg2-bin \
     libcairo2 libfreetype6 fontconfig fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji && \
     curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscli.zip && \
     unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscli.zip && \
     ln -s /usr/bin/fdfind /usr/local/bin/fd && \
+    git config --system user.name BotCube && \
+    git config --system user.email botcube@noreply.invalid && \
+    git config --system --add safe.directory /mnt/workspace/files && \
+    git config --system --add safe.directory '/mnt/workspace/files/*' && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && rm -f /tmp/botcube-build-apt.conf
 
 # uv from PyPI, so every image comes from the one registry.

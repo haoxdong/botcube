@@ -93,7 +93,10 @@ def test_a_turn_saves_the_file_its_answer_links_by_path_before_finishing(
 def test_link_import_preserves_files_and_excludes_scratch_and_nonfiles(tmp_path: Path) -> None:
     workspace, filesystem = tmp_path / 'workspace', tmp_path / 'filesystem'
     workspace.mkdir()
-    for name in ('mnt/data/monthly report.pdf', 'report.pdf', 'tmp/scratch.pdf', '.secret.pdf', 'skill/example.pdf'):
+    for name in (
+        'mnt/data/monthly report.pdf', 'report.pdf', 'tmp/scratch.pdf', '.secret.pdf', 'skill/example.pdf',
+        '.git/config', 'project/.git/objects/ab/cdef',
+    ):
         path = filesystem / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'shell file')
@@ -103,6 +106,7 @@ def test_link_import_preserves_files_and_excludes_scratch_and_nonfiles(tmp_path:
         '[Download report](</mnt/data/monthly%20report.pdf> "Report") '
         '[Existing](/report.pdf) [Missing](/missing.pdf) [Scratch](/tmp/scratch.pdf) '
         '[Hidden](/.secret.pdf) [Skill](/skill/example.pdf) [Link](/mnt/data/link.pdf) '
+        '[Git](/.git/config) [Nested git](/project/.git/objects/ab/cdef) '
         '[Directory](/mnt/data) [Traversal](/../report.pdf) [Web](https://example.com/report.pdf)'
     )
 
@@ -151,7 +155,7 @@ def test_link_import_allows_files_from_the_files_workspace(tmp_path: Path) -> No
     assert (workspace / 'workspace/report.pdf').read_bytes() == b'workspace file'
 
 
-@pytest.mark.parametrize('name', ['tmp/scratch.pdf', 'skill/example.pdf'])
+@pytest.mark.parametrize('name', ['tmp/scratch.pdf', 'skill/example.pdf', '.git/config', 'project/.git/config'])
 def test_workspace_sources_keep_their_files_exclusions(tmp_path: Path, name: str) -> None:
     filesystem = tmp_path / 'filesystem'
     workspace = filesystem / 'workspace'
