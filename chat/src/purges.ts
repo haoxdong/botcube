@@ -14,8 +14,9 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
  * (`ownerActorId`), under which the claiming account's Turns file (ADR 0067 §8).
  * Only an anonymous account is claimed, into a registered one that is never
  * claimed in turn, so these two are all. Background purges run one at a time;
- * account erasure waits only for its own Sessions. The session API paces each
- * purge to the per-Session rate.
+ * recovery yields between Sessions to newly requested deletions. Account erasure
+ * waits only for its own Sessions. The session API paces each purge to the
+ * per-Session rate.
  *
  * The documented transient choke point for purges (ADR 0030): nobody waits on a
  * background purge, and the UI no longer lists the Session to delete it again.
@@ -32,10 +33,22 @@ export function purgeQueue(
   complete: (session: SessionPurge) => Promise<void> = async () => undefined,
   retainUnproved: (session: SessionPurge) => Promise<void> = async () => undefined,
   draining: () => Promise<boolean> = async () => false,
-): ((sessions: SessionPurge[]) => void) & { wait(sessions: SessionPurge[]): Promise<void> } {
+): ((sessions: SessionPurge[]) => void) & { recover(sessions: SessionPurge[]): void; wait(sessions: SessionPurge[]): Promise<void> } {
   let tail: Promise<void> = Promise.resolve();
   const queued = new Set<string>();
+  const recovered: SessionPurge[] = [];
+  let recovering = false;
   const jobKey = ({ filing_user_id, session_id }: SessionPurge) => JSON.stringify([filing_user_id, session_id]);
+
+  async function recoverNext(): Promise<void> {
+    const session = recovered.shift();
+    if (session === undefined) {
+      recovering = false;
+      return;
+    }
+    await purge(session);
+    tail = tail.then(recoverNext);
+  }
 
   async function observeAgain(session: SessionPurge, failures: number, pending: number): Promise<void> {
     if (await stillServing(draining)) return purge(session, failures, pending);
@@ -109,6 +122,17 @@ export function purgeQueue(
     }
   };
   return Object.assign(enqueue, {
+    recover(sessions: SessionPurge[]) {
+      for (const session of sessions) {
+        const id = jobKey(session);
+        if (queued.has(id)) continue;
+        queued.add(id);
+        recovered.push(session);
+      }
+      if (recovering) return;
+      recovering = true;
+      tail = tail.then(recoverNext);
+    },
     wait(sessions: SessionPurge[]) {
       const result = (async () => {
         for (const session of sessions) {

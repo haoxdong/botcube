@@ -42,8 +42,9 @@ const holds = (item: Item | undefined, expression: string | undefined, values: V
     alternative.split(' AND ').every((part) => clause(item, part.trim(), values)),
   );
 
-export function memoryDocuments(): Pick<DynamoDBDocumentClient, 'send'> & { items: Map<string, Item> } {
+export function memoryDocuments({ rejectTransactionConflicts = false } = {}): Pick<DynamoDBDocumentClient, 'send'> & { items: Map<string, Item> } {
   const items = new Map<string, Item>();
+  const transactions = new Set<string>();
   const id = (key: Item) => `${String(key.pk)}\u0000${String(key.sk)}`;
   const check = (key: Item, { ConditionExpression, ExpressionAttributeValues, ExpressionAttributeNames = {} }: Conditional) =>
     holds(items.get(id(key)), ConditionExpression?.replace(/#[A-Za-z0-9_]+/g, (name) => required(ExpressionAttributeNames[name], 'an attribute alias')), ExpressionAttributeValues);
@@ -66,6 +67,31 @@ export function memoryDocuments(): Pick<DynamoDBDocumentClient, 'send'> & { item
     const key = kind === 'Put' ? (input.Item as Item) : required(input.Key, 'a key');
     if (!check(key, input)) throw new ConditionalCheckFailedException({ message: 'The conditional request failed', ...metadata });
     (writes[kind] as (input: unknown) => () => void)(input)();
+    return metadata;
+  }
+
+  async function transact(input: Item) {
+    const operations = (input.TransactItems as Record<string, Conditional & Item>[]).map((operation) => {
+      const [kind, body] = required(Object.entries(operation)[0], 'a transaction operation') as [keyof typeof writes, Conditional & Item];
+      const key = kind === 'Put' ? (body.Item as Item) : required(body.Key, 'a key');
+      return { key: id(key), ok: check(key, body), apply: (writes[kind] as (input: unknown) => () => void)(body) };
+    });
+    if (!operations.every(({ ok }) => ok)) {
+      throw new TransactionCanceledException({ message: 'Transaction cancelled', ...metadata });
+    }
+    if (rejectTransactionConflicts && operations.some(({ key }) => transactions.has(key))) {
+      throw new TransactionCanceledException({
+        message: 'Transaction cancelled', ...metadata,
+        CancellationReasons: operations.map(({ key }) => ({ Code: transactions.has(key) ? 'TransactionConflict' : 'None' })),
+      });
+    }
+    if (rejectTransactionConflicts) for (const { key } of operations) transactions.add(key);
+    try {
+      if (rejectTransactionConflicts) await Promise.resolve();
+      for (const { apply } of operations) apply();
+    } finally {
+      if (rejectTransactionConflicts) for (const { key } of operations) transactions.delete(key);
+    }
     return metadata;
   }
 
@@ -94,18 +120,7 @@ export function memoryDocuments(): Pick<DynamoDBDocumentClient, 'send'> & { item
           .sort((a, b) => String(a.sk).localeCompare(String(b.sk)));
         return { ...metadata, Items: structuredClone(found) };
       }
-      case 'TransactWriteCommand': {
-        const operations = (input.TransactItems as Record<string, Conditional & Item>[]).map((operation) => {
-          const [kind, body] = required(Object.entries(operation)[0], 'a transaction operation') as [keyof typeof writes, Conditional & Item];
-          const key = kind === 'Put' ? (body.Item as Item) : required(body.Key, 'a key');
-          return { ok: check(key, body), apply: (writes[kind] as (input: unknown) => () => void)(body) };
-        });
-        if (!operations.every(({ ok }) => ok)) {
-          throw new TransactionCanceledException({ message: 'Transaction cancelled', ...metadata });
-        }
-        for (const { apply } of operations) apply();
-        return metadata;
-      }
+      case 'TransactWriteCommand': return transact(input);
       default:
         throw new Error(`Unsupported command: ${command.constructor.name}`);
     }

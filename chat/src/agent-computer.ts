@@ -461,9 +461,14 @@ export function agentComputers({ browser, records, started, files, idleSeconds, 
         for (const [key, sleep] of sleeping) {
           if (sleep.accountId === accountId) threads.add((JSON.parse(key) as [string, string])[1]);
         }
-        const results = await Promise.allSettled([...threads].map(revokeSession));
-        const failed = results.find((result) => result.status === 'rejected');
-        if (failed?.status === 'rejected') throw failed.reason;
+        const errors: unknown[] = [];
+        for (const threadId of threads) {
+          try {
+            // eslint-disable-next-line no-await-in-loop -- removals transact against the same account lease
+            await revokeSession(threadId);
+          } catch (error) { errors.push(error); }
+        }
+        if (errors.length > 0) throw errors[0];
       });
       for (const key of warmups.keys()) if (key.startsWith(JSON.stringify([accountId]).slice(0, -1))) warmups.delete(key);
     } finally { revoking.delete(accountId); }
@@ -530,7 +535,10 @@ export function agentComputers({ browser, records, started, files, idleSeconds, 
     async erase(accountId: string): Promise<void> {
       await revoke(accountId);
       await records().withAgentComputerLease(accountId, async () => {
-        await Promise.all((await records().runningAgentComputers(accountId)).map((record) => stop(record)));
+        for (const record of await records().runningAgentComputers(accountId)) {
+          // eslint-disable-next-line no-await-in-loop -- removals transact against the same account lease
+          await stop(record);
+        }
         const { profileId } = await records().agentComputer(accountId);
         if (profileId !== null) await browser().deleteProfile(profileId);
         await records().deleteAgentComputer(accountId);

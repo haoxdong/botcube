@@ -175,6 +175,47 @@ function sendTurn(url: string, { signal, turn = TURN }: { signal?: AbortSignal; 
 }
 
 describe('a Turn against a local Harness', () => {
+  it('purges a newly deleted Session before the remaining recovery backlog', async () => {
+    const agent = await localHarness((response) => response.end());
+    let releaseFirst!: () => void;
+    let releaseRest!: () => void;
+    let started!: () => void;
+    const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const rest = new Promise<void>((resolve) => { releaseRest = resolve; });
+    const recovering = new Promise<void>((resolve) => { started = resolve; });
+    const completed: string[] = [];
+    const job = (session_id: string) => ({
+      session_id, filing_user_id: 'filed-acct_owner', owner: 'acct_owner',
+      created_at: '2026-11-20T00:00:00Z', updated_at: '2026-11-20T00:00:00Z',
+    });
+    const url = await chatService(agent.url, {
+      metadata: {
+        ...sessionMetadata,
+        pendingPurges: async () => [job('recovery-first'), job('recovery-rest')],
+        fence: async () => job(TURN.threadId),
+        completePurge: async ({ session_id }) => { completed.push(session_id); },
+      },
+      invoke: async (event) => {
+        if (event.operation !== 'purge') throw new Error('expected a purge');
+        if (event.sessionId === 'recovery-first') { started(); await first; }
+        if (event.sessionId === 'recovery-rest') await rest;
+        return {};
+      },
+    });
+    try {
+      await recovering;
+      expect((await fetch(`${url}/threads/${TURN.threadId}`, { method: 'DELETE' })).status).toBe(204);
+      expect(completed).toEqual([]);
+      releaseFirst();
+      await expect.poll(() => completed).toContain(TURN.threadId);
+      expect(completed).not.toContain('recovery-rest');
+    } finally {
+      releaseFirst();
+      releaseRest();
+      await expect.poll(() => completed).toHaveLength(3);
+    }
+  });
+
   it('settles a registration older than MaxLifetime + 2 h and purges its chat, while a younger one keeps the exact-stop rule', async () => {
     const agent = await localHarness((response) => {
       if (response.req.url?.includes('/stopruntimesession')) {

@@ -91,9 +91,9 @@ function fakeBrowser() {
   return { browser, log, failing, hold, step, mounts, takenOver, cookies, profiles };
 }
 
-function computers() {
+function computers(documents = memoryDocuments()) {
   const fake = fakeBrowser();
-  const store = new AccountResources('chat', memoryDocuments());
+  const store = new AccountResources('chat', documents);
   const files = { mount: async (accountId: string) => filesOf(accountId) } as AccountFiles;
   const computer = agentComputers({
     browser: () => fake.browser,
@@ -795,6 +795,19 @@ describe('an Agent Computer', () => {
 
     expect(log.at(-1)).toBe('stop browser-1');
     expect(await store.agentComputerScreenshot(ACCOUNT, 'chat-0')).toBeNull();
+  });
+
+  it('erases multiple awake browsers without conflicting on their shared account lease', async () => {
+    const { computer, store, log } = computers(memoryDocuments({ rejectTransactionConflicts: true }));
+    await computer.wake(ACCOUNT, 'chat-1');
+    await computer.wake(ACCOUNT, 'chat-2');
+
+    await computer.erase(ACCOUNT);
+
+    expect(await store.runningAgentComputers(ACCOUNT)).toEqual([]);
+    expect(log.filter((entry) => entry.startsWith('stop '))).toEqual(['stop browser-1', 'stop browser-2']);
+    expect(await computer.state(ACCOUNT, 'chat-1')).toEqual({ state: 'asleep', screenshot: null });
+    expect(await computer.state(ACCOUNT, 'chat-2')).toEqual({ state: 'asleep', screenshot: null });
   });
 
   it('erases an account without waiting for another account to finish sleeping', async () => {

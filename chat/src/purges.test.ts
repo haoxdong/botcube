@@ -32,6 +32,30 @@ afterEach(() => {
 });
 
 describe('a background Session purge', () => {
+  it('recovers serially without duplicating jobs when discovery repeats during a purge', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const completed: string[] = [];
+    const invoke = vi.fn<SessionApi>(async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      if (event.sessionId === 'recovery-first') await blocked;
+      return {};
+    });
+    const queue = purgeQueue(invoke, filed, async () => undefined, [], async ({ session_id }) => { completed.push(session_id); });
+    queue.recover([session('recovery-first'), session('recovery-second')]);
+    await vi.advanceTimersByTimeAsync(0);
+    queue.recover([session('recovery-first'), session('recovery-second'), session('recovery-third')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke.mock.calls).toEqual([purgeOf('recovery-first')]);
+    expect(completed).toEqual([]);
+
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(completed).toEqual(['recovery-first', 'recovery-second', 'recovery-third']);
+    expect(invoke.mock.calls).toEqual([purgeOf('recovery-first'), purgeOf('recovery-second'), purgeOf('recovery-third')]);
+  });
+
   it('completes account erasure without waiting for unrelated queued purges', async () => {
     const completed: string[] = [];
     let release!: () => void;

@@ -131,15 +131,20 @@ export function createChatService(
     if (settled) return undefined;
     return upstream.stop(session);
   }, undefined, (session) => sessionMetadata.completePurge(session), (session) => sessionMetadata.retainUnprovedPurge(session), draining);
-  const purgeSessions = (sessions: SessionPurge[], wait = false) => {
+  const fenceSessions = (sessions: SessionPurge[]) => {
     if (sessions.length > 0 && upstream === null) throw new HttpError(503, 'The Session Runtime is not configured');
     upstream?.fence(sessions);
+  };
+  const purgeSessions = (sessions: SessionPurge[], wait = false) => {
+    fenceSessions(sessions);
     return wait ? purge.wait(sessions) : purge(sessions);
   };
   let recoveryError: unknown = new Error('Session purge recovery has not completed');
   const recoverPurges = async () => {
     try {
-      await purgeSessions(await sessionMetadata.pendingPurges());
+      const sessions = await sessionMetadata.pendingPurges();
+      fenceSessions(sessions);
+      purge.recover(sessions);
       await bot.recoverAccountDeletions?.();
       recoveryError = undefined;
     } catch (error) {
