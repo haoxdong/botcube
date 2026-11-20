@@ -543,6 +543,11 @@
             "kind": {
               "type": "string",
               "const": "bedrock"
+            },
+            "turnSummaryModel": {
+              "description": "The Bedrock model that summarizes each finished Turn; absent, BotCube's own.",
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": ["kind"],
@@ -2102,6 +2107,70 @@
           "description": "Outbound traffic goes direct."
         }
       ]
+    },
+    "productName": {
+      "description": "The product's name, as Users see it.",
+      "type": "string",
+      "minLength": 1
+    },
+    "web": {
+      "description": "Web pages on other origins.",
+      "type": "object",
+      "properties": {
+        "corsOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": "Browser origins, besides its own, that may call the Chat Service."
+        }
+      },
+      "required": ["corsOrigins"],
+      "additionalProperties": false
+    },
+    "productService": {
+      "description": "The product's own service.",
+      "type": "object",
+      "properties": {
+        "agentComputerStartedPath": {
+          "type": "string",
+          "format": "starts_with",
+          "pattern": "^\\/.*",
+          "description": "The Credential Service path called when an Agent Computer's browser starts, for the product to prepare it."
+        }
+      },
+      "required": ["agentComputerStartedPath"],
+      "additionalProperties": false
+    },
+    "planUsage": {
+      "description": "Plan Usage, whose models run on a linked plan.",
+      "type": "object",
+      "properties": {
+        "ownerAccountId": {
+          "type": "string",
+          "pattern": "^acct_[A-Za-z0-9_-]{5,123}$",
+          "description": "The Account whose linked plans they run on."
+        }
+      },
+      "required": ["ownerAccountId"],
+      "additionalProperties": false
+    },
+    "parking": {
+      "description": "Parking, which stops an idle deployment and wakes it on a request.",
+      "type": "object",
+      "properties": {
+        "automationUserAgents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "User-Agent substrings marking automation, which doesn't wake a parked deployment."
+        }
+      },
+      "required": ["automationUserAgents"],
+      "additionalProperties": false
     }
   },
   "required": ["bot"],

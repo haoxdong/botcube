@@ -302,6 +302,17 @@ describe('a Deployment Config', () => {
       'telemetry.credential: A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one'],
     ['a command telemetry credential without the opt-in', { bot: './bot.json', telemetry: { kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND } },
       'telemetry.credential: A command credential runs only when allowCommandCredentials is true'],
+    ['an empty product name', { bot: './bot.json', productName: ' ' }, 'productName: '],
+    ['a CORS origin over http off this machine', { bot: './bot.json', web: { corsOrigins: ['http://chat.example.com'] } },
+      'web.corsOrigins.0: A CORS origin is https; only a stand-in on this machine may use http'],
+    ['a CORS origin with a path', { bot: './bot.json', web: { corsOrigins: ['https://chat.example.com/chat'] } },
+      'web.corsOrigins.0: Expected an origin: a scheme and host, no path'],
+    ['a started path relative to nothing', { bot: './bot.json', productService: { agentComputerStartedPath: 'me/agent-computer/seed' } },
+      'productService.agentComputerStartedPath: Expected a path starting with /'],
+    ['a Plan Usage owner that is no Account', { bot: './bot.json', planUsage: { ownerAccountId: '123456789012' } },
+      'planUsage.ownerAccountId: Expected an Account id, acct_ and its token'],
+    ['an empty automation user agent', { bot: './bot.json', parking: { automationUserAgents: [''] } }, 'parking.automationUserAgents.0: '],
+    ['an empty Bedrock turn summary model', { bot: './bot.json', models: { kind: 'bedrock', turnSummaryModel: '' } }, 'models.turnSummaryModel: '],
   ])('stops on %s and names the field', (_, config, field) => {
     const path = configFile(config);
     expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: ${field}`);
@@ -366,6 +377,22 @@ describe('a Deployment Config', () => {
   it.each(['http://localhost:8080/v1', 'http://127.0.0.1:8080/v1', 'http://[::1]:8080/v1'])('takes a stand-in models endpoint over http on this machine at %s', (url) => {
     const models = { ...ENTERPRISE_MODELS, url };
     expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual({ ...models, wire: 'chat-completions' });
+  });
+
+  it("takes the product's name, its web origins, its service's started path, the Plan Usage owner and the automation user agents parking skips", () => {
+    const product = {
+      productName: 'Example Bot',
+      web: { corsOrigins: ['https://chat.example.com', 'https://preview.chat.example.com', 'http://localhost:3001'] },
+      productService: { agentComputerStartedPath: '/me/agent-computer/seed' },
+      planUsage: { ownerAccountId: 'acct_plan_owner_0000000000' },
+      parking: { automationUserAgents: ['-Verification/', 'collective-automation'] },
+    };
+    expect(loadDeployment(configFile({ bot: './bot.json', ...product })).config).toMatchObject(product);
+  });
+
+  it('summarizes Turns on a Bedrock model the operator names', () => {
+    const models = { kind: 'bedrock', turnSummaryModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' };
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
   });
 
   it('takes a stand-in OIDC issuer over http on this machine', () => {

@@ -102,7 +102,9 @@ const identity = z.discriminatedUnion('kind', [
   }).describe('Users sign in with an OpenID Connect provider, by authorization code with PKCE: with the first client, or the one a sign-in names.'),
 ]);
 const models = z.discriminatedUnion('kind', [
-  kindOnly('bedrock'),
+  kindOnly('bedrock').extend({
+    turnSummaryModel: z.string().min(1).optional().describe("The Bedrock model that summarizes each finished Turn; absent, BotCube's own."),
+  }),
   endpoint.extend({
     kind: z.literal('openai-compatible'),
     url: z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http')
@@ -177,6 +179,10 @@ const imageRegistry = z
 
 const httpUrl = z.url({ protocol: /^https?$/ });
 
+const corsOrigin = z.url()
+  .refine(httpsOrLoopback, 'A CORS origin is https; only a stand-in on this machine may use http')
+  .refine((url) => new URL(url).origin === url, 'Expected an origin: a scheme and host, no path');
+
 const telemetry = z.discriminatedUnion('kind', [
   kindOnly('xray').describe("AWS X-Ray, through each service's collector."),
   z.strictObject({
@@ -224,6 +230,22 @@ export const deploymentSections = z.strictObject({
   imageRegistry,
   telemetry: telemetry.default({ kind: 'xray' }).describe('Where traces go.'),
   proxy: proxy.default({ kind: 'none' }).describe('The proxy outbound traffic goes through.'),
+  productName: z.string().trim().min(1).optional().describe("The product's name, as Users see it."),
+  web: z.strictObject({
+    corsOrigins: z.array(corsOrigin).describe("Browser origins, besides its own, that may call the Chat Service."),
+  }).optional().describe('Web pages on other origins.'),
+  productService: z.strictObject({
+    agentComputerStartedPath: z.string().startsWith('/', 'Expected a path starting with /')
+      .describe("The Credential Service path called when an Agent Computer's browser starts, for the product to prepare it."),
+  }).optional().describe("The product's own service."),
+  planUsage: z.strictObject({
+    ownerAccountId: z.string().regex(/^acct_[A-Za-z0-9_-]{5,123}$/, 'Expected an Account id, acct_ and its token')
+      .describe('The Account whose linked plans they run on.'),
+  }).optional().describe('Plan Usage, whose models run on a linked plan.'),
+  parking: z.strictObject({
+    automationUserAgents: z.array(z.string().min(1))
+      .describe("User-Agent substrings marking automation, which doesn't wake a parked deployment."),
+  }).optional().describe('Parking, which stops an idle deployment and wakes it on a request.'),
 });
 
 
