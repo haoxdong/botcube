@@ -83,6 +83,87 @@ describe('a background Session purge', () => {
     expect(completed).toEqual(['account-session', 'unrelated', 'also-unrelated']);
   });
 
+  // One at a time, a 1,948-Session account erase outlived every task that ran it.
+  it('erases an account four Sessions at a time and logs its progress at most once a minute', async () => {
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    let running = 0;
+    let most = 0;
+    const queue = purgeQueue(async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, 20_000));
+      running -= 1;
+      return {};
+    }, filed, async () => undefined, []);
+    const erasure = queue.wait(Array.from({ length: 12 }, (_, index) => session(`session-${index}`)));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(most).toBe(4);
+    expect(consoleInfo.mock.calls.filter(([line]) => String(line).startsWith('Account history erase'))).toEqual([
+      ['Account history erase purged 9 of 12 Sessions'],
+    ]);
+    await erasure;
+  });
+
+  it('halves account erasure concurrency after a failure and retries the Session after its backoff', async () => {
+    let running = 0;
+    const startedWith: number[] = [];
+    // Erases already running when the first one fails run on; none started after them overlaps more than two.
+    const firstWave = Date.now() + 1_000;
+    const afterFailure: number[] = [];
+    let failed = false;
+    const completed: string[] = [];
+    const queue = purgeQueue(async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      running += 1;
+      startedWith.push(running);
+      if (Date.now() > firstWave) afterFailure.push(running);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        if (event.sessionId === 'session-0' && !failed) {
+          failed = true;
+          throw new Error('throttled');
+        }
+        return {};
+      } finally {
+        running -= 1;
+      }
+    }, filed, async () => undefined, [5_000], async ({ session_id }) => { completed.push(session_id); });
+    const erasure = queue.wait(Array.from({ length: 8 }, (_, index) => session(`session-${index}`)));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await erasure;
+    expect(completed.sort()).toEqual(Array.from({ length: 8 }, (_, index) => `session-${index}`).sort());
+    expect(startedWith.slice(0, 4)).toEqual([1, 2, 3, 4]);
+    expect(afterFailure.length).toBeGreaterThan(0);
+    expect(Math.max(...afterFailure)).toBeLessThanOrEqual(2);
+    expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining('retrying in 5s with 2 at once. session_id=session-0'), expect.any(Error));
+  });
+
+  it('skips a Session whose writer is still registered, erases the rest, then rejects with that error', async () => {
+    const pending = new SessionDispatchPendingError('Session dispatch is still registered');
+    const completed: string[] = [];
+    const queue = purgeQueue(async () => ({}), filed, async ({ session_id }) => {
+      if (session_id === 'session-2') throw pending;
+    }, [5_000], async ({ session_id }) => { completed.push(session_id); });
+    const erasure = queue.wait(Array.from({ length: 10 }, (_, index) => session(`session-${index}`)));
+    await expect(erasure).rejects.toBe(pending);
+    expect(completed.sort()).toEqual(Array.from({ length: 10 }, (_, index) => `session-${index}`).filter((id) => id !== 'session-2').sort());
+    expect(consoleWarn).not.toHaveBeenCalled();
+  });
+
+  it('stops starting Sessions once an account erase fails for good, and rejects', async () => {
+    const failure = new Error('writer still running');
+    const erased: string[] = [];
+    const queue = purgeQueue(async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      erased.push(event.sessionId);
+      return {};
+    }, filed, async ({ session_id }) => {
+      if (session_id === 'session-0') throw failure;
+    }, []);
+    await expect(queue.wait(Array.from({ length: 12 }, (_, index) => session(`session-${index}`)))).rejects.toBe(failure);
+    expect(erased).not.toContain('session-11');
+  });
+
   it('rejects account erasure when its writer cannot stop, without blocking background purges', async () => {
     const failure = new Error('writer still running');
     const erased: string[] = [];

@@ -1080,14 +1080,20 @@ export class DynamoDBSessionMetadata implements SessionMetadata {
           ConditionExpression: 'attribute_exists(pk) AND session_id = :id AND filing_user_id = :filing',
           ExpressionAttributeValues: { ':now': deletedAt, ':id': sessionId, ':filing': Item.filing_user_id, ':registered': true },
         } },
-        { Put: { TableName: this.tableName, Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, owner } } },
+        // A completed purge is never rewritten, so a retried account erase resumes past it.
+        { Put: {
+          TableName: this.tableName,
+          Item: { ...purgeKey({ session_id: sessionId, filing_user_id: Item.filing_user_id }), session_id: sessionId, filing_user_id: Item.filing_user_id, owner },
+          ConditionExpression: 'attribute_not_exists(completed_at)',
+        } },
       ] }));
       const { Item: fencedItem } = await this.read(key(owner, sessionId));
       if (fencedItem === undefined) throw new Error('The fenced Session disappeared before its acknowledgement');
       return { ...summaryWithLegacyProvider(fencedItem as SessionItem), owner };
     } catch (error) {
       const reasons = (error as Partial<TransactionCanceledException>).CancellationReasons;
-      if (reasons?.[0]?.Code === 'ConditionalCheckFailed') {
+      // The Session is gone, or its purge already completed: nothing is left to purge.
+      if (reasons?.[0]?.Code === 'ConditionalCheckFailed' || reasons?.[1]?.Code === 'ConditionalCheckFailed') {
         return null;
       }
       throw error;

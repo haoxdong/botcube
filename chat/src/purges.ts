@@ -8,6 +8,17 @@ import { SessionDispatchPendingError, type SessionPurge } from './session-metada
 const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
 
 /**
+ * Sessions an account erase purges at once. AgentCore allows 20 DeleteEvent calls a second per AWS
+ * account, and each session API environment paces itself to 5, so four saturate it; it also leaves one
+ * of the process's SESSION_API_CALLS_AT_ONCE for page loads. Serial, a 1,948-Session account outlived
+ * every task that tried it.
+ */
+const ERASE_AT_ONCE = 4;
+
+/** An account erase logs its progress at most this often. */
+const PROGRESS_EVERY_MS = 60_000;
+
+/**
  * Purges fenced Sessions' events one at a time, after the response, retrying a
  * failure after each backoff in turn. A Session is purged under every actor that
  * filed into it: its filing ID and, after Account Claim, its owner's actor
@@ -15,8 +26,8 @@ const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
  * Only an anonymous account is claimed, into a registered one that is never
  * claimed in turn, so these two are all. Background purges run one at a time;
  * recovery yields between Sessions to newly requested deletions. Account erasure
- * waits only for its own Sessions. The session API paces each purge to the
- * per-Session rate.
+ * waits only for its own Sessions, ERASE_AT_ONCE at a time. The session API paces
+ * each purge to the per-Session rate.
  *
  * The documented transient choke point for purges (ADR 0030): nobody waits on a
  * background purge, and the UI no longer lists the Session to delete it again.
@@ -33,6 +44,7 @@ export function purgeQueue(
   complete: (session: SessionPurge) => Promise<void> = async () => undefined,
   retainUnproved: (session: SessionPurge) => Promise<void> = async () => undefined,
   draining: () => Promise<boolean> = async () => false,
+  eraseAtOnce = ERASE_AT_ONCE,
 ): ((sessions: SessionPurge[]) => void) & { recover(sessions: SessionPurge[]): void; wait(sessions: SessionPurge[]): Promise<void> } {
   let tail: Promise<void> = Promise.resolve();
   const queued = new Set<string>();
@@ -113,6 +125,63 @@ export function purgeQueue(
     }
   }
 
+  /**
+   * Erases an account's Sessions, ERASE_AT_ONCE at a time. A failure halves how many run at once and is retried
+   * after each backoff in turn. Once a failure is final, the erase stops starting Sessions and rejects after the
+   * running ones settle. A registered writer or an unproved admission is no throttling: that Session is skipped at
+   * once, the rest are erased, and the erase then rejects with the first such error. Completed Sessions stay
+   * completed, so a later erase resumes.
+   */
+  async function eraseAll(sessions: SessionPurge[]): Promise<void> {
+    let next = 0;
+    let done = 0;
+    let atOnce = eraseAtOnce;
+    let failure: { error: unknown } | undefined;
+    let skipped: { error: unknown } | undefined;
+    let reported = Date.now();
+    // Another worker sets `failure` while this one awaits.
+    const failed = () => failure !== undefined;
+    /** Erases one Session, retrying a failure after each backoff; whether it was erased, or skipped as fenced. */
+    const eraseOne = async (session: SessionPurge): Promise<'erased' | 'skipped' | 'failed'> => {
+      for (let failures = 0; ; failures += 1) {
+        try {
+          // eslint-disable-next-line no-await-in-loop -- each worker erases one Session at a time
+          await erase(session);
+          return 'erased';
+        } catch (error) {
+          if (error instanceof SessionDispatchPendingError || error instanceof RuntimeAdmissionUnprovedError) {
+            skipped ??= { error };
+            return 'skipped';
+          }
+          const backoff = backoffMs[failures];
+          if (backoff === undefined || failed()) {
+            failure ??= { error };
+            return 'failed';
+          }
+          atOnce = Math.max(1, Math.floor(atOnce / 2));
+          console.warn(`Session purge attempt failed; retrying in ${backoff / 1000}s with ${atOnce} at once. session_id=${session.session_id}`, error);
+          // eslint-disable-next-line no-await-in-loop -- retries after each backoff
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+        }
+      }
+    };
+    const worker = async (slot: number): Promise<void> => {
+      while (!failed() && slot < atOnce && next < sessions.length) {
+        // eslint-disable-next-line no-await-in-loop -- each worker erases one Session at a time
+        const outcome = await eraseOne(sessions[next++] as SessionPurge);
+        if (outcome !== 'erased') continue;
+        done += 1;
+        if (Date.now() - reported >= PROGRESS_EVERY_MS) {
+          reported = Date.now();
+          console.info(`Account history erase purged ${done} of ${sessions.length} Sessions`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: eraseAtOnce }, (_, slot) => worker(slot)));
+    const rejection = failure ?? skipped;
+    if (rejection !== undefined) throw rejection.error;
+  }
+
   const enqueue = (sessions: SessionPurge[]) => {
     for (const session of sessions) {
       const id = jobKey(session);
@@ -134,12 +203,7 @@ export function purgeQueue(
       tail = tail.then(recoverNext);
     },
     wait(sessions: SessionPurge[]) {
-      const result = (async () => {
-        for (const session of sessions) {
-          // eslint-disable-next-line no-await-in-loop -- account erasure must settle each producer before Files erasure
-          await erase(session);
-        }
-      })();
+      const result = eraseAll(sessions);
       void result.catch((error: unknown) => { console.error('Session purge failed; account history deletion remains pending', error); });
       return result;
     },

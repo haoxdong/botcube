@@ -842,6 +842,20 @@ describe('fenceOwner', () => {
     ]);
   });
 
+  // An account erase that a task replacement cut short resumes, rather than re-purging every Session.
+  it('leaves out a Session whose purge already completed, so a retried account erase resumes', async () => {
+    await turn('account-1', 'session-1', T1);
+    await turn('account-1', 'session-2', T1);
+    const first = await metadata.fenceOwner('account-1');
+    const done = defined(first.find((session) => session.session_id === 'session-1'), 'the first fence lists session-1');
+    await metadata.completePurge(done);
+
+    const retried = await metadata.fenceOwner('account-1');
+
+    expect(retried.map((session) => session.session_id)).toEqual(['session-2']);
+    expect((await metadata.pendingPurges()).map((session) => session.session_id)).toEqual(['session-2']);
+  });
+
   it('leaves out a Session deleted while it fences', async () => {
     await turn('account-1', 'session-1', T1);
     const documents = DynamoDBDocumentClient.from(client());
@@ -1390,8 +1404,9 @@ describe('purge recovery across task replacement', () => {
     await replacement.completePurge(job);
     expect(await new DynamoDBSessionMetadata(table, client()).pendingPurges()).toMatchObject([]);
     expect(await replacement.pendingPurges()).toMatchObject([]);
-    await replacement.fence('owner', 'session');
-    expect(await replacement.pendingPurges()).toMatchObject([job]);
+    // Fencing again keeps the completed purge, so it is not queued again.
+    expect(await replacement.fence('owner', 'session')).toBeNull();
+    expect(await replacement.pendingPurges()).toMatchObject([]);
   });
 
   it.each([2, 3])('fences the root first and recovers every retired account after interruption before tombstone %i', async (interruptedAt) => {

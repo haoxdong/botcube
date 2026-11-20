@@ -88,6 +88,19 @@ export class AccountStore<A extends Account = Account> extends GuestExpiry<A> {
     }
   }
 
+  /** As `accountDeletionLock`, but `false` without running `body` while another live holder renews the lease. */
+  async accountDeletionLockUnlessLive(accountId: string, body: () => Promise<void>): Promise<boolean> {
+    if (!isAccountId(accountId)) throw new AccountStoreError('Account deletion identity is invalid');
+    const lease = await new Lease(this, `DELETION#${accountId}`).acquireUnlessLive();
+    if (lease === null) return false;
+    try {
+      await this.deletion.run(lease, body);
+      return true;
+    } finally {
+      await lease.release();
+    }
+  }
+
   async loadAccount(accountId: string | null | undefined): Promise<A | null> {
     if (!isAccountId(accountId)) return null;
     const item = await this.get(`ACCOUNT#${accountId}`);

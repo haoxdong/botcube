@@ -24,6 +24,7 @@ export interface AgentComputerStream {
   expiresAt: number;
 }
 const LOCK_SECONDS = 60;
+const RENEW_SECONDS = LOCK_SECONDS / 3;
 export const nowSeconds = () => Math.floor(Date.now() / 1000);
 type Item = Record<string, unknown>;
 const key = (pk: string, sk = 'META') => ({ pk, sk });
@@ -38,9 +39,20 @@ export class Lease {
 
   constructor(
     private readonly store: AccountResources,
-    name: string,
+    private readonly name: string,
   ) {
     this.key = key(`ACCOUNT_LOCK#${name}`);
+  }
+
+  private take(): Promise<unknown> {
+    return this.store.documents.send(
+      new PutCommand({
+        TableName: this.store.tableName,
+        Item: { ...this.key, holder: this.holder, expiresAt: nowSeconds() + LOCK_SECONDS },
+        ConditionExpression: 'attribute_not_exists(pk) OR expiresAt <= :now',
+        ExpressionAttributeValues: { ':now': nowSeconds() },
+      }),
+    );
   }
 
   async acquire(): Promise<this> {
@@ -48,30 +60,46 @@ export class Lease {
     for (;;) {
       try {
         // eslint-disable-next-line no-await-in-loop -- retries until the lock is acquired
-        await this.store.documents.send(
-          new PutCommand({
-            TableName: this.store.tableName,
-            Item: { ...this.key, holder: this.holder, expiresAt: nowSeconds() + LOCK_SECONDS },
-            ConditionExpression: 'attribute_not_exists(pk) OR expiresAt <= :now',
-            ExpressionAttributeValues: { ':now': nowSeconds() },
-          }),
-        );
+        await this.take();
         break;
       } catch (error) {
         // The holder's fenced commit checks the lock item, so DynamoDB rejects this Put until that transaction ends.
         const contended =
           error instanceof ConditionalCheckFailedException || error instanceof TransactionConflictException;
         if (!contended || Date.now() >= deadline) {
-          throw new AccountStoreError('Could not acquire account operation lock', { cause: error });
+          throw new AccountStoreError(`Could not acquire account operation lock ${this.name}`, { cause: error });
         }
         // eslint-disable-next-line no-await-in-loop -- retries until the lock is acquired
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
+    return this.held();
+  }
+
+  /**
+   * The lease, or null while another holder renewed it within the last two renewal periods: that holder is
+   * alive and doing the work. An expired, stale or unreadable lease waits as `acquire` does, and fails as it does,
+   * so a stuck holder still alarms.
+   */
+  async acquireUnlessLive(): Promise<this | null> {
+    try {
+      await this.take();
+      return this.held();
+    } catch (error) {
+      if (!(error instanceof ConditionalCheckFailedException)) return this.acquire();
+    }
+    const current = await this.store.documents.send(new GetCommand({ TableName: this.store.tableName, Key: this.key, ConsistentRead: true }))
+      .then(({ Item }) => Item, () => undefined);
+    const expiresAt = current?.expiresAt;
+    const renewedRecently = typeof expiresAt === 'number' && expiresAt - nowSeconds() >= LOCK_SECONDS - 2 * RENEW_SECONDS;
+    return renewedRecently ? null : this.acquire();
+  }
+
+  private held(): this {
     this.active = true;
     this.renewal = setInterval(() => {
       this.renewing = this.renew();
-    }, (LOCK_SECONDS / 3) * 1000);
+    }, RENEW_SECONDS * 1000);
     this.renewal.unref();
     return this;
   }

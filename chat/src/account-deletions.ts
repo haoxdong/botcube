@@ -3,7 +3,7 @@ import type { AccountStore } from './account-store.js';
 import { HttpError } from './http-error.js';
 
 type DeletionStore<A extends Account> = Pick<AccountStore<A>,
-  'accountDeletionLock' | 'accountDeletion' | 'loadAccount' | 'completeAccountDeletion' | 'pendingAccountDeletions' | 'expireGuests'>;
+  'accountDeletionLockUnlessLive' | 'accountDeletion' | 'loadAccount' | 'completeAccountDeletion' | 'pendingAccountDeletions' | 'expireGuests'>;
 
 /** Whether a service answers `/health` with 2xx within `within` ms, checked every `every` ms. */
 export async function serviceHealthy(serviceUrl: string, {
@@ -58,7 +58,8 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
   }
 
   async function finish(intent: AccountDeletionIntent): Promise<void> {
-    await store().accountDeletionLock(intent.accountId, async () => {
+    // Another task erasing this account renews its lease; this sweep leaves the deletion to it.
+    const ran = await store().accountDeletionLockUnlessLive(intent.accountId, async () => {
       const authorized = await store().accountDeletion(intent.accountId);
       if (authorized?.status !== 'authorized') return;
       if (authorized.operationId !== intent.operationId) throw new HttpError(409, 'Account deletion authorization no longer matches');
@@ -70,6 +71,7 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
       await store().completeAccountDeletion(authorized);
       console.info(`Account deletion completed operation_id=${intent.operationId}`);
     });
+    if (!ran) console.info(`Account deletion continues on another task operation_id=${intent.operationId}`);
   }
 
   async function enqueuePending(): Promise<void> {

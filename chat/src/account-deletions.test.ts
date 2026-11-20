@@ -8,7 +8,12 @@ function deletionStore() {
   const deletions = new Map([[intent.accountId, { ...intent }]]);
   return {
     deletions,
-    async accountDeletionLock<T>(_accountId: string, work: () => Promise<T>) { return work(); },
+    heldElsewhere: false,
+    async accountDeletionLockUnlessLive(_accountId: string, work: () => Promise<void>) {
+      if (this.heldElsewhere) return false;
+      await work();
+      return true;
+    },
     async accountDeletion(accountId: string) { return deletions.get(accountId) ?? null; },
     async loadAccount(_accountId: string): Promise<Account | null> { return null; },
     async completeAccountDeletion(authorized: AccountDeletionIntent) { deletions.set(authorized.accountId, { ...authorized, status: 'completed' }); },
@@ -89,6 +94,27 @@ describe('the first deletion sweep after a wake', () => {
     expect(store.deletions.get(intent.accountId)?.status).toBe('authorized');
 
     checks.fetch.mockImplementation(async () => new Response(null, { status: 200 }));
+    await deletions.recover();
+    await vi.waitFor(() => expect(store.deletions.get(intent.accountId)?.status).toBe('completed'));
+  });
+
+  // While one task erases, another task's sweep waited out the 60 s lease deadline and logged an error every sweep.
+  it('leaves a deletion to the task already erasing it, quietly, and finishes it once that task stops', async () => {
+    const store = deletionStore();
+    store.heldElsewhere = true;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const deleteAccount = vi.fn(async () => {});
+    const deletions = accountDeletions({ store: () => store, deleteAccount });
+
+    await deletions.recover();
+    await settle();
+    expect(deleteAccount).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith('Account deletion continues on another task operation_id=op_1');
+    expect(store.deletions.get(intent.accountId)?.status).toBe('authorized');
+
+    store.heldElsewhere = false;
     await deletions.recover();
     await vi.waitFor(() => expect(store.deletions.get(intent.accountId)?.status).toBe('completed'));
   });

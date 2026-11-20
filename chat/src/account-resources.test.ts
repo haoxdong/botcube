@@ -1,7 +1,7 @@
 import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { agentComputers } from './agent-computer.js';
-import { AccountResources } from './account-resources.js';
+import { AccountResources, Lease, nowSeconds } from './account-resources.js';
 import { memoryDocuments } from '../test/memory-documents.js';
 it('deletes Agent Computer screenshots across every DynamoDB page while leaving another account alone', async () => {
   const documents = memoryDocuments();
@@ -124,4 +124,45 @@ it('refuses a capped Session before any Browser factory or Files mount', async (
   await expect(computers.wake('owner', 'smoke')).rejects.toThrow('Browser sessions are denied');
   await expect(records.assertBrowserAllowed('other-owner', 'smoke')).resolves.toBeUndefined();
   await expect(records.assertBrowserAllowed('owner', 'ordinary')).resolves.toBeUndefined();
+});
+
+// A sweep leaves a deletion to the live task erasing it, but never hides a stuck holder.
+it('yields a lease to a live holder that renews it, and waits out one that stopped renewing', async () => {
+  vi.useFakeTimers();
+  try {
+    const documents = memoryDocuments();
+    const first = new AccountResources('chat', documents);
+    const replacement = new AccountResources('chat', documents);
+    const held = await new Lease(first, 'DELETION#acct_test').acquire();
+    expect(await new Lease(replacement, 'DELETION#acct_test').acquireUnlessLive()).toBeNull();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(await new Lease(replacement, 'DELETION#acct_test').acquireUnlessLive()).toBeNull();
+    await held.release();
+    const taken = await new Lease(replacement, 'DELETION#acct_test').acquireUnlessLive();
+    expect(taken?.active).toBe(true);
+    await taken?.release();
+
+    // A holder whose last renewal was 50 s ago has 10 s left: the lease is taken once it expires.
+    await documents.send(new PutCommand({ TableName: 'chat', Item: { pk: 'ACCOUNT_LOCK#DELETION#acct_test', sk: 'META', holder: 'stuck', expiresAt: nowSeconds() + 10 } }));
+    const waiting = new Lease(replacement, 'DELETION#acct_test').acquireUnlessLive();
+    await vi.advanceTimersByTimeAsync(11_000);
+    const stale = await waiting;
+    expect(stale?.active).toBe(true);
+    await stale?.release();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('names the lease it could not acquire', async () => {
+  vi.useFakeTimers();
+  try {
+    const store = new AccountResources('chat', memoryDocuments());
+    await new Lease(store, 'DELETION#acct_test').acquire();
+    const contended = expect(new Lease(store, 'DELETION#acct_test').acquire()).rejects.toThrow('Could not acquire account operation lock DELETION#acct_test');
+    await vi.advanceTimersByTimeAsync(61_000);
+    await contended;
+  } finally {
+    vi.useRealTimers();
+  }
 });
