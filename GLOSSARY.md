@@ -1,6 +1,6 @@
 # BotCube Context
 
-BotCube is the generic agentic-chat platform that each bot deploys and configures; the configuration decides which bot it is. Its relationships to the other contexts are in [GLOSSARY-MAP.md](../GLOSSARY-MAP.md).
+BotCube is the generic agentic-chat platform that each bot deploys and configures: a bot is a Bot Image, and each deployment of it is one BotCube Config. Its relationships to the other contexts are in [GLOSSARY-MAP.md](../GLOSSARY-MAP.md).
 
 ## Language
 
@@ -8,13 +8,13 @@ BotCube is the generic agentic-chat platform that each bot deploys and configure
 The generic agentic-chatbot platform, free of any bot identity, that each bot deploys and configures rather than extends with code. It holds the Chat Service, the Harnesses, the white-label UI, per-host infrastructure, and a public and an enterprise example.
 _Avoid_: AgentCradle (former name), agentstack, the stack, console, framework, Cartridge (retired: a bot is configuration, not plug-in code), Always On (retired: an example, not a term)
 
-**Deployment Config**:
-The settings for one BotCube deployment: which adapter reaches each External Service, and the values it needs.
-_Avoid_: environment, Deployment Environment, config (bare), env file
+**Bot Image**:
+The container image a bot's author builds on a Harness image, holding the bot's Skills, files and its settings file, `bot.yaml`. It is the bot: every deployment of it runs the same image.
+_Avoid_: Cartridge (retired), bot package, custom image, bot.json (former settings file)
 
-**External Service**:
-Something outside BotCube that one deployment depends on, chosen by its operator in the Deployment Config, such as the model gateway, identity provider or scheduler.
-_Avoid_: backing service, dependency, integration, Connector, App
+**BotCube Config**:
+`botcube.yaml`, the one file an operator writes for one deployment: which Bot Image runs, the integrations it uses, the existing resources it is given and its network.
+_Avoid_: Deployment Config (former name), config (bare), environment, env file, manifest, integrator (say operator)
 
 **Harness**:
 A complete agent implementation on one third-party harness library, such as deepagents with LangGraph, together with everything coupled to that library, such as memory backends and LLM provider factories. It is swapped whole, never in place, and lives in `botcube/harness/<library>/`.
