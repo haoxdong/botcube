@@ -51,6 +51,7 @@ const PRINCIPAL_ROLES: Partial<Record<string, Principal>> = {
   'PreviewOrigin/ChatService/ScheduledRunsRole': 'scheduledRuns',
   'PreviewOrigin/AgentComputerBrowserRole': 'agentComputerBrowser',
   'PreviewOrigin/FilesMountRole': 'filesMount',
+  'PreviewOrigin/CredentialService/AuditCopy/ServiceRole': 'auditCopy',
   [`${AGENTCORE_STACK}/Application/AgentBotCube/Runtime/ExecutionRole`]: 'harness',
   [`${AGENTCORE_STACK}/SessionApiRole`]: 'sessionApi',
   [`${AGENTCORE_STACK}/UserMemoryRole`]: 'userMemory',
@@ -64,7 +65,6 @@ const MACHINERY = new Set([
   'PreviewOrigin/OriginProvider/framework-onTimeout/ServiceRole', 'PreviewOrigin/OriginProvider/waiter-state-machine/Role',
   'PreviewOrigin/OriginSmokePolicy',
   'PreviewOrigin/ChatService/Task/ExecutionRole', 'PreviewOrigin/CredentialService/Task/ExecutionRole',
-  'PreviewOrigin/CredentialService/AuditCopy/ServiceRole',
   ...['onEvent', 'isComplete', 'worker'].map(handler => `PreviewOrigin/FilesPool/${handler}/ServiceRole`),
   ...['framework-onEvent', 'framework-isComplete', 'framework-onTimeout'].map(handler => `PreviewOrigin/FilesPool/Provider/${handler}/ServiceRole`),
   'PreviewOrigin/FilesPool/Provider/waiter-state-machine/Role',
@@ -85,6 +85,8 @@ interface Properties {
   Roles?: (string | { Ref: string })[];
   ContainerDefinitions?: { Image: string; Environment?: { Name: string; Value: unknown }[] }[];
   EnvironmentVariables?: Record<string, unknown>;
+  Role?: { 'Fn::GetAtt': [string, string] };
+  LoggingConfig?: { LogGroup?: { Ref: string } };
 }
 
 type Resources = Record<string, { Type: string; Properties: Properties }>;
@@ -212,6 +214,23 @@ describe.each(EXAMPLES)('the %s example', example => {
 
   test('grants each BotCube role exactly the IAM actions its footprint prints with Files access points from the deploy-time pool', () => {
     expect(pooled.iam).toEqual(footprint(loadDeployment(deploymentConfigPath(example)).config, { filesAccessPointMode: 'pool' }).iam);
+  });
+
+  test('holds no AWS managed policy on any Lambda role: each function writes its own log group by an inline grant it deploys after', async () => {
+    const stacks = (await appOf(example)).node.findAll().filter(Stack.isStack);
+    const strays = stacks.flatMap(stack => {
+      const resources = Template.fromStack(stack).toJSON().Resources as Record<string, Resources[string] & { DependsOn?: string[] }>;
+      const logsPolicy = (roleId: string | undefined, logGroupId: string | undefined) => Object.entries(resources).find(([, { Type, Properties }]) => Type === 'AWS::IAM::Policy'
+        && JSON.stringify(Properties.Roles).includes(`"${roleId}"`)
+        && (Properties.PolicyDocument?.Statement ?? []).some(statement => [statement.Action].flat().includes('logs:PutLogEvents') && JSON.stringify(statement).includes(`"${logGroupId}"`)))?.[0];
+      return Object.entries(resources).filter(([, { Type }]) => Type === 'AWS::Lambda::Function').flatMap(([logicalId, { Properties, DependsOn = [] }]) => {
+        const roleId = Properties.Role?.['Fn::GetAtt'][0];
+        const policy = logsPolicy(roleId, Properties.LoggingConfig?.LogGroup?.Ref);
+        const managed = roleId ? resources[roleId]?.Properties.ManagedPolicyArns : undefined;
+        return managed || !policy || !DependsOn.includes(policy) ? [`${stack.node.path}/${logicalId}`] : [];
+      });
+    });
+    expect(strays).toEqual([]);
   });
 
   test('runs exactly the images its footprint prints', () => {

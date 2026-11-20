@@ -45,7 +45,8 @@ describe('the enterprise example', () => {
   it('lists each resource it supplies with the grants it carries', () => {
     expect(section(printedFor('enterprise'), 'Supplied resources')).toEqual([
       '  supplied.network vpc-fixtureenterprise',
-      "    grant every other Lambda function's role, the deploy's own included: AWS managed policy AWSLambdaVPCAccessExecutionRole",
+      "    grant every other Lambda function's role, the deploy's own included: ec2:AssignPrivateIpAddresses ec2:CreateNetworkInterface ec2:DeleteNetworkInterface ec2:DescribeNetworkInterfaces ec2:DescribeSubnets ec2:UnassignPrivateIpAddresses",
+      '    grant its private subnets a route, by a NAT gateway or VPC endpoints: to each egress host below',
       '  supplied.kmsKeys.vault arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111',
       '    grant Credential Service task: kms:Decrypt kms:DescribeKey kms:GenerateDataKey',
       '  supplied.kmsKeys.sheet arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222',
@@ -98,13 +99,11 @@ describe('the enterprise example', () => {
     expect(iam.harness?.actions).not.toContain('kms:Decrypt');
   });
 
-  it('lets every Lambda function attach to the supplied network: each role holds the VPC access policy', () => {
+  it('lets every Lambda function attach to the supplied network by an inline grant, holding no AWS managed policy', () => {
     const { iam } = footprint(loadDeployment(example('enterprise')).config);
-    expect(iam.sessionApi?.managedPolicies).toEqual(expect.arrayContaining(['AWSLambdaVPCAccessExecutionRole']));
-    expect(section(printedFor('enterprise'), 'Supplied resources').slice(0, 2)).toEqual([
-      '  supplied.network vpc-fixtureenterprise',
-      "    grant every other Lambda function's role, the deploy's own included: AWS managed policy AWSLambdaVPCAccessExecutionRole",
-    ]);
+    const lambdas = [iam.sessionApi, iam.auditCopy];
+    expect(lambdas.map(grant => grant?.actions)).toEqual(Array(2).fill(expect.arrayContaining(['ec2:CreateNetworkInterface', 'ec2:DeleteNetworkInterface'])));
+    expect(lambdas.map(grant => grant?.managedPolicies)).toEqual([[], []]);
   });
 
   it('pulls every image, and builds every image FROM, its mirror registry', () => {
@@ -143,7 +142,16 @@ describe('the public example', () => {
     const { iam } = footprint(loadDeployment(example('public')).config);
     expect(iam.credentialService?.actions).toEqual(expect.arrayContaining(['dynamodb:GetItem', 'kms:GenerateDataKey']));
     expect(iam.harness?.actions).toContain('kms:Decrypt');
-    expect(iam.sessionApi?.managedPolicies).toEqual(['AWSLambdaBasicExecutionRole']);
+  });
+
+  it('lets each Lambda function write its logs by an inline grant, holding no AWS managed policy', () => {
+    const { iam } = footprint(loadDeployment(example('public')).config);
+    const OWN_LOGS = ['logs:CreateLogStream', 'logs:PutLogEvents'];
+    expect([iam.sessionApi, iam.auditCopy].map(grant => grant?.actions)).toEqual([expect.arrayContaining(OWN_LOGS), OWN_LOGS]);
+    expect([iam.sessionApi, iam.auditCopy].map(grant => grant?.managedPolicies)).toEqual([[], []]);
+    expect(section(printedFor('public'), 'IAM actions')).toEqual(expect.arrayContaining([
+      "  auditCopy (Credential Service's audit-copy function)", '    logs:CreateLogStream', '    logs:PutLogEvents',
+    ]));
   });
 
   it('runs the stock Credential Service, which mounts no Sign-in Sheet routes: no sheet key is created or granted', () => {

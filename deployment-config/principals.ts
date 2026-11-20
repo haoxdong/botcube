@@ -7,6 +7,7 @@ export const PRINCIPALS = {
   filesMount: "a Turn's Files mount",
   harness: 'Harness (AgentCore Runtime)',
   sessionApi: 'session API function',
+  auditCopy: "Credential Service's audit-copy function",
   userMemory: "a Turn's own Memory credentials",
 } as const;
 

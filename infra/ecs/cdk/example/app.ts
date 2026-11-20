@@ -14,6 +14,7 @@ import { loadDeployConfig } from '../../../agentcore/cdk/lib/deploy-config.js';
 import { deployIdentity } from '../lib/deploy-root.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { defineProduction, type ProductionOptions } from '../lib/production.js';
+import { grantLambdasInline } from '../lib/lambda-inline-grants.js';
 import { placeLambdasInNetwork } from '../lib/supplied-network.js';
 
 /** The examples' deploy names and AgentCore spec, in the public example's deploy directory. */
@@ -100,6 +101,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
     ...(kmsKeys?.images ? { suppliedImageKeyArn: kmsKeys.images } : {}),
   }, config.turnCredentials.kind);
   if (network) placeLambdasInNetwork(app, { vpcId: network.vpcId, privateSubnetIds: network.privateSubnets.map(({ subnetId }) => subnetId) });
+  grantLambdasInline(app);
 }
 
 /**

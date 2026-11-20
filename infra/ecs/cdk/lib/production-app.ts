@@ -6,6 +6,7 @@ import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
 import { activeDeployRoot, deployIdentity, projectDir } from './deploy-root.js';
 import { defineProduction, type ProductionOptions } from './production.js';
 import { credentialServiceImage } from './credential-audit-copy.js';
+import { grantLambdasInline } from './lambda-inline-grants.js';
 import { repositoryImageProps } from './repository-image.js';
 
 /** Where a Cartridge keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
@@ -64,5 +65,6 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
     webLatency = { moments };
   }
   defineProduction(app, { repositoryRoot, deployRoot, identity, origin, ...(chat ? { chat } : {}), ...(webLatency ? { webLatency } : {}), ...product });
+  grantLambdasInline(app);
   return app;
 }

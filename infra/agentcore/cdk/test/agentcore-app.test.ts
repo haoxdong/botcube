@@ -148,6 +148,48 @@ test('outputs the deployed commit for scripts/dev-status.sh', () => {
   Template.fromStack(onlyStack(app)).hasOutput('Commit', { Value: COMMIT });
 });
 
+interface Resource {
+  Type: string;
+  DependsOn?: string[];
+  Properties: {
+    Role?: { 'Fn::GetAtt': [string, string] };
+    LoggingConfig?: { LogGroup?: { Ref: string } };
+    ManagedPolicyArns?: unknown[];
+    Roles?: { Ref: string }[];
+    PolicyDocument?: { Statement: { Action: string | string[]; Resource: unknown }[] };
+  };
+}
+
+test('holds no AWS managed policy on any Lambda role: each function writes its own log group by an inline grant it deploys after', () => {
+  const app = new App();
+  addAgentCoreStacks(app, deployConfig(), COMMIT);
+  const resources: Record<string, Resource> = Template.fromStack(onlyStack(app)).toJSON().Resources;
+
+  const functions = Object.entries(resources).filter(([, { Type }]) => Type === 'AWS::Lambda::Function');
+  const strays = functions.flatMap(([logicalId, { Properties, DependsOn = [] }]) => {
+    const own = Properties.LoggingConfig?.LogGroup?.Ref;
+    const roleId = Properties.Role?.['Fn::GetAtt'][0];
+    const logsPolicies = Object.entries(resources).filter(
+      ([, { Type, Properties: policy }]) =>
+        Type === 'AWS::IAM::Policy' &&
+        policy.Roles?.some(role => role.Ref === roleId) &&
+        (policy.PolicyDocument?.Statement ?? []).some(statement =>
+          [statement.Action].flat().includes('logs:PutLogEvents')
+        )
+    );
+    const written = logsPolicies
+      .flatMap(([, { Properties: policy }]) => policy.PolicyDocument?.Statement ?? [])
+      .filter(statement => [statement.Action].flat().includes('logs:PutLogEvents'))
+      .map(statement => JSON.stringify(statement.Resource));
+    const managed = roleId ? resources[roleId]?.Properties.ManagedPolicyArns : undefined;
+    const ordered = logsPolicies.every(([policyId]) => DependsOn.includes(policyId));
+    const ownOnly = own && written.length > 0 && written.every(resource => resource.includes(`"${own}"`));
+    return !managed && ordered && ownOnly ? [] : [logicalId];
+  });
+  expect(functions.length).toBeGreaterThan(1);
+  expect(strays).toEqual([]);
+});
+
 test('names every resource from identity.json and builds the session API from the runtime source', () => {
   const app = new App();
   const { identity } = deployConfig();

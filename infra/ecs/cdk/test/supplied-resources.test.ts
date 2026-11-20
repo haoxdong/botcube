@@ -89,10 +89,19 @@ test("runs the Credential Service's audit copy from its image, in the private su
   }))).toEqual([{ image: 'botcube-credential-service', subnets: PRIVATE_SUBNETS, key: 'arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555' }]);
 });
 
-test('lets each Lambda function attach to the supplied network: its role holds the VPC access policy', () => {
+/** Whether the role `roleId` may create network interfaces by an inline grant scoped to the supplied subnets. */
+function attaches(template: StackTemplate, roleId: string): boolean {
+  return Object.values(template.Resources)
+    .filter(({ Type, Properties }) => Type === 'AWS::IAM::Policy' && references(Properties.Roles).includes(roleId))
+    .flatMap(({ Properties }) => (Properties.PolicyDocument as { Statement: { Action: string | string[]; Resource: unknown }[] }).Statement)
+    .some(({ Action, Resource }) => [Action].flat().includes('ec2:CreateNetworkInterface')
+      && PRIVATE_SUBNETS.every(subnet => JSON.stringify(Resource).includes(`subnet/${subnet}`)));
+}
+
+test('lets each Lambda function attach to the supplied network by an inline grant scoped to its subnets', () => {
   const withoutAccess = templates.flatMap(template => Object.entries(template.Resources)
     .filter(([, { Type }]) => Type === 'AWS::Lambda::Function')
-    .filter(([, { Properties }]) => !references(Properties.Role).some(roleId => JSON.stringify(template.Resources[roleId]).includes('AWSLambdaVPCAccessExecutionRole')))
+    .filter(([, { Properties }]) => !references(Properties.Role).some(roleId => attaches(template, roleId)))
     .map(([logicalId]) => logicalId));
   expect(withoutAccess).toEqual([]);
 });

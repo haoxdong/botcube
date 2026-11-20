@@ -318,7 +318,6 @@ export class AgentCoreStack extends Stack {
     const role = new iam.Role(this, 'SessionApiRole', {
       roleName: identity.roles.sessionApi,
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole')],
     });
     // Scheduled runs post their result to the member's Main Chat as an event. A purge lists the
     // Session's checkpoint writes sessions (ListSessions) and deletes their events.
@@ -352,6 +351,7 @@ export class AgentCoreStack extends Stack {
       logGroupName: props.sessionApiLogGroupName ?? `/aws/lambda/${identity.sessionApiFunction}`,
       retention: props.sessionApiLogRetention ?? logs.RetentionDays.ONE_MONTH,
     });
+    logGroup.grantWrite(role);
     const sessionApi = new lambda.DockerImageFunction(this, 'SessionApi', {
       functionName: identity.sessionApiFunction,
       code: sessionApiCode(codeLocation, registryArgs(props)),

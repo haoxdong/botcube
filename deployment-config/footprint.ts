@@ -2,9 +2,10 @@ import { outsideIssuer } from './credential-fields.js';
 import type { DeploymentConfig } from './schema.js';
 import type { CredentialSource, EndpointTls } from './blocks.js';
 import { PRINCIPALS, type Principal } from './principals.js';
-import { SUPPLIABLE, VPC_ACCESS } from './suppliable.js';
+import { NETWORK_INTERFACES, SUPPLIABLE } from './suppliable.js';
 
 const XRAY = ['xray:PutTelemetryRecords', 'xray:PutTraceSegments'];
+const OWN_LOGS = ['logs:CreateLogStream', 'logs:PutLogEvents'];
 
 export interface Grant {
   readonly actions: readonly string[];
@@ -87,14 +88,14 @@ const BUILT_IN: Need = {
       'ecs:DescribeTasks', 'ssm:GetParameterHistory',
     ] },
     credentialService: { actions: ['bedrock-agentcore:ConnectBrowserAutomationStream', 'bedrock-agentcore:GetBrowserSession'] },
+    auditCopy: { actions: OWN_LOGS },
     harness: { actions: [
       'ecr:BatchCheckLayerAvailability', 'ecr:BatchGetImage', 'ecr:GetAuthorizationToken', 'ecr:GetDownloadUrlForLayer',
       'logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:PutLogEvents',
     ] },
     sessionApi: {
       actions: ['BatchUpdateMemoryRecords', 'CreateEvent', 'DeleteEvent', 'DeleteMemoryRecord', 'GetEvent', 'ListEvents', 'ListMemoryRecords', 'ListSessions']
-        .map(action => `bedrock-agentcore:${action}`),
-      managedPolicies: ['AWSLambdaBasicExecutionRole'],
+        .map(action => `bedrock-agentcore:${action}`).concat(OWN_LOGS),
     },
   },
   egressHosts: [
@@ -137,7 +138,10 @@ function suppliedResources({ supplied = {}, identity }: DeploymentConfig): { nee
   for (const { resource: { grant } } of createdEntries) {
     for (const { to, actions } of grant ?? []) iam[to] = { actions: [...(iam[to]?.actions ?? []), ...actions] };
   }
-  if (supplied.network) iam.sessionApi = { actions: [], managedPolicies: [VPC_ACCESS] };
+  if (supplied.network) {
+    iam.sessionApi = { actions: NETWORK_INTERFACES };
+    iam.auditCopy = { actions: NETWORK_INTERFACES };
+  }
   return {
     need: { iam, supplied: [...suppliedEntries, ...providerResources] },
     created: createdEntries.map(({ key, resource }) => `supplied.${key}: ${resource.created}`),

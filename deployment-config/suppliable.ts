@@ -1,7 +1,8 @@
 import type { DeploymentConfig } from './schema.js';
 import type { Principal } from './principals.js';
 
-export const VPC_ACCESS = 'AWSLambdaVPCAccessExecutionRole';
+export const NETWORK_INTERFACES = ['CreateNetworkInterface', 'DeleteNetworkInterface', 'DescribeNetworkInterfaces', 'DescribeSubnets',
+  'AssignPrivateIpAddresses', 'UnassignPrivateIpAddresses'].map(action => `ec2:${action}`);
 const CHAT_TABLE_ACTIONS = ['BatchGetItem', 'BatchWriteItem', 'ConditionCheckItem', 'DeleteItem', 'DescribeTable', 'GetItem', 'GetRecords',
   'GetShardIterator', 'PutItem', 'Query', 'Scan', 'UpdateItem'].map(action => `dynamodb:${action}`);
 const VAULT_TABLE_ACTIONS = ['ConditionCheckItem', 'DeleteItem', 'GetItem', 'PutItem', 'Query', 'UpdateItem'].map(action => `dynamodb:${action}`);
@@ -31,7 +32,10 @@ export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
   network: {
     created: "the private subnets' NAT gateway, its Elastic IP and route",
     name: ({ network }) => network?.vpcId,
-    others: { "every other Lambda function's role, the deploy's own included": [`AWS managed policy ${VPC_ACCESS}`] },
+    others: {
+      "every other Lambda function's role, the deploy's own included": NETWORK_INTERFACES,
+      'its private subnets a route, by a NAT gateway or VPC endpoints': ['to each egress host below'],
+    },
   },
   'kmsKeys.vault': { created: "the Credential Service's vault key", name: ({ kmsKeys }) => kmsKeys?.vault, grant: [{ to: 'credentialService', actions: KEY_USE }] },
   'kmsKeys.sheet': { name: ({ kmsKeys }) => kmsKeys?.sheet?.keyArn, grant: [{ to: 'credentialService', actions: ['kms:Decrypt', 'kms:GetPublicKey'] }] },

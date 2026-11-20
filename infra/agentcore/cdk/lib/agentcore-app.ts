@@ -1,5 +1,6 @@
 import type { App } from 'aws-cdk-lib';
 import * as path from 'path';
+import { grantLambdasInline } from './lambda-inline-grants';
 import { AgentCoreStack, type AgentCoreStackProps, type AgentCorePhysicalIdentity } from './cdk-stack';
 import type { DeployConfig, DeployIdentity } from './deploy-config';
 import type { UserMemoryRole } from './user-memory-role';
@@ -40,31 +41,36 @@ export function addAgentCoreStacks(
   const chatServiceIssuer = `https://${new URL(identity.domains.chatService).hostname}`;
   const userMemoryRole = memoryRoleFor(identity, turnCredentials, chatServiceIssuer);
   for (const target of targets) {
-    new AgentCoreStack(app, `AgentCore-${identity.aws.cloudFormation.stackFamily}-${target.name}`.replace(/_/g, '-'), {
-      spec,
-      physicalIdentity,
-      commit,
-      chatServiceIssuer,
-      userMemoryRole,
-      privateNatBrowser: agentCore.privateNatBrowser,
-      platformVersion: agentCore.platformVersion,
-      ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
-      harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
-      runtimeNetwork: agentCore.runtimeNetworkParameter
-        ? {
-            securityGroupParameterName: agentCore.runtimeNetworkParameter,
-            subnetIds: agentCore.privateNatBrowser.subnets.map(subnet => subnet.id),
-          }
-        : undefined,
-      ...overrides,
-      ...(overrides.vpc ? { runtimeNetwork: undefined } : {}),
-      env: { account: target.account, region: target.region },
-      description: `AgentCore stack for ${spec.name} deployed to ${target.name} (${target.region})`,
-      tags: {
-        'agentcore:project-name': spec.name,
-        'agentcore:target-name': target.name,
-      },
-    });
+    const stack = new AgentCoreStack(
+      app,
+      `AgentCore-${identity.aws.cloudFormation.stackFamily}-${target.name}`.replace(/_/g, '-'),
+      {
+        spec,
+        physicalIdentity,
+        commit,
+        chatServiceIssuer,
+        userMemoryRole,
+        privateNatBrowser: agentCore.privateNatBrowser,
+        platformVersion: agentCore.platformVersion,
+        ...(agentCore.rollbackVersion !== undefined ? { rollbackVersion: agentCore.rollbackVersion } : {}),
+        harnessCodeLocation: path.resolve(deployRoot, runtime.codeLocation),
+        runtimeNetwork: agentCore.runtimeNetworkParameter
+          ? {
+              securityGroupParameterName: agentCore.runtimeNetworkParameter,
+              subnetIds: agentCore.privateNatBrowser.subnets.map(subnet => subnet.id),
+            }
+          : undefined,
+        ...overrides,
+        ...(overrides.vpc ? { runtimeNetwork: undefined } : {}),
+        env: { account: target.account, region: target.region },
+        description: `AgentCore stack for ${spec.name} deployed to ${target.name} (${target.region})`,
+        tags: {
+          'agentcore:project-name': spec.name,
+          'agentcore:target-name': target.name,
+        },
+      }
+    );
+    grantLambdasInline(stack);
   }
 }
 

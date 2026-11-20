@@ -43,6 +43,16 @@ function template(): Template {
   return Template.fromStack(stack());
 }
 
+function sessionApiLogs(synthesized: Template): string {
+  const [id] = Object.keys(
+    synthesized.findResources('AWS::Logs::LogGroup', {
+      Properties: { LogGroupName: `/aws/lambda/${IDENTITY.aws.agentCore.sessionApiFunction}` },
+    })
+  );
+  assert(id, 'the session API logs under its own name');
+  return id;
+}
+
 function memoryId(synthesized: Template): string {
   const [id] = Object.keys(synthesized.findResources('AWS::BedrockAgentCore::Memory'));
   assert(id, 'the stack declares an AgentCore memory');
@@ -139,7 +149,7 @@ test('checkpoint fragmentation needs no rollout parameter or writer environment 
   });
 });
 
-test("the session API may only list, get, create and delete events, list sessions, list, update and delete the memory's records, and read its LangSmith key", () => {
+test("the session API may only list, get, create and delete events, list sessions, list, update and delete the memory's records, and write its own logs", () => {
   const synthesized = template();
   const roles = synthesized.findResources('AWS::IAM::Role', {
     Properties: { RoleName: IDENTITY.aws.iam.sessionApiRole },
@@ -175,6 +185,11 @@ test("the session API may only list, get, create and delete events, list session
       Effect: 'Allow',
       Resource: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryArn'] },
     },
+    {
+      Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+      Effect: 'Allow',
+      Resource: { 'Fn::GetAtt': [sessionApiLogs(synthesized), 'Arn'] },
+    },
   ]);
 });
 
@@ -195,7 +210,7 @@ test('the runtime writes Sessions to the memory the session API reads', () => {
   });
 });
 
-test('the session API runs as Lambda with basic execution logging, one month of logs under its own name', () => {
+test('the session API logs one month under its own name', () => {
   const synthesized = template();
 
   synthesized.hasResourceProperties('AWS::IAM::Role', {
@@ -203,19 +218,8 @@ test('the session API runs as Lambda with basic execution logging, one month of 
     AssumeRolePolicyDocument: {
       Statement: [{ Action: 'sts:AssumeRole', Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' } }],
     },
-    ManagedPolicyArns: [
-      {
-        'Fn::Join': [
-          '',
-          ['arn:', { Ref: 'AWS::Partition' }, ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'],
-        ],
-      },
-    ],
   });
-  synthesized.hasResourceProperties('AWS::Logs::LogGroup', {
-    LogGroupName: `/aws/lambda/${IDENTITY.aws.agentCore.sessionApiFunction}`,
-    RetentionInDays: 30,
-  });
+  expect(synthesized.toJSON().Resources[sessionApiLogs(synthesized)].Properties.RetentionInDays).toBe(30);
 });
 
 test('the session API image builds from the Harness source with its own Dockerfile for arm64', () => {
