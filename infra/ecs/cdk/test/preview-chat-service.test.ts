@@ -31,19 +31,27 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   return parkingTemplate(origin, parked, prepareOrigin);
 }
 
-test('origin preparation builds ingress, leaves the parked service untouched and keeps the parked edge', () => {
+// Attaching the target group at 0 tasks keeps activation a count change on one deployment; attaching it while scaling
+// to 1 made ECS hold minimum health with a task from the old deployment and then drain it.
+test('origin preparation builds ingress and attaches the parked service to it at 0 tasks, keeping the parked edge', () => {
   const template = synth(undefined, true, privateSubnets, {}, true);
   template.resourceCountIs('AWS::ElasticLoadBalancingV2::LoadBalancer', 1);
   template.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', 1);
   expect(Object.keys(template.findResources('AWS::ElasticLoadBalancingV2::ListenerRule')).length).toBeGreaterThan(0);
-  const [service] = Object.values(template.findResources('AWS::ECS::Service'));
-  const [parked] = Object.values(synth(undefined, true).findResources('AWS::ECS::Service'));
-  expect(service).toEqual(parked);
-  template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0, LoadBalancers: [] });
+  template.hasResourceProperties('AWS::ECS::Service', {
+    DesiredCount: 0, LoadBalancers: [Match.objectLike({ ContainerName: Match.anyValue(), TargetGroupArn: Match.anyValue() })],
+  });
   template.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker' });
   template.hasResourceProperties('AWS::CloudFormation::CustomResource', {
     Kind: 'Dns', Hostname: 'api.example.com', Target: 'parked.invalid', Worker: Match.anyValue(),
   });
+});
+
+test('activation changes only the count of a prepared service', () => {
+  const [prepared] = Object.values(synth(undefined, true, privateSubnets, {}, true).findResources('AWS::ECS::Service'));
+  const [live] = Object.values(synth().findResources('AWS::ECS::Service'));
+  assert(prepared && live);
+  expect({ ...live.Properties, DesiredCount: 0 }).toEqual(prepared.Properties);
 });
 
 /** The security group a construct path created, as the template references it. */
