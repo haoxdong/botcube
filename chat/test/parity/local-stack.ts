@@ -37,8 +37,6 @@ const HARNESS_COMMAND =
   `${HARNESS_BIN}/python -c "from botcube_harness_deepagents import llm, serving; ` +
   `llm.AVAILABLE_MODELS.update(dict.fromkeys(llm.AVAILABLE_MODELS, 'echo')); serving.main()"`;
 
-const EXAMPLE_BOT = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
-
 /** The stock Chat Service, as its image runs it. */
 const CHAT_SERVICE_COMMAND = `node ${fileURLToPath(new URL('../../dist/main.js', import.meta.url))}`;
 
@@ -97,10 +95,7 @@ export async function startLocalStack(options: {
     HOME: home,
     AGENTCORE_MEMORY_ID: '',
     LANGSMITH_TRACING: 'false',
-    BOTCUBE_MODEL: 'echo',
     BOTCUBE_CHECKPOINT_PATH: join(home, 'checkpoints.sqlite3'),
-    // The example bot's image, unbuilt: BotCube's Harness serving the bot's settings and skills.
-    BOTCUBE_BOT_SETTINGS: EXAMPLE_BOT,
     // A start that never answers dumps its stacks (botcube/chat/test/fakes/process.ts).
     PYTHONFAULTHANDLER: '1',
     // The Mutation Gate's tier 2 (ADR 0069) activates a Mutant in the service through these:
@@ -131,6 +126,7 @@ export async function startLocalStack(options: {
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
     // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
     const modelsEnv = await modelsStandInEnvironment(models, openAICompatible, home, mtls);
+    // The Harness serves the bot settings the Deployment Config's `bot` names, as the example bot's image does.
     Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({

@@ -227,12 +227,11 @@ def _mark_responses(payload: dict[str, Any]) -> None:
         _mark_responses_item(item)
 
 
-def _endpoint_model(model_key: str | None, relay: Callable[[], ModelRelay] | None, max_tokens: int | None) -> Any:
+def _endpoint_model(key: str | None, relay: Callable[[], ModelRelay] | None, max_tokens: int | None) -> Any:
     from langchain_openai import ChatOpenAI
 
-    key = model_key or os.environ.get('BOTCUBE_MODEL')
     if not key:
-        raise RuntimeError('The OpenAI-compatible models endpoint needs a model key, and this Turn names no model and BOTCUBE_MODEL is unset')
+        raise RuntimeError('The OpenAI-compatible models endpoint needs a model key, and this Turn names no model')
     if relay is None:
         raise RuntimeError(f'Model "{key}" runs on the models Endpoint, which needs the Credential Service relay; this Turn has none')
     marked = cache_markers_on()
@@ -324,7 +323,7 @@ def _plan_model(slug: str, relay: Callable[[], ModelRelay], effort: str | None =
 
 
 def resolve_model(model: str | None = None) -> str:
-    selected = model or os.environ.get('BOTCUBE_MODEL', DEFAULT_MODEL)
+    selected = model or DEFAULT_MODEL
     return AVAILABLE_MODELS.get(selected, selected)
 
 

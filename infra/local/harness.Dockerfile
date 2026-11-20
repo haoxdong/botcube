@@ -23,7 +23,6 @@ RUN --mount=type=secret,id=build_ca \
   uv sync --frozen --no-dev --no-editable
 
 ENV PATH="/opt/harness/.venv/bin:$PATH"
-ENV BOTCUBE_MODEL=echo
 ENV BOTCUBE_CHECKPOINT_PATH=/var/lib/botcube-harness/checkpoints.sqlite3
 EXPOSE 8080
 CMD ["botcube-harness-deepagents"]

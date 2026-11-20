@@ -39,7 +39,8 @@ def test_agent_answers_simple_query_with_injected_cube_dependencies(tmp_path: Pa
 
 
 def test_local_echo_model_runs_without_provider_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv('BOTCUBE_MODEL', 'echo')
+    from botcube_harness_deepagents.agent import build_model
+
     for name in (
         'AWS_ACCESS_KEY_ID',
         'AWS_SECRET_ACCESS_KEY',
@@ -51,7 +52,7 @@ def test_local_echo_model_runs_without_provider_credentials(monkeypatch: pytest.
         inherit_env=False,
     )
 
-    answer = ask(build_agent(backend=backend, skills=[]), 'hello cube')
+    answer = ask(build_agent(backend=backend, skills=[], model=build_model(model='echo')), 'hello cube')
 
     assert answer == 'Echo: hello cube'
 
@@ -134,13 +135,9 @@ def test_model_uses_env_overrides_for_converse(monkeypatch: pytest.MonkeyPatch, 
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.setenv(
-        'BOTCUBE_MODEL',
-        'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-    )
     monkeypatch.setenv('AWS_REGION', 'us-east-1')
 
-    build_model(max_tokens=32)
+    build_model(model='global.anthropic.claude-haiku-4-5-20251001-v1:0', max_tokens=32)
 
     assert calls == [
         {
@@ -163,11 +160,10 @@ def test_model_falls_back_to_the_default_aws_region(monkeypatch: pytest.MonkeyPa
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.setenv('BOTCUBE_MODEL', 'deepseek.v3.2')
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'eu-west-1')
 
-    build_model()
+    build_model(model='deepseek.v3.2')
 
     assert calls == [{
         'model': 'deepseek.v3.2', 'temperature': 0, 'max_tokens': 128, 'region_name': 'eu-west-1', **SHARED_CLIENTS,
@@ -182,7 +178,6 @@ def test_model_resolves_ui_alias_and_effort(monkeypatch: pytest.MonkeyPatch, kwa
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
@@ -209,7 +204,6 @@ def test_model_passes_max_effort_through(monkeypatch: pytest.MonkeyPatch, kwargs
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
 
     build_model(model='sonnet-4.6', effort='max', max_tokens=4096)
     build_model(model='opus-4.6', effort='max', max_tokens=4096)
@@ -227,7 +221,8 @@ def test_model_defaults_to_sonnet(monkeypatch: pytest.MonkeyPatch, kwargs_record
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
+    # A served Turn's default is its bot settings' first model; no environment variable picks another.
+    monkeypatch.setenv('BOTCUBE_MODEL', 'deepseek.v3.2')
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
@@ -255,7 +250,7 @@ def test_an_openai_compatible_turn_with_no_model_fails_instead_of_sending_the_be
 
     deploy(monkeypatch, tmp_path, models=ENDPOINT_MODELS)
     monkeypatch.setitem(sys.modules, 'langchain_openai', _fake_module('langchain_openai', ChatOpenAI=kwargs_recorder))
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
+    monkeypatch.setenv('BOTCUBE_MODEL', 'echo')
 
     with pytest.raises(RuntimeError, match='names no model'):
         llm.build_model()
@@ -269,11 +264,10 @@ def test_model_falls_back_to_converse_for_non_openai(monkeypatch: pytest.MonkeyP
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.setenv('BOTCUBE_MODEL', 'deepseek.v3.2')
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
-    build_model()
+    build_model(model='deepseek.v3.2')
 
     assert calls == [
         {
@@ -291,7 +285,6 @@ def test_model_enables_adaptive_thinking_with_effort(monkeypatch: pytest.MonkeyP
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
@@ -316,7 +309,6 @@ def test_model_effort_argument(monkeypatch: pytest.MonkeyPatch, kwargs_recorder:
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
 
     build_model(effort='low')
 
@@ -333,11 +325,10 @@ def test_deepseek_reasons_at_the_only_level_bedrock_honours(monkeypatch: pytest.
     calls = kwargs_recorder.calls
     fake_langchain_aws = _fake_module('langchain_aws', ChatBedrockConverse=kwargs_recorder)
     monkeypatch.setitem(sys.modules, 'langchain_aws', fake_langchain_aws)
-    monkeypatch.setenv('BOTCUBE_MODEL', 'deepseek.v3.2')
     monkeypatch.delenv('AWS_REGION', raising=False)
     monkeypatch.delenv('AWS_DEFAULT_REGION', raising=False)
 
-    build_model(effort='low')
+    build_model(model='deepseek.v3.2', effort='low')
 
     # Bedrock's DeepSeek accepts "low" and "medium" but reasons only at "high".
     assert calls[0]['additional_model_request_fields'] == {'reasoning_config': 'high'}

@@ -23,6 +23,7 @@ from .definition import (
     environment_cache_key,
     openai_model_relay,
 )
+from .deployment_config import DEPLOYMENT_CONFIG_ENV, deployment_config_from_env
 from .memory.agentcore import turn_actor
 
 # The shell variable OpenTelemetry SDKs read resource attributes from, so a CLI's spans name the Turn's User and traffic.
@@ -81,14 +82,14 @@ def load_bot_settings(path: Path) -> BotSettings:
 
 
 def bot_from_env() -> tuple[HarnessDefinition, str] | None:
-    """The definition and default model of the bot `BOTCUBE_BOT_SETTINGS` names, if it names one.
+    """The definition and default model, its first, of the bot the Deployment Config names, if the process has one.
 
-    The Harness then serves the bot with BotCube's own definition and runs no bot code.
+    Its `bot` is relative to the file. The Harness then serves the bot with BotCube's own definition and runs no bot code.
     """
-    path = os.getenv('BOTCUBE_BOT_SETTINGS', '').strip()
-    if not path:
+    config = os.getenv(DEPLOYMENT_CONFIG_ENV)
+    if not config:
         return None
-    bot = load_bot_settings(Path(path))
+    bot = load_bot_settings((Path(config).parent / deployment_config_from_env()['bot']).resolve())
     return bot_definition(bot), bot.models[0]
 
 

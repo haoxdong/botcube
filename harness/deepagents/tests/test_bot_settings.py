@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from agentcore_fake import turn_identity
 from botcube_harness_deepagents import serving, session_api
 from botcube_harness_deepagents.bot_settings import BotSettingsError, load_bot_settings
+from deployment_fixture import deploy
 from test_serving import _Recorder, _ScriptedModel, _Service, _tool_output
 from test_serving import start as start
 
@@ -40,14 +42,22 @@ def _bot(root: Path, **settings: Any) -> Path:
     return path
 
 
+def _deployed(monkeypatch: pytest.MonkeyPatch, root: Path, bot: Path) -> Path:
+    """A Deployment Config in its own directory, naming the bot settings relative to itself as the examples' do."""
+    directory = root / 'deployment'
+    directory.mkdir()
+    return deploy(monkeypatch, directory, bot=os.path.relpath(bot, directory))
+
+
 @pytest.fixture
 def bot_service(request: pytest.FixtureRequest, start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Service]:
     home = tmp_path / 'home'
     home.mkdir()
     bot = _bot(tmp_path / 'bot', **getattr(request, 'param', {}))
     for name, value in {'HOME': str(home), 'BOTCUBE_CHECKPOINT_PATH': str(tmp_path / 'checkpoints.sqlite3'), 'LANGSMITH_TRACING': 'false',
-                        'BOTCUBE_WORKSPACE': str(tmp_path / 'workspace'), 'BOTCUBE_BOT_SETTINGS': str(bot)}.items():
+                        'BOTCUBE_WORKSPACE': str(tmp_path / 'workspace')}.items():
         monkeypatch.setenv(name, value)
+    _deployed(monkeypatch, tmp_path, bot)
     for name, value in {'AGENTCORE_MEMORY_ID': '', '_AGENTS': {}, '_BACKENDS': {}, '_BACKEND_BY_AGENT': {}, '_CHECKPOINTER': None,
                         '_STORE': None, '_SESSION_TURNS': serving._SessionTurns()}.items():
         monkeypatch.setattr(serving, name, value)
@@ -201,9 +211,9 @@ def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: 
     path = _bot(tmp_path, **settings)
     (tmp_path / 'other' / 'greeting').mkdir(parents=True)
     (tmp_path / 'other' / 'greeting' / 'SKILL.md').write_text(SKILL)
-    monkeypatch.setenv('BOTCUBE_BOT_SETTINGS', str(path))
+    _deployed(monkeypatch, tmp_path, path)
 
-    with pytest.raises(BotSettingsError, match=rf'^Bot settings {path}: {re.escape(field)}: '):
+    with pytest.raises(BotSettingsError, match=rf'^Bot settings {re.escape(str(path.resolve()))}: {re.escape(field)}: '):
         start()
 
 

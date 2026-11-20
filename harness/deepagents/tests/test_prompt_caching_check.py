@@ -32,7 +32,7 @@ class BedrockProbe(DelegatingBedrockClient):
         return {'stream': events()}
 
 
-def run_checker(monkeypatch: pytest.MonkeyPatch, provider: BedrockProbe, configured: str | None = None) -> int:
+def run_checker(monkeypatch: pytest.MonkeyPatch, provider: BedrockProbe, *args: str) -> int:
     import functools
 
     import boto3
@@ -42,10 +42,6 @@ def run_checker(monkeypatch: pytest.MonkeyPatch, provider: BedrockProbe, configu
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
     monkeypatch.setenv('AWS_REGION', 'us-east-1')
-    if configured is None:
-        monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
-    else:
-        monkeypatch.setenv('BOTCUBE_MODEL', configured)
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: provider)
     monkeypatch.setattr(boto3.session.Session, 'client', lambda *args, **kwargs: provider)
     # A new checker process builds its own shared Bedrock clients, which later tests must not see.
@@ -55,18 +51,18 @@ def run_checker(monkeypatch: pytest.MonkeyPatch, provider: BedrockProbe, configu
     assert spec is not None and spec.loader is not None
     checker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(checker)
-    return checker.main()
+    return checker.main(list(args))
 
 
-@pytest.mark.parametrize(('configured', 'expected'), [
-    (None, 'us.anthropic.claude-sonnet-4-6'),
-    ('opus-5.5', 'us.anthropic.claude-opus-5-5'),
+@pytest.mark.parametrize(('args', 'expected'), [
+    ((), 'us.anthropic.claude-sonnet-4-6'),
+    (('--model', 'opus-5.5'), 'us.anthropic.claude-opus-5-5'),
 ])
 def test_checker_invokes_the_working_default(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], configured: str | None, expected: str,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: tuple[str, ...], expected: str,
 ) -> None:
     provider = BedrockProbe()
-    assert run_checker(monkeypatch, provider, configured) == 0
+    assert run_checker(monkeypatch, provider, *args) == 0
     assert provider.stream_models == [expected]
     assert 'PASS|default:invoke|' in capsys.readouterr().out
 

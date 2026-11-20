@@ -57,4 +57,4 @@ microVM boundary.
 
 ## Model configuration
 
-`BOTCUBE_MODEL` selects the model, falling back to `DEFAULT_MODEL` in `llm.py`. Bedrock Converse model factories and prompt caching are owned there; agent composition owns caching middleware. Product Cartridges supply the conversation binding and tool environment, including the CLI ref namespace.
+A Turn runs on the model it names, else the first in its bot settings, which the Deployment Config's `bot` names; a call naming neither runs `DEFAULT_MODEL` in `llm.py`. Bedrock Converse model factories and prompt caching are owned there; agent composition owns caching middleware. Product Cartridges supply the conversation binding and tool environment, including the CLI ref namespace.
