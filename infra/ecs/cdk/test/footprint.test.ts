@@ -9,7 +9,7 @@ import { footprint, IMAGES } from '../../../../deployment-config/footprint.js';
 import type { Principal } from '../../../../deployment-config/principals.js';
 import { loadDeployment } from '../../../../deployment-config/load.js';
 import { EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
-import { cartridgeIdentity } from '../lib/cartridge.js';
+import { deployIdentity } from '../lib/deploy-root.js';
 import { deploymentConfigPath, synthesizeExample } from './example-fixture.js';
 import { parkingTemplate } from './resolve-parking.js';
 
@@ -42,7 +42,7 @@ function egressDrift(printed: string[], configured: string[]) {
     printedNotConfigured: beyondCode.filter(host => !configured.includes(host)),
   };
 }
-const EXAMPLE_IDENTITY = cartridgeIdentity(path.resolve(__dirname, '../../../../templates/always-on/deploy'));
+const EXAMPLE_IDENTITY = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
 
 /** Each runtime role BotCube creates, by construct path, and the footprint principal it is. */
 const PRINCIPAL_ROLES: Partial<Record<string, Principal>> = {

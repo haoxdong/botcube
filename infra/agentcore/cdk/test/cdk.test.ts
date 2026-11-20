@@ -25,7 +25,7 @@ function onlyOf<T>(entries: T[]): T {
 }
 import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
-const DEPLOY_ROOT = resolve(__dirname, '../../../../templates/always-on/deploy');
+const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 const DEPLOY_IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 const PHYSICAL_IDENTITY = {
   runtime: DEPLOY_IDENTITY.aws.agentCore.runtime,

@@ -11,13 +11,13 @@ import type { DeploymentConfig } from '../../../../deployment-config/schema.js';
 import { telemetryDeployment } from '../../../../deployment-config/telemetry.js';
 import { addAgentCoreStacks } from '../../../agentcore/cdk/lib/agentcore-app.js';
 import { loadDeployConfig } from '../../../agentcore/cdk/lib/deploy-config.js';
-import { cartridgeIdentity } from '../lib/cartridge.js';
+import { deployIdentity } from '../lib/deploy-root.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { defineProduction, type ProductionOptions } from '../lib/production.js';
 import { placeLambdasInNetwork } from '../lib/supplied-network.js';
 
-/** The examples' deploy names and AgentCore spec, still in the Always On deploy directory until it moves under them. */
-const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../templates/always-on/deploy');
+/** The examples' deploy names and AgentCore spec, in the public example's deploy directory. */
+const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
 /** The examples' chat image, and the examples directory whose files it ships under its WORKDIR. */
 const CHAT_DOCKERFILE = path.resolve(__dirname, '../../../../chat/Dockerfile');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
@@ -43,7 +43,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const deploymentConfig = imageDeploymentConfig(configPath, config.bot);
   const network = config.supplied?.network;
   const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
-  const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(cartridgeIdentity(EXAMPLE_DEPLOY_ROOT))), network);
+  const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(deployIdentity(EXAMPLE_DEPLOY_ROOT))), network);
   const environment = proxyEnvironment(config);
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);

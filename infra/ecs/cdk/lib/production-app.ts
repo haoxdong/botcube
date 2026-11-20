@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { cartridgeDeployRoot, cartridgeIdentity, projectDir } from './cartridge.js';
+import { activeDeployRoot, deployIdentity, projectDir } from './deploy-root.js';
 import { defineProduction, type ProductionOptions } from './production.js';
 import { credentialServiceImage } from './credential-audit-copy.js';
 import { repositoryImageProps } from './repository-image.js';
@@ -34,8 +34,8 @@ function checkoutCommit(root: string): string {
 export function productionApp(product: Pick<ProductionOptions, 'serving' | 'credentials'> = {}): App {
   const app = new App();
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
-  const deployRoot = cartridgeDeployRoot();
-  const identity = cartridgeIdentity(deployRoot);
+  const deployRoot = activeDeployRoot();
+  const identity = deployIdentity(deployRoot);
   const cartridgeFile = (file: string) => path.relative(repositoryRoot, path.join(deployRoot, file));
   let origin;
   let chat;

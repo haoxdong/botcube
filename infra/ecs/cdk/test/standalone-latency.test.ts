@@ -9,11 +9,12 @@ let savedEnvironment: NodeJS.ProcessEnv;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'standalone-latency-'));
-  fs.mkdirSync(path.join(root, 'templates/always-on/deploy'), { recursive: true });
-  fs.copyFileSync(path.resolve(__dirname, '../../../../templates/always-on/deploy/identity.json'), path.join(root, 'templates/always-on/deploy/identity.json'));
+  fs.mkdirSync(path.join(root, 'examples/public/deploy'), { recursive: true });
+  fs.copyFileSync(path.resolve(__dirname, '../../../../examples/public/deploy/identity.json'), path.join(root, 'examples/public/deploy/identity.json'));
   savedEnvironment = { ...process.env };
   process.env.BOTCUBE_REPOSITORY_ROOT = root;
-  process.env.CARTRIDGE_DEPLOY_ROOT = path.join(root, 'templates/always-on/deploy');
+  delete process.env.CARTRIDGE_DEPLOY_ROOT;
+  process.env.BOTCUBE_DEPLOY_ROOT = path.join(root, 'examples/public/deploy');
 });
 
 afterEach(() => {
@@ -33,7 +34,7 @@ function compose(moments?: unknown): App {
 }
 
 test('the unfiltered standalone export synthesizes explicitly supplied latency moments without a budget file', () => {
-  expect(fs.existsSync(path.join(root, 'templates/always-on/latency-budgets.json'))).toBe(false);
+  expect(fs.existsSync(path.join(root, 'examples/public/latency-budgets.json'))).toBe(false);
   const app = compose(JSON.stringify(['first-response', 'tool-result']));
   app.synth();
   Template.fromStack(app.node.findChild('WebLatency') as Stack).hasResourceProperties('AWS::RUM::AppMonitor', {

@@ -94,9 +94,9 @@ export interface ProductionOptions {
   /** The secrets the Chat Service's credential sources read. */
   chatSecretArns?: readonly string[];
   repositoryRoot: string;
-  /** The active Cartridge's deploy directory (`CARTRIDGE_DEPLOY_ROOT`). */
+  /** The active deploy directory (`BOTCUBE_DEPLOY_ROOT`). */
   deployRoot: string;
-  /** The Cartridge's deploy identity, as `cartridgeIdentity` reads it. */
+  /** The deploy identity, as `deployIdentity` reads it. */
   identity: DeployIdentity;
   /** The registry, mirroring ECR Public's paths, every image comes from. */
   imageRegistry?: string;

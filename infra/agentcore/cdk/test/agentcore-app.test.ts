@@ -20,7 +20,7 @@ import type { AgentCoreStack } from '../lib/cdk-stack';
 import { readDeployIdentity, readProjectSpec, type DeployConfig } from '../lib/deploy-config';
 
 const COMMIT = 'abc123';
-const DEPLOY_ROOT = resolve(__dirname, '../../../../templates/always-on/deploy');
+const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 setSessionProjectRoot(DEPLOY_ROOT);
 
 const PRIVATE_NAT_BROWSER = {

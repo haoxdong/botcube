@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import patch
 
 os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'example.com'})
-os.environ['CARTRIDGE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'templates/always-on/deploy')
+os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'examples/public/deploy')
 import handler
 
 

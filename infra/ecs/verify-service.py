@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 import boto3
 from botocore.exceptions import ClientError
-from deploy_identity import load_identity
+from deploy_identity import deploy_root, load_identity
 from origin_smoke import OriginSmoke, cleanup_conversation
 from test_user import test_user
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from types_boto3_elbv2.type_defs import TargetHealthDescriptionTypeDef
     from types_boto3_lambda import LambdaClient
 
-DEPLOY_ROOT = Path(os.environ['CARTRIDGE_DEPLOY_ROOT']).resolve()
+DEPLOY_ROOT = deploy_root().resolve()
 IDENTITY = load_identity()
 DOMAIN = 'chatServicePreview'
 

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const identity = JSON.parse(readFileSync(join(process.env.CARTRIDGE_DEPLOY_ROOT, 'identity.json'), 'utf8'));
+// CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
+const identity = JSON.parse(readFileSync(join(process.env.BOTCUBE_DEPLOY_ROOT || process.env.CARTRIDGE_DEPLOY_ROOT, 'identity.json'), 'utf8'));
 const { account, region, ecs } = identity.aws;
 const [mode, source] = process.argv.slice(2);
 if (!['deploy', 'rollback'].includes(mode) || !source) throw new Error('Usage: managed-deploy-policies.mjs deploy|rollback POLICY_JSON');

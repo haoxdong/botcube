@@ -164,7 +164,7 @@ export function readProjectSpec(deployRoot: string): AgentCoreProjectSpec {
  */
 export async function loadDeployConfig(configuredRoot: string | undefined, cwd: string): Promise<DeployConfig> {
   if (!configuredRoot) {
-    throw new Error('CARTRIDGE_DEPLOY_ROOT must point to the active Cartridge deploy directory');
+    throw new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory');
   }
   const deployRoot = path.resolve(cwd, configuredRoot);
   const configRoot = path.join(deployRoot, 'agentcore');

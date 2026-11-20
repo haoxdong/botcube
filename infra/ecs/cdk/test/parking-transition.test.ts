@@ -3,10 +3,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { cartridgeIdentity } from '../lib/cartridge.js';
+import { deployIdentity } from '../lib/deploy-root.js';
 import { parkingTransition } from '../lib/parking-transition.js';
 
-const identity = cartridgeIdentity(path.resolve(__dirname, '../../../../templates/always-on/deploy'));
+const identity = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
 
 test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy workflow', () => {
   const infraRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'transition-infra-'));

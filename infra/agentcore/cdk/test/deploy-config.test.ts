@@ -5,13 +5,13 @@ import * as path from 'path';
 import { findConfigRoot, type AgentCoreProjectSpec } from '@aws/agentcore-cdk';
 import { loadDeployConfig, type DeployIdentity } from '../lib/deploy-config';
 
-const TEMPLATE_DEPLOY = path.resolve(__dirname, '../../../../templates/always-on/deploy');
+const EXAMPLE_DEPLOY = path.resolve(__dirname, '../../../../examples/public/deploy');
 const tempRoots: string[] = [];
 
-/** The template spec's one runtime. */
+/** The example spec's one runtime. */
 function runtimeOf(spec: AgentCoreProjectSpec) {
   const [runtime] = spec.runtimes;
-  assert(runtime, 'the template spec declares a runtime');
+  assert(runtime, 'the example spec declares a runtime');
   return runtime;
 }
 
@@ -25,16 +25,16 @@ interface Fixture {
   targets?: unknown[];
 }
 
-/** A copy of the template Cartridge deploy root, edited per test. */
+/** A copy of the public example's deploy root, edited per test. */
 function deployRoot(fixture: Fixture = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentcore-deploy-config-'));
   tempRoots.push(root);
-  const identity: DeployIdentity = JSON.parse(fs.readFileSync(path.join(TEMPLATE_DEPLOY, 'identity.json'), 'utf8'));
+  const identity: DeployIdentity = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'identity.json'), 'utf8'));
   const spec: AgentCoreProjectSpec = JSON.parse(
-    fs.readFileSync(path.join(TEMPLATE_DEPLOY, 'agentcore/agentcore.json'), 'utf8')
+    fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'agentcore/agentcore.json'), 'utf8')
   );
   const [memory] = spec.memories;
-  assert(memory, 'the template spec declares a memory');
+  assert(memory, 'the example spec declares a memory');
   fixture.identity?.(identity);
   fixture.spec?.(spec);
   fs.mkdirSync(path.join(root, 'agentcore'));
@@ -47,9 +47,9 @@ function deployRoot(fixture: Fixture = {}): string {
   return root;
 }
 
-test('requires CARTRIDGE_DEPLOY_ROOT', async () => {
+test('requires a deploy root', async () => {
   await expect(loadDeployConfig(undefined, '/')).rejects.toThrow(
-    new Error('CARTRIDGE_DEPLOY_ROOT must point to the active Cartridge deploy directory')
+    new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory')
   );
 });
 
@@ -172,7 +172,7 @@ test('accepts an agentcore.json that omits the optional features', async () => {
 const HARNESS = path.resolve(__dirname, '../../../../harness/deepagents');
 
 test("the template names only its project, runtime and memory: BotCube's defaults fill the rest", async () => {
-  const config = await loadDeployConfig(TEMPLATE_DEPLOY, '/');
+  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
 
   expect(config.identity.aws.agentCore.sessionApiAlias).toBe('live');
   expect(config.spec).toMatchObject({
@@ -234,7 +234,7 @@ test('rejects an agentcore.json that the defaults cannot make valid, naming it',
 });
 
 test('SDK metrics stay off while Turn tracing remains enabled', async () => {
-  const config = await loadDeployConfig(TEMPLATE_DEPLOY, '/');
+  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
   expect(runtimeOf(config.spec).envVars).toEqual(
     expect.arrayContaining([
       { name: 'AGENT_OBSERVABILITY_ENABLED', value: 'true' },

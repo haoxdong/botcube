@@ -14,7 +14,11 @@ function checkoutCommit(repositoryRoot: string): string {
 }
 
 async function main() {
-  const config = await loadDeployConfig(process.env.CARTRIDGE_DEPLOY_ROOT, process.cwd());
+  // CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
+  const config = await loadDeployConfig(
+    process.env.BOTCUBE_DEPLOY_ROOT || process.env.CARTRIDGE_DEPLOY_ROOT,
+    process.cwd()
+  );
 
   const repositoryRoot = toolStagingRoot(config.deployRoot, config.identity.artifacts.toolStaging.hook);
   const commit = checkoutCommit(repositoryRoot);

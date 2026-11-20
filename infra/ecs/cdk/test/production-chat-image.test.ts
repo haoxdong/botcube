@@ -22,8 +22,8 @@ test('a deploy root with its own chat Dockerfile builds it and names no Deployme
   expect(productionChatImage(root, path.join(root, 'product/deploy'))).toEqual({ file: 'product/chat/Dockerfile' });
 });
 
-test('the Always On template, with no chat of its own, builds the stock Chat Service on the public example', () => {
-  const image = productionChatImage(botcubeRoot, path.join(botcubeRoot, 'templates/always-on/deploy'));
+test('the public example, with no chat of its own, builds the stock Chat Service on its Deployment Config', () => {
+  const image = productionChatImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
   expect(image).toEqual({ file: 'chat/Dockerfile', deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json' });
   expect(repositoryImageProps(botcubeRoot, image.file).file).toBe('chat/Dockerfile');
   expect(fs.readFileSync(path.join(botcubeRoot, image.file), 'utf8'))

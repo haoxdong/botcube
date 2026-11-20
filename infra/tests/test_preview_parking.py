@@ -142,11 +142,11 @@ class WithoutOwnedEgressVerificationTests(unittest.TestCase):
     """An existing network brings its own egress, so verification never looks for BotCube's NAT."""
 
     def setUp(self):
-        identity = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+        identity = json.loads((Path(os.environ['BOTCUBE_DEPLOY_ROOT']) / 'identity.json').read_text())
         del identity['aws']['ecs']['privateEgress']
         root = Path(tempfile.mkdtemp())
         (root / 'identity.json').write_text(json.dumps(identity))
-        with patch.dict(os.environ, {'CARTRIDGE_DEPLOY_ROOT': str(root)}):
+        with patch.dict(os.environ, {'BOTCUBE_DEPLOY_ROOT': str(root)}):
             self.verifier = runpy.run_path(str(DEPLOY_ECS / 'verify-park.py'))
 
     @staticmethod

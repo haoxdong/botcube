@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Add only rollback exercise privileges; preserve concurrent preview deploy policy updates.
 set -euo pipefail
+# CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
+DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:-${CARTRIDGE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}}"
 if [[ "${1:-}" == '--profile' ]]; then
   export AWS_PROFILE="${2:?profile required}"
   shift 2
@@ -14,7 +16,7 @@ test "$#" -eq 0
 read -r ACCOUNT REGION CLUSTER ROLE TASK_FAMILY POLICY_NAME < <(node -e '
 const x = require(process.argv[1]).aws;
 console.log(x.account, x.region, x.ecs.cluster, x.ecs.deployRoleName, x.ecs.rollbackTaskFamilyPrefix, x.ecs.rollbackPolicyName);
-' "${CARTRIDGE_DEPLOY_ROOT:?}/identity.json")
+' "$DEPLOY_ROOT/identity.json")
 REVISION="$(aws ecs describe-services --region "$REGION" --cluster "$CLUSTER" --services chat-service-preview --query 'services[0].taskDefinition' --output text)"
 read -r TASK_ROLE EXECUTION_ROLE IMAGE < <(aws ecs describe-task-definition --region "$REGION" --task-definition "$REVISION" --query 'taskDefinition.[taskRoleArn,executionRoleArn,containerDefinitions[0].image]' --output text)
 test -n "$TASK_ROLE"

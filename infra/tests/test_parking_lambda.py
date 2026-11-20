@@ -561,10 +561,10 @@ class OwnNetwork(Production):
 
 
 def load_without_owned_egress(monkeypatch, tmp_path):
-    identity = json.loads((Path(os.environ['CARTRIDGE_DEPLOY_ROOT']) / 'identity.json').read_text())
+    identity = json.loads((Path(os.environ['BOTCUBE_DEPLOY_ROOT']) / 'identity.json').read_text())
     del identity['aws']['ecs']['privateEgress']
     (tmp_path / 'identity.json').write_text(json.dumps(identity))
-    monkeypatch.setenv('CARTRIDGE_DEPLOY_ROOT', str(tmp_path))
+    monkeypatch.setenv('BOTCUBE_DEPLOY_ROOT', str(tmp_path))
     return load()
 
 

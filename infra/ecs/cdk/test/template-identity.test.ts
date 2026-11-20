@@ -5,11 +5,11 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { cartridgeIdentity } from '../lib/cartridge.js';
+import { deployIdentity } from '../lib/deploy-root.js';
 import { defineProduction } from '../lib/production.js';
 import { registryCredentialImage } from './credential-image.js';
 
-const identity = cartridgeIdentity(path.resolve(__dirname, '../../../../templates/always-on/deploy'));
+const identity = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
 const roots: string[] = [];
 
 afterEach(() => {

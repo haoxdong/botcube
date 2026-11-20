@@ -7,7 +7,9 @@ set -euo pipefail
 # reissues both and appends the new CA to the bundle, so the ALB trusts old and
 # new client certificates until Cloudflare switches; then drop the old CA.
 
-REPO_ROOT="${CARTRIDGE_REPOSITORY_ROOT:?}"
+# The CARTRIDGE_* names are the old ones, read until every setter moves to the BOTCUBE_* names.
+REPO_ROOT="${BOTCUBE_DEPLOY_REPOSITORY_ROOT:-${CARTRIDGE_REPOSITORY_ROOT:?BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root}}"
+DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:-${CARTRIDGE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}}"
 
 ROTATE=false
 while [[ "$#" -gt 0 ]]; do
@@ -37,7 +39,7 @@ read -r AWS_REGION CA_PATH SECRET_NAME PREVIEW_URL ORGANIZATION < <(node -e '
     identity.domains.chatServicePreview,
     identity.aws.ecs.originPullOrganization,
   ].join(" ") + "\n");
-' "${CARTRIDGE_DEPLOY_ROOT:?}/identity.json")
+' "$DEPLOY_ROOT/identity.json")
 export AWS_REGION
 
 SECRET_EXISTS=false

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
+DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:-${CARTRIDGE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}}"
 
 if [[ "${1:-}" == '--profile' ]]; then
   test -n "${2:-}"
@@ -36,7 +38,7 @@ read -r AWS_ACCOUNT_ID AWS_REGION STACK_FAMILY CLUSTER ROLE_NAME ORIGIN_PULL_SEC
     identity.aws.ecs.apiHealth.stackName,
     identity.aws.ecs.chatService.turnIdentityKeysSecretName,
   ].join(" ") + "\n");
-' "${CARTRIDGE_DEPLOY_ROOT:?}/identity.json")
+' "$DEPLOY_ROOT/identity.json")
 
 TRUST_POLICY="$(mktemp)"
 ROLE_POLICY="$(mktemp)"

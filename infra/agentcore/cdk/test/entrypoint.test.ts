@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 const PACKAGE_ROOT = path.resolve(__dirname, '..');
-const TEMPLATE_DEPLOY = path.resolve(PACKAGE_ROOT, '../../../templates/always-on/deploy');
+const EXAMPLE_DEPLOY = path.resolve(PACKAGE_ROOT, '../../../examples/public/deploy');
 const mockContextPaths: string[] = [];
 
 // Jest runs the entrypoint from bin/, but deploys run it built into dist/bin/. Record the cdk.json
@@ -24,18 +24,31 @@ jest.mock('../lib/cdk-context', () => {
 });
 
 const tempRoots: string[] = [];
-const originalDeployRoot = process.env.CARTRIDGE_DEPLOY_ROOT;
+const originalDeployRoot = process.env.BOTCUBE_DEPLOY_ROOT;
+const originalOldDeployRoot = process.env.CARTRIDGE_DEPLOY_ROOT;
 const originalOutdir = process.env.CDK_OUTDIR;
 
 afterEach(() => {
   jest.restoreAllMocks();
   mockContextPaths.length = 0;
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-  if (originalDeployRoot === undefined) delete process.env.CARTRIDGE_DEPLOY_ROOT;
-  else process.env.CARTRIDGE_DEPLOY_ROOT = originalDeployRoot;
+  if (originalDeployRoot === undefined) delete process.env.BOTCUBE_DEPLOY_ROOT;
+  else process.env.BOTCUBE_DEPLOY_ROOT = originalDeployRoot;
+  if (originalOldDeployRoot === undefined) delete process.env.CARTRIDGE_DEPLOY_ROOT;
+  else process.env.CARTRIDGE_DEPLOY_ROOT = originalOldDeployRoot;
   if (originalOutdir === undefined) delete process.env.CDK_OUTDIR;
   else process.env.CDK_OUTDIR = originalOutdir;
 });
+
+/** Name the deploy root by `name` alone, so the other name cannot shadow it. */
+function setDeployRoot(
+  root: string,
+  name: 'BOTCUBE_DEPLOY_ROOT' | 'CARTRIDGE_DEPLOY_ROOT' = 'BOTCUBE_DEPLOY_ROOT'
+): void {
+  delete process.env.BOTCUBE_DEPLOY_ROOT;
+  delete process.env.CARTRIDGE_DEPLOY_ROOT;
+  process.env[name] = root;
+}
 
 function tempDir(): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agentcore-entrypoint-')));
@@ -47,8 +60,8 @@ function tempDir(): string {
 function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');
-  const identity = JSON.parse(fs.readFileSync(path.join(TEMPLATE_DEPLOY, 'identity.json'), 'utf8'));
-  const spec = JSON.parse(fs.readFileSync(path.join(TEMPLATE_DEPLOY, 'agentcore/agentcore.json'), 'utf8'));
+  const identity = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'identity.json'), 'utf8'));
+  const spec = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'agentcore/agentcore.json'), 'utf8'));
   identity.artifacts.toolStaging.hook = 'bot/deploy/stage-tools.sh';
   spec.runtimes[0].codeLocation = '../../harness/';
   fs.mkdirSync(path.join(deployRoot, 'agentcore'), { recursive: true });
@@ -102,7 +115,7 @@ async function runEntrypoint(): Promise<{ app?: App; exitCode?: number; errors: 
 
 test('stages tools from the repository root, then synthesizes the stacks with the package cdk.json context', async () => {
   const repo = repository();
-  process.env.CARTRIDGE_DEPLOY_ROOT = path.join(repo, 'bot/deploy');
+  setDeployRoot(path.join(repo, 'bot/deploy'));
   process.env.CDK_OUTDIR = tempDir();
 
   const { app, exitCode, errors } = await runEntrypoint();
@@ -118,33 +131,33 @@ test('stages tools from the repository root, then synthesizes the stacks with th
   expect(deployedCommit(process.env.CDK_OUTDIR)).toBe(git(repo, 'rev-parse', 'HEAD'));
 });
 
-test('stages a nested template Cartridge from the root that owns its hook', async () => {
+test('stages a nested deploy root from the root that owns its hook', async () => {
   const repo = repository();
   const oldDeploy = path.join(repo, 'bot/deploy');
-  const deployRoot = path.join(repo, 'templates/always-on/deploy');
+  const deployRoot = path.join(repo, 'examples/public/deploy');
   fs.mkdirSync(path.dirname(deployRoot), { recursive: true });
   fs.renameSync(oldDeploy, deployRoot);
   const identity = JSON.parse(fs.readFileSync(path.join(deployRoot, 'identity.json'), 'utf8'));
-  identity.artifacts.toolStaging.hook = 'templates/always-on/deploy/stage-tools.sh';
+  identity.artifacts.toolStaging.hook = 'examples/public/deploy/stage-tools.sh';
   fs.writeFileSync(path.join(deployRoot, 'identity.json'), JSON.stringify(identity));
   const specPath = path.join(deployRoot, 'agentcore/agentcore.json');
   const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
   spec.runtimes[0].codeLocation = '../../../harness/';
   fs.writeFileSync(specPath, JSON.stringify(spec));
-  process.env.CARTRIDGE_DEPLOY_ROOT = deployRoot;
+  setDeployRoot(deployRoot);
   process.env.CDK_OUTDIR = tempDir();
 
   const { app, errors, exitCode } = await runEntrypoint();
 
   expect({ errors, exitCode }).toEqual({ errors: [], exitCode: undefined });
-  assert(app, 'the template entrypoint synthesized its app');
+  assert(app, 'the nested entrypoint synthesized its app');
   expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
 });
 
 test('marks the deployed commit dirty when tracked files differ from it', async () => {
   const repo = repository();
   fs.appendFileSync(path.join(repo, 'harness/session-api.Dockerfile'), '# local edit\n');
-  process.env.CARTRIDGE_DEPLOY_ROOT = path.join(repo, 'bot/deploy');
+  setDeployRoot(path.join(repo, 'bot/deploy'));
   const outdir = (process.env.CDK_OUTDIR = tempDir());
 
   const { errors } = await runEntrypoint();
@@ -153,13 +166,26 @@ test('marks the deployed commit dirty when tracked files differ from it', async 
   expect(deployedCommit(outdir)).toBe(`${git(repo, 'rev-parse', 'HEAD')}-dirty`);
 });
 
+test('still reads the deploy root from the old CARTRIDGE_DEPLOY_ROOT while BOTCUBE_DEPLOY_ROOT is unset', async () => {
+  const repo = repository();
+  setDeployRoot(path.join(repo, 'bot/deploy'), 'CARTRIDGE_DEPLOY_ROOT');
+  process.env.CDK_OUTDIR = tempDir();
+
+  const { app, errors, exitCode } = await runEntrypoint();
+
+  expect({ errors, exitCode }).toEqual({ errors: [], exitCode: undefined });
+  assert(app, 'the entrypoint synthesized its app from the old name');
+  expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
+});
+
 test('prints why synthesis failed and exits 1', async () => {
+  delete process.env.BOTCUBE_DEPLOY_ROOT;
   delete process.env.CARTRIDGE_DEPLOY_ROOT;
 
   const { exitCode, errors } = await runEntrypoint();
 
   expect(exitCode).toBe(1);
   expect(errors).toEqual([
-    ['AgentCore CDK synthesis failed:', 'CARTRIDGE_DEPLOY_ROOT must point to the active Cartridge deploy directory'],
+    ['AgentCore CDK synthesis failed:', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'],
   ]);
 });

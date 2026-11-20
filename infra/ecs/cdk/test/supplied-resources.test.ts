@@ -103,18 +103,18 @@ test('refers only to what each stack defines, once the created resources are gon
   expect(dangling).toEqual([]);
 });
 
-const TEMPLATE_EGRESS = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../templates/always-on/deploy/identity.json'), 'utf8')) as DeployIdentity)
+const EXAMPLE_EGRESS = (JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../examples/public/deploy/identity.json'), 'utf8')) as DeployIdentity)
   .aws.ecs.privateEgress;
 
-test("leaves egress to the supplied network: no NAT, route or Elastic IP, and none of the template's NAT subnet or route table", () => {
+test("leaves egress to the supplied network: no NAT, route or Elastic IP, and none of the example's NAT subnet or route table", () => {
   const egress = ['AWS::EC2::NatGateway', 'AWS::EC2::Route', 'AWS::EC2::EIP'];
   expect(resources.filter(({ Type }) => egress.includes(Type)).map(({ Type }) => Type)).toEqual([]);
   const named = JSON.stringify(templates);
-  expect([TEMPLATE_EGRESS?.natGateway.publicSubnetId, TEMPLATE_EGRESS?.routeTableId].filter(id => !id || named.includes(id))).toEqual([]);
+  expect([EXAMPLE_EGRESS?.natGateway.publicSubnetId, EXAMPLE_EGRESS?.routeTableId].filter(id => !id || named.includes(id))).toEqual([]);
 });
 
 test('fails when its deploy identity also names a NAT, naming both fields', async () => {
-  const withNat = (identity: DeployIdentity) => ({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, privateEgress: TEMPLATE_EGRESS } } });
+  const withNat = (identity: DeployIdentity) => ({ ...identity, aws: { ...identity.aws, ecs: { ...identity.aws.ecs, privateEgress: EXAMPLE_EGRESS } } });
   await expect(synthesizeExample('enterprise', withNat)).rejects.toThrow('supplied.network, aws.ecs.privateEgress: ');
 });
 

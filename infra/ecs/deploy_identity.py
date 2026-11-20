@@ -18,9 +18,16 @@ def _over(defaults: Any, cartridge: Any) -> Any:
     return {**defaults, **{key: _over(defaults.get(key), value) for key, value in cartridge.items()}}
 
 
+def deploy_root() -> Path:
+    """The active deploy directory, `BOTCUBE_DEPLOY_ROOT`, or the old `CARTRIDGE_DEPLOY_ROOT` until every setter moves."""
+    root = os.environ.get('BOTCUBE_DEPLOY_ROOT') or os.environ.get('CARTRIDGE_DEPLOY_ROOT')
+    if not root:
+        raise RuntimeError('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory')
+    return Path(root)
+
+
 def load_identity() -> dict[str, Any]:
-    deploy_root = Path(os.environ['CARTRIDGE_DEPLOY_ROOT'])
-    return _over(json.loads(_DEFAULTS.read_text()), json.loads((deploy_root / 'identity.json').read_text()))
+    return _over(json.loads(_DEFAULTS.read_text()), json.loads((deploy_root() / 'identity.json').read_text()))
 
 
 def require(condition: object, message: str) -> None:

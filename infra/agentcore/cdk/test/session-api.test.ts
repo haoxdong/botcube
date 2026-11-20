@@ -7,7 +7,7 @@ import { join, resolve } from 'path';
 import { AgentCoreStack, SESSION_API_TIMEOUT_SECONDS } from '../lib/cdk-stack';
 import { readDeployIdentity, readProjectSpec } from '../lib/deploy-config';
 
-const DEPLOY_ROOT = resolve(__dirname, '../../../../templates/always-on/deploy');
+const DEPLOY_ROOT = resolve(__dirname, '../../../../examples/public/deploy');
 const SPEC = readProjectSpec(DEPLOY_ROOT);
 const IDENTITY = readDeployIdentity(DEPLOY_ROOT);
 const [RUNTIME] = SPEC.runtimes;

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'example.com'})
-os.environ['CARTRIDGE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'templates/always-on/deploy')
+os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'examples/public/deploy')
 import handler
 
 # The deploy scripts import their shared identity module from their own directory.
