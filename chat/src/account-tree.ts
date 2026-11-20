@@ -65,8 +65,11 @@ export class AccountTree {
    * on its way, since the walk is refused. Throws ENOENT when there is none, and refuses anything that is not a regular file.
    */
   async open(name: string, flags: number, mode?: number): Promise<FileHandle> {
-    const file = await this.inFolder(name, (flags & constants.O_CREAT) !== 0, (at) => open(at, flags | constants.O_NOFOLLOW, mode))
+    // O_NONBLOCK, which a regular file ignores, opens a FIFO at once so the check below refuses it, never waiting for its
+    // other end; ENXIO is a FIFO opened to write with no reader.
+    const file = await this.inFolder(name, (flags & constants.O_CREAT) !== 0, (at) => open(at, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, mode))
       .catch((error: unknown) => {
+        if (errorCode(error) === 'ENXIO') throw new HttpError(400, `/${name} in Files is not a file`);
         throw errorCode(error) === 'ELOOP' ? this.linked(name) : error;
       });
     try {

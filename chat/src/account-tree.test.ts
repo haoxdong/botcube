@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -153,4 +154,30 @@ describe('an AccountTree whose folder becomes a symbolic link after the walk loo
       expect(await snapshot()).toEqual(before);
     });
   });
+});
+
+describe('an AccountTree file the agent replaced with a FIFO', () => {
+  let base: string;
+  beforeEach(async () => {
+    base = await mkdtemp(path.join(tmpdir(), 'account-tree-fifo-'));
+    // Where an Artifact save reads the version it edits: artifacts/<source>.versions/<n>.json.
+    await mkdir(path.join(base, 'artifacts', 'report.versions'), { recursive: true });
+    execFileSync('mkfifo', [path.join(base, 'artifacts', 'report.versions', '1.json')]);
+  });
+  afterEach(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+
+  // An open that waited for the FIFO's other end would hold one of Node's few fs workers, and a handful would stall the service.
+  const notAFile = { status: 400, message: '/artifacts/report.versions/1.json in Files is not a file' };
+
+  it('refuses a read at once, never waiting for a writer', async () => {
+    const tree = await AccountTree.at(base);
+    await expect(tree.read('artifacts/report.versions/1.json')).rejects.toMatchObject(notAFile);
+  }, 2000);
+
+  it('refuses a write at once, never waiting for a reader', async () => {
+    const tree = await AccountTree.at(base);
+    await expect(tree.write('artifacts/report.versions/1.json', 'x', 'replace')).rejects.toMatchObject(notAFile);
+  }, 2000);
 });
