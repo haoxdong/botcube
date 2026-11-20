@@ -52,11 +52,13 @@ export default async function smokeConfig(phase: string) {
 }
 `);
   const dcvSdk = '/nice-dcv-web-client-sdk/dcvjs-esm/dcv.js';
+  // Unset, the app builds with its default UI plugin.
+  const { CARTRIDGE_UI_PACKAGE: _package, CARTRIDGE_UI_BUILD_CONFIG: _buildConfig, ...uiEnv } = process.env;
   const starts = await Promise.allSettled([
     startLocalStack({ chatEnv: { BOTCUBE_CORS_ORIGINS: 'http://localhost:4001,http://127.0.0.1:4001' } }).then((started) => (stack = started)),
     startOnFreePort((port) => ({
       command: `cd ${app} && node ${resolve('ui/web/node_modules/next/dist/bin/next')} dev --port ${port}`,
-      env: { ...process.env, NODE_OPTIONS: '', CARTRIDGE_UI_PACKAGE: resolve('templates/always-on/ui/web/src/index.ts'), BOTCUBE_REPOSITORY_ROOT: resolve('.') },
+      env: { ...uiEnv, NODE_OPTIONS: '', BOTCUBE_REPOSITORY_ROOT: resolve('.') },
       url: `http://127.0.0.1:${port}${dcvSdk}`,
       listening: `localhost:${port}`,
       readyTimeoutMs: 120_000,

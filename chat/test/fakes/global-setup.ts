@@ -7,14 +7,14 @@ import { startMotos } from './moto-servers.js';
 export default async function setup(project: TestProject) {
   const launcher = fileURLToPath(new URL('./moto_server.py', import.meta.url));
   let directory = dirname(launcher);
-  let python = join(directory, 'templates/always-on/.venv/bin/python');
+  let python = join(directory, 'harness/deepagents/.venv/bin/python');
   while (!existsSync(python)) {
     const parent = dirname(directory);
     if (existsSync(join(directory, '.git')) || parent === directory) {
-      throw new Error(`template Python interpreter not found above ${launcher}`);
+      throw new Error(`Harness Python interpreter not found above ${launcher}`);
     }
     directory = parent;
-    python = join(directory, 'templates/always-on/.venv/bin/python');
+    python = join(directory, 'harness/deepagents/.venv/bin/python');
   }
   return startMotos(project, python, launcher);
 }

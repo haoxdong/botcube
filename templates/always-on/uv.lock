@@ -397,7 +397,7 @@ requires-dist = [
 contract-pins = [{ name = "strands-agents-tools", specifier = "==0.8.12" }]
 dev = [
     { name = "langchain-core", specifier = ">=1.6.7" },
-    { name = "moto", extras = ["s3"], specifier = ">=5.2.3" },
+    { name = "moto", extras = ["dynamodb", "kms", "s3", "scheduler", "sqs", "server"], specifier = ">=5.2.3" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-xdist", specifier = "==3.8.0" },
     { name = "ty", specifier = "==0.0.99" },
