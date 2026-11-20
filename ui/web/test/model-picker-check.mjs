@@ -14,8 +14,11 @@ const PICKER_MODELS = [
 ].map(([key, label]) => ({ key, label, provider: 'openai', description: 'A model for complex analysis and everyday work with extended reasoning and coding capabilities.' }));
 const VISIBLE_MODELS = ['GPT-6.1-Sol', 'GPT-6-Astra', 'Opus 5.5', 'DeepSeek V3.2'];
 
-/** @param {import('playwright').Page} page @param {string} base @param {string} name @param {string} chatService */
-export async function checkModelPicker(page, base, name, chatService) {
+/**
+ * @param {import('playwright').Page} page @param {string} base @param {string} name @param {string} chatService
+ * @param {boolean} [twoLines] whether a phone types two lines first, which puts the picker beside Send
+ */
+export async function checkModelPicker(page, base, name, chatService, twoLines = true) {
   await page.route(`${chatService}/agent/models`, (route) => route.fulfill({
     contentType: 'application/json',
     headers: { 'access-control-allow-origin': new URL(base).origin, 'access-control-allow-credentials': 'true' },
@@ -26,7 +29,12 @@ export async function checkModelPicker(page, base, name, chatService) {
   if (!viewport) throw new Error('Model picker viewport missing');
   await page.setViewportSize({ width: viewport.width > 767 ? 1280 : viewport.width, height: 633 });
   await page.goto(base);
-  if (viewport.width <= 767) await page.locator('.chat-composer textarea:not([readonly])').click();
+  // A phone's one-line composer has no picker, as in the Claude app; two lines put it beside Send.
+  if (viewport.width <= 767) {
+    const composer = page.locator('.chat-composer textarea:not([readonly])');
+    if (twoLines) await composer.fill('What moved US rates?\nAnd why?');
+    else await composer.click();
+  }
   const pill = page.locator('.chat-model-picker .mep-pill');
   await pill.waitFor();
   await pill.click();
