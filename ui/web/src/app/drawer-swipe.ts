@@ -2,8 +2,7 @@ import { useDrag } from '@use-gesture/react';
 import { styleEffect, useSpring } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 
-import { moveMs } from './motion';
-import { motionTokens } from './motion-tokens';
+import { motionTokens, moveMs } from './motion-tokens';
 
 type DragSession =
   | { phase: 'idle' }

@@ -61,6 +61,7 @@ export function useInstant() {
 
 const closesRows = (animation: Animation) => "transitionProperty" in animation && animation.transitionProperty === "grid-template-rows";
 
+// Kept: Motion measures an auto-height exit at zero and clamps bottom-held scrollers, so this tweens CSS grid rows.
 // What opens and closes in the column grows its rows from nothing on --motion-move and closes them before it unmounts
 // (motion.css), so what follows moves with it: never a held gap, then a jump.
 function Collapsible({ as = "div", still, children }: { as?: Tag; still: boolean; children: ReactNode }) {
