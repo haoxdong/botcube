@@ -1,6 +1,6 @@
 export { Button } from "./button"
 export { Dialog, DialogContent } from "./dialog"
-export { Field } from "./field"
+export { Field, FieldLabel } from "./field"
 export { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "./list-row"
 export { Sheet } from "./sheet"
 export { StatusPill } from "./status-pill"

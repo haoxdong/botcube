@@ -10,7 +10,7 @@ import type { AgentProfileTab } from "../cartridge/index.js";
 import type { SignInsControl } from "../cartridge/types";
 import { SignInsTab } from "./sign-ins";
 import { Button } from "../components/pill-button";
-import { Field } from "../components/ui/field";
+import { Field, FieldLabel } from "../components/ui/field";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton, useLoad, type LoadState } from "./load-state";
 import { PictureField } from "./picture-field";
@@ -296,6 +296,7 @@ function IdentityFile({
   onClose: () => void;
   run: RunChange;
 }) {
+  const id = useId();
   const [draft, setDraft] = useState<IdentityDraft>({ identity, picture });
   const save = async () => {
     if (await run(() => onSave(draft.identity, draft.picture === picture ? undefined : draft.picture))) onClose();
@@ -313,8 +314,10 @@ function IdentityFile({
         onError={onError}
       />
       {IDENTITY_FIELDS.map((field) => (
-        <Field key={field} label={fieldLabel(field)}>
+        <Field key={field}>
+          <FieldLabel htmlFor={`${id}-${field}`}>{fieldLabel(field)}</FieldLabel>
           <input
+            id={`${id}-${field}`}
             value={draft.identity[field]}
             onChange={(event) => setDraft({ ...draft, identity: { ...draft.identity, [field]: event.target.value } })}
           />
@@ -333,6 +336,7 @@ function SoulFile({
   saved,
 }: FileProps & { soul: string; onSave: (soul: string) => Promise<void>; onBack: () => void }) {
   const { draft, setDraft, edit, cancel } = useDraft<string>(onModeChange);
+  const id = useId();
   const save = async () => {
     if (draft !== null && (await run(() => onSave(draft)))) setDraft(null);
   };
@@ -346,8 +350,9 @@ function SoulFile({
       <Presence>{draft === null ? (
         <motionElement.div {...presenceMotion} key="0" className="agent-file-group agent-file-text">{soul}</motionElement.div>
       ) : (
-        <MotionField {...presenceMotion} key="1" label="Soul">
-          <textarea rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
+        <MotionField {...presenceMotion} key="1">
+          <FieldLabel htmlFor={id}>Soul</FieldLabel>
+          <textarea id={id} rows={12} value={draft} onChange={(event) => setDraft(event.target.value)} />
         </MotionField>
       )}</Presence>
     </FileDocument>
@@ -372,6 +377,7 @@ function MemoryFile({
   onBack: () => void;
 }) {
   const [addition, setAddition] = useState<{ text: string; saving: boolean } | null>(null);
+  const additionId = useId();
   const adding = useRef(false);
   const add = async () => {
     if (!addition || adding.current || !addition.text.trim()) return;
@@ -410,8 +416,9 @@ function MemoryFile({
       )}
     >
       <Presence>{addition && (
-        <MotionField {...presenceMotion} label="New Memory">
-          <input autoFocus required value={addition.text} disabled={addition.saving}
+        <MotionField {...presenceMotion}>
+          <FieldLabel htmlFor={additionId}>New Memory</FieldLabel>
+          <input id={additionId} autoFocus required value={addition.text} disabled={addition.saving}
             onChange={(event) => setAddition({ ...addition, text: event.target.value })} />
         </MotionField>
       )}</Presence>

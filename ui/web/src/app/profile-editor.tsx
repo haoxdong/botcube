@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import type { AuthUiState, AuthUser } from "../cartridge/index.js";
 import { Button } from "../components/pill-button";
-import { Field } from "../components/ui/field";
+import { Field, FieldLabel } from "../components/ui/field";
 import { PictureField } from "./picture-field";
 import { Fade } from "./collapse";
 
@@ -23,6 +23,7 @@ export function ProfileEditor({
   /** The chosen photo: null to remove it, undefined to keep the user's. */
   const [photo, setPhoto] = useState<string | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const nameId = useId();
   const shown = photo === undefined ? user?.photo : (photo ?? undefined);
 
   const save = async (event: FormEvent) => {
@@ -39,8 +40,9 @@ export function ProfileEditor({
   return (
     <form className="profile-editor" aria-label="Edit profile" onSubmit={(event) => void save(event)}>
       <PictureField picture={shown} name={name} noun="photo" onChange={setPhoto} onError={setError} />
-      <Field label="Display name">
-        <input value={name} onChange={(event) => setName(event.target.value)} />
+      <Field>
+        <FieldLabel htmlFor={nameId}>Display name</FieldLabel>
+        <input id={nameId} value={name} onChange={(event) => setName(event.target.value)} />
       </Field>
       <Fade open={error !== null} className="profile-editor-error" role="alert">{error}</Fade>
       <div className="profile-editor-actions">
