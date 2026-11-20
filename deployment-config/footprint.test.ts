@@ -70,7 +70,6 @@ describe('the enterprise example', () => {
       '    grant Chat Service task (role aws.iam.chatServiceTaskRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
       '    grant Agent Computer browser (role aws.iam.agentComputerBrowserRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
       "    grant a Turn's Files mount (role aws.iam.filesMountRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite",
-      '    grant Files links function (role aws.iam.filesLinksRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
       "    grant NFS clients in the supplied private subnets: TCP 2049 to the file system's mount target in each subnet",
       "    grant the supplied VPC: Amazon-provided DNS, by which the Chat Service finds the mount target as <fileSystemId>.efs.<region>.amazonaws.com",
     ]);
@@ -101,8 +100,7 @@ describe('the enterprise example', () => {
 
   it('lets every Lambda function attach to the supplied network: each role holds the VPC access policy', () => {
     const { iam } = footprint(loadDeployment(example('enterprise')).config);
-    expect([iam.sessionApi?.managedPolicies, iam.filesLinks?.managedPolicies]).toEqual([
-      expect.arrayContaining(['AWSLambdaVPCAccessExecutionRole']), expect.arrayContaining(['AWSLambdaVPCAccessExecutionRole'])]);
+    expect(iam.sessionApi?.managedPolicies).toEqual(expect.arrayContaining(['AWSLambdaVPCAccessExecutionRole']));
     expect(section(printedFor('enterprise'), 'Supplied resources').slice(0, 2)).toEqual([
       '  supplied.network vpc-fixtureenterprise',
       "    grant every other Lambda function's role, the deploy's own included: AWS managed policy AWSLambdaVPCAccessExecutionRole",

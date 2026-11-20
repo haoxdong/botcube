@@ -9,7 +9,7 @@ export interface UploadOptions {
   signal: AbortSignal;
 }
 
-/** Lambda's request cap is 6 MB with base64 included: a Files link takes uploads in chunks of this many bytes. */
+/** A Files link takes uploads in chunks of at most this many bytes, the Chat Service's limit (botcube/chat/src/files-link.ts). */
 const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const PARALLEL_CHUNKS = 4;
 

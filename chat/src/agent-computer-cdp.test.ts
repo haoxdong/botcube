@@ -194,6 +194,7 @@ function computersFor(browser: AgentComputerBrowser, idleSeconds = 600) {
     list: unusedFilesOperation,
     uploadUrl: unusedFilesOperation,
     downloadUrl: unusedFilesOperation,
+    link: unusedFilesOperation,
     remove: unusedFilesOperation,
     rename: unusedFilesOperation,
     saveArtifact: unusedFilesOperation,

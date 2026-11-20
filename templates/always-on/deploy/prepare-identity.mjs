@@ -59,7 +59,6 @@ const nameFields =
   "aws.iam.sessionApiRole": "botcube-session-api",
   "aws.iam.invokePolicyFamily": "botcube-agentcore-invoke",
   "aws.iam.filesMountRole": "botcube-files-mount",
-  "aws.iam.filesLinksRole": "botcube-files-links",
   "aws.iam.agentComputerBrowserRole": "botcube-agent-computer-browser",
   "ssm.runtimeArn": "/botcube/agentcore/runtime-arn",
   "ssm.parkState": "/botcube/production/park-state",

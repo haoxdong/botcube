@@ -1360,7 +1360,7 @@
             "accountsAccessPointId": {
               "type": "string",
               "pattern": "^fsap-[0-9a-f]+$",
-              "description": "The Chat Service's and the Files links function's access point: root directory /accounts, as uid and gid 1000."
+              "description": "The Chat Service's access point: root directory /accounts, as uid and gid 1000."
             },
             "accessPoints": {
               "minItems": 1,

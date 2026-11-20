@@ -516,7 +516,6 @@ const GUEST_START = new Date('2026-11-01T12:00:00Z');
 const efsFiles = () => ({
   BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
   BOTCUBE_FILES_EFS_ROOT: mkdtempSync(join(tmpdir(), 'stock-files-')),
-  BOTCUBE_FILES_LINKS_URL: 'https://files.example.test/',
   BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
   BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
   BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',

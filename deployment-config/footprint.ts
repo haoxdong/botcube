@@ -83,7 +83,6 @@ const BUILT_IN: Need = {
       'ecs:DescribeTasks', 'ssm:GetParameterHistory',
     ] },
     credentialService: { actions: ['bedrock-agentcore:ConnectBrowserAutomationStream', 'bedrock-agentcore:GetBrowserSession'] },
-    filesLinks: { actions: [], managedPolicies: ['AWSLambdaBasicExecutionRole', VPC_ACCESS] },
     harness: { actions: [
       'ecr:BatchCheckLayerAvailability', 'ecr:BatchGetImage', 'ecr:GetAuthorizationToken', 'ecr:GetDownloadUrlForLayer',
       'logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:PutLogEvents',

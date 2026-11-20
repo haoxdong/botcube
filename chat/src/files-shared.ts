@@ -2,6 +2,7 @@ import type { FilesCleanupClaim } from './files-cleanup-worker.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactSave, SavedArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
+import type { LinkRequest } from './files-link.js';
 
 /** Where every Agent Computer browser mounts its account's Files; Chrome's download directory (deploy/agent-computer). */
 export const FILES_MOUNT_PATH = '/mnt/files';
@@ -63,8 +64,12 @@ export interface AccountFiles {
   /** The account's access point, created on first use, mounted at FILES_MOUNT_PATH. */
   mount(accountId: string): Promise<FilesMount>;
   list(accountId: string): Promise<FileEntry[]>;
+  /** A signed link's path and query on the Chat Service, which uploads `name` as a new file. */
   uploadUrl(accountId: string, name: string): Promise<string>;
+  /** A signed link's path and query on the Chat Service, which downloads `name`. */
   downloadUrl(accountId: string, name: string): Promise<string>;
+  /** Serve a request to a signed link: the link alone authorizes it. */
+  link(request: LinkRequest): Promise<Response>;
   /** Delete a file; 404 when it is not there. */
   remove(accountId: string, name: string): Promise<void>;
   /** Rename a file without replacing another file. */

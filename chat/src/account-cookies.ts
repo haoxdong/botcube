@@ -4,14 +4,20 @@ import { SESSION_COOKIE_MAX_AGE_SECONDS } from './account-store.js';
 
 const ACCOUNT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
-/** Set an httpOnly, Lax cookie for the whole site, Secure when the browser reached it over https. */
-export function setSiteCookie(c: Context, name: string, value: string, maxAge: number): void {
+/** The origin the browser reached: https when the load balancer in front says so. */
+export function browserOrigin(c: Context): string {
+  const url = new URL(c.req.url);
   // The first protocol of a proxy chain's list: one split piece, which join() returns as is.
   const forwardedProto = c.req.header('x-forwarded-proto')?.split(',', 1).join().trim().toLowerCase();
+  return forwardedProto === 'https' ? `https://${url.host}` : url.origin;
+}
+
+/** Set an httpOnly, Lax cookie for the whole site, Secure when the browser reached it over https. */
+export function setSiteCookie(c: Context, name: string, value: string, maxAge: number): void {
   setCookie(c, name, value, {
     maxAge,
     httpOnly: true,
-    secure: forwardedProto === 'https' || new URL(c.req.url).protocol === 'https:',
+    secure: browserOrigin(c).startsWith('https:'),
     sameSite: 'Lax',
     path: '/',
   });

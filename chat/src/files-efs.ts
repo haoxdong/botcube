@@ -1,5 +1,5 @@
 import { localCleanupWorker, type CleanupWorker } from './files-cleanup-worker.js';
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readdir, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,6 +10,7 @@ import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import { AccountTree } from './account-tree.js';
 import { saveArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
+import { answerFilesLink, missing, signFilesLink } from './files-link.js';
 import {
   FILES_MOUNT_PATH, HIDDEN, POSIX_ID, RETIREMENT_GRACE_MS, MOUNT_SECONDS, URL_SECONDS,
   directoryOf, fileDestination, filePath, freeName,
@@ -96,27 +97,17 @@ export function stsMountCredentials(roleArn: string, fileSystemArn: string): Mou
   };
 }
 
-/** A Files link the Files Lambda serves: the same claims and HMAC as botcube/infra/ecs/files/files.mjs. */
-export function signFilesLink(baseUrl: string, key: string, claims: { op: 'get' | 'put'; account: string; name: string }, expiresAt: number): string {
-  const payload = Buffer.from(JSON.stringify({ ...claims, exp: expiresAt })).toString('base64url');
-  return `${baseUrl}?t=${payload}.${createHmac('sha256', key).update(payload).digest('base64url')}`;
-}
-
 /** The hash part of an account's directory, as a link names it. */
 const accountOf = (accountId: string) => directoryOf(accountId).slice('accounts/'.length);
-
-function missing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException).code === 'ENOENT';
-}
 
 /**
  * Every account's Files on one EFS file system: the Chat Service mounts the `/accounts` access point
  * at `root`, each Browser and Runtime session mounts only its account's own access point, and the
- * Files Lambda serves signed upload and download links. There are no versions: a delete or a move
+ * Chat Service serves signed upload and download links from `root`. There are no versions: a delete or a move
  * is one file operation, and a Claim moves files within the file system.
  */
 export function accountFilesEfs({
-  root, fileSystemArn, mountTargetIp, accessPoints, mountCredentials, records, links, cleanupWorker = localCleanupWorker,
+  root, fileSystemArn, mountTargetIp, accessPoints, mountCredentials, records, linkKey, cleanupWorker = localCleanupWorker,
 }: {
   cleanupWorker?: CleanupWorker;
   root: string;
@@ -125,7 +116,7 @@ export function accountFilesEfs({
   accessPoints: AccessPoints;
   mountCredentials: MountCredentials;
   records: () => FilesRecords;
-  links: { url: string; key: string };
+  linkKey: string;
 }): AccountFiles {
   // arn:aws:elasticfilesystem:<region>:<account>:file-system/<id>
   const [, , , region = '', , resource = ''] = fileSystemArn.split(':');
@@ -300,8 +291,8 @@ export function accountFilesEfs({
     await records().scheduleFilesCleanup(userId, Date.now() + MOUNT_SECONDS * 1000, retirement.lastCredentialExpiresAt);
   }
 
-  const link_ = async (op: 'get' | 'put', userId: string, name: string) =>
-    signFilesLink(links.url, links.key, { op, account: path.basename(await directory(userId)), name }, Math.floor(Date.now() / 1000) + URL_SECONDS);
+  const signedLink = async (op: 'GET' | 'PUT', userId: string, name: string) =>
+    signFilesLink(linkKey, { op, accountDirectory: path.basename(await directory(userId)), name, expiresAtSeconds: Math.floor(Date.now() / 1000) + URL_SECONDS });
 
   return {
     async recoverCleanup() {
@@ -342,12 +333,13 @@ export function accountFilesEfs({
       await requireActive(userId);
       const destination = fileDestination(name);
       if (await exists(await fileOf(userId, destination))) throw new HttpError(409, `A file named ${name} is already in Files`);
-      return link_('put', userId, destination);
+      return signedLink('PUT', userId, destination);
     },
     async downloadUrl(userId, name) {
       if (!await exists(await fileOf(userId, name))) throw new HttpError(404, `No file ${name} in Files`);
-      return link_('get', userId, name);
+      return signedLink('GET', userId, name);
     },
+    link: (request) => answerFilesLink({ key: linkKey, root }, request),
     async remove(userId, name) {
       const file = filePath(name);
       await inFiles(userId, name, (tree) => tree.unlink(file));

@@ -6,13 +6,14 @@ import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountResources } from './account-resources.js';
-import { accountFilesEfs, signFilesLink, type AccessPoints } from './files-efs.js';
+import { accountFilesEfs, type AccessPoints } from './files-efs.js';
+import { signFilesLink } from './files-link.js';
 
 const ACCOUNT = 'acct_0123456789';
 /** `printf acct_0123456789 | shasum -a 256`, first 32 hex digits. */
 const HASH = '8300e9d12ce55ca979c3e7e01a8f7fac';
 const FILE_SYSTEM_ARN = 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc';
-const LINKS = { url: 'https://links.test/', key: 'k'.repeat(64) };
+const LINK_KEY = 'k'.repeat(64);
 const NOW = Date.UTC(2026, 10, 6, 5);
 
 let root: string;
@@ -43,7 +44,7 @@ function setup() {
   const access = fakeAccessPoints();
   const minted: string[] = [];
   const files = accountFilesEfs({
-    root, mountTargetIp: () => Promise.resolve('192.0.2.12'), fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, links: LINKS,
+    root, mountTargetIp: () => Promise.resolve('192.0.2.12'), fileSystemArn: FILE_SYSTEM_ARN, accessPoints: access.points, records: () => records, linkKey: LINK_KEY,
     mountCredentials: async (accessPointArn) => {
       minted.push(accessPointArn);
       return { accessKeyId: 'AKIA', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date(Date.now() + 3_600_000).toISOString() };
@@ -62,8 +63,8 @@ const snapshot = async (folder: string) => Object.fromEntries(await Promise.all(
     .map(async (entry) => [path.join(entry.parentPath, entry.name), await readFile(path.join(entry.parentPath, entry.name), 'utf8')]),
 ));
 const claims = (link: string) => {
-  const [payload, signature] = new URL(link).searchParams.get('t')?.split('.') ?? [];
-  expect(signature).toBe(createHmac('sha256', LINKS.key).update(payload ?? '').digest('base64url'));
+  const [payload, signature] = new URL(link, 'https://chat.test').searchParams.get('t')?.split('.') ?? [];
+  expect(signature).toBe(createHmac('sha256', LINK_KEY).update(payload ?? '').digest('base64url'));
   return JSON.parse(Buffer.from(payload ?? '', 'base64url').toString());
 };
 
@@ -83,15 +84,15 @@ describe('EFS account Files', () => {
     expect(listed[0]?.lastModified).toMatch(/^\d{4}-\d\d-\d\dT/);
   });
 
-  it('signs upload and download links the Files Lambda accepts, for this account, for five minutes', async () => {
+  it('signs upload and download links on the Chat Service, for this account, for five minutes', async () => {
     const { files } = setup();
     const upload = await files.uploadUrl(ACCOUNT, 'new/notes.md');
-    expect(upload.startsWith(LINKS.url)).toBe(true);
-    expect(claims(upload)).toEqual({ op: 'put', account: HASH, name: 'new/notes.md', exp: NOW / 1000 + 300 });
+    expect(upload.startsWith('/files/link?t=')).toBe(true);
+    expect(claims(upload)).toEqual({ op: 'PUT', accountDirectory: HASH, name: 'new/notes.md', expiresAtSeconds: NOW / 1000 + 300 });
     await expect(files.downloadUrl(ACCOUNT, 'new/notes.md')).rejects.toMatchObject({ status: 404 });
     await put(HASH, 'new/notes.md');
-    expect(claims(await files.downloadUrl(ACCOUNT, 'new/notes.md'))).toMatchObject({ op: 'get', account: HASH, name: 'new/notes.md' });
-    expect(signFilesLink('u', 'k', { op: 'get', account: 'a', name: 'n' }, 1)).toBe(`u?t=${Buffer.from('{"op":"get","account":"a","name":"n","exp":1}').toString('base64url')}.${createHmac('sha256', 'k').update(Buffer.from('{"op":"get","account":"a","name":"n","exp":1}').toString('base64url')).digest('base64url')}`);
+    expect(claims(await files.downloadUrl(ACCOUNT, 'new/notes.md'))).toMatchObject({ op: 'GET', accountDirectory: HASH, name: 'new/notes.md' });
+    expect(signFilesLink('k', { op: 'GET', accountDirectory: 'a', name: 'n', expiresAtSeconds: 1 })).toBe(`/files/link?t=${Buffer.from('{"op":"GET","accountDirectory":"a","name":"n","expiresAtSeconds":1}').toString('base64url')}.${createHmac('sha256', 'k').update(Buffer.from('{"op":"GET","accountDirectory":"a","name":"n","expiresAtSeconds":1}').toString('base64url')).digest('base64url')}`);
   });
 
   it('refuses an upload over a taken name, into a hidden folder, or out of the account', async () => {

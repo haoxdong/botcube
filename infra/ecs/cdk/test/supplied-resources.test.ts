@@ -139,29 +139,19 @@ test('names each role that mounts the supplied Files from its deploy identity, s
   const roleNames = templates.flatMap(template => Object.entries(template.Resources))
     .filter(([, { Type }]) => Type === 'AWS::IAM::Role')
     .flatMap(([logicalId, { Properties }]) => {
-      const role = ['ChatServiceTaskTaskRole', 'FilesMountRole', 'FilesLinksServiceRole', 'AgentComputerBrowserRole'].find(prefix => logicalId.startsWith(prefix));
+      const role = ['ChatServiceTaskTaskRole', 'FilesMountRole', 'AgentComputerBrowserRole'].find(prefix => logicalId.startsWith(prefix));
       return role ? [[role, Properties.RoleName]] : [];
     });
   expect(Object.fromEntries(roleNames)).toEqual({
     ChatServiceTaskTaskRole: 'bot-cube-chat-service',
     FilesMountRole: 'bot-cube-files-mount',
-    FilesLinksServiceRole: 'bot-cube-files-links',
     AgentComputerBrowserRole: 'bot-cube-agent-computer-browser',
   });
 });
 
 test('fails when its deploy identity leaves a role that mounts the supplied Files unnamed, naming the field', async () => {
-  const unnamed = ({ aws: { iam: { filesLinksRole: _, ...iam }, ...aws }, ...identity }: DeployIdentity) => ({ ...identity, aws: { ...aws, iam } });
-  await expect(synthesizeExample('enterprise', unnamed)).rejects.toThrow('Deploy identity aws.iam.filesLinksRole: required with supplied.files');
-});
-
-test("lets the Files links function reach NFS only in the supplied private subnets, where the file system's mount targets are", () => {
-  const [links] = templates.flatMap(template => Object.entries(template.Resources))
-    .filter(([logicalId, { Type }]) => Type === 'AWS::EC2::SecurityGroup' && logicalId.startsWith('FilesLinksNetwork'));
-  expect(links[1].Properties.SecurityGroupEgress).toEqual([
-    expect.objectContaining({ CidrIp: '198.51.100.0/24', IpProtocol: 'tcp', FromPort: 2049, ToPort: 2049 }),
-    expect.objectContaining({ CidrIp: '203.0.113.0/24', IpProtocol: 'tcp', FromPort: 2049, ToPort: 2049 }),
-  ]);
+  const unnamed = ({ aws: { iam: { filesMountRole: _, ...iam }, ...aws }, ...identity }: DeployIdentity) => ({ ...identity, aws: { ...aws, iam } });
+  await expect(synthesizeExample('enterprise', unnamed)).rejects.toThrow('Deploy identity aws.iam.filesMountRole: required with supplied.files');
 });
 
 test('creates no Files file system, mount target or access point, nor the access-point pool that would fill it', () => {
@@ -189,8 +179,7 @@ test("serves Files from the supplied file system, leasing Users' access points f
   const volumes = ofType('AWS::ECS::TaskDefinition').flatMap(({ Properties }) => (Properties.Volumes as { EFSVolumeConfiguration?: unknown }[] | undefined) ?? [])
     .map(volume => volume.EFSVolumeConfiguration);
   expect(volumes).toEqual([{ FilesystemId: 'fs-0fea7e5f11e5', TransitEncryption: 'ENABLED', AuthorizationConfig: { AccessPointId: 'fsap-0acc0047', IAM: 'ENABLED' } }]);
-  const [links] = ofType('AWS::Lambda::Function').filter(({ Properties }) => Properties.FileSystemConfigs);
-  expect(JSON.stringify(links.Properties.FileSystemConfigs)).toContain(':elasticfilesystem:us-east-1:000000000000:access-point/fsap-0acc0047');
+  expect(ofType('AWS::Lambda::Function').filter(({ Properties }) => Properties.FileSystemConfigs)).toEqual([]);
 });
 
 test('uses the supplied tables and their stream', () => {

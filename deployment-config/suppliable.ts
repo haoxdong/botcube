@@ -63,7 +63,7 @@ export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
   files: {
     created: 'the Files file system, its mount targets and access points',
     name: ({ files }) => files && `${files.fileSystemId} (KMS key ${files.kmsKey})`,
-    grant: ([['chatService', 'chatServiceTaskRole'], ['agentComputerBrowser', 'agentComputerBrowserRole'], ['filesMount', 'filesMountRole'], ['filesLinks', 'filesLinksRole']] as const)
+    grant: ([['chatService', 'chatServiceTaskRole'], ['agentComputerBrowser', 'agentComputerBrowserRole'], ['filesMount', 'filesMountRole']] as const)
       .map(([to, role]) => ({ to, role: `aws.iam.${role}`, actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'] })),
     others: {
       'NFS clients in the supplied private subnets': ["TCP 2049 to the file system's mount target in each subnet"],

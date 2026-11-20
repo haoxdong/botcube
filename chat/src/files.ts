@@ -9,7 +9,7 @@ import type { AccountFiles, FilesRecords } from './files-shared.js';
 
 export type { AccountFiles, FileEntry, FilesMount, FilesRecords } from './files-shared.js';
 
-const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_LINKS_URL', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN', 'BOTCUBE_FILES_MOUNT_TARGET_IP'] as const;
+const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN', 'BOTCUBE_FILES_MOUNT_TARGET_IP'] as const;
 
 /** The operator's file system and the access points Users lease from it (ADR 0091), as the Deployment Config supplies them. */
 export type SuppliedFiles = NonNullable<NonNullable<DeploymentConfig['supplied']>['files']>;
@@ -44,7 +44,7 @@ function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, su
     mountCredentials: stsMountCredentials(setting('BOTCUBE_FILES_MOUNT_ROLE_ARN'), fileSystemArn),
     records,
     cleanupWorker: ecsCleanupWorker(env.ECS_CONTAINER_METADATA_URI_V4),
-    links: { url: setting('BOTCUBE_FILES_LINKS_URL'), key: setting('BOTCUBE_FILES_SIGNING_KEY') },
+    linkKey: setting('BOTCUBE_FILES_SIGNING_KEY'),
   });
 }
 

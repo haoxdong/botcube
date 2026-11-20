@@ -17,7 +17,6 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
     const env = {
       BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
       BOTCUBE_FILES_EFS_ROOT: root,
-      BOTCUBE_FILES_LINKS_URL: 'https://files.example.test/',
       BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
       BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
@@ -25,8 +24,7 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
     expect(filesConfigured(env)).toBe(true);
     const files = accountFilesFromEnv(env, () => new AccountResources('chat', memoryDocuments()))();
     expect(await files.list(account)).toEqual([{ name: 'reopened.txt', size: 9, lastModified: expect.any(String) }]);
-    const url = await files.downloadUrl(account, 'reopened.txt');
-    expect(new URL(url).origin).toBe('https://files.example.test');
+    expect(await files.downloadUrl(account, 'reopened.txt')).toMatch(/^\/files\/link\?t=/);
     await expect(files.downloadUrl('acct_other', 'reopened.txt')).rejects.toMatchObject({ status: 404 });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -42,7 +40,6 @@ it("leases a User's access point from the supplied pool on first use, and names 
     const env = {
       BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
       BOTCUBE_FILES_EFS_ROOT: root,
-      BOTCUBE_FILES_LINKS_URL: 'https://files.example.test/',
       BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
     };

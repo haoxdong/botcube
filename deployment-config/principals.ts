@@ -5,7 +5,6 @@ export const PRINCIPALS = {
   scheduledRuns: 'EventBridge Scheduler, sending scheduled runs to their queue',
   agentComputerBrowser: 'Agent Computer browser',
   filesMount: "a Turn's Files mount",
-  filesLinks: 'Files links function',
   harness: 'Harness (AgentCore Runtime)',
   sessionApi: 'session API function',
   userMemory: "a Turn's own Memory credentials",

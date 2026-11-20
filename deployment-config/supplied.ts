@@ -7,7 +7,7 @@ const suppliedFiles = z
   .strictObject({
     fileSystemId: z.string().regex(/^fs-[0-9a-f]+$/).describe('The Files file system, with a mount target in each supplied private subnet.'),
     kmsKey: kmsKeyArn.describe('The key the file system is encrypted with.'),
-    accountsAccessPointId: accessPointId.describe("The Chat Service's and the Files links function's access point: root directory /accounts, as uid and gid 1000."),
+    accountsAccessPointId: accessPointId.describe("The Chat Service's access point: root directory /accounts, as uid and gid 1000."),
     accessPoints: z
       .array(z.strictObject({
         accessPointId,

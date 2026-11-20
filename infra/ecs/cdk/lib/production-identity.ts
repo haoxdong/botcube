@@ -17,7 +17,6 @@ export interface DeployIdentity {
       userMemoryRole: string;
       chatServiceTaskRole?: string;
       filesMountRole?: string;
-      filesLinksRole?: string;
       agentComputerBrowserRole?: string;
     };
     account: string;

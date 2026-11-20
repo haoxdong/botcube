@@ -51,7 +51,6 @@ const PRINCIPAL_ROLES: Partial<Record<string, Principal>> = {
   'PreviewOrigin/ChatService/ScheduledRunsRole': 'scheduledRuns',
   'PreviewOrigin/AgentComputerBrowserRole': 'agentComputerBrowser',
   'PreviewOrigin/FilesMountRole': 'filesMount',
-  'PreviewOrigin/FilesLinks/ServiceRole': 'filesLinks',
   [`${AGENTCORE_STACK}/Application/AgentBotCube/Runtime/ExecutionRole`]: 'harness',
   [`${AGENTCORE_STACK}/SessionApiRole`]: 'sessionApi',
   [`${AGENTCORE_STACK}/UserMemoryRole`]: 'userMemory',

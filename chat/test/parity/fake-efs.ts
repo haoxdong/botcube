@@ -1,10 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { answer } from '../../../infra/ecs/files/files.mjs';
-import { disk } from '../../../infra/ecs/files/disk.mjs';
 import { filePath } from '../../src/files-shared.js';
 import { HttpFake, sendJson, type RecordedRequest } from '../fakes/http-fake.js';
 
@@ -33,7 +30,7 @@ export class FakeEfs extends HttpFake {
   get environment(): NodeJS.ProcessEnv {
     return {
       BOTCUBE_FILES_EFS_ARN: FILE_SYSTEM_ARN, BOTCUBE_FILES_EFS_ROOT: this.root,
-      BOTCUBE_FILES_LINKS_URL: this.url, BOTCUBE_FILES_SIGNING_KEY: this.key,
+      BOTCUBE_FILES_SIGNING_KEY: this.key,
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
       BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12', AWS_ENDPOINT_URL_EFS: this.url,
     };
@@ -78,33 +75,13 @@ export class FakeEfs extends HttpFake {
     return entries.filter((entry) => entry.isFile()).map((entry) => `accounts/${path.relative(this.root, path.join(entry.parentPath, entry.name))}`).filter((key) => key.startsWith(prefix)).sort();
   }
 
-  private async handle(request: RecordedRequest, response: ServerResponse): Promise<void> {
+  private handle(request: RecordedRequest, response: ServerResponse): void {
     const url = new URL(request.path, 'http://files.test');
-    if (url.pathname.startsWith('/2015-02-01/access-points')) {
-      this.accessPoint(request, response, url);
+    if (!url.pathname.startsWith('/2015-02-01/access-points')) {
+      sendJson(response, 404, { code: 'UnknownOperation' });
       return;
     }
-    const result = await answer({ key: this.key, root: this.root, disk, now: Date.now() }, {
-      method: request.method, query: Object.fromEntries(url.searchParams), ...(request.headers.range ? { range: request.headers.range } : {}), body: request.bodyBytes,
-    });
-    if (result.opened === undefined) {
-      response.writeHead(result.status, { 'content-type': 'text/plain' });
-      response.end(result.text ?? String(result.status));
-      return;
-    }
-    const start = result.start ?? 0;
-    const end = result.end ?? -1;
-    response.writeHead(result.status, {
-      'content-length': String(end - start + 1), 'content-type': 'application/octet-stream',
-      ...(result.status === 206 ? { 'content-range': `bytes ${start}-${end}/${result.size}` } : {}),
-    });
-    if ((result.size ?? 0) === 0) {
-      await result.opened.close();
-      response.end();
-      return;
-    }
-    // Streams the file the Lambda opened and checked, as index.mjs does.
-    await pipeline(result.opened.stream(start, end), response);
+    this.accessPoint(request, response, url);
   }
 
   private accessPoint(request: RecordedRequest, response: ServerResponse, url: URL): void {

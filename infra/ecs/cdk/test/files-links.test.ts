@@ -30,7 +30,7 @@ function synth(parked: boolean, context: Record<string, unknown> = {}) {
     chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'),
   });
   const runtime = new SecurityGroup(origin, 'RuntimeNetwork', { vpc: chat.cluster.vpc });
-  addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), ['https://web.example.com'], [runtime]);
+  addFilesLinks(origin, chat, storage, { subnets }, path.resolve(__dirname, '../../../..'), [runtime]);
   return parkingTemplate(origin, parked);
 }
 
@@ -49,7 +49,6 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
         { Name: 'BOTCUBE_FILES_MOUNT_TARGET_IP', Value: { 'Fn::GetAtt': ['FilesEfsMountTarget0', 'IpAddress'] } },
         { Name: 'BOTCUBE_FILES_EFS_ARN', Value: Match.anyValue() },
         { Name: 'BOTCUBE_FILES_EFS_ROOT', Value: '/mnt/files-efs' },
-        { Name: 'BOTCUBE_FILES_LINKS_URL', Value: Match.anyValue() },
         { Name: 'BOTCUBE_FILES_MOUNT_ROLE_ARN', Value: Match.anyValue() },
       ]),
       Secrets: Match.arrayWith([{ Name: 'BOTCUBE_FILES_SIGNING_KEY', ValueFrom: Match.anyValue() }]),
@@ -57,6 +56,7 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
   });
   const tasks = template.findResources('AWS::ECS::TaskDefinition');
   expect(JSON.stringify(tasks)).not.toContain('BOTCUBE_FILES_STORE');
+  expect(JSON.stringify(tasks)).not.toContain('BOTCUBE_FILES_LINKS_URL');
   const targets = Object.keys(template.findResources('AWS::EFS::MountTarget'));
   template.hasResource('AWS::ECS::Service', { DependsOn: Match.arrayWith([accounts, ...targets]) });
   template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
@@ -89,6 +89,13 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
   });
 });
 
+
+test.each([false, true])('the Chat Service serves signed links: no function, and no public function URL, serves Files, parked=%s', parked => {
+  const template = synth(parked);
+  template.resourceCountIs('AWS::Lambda::Url', 0);
+  expect(JSON.stringify(template.findResources('AWS::Lambda::Function'))).not.toContain('/mnt/files');
+  template.resourceCountIs('AWS::SecretsManager::Secret', 1);
+});
 
 test('pool uses one API resource, omits serving-role management, and alarms at 80%', () => {
   const template = synth(false, { filesAccessPointMode: 'pool', filesAccessPointPoolSize: 5 });

@@ -1,9 +1,12 @@
 import { Hono, type Context } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { browserOrigin } from './account-cookies.js';
 import { ArtifactSave } from './artifact-save.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import type { AccountFiles } from './files.js';
+import { LINK_PATH, UPLOAD_CHUNK_BYTES } from './files-link.js';
 import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
 
@@ -12,7 +15,7 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;
   computers: { state(owner: string, threadId: string): Promise<AgentComputerState>; wake(owner: string, threadId: string): Promise<AgentComputerState> };
-  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact'>;
+  files(c: Context): Pick<AccountFiles, 'list' | 'downloadUrl' | 'link' | 'remove' | 'rename' | 'uploadUrl' | 'saveArtifact'>;
 }): Hono {
   const routes = new Hono();
   const threadIdOf = (c: Context) => { const value = c.req.query('thread_id')?.trim(); if (!value) throw new HttpError(422, 'thread_id must not be blank'); return value; };
@@ -25,14 +28,15 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
     if (!(await history.owns(owner, threadId))) throw new HttpError(404, "This chat's computer starts with its first message");
     return c.json(await computers.wake(owner, threadId));
   });
-  // The Files app (ADR 0077 decision 2): the account's files, moved through presigned URLs.
+  // The Files app (ADR 0077 decision 2): the account's files, moved through signed links this service serves.
   const fileName = (name: unknown) => {
     if (typeof name !== 'string') throw new HttpError(422, 'name is required');
     return name;
   };
   routes.get('/files', async (c) => c.json({ files: await files(c).list((await requester(c)).owner) }));
+  const linkUrl = (c: Context, link: string) => new URL(link, browserOrigin(c)).toString();
   routes.get('/files/download-url', async (c) =>
-    c.json({ url: await files(c).downloadUrl((await requester(c)).owner, fileName(c.req.query('name'))) }),
+    c.json({ url: linkUrl(c, await files(c).downloadUrl((await requester(c)).owner, fileName(c.req.query('name')))) }),
   );
   routes.delete('/files', async (c) => {
     await files(c).remove((await requester(c)).owner, fileName(c.req.query('name')));
@@ -47,8 +51,11 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
   });
   routes.post('/files/upload-url', async (c) => {
     const { owner } = await requester(c);
-    return c.json({ url: await files(c).uploadUrl(owner, fileName((await jsonPayload(c))?.name)) });
+    return c.json({ url: linkUrl(c, await files(c).uploadUrl(owner, fileName((await jsonPayload(c))?.name))) });
   });
+  routes.get(LINK_PATH, async (c) => files(c).link({ method: 'GET', query: c.req.query(), range: c.req.header('range') }));
+  routes.put(LINK_PATH, bodyLimit({ maxSize: UPLOAD_CHUNK_BYTES, onError: (c) => c.text(`chunks are at most ${UPLOAD_CHUNK_BYTES} bytes`, 413) }), async (c) =>
+    files(c).link({ method: 'PUT', query: c.req.query(), body: Buffer.from(await c.req.arrayBuffer()) }));
   routes.post('/files/artifact-save', async (c) => {
     const { owner } = await requester(c);
     const save = ArtifactSave.safeParse(await jsonPayload(c));
@@ -57,3 +64,4 @@ export function computerFilesRoutes({ requester, history, computers, files }: {
   });
   return routes;
 }
+

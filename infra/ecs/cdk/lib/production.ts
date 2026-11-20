@@ -253,8 +253,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
   addFilesPolicy(origin, chat);
-  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork, agentComputer.network],
-    filesRoles?.links);
+  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, [agentNetwork, agentComputer.network], filesRoles?.filesMountRole);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
