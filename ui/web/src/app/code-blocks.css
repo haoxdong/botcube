@@ -197,11 +197,6 @@
   max-width: 300px !important;
 }
 
-/* Streamdown exposes an active pointer drag through its frame's cursor. */
-[data-streamdown="mermaid-fullscreen"] [style*="grabbing"] > [role="application"] {
-  transition: none;
-}
-
 /* Streamdown's 200px offscreen estimate shrinks when short code enters view. */
 .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"] {
   content-visibility: visible !important;
