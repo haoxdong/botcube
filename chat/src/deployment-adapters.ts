@@ -13,20 +13,31 @@ export interface DeploymentAdapters {
   schedules: DeploymentConfig['schedules'];
   telemetry: DeploymentConfig['telemetry'];
   proxy: DeploymentConfig['proxy'];
+  /** `web.corsOrigins`; null keeps the bot's defaults. */
+  corsOrigins: string[] | null;
+  /** `productName`, the name a run skipped while parked says was paused. */
+  productName: string | undefined;
+  /** `parking.automationUserAgents`: requests from these keep no parked deployment awake. */
+  automationUserAgents: string[];
   models: DeploymentConfig['models'];
 }
 
-const ADAPTER_SECTIONS = deploymentSections.pick({ harnessAuth: true, turnCredentials: true, schedules: true, telemetry: true, proxy: true, models: true });
+const ADAPTER_SECTIONS = deploymentSections.pick({
+  harnessAuth: true, turnCredentials: true, schedules: true, telemetry: true, proxy: true, productName: true, web: true, parking: true, models: true,
+});
 
 /**
  * The adapters the Chat Service runs on: each section's `kind` in the Deployment Config at BOTCUBE_DEPLOYMENT_CONFIG,
  * or the schema's defaults without one (ADR 0091). Startup stops on a chosen kind whose environment is missing.
  */
 export function deploymentAdapters(env: NodeJS.ProcessEnv): DeploymentAdapters {
-  const { harnessAuth, turnCredentials, schedules, telemetry, proxy, models } = env.BOTCUBE_DEPLOYMENT_CONFIG
+  const { harnessAuth, turnCredentials, schedules, telemetry, proxy, productName, web, parking, models } = env.BOTCUBE_DEPLOYMENT_CONFIG
     ? loadDeployment(env.BOTCUBE_DEPLOYMENT_CONFIG).config
     : ADAPTER_SECTIONS.parse({});
-  return { harnessAuth, turnCredentials: turnCredentialsAdapter(turnCredentials.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy, models };
+  return {
+    harnessAuth, turnCredentials: turnCredentialsAdapter(turnCredentials.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy,
+    corsOrigins: web?.corsOrigins ?? null, productName, automationUserAgents: parking?.automationUserAgents ?? [], models,
+  };
 }
 
 function turnCredentialsAdapter(kind: DeploymentConfig['turnCredentials']['kind'], roleArn: string | undefined): TurnCredentialsAdapter {

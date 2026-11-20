@@ -36,6 +36,11 @@ def _loaded(path: str | None) -> dict[str, Any]:
     return load_deployment_config(Path(path)) if path else _with_defaults({})
 
 
+def plan_usage_owner(config: Mapping[str, Any]) -> str:
+    """The Account whose linked plans Plan Usage runs on: the config's `planUsage.ownerAccountId`, empty without one."""
+    return str(config.get('planUsage', {}).get('ownerAccountId', ''))
+
+
 def load_deployment_config(path: Path) -> dict[str, Any]:
     """The Deployment Config at this path, each section it leaves out its default, or an error naming each bad field."""
     source = f'Deployment Config {path}'

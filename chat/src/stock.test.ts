@@ -39,6 +39,14 @@ vi.mock('./local-chromium.js', async (original) => {
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false, owns: async () => true };
 
 const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../examples/public/deployment-config.json', import.meta.url));
+const EXAMPLE_BOT = fileURLToPath(new URL('../../examples/bot/bot.json', import.meta.url));
+
+/** The public example's BotCube Config, with these sections too. */
+function publicExample(sections: Record<string, unknown>) {
+  const path = join(mkdtempSync(join(tmpdir(), 'stock-deployment-')), 'deployment-config.json');
+  writeFileSync(path, JSON.stringify({ bot: EXAMPLE_BOT, ...sections }));
+  return path;
+}
 
 function deploymentConfig(bot: unknown) {
   const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
@@ -148,13 +156,13 @@ describe('the stock Chat Service', () => {
     });
   });
 
-  it('tells the service BOTCUBE_AGENT_COMPUTER_STARTED_URL names of each browser its Agent Computer starts', async () => {
+  it('tells the Credential Service path productService.agentComputerStartedPath names of each browser its Agent Computer starts', async () => {
     const product = await new HttpFake((_, response) => sendJson(response, 200, {})).listen();
     const { privateKey } = await generateKeyPair('ES256', { extractable: true });
     const env = {
-      BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ productService: { agentComputerStartedPath: '/agent-computer/started' } }),
       BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
-      BOTCUBE_AGENT_COMPUTER_STARTED_URL: `${product.url}/agent-computer/started`,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: product.url,
       BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([{ ...(await exportJWK(privateKey)), kid: 'k1' }]),
       BOTCUBE_PUBLIC_ORIGIN: 'https://chat.example.com',
     };
@@ -369,10 +377,9 @@ describe("the stock Chat Service's Plan Usage", () => {
 
   async function planUsage() {
     const env = {
-      BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
-      BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: PLAN_OWNER,
+      BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }),
     };
     const documents = memoryDocuments();
     const accountStore = stockAccountStore(env, documents);
@@ -423,13 +430,13 @@ describe("the stock Chat Service's Plan Usage", () => {
     expect(await stockChatService(bound, { accountStore })(history).accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([]);
 
     await accountStore.removeOpenAISignIn(PLAN_OWNER);
-    const signedOut = stockChatService({ ...bound, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: PLAN_OWNER }, { accountStore })(history);
+    const signedOut = stockChatService({ ...bound, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
     expect(await signedOut.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([]);
   });
 
   it('lets only the plan owner send candidate prompts', () => {
     const service = (owner?: string) => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
-      ...(owner === undefined ? {} : { BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: owner }) })(history);
+      ...(owner === undefined ? {} : { BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) }) })(history);
 
     expect(service(PLAN_OWNER).tunesPrompts?.({ owner: PLAN_OWNER })).toBe(true);
     expect(service(PLAN_OWNER).tunesPrompts?.({ owner: 'acct_someone_else' })).toBe(false);
@@ -439,8 +446,8 @@ describe("the stock Chat Service's Plan Usage", () => {
   it('fails loud when the plan catalog cannot be fetched, keeping the models last listed', async () => {
     const { service, accountStore } = await planUsage();
     expect(await service.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([model]);
-    const refused = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
-      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'wrong-secret', BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: PLAN_OWNER }, { accountStore })(history);
+    const refused = stockChatService({ BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'wrong-secret', BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
 
     await expect(refused.accountModels({ owner: PLAN_OWNER }, { refresh: true }))
       .rejects.toMatchObject({ status: 503, detail: 'Credential Service plan catalog failed with HTTP 401' });
@@ -453,7 +460,7 @@ describe("the stock Chat Service's Plan Usage", () => {
     await account(other, 'registered');
     const routes = (env: Record<string, string>) => new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 403 : 500))
-      .route('/', stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: PLAN_OWNER, ...env }, { accountStore })(history).routes);
+      .route('/', stockChatService({ BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }), ...env }, { accountStore })(history).routes);
     const signIn = (route: Hono, accountId: string) => route.request('/account/plan-usage/openai', {
       method: 'POST',
       headers: { authorization: `Bearer ${signCredentialServiceInvocation(SECRET, accountId, 'operator', { scope: 'credential_capture' })}` },
@@ -481,7 +488,7 @@ describe("the stock Chat Service's Plan Usage", () => {
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
     };
     const { account: { accountId: owner } } = await stockAccountStore(base).anonymousAccount(undefined);
-    const env = { ...base, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: owner };
+    const env = { ...base, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) };
     const server = serveChatService(env);
     try {
       await once(server, 'listening');
@@ -607,8 +614,8 @@ describe("the stock Chat Service's account deletion", () => {
     await createChatTable(endpoint, table);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const env = {
-      PORT: '0', AWS_REGION: 'us-east-1', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
-      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: 'acct_owner',
+      PORT: '0', AWS_REGION: 'us-east-1', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, BOTCUBE_CHAT_TABLE: table,
+      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }),
     };
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
     const accountId = 'acct_stock_connector';
@@ -651,7 +658,7 @@ describe("the stock Chat Service's account deletion", () => {
   });
 
   it('refuses every Test User Connector copy while the Credential Service is unbound', async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID: 'acct_owner' };
+    const env = { BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }) };
     const route = new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 401 : 500))
       .route('/', stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history).routes);

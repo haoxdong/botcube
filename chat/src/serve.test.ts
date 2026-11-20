@@ -324,11 +324,11 @@ describe('the Chat Service served from the environment', () => {
     expect(consoleWarn).not.toHaveBeenCalled();
   });
 
-  it('allows the trimmed BOTCUBE_CORS_ORIGINS in place of the bot defaults', async () => {
+  it("allows the BotCube Config's web.corsOrigins in place of the bot defaults", async () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await newTable(),
-      BOTCUBE_CORS_ORIGINS: ' https://a.example.com , ,https://b.example.com',
+      BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(undefined, { web: { corsOrigins: ['https://a.example.com', 'https://b.example.com'] } }),
     });
     const allowed = async (origin: string) =>
       (await fetch(`${url}/ping`, { headers: { origin } })).headers.get('access-control-allow-origin');
@@ -339,7 +339,7 @@ describe('the Chat Service served from the environment', () => {
     expect(await allowed('')).toBeNull();
   });
 
-  it('allows the bot default origins without BOTCUBE_CORS_ORIGINS', async () => {
+  it('allows the bot default origins without web.corsOrigins', async () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
     const response = await fetch(`${url}/ping`, { headers: { origin: 'https://bot.example.com' } });

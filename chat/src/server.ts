@@ -13,7 +13,7 @@ import { cspReportRoutes } from './csp-reports.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { sleepComputersAtTaskStop } from './task-stop.js';
-import { cors, corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
+import { cors, LOCAL_UI_ORIGINS } from './cors.js';
 import { sessionOperations } from './sessions.js';
 import { purgeQueue } from './purges.js';
 import { sweepEvery } from './task-drain.js';
@@ -48,7 +48,7 @@ export interface ChatServiceConfig {
   harnessAuth?: ChatHarnessAuth;
   /** Set: Turns go to this local Harness over plain HTTP instead of AgentCore. */
   localHarnessUrl: string | null;
-  /** BOTCUBE_CORS_ORIGINS; null keeps the bot's defaults. */
+  /** The BotCube Config's `web.corsOrigins`; null keeps the bot's defaults. */
   corsOrigins: string[] | null;
   /** The AgentCore region and data-plane endpoint, for browser live-view URLs. */
   region: string;
@@ -70,7 +70,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): Ch
     agentCore: env.AGENTCORE_RUNTIME_ARN ? { arn: env.AGENTCORE_RUNTIME_ARN, region, endpoint } : null,
     harnessAuth: adapters.harnessAuth,
     localHarnessUrl: env.BOTCUBE_LOCAL_HARNESS_URL?.replace(/\/+$/, '') || null,
-    corsOrigins: corsOriginsFromEnv(env),
+    corsOrigins: adapters.corsOrigins,
     region,
     agentCoreEndpoint: endpoint,
     browserId: env.AGENTCORE_BROWSER_ID || 'aws.browser.v1',
@@ -279,11 +279,10 @@ export function createChatService(
   return { app, chat: bot, history };
 }
 
-function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
+function parkHistoryFromEnv(env: NodeJS.ProcessEnv, productName: string | undefined): ParkHistory | undefined {
   const parameter = env.BOTCUBE_PARK_STATE_PARAMETER;
   if (parameter === undefined) return undefined;
-  const productName = env.BOTCUBE_PRODUCT_NAME;
-  if (!productName) throw new Error('BOTCUBE_PARK_STATE_PARAMETER needs BOTCUBE_PRODUCT_NAME, the name a skipped run says was paused');
+  if (productName === undefined) throw new Error("BOTCUBE_PARK_STATE_PARAMETER needs the BotCube Config's productName, the name a skipped run says was paused");
   return ssmParkHistory(parameter, productName);
 }
 
@@ -315,7 +314,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
     scheduling && {
       ...scheduling,
       draining,
-      parkHistory: parkHistoryFromEnv(env),
+      parkHistory: parkHistoryFromEnv(env, adapters.productName),
       onClose: (stop) => { stopScheduledRuns = stop; },
     },
     new TurnQuota(table),
@@ -337,9 +336,8 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   let shutdown: Promise<void> | undefined;
   const stopTracing = () => shutdown ??= tracing?.shutdown() ?? Promise.resolve();
   const webOrigins = config.corsOrigins ?? chat.corsOrigins ?? LOCAL_UI_ORIGINS;
-  const automation = (env.BOTCUBE_AUTOMATION_USER_AGENTS ?? '').split(',').filter(Boolean);
   const fetch: typeof app.fetch = (request, ...rest) => {
-    if (isUserRequest(request, webOrigins, automation)) activity.userRequest();
+    if (isUserRequest(request, webOrigins, adapters.automationUserAgents)) activity.userRequest();
     return app.fetch(request, ...rest);
   };
   activity.report(table);

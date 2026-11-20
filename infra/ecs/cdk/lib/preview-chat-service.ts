@@ -76,7 +76,6 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   clusterName: string;
   alertsTopicName: string;
   hostnames: string[];
-  corsOrigins: string[];
   runtimeArn?: string;
   /** Absent, SigV4: the task role invokes the Runtime. A JWT bearer needs no Runtime grant. */
   harnessAuth?: HarnessAuth;
@@ -181,7 +180,6 @@ export class PreviewChatService extends Construct {
         BOTCUBE_SESSION_API_FUNCTION_ARN: sessionApiArn,
         AGENTCORE_BROWSER_ID: browserId,
         BOTCUBE_CHAT_TABLE: props.chatTable.tableName,
-        BOTCUBE_CORS_ORIGINS: props.corsOrigins.join(','),
         OTEL_LOG_LEVEL: 'error',
         ...(telemetry.kind === 'xray'
           ? { OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://127.0.0.1:4318/v1/traces' }

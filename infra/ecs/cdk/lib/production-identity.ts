@@ -39,7 +39,6 @@ export interface DeployIdentity {
       apiHealth: { stackName: string; alarmName: string };
       webLatency: { stackName: string; appMonitorName: string };
       chatService: {
-        planUsageOwnerAccountParameter: string;
         /** The private P-256 JWKs that sign per-Turn JWTs (ADR 0067 §8), created out of band. */
         turnIdentityKeysSecretName: string;
       };
@@ -48,8 +47,6 @@ export interface DeployIdentity {
         tableName: string;
 
         rpcPath: string;
-        /** Where on the credential service BotCube tells the product of each Agent Computer browser it starts (ADR 0091). */
-        agentComputerStartedPath?: string;
         /** The host the User's browser reaches the product's service on (ADR 0091). */
         publicHostname?: string;
         /** With `publicHostname`: the paths under `rpcPath` the User's browser may reach there. */
@@ -64,7 +61,7 @@ export interface DeployIdentity {
       previewOriginStackName: string;
       originOwnership: string;
       parkedWorkerName: string;
-      parking: { slotBucket: string; originSlotKey: string; functionName: string; automationUserAgents: string[]; autoPark: boolean };
+      parking: { slotBucket: string; originSlotKey: string; functionName: string; autoPark: boolean };
       originZone: string;
       /** The NAT BotCube creates and parks for the private subnets; absent, an existing network brings its own egress. */
       privateEgress?: { stackName: string; natGateway: { name: string; publicSubnetId: string }; routeTableId: string };
@@ -74,7 +71,6 @@ export interface DeployIdentity {
   };
   domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[]; corsOrigins: string[] };
   ssm: { parkState: string };
-  product: { name: string };
   /** The repository's immutable GitHub OIDC subject prefix (`gh api repos/<repo>/actions/oidc/customization/sub`). */
   github: { oidcSubjectPrefix: string };
 }

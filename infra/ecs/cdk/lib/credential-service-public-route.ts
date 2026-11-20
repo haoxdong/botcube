@@ -17,8 +17,6 @@ export interface CredentialServicePublicRoute {
   port: number;
   /** The paths under `rpcPath` the User's browser may reach; the service's other routes stay off the listener. */
   paths: readonly string[];
-  /** The bot's UI origins, which call the service cross-origin with BotCube's signed user token. */
-  corsOrigins: readonly string[];
   chatTable: ITable;
   /** The operator supplied the chat table with its grants: the service is granted nothing on it. */
   chatTableSupplied: boolean;
@@ -30,7 +28,6 @@ export interface CredentialServicePublicRoute {
 
 /** Publish the product's service on its own host through the origin's ALB, its private routes kept off the listener. */
 export function publishCredentialService(origin: PreviewOriginStack, credentials: PrivateCredentialService, route: CredentialServicePublicRoute): void {
-  credentials.container.addEnvironment('BOTCUBE_CORS_ORIGINS', route.corsOrigins.join(','));
   credentials.container.addEnvironment('BOTCUBE_CHAT_TABLE', route.chatTable.tableName);
   if (route.rawHostname !== undefined) {
     credentials.container.addEnvironment('BOTCUBE_RAW_SERVICE_HOST', route.rawHostname);

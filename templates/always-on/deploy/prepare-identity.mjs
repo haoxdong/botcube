@@ -28,7 +28,6 @@ const nameFields =
   "aws.agentCore.privateNatBrowser.name": "botcube_provider_link",
   "aws.agentCore.privateNatBrowser.extension.prefix": "botcube/browser-extensions/provider-user-agent/v2.zip",
   "aws.ecs.privateNamespace": "botcube.internal",
-  "aws.ecs.chatService.planUsageOwnerAccountParameter": "/botcube/plan-usage/owner-account-id",
   "aws.ecs.cluster": "botcube",
   "aws.ecs.deployRoleName": "botcube-ecs-github-deploy",
   "aws.ecs.originPullClientSecretName": "/botcube/cloudflare/origin-pull-client",

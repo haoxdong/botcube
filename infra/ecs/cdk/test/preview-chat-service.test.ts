@@ -25,7 +25,7 @@ function synth(runtimeArn = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:ru
   });
   new PreviewChatService(origin, 'ChatService', {
     vpcId: 'vpc-fixture12345678', privateSubnets: subnets,
-    clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'], corsOrigins: ['https://example.com', 'https://web.example.com'],
+    clusterName: 'test', alertsTopicName: 'existing-alerts', hostnames: ['preview.example.com', 'api.example.com'],
     runtimeArn, sessionApiFunctionName: 'test-session-api', sessionApiAlias: 'live', chatTable: storage.chatTable as ITable, image: ContainerImage.fromRegistry('test-image'), ...(typeof overrides === 'function' ? overrides(origin) : overrides),
   });
   return parkingTemplate(origin, parked, prepareOrigin);
@@ -356,7 +356,6 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
       { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] } },
       { Name: 'AGENTCORE_BROWSER_ID', Value: 'aws.browser.v1' },
       { Name: 'BOTCUBE_CHAT_TABLE', Value: { 'Fn::ImportValue': 'Storage:ExportsOutputRefChatTable7A2D1C242A7F282B' } },
-      { Name: 'BOTCUBE_CORS_ORIGINS', Value: 'https://example.com,https://web.example.com' },
       { Name: 'OTEL_LOG_LEVEL', Value: 'error' },
       { Name: 'OTEL_TRACES_EXPORTER', Value: 'otlp' },
       { Name: 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', Value: 'http://127.0.0.1:4318/v1/traces' },

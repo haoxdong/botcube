@@ -41,12 +41,8 @@ export const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDAR
 
 /** Names set today outside the four uses, each until a Deployment Config field replaces it. It only shrinks. */
 export const PENDING: readonly string[] = [
-  'BOTCUBE_AUTOMATION_USER_AGENTS',
-  'BOTCUBE_CORS_ORIGINS',
   'BOTCUBE_DEPLOY_REPOSITORY_ROOT',
   'BOTCUBE_DEPLOY_ROOT',
-  'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
-  'BOTCUBE_PRODUCT_NAME',
 ];
 
 /** The variable names one process is deployed with: an ECS container, a Lambda or a Harness Runtime. */

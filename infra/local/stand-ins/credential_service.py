@@ -15,6 +15,10 @@ from botcube_credential_service.audit import (
 )
 from botcube_credential_service.aws import env_vault
 from botcube_credential_service.compose import credential_service_app
+from botcube_credential_service.deployment_config import (
+    deployment_config_from_env,
+    plan_usage_owner,
+)
 from botcube_credential_service.server import CredentialServiceSettings
 from botcube_credential_service.vault import DynamoDbCredentialVault
 
@@ -26,7 +30,7 @@ def local_credential_service(
     return credential_service_app(
         CredentialServiceSettings(
             'local', invocation_secret,
-            plan_usage_owner_account_id=os.environ.get('BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID', ''),
+            plan_usage_owner_account_id=plan_usage_owner(deployment_config_from_env()),
         ),
         FakeSiteProvider(vault, site_url, audit),
         vault,

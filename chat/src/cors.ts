@@ -5,12 +5,6 @@ const ALLOW_METHODS = 'DELETE, GET, PATCH, POST, PUT, OPTIONS';
 /** The BotCube web UI's local development server (`pnpm dev:bot`). */
 export const LOCAL_UI_ORIGINS = ['http://localhost:3001', 'http://127.0.0.1:3001'];
 
-/** BOTCUBE_CORS_ORIGINS, the web UI's origins; null when unset. */
-export function corsOriginsFromEnv(env: NodeJS.ProcessEnv): string[] | null {
-  const origins = env.BOTCUBE_CORS_ORIGINS;
-  return origins ? origins.split(',').map((origin) => origin.trim()).filter(Boolean) : null;
-}
-
 /**
  * Credentialed CORS for the given origins: a preflight is 200 for an allowed
  * origin and 400 otherwise, and it allows whatever request headers the preflight asks for.

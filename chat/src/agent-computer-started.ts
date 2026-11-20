@@ -16,7 +16,7 @@ const TIMEOUT_MS = 90_000;
 export type AgentComputerStarted = (accountId: string, threadId: string, browserSessionId: string) => Promise<void>;
 
 interface AgentComputerStartedOptions {
-  /** BOTCUBE_AGENT_COMPUTER_STARTED_URL: the product's own service, which may prepare the browser (ADR 0091). */
+  /** The product's own service, which may prepare the browser (ADR 0091). */
   url: string;
   signer: Pick<TurnIdentity, 'signToken'>;
   /** Whether the account has not signed in, for the token's `anonymous` claim. */
@@ -66,12 +66,17 @@ function refusalMessage(body: string): string | undefined {
   return undefined;
 }
 
-/** The announcer BOTCUBE_AGENT_COMPUTER_STARTED_URL names, signing with the Turn identity keys; unset, none. */
-export function agentComputerStartedFromEnv(env: NodeJS.ProcessEnv, anonymous: (accountId: string) => Promise<boolean>): AgentComputerStarted | undefined {
-  const url = env.BOTCUBE_AGENT_COMPUTER_STARTED_URL?.trim();
-  if (!url) return undefined;
-  if (!URL.canParse(url) || !/^https?:$/.test(new URL(url).protocol)) throw new Error('BOTCUBE_AGENT_COMPUTER_STARTED_URL must be an http(s) URL');
+/**
+ * The announcer the BotCube Config's `productService.agentComputerStartedPath` names, on the Credential Service at
+ * BOTCUBE_CREDENTIAL_SERVICE_URL, signing with the Turn identity keys; no path, none.
+ */
+export function agentComputerStartedFromConfig(
+  path: string | undefined, env: NodeJS.ProcessEnv, anonymous: (accountId: string) => Promise<boolean>,
+): AgentComputerStarted | undefined {
+  if (path === undefined) return undefined;
+  const service = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
+  if (!service) throw new Error('productService.agentComputerStartedPath is on the Credential Service, so BOTCUBE_CREDENTIAL_SERVICE_URL must be set');
   const identity = turnIdentityConfigFromEnv(env);
-  if (identity === undefined) throw new Error('BOTCUBE_AGENT_COMPUTER_STARTED_URL is set, so BOTCUBE_TURN_IDENTITY_KEYS must be too: they sign the user token it is sent');
-  return agentComputerStarted({ url, signer: new TurnIdentity(identity), anonymous });
+  if (identity === undefined) throw new Error('productService.agentComputerStartedPath is set, so BOTCUBE_TURN_IDENTITY_KEYS must be too: they sign the user token it is sent');
+  return agentComputerStarted({ url: `${service.replace(/\/+$/, '')}${path}`, signer: new TurnIdentity(identity), anonymous });
 }

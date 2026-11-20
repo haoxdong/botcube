@@ -151,7 +151,7 @@ describe('the allowed origins', () => {
     },
   );
 
-  it("are the bot's defaults when BOTCUBE_CORS_ORIGINS is unset", async () => {
+  it("are the bot's defaults when the BotCube Config names no web.corsOrigins", async () => {
     const defaults = await startInProcess({ overrides: { corsOrigins: ['https://bot.example.com'] } });
     try {
       const allowed = await defaults.app.request('/ping', { headers: { origin: 'https://bot.example.com' } });
@@ -164,7 +164,7 @@ describe('the allowed origins', () => {
     }
   });
 
-  it("replace the bot's defaults when BOTCUBE_CORS_ORIGINS is set", async () => {
+  it("replace the bot's defaults when the BotCube Config names web.corsOrigins", async () => {
     const overridden = await startInProcess({
       overrides: { corsOrigins: ['https://bot.example.com'] },
       config: { corsOrigins: [UI] },

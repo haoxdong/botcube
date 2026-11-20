@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/prom
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, expect, it } from 'vitest';
 import { required } from '../required.js';
@@ -10,6 +11,14 @@ import { startLocalStack, type LocalStack } from './local-stack.js';
 import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
 
 const execute = promisify(execFile);
+
+/** The public example's BotCube Config, its web origins this test's UI port. */
+async function webOriginsConfig(): Promise<string> {
+  const path = join(await mkdtemp(join(tmpdir(), 'local-smoke-deployment-')), 'deployment-config.json');
+  const bot = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
+  await writeFile(path, JSON.stringify({ bot, web: { corsOrigins: ['http://localhost:4001', 'http://127.0.0.1:4001'] } }));
+  return path;
+}
 let stack: LocalStack | undefined;
 let ui: RunningProcess | undefined;
 let home: string | undefined;
@@ -55,7 +64,7 @@ export default async function smokeConfig(phase: string) {
   // Unset, the app builds with its default UI plugin.
   const { CARTRIDGE_UI_PACKAGE: _package, CARTRIDGE_UI_BUILD_CONFIG: _buildConfig, ...uiEnv } = process.env;
   const starts = await Promise.allSettled([
-    startLocalStack({ chatEnv: { BOTCUBE_CORS_ORIGINS: 'http://localhost:4001,http://127.0.0.1:4001' } }).then((started) => (stack = started)),
+    webOriginsConfig().then((deploymentConfig) => startLocalStack({ deploymentConfig })).then((started) => (stack = started)),
     startOnFreePort((port) => ({
       command: `cd ${app} && node ${resolve('ui/web/node_modules/next/dist/bin/next')} dev --port ${port}`,
       env: { ...uiEnv, NODE_OPTIONS: '', BOTCUBE_REPOSITORY_ROOT: resolve('.') },

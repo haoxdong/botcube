@@ -36,7 +36,6 @@ const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
 /** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
-  planUsageOwnerAccountId: 'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
@@ -187,7 +186,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     clusterName: identity.aws.ecs.cluster,
     alertsTopicName: identity.aws.ecs.alertsTopicName,
     hostnames: [identity.domains.chatServicePreview, identity.domains.chatService].map(url => new URL(url).hostname),
-    corsOrigins: identity.domains.corsOrigins,
     runtimeArn: input.runtimeArn,
     sessionApiFunctionName: identity.aws.agentCore.sessionApiFunction,
     sessionApiAlias: identity.aws.agentCore.sessionApiAlias,
@@ -207,8 +205,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   new CfnOutput(origin, 'AgentSecurityGroupId', { value: agentNetwork.securityGroupId });
   // The per-Turn JWT's issuer is the origin the AgentCore app registers as the Memory role's OIDC provider.
   chat.container.addEnvironment('BOTCUBE_PARK_STATE_PARAMETER', identity.ssm.parkState);
-  chat.container.addEnvironment('BOTCUBE_PRODUCT_NAME', identity.product.name);
-  chat.container.addEnvironment('BOTCUBE_AUTOMATION_USER_AGENTS', identity.aws.ecs.parking.automationUserAgents.join(','));
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` })] }));
   const publicOrigin = `https://${new URL(identity.domains.chatService).hostname}`;
   chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
@@ -217,8 +213,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   if (options.turnCredentials === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
   nameTaskRoles(chat.task, filesRoles?.chatServiceTaskRole, undefined, undefined);
   grantSecrets(chat, options.chatSecretArns);
-  const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
-  chat.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), {
     ...options.originConfig, ...optionalPhysicalName('agentComputerBrowserRoleName', filesRoles?.agentComputerBrowserRole),
   });
@@ -234,7 +228,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
     agentComputerBrowserId: agentComputer.browser.attrBrowserId,
     ...options.credentials,
   });
-  credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   grantModelsEndpoint(credentials, options.models);
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
   credentials.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
@@ -243,7 +236,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,
     paths: publicPaths(credentialConfig),
     chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [], rawHostname,
-    corsOrigins: identity.domains.corsOrigins, chatTable: storage.chatTable as ITable, chatTableSupplied: storage.chatTableSupplied,
+    chatTable: storage.chatTable as ITable, chatTableSupplied: storage.chatTableSupplied,
   });
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
   for (const task of [chat.task, credentials.task]) {
@@ -253,9 +246,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, [agentNetwork, agentComputer.network], filesRoles?.filesMountRole);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
-  if (credentialConfig.agentComputerStartedPath !== undefined) {
-    chat.container.addEnvironment('BOTCUBE_AGENT_COMPUTER_STARTED_URL', `${credentials.url}${credentialConfig.agentComputerStartedPath}`);
-  }
   chat.container.addEnvironment(CREDENTIAL_SERVICE_ENV.url, credentials.url);
   // aws-cdk-lib's Secret declares `T | undefined` getters where ISecret declares `prop?: T`,
   // which exactOptionalPropertyTypes rejects; the construct is its interface.

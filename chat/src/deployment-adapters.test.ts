@@ -24,8 +24,24 @@ describe("the Chat Service's adapters", () => {
       schedules: { kind: 'eventbridge-scheduler' },
       telemetry: { kind: 'xray' },
       proxy: { kind: 'none' },
+      corsOrigins: null,
+      productName: undefined,
+      automationUserAgents: [],
       models: { kind: 'bedrock' },
     });
+  });
+
+  it("take the web origins, product name and automation User-Agents from the BotCube Config, not the environment", () => {
+    const path = deploymentConfig({
+      productName: 'Quill', web: { corsOrigins: ['https://quill.example.com'] }, parking: { automationUserAgents: ['probe/1'] },
+    });
+    const legacy = { BOTCUBE_CORS_ORIGINS: 'https://other.example.com', BOTCUBE_PRODUCT_NAME: 'Other', BOTCUBE_AUTOMATION_USER_AGENTS: 'bot' };
+
+    expect(deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: path, ...legacy })).toMatchObject({
+      corsOrigins: ['https://quill.example.com'], productName: 'Quill', automationUserAgents: ['probe/1'],
+    });
+    expect(deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({}), ...legacy }))
+      .toMatchObject({ corsOrigins: null, productName: undefined, automationUserAgents: [] });
   });
 
   it("take the Harness auth from the Deployment Config's kind, not the environment", () => {

@@ -11,7 +11,7 @@ beforeAll(async () => {
     startStack({
       agentcore: 'unconfigured',
       table: 'missing',
-      corsOrigins: 'https://example.com, https://preview.example.com',
+      corsOrigins: ['https://example.com', 'https://preview.example.com'],
     }),
   ]);
 });

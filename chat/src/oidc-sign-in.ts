@@ -5,7 +5,6 @@ import * as client from 'openid-client';
 import { clearCookie, type AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
 import { HttpError } from './http-error.js';
-import { corsOriginsFromEnv, LOCAL_UI_ORIGINS } from './cors.js';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 
 interface OidcClient {
@@ -36,7 +35,7 @@ const DELETION_REAUTH_SECONDS = 300;
 export function oidcIdentity(
   identity: Extract<DeploymentConfig['identity'], { kind: 'oidc' }>,
   env: NodeJS.ProcessEnv,
-  { store, cookies }: Pick<OidcSignInOptions, 'store' | 'cookies'>,
+  { store, cookies, returnOrigins }: Pick<OidcSignInOptions, 'store' | 'cookies' | 'returnOrigins'>,
 ) {
   const client = ({ clientId, clientSecret }: (typeof identity.clients)[number], index: number): OidcClient =>
     ({ clientId, clientSecret: credentialSource(`identity.clients.${index}.clientSecret`, clientSecret, { env }) });
@@ -45,7 +44,7 @@ export function oidcIdentity(
     identity: { issuer: identity.issuer, clients: [client(first, 0), ...rest.map((other, index) => client(other, index + 1))] },
     store,
     cookies,
-    returnOrigins: corsOriginsFromEnv(env) ?? LOCAL_UI_ORIGINS,
+    returnOrigins,
     publicOrigin: env.BOTCUBE_PUBLIC_ORIGIN,
   });
 }

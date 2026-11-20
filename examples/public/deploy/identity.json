@@ -48,7 +48,6 @@
         "rpcPath": ""
       },
       "chatService": {
-        "planUsageOwnerAccountParameter": "/bot-cube/plan-usage/owner-account-id",
         "turnIdentityKeysSecretName": "/bot-cube/chat-service/turn-identity-keys"
       },
       "cluster": "bot-cube",
@@ -91,8 +90,7 @@
         "autoPark": false,
         "functionName": "bot-cube-production-parking",
         "slotBucket": "bot-cube-sessions",
-        "originSlotKey": "dev-slots/DEV_SLOT_ORIGIN",
-        "automationUserAgents": ["-Verification/", "collective-automation"]
+        "originSlotKey": "dev-slots/DEV_SLOT_ORIGIN"
       },
       "originZone": "example.invalid",
       "originPullOrganization": "bot-cube",
@@ -154,8 +152,5 @@
   "verification": {
     "userAgent": "BotCube-Preview-Verification/1.0",
     "originUserAgent": "BotCube-Origin-Verification/1.0"
-  },
-  "product": {
-    "name": "BotCube"
   }
 }

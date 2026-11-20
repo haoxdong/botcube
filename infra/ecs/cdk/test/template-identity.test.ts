@@ -95,7 +95,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   expect((app.node.findChild('PreviewOrigin') as Stack).stackName).toBe(identity.aws.ecs.previewOriginStackName);
   origin.hasResourceProperties('AWS::BedrockAgentCore::BrowserCustom', { Name: identity.aws.agentCore.agentComputerBrowser.name });
   origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([
-    { Name: 'BOTCUBE_PARK_STATE_PARAMETER', Value: identity.ssm.parkState }, { Name: 'BOTCUBE_PRODUCT_NAME', Value: 'BotCube' },
+    { Name: 'BOTCUBE_PARK_STATE_PARAMETER', Value: identity.ssm.parkState },
   ]) })]) });
   const parkReads = Object.values(origin.findResources('AWS::IAM::Policy'))
     .flatMap(({ Properties }) => (Properties.PolicyDocument.Statement as { Action: unknown; Resource: unknown }[]))

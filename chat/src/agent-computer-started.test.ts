@@ -1,6 +1,6 @@
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { agentComputerStarted, agentComputerStartedFromEnv } from './agent-computer-started.js';
+import { agentComputerStarted, agentComputerStartedFromConfig } from './agent-computer-started.js';
 import { TurnIdentity } from './turn-identity.js';
 
 const ISSUER = 'https://chat.example.com';
@@ -53,14 +53,14 @@ describe("telling a product's service about each Agent Computer browser BotCube 
     await expect(started('acct_1', 'chat-1', 'browser-1')).rejects.toMatchObject({ status: 401, message: 'Sign in again to continue' });
   });
 
-  it('is off unless its URL is set, and needs the Turn identity keys that sign the token', async () => {
+  it('is off unless its path is set, and needs the Credential Service and the Turn identity keys that sign the token', async () => {
     const { jwk } = await keys();
     const anonymous = async () => false;
+    const signing = { BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([jwk]), BOTCUBE_PUBLIC_ORIGIN: ISSUER };
 
-    expect(agentComputerStartedFromEnv({}, anonymous)).toBeUndefined();
-    expect(() => agentComputerStartedFromEnv({ BOTCUBE_AGENT_COMPUTER_STARTED_URL: SERVICE }, anonymous)).toThrow(/BOTCUBE_TURN_IDENTITY_KEYS/);
-    expect(agentComputerStartedFromEnv({
-      BOTCUBE_AGENT_COMPUTER_STARTED_URL: SERVICE, BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([jwk]), BOTCUBE_PUBLIC_ORIGIN: ISSUER,
-    }, anonymous)).toBeTypeOf('function');
+    expect(agentComputerStartedFromConfig(undefined, {}, anonymous)).toBeUndefined();
+    expect(() => agentComputerStartedFromConfig('/started', signing, anonymous)).toThrow(/BOTCUBE_CREDENTIAL_SERVICE_URL/);
+    expect(() => agentComputerStartedFromConfig('/started', { BOTCUBE_CREDENTIAL_SERVICE_URL: SERVICE }, anonymous)).toThrow(/BOTCUBE_TURN_IDENTITY_KEYS/);
+    expect(agentComputerStartedFromConfig('/started', { BOTCUBE_CREDENTIAL_SERVICE_URL: SERVICE, ...signing }, anonymous)).toBeTypeOf('function');
   });
 });

@@ -18,7 +18,8 @@ export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 interface StackOptions {
   agentcore?: 'fake' | 'unreachable' | 'unconfigured';
   table?: 'created' | 'missing';
-  corsOrigins?: string;
+  /** The BotCube Config's `web.corsOrigins`. */
+  corsOrigins?: string[];
 }
 
 export type Stack = Awaited<ReturnType<typeof startStack>>;
@@ -59,7 +60,7 @@ export async function startStack(options: StackOptions = {}) {
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     AWS_REGION: 'us-east-1', AWS_DEFAULT_REGION: 'us-east-1', AWS_EC2_METADATA_DISABLED: 'true',
     AWS_ENDPOINT_URL_DYNAMODB: endpoint, BOTCUBE_CHAT_TABLE: name,
-    BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(PARITY_BOT),
+    BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(PARITY_BOT, options.corsOrigins === undefined ? {} : { web: { corsOrigins: options.corsOrigins } }),
     BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
     AWS_ENDPOINT_URL_STS: endpoint,
@@ -73,7 +74,6 @@ export async function startStack(options: StackOptions = {}) {
     }),
     BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
     BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'parity-credential-secret',
-    ...(options.corsOrigins === undefined ? {} : { BOTCUBE_CORS_ORIGINS: options.corsOrigins }),
   };
   const closeFakes = async () => {
     await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), files.close(), credentialService.close()]);

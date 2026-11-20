@@ -13,6 +13,7 @@ from botcube_credential_service.deployment_config import (
     DeploymentConfigError,
     deployment_config_from_env,
     load_deployment_config,
+    plan_usage_owner,
 )
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 
@@ -36,6 +37,14 @@ def test_a_valid_file_gives_its_sections_and_the_defaults_of_those_it_leaves_out
     assert config['models']['url'] == 'https://models.example.com/v1'
     assert config['proxy'] == {'kind': 'none'}
     assert config['telemetry'] == {'kind': 'xray'}
+
+
+def test_the_plan_usage_owner_is_the_files_not_the_environments(tmp_path: Path) -> None:
+    owned = _file(tmp_path, {'bot': './bot.json', 'planUsage': {'ownerAccountId': 'acct_owner_1'}})
+    legacy = {'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID': 'acct_other'}
+
+    assert plan_usage_owner(load_deployment_config(owned)) == 'acct_owner_1'
+    assert plan_usage_owner(deployment_config_from_env(legacy)) == ''
 
 
 def test_the_enterprise_example_loads() -> None:
