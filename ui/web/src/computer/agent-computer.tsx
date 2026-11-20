@@ -14,10 +14,11 @@ import { Terminal, type ShellCommand } from './terminal';
 
 /**
  * The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. An awake
- * local Agent Computer says its screen comes as `screenshots`, frame by frame; without that, it is a DCV live view.
+ * local Agent Computer says its screen comes as `screenshots`, frame by frame; one under the Deployment Config's
+ * `liveView: none` says `none`, and shows no live view; without either, it is a DCV live view.
  */
 export type AgentComputerState =
-  | { state: 'awake'; browserSessionId: string; control: 'user' | 'agent'; screenshot: string | null; liveView?: 'screenshots' }
+  | { state: 'awake'; browserSessionId: string; control: 'user' | 'agent'; screenshot: string | null; liveView?: 'screenshots' | 'none' }
   | { state: 'starting' | 'asleep'; screenshot: string | null };
 
 interface ChatServiceOptions {
@@ -62,6 +63,12 @@ export class ChatNotStarted extends Error {}
 
 export const loadAgentComputer = agentComputerRequest('/agent-computer', 'GET', 'Agent Computer request failed');
 export const wakeAgentComputer = agentComputerRequest('/agent-computer/wake', 'POST', 'Wake failed', ChatNotStarted);
+
+/** The browser Session the desktop watches: none under `liveView: none`, which its cover says. */
+function watching(computer: AgentComputerState, notice: string | null) {
+  const off = computer.state === 'awake' && computer.liveView === 'none';
+  return { off, browserSessionId: computer.state === 'awake' && !off ? computer.browserSessionId : null, coverNotice: notice ?? (off ? 'Live view is off in this deployment.' : null) };
+}
 
 export type DockApp = 'Chrome' | 'Terminal' | 'Files';
 const DOCK_APPS: readonly DockApp[] = ['Files', 'Chrome', 'Terminal'];
@@ -156,7 +163,7 @@ export function AgentComputer({
     }
     if (!busy && error !== null) returning.current = false;
   }, [control, busy, error]);
-  const browserSessionId = computer.state === 'awake' ? computer.browserSessionId : null;
+  const { off, browserSessionId, coverNotice } = watching(computer, notice);
   const currentBrowser = useRef(browserSessionId);
   currentBrowser.current = browserSessionId;
   const connectionCallback = useRef(onConnectionChange);
@@ -256,8 +263,8 @@ export function AgentComputer({
                 <Presence>{computer.screenshot !== null && (
                   <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
                 )}</Presence>
-                <Presence>{!liveViewExhausted && (starting || browserSessionId !== null) && <motionElement.p {...presenceMotion} className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</motionElement.p>}</Presence>
-                <Presence>{notice && <motionElement.p {...presenceMotion} className="agent-computer-notice" role="status">{notice}</motionElement.p>}</Presence>
+                <Presence>{!liveViewExhausted && !off && (starting || browserSessionId !== null) && <motionElement.p {...presenceMotion} className="agent-computer-starting" role="status">{computer.state === 'awake' ? 'Connecting…' : 'Starting…'}</motionElement.p>}</Presence>
+                <Presence>{coverNotice && <motionElement.p {...presenceMotion} className="agent-computer-notice" role="status">{coverNotice}</motionElement.p>}</Presence>
               </motionElement.div>
             )}</Presence>
             {/* Terminal and Files fill the window Chrome's live view fills; the dock switches between them, closing none. */}

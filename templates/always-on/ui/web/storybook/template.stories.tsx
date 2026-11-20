@@ -5,7 +5,7 @@ import Page from 'botcube-ui-web/storybook-page';
 import { animationsSettled } from '../../../../../ui/web/.storybook/animations-settled';
 import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
 import { LiveBrowserWindow } from '../../../../../ui/web/src/computer/live-browser-window';
-import { SESSION, awakeComputer, reply } from './chat-service';
+import { SESSION, awakeComputer, noLiveViewComputer, reply } from './chat-service';
 
 const meta = {
   title: 'Template',
@@ -173,6 +173,19 @@ export const ProfileComputerAwake: Story = {
     const live = await computerGeometry(panel);
     await expect([live.left, live.top, live.width, live.height]).toEqual([covered.left, covered.top, covered.width, covered.height]);
     await near(box(panel, '.computer-screen-image').width, box(panel, '.computer-screen-glass').width);
+    await noPageScroll(canvasElement);
+  }),
+};
+export const ProfileComputerNoLiveView: Story = {
+  name: 'profile-computer-no-live-view',
+  parameters: { msw: { handlers: noLiveViewComputer } },
+  play: resting(async ({ canvasElement }) => {
+    await profile(canvasElement, 'Computer');
+    const panel = computerPanel(canvasElement);
+    await visible(panel, '.agent-computer-notice');
+    await expect(panel.querySelector('.agent-computer-notice')).toHaveTextContent('Live view is off in this deployment.');
+    await expect(panel.querySelector('.agent-computer-live')).toBeNull();
+    await computerGeometry(panel);
     await noPageScroll(canvasElement);
   }),
 };

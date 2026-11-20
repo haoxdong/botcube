@@ -5,9 +5,10 @@ import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import { agentComputerIdleSeconds } from './agent-computer.js';
+import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
-import { ComputerStartupCancelled, findChromium, startLocalChromium, type LocalChromium } from './local-chromium.js';
+import { ComputerStartupCancelled, findChromium, refuseProxyCredentials, startLocalChromium, type LocalChromium } from './local-chromium.js';
 
 interface RunningComputer {
   readonly owner: string;
@@ -39,12 +40,16 @@ export function localAgentComputer({
   requester,
   env,
   startPage = 'about:blank',
+  started,
 }: {
   history: Pick<AccountHistory, 'owns' | 'ownsMainChat'>;
   requester: (c: Context) => Promise<Requester>;
   env: NodeJS.ProcessEnv;
   startPage?: string | undefined;
+  /** Told of each browser started, before the agent may use it (`agent-computer-started.ts`); unset, nothing is. */
+  started?: AgentComputerStarted | undefined;
 }) {
+  refuseProxyCredentials(env);
   const cdpUrls = agentComputerCdpUrls(
     new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`).href,
     env
@@ -91,11 +96,12 @@ export function localAgentComputer({
       return existing;
     }
     const startup = new AbortController();
+    const browserSessionId = randomUUID();
     const retire = () => {
       clearTimeout(computer.idleTimer);
       if (running.get(key) === computer) running.delete(key);
     };
-    const ready = Promise.resolve().then(() => startLocalChromium(findChromium(env), startUrl, startup.signal, env.BOTCUBE_CHROMIUM_DIAGNOSTICS === '1')).then(
+    const ready = Promise.resolve().then(() => startLocalChromium(findChromium(env), startUrl, startup.signal, env)).then(
       (browser) => {
         void browser.closed.then(retire, (error: unknown) => {
           const failure = new HttpError(503, 'Agent Computer profile cleanup failed');
@@ -120,8 +126,17 @@ export function localAgentComputer({
         computer.failure = failure;
         throw failure;
       }
-    );
-    const computer: RunningComputer = { owner, threadId, browserSessionId: randomUUID(), ready, startup };
+    ).then(async (browser) => {
+      try {
+        await started?.(owner, threadId, browserSessionId);
+      } catch (error) {
+        computer.failure = error instanceof HttpError ? error : Object.assign(new HttpError(502, String(error)), { cause: error });
+        await browser.stop().catch((stopError: unknown) => console.error('Agent Computer stop failed', stopError));
+        throw computer.failure;
+      }
+      return browser;
+    });
+    const computer: RunningComputer = { owner, threadId, browserSessionId, ready, startup };
     void ready.catch((error: unknown) => {
       console.error('Agent Computer startup failed', error);
     });

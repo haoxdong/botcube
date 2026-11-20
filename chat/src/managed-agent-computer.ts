@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { AccountStore } from './account-store.js';
 import { agentComputerBrowserFromEnv, agentComputerIdleSeconds, agentComputers } from './agent-computer.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
-import { agentComputerStartedFromEnv } from './agent-computer-started.js';
+import type { AgentComputerStarted } from './agent-computer-started.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
@@ -15,12 +15,14 @@ import { ecsTaskDraining } from './scheduled-runs.js';
  * each Session's browser wakes from the account's browser profile with its Files mounted, as a bot's does. It
  * answers what `localAgentComputer` answers, so the stock Chat Service takes either.
  */
-export function managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains, accountKey }: {
+export function managedAgentComputer({ history, requester, env, store, files, started, profileOmitsCookieDomains, accountKey }: {
   history: Pick<AccountHistory, 'owns' | 'ownsMainChat'>;
   requester: (c: Context) => Promise<Requester>;
   env: NodeJS.ProcessEnv;
   store: () => AccountStore;
   files: () => AccountFiles;
+  /** Told of each browser started (`agent-computer-started.ts`); unset, nothing is. */
+  started: AgentComputerStarted | undefined;
   /** The bot settings' `agentComputer.profileOmitsCookieDomains`. */
   profileOmitsCookieDomains: readonly string[];
   /** The bot settings' `accountKey`. */
@@ -30,7 +32,7 @@ export function managedAgentComputer({ history, requester, env, store, files, pr
   const computers = agentComputers({
     browser,
     records: store,
-    started: agentComputerStartedFromEnv(env, async (accountId) => (await store().loadAccount(accountId))?.status !== 'registered'),
+    started,
     files,
     idleSeconds: agentComputerIdleSeconds(env),
     draining: ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4),

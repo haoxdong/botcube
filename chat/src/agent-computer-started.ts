@@ -8,7 +8,11 @@ const TOKEN_SECONDS = 120;
 // Longer than a product's service may wait for a Sign-in still being saved before it answers.
 const TIMEOUT_MS = 90_000;
 
-/** Told of each Agent Computer browser BotCube starts, before the agent may use it; a failure stops that browser. */
+/**
+ * Told of each Agent Computer browser BotCube starts, before the agent may use it; a failure stops that browser.
+ * `browserSessionId`, sent as the `agentComputerSession` claim, is opaque and owned by the backend in use: the local
+ * browser's UUID, or the AgentCore session id. A product's service must not parse it or call AgentCore with it.
+ */
 export type AgentComputerStarted = (accountId: string, threadId: string, browserSessionId: string) => Promise<void>;
 
 interface AgentComputerStartedOptions {

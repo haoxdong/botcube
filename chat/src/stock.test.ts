@@ -8,7 +8,9 @@ import type { RunAgentInput } from '@ag-ui/client';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { Hono } from 'hono';
+import { decodeJwt, exportJWK, generateKeyPair } from 'jose';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { testChromiumPath } from '../test/chromium.js';
 import { FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
@@ -146,6 +148,30 @@ describe('the stock Chat Service', () => {
     });
   });
 
+  it('tells the service BOTCUBE_AGENT_COMPUTER_STARTED_URL names of each browser its Agent Computer starts', async () => {
+    const product = await new HttpFake((_, response) => sendJson(response, 200, {})).listen();
+    const { privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const env = {
+      BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
+      BOTCUBE_AGENT_COMPUTER_STARTED_URL: `${product.url}/agent-computer/started`,
+      BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([{ ...(await exportJWK(privateKey)), kid: 'k1' }]),
+      BOTCUBE_PUBLIC_ORIGIN: 'https://chat.example.com',
+    };
+    const service = stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history);
+    try {
+      await service.warmSession({ owner: 'acct_1' }, 'session-1');
+      const live = await service.browserLiveView?.({ owner: 'acct_1' }, 'session-1');
+      expect(live).toEqual({ open: true, sessionId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/) });
+      expect(product.requests.map((request) => decodeJwt(request.headers.authorization?.replace(/^Bearer /, '') ?? ''))).toEqual([expect.objectContaining({
+        sub: 'acct_1', threadId: 'session-1', anonymous: true, agentComputerSession: live?.sessionId,
+      })]);
+    } finally {
+      await service.sleepAgentComputers?.().slept;
+      await product.close();
+    }
+  });
+
   it('serves Files from EFS, refusing them until EFS is configured', async () => {
     const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE };
     const service = stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history);
@@ -260,6 +286,49 @@ describe("the stock Chat Service's Agent Computer", () => {
 
     await vi.waitFor(() => expect(requests).toContain('http://agentcore.test/browsers/agent-computer-browser/sessions/get?sessionId=browser-1'));
     expect(chromium.lookups).toBe(lookups);
+    await service.sleepAgentComputers?.().slept;
+  });
+
+  it('says its awake computer shows no live view under liveView none', async () => {
+    vi.stubEnv('AWS_ACCESS_KEY_ID', 'AKIDEXAMPLE');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'secret');
+    vi.stubEnv('AWS_SESSION_TOKEN', '');
+    vi.stubGlobal('fetch', async () => Response.json({ streams: { automationStream: { streamEndpoint: 'wss://stream.test/awake', streamStatus: 'ENABLED' } } }));
+    const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
+    const bot = JSON.parse(readFileSync(new URL('../../examples/bot/bot.json', import.meta.url), 'utf8')) as { agentComputer?: object };
+    writeFileSync(join(dir, 'bot.json'), JSON.stringify({ ...bot, agentComputer: { ...bot.agentComputer, liveBrowser: false } }));
+    writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json', liveView: { kind: 'none' } }));
+    const env = {
+      BOTCUBE_DEPLOYMENT_CONFIG: join(dir, 'deployment-config.json'),
+      AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
+      AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'agent-computer-browser',
+      BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET: 'policy-bucket',
+      BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY: 'agent-computer/chrome-policy.json',
+    };
+    const accountStore = stockAccountStore(env, memoryDocuments());
+    const service = stockChatService(env, { accountStore })(history);
+    const route = new Hono().route('/', service.routes);
+    const session = await route.request('/account/session');
+    const cookie = session.headers.get('set-cookie')?.split(';')[0] ?? '';
+    const { accountId } = await session.json() as { accountId: string };
+    await accountStore.withAgentComputerLease(accountId, () => accountStore.saveRunningAgentComputer({
+      accountId, threadId: 'session-1', sessionId: 'browser-1', phase: 'awake', idleDeadline: Date.now() + 60_000,
+    }), 'session-1');
+
+    const computer = await route.request('/agent-computer?thread_id=session-1', { headers: { Cookie: cookie } });
+
+    expect(await computer.json()).toEqual({ state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null, liveView: 'none' });
+    // The Computer tab's hint is not the policy: the owner's own client is refused the screen too.
+    const refused = await Promise.all(['/browser-live-view-url?session_id=browser-1', '/agent-computer/view?thread_id=session-1'].map(async (path) => {
+      const response = await route.request(path, { headers: { Cookie: cookie } });
+      return [path, response.status, await response.text()];
+    }));
+    expect(refused).toEqual([
+      ['/browser-live-view-url?session_id=browser-1', 404, expect.stringContaining('This deployment shows no live view')],
+      ['/agent-computer/view?thread_id=session-1', 404, expect.stringContaining('This deployment shows no live view')],
+    ]);
+    // The agent still drives the browser: its CDP route is not behind the refusal.
+    expect((await route.request('/agent-computer/cdp', { headers: { Cookie: cookie } })).status).not.toBe(404);
     await service.sleepAgentComputers?.().slept;
   });
 });

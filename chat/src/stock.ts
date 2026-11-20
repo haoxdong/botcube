@@ -6,6 +6,8 @@ import { accountDeletions, serviceHealthy } from './account-deletions.js';
 import type { AccountHistory } from './account-history.js';
 import { AccountStore } from './account-store.js';
 import { accountLifecycle, accountRoutes } from './accounts.js';
+import type { AgentComputerState } from './agent-computer.js';
+import { agentComputerStartedFromEnv } from './agent-computer-started.js';
 import { agentDocumentTemplates } from './agent-documents.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
@@ -51,6 +53,29 @@ async function credentialServiceResponse(url: string, secret: string, accountId:
   });
   if (!response.ok) throw new HttpError(503, `${failure} failed with HTTP ${response.status}`);
   return response;
+}
+
+type ComputerStates = Parameters<typeof computerFilesRoutes>[0]['computers'];
+
+/**
+ * Under the Deployment Config's `liveView: none`, no client gets the screen: the live-view URL and its frames answer 404.
+ * Mounted ahead of the computer's routes, and of the Chat Service's own AgentCore live-view URL, so it covers both.
+ */
+function refusingLiveView(): Hono {
+  const routes = new Hono();
+  for (const path of ['/browser-live-view-url', '/agent-computer/view']) {
+    routes.get(path, (c) => c.json({ detail: 'This deployment shows no live view' }, 404));
+  }
+  return routes;
+}
+
+/** Under the Deployment Config's `liveView: none`, an awake computer tells the Computer tab to start no live view. */
+function withoutLiveView(computers: ComputerStates): ComputerStates {
+  const marked = (state: AgentComputerState): AgentComputerState => (state.state === 'awake' ? { ...state, liveView: 'none' } : state);
+  return {
+    state: async (owner, threadId) => marked(await computers.state(owner, threadId)),
+    wake: async (owner, threadId) => marked(await computers.wake(owner, threadId)),
+  };
 }
 
 function deployment(env: NodeJS.ProcessEnv) {
@@ -110,6 +135,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const cookies = accountCookies(bot.accountKey);
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
   const files = accountFilesFromEnv(env, store, config.supplied?.files);
+  const started = agentComputerStartedFromEnv(env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
   const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;
@@ -157,8 +183,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     };
     // The managed AgentCore browser when the deploy names one; a local Chromium only when it names none.
     const computer = env.AGENTCORE_AGENT_COMPUTER_BROWSER_ID?.trim()
-      ? managedAgentComputer({ history, requester, env, store, files, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
-      : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage }));
+      ? managedAgentComputer({ history, requester, env, store, files, started, profileOmitsCookieDomains: bot.agentComputer.profileOmitsCookieDomains, accountKey: bot.accountKey })
+      : (options.agentComputer ?? ((local) => local))(localAgentComputer({ history, requester, env, startPage: options.startPage, started }));
     const lifecycle = accountLifecycle({ credentials, history, files: filesConfigured(env) ? files : null, computers: computer, store });
     const deletions = accountDeletions({
       store, deleteAccount: lifecycle.deleteAccount,
@@ -182,8 +208,9 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
       accountModels: ({ owner }, options) => plan.accountModels(owner, options),
       accountModel: ({ owner }, key) => plan.accountModel(owner, key),
       routes: new Hono()
+        .route('/', config.liveView.kind === 'none' ? refusingLiveView() : new Hono())
         .route('/', computer.routes)
-        .route('/', computerFilesRoutes({ requester, history, computers: computer, files: () => files() }))
+        .route('/', computerFilesRoutes({ requester, history, computers: config.liveView.kind === 'none' ? withoutLiveView(computer) : computer, files: () => files() }))
         .route('/account/plan-usage/openai', plan.routes)
         .route('/', accounts.routes)
         .route('/', testUserConnector)

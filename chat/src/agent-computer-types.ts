@@ -33,9 +33,13 @@ export type BrowserControl = 'user' | 'agent';
 
 export type AgentComputerRecords = Pick<AccountResources, 'assertBrowserAllowed' | 'scheduledBrowserAdmission' | 'agentComputer' | 'saveAgentComputer' | 'agentComputerScreenshot' | 'saveAgentComputerScreenshot' | 'deleteAgentComputer' | 'withAgentComputerLease' | 'runningAgentComputer' | 'runningAgentComputers' | 'saveRunningAgentComputer' | 'deleteRunningAgentComputer' | 'agentComputerStream' | 'claimAgentComputerStream' | 'renewAgentComputerStream' | 'releaseAgentComputerStream'>;
 
-/** The Session's last screenshot comes with either state: it stands in until the live view shows the browser. */
+/**
+ * The Session's last screenshot comes with either state: it stands in until the live view shows the browser. An awake
+ * computer says `liveView: 'screenshots'` when its screen comes frame by frame, and `'none'` under the Deployment Config's
+ * `liveView: none`, where the User is shown no live view.
+ */
 export type AgentComputerState =
-  | { state: 'awake'; browserSessionId: string; control: BrowserControl; screenshot: string | null }
+  | { state: 'awake'; browserSessionId: string; control: BrowserControl; screenshot: string | null; liveView?: 'screenshots' | 'none' }
   | { state: 'starting' | 'asleep'; screenshot: string | null };
 
 export type AwakeComputer = Extract<AgentComputerState, { state: 'awake' }>;

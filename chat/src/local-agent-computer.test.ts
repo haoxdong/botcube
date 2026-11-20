@@ -11,10 +11,12 @@ import { WebSocketServer } from 'ws';
 import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import { computerFilesRoutes } from './computer-files-routes.js';
+import type { AgentComputerStarted } from './agent-computer-started.js';
 import { localAgentComputer } from './local-agent-computer.js';
 import { startLocalChromium, type LocalChromium } from './local-chromium.js';
 import { AgentCdp } from '../test/agent-cdp.js';
 import { testChromiumPath } from '../test/chromium.js';
+import { proxyEnvironment } from '../../deployment-config/environment.js';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
 
@@ -127,12 +129,19 @@ function newComputer({
   history = owning(),
   chromiumPath = testChromiumPath(),
   startPage,
-}: { history?: Pick<AccountHistory, 'owns' | 'ownsMainChat'>; chromiumPath?: string; startPage?: string } = {}) {
+  started,
+}: {
+  history?: Pick<AccountHistory, 'owns' | 'ownsMainChat'>;
+  chromiumPath?: string;
+  startPage?: string;
+  started?: AgentComputerStarted;
+} = {}) {
   computer = localAgentComputer({
     history,
     requester,
     env: { BOTCUBE_CHROMIUM_PATH: chromiumPath, BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://127.0.0.1/computer' },
     startPage,
+    started,
   });
   return computer;
 }
@@ -198,6 +207,18 @@ it("with zero env, runs the Chromium on PATH on a blank page and answers on this
   await computer.warmSession({ owner: OWNER }, 'default-session');
   expect(await computer.state(OWNER, 'default-session')).toMatchObject({ state: 'awake' });
   expect(startupDiagnostics.spawned).toEqual([[executable, expect.arrayContaining(['about:blank', '--use-mock-keychain'])]]);
+  expect(startupDiagnostics.spawned).toEqual([[executable, expect.not.arrayContaining([expect.stringMatching(/^--(no-)?proxy/)])]]);
+});
+
+it("under the Deployment Config's proxy, starts Chromium through it, bypassing NO_PROXY", async () => {
+  const proxy = proxyEnvironment({ proxy: { kind: 'forward', url: 'http://proxy.example:3128', noProxy: ['.internal.test'] } });
+  computer = localAgentComputer({ history: owning(), requester, env: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), ...proxy } });
+  await computer.warmSession({ owner: OWNER }, 'proxied-session');
+  expect(await computer.state(OWNER, 'proxied-session')).toMatchObject({ state: 'awake' });
+  expect(startupDiagnostics.spawned).toEqual([[testChromiumPath(), expect.arrayContaining([
+    '--proxy-server=http://proxy.example:3128',
+    '--proxy-bypass-list=localhost;*.localhost;127.0.0.1;[::1];169.254.169.254;169.254.170.2;internal.test;*.internal.test',
+  ])]]);
 });
 
 it('with no Chromium on PATH or in /Applications, fails the start naming the fix', async () => {
@@ -325,6 +346,53 @@ it('authorizes an assigned Main Chat before its first Turn and denies every entr
   }));
   const fenced = await AgentCdp.connect(cdpUrl);
   expect(await fenced.closed).toEqual({ code: 1011, reason: 'This account does not own the Session' });
+});
+
+it('tells the started-browser hook of each browser it starts, before the agent may use it', async () => {
+  const told: [string, string, string][] = [];
+  let enter: () => void = () => undefined;
+  let prepare: () => void = () => undefined;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const prepared = new Promise<void>((resolve) => { prepare = resolve; });
+  const local = newComputer({
+    startPage: await fakeSite(),
+    started: async (accountId, threadId, browserSessionId) => {
+      told.push([accountId, threadId, browserSessionId]);
+      enter();
+      await prepared;
+    },
+  });
+  const settled: string[] = [];
+  const wake = Promise.resolve(computerApp(local)
+    .request('/agent-computer/wake?thread_id=hook-session', { method: 'POST', ...as() }))
+    .then((response) => { settled.push('wake'); return response.json(); });
+  await entered;
+  expect(settled).toEqual([]);
+  prepare();
+  const awake = (await wake) as { state: string; browserSessionId: string };
+  expect(awake).toMatchObject({ state: 'awake' });
+  expect(told).toEqual([[OWNER, 'hook-session', awake.browserSessionId]]);
+});
+
+it("stops the browser the hook refuses and answers the wake with the hook's refusal, retrying at the next wake", async () => {
+  const refusals = [new HttpError(403, 'Sign in first')];
+  const local = newComputer({
+    startPage: await fakeSite(),
+    started: async () => {
+      const refusal = refusals.shift();
+      if (refusal) throw refusal;
+    },
+  });
+  const app = computerApp(local);
+  const refused = await app.request('/agent-computer/wake?thread_id=refused-session', { method: 'POST', ...as() });
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toEqual({ detail: 'Sign in first' });
+  expect(await local.browserLiveView({ owner: OWNER }, 'refused-session')).toBeNull();
+  await vi.waitFor(async () =>
+    expect((await app.request('/agent-computer/view?thread_id=refused-session', as())).status).toBe(409)
+  );
+  const retried = await app.request('/agent-computer/wake?thread_id=refused-session', { method: 'POST', ...as() });
+  expect(await retried.json()).toMatchObject({ state: 'awake' });
 });
 
 it('retries a failed browser start when the executable becomes available', { timeout: 15_000 }, async () => {
@@ -672,7 +740,7 @@ it.each(['exit', 'timeout'])('records Chromium startup diagnostics on %s', async
   if (failure === 'timeout') vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   startupDiagnostics.capture = { stderr: '' };
   try {
-    const rejected = expect(startLocalChromium(executable, 'about:blank', new AbortController().signal, true)).rejects.toThrow(
+    const rejected = expect(startLocalChromium(executable, 'about:blank', new AbortController().signal, { BOTCUBE_CHROMIUM_DIAGNOSTICS: '1' })).rejects.toThrow(
       failure === 'exit' ? 'Chromium exited before startup' : 'Chromium startup timed out while waiting for the DevTools endpoint'
     );
     if (failure === 'timeout') {
@@ -700,7 +768,7 @@ it.each(['exit', 'timeout'])('records Chromium startup diagnostics on %s', async
 it('records DevTools discovery without changing Chromium startup', async () => {
   const log = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    browser = await startLocalChromium(testChromiumPath(), 'about:blank', new AbortController().signal, true);
+    browser = await startLocalChromium(testChromiumPath(), 'about:blank', new AbortController().signal, { BOTCUBE_CHROMIUM_DIAGNOSTICS: '1' });
     expect(browser.alive).toBe(true);
     await browser.stop();
     const records = log.mock.calls.filter(([prefix]) => prefix === 'Chromium startup diagnostic').map(([, value]) => JSON.parse(String(value)));

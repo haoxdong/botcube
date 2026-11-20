@@ -129,6 +129,18 @@ describe('the Computer tab on a local Agent Computer', () => {
     expect(container.querySelector('img')).not.toBeNull();
   });
 
+  it('under liveView none, wakes the computer but requests no live view and shows its static state', async () => {
+    answers['GET /agent-computer'] = asleep;
+    answers['POST /agent-computer/wake'] = () => Response.json({ state: 'awake', browserSessionId: 'browser-1', control: 'agent', screenshot: null, liveView: 'none' });
+    await show();
+    await settle();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(requests).toEqual(['GET /agent-computer?thread_id=chat-1', 'POST /agent-computer/wake?thread_id=chat-1']);
+    expect(container.querySelector('.agent-computer-notice')?.textContent).toBe('Live view is off in this deployment.');
+    expect(container.textContent).not.toContain('Connecting…');
+    expect(container.textContent).not.toContain('Take over');
+  });
+
   it('explains a wake before the first message starts its computer', async () => {
     answers['GET /agent-computer'] = asleep;
     answers['POST /agent-computer/wake'] = () => Response.json({ detail: "The computer starts with this chat's first message." }, { status: 404 });

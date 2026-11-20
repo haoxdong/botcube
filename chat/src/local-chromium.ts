@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { availableParallelism, cpus, freemem, loadavg, tmpdir, totalmem } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { HttpError } from './http-error.js';
@@ -42,6 +43,40 @@ export function findChromium(env: NodeJS.ProcessEnv): string {
       `No Chromium found on PATH (${CHROMIUM_COMMANDS.join(', ')}) or in /Applications: install Chromium or set BOTCUBE_CHROMIUM_PATH`
     );
   return found;
+}
+
+/** One NO_PROXY entry as Chromium bypass rules (net/proxy_resolution/proxy_bypass_rules.h). */
+function bypassRules(entry: string): string[] {
+  // CIDR blocks and bracketed IPv6, with or without a port, read the same in both.
+  if (entry.includes('/') || entry.startsWith('[')) return [entry];
+  // Chromium reads a bare IPv6 literal only in brackets.
+  if (isIP(entry) === 6) return [`[${entry}]`];
+  const host = entry.replace(/^\*?\./, '');
+  if (isIP(host.replace(/:\d+$/, '')) === 4) return [host];
+  // NO_PROXY's `example.com` and `.example.com` cover the domain and its subdomains; Chromium's `example.com` is that host alone.
+  return [host, `*.${host}`];
+}
+
+/** Chromium drops `user:pass@` from `--proxy-server`, so a proxy that needs them would see unauthenticated traffic. */
+export function refuseProxyCredentials({ NODE_USE_ENV_PROXY, HTTPS_PROXY }: NodeJS.ProcessEnv): void {
+  if (NODE_USE_ENV_PROXY !== '1' || !HTTPS_PROXY) return;
+  const { username, password } = new URL(HTTPS_PROXY);
+  if (username || password) throw new Error("Chromium can't authenticate to a proxy: remove the credentials from the Deployment Config's proxy URL");
+}
+
+/**
+ * Chromium's proxy flags under the Deployment Config's proxy (NODE_USE_ENV_PROXY, as `proxyEnvironment` sets it):
+ * HTTPS_PROXY as its proxy server and NO_PROXY as its bypass list. None without it, so Chromium keeps its defaults.
+ */
+export function chromiumProxyArgs(env: NodeJS.ProcessEnv): string[] {
+  const { NODE_USE_ENV_PROXY, HTTPS_PROXY, NO_PROXY = '' } = env;
+  if (NODE_USE_ENV_PROXY !== '1' || !HTTPS_PROXY) return [];
+  refuseProxyCredentials(env);
+  // NO_PROXY is often written with spaces after its commas, or ends in one: an entry is trimmed, and an empty one means nothing.
+  const entries = NO_PROXY.split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (entries.includes('*')) return ['--no-proxy-server'];
+  const bypass = [...new Set(entries.flatMap(bypassRules))];
+  return [`--proxy-server=${HTTPS_PROXY}`, ...(bypass.length > 0 ? [`--proxy-bypass-list=${bypass.join(';')}`] : [])];
 }
 
 /** A Chromium process on this Chat Service's host, with a private profile it deletes on exit. */
@@ -86,13 +121,17 @@ function observeStartup(child: ChildProcess, executable: string, args: string[],
   return record;
 }
 
-/** Start headless Chromium on `startPage`; answers once its DevTools endpoint has a page. */
+/**
+ * Start headless Chromium on `startPage`, under `env`'s Deployment Config proxy if any, logging its startup under
+ * BOTCUBE_CHROMIUM_DIAGNOSTICS=1; answers once its DevTools endpoint has a page.
+ */
 export async function startLocalChromium(
   chromiumPath: string,
   startPage: string,
   signal: AbortSignal,
-  diagnostics = false
+  env: NodeJS.ProcessEnv = {}
 ): Promise<LocalChromium> {
+  const diagnostics = env.BOTCUBE_CHROMIUM_DIAGNOSTICS === '1';
   const profile = await mkdtemp(join(tmpdir(), 'agent-computer-'));
   if (signal.aborted) {
     await rm(profile, { recursive: true, force: true });
@@ -112,6 +151,7 @@ export async function startLocalChromium(
     '--remote-debugging-port=0',
     '--window-size=1280,720',
     `--user-data-dir=${profile}`,
+    ...chromiumProxyArgs(env),
     startPage,
   ];
   const started = performance.now();
