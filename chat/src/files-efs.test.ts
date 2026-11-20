@@ -455,6 +455,66 @@ describe('EFS account Files', () => {
     expect(await records.filesAccessPoint(ACCOUNT)).toBeNull();
   });
 
+  describe('never follows a symbolic link the agent planted in Files', () => {
+    /** Another account's folder on the same EFS, holding `theirs.txt`. */
+    const OTHER = 'ffffffffffffffffffffffffffffffff';
+    const planted = async (name: string, target = path.join(root, OTHER)) => {
+      await put(OTHER, 'theirs.txt', 'theirs');
+      await mkdir(path.join(root, HASH, path.dirname(name)), { recursive: true });
+      await symlink(target, path.join(root, HASH, name));
+      return snapshot(path.join(root, OTHER));
+    };
+
+    it('refuses a rename into a linked folder, and writes nothing into it', async () => {
+      const { files } = setup();
+      await put(HASH, 'a.txt', 'A');
+      const before = await planted('out');
+      await expect(files.rename(ACCOUNT, 'a.txt', 'out/a.txt')).rejects.toMatchObject({ status: 400, message: expect.stringContaining('is a symbolic link') });
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+      expect(await readFile(path.join(root, HASH, 'a.txt'), 'utf8')).toBe('A');
+    });
+
+    it('refuses a rename out of a linked folder, which would take a file from another account', async () => {
+      const { files } = setup();
+      const before = await planted('in');
+      await expect(files.rename(ACCOUNT, 'in/theirs.txt', 'mine.txt')).rejects.toMatchObject({ status: 400 });
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+    });
+
+    it('refuses a remove through a linked folder, and leaves the file it points into', async () => {
+      const { files } = setup();
+      const before = await planted('out');
+      await expect(files.remove(ACCOUNT, 'out/theirs.txt')).rejects.toMatchObject({ status: 400 });
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+    });
+
+    it('removes a link itself, never the file it points at', async () => {
+      const { files } = setup();
+      const before = await planted('notes.txt', path.join(root, OTHER, 'theirs.txt'));
+      await files.remove(ACCOUNT, 'notes.txt');
+      await expect(readdir(path.join(root, HASH))).resolves.toEqual([]);
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+    });
+
+    it('a Claim moves nothing through a linked folder in the source or the destination', async () => {
+      const { files, records, access } = setup();
+      await records.call('PutItem', new PutCommand({ TableName: 'chat', Item: { pk: 'ACCOUNT#acct_claimed', sk: 'META', record: { accountId: 'acct_claimed' } } }));
+      await files.mount(ACCOUNT);
+      await put(HASH, 'sub/deep.txt', 'deep');
+      const destination = (await files.mount('acct_claimed')).accessPointArn;
+      const claimedHash = path.basename(access.live.get(destination) ?? '');
+      await put(OTHER, 'theirs.txt', 'theirs');
+      // The source's own link to another account is never walked, so its file stays put.
+      await symlink(path.join(root, OTHER), path.join(root, HASH, 'linked'));
+      // The destination's link would carry `sub/deep.txt` into the other account.
+      await mkdir(path.join(root, claimedHash), { recursive: true });
+      await symlink(path.join(root, OTHER), path.join(root, claimedHash, 'sub'));
+      const before = await snapshot(path.join(root, OTHER));
+      await expect(files.transfer(ACCOUNT, 'acct_claimed')).rejects.toMatchObject({ status: 400 });
+      expect(await snapshot(path.join(root, OTHER))).toEqual(before);
+    });
+  });
+
   it('a Claim moves every file into the claiming account, a taken name getting the next free one, and retires the source', async () => {
     const { files, records, access } = setup();
     await records.call('PutItem', new PutCommand({ TableName: 'chat', Item: { pk: 'ACCOUNT#acct_claimed', sk: 'META', record: { accountId: 'acct_claimed' } } }));

@@ -1,12 +1,13 @@
 import { localCleanupWorker, type CleanupWorker } from './files-cleanup-worker.js';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { link, mkdir, readdir, rm, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   AccessPointNotFound, CreateAccessPointCommand, DeleteAccessPointCommand, DescribeAccessPointsCommand, EFSClient,
 } from '@aws-sdk/client-efs';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
+import { AccountTree } from './account-tree.js';
 import { saveArtifact } from './artifact-save.js';
 import { HttpError } from './http-error.js';
 import {
@@ -173,17 +174,29 @@ export function accountFilesEfs({
     }
   }
 
-  /** Give `from` the name `to` without ever replacing a file there: link refuses a taken name. */
-  async function moveNoClobber(from: string, to: string): Promise<boolean> {
-    await mkdir(path.dirname(to), { recursive: true });
+  /** The account's Files, walked without following a link the agent planted there; null before its folder exists. */
+  async function treeOf(userId: string, create = false): Promise<AccountTree | null> {
+    const folder = await directory(userId);
+    if (create) await mkdir(folder, { recursive: true });
     try {
-      await link(from, to);
+      return await AccountTree.at(folder);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      if (missing(error)) return null;
       throw error;
     }
-    await unlink(from);
-    return true;
+  }
+
+  /** A missing file, or a missing account folder, answers 404. */
+  async function inFiles<T>(userId: string, name: string, body: (tree: AccountTree) => Promise<T>): Promise<T> {
+    const notFound = (cause?: unknown) => Object.assign(new HttpError(404, `No file ${name} in Files`), { cause });
+    const tree = await treeOf(userId);
+    if (tree === null) throw notFound();
+    try {
+      return await body(tree);
+    } catch (error) {
+      if (missing(error)) throw notFound(error);
+      throw error;
+    }
   }
 
   async function requireActive(userId: string, expectedAccessPoint?: string): Promise<void> {
@@ -220,11 +233,14 @@ export function accountFilesEfs({
     await retirementOperation(destinationUserId, async () => {
       await requireActive(destinationUserId);
       const taken = new Set((await walk(await directory(destinationUserId))).map(({ name }) => name));
+      const destination = await treeOf(destinationUserId, true);
+      if (destination === null) throw new HttpError(503, 'The claiming account has no Files folder');
+      // The source walk never descends a link (a Dirent is not a directory); the destination tree refuses one.
       for (const { name, file } of await walk(await directory(sourceUserId))) {
         let moved = freeName(name, taken);
         // A file written into the destination since it was listed takes the name first; try the next.
         // eslint-disable-next-line no-await-in-loop -- one file at a time: a retried claim moves what is left
-        while (!await moveNoClobber(file, path.join(await directory(destinationUserId), moved))) {
+        while (!await destination.linkInto(file, moved)) {
           taken.add(moved);
           moved = freeName(name, taken);
         }
@@ -321,17 +337,11 @@ export function accountFilesEfs({
       return link_('get', userId, name);
     },
     async remove(userId, name) {
-      try {
-        await unlink(await fileOf(userId, name));
-      } catch (error) {
-        if (missing(error)) throw Object.assign(new HttpError(404, `No file ${name} in Files`), { cause: error });
-        throw error;
-      }
+      await inFiles(userId, name, (tree) => tree.unlink(filePath(name)));
     },
     async rename(userId, from, to) {
-      const [source, target] = [await fileOf(userId, from), await fileOf(userId, fileDestination(to))];
-      if (!await exists(source)) throw new HttpError(404, `No file ${from} in Files`);
-      if (!await moveNoClobber(source, target)) throw new HttpError(409, `A file named ${to} is already in Files`);
+      const moved = await inFiles(userId, from, (tree) => tree.moveNoClobber(filePath(from), filePath(fileDestination(to))));
+      if (!moved) throw new HttpError(409, `A file named ${to} is already in Files`);
     },
     async saveArtifact(userId, save) {
       await requireActive(userId);
