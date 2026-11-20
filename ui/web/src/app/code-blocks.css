@@ -197,10 +197,6 @@
   max-width: 300px !important;
 }
 
-[data-streamdown="mermaid-fullscreen"] [role="application"] {
-  transition: transform var(--motion-move) var(--ease);
-}
-
 /* Streamdown exposes an active pointer drag through its frame's cursor. */
 [data-streamdown="mermaid-fullscreen"] [style*="grabbing"] > [role="application"] {
   transition: none;

@@ -167,7 +167,6 @@ button.worklog-head {
   flex: none;
   width: 14px;
   height: 14px;
-  transition: transform var(--motion-move) var(--ease);
 }
 
 .worklog[data-open] .worklog-chevron {
