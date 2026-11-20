@@ -46,10 +46,11 @@ services:
       context: ../..
       dockerfile: infra/local/credential-service.Dockerfile
       args: *harness-build-args
-    command: ["template-site"]
+    # The fake site the Credential Service signs in to; it also answers the Chat Service's Bedrock calls.
+    command: ["python", "/opt/stand-ins/fake_site.py"]
     environment:
       PORT: "8124"
-      TEMPLATE_SITE_HOST: "0.0.0.0"
+      FAKE_SITE_HOST: "0.0.0.0"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8124/login')"]
       interval: 2s
@@ -70,11 +71,11 @@ services:
       <<: *dynamodb-environment
       PORT: "8125"
       BOTCUBE_VAULT_TABLE: credential-vault
-      BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/template-vault/key
-      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret
-      TEMPLATE_SITE_URL: http://fake-site:8124
+      BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/local-vault/key
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
+      FAKE_SITE_URL: http://fake-site:8124
     volumes:
-      - credential-key:/var/lib/template-vault
+      - credential-key:/var/lib/local-vault
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8125/health')"]
       interval: 2s
@@ -139,7 +140,7 @@ services:
       <<: *dynamodb-environment
       AWS_ENDPOINT_URL_BEDROCK_RUNTIME: http://fake-site:8124
       BOTCUBE_CREDENTIAL_SERVICE_URL: http://credential-service:8125
-      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-template-invocation-secret
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
       BOTCUBE_AGENT_COMPUTER_CDP_URL: ws://chat-service:8123/agent-computer/cdp
       BOTCUBE_CORS_ORIGINS: http://localhost:${BOTCUBE_LOCAL_UI_PORT:-3001},http://127.0.0.1:${BOTCUBE_LOCAL_UI_PORT:-3001}
     ports:

@@ -1,25 +1,29 @@
 # Local sandbox
 
-Install Docker Compose, Node 24 with npm, and uv on the host. Startup stages
-the template browser tools with npm, uv, and Node before building the images.
+Install Docker Compose on the host.
 
 Run `./run.sh -d`, wait for the services, then run `./smoke.sh` and open
 `http://localhost:3001`. No cloud or model-provider credentials are used.
 See [Integrating BotCube](../../INTEGRATING.md) for the configuration reference.
 
-The `harness` service is the example bot's image (`examples/bot/Dockerfile`):
-BotCube's Harness image, the one `session-api` runs, plus the bot's settings and skills.
+The stack runs the public example: the Chat Service reads
+`examples/public/deployment-config.json`, and the `harness` service is the example bot's image
+(`examples/bot/Dockerfile`): BotCube's Harness image, the one `session-api` runs, plus the bot's
+settings and skills. The UI builds with its default UI plugin.
+
+`stand-ins/` holds the local stand-ins the `credential-service.Dockerfile` image copies and runs as
+plain scripts: the fake site (`fake_site.py`), which also answers the Chat Service's Bedrock calls,
+and the Credential Service with its fake-site provider (`credential_service.py`,
+`fake_site_provider.py`).
 
 Set `BOTCUBE_LOCAL_CHAT_PORT` and `BOTCUBE_LOCAL_UI_PORT` to change the host
 ports. The UI uses the selected Chat port unless `NEXT_PUBLIC_CHAT_SERVICE_URL`
 is set. Use the same variables for startup and smoke.
 
 If your HTTPS proxy uses a private CA, set `BOTCUBE_BUILD_CA_CERTS` to a
-readable combined CA bundle before startup. Host tool staging uses it through
-`NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` in its subprocess. BuildKit mounts the
-same bundle for image dependency downloads without putting it in the images.
-TLS verification stays enabled. When unset, staging inherits the host trust
-configuration.
+readable combined CA bundle before startup. BuildKit mounts the bundle for image
+dependency downloads without putting it in the images. TLS verification stays
+enabled.
 
 The Harness persists each Session's checkpoints in `harness-state`, and the
 session API replays Sessions from that same record; the Chat Service keeps Session Metadata
@@ -34,7 +38,7 @@ is internal to Compose and uses dummy credentials. Re-running startup reuses the
 table. The smoke test checks echo, replay, restart persistence, deletion and an
 invalid request. Set `COMPOSE_PROJECT_NAME` consistently for startup and smoke.
 
-The template Chat Service installs Chromium and starts each Session's Agent
+The local Chat Service installs Chromium and starts each Session's Agent
 Computer on the internal fake site. Its HTTP endpoint returns an owner-authorized
 image of that browser. Its signed CDP handoff uses `chat-service:8123` so the
 Harness can reach it inside Compose. Stopping the Chat Service sleeps its

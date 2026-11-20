@@ -9,7 +9,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "moto[dynamodb]>=5.2.3",
+  # The local stack's stand-ins (local/stand-ins/) run on the Credential Service package.
+  "botcube-credential-service",
+  "moto[dynamodb,server]>=5.2.3",
   "ty==0.0.99",
   "pytest>=9.1.1",
   "types-boto3[acm,bedrock-agentcore,bedrock-agentcore-control,cloudformation,cloudwatch,dynamodb,ec2,ecr,ecs,elbv2,lambda,logs,route53,s3,sns]>=1.43.108",
@@ -18,9 +20,12 @@ dev = [
 [tool.uv]
 package = false
 
+[tool.uv.sources]
+botcube-credential-service = { path = "../credential-service", editable = true }
+
 [tool.ty.environment]
 python-version = "3.11"
-extra-paths = ["ecs", "ecs/origin-provider"]
+extra-paths = ["ecs", "ecs/origin-provider", "local/stand-ins"]
 
 [tool.ty.src]
 include = ["ecs", "tests"]
@@ -28,5 +33,6 @@ exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
 
 [tool.pytest.ini_options]
 markers = ["integration: runs a real subprocess, server or socket (ADR 0083 decision 1)"]
-# The deploy scripts import their shared identity module from their own directory.
-pythonpath = ["ecs"]
+# The deploy scripts import their shared identity module from their own directory, and the local
+# stack's stand-ins are plain scripts its Credential Service image runs from one directory.
+pythonpath = ["ecs", "local/stand-ins"]

@@ -9,8 +9,7 @@ RUN --mount=type=secret,id=build_ca \
   npm install --global pnpm@12.10.1 && \
   pnpm install --frozen-lockfile --ignore-scripts
 
-ENV CARTRIDGE_UI_PACKAGE=botcube-always-on-ui-web
-ENV CARTRIDGE_UI_BUILD_CONFIG=templates/always-on/ui/web/build-config.cjs
+ENV CARTRIDGE_UI_PACKAGE=botcube-ui-web/cartridge-default
 ENV BOTCUBE_REPOSITORY_ROOT=../..
 EXPOSE 3001
 CMD ["pnpm", "--filter", "botcube-ui-web", "dev", "--hostname", "0.0.0.0"]

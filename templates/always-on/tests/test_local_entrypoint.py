@@ -1,3 +1,5 @@
+"""The template's tool-staging hook (deploy/stage-tools.sh), which the local stack's run.sh no longer calls."""
+
 import json
 import os
 import shutil
@@ -10,15 +12,17 @@ import pytest
 # Runs a real subprocess, server or socket (ADR 0083 decision 1).
 pytestmark = pytest.mark.integration
 
+STAGED = ('bin/template-cli', 'package.json', 'cartridge/template.whl')
+
 
 @pytest.fixture
 def local_checkout(tmp_path: Path) -> Path:
     cube = tmp_path / 'botcube'
     source = Path(__file__).resolve().parents[3]
-    for relative in ('infra/local/run.sh', 'templates/always-on/deploy/stage-tools.sh'):
-        destination = cube / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source / relative, destination)
+    relative = 'templates/always-on/deploy/stage-tools.sh'
+    destination = cube / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source / relative, destination)
     deploy = cube / 'templates/always-on/deploy'
     (deploy / 'bin').mkdir()
     (deploy / 'bin/template-cli').write_text('cli')
@@ -50,13 +54,6 @@ test -d "$2/node_modules/agent-browser"
 printf browser > "$2/agent-browser-linux-x64"
 printf browser > "$2/agent-browser-linux-arm64"
 ''',
-        'docker': '''#!/bin/sh
-set -eu
-for artifact in bin/template-cli package.json cartridge/template.whl; do
-  test -f "$LOCAL_CUBE/harness/deepagents/.tool-dist/$artifact" || exit 32
-done
-printf '%s\\n' "$@"
-''',
     }
     for name, content in commands.items():
         command = doubles / name
@@ -69,25 +66,27 @@ fi
     return cube
 
 
-def run_local(cube: Path, **environment: str) -> subprocess.CompletedProcess[str]:
+def stage_tools(cube: Path, **environment: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ['bash', str(cube / 'infra/local/run.sh'), '-d', 'harness'],
+        ['bash', str(cube / 'templates/always-on/deploy/stage-tools.sh')],
         cwd=cube.parent,
-        env={**os.environ, 'PATH': f'{cube.parent}/bin:{os.environ["PATH"]}', 'LOCAL_CUBE': str(cube), **environment},
+        env={**os.environ, 'PATH': f'{cube.parent}/bin:{os.environ["PATH"]}', **environment},
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def test_fresh_local_checkout_stages_tools_before_build(local_checkout: Path) -> None:
-    result = run_local(local_checkout)
+def staged(cube: Path) -> list[str]:
+    destination = cube / 'harness/deepagents/.tool-dist'
+    return [artifact for artifact in STAGED if (destination / artifact).is_file()]
+
+
+def test_fresh_local_checkout_stages_tools(local_checkout: Path) -> None:
+    result = stage_tools(local_checkout)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
-        'compose', '-f', str(local_checkout / 'infra/local/compose.yml'),
-        'up', '--build', '-d', 'harness',
-    ]
+    assert staged(local_checkout) == list(STAGED)
 
 
 @pytest.mark.parametrize('symlinked', [False, True])
@@ -126,16 +125,12 @@ def test_local_staging_with_real_npm_through_symlink(local_checkout: Path, symli
         alias.symlink_to(local_checkout.parent, target_is_directory=True)
         cube = alias / local_checkout.name
 
-    result = run_local(
+    result = stage_tools(
         cube, npm_config_cache=str(local_checkout.parent / 'npm-cache'),
         npm_config_offline='true', npm_config_audit='false', npm_config_fund='false',
     )
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines()[-7:] == [
-        'compose', '-f', str(cube / 'infra/local/compose.yml'),
-        'up', '--build', '-d', 'harness',
-    ]
     destination = local_checkout / 'harness/deepagents/.tool-dist'
     assert (destination / 'bin/template-cli').read_text() == 'cli'
     assert json.loads((destination / 'package.json').read_text()) == manifest
@@ -143,73 +138,42 @@ def test_local_staging_with_real_npm_through_symlink(local_checkout: Path, symli
     assert not (destination / 'node_modules').exists()
 
 
-def test_local_staging_failure_prevents_compose(local_checkout: Path) -> None:
-    result = run_local(local_checkout, STAGING_FAILURE='uv')
+def test_local_staging_failure_stops_staging(local_checkout: Path) -> None:
+    result = stage_tools(local_checkout, STAGING_FAILURE='uv')
 
     assert result.returncode == 27
-    assert result.stdout == ''
+    assert 'cartridge/template.whl' not in staged(local_checkout)
 
 
-@pytest.mark.parametrize('build_ca', ['readable', 'unset'])
-def test_local_staging_trust_is_scoped_to_build_tools(local_checkout: Path, build_ca: str) -> None:
+@pytest.mark.parametrize('trust', ['build-ca', 'inherited'])
+def test_local_staging_uses_the_trust_its_caller_gives_its_build_tools(local_checkout: Path, trust: str) -> None:
     bundle = local_checkout.parent / 'build-ca.pem'
     bundle.write_text('public fixture CA bundle')
     capture = local_checkout.parent / 'trust.log'
+    certificates = (str(bundle), str(bundle)) if trust == 'build-ca' else ('inherited-node-fixture.pem', 'inherited-ssl-fixture.pem')
 
-    result = run_local(
+    result = stage_tools(
         local_checkout,
-        BOTCUBE_BUILD_CA_CERTS=str(bundle) if build_ca == 'readable' else '',
-        NODE_EXTRA_CA_CERTS='inherited-node-fixture.pem',
-        SSL_CERT_FILE='inherited-ssl-fixture.pem',
+        NODE_EXTRA_CA_CERTS=certificates[0],
+        SSL_CERT_FILE=certificates[1],
         TRUST_CAPTURE=str(capture),
     )
 
     assert result.returncode == 0, result.stderr
-    if build_ca == 'readable':
-        assert capture.read_text().splitlines() == [
-            f'npm|{bundle}|{bundle}',
-            f'uv|{bundle}|{bundle}',
-            'docker|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
-        ]
-        assert result.stdout.splitlines() == [
-            'compose', '-f', str(local_checkout / 'infra/local/compose.yml'),
-            '-f', str(local_checkout / 'infra/local/compose.build-ca.yml'),
-            'up', '--build', '-d', 'harness',
-        ]
-    else:
-        assert capture.read_text().splitlines() == [
-            'npm|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
-            'uv|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
-            'docker|inherited-node-fixture.pem|inherited-ssl-fixture.pem',
-        ]
+    assert capture.read_text().splitlines() == [
+        f'npm|{certificates[0]}|{certificates[1]}',
+        f'uv|{certificates[0]}|{certificates[1]}',
+    ]
 
 
-def test_local_unreadable_build_ca_prevents_staging_and_compose(local_checkout: Path) -> None:
-    capture = local_checkout.parent / 'trust.log'
-
-    result = run_local(
-        local_checkout,
-        BOTCUBE_BUILD_CA_CERTS=str(local_checkout.parent / 'missing-ca.pem'),
-        NODE_EXTRA_CA_CERTS='inherited-node-fixture.pem',
-        SSL_CERT_FILE='inherited-ssl-fixture.pem',
-        TRUST_CAPTURE=str(capture),
-    )
-
-    assert result.returncode == 1
-    assert result.stderr == 'BOTCUBE_BUILD_CA_CERTS must name a readable CA bundle\n'
-    assert result.stdout == ''
-    assert not capture.exists()
-    assert not (local_checkout / 'harness/deepagents/.tool-dist').exists()
-
-
-def test_local_browser_install_failure_prevents_compose(local_checkout: Path) -> None:
-    result = run_local(local_checkout, STAGING_FAILURE='npm')
+def test_local_browser_install_failure_stops_staging(local_checkout: Path) -> None:
+    result = stage_tools(local_checkout, STAGING_FAILURE='npm')
 
     assert result.returncode == 28
-    assert result.stdout == ''
+    assert 'cartridge/template.whl' not in staged(local_checkout)
 
 
-def test_local_corrupt_browser_release_prevents_compose(local_checkout: Path) -> None:
+def test_local_corrupt_browser_release_stops_staging(local_checkout: Path) -> None:
     deploy = local_checkout / 'templates/always-on/deploy'
     release = local_checkout.parent / 'release'
     release.mkdir()
@@ -232,12 +196,12 @@ def test_local_corrupt_browser_release_prevents_compose(local_checkout: Path) ->
     for command in ('npm', 'node'):
         (local_checkout.parent / 'bin' / command).unlink()
 
-    result = run_local(
+    result = stage_tools(
         local_checkout, npm_config_cache=str(local_checkout.parent / 'npm-cache'),
         npm_config_fetch_retries='0',
     )
 
     assert result.returncode != 0
     assert 'EINTEGRITY' in result.stderr
-    assert 'compose' not in result.stdout
+    assert 'cartridge/template.whl' not in staged(local_checkout)
     assert not (local_checkout / 'harness/deepagents/.tool-dist/agent-browser-linux-x64').exists()
