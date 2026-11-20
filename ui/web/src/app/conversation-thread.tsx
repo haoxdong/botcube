@@ -8,6 +8,9 @@ import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 
 const ROTATION_HOLD_MS = 400;
+// A reader's scroll starts with one of these; a flick's momentum runs on for a couple of seconds after its touch.
+const READER_INPUTS = ["wheel", "touchstart", "touchmove", "pointerdown", "keydown"] as const;
+const READER_INPUT_MS = 3000;
 
 const boxOf = (contentRef: StickToBottomContext["contentRef"]) => {
   const box = contentRef.current?.parentElement;
@@ -87,7 +90,13 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
     // The library decides a touch escape a task later and skips it while content grows, so its next resize tick pulls
     // a reader flicking up mid-stream back down. A scroll up over the same rows, with no room lost below them, is the
     // reader's: that escape is decided here. Rows swapped in, as kept history hands over to the live chat, are left to
-    // the library.
+    // the library. A row can also shrink and grow back, a mermaid block becoming its diagram, before the clamp's event
+    // arrives with the room as it was: a scroll up with no reader input lately is the browser's, and returns to the end.
+    let input = Number.NEGATIVE_INFINITY;
+    const touched = () => {
+      input = performance.now();
+    };
+    for (const name of READER_INPUTS) window.addEventListener(name, touched, { capture: true, passive: true });
     const scrolled = (event: Event) => {
       const scroller = scrollRef.current;
       if (scroller === null || (event.target === document ? document.documentElement : event.target) !== scroller) return;
@@ -99,13 +108,17 @@ function Follow({ stick }: { stick: StickToBottomContext }) {
       const swapped = seen === null || seen.rows !== rows;
       // WebKit can also drop the writes since the last scroll event, the library's included, and report the scroll back where that event left it.
       const reverted = seen !== null && seen.written > seen.real + 0.5 && Math.abs(top - seen.real) <= 0.5;
-      if (state.isAtBottom && (state.scrollDifference <= 1 || clamped || reverted)) state.ignoreScrollToTop = top;
-      else if (state.isAtBottom && up && !swapped && state.animation?.ignoreEscapes !== true) stopScroll();
+      const unread = up && performance.now() - input > READER_INPUT_MS;
+      if (state.isAtBottom && (state.scrollDifference <= 1 || clamped || reverted || unread)) {
+        state.ignoreScrollToTop = top;
+        if (unread && !clamped && !reverted && state.scrollDifference > 1) state.scrollTop = state.calculatedTargetScrollTop;
+      } else if (state.isAtBottom && up && !swapped && state.animation?.ignoreEscapes !== true) stopScroll();
       saw(top);
     };
     document.addEventListener("scroll", scrolled, { capture: true, passive: true });
     return () => {
       document.removeEventListener("scroll", scrolled, { capture: true });
+      for (const name of READER_INPUTS) window.removeEventListener(name, touched, { capture: true });
       joined.disconnect();
       observer.disconnect();
     };
