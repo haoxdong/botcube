@@ -111,6 +111,16 @@ describe('EFS account Files', () => {
     await expect(files.remove(ACCOUNT, 'old.txt')).rejects.toMatchObject({ status: 404 });
   });
 
+  it('refuses a name outside Files with 400 before it looks for the account folder', async () => {
+    const { files } = setup();
+    for (const name of ['', '../private.pdf', 'a//b', 'a/../b']) {
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.remove(ACCOUNT, name)).rejects.toMatchObject({ status: 400 });
+      // eslint-disable-next-line no-await-in-loop -- one name at a time
+      await expect(files.rename(ACCOUNT, name, 'b.txt')).rejects.toMatchObject({ status: 400 });
+    }
+  });
+
   it('renames into a new folder but never over another file', async () => {
     const { files } = setup();
     await put(HASH, 'a.txt', 'A');

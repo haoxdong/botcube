@@ -337,10 +337,13 @@ export function accountFilesEfs({
       return link_('get', userId, name);
     },
     async remove(userId, name) {
-      await inFiles(userId, name, (tree) => tree.unlink(filePath(name)));
+      const file = filePath(name);
+      await inFiles(userId, name, (tree) => tree.unlink(file));
     },
     async rename(userId, from, to) {
-      const moved = await inFiles(userId, from, (tree) => tree.moveNoClobber(filePath(from), filePath(fileDestination(to))));
+      // Names are checked before the account folder: a bad name is 400 even for an account with no Files.
+      const [source, destination] = [filePath(from), filePath(fileDestination(to))];
+      const moved = await inFiles(userId, from, (tree) => tree.moveNoClobber(source, destination));
       if (!moved) throw new HttpError(409, `A file named ${to} is already in Files`);
     },
     async saveArtifact(userId, save) {

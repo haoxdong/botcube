@@ -1,9 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { frameData, sseFrames } from './browser.js';
 import { startLocalStack, type LocalStack } from './local-stack.js';
+import { startNoLinkedAccounts } from './stack.js';
+import type { HttpFake } from '../fakes/http-fake.js';
 
 let stack: LocalStack | undefined;
-afterAll(() => stack?.stop());
+let credentialService: HttpFake | undefined;
+afterAll(async () => { await stack?.stop(); await credentialService?.close(); });
 
 const events = (body: string) => sseFrames(body).map(frameData);
 
@@ -12,9 +15,10 @@ const contents = (messages: unknown[]) =>
 
 describe('against the local Harness', () => {
   it('streams a Turn, replays it, and continues the Session', { timeout: 120_000 }, async () => {
+    credentialService = await startNoLinkedAccounts();
     stack = await startLocalStack({
       chatEnv: {
-        BOTCUBE_CREDENTIAL_SERVICE_URL: 'https://credential.example',
+        BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
         BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-stack-secret',
       },
     });

@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { inject } from 'vitest';
 import { FakeAgentCore } from '../fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from '../fakes/fake-backends.js';
+import { HttpFake, sendJson } from '../fakes/http-fake.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable, RUNTIME_ARN } from '../fakes/stack.js';
 import { motoEndpoint } from '../fakes/moto.js';
 import { BIND_ADDRESS, startOnFreePort } from '../fakes/process.js';
@@ -29,6 +30,14 @@ export const PARITY_BOT = {
   models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
 };
 
+/** The Credential Service as `/account/session` reads it: an account with no Linked Accounts. Nothing else is served. */
+export function startNoLinkedAccounts() {
+  return new HttpFake((request, response) => {
+    if (`${request.method} ${request.path}` !== 'POST /account/linked-accounts') return sendJson(response, 404, { detail: 'Not Found' });
+    sendJson(response, 200, { linkedAccounts: [] });
+  }).listen();
+}
+
 export async function startStack(options: StackOptions = {}) {
   const endpoint = motoEndpoint();
   const home = await mkdtemp(join(tmpdir(), 'chat-parity-'));
@@ -38,6 +47,7 @@ export async function startStack(options: StackOptions = {}) {
   const sessionApi = await new FakeSessionApi().listen();
   const bedrock = await new FakeBedrock().listen();
   const files = await new FakeEfs(join(home, 'files')).listen();
+  const credentialService = await startNoLinkedAccounts();
   const unreachable = createServer((socket) => socket.destroy());
   if (options.agentcore === 'unreachable') {
     await new Promise<void>((done) => unreachable.listen(0, BIND_ADDRESS, done));
@@ -61,12 +71,12 @@ export async function startStack(options: StackOptions = {}) {
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agentcoreUrl,
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL: agentcoreUrl,
     }),
-    BOTCUBE_CREDENTIAL_SERVICE_URL: 'https://credentials.example',
+    BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
     BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'parity-credential-secret',
     ...(options.corsOrigins === undefined ? {} : { BOTCUBE_CORS_ORIGINS: options.corsOrigins }),
   };
   const closeFakes = async () => {
-    await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), files.close()]);
+    await Promise.all([agentcore.close(), sessionApi.close(), bedrock.close(), files.close(), credentialService.close()]);
     if (unreachable.listening) await new Promise<void>((done) => unreachable.close(() => done()));
     await rm(home, { recursive: true, force: true });
   };
