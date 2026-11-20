@@ -37,10 +37,7 @@ export function managedAgentComputer({ history, requester, env, store, files, st
     idleSeconds: AGENT_COMPUTER_IDLE_SECONDS,
     draining: ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4),
   });
-  const cdpUrls = agentComputerCdpUrls(
-    new URL(env.BOTCUBE_AGENT_COMPUTER_CDP_URL?.trim() || `ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`).href,
-    env,
-  );
+  const cdpUrls = agentComputerCdpUrls(`ws://127.0.0.1:${env.PORT || '8123'}/agent-computer/cdp`, env);
   const authorized = async (owner: string, threadId: string) =>
     (await history.owns(owner, threadId)) || (await history.ownsMainChat(owner, threadId));
   const requireOwner = async (owner: string, threadId: string) => {

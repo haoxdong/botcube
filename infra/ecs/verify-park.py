@@ -39,7 +39,6 @@ IDENTITY = load_identity()
 os.environ.update({
     'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
     'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],
-    'ORIGIN_ZONE': IDENTITY['aws']['ecs']['originZone'],
 })
 sys.path.insert(0, str(Path(__file__).parent / 'origin-provider'))
 handler = importlib.import_module('handler')
@@ -212,7 +211,7 @@ def network_facts(ec2: EC2Client) -> tuple[list[dict[str, str | None]], list[dic
 
 def dns_facts() -> dict[str, dict[str, object] | None]:
     cf = Cloudflare(os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'])
-    zone = cf.zone()
+    zone = cf.zone(IDENTITY['aws']['ecs']['originZone'])
     facts: dict[str, dict[str, object] | None] = {}
     for host in HOSTS:
         records = cf.records(zone, host)

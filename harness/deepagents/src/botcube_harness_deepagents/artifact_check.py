@@ -5,12 +5,13 @@ Artifact Type's format. Each error names the file, the element and the nearest a
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
-# In the image the Dockerfile sets BOTCUBE_ARTIFACT_CHECK; from a checkout the package sits beside the harness source.
-CHECKER = Path(os.environ.get('BOTCUBE_ARTIFACT_CHECK') or Path(__file__).resolve().parents[2] / 'artifact-check/src/cli.mjs')
+CHECKOUT_CHECKER = Path(__file__).resolve().parents[2] / 'artifact-check/src/cli.mjs'
+# The image installs the harness into a venv, so the package is not beside it there; the Dockerfile copies it here.
+IMAGE_CHECKER = Path('/opt/artifact-check/src/cli.mjs')
+CHECKER = CHECKOUT_CHECKER if CHECKOUT_CHECKER.is_file() else IMAGE_CHECKER
 # The checker CLI's exit code for a Source with errors; any code but this and 0 is the checker itself failing.
 FOUND_ERRORS = 3
 

@@ -48,7 +48,7 @@ def test_missing_required_operator_option_refuses_before_aws(
     with mock_aws(), httpx.Client(transport=httpx.MockTransport(answer)) as client:
         monkeypatch.setattr(boto3, 'client', observed_client)
         with pytest.raises(SystemExit) as refused:
-            sign_in.main(argv, http=client, open_browser=browser_urls.append, port=0)
+            sign_in.main(argv, http=client, open_browser=browser_urls.append)
     assert aws_calls == []
     assert browser_urls == []
     assert requests == []
@@ -65,7 +65,8 @@ def test_help_explains_operator_options_and_command(capsys: pytest.CaptureFixtur
         'usage: botcube-openai-plan-usage', "The operator command that stores or removes",
         "The Account to give Plan Usage", "The Chat Service's Plan Usage route",
         'Secrets Manager secret holding the invocation secret', "AWS region", 'AWS profile',
-        'app name ChatGPT shows at sign-in', "Revoke the Account's Plan Usage instead",
+        'app name ChatGPT shows at sign-in', 'loopback port ChatGPT returns the Sign-in to',
+        "Revoke the Account's Plan Usage instead",
     ):
         assert expected in help_text
 

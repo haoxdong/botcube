@@ -27,7 +27,6 @@ IDENTITY = load_identity()
 os.environ.update({
     'ORIGIN_OWNERSHIP': IDENTITY['aws']['ecs']['originOwnership'],
     'PARKED_WORKER_NAME': IDENTITY['aws']['ecs']['parkedWorkerName'],
-    'ORIGIN_ZONE': IDENTITY['aws']['ecs']['originZone'],
 })
 sys.path.insert(0, str(Path(__file__).parent / 'origin-provider'))
 handler = importlib.import_module('handler')
@@ -232,7 +231,7 @@ def parse_args(argv: list[str]):
 if __name__ == '__main__':
     args = parse_args(sys.argv[1:])
     cf = Cloudflare(os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'])
-    zone = cf.zone()
+    zone = cf.zone(IDENTITY['aws']['ecs']['originZone'])
     outputs = json.loads(Path(args.outputs).read_text())[IDENTITY['aws']['ecs']['previewOriginStackName']]
     if args.action == 'production':
         verify_production(cf, zone, outputs)

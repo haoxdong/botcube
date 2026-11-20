@@ -78,7 +78,6 @@ RUN --mount=type=secret,id=build_ca \
     npm ci --omit=dev --ignore-scripts
 COPY artifact-check/src/ ./src/
 COPY artifact-check/skills/ ./skills/
-ENV BOTCUBE_ARTIFACT_CHECK=/opt/artifact-check/src/cli.mjs
 
 # BotCube's Harness image, with no bot: a bot's image builds FROM it with its settings and skills (examples/bot/Dockerfile).
 FROM base AS harness

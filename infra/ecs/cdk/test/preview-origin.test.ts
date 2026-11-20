@@ -47,7 +47,7 @@ test('production hostname gets certificate, AOP, and DNS on this origin', () => 
   template.hasResourceProperties('AWS::Lambda::Function', { Environment: { Variables: Match.objectLike({ HOSTNAMES: 'preview.example.com,api.example.com' }) } });
   const [dnsId, dns] = find('Dns', 'api.example.com');
   const [aopId, aop] = find('Aop', 'api.example.com');
-  expect(Object.keys(dns.Properties).sort()).toEqual(['AlwaysUseHttps', 'Hostname', 'Kind', 'ServiceToken', 'Target']);
+  expect(Object.keys(dns.Properties).sort()).toEqual(['AlwaysUseHttps', 'Hostname', 'Kind', 'ServiceToken', 'Target', 'Zone']);
   expect(dns.Properties.AlwaysUseHttps).toBe('on');
   expect(template.toJSON().Resources[dnsId].DependsOn).toContain(aopId);
   expect(aop.Properties.CertId).toEqual({ Ref: find('Aop', 'preview.example.com')[0] });
@@ -166,12 +166,12 @@ test('the provider creates each certificate, AOP and DNS record through one hand
   const listener = { Ref: 'OriginHttpsAC81CBD6' };
   const target = { 'Fn::GetAtt': ['OriginBCF5A9D0', 'DNSName'] };
   expect(custom).toEqual({
-    ServerCertificate: { ServiceToken: provider, Kind: 'Certificate', Hostname: 'preview.example.com' },
-    ProductionCertificate: { ServiceToken: provider, Kind: 'Certificate', Hostname: 'api.example.com' },
-    PreviewAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'preview.example.com', ClientVersion: 'version', ListenerArn: listener },
-    ProductionAop: { ServiceToken: provider, Kind: 'Aop', Hostname: 'api.example.com', ClientVersion: 'version', CertId: { Ref: 'PreviewAop' }, ListenerArn: listener },
-    PreviewDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'preview.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['PreviewAop'] },
-    ProductionDns: { ServiceToken: provider, Kind: 'Dns', Hostname: 'api.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['ProductionAop'] },
+    ServerCertificate: { ServiceToken: provider, Zone: 'example.com', Kind: 'Certificate', Hostname: 'preview.example.com' },
+    ProductionCertificate: { ServiceToken: provider, Zone: 'example.com', Kind: 'Certificate', Hostname: 'api.example.com' },
+    PreviewAop: { ServiceToken: provider, Zone: 'example.com', Kind: 'Aop', Hostname: 'preview.example.com', ClientVersion: 'version', ListenerArn: listener },
+    ProductionAop: { ServiceToken: provider, Zone: 'example.com', Kind: 'Aop', Hostname: 'api.example.com', ClientVersion: 'version', CertId: { Ref: 'PreviewAop' }, ListenerArn: listener },
+    PreviewDns: { ServiceToken: provider, Zone: 'example.com', Kind: 'Dns', Hostname: 'preview.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['PreviewAop'] },
+    ProductionDns: { ServiceToken: provider, Zone: 'example.com', Kind: 'Dns', Hostname: 'api.example.com', Target: target, AlwaysUseHttps: 'on', DependsOn: ['ProductionAop'] },
   });
 });
 
@@ -193,6 +193,7 @@ test('each provider handler reads both secrets and both hostnames and may manage
       Runtime: 'python3.12', Timeout: 120,
       Environment: { Variables: { TOKEN_SECRET: '/test/token', CLIENT_SECRET: '/test/client', HOSTNAMES: 'preview.example.com,api.example.com' } },
     });
+    expect(fn.Environment.Variables.ORIGIN_ZONE).toBe('example.com');
     expect(template.toJSON().Resources[fn.LoggingConfig.LogGroup.Ref].Properties).toEqual({ RetentionInDays: 7 });
     const [policy] = Object.values(template.findResources('AWS::IAM::Policy'))
       .filter(resource => resource.Properties.Roles[0].Ref === fn.Role['Fn::GetAtt'][0]);

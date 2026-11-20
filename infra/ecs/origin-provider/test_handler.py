@@ -10,7 +10,7 @@ from typing import TypedDict
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
-os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'example.com'})
+os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked'})
 os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'examples/public/deploy')
 import handler
 
@@ -37,7 +37,7 @@ class OriginTests(unittest.TestCase):
 
     def event(self, kind: str, request: str = 'Create') -> _Event:
         return {'RequestType': request, 'RequestId': 'request', 'PhysicalResourceId': 'owned',
-                'ResourceProperties': {'Kind': kind, 'Hostname': 'api-next.example.com', 'ClientVersion': 'v1'},
+                'ResourceProperties': {'Kind': kind, 'Hostname': 'api-next.example.com', 'ClientVersion': 'v1', 'Zone': 'example.com'},
                 'OldResourceProperties': {'Hostname': 'api-next.example.com', 'ClientVersion': 'v1'}}
 
     def test_dns_creation_and_update_enable_native_edge_https_before_serving_http_checks(self):

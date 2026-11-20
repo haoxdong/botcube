@@ -48,10 +48,8 @@ def main(
     *,
     http: httpx.Client | None = None,
     open_browser: Callable[[str], object] = webbrowser.open,
-    port: int | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
-    configured_port = int(os.environ.get('BOTCUBE_OPENAI_LOOPBACK_PORT', str(LOOPBACK_PORT))) if port is None else port
     OpenAISettings()
     timeout = httpx.Timeout(positive_seconds('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', 30))
     secret = _invocation_secret(args.secret_id, args.region)
@@ -64,7 +62,7 @@ def main(
             return 0
         registration = _registration(args.url, args.account)
         registration.save()
-        sign_in = _sign_in(client, open_browser, configured_port, args.agent_name, registration)
+        sign_in = _sign_in(client, open_browser, args.loopback_port, args.agent_name, registration)
         registration.client_id = sign_in['clientId']
         registration.subject = sign_in['subject']
         registration.save()
@@ -80,7 +78,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--url', required=True, help='The Chat Service\'s Plan Usage route.')
     parser.add_argument('--secret-id', required=True, help='The Secrets Manager secret holding the invocation secret.')
     parser.add_argument('--region', help='The secret\'s AWS region; defaults to the AWS profile\'s.')
-    parser.add_argument('--agent-name', default=os.environ.get('BOTCUBE_OPENAI_AGENT_NAME', 'BotCube Plan Usage'), help='The app name ChatGPT shows at sign-in.')
+    parser.add_argument('--agent-name', default='BotCube Plan Usage', help='The app name ChatGPT shows at sign-in.')
+    parser.add_argument('--loopback-port', type=int, default=LOOPBACK_PORT, help='The loopback port ChatGPT returns the Sign-in to.')
     parser.add_argument('--remove', action='store_true', help='Revoke the Account\'s Plan Usage instead.')
     return parser
 

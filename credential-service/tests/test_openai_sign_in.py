@@ -107,10 +107,9 @@ def secret() -> Iterator[None]:
 
 def _run(openai: FakeOpenAI, *args: str) -> int:
     return main(
-        ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL, '--secret-id', SECRET_ID, '--region', 'us-east-1', *args],
+        ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL, '--secret-id', SECRET_ID, '--region', 'us-east-1', '--loopback-port', '0', *args],
         http=httpx.Client(transport=httpx.MockTransport(openai.handle)),
         open_browser=openai.browser,
-        port=0,
     )
 
 
@@ -152,10 +151,10 @@ def test_operator_command_reports_the_account_result_after_real_sign_in_or_revoc
     # the real loopback callback, and the command reads its secret through Moto.
     monkeypatch.setattr(sign_in, 'httpx', SimpleNamespace(Client=client_factory, Timeout=httpx.Timeout))
     argv = ['--account', 'acct_owner123', '--url', PLAN_USAGE_URL,
-            '--secret-id', SECRET_ID, '--region', 'us-east-1']
+            '--secret-id', SECRET_ID, '--region', 'us-east-1', '--loopback-port', '0']
     if remove:
         argv.append('--remove')
-    assert main(argv, open_browser=openai.browser, port=0) == 0
+    assert main(argv, open_browser=openai.browser) == 0
     [request] = openai.plan_usage_requests
     assert request.extensions['timeout'] == {'connect': 30, 'read': 30, 'write': 30, 'pool': 30}
     assert request.method == ('DELETE' if remove else 'POST')

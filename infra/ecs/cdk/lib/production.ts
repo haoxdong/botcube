@@ -38,7 +38,6 @@ const TURN_SUMMARY_MODEL_ENV: ModelsEnv['turnSummaryModel'] = 'BOTCUBE_TURN_SUMM
 /** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
   planUsageOwnerAccountId: 'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
-  agentComputerCdpUrl: 'BOTCUBE_AGENT_COMPUTER_CDP_URL',
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
@@ -256,8 +255,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, [agentNetwork, agentComputer.network], filesRoles?.filesMountRole);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
-  // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
-  chat.container.addEnvironment(CHAT_SERVICE_ENV.agentComputerCdpUrl, `ws://task-address:${options.chat?.port ?? 8123}/agent-computer/cdp`);
   if (credentialConfig.agentComputerStartedPath !== undefined) {
     chat.container.addEnvironment('BOTCUBE_AGENT_COMPUTER_STARTED_URL', `${credentials.url}${credentialConfig.agentComputerStartedPath}`);
   }

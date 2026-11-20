@@ -45,7 +45,7 @@ def test_service_entrypoint_parses_help_before_cloud_access(capsys: pytest.Captu
 def test_origin_deploy_dispatches_resource_creation(kind: str, physical: str, data: dict[str, str]) -> None:
     sys.path.insert(0, str(DEPLOY_ECS / 'origin-provider'))
     with patch.dict('os.environ', {'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin',
-                                   'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'example.com'}):
+                                   'PARKED_WORKER_NAME': 'bot-cube-parked'}):
         import handler
 
     cloudflare, acm = Mock(), Mock()
@@ -53,7 +53,7 @@ def test_origin_deploy_dispatches_resource_creation(kind: str, physical: str, da
     cloudflare.put_record.return_value = 'dns-record'
     acm.request_certificate.return_value = {'CertificateArn': 'certificate-arn'}
     event = {'RequestType': 'Create', 'RequestId': 'request',
-             'ResourceProperties': {'Kind': kind, 'Hostname': 'api.example.com', 'Target': 'origin.example', 'AlwaysUseHttps': 'on'}}
+             'ResourceProperties': {'Kind': kind, 'Hostname': 'api.example.com', 'Target': 'origin.example', 'AlwaysUseHttps': 'on', 'Zone': 'example.com'}}
     with patch.dict(handler.os.environ, {'HOSTNAMES': 'api.example.com'}), \
             patch.object(handler, 'Cloudflare', return_value=cloudflare), \
             patch.object(handler.boto3, 'client', return_value=acm):

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked', 'ORIGIN_ZONE': 'example.com'})
+os.environ.update({'ORIGIN_OWNERSHIP': 'bot-cube:preview-origin', 'PARKED_WORKER_NAME': 'bot-cube-parked'})
 os.environ['BOTCUBE_DEPLOY_ROOT'] = str(Path(__file__).resolve().parents[3] / 'examples/public/deploy')
 import handler
 
@@ -27,7 +27,7 @@ class ParkedWorkerTests(unittest.TestCase):
         self.addCleanup(client.stop)
 
     def event(self, request: str = 'Create') -> dict[str, Any]:
-        props: dict[str, object] = {'Kind': 'ParkedWorker', 'Issuer': 'https://api.example.com', 'TurnIdentityKeysSecret': 'keys', 'Hostnames': self.HOSTNAMES, 'Origins': ['https://example.com'], 'WakeUrl': 'https://wake.example.com/'}
+        props: dict[str, object] = {'Kind': 'ParkedWorker', 'Issuer': 'https://api.example.com', 'TurnIdentityKeysSecret': 'keys', 'Hostnames': self.HOSTNAMES, 'Origins': ['https://example.com'], 'WakeUrl': 'https://wake.example.com/', 'Zone': 'example.com'}
         return {'RequestType': request, 'RequestId': 'request', 'PhysicalResourceId': 'bot-cube-parked',
                 'ResourceProperties': props, 'OldResourceProperties': props}
 
@@ -70,6 +70,19 @@ class ParkedWorkerTests(unittest.TestCase):
         self.keys.append({**self.keys[0], 'kid': 'next'})
         self.assertEqual(len(handler.issuer_documents(self.keys, 'https://api.example.com')['/.well-known/jwks.json']['keys']), 2)
 
+
+    def test_the_worker_lands_in_the_zone_the_resource_names(self):
+        event = self.event()
+        event['ResourceProperties'] = {**event['ResourceProperties'], 'Zone': 'operator.example'}
+        self.run_event(event)
+        self.assertEqual({path for method, path in self.calls if method == 'GET' and path.startswith('zones?')}, {'zones?name=operator.example'})
+
+    def test_a_resource_without_a_zone_uses_the_provider_zone_during_a_rollback(self):
+        event = self.event()
+        event['ResourceProperties'] = {key: value for key, value in event['ResourceProperties'].items() if key != 'Zone'}
+        with patch.dict(handler.os.environ, {'ORIGIN_ZONE': 'rollback.example'}):
+            self.run_event(event)
+        self.assertEqual({path for method, path in self.calls if method == 'GET' and path.startswith('zones?')}, {'zones?name=rollback.example'})
 
     def test_create_is_idempotent_on_existing_owned_routes(self):
         self.routes = [{'id': f'r{i}', 'pattern': f'{host}/*', 'script': 'bot-cube-parked'} for i, host in enumerate(self.HOSTNAMES)]

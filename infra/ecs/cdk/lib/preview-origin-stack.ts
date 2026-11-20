@@ -116,13 +116,14 @@ export class PreviewOriginStack extends Stack {
     const providerCode = lambda.Code.fromAsset(props.originProviderPath, {
       exclude: ['__pycache__', 'test_*.py', 'parked-worker.test.ts'],
     });
+    const zone = props.originZone ?? props.production.hostname.split('.').slice(-2).join('.');
     const providerHandler = (handler: 'on_event' | 'is_complete') => {
       const names = props.providerNames?.[handler];
       const fn = new lambda.Function(this, handler, {
         ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
-        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: props.originZone ?? props.production.hostname.split('.').slice(-2).join('.'), TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.service ? [props.service.hostname] : []), ...(props.additionalHostnames ?? [])].join(',') },
+        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: zone, TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.service ? [props.service.hostname] : []), ...(props.additionalHostnames ?? [])].join(',') },
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
@@ -141,7 +142,7 @@ export class PreviewOriginStack extends Stack {
       queryInterval: Duration.seconds(20), totalTimeout: Duration.minutes(30),
       disableWaiterStateMachineLogging: true,
     });
-    const resource = (id: string, properties: Record<string, unknown>) => new CustomResource(this, id, { serviceToken: provider.serviceToken, properties });
+    const resource = (id: string, properties: Record<string, unknown>) => new CustomResource(this, id, { serviceToken: provider.serviceToken, properties: { ...properties, Zone: zone } });
     const certificate = resource('ServerCertificate', { Kind: 'Certificate', Hostname: props.hostname });
     const productionCertificate = resource('ProductionCertificate', { Kind: 'Certificate', Hostname: props.production.hostname });
     const aop = resource('PreviewAop', { Kind: 'Aop', Hostname: props.hostname, ClientVersion: props.clientVersion });
