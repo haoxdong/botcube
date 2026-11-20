@@ -14,6 +14,7 @@ from opentelemetry import baggage, propagate
 
 from . import aws_clients, turn_timing
 from .definition import ModelRelay
+from .deployment_config import deployment_config_from_env
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
 AVAILABLE_MODELS: dict[str, str] = {
@@ -28,8 +29,6 @@ DEFAULT_EFFORT = 'medium'
 DEFAULT_MAX_TOKENS = 128
 # A model on the account's ChatGPT plan, named by its slug in the plan's catalog (ADR 0078).
 PLAN_MODEL_PREFIX = 'openai-plan:'
-MODELS_KIND_ENV = 'BOTCUBE_MODELS_KIND'
-MODELS_CACHE_MARKERS_ENV = 'BOTCUBE_MODELS_CACHE_MARKERS'
 OPENAI_COMPATIBLE = 'openai-compatible'
 CLAUDE_CACHE_MARKERS = 'claude'
 CACHE_MARKER = {'type': 'ephemeral'}
@@ -141,17 +140,12 @@ def build_model(
 
 
 def models_on_endpoint() -> bool:
-    kind = os.getenv(MODELS_KIND_ENV, '').strip()
-    if kind not in ('', OPENAI_COMPATIBLE):
-        raise RuntimeError(f'{MODELS_KIND_ENV}: expected {OPENAI_COMPATIBLE}, or unset for Bedrock, not {kind!r}')
-    return kind == OPENAI_COMPATIBLE
+    """Whether the Deployment Config puts the agent's models on an OpenAI-compatible endpoint, relayed by the Credential Service."""
+    return deployment_config_from_env()['models']['kind'] == OPENAI_COMPATIBLE
 
 
 def cache_markers_on() -> bool:
-    markers = os.getenv(MODELS_CACHE_MARKERS_ENV, '').strip()
-    if markers not in ('', CLAUDE_CACHE_MARKERS):
-        raise RuntimeError(f'{MODELS_CACHE_MARKERS_ENV}: expected {CLAUDE_CACHE_MARKERS}, or unset for none, not {markers!r}')
-    return markers == CLAUDE_CACHE_MARKERS
+    return deployment_config_from_env()['models'].get('cacheMarkers') == CLAUDE_CACHE_MARKERS
 
 
 def _endpoint_client() -> Any:

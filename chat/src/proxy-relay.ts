@@ -1,6 +1,6 @@
 import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
-import { proxyRelayFromEnv } from 'botcube-deployment-config/environment';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 
 // The proxy Endpoint's credential and headers (ADR 0091). Every HTTP client in a process, and every command it runs,
@@ -58,14 +58,22 @@ export async function startProxyRelay({ upstream, listen, credential, headers }:
 }
 
 /**
- * The relay the deploy set for this process (`proxyEnvironment` in botcube/deployment-config), listening before any
- * client connects; undefined without one. A relay that cannot listen stops the process.
+ * The relay for the Deployment Config's `proxy`, listening where HTTPS_PROXY points (`proxyEnvironment` in
+ * botcube/deployment-config) before any client connects; undefined unless the proxy takes a credential or headers.
+ * A relay that cannot listen stops the process.
  */
-export function startProxyRelayFromEnv(env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
-  const settings = proxyRelayFromEnv(env);
-  if (settings === undefined) return undefined;
-  const { credential, ...rest } = settings;
-  return startProxyRelay({ ...rest, credential: credential && credentialSource('proxy', credential, { env }) });
+export function startProxyRelayForConfig(proxy: DeploymentConfig['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
+  if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined)) return undefined;
+  const listen = env.HTTPS_PROXY ? new URL(env.HTTPS_PROXY) : undefined;
+  if (listen === undefined || !listen.hostname || !listen.port) {
+    throw new Error("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers; the deploy points it at the proxy relay");
+  }
+  return startProxyRelay({
+    upstream: new URL(proxy.url),
+    listen: { host: listen.hostname, port: Number(listen.port) },
+    credential: proxy.credential && credentialSource('proxy', proxy.credential, { env }),
+    headers: proxy.headers ?? {},
+  });
 }
 
 /** The client's request head, up to its blank line, and any bytes after it. */

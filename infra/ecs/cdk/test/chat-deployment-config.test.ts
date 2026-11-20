@@ -10,19 +10,20 @@ import { synthesizeExample, synthesizeExampleAt } from './example-fixture.js';
 interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
 
 const DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../chat/Dockerfile'), 'utf8').split('\n');
+const CREDENTIAL_DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../templates/always-on/deploy/credential-service/Dockerfile'), 'utf8').split('\n');
 
-function chatEnvironment(app: App): Record<string, unknown> {
+function containerEnvironment(app: App, name: string): Record<string, unknown> {
   const origin = app.node.findChild('PreviewOrigin') as Stack;
   const container = Object.values(Template.fromStack(origin).findResources('AWS::ECS::TaskDefinition'))
     .flatMap(({ Properties }) => Properties.ContainerDefinitions as Container[])
-    .find(({ Name }) => Name === 'chat-service');
-  if (container === undefined) throw new Error('The preview origin has no chat-service container');
+    .find(({ Name }) => Name === name);
+  if (container === undefined) throw new Error(`The preview origin has no ${name} container`);
   return Object.fromEntries((container.Environment ?? []).map(({ Name, Value }) => [Name, Value]));
 }
 
 test.each(['public', 'enterprise'])('the %s example names the Deployment Config its chat image ships', async example => {
   const app = await synthesizeExample(example);
-  expect(chatEnvironment(app).BOTCUBE_DEPLOYMENT_CONFIG).toBe(`/opt/chat-service/examples/${example}/deployment-config.json`);
+  expect(containerEnvironment(app, 'chat-service').BOTCUBE_DEPLOYMENT_CONFIG).toBe(`/opt/chat-service/examples/${example}/deployment-config.json`);
   // The build stage gathers the config and its `../bot/bot.json`; the runtime stage ships them under its WORKDIR.
   expect(DOCKERFILE).toEqual(expect.arrayContaining([
     `COPY \${BOTCUBE_ROOT}/examples/${example}/deployment-config.json examples/${example}/deployment-config.json`,
@@ -30,6 +31,8 @@ test.each(['public', 'enterprise'])('the %s example names the Deployment Config 
     'WORKDIR /opt/chat-service',
     'COPY --from=build /workspace/botcube/examples/ examples/',
   ]));
+  expect(containerEnvironment(app, 'credential-service').BOTCUBE_DEPLOYMENT_CONFIG).toBe(`/opt/botcube/examples/${example}/deployment-config.json`);
+  expect(CREDENTIAL_DOCKERFILE).toContain(`COPY \${BOTCUBE_ROOT}/examples/${example}/deployment-config.json /opt/botcube/examples/${example}/deployment-config.json`);
 }, 180_000);
 
 test('a Deployment Config the chat image does not ship fails before any stack', async () => {

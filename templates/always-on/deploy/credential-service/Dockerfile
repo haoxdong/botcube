@@ -11,6 +11,9 @@ RUN --mount=type=secret,id=build_ca \
   pip install --no-cache-dir uv==0.12.19
 COPY ${BOTCUBE_ROOT}/credential-service/ /opt/botcube/credential-service/
 COPY ${BOTCUBE_ROOT}/templates/always-on/ /opt/botcube/templates/always-on/
+# The examples' Deployment Configs, which BOTCUBE_DEPLOYMENT_CONFIG names (ADR 0091).
+COPY ${BOTCUBE_ROOT}/examples/enterprise/deployment-config.json /opt/botcube/examples/enterprise/deployment-config.json
+COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json /opt/botcube/examples/public/deployment-config.json
 WORKDIR /opt/botcube/templates/always-on
 RUN --mount=type=secret,id=build_ca \
   if [ -f /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \

@@ -214,17 +214,6 @@ def _oauth_adapter(source: OAuthClientCredentialsSource, env: Mapping[str, str],
     return about, read
 
 
-def credential_source_from_env(seam: str, name: str, env: Mapping[str, str] = os.environ) -> CredentialSource | None:
-    value = env.get(name)
-    if not value:
-        return None
-    try:
-        source = json.loads(value)
-    except ValueError:
-        raise CredentialSourceError(f'{name}: not JSON') from None
-    return credential_source(seam, source, env=env)
-
-
 def _field(issue: object) -> str:
     loc = issue['loc'] if isinstance(issue, dict) else ()
     return '.'.join(str(part) for part in loc) or 'kind'

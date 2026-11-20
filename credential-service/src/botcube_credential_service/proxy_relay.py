@@ -1,8 +1,8 @@
 """The proxy Endpoint's credential and headers (ADR 0091) for the Credential Service, the twin of the Harness's `proxy_relay`.
 
 The OpenAI relay and the sign-in socket read HTTP(S)_PROXY, so the deploy points them at this loopback relay
-(`proxyEnvironment` in botcube/deployment-config), which opens each request to the operator's proxy with the
-credential file's current value: a rotated token reaches the next request.
+(`proxyEnvironment` in botcube/deployment-config), which opens each request to the proxy the Deployment Config names
+with the credential file's current value: a rotated token reaches the next request.
 """
 from __future__ import annotations
 
@@ -15,41 +15,22 @@ import ssl
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from threading import Thread
+from typing import Any
 from urllib.parse import urlsplit
-
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 log = logging.getLogger(__name__)
 
-PROXY_URL_ENV = 'BOTCUBE_PROXY_URL'
-PROXY_CREDENTIAL_ENV = 'BOTCUBE_PROXY_CREDENTIAL'
-PROXY_HEADERS_ENV = 'BOTCUBE_PROXY_HEADERS'
 # The most a client's request head may take before the relay refuses it.
 _MAX_HEAD_BYTES = 64 * 1024
 # Request headers the relay sets itself, dropping a client's.
 _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
-_HEADERS: TypeAdapter[dict[str, str]] = TypeAdapter(dict[str, str])
 
 
-class _FileCredential(BaseModel):
-    """A proxy credential is always a file (`proxy.credential` in botcube/deployment-config)."""
-
-    model_config = ConfigDict(extra='forbid')
-    kind: str
-    path: str
-
-
-def _file_credential(env: Mapping[str, str]) -> Callable[[], str] | None:
-    raw = env.get(PROXY_CREDENTIAL_ENV)
-    if not raw:
-        return None
-    try:
-        source = _FileCredential.model_validate_json(raw)
-    except ValidationError:
-        raise RuntimeError(f'{PROXY_CREDENTIAL_ENV}: expected {{"kind": "file", "path": ...}}') from None
-    if source.kind != 'file':
-        raise RuntimeError(f'{PROXY_CREDENTIAL_ENV}: the proxy credential is a file, not {source.kind}')
-    path = Path(source.path)
+def _file_credential(source: Mapping[str, str]) -> Callable[[], str]:
+    """A proxy credential, always a file (`proxy.credential` in botcube/deployment-config)."""
+    if source['kind'] != 'file':
+        raise RuntimeError(f"proxy.credential: the proxy credential is a file, not {source['kind']}")
+    path = Path(source['path'])
 
     def read() -> str:
         # Read on each request, so a rotated file reaches the next one.
@@ -61,20 +42,16 @@ def _file_credential(env: Mapping[str, str]) -> Callable[[], str] | None:
     return read
 
 
-def start_proxy_relay_from_env(env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay the deploy set for this process, listening where HTTPS_PROXY points; None without one."""
-    upstream = env.get(PROXY_URL_ENV)
-    if not upstream:
+def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
+    """The relay for the Deployment Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential or headers."""
+    proxy = config['proxy']
+    if proxy['kind'] == 'none' or ('credential' not in proxy and 'headers' not in proxy):
         return None
     listen = urlsplit(env.get('HTTPS_PROXY') or '')
     if not listen.hostname or listen.port is None:
-        raise RuntimeError(f'HTTPS_PROXY is unset beside {PROXY_URL_ENV}; the deploy points it at the proxy relay')
-    credential = _file_credential(env)
-    try:
-        headers = _HEADERS.validate_json(env.get(PROXY_HEADERS_ENV) or '{}')
-    except ValidationError:
-        raise RuntimeError(f'{PROXY_HEADERS_ENV}: expected an object of header values') from None
-    return start_proxy_relay(upstream=upstream, listen=(listen.hostname, listen.port), credential=credential, headers=headers)
+        raise RuntimeError("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers; the deploy points it at the proxy relay")
+    credential = _file_credential(proxy['credential']) if 'credential' in proxy else None
+    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}))
 
 
 def start_proxy_relay(*, upstream: str, listen: tuple[str, int], credential: Callable[[], str] | None, headers: Mapping[str, str]) -> str:

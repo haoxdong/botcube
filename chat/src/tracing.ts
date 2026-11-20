@@ -3,7 +3,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { AWSXRayIdGenerator } from '@opentelemetry/id-generator-aws-xray';
 import { AWSXRayPropagator } from '@opentelemetry/propagator-aws-xray';
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import { telemetryCredentialFromEnv } from 'botcube-deployment-config/telemetry';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 
 let activeTurns: Set<Promise<void>> | undefined;
@@ -17,9 +17,13 @@ export function registerTracingTurn(): (() => void) | undefined {
   return () => { pending.delete(done); finish?.(); };
 }
 
-export function startChatTracing(env: NodeJS.ProcessEnv = process.env): { shutdown(): Promise<void>; credential: CredentialSource | undefined } | undefined {
+/** Export traces as the deploy's OTEL_* variables say, authenticated with the Deployment Config's telemetry credential. */
+export function startChatTracing(
+  telemetry: DeploymentConfig['telemetry'],
+  env: NodeJS.ProcessEnv = process.env,
+): { shutdown(): Promise<void>; credential: CredentialSource | undefined } | undefined {
   if (env.OTEL_TRACES_EXPORTER !== 'otlp') return undefined;
-  const credential = telemetryCredentialFromEnv(env);
+  const credential = telemetry.kind === 'otlp' ? telemetry.credential : undefined;
   const source = credential && credentialSource('telemetry.credential', credential, { env });
   const sdk = new NodeSDK({
     serviceName: 'botcube-chat',

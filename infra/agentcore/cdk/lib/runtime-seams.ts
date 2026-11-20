@@ -76,11 +76,6 @@ type AgentCoreRuntime =
       ? R
       : never
     : never;
-function applyModelsEndpoint(runtime: AgentCoreRuntime, models: ModelsDeployment | undefined): void {
-  if (!models) return;
-  for (const [name, value] of Object.entries(models.harness)) runtime.addEnvironmentVariable(name, value);
-}
-
 /**
  * The Deployment Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
  * credential is read from. Absent, `harnessAuth` is
@@ -98,7 +93,6 @@ export function applyDeploymentSeams(
     telemetry?: RuntimeTelemetry | undefined;
   }
 ): void {
-  applyModelsEndpoint(runtime, props.models);
   if (props.harnessAuth?.kind === 'jwt-bearer')
     cfnRuntime.authorizerConfiguration = jwtAuthorizer(props.harnessAuth, props.chatServiceIssuer);
   restrictRuntimePolicy(stack, runtime.role, props.models, props.telemetry);

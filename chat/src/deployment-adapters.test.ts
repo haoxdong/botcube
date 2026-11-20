@@ -22,6 +22,8 @@ describe("the Chat Service's adapters", () => {
       harnessAuth: { kind: 'sigv4' },
       turnCredentials: { kind: 'web-identity' },
       schedules: { kind: 'eventbridge-scheduler' },
+      telemetry: { kind: 'xray' },
+      proxy: { kind: 'none' },
     });
   });
 
@@ -44,6 +46,18 @@ describe("the Chat Service's adapters", () => {
     ['a Memory role under web-identity', {}, { BOTCUBE_USER_MEMORY_ROLE_ARN: ROLE_ARN }, 'turnCredentials: BOTCUBE_USER_MEMORY_ROLE_ARN is set but turnCredentials.kind is web-identity'],
   ])('stop startup on %s, naming the missing or stray value', (_, sections, env, message) => {
     expect(() => deploymentAdapters({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig(sections), ...env })).toThrow(message);
+  });
+
+  it('stop the Chat Service starting, before it listens, when the Deployment Config its locator names is missing', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'chat-deployment-')), 'absent.json');
+
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Deployment Config ${path}: no file`);
+  });
+
+  it('stop the Chat Service starting, before it listens, when the Deployment Config its locator names fails the schema', () => {
+    const path = deploymentConfig({ proxy: { kind: 'forward' } });
+
+    expect(() => serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Deployment Config ${path}: proxy.url`);
   });
 
   it('stop the Chat Service starting, before it listens, when the chosen kind is missing its environment', () => {

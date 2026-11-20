@@ -34,7 +34,7 @@ it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown
   await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
   const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
     const { startChatTracing, registerTracingTurn } = await import('./src/tracing.ts');
-    const sdk = startChatTracing();
+    const sdk = startChatTracing({ kind: 'xray' });
     const { trace } = await import('@opentelemetry/api');
     const finish = registerTracingTurn();
     trace.getTracer('test').startSpan('startup export probe').end();
@@ -84,16 +84,17 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
   });
   await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`;
-  const deployed = telemetryDeployment({ kind: 'otlp', url, credential: { kind: 'file', path }, headers: { 'x-tenant': 'botcube-example' } });
+  const telemetry = { kind: 'otlp', url, credential: { kind: 'file', path }, headers: { 'x-tenant': 'botcube-example' } } as const;
+  const deployed = telemetryDeployment(telemetry);
   const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
     const { startChatTracing } = await import('./src/tracing.ts');
-    const sdk = startChatTracing();
+    const sdk = startChatTracing(${JSON.stringify(telemetry)});
     const { trace } = await import('@opentelemetry/api');
     trace.getTracer('test').startSpan('authenticated export probe').end();
     await sdk.shutdown();
   `], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, ...deployed.chatService, OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none' },
+    env: { ...process.env, ...standardVariables(deployed.chatService), OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -111,6 +112,11 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** The OpenTelemetry variables the deploy sets beside the Deployment Config, which holds the credential. */
+function standardVariables(environment: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => name.startsWith('OTEL_')));
+}
 
 it('exports nothing under none telemetry', () => {
   expect(telemetryDeployment({ kind: 'none' }).chatService).toEqual({});

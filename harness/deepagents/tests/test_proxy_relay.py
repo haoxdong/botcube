@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import socket
 import socketserver
 from collections.abc import Iterator
@@ -13,7 +12,7 @@ import pytest
 from botcube_harness_deepagents.credential_source import credential_source
 from botcube_harness_deepagents.proxy_relay import (
     start_proxy_relay,
-    start_proxy_relay_from_env,
+    start_proxy_relay_from_config,
 )
 
 pytestmark = pytest.mark.integration
@@ -115,11 +114,9 @@ def test_relay_authenticates_a_plain_http_request_one_to_a_connection(upstream: 
 def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails(upstream: tuple[str, list[str]], tmp_path: Path) -> None:
     url, heads = upstream
     missing = tmp_path / 'proxy-token'
-    relay = start_proxy_relay_from_env({
-        'BOTCUBE_PROXY_URL': url,
-        'HTTPS_PROXY': 'http://127.0.0.1:0',
-        'BOTCUBE_PROXY_CREDENTIAL': json.dumps({'kind': 'file', 'path': str(missing)}),
-    })
+    relay = start_proxy_relay_from_config(
+        {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(missing)}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
+    )
     assert relay is not None
 
     answer = _exchange(relay, 'CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n').decode('latin-1')
@@ -129,15 +126,11 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
     assert heads == []
 
 
-def test_no_relay_without_the_deploys_proxy_url() -> None:
-    assert start_proxy_relay_from_env({'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
+@pytest.mark.parametrize('proxy', [{'kind': 'none'}, {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}])
+def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -> None:
+    assert start_proxy_relay_from_config({'proxy': proxy}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
 
 
-@pytest.mark.parametrize(('env', 'error'), [
-    ({'BOTCUBE_PROXY_CREDENTIAL': '{not json'}, 'BOTCUBE_PROXY_CREDENTIAL: not JSON'),
-    ({'BOTCUBE_PROXY_CREDENTIAL': json.dumps({'kind': 'secret'})}, 'proxy credential: secret.secretArn: '),
-    ({'BOTCUBE_PROXY_HEADERS': json.dumps({'x-tenant': 1})}, 'BOTCUBE_PROXY_HEADERS: expected an object of header values'),
-])
-def test_refuses_a_malformed_relay_setting_naming_it(env: dict[str, str], error: str) -> None:
-    with pytest.raises(RuntimeError, match=f'^{error}'):
-        start_proxy_relay_from_env({'BOTCUBE_PROXY_URL': 'http://proxy.example.com:3128', 'HTTPS_PROXY': 'http://127.0.0.1:0', **env})
+def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
+    with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the Deployment Config'):
+        start_proxy_relay_from_config({'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}, {})

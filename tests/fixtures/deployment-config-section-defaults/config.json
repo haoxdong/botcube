@@ -1,0 +1,13 @@
+{
+  "bot": "./bot.json",
+  "allowCommandCredentials": true,
+  "proxy": { "kind": "forward", "url": "http://proxy.example.com:3128" },
+  "telemetry": {
+    "kind": "otlp",
+    "url": "http://collector:4318/v1/traces",
+    "credential": {
+      "kind": "command",
+      "command": ["/usr/local/bin/telemetry-token"]
+    }
+  }
+}

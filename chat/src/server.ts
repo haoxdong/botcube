@@ -1,6 +1,6 @@
 import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
-import { startProxyRelayFromEnv } from './proxy-relay.js';
+import { startProxyRelayForConfig } from './proxy-relay.js';
 import { chatTable } from './config.js';
 import { assumeRoleTurnCredentials } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
@@ -289,13 +289,13 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv): ParkHistory | undefined {
 
 /** Serve the Chat Service, configured from the environment and the Deployment Config it names, on $PORT. */
 export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
+  const adapters = deploymentAdapters(env);
   // Listening first: every client, and the collector sidecar beside this container, sends through it.
-  const proxyRelay = startProxyRelayFromEnv(env);
+  const proxyRelay = startProxyRelayForConfig(adapters.proxy, env);
   proxyRelay?.catch((error: unknown) => {
     console.error('The proxy relay could not start', error);
     process.exit(1);
   });
-  const adapters = deploymentAdapters(env);
   const config = configFromEnv(env, adapters);
   if (config.agentCore === null && config.localHarnessUrl === null) {
     console.warn('AGENTCORE_RUNTIME_ARN is not set; agent runs (POST /) return 503 and warmup is skipped until it is configured.');
@@ -324,7 +324,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const port = Number(env.PORT || 8123);
   // ws types `noServer` as `boolean | undefined`, which exactOptionalPropertyTypes keeps from matching.
   const websocket = { server: new WebSocketServer({ noServer: true }) as unknown as WebSocketServerLike };
-  const tracing = startChatTracing(env);
+  const tracing = startChatTracing(adapters.telemetry, env);
   const startupCredentials = [
     ...(config.turnSummaryModel.kind === 'openai-compatible' ? [config.turnSummaryModel.endpoint.credential] : []),
     ...(tracing?.credential ? [tracing.credential] : []),

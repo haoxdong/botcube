@@ -87,6 +87,7 @@ from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
 from .conversation import conversation, reasoning_chunk
 from .definition import HarnessDefinition, InvocationAuth, ModelRelay
+from .deployment_config import deployment_config_from_env
 from .files import (
     FilesBindingError,
     excluded_paths,
@@ -116,7 +117,7 @@ from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
 )
-from .proxy_relay import start_proxy_relay_from_env
+from .proxy_relay import start_proxy_relay_from_config
 from .scheduled_tasks import propose_scheduled_task
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 from .shell_backend import WorkerShellBackend
@@ -1452,7 +1453,7 @@ def main() -> None:
     import uvicorn
 
     # Listening before any client connects: every client, and every command the agent runs, sends through it.
-    start_proxy_relay_from_env()
+    start_proxy_relay_from_config(deployment_config_from_env())
     importlib.import_module('openai.resources.responses')
     restore_prime.prime_if_enabled(AWS_REGION)
     if AGENTCORE_MEMORY_ID:

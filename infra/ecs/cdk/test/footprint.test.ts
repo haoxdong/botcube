@@ -8,7 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { footprint, IMAGES } from '../../../../deployment-config/footprint.js';
 import type { Principal } from '../../../../deployment-config/principals.js';
 import { loadDeployment } from '../../../../deployment-config/load.js';
-import { EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
+import { CREDENTIAL_IMAGE_EXAMPLES_ROOT, EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
 import { deployIdentity } from '../lib/deploy-root.js';
 import { deploymentConfigPath, synthesizeExample } from './example-fixture.js';
 import { parkingTemplate } from './resolve-parking.js';
@@ -146,7 +146,7 @@ const isOwn = ({ host, hostname }: URL) =>
   OWN_HOSTS.has(host) || ['localhost', '127.0.0.1', '[::1]', 'task-address'].includes(hostname) || hostname.endsWith(`.${EXAMPLE_IDENTITY.aws.ecs.privateNamespace}`);
 
 /**
- * The hosts the containers' and Runtimes' environment names, and the Deployment Config file it points the Chat Service
+ * The hosts the containers' and Runtimes' environment names, and the Deployment Config file it points each process
  * at, other than the deployment's own origins, loopback and its private namespace: where its processes are configured
  * to reach beyond the AWS APIs their roles name.
  */
@@ -162,10 +162,11 @@ function configuredHosts(resources: Resources): string[] {
   });
 }
 
-/** The text of the Deployment Config at `imagePath` in the chat image, which ships it from botcube/examples/. */
+/** The text of the Deployment Config at `imagePath` in the chat or Credential Service image, which ships it from botcube/examples/. */
 function servedDeploymentConfig(imagePath: unknown): string {
-  assert(typeof imagePath === 'string' && imagePath.startsWith(`${IMAGE_EXAMPLES_ROOT}/`), `${JSON.stringify(imagePath)} is under ${IMAGE_EXAMPLES_ROOT}`);
-  return fs.readFileSync(path.join(EXAMPLES_ROOT, path.posix.relative(IMAGE_EXAMPLES_ROOT, imagePath)), 'utf8');
+  const root = [IMAGE_EXAMPLES_ROOT, CREDENTIAL_IMAGE_EXAMPLES_ROOT].find(prefix => typeof imagePath === 'string' && imagePath.startsWith(`${prefix}/`));
+  assert(typeof imagePath === 'string' && root !== undefined, `${JSON.stringify(imagePath)} is under ${IMAGE_EXAMPLES_ROOT} or ${CREDENTIAL_IMAGE_EXAMPLES_ROOT}`);
+  return fs.readFileSync(path.join(EXAMPLES_ROOT, path.posix.relative(root, imagePath)), 'utf8');
 }
 
 function imagesIn(resources: Resources): string[] {
@@ -253,7 +254,7 @@ test("the enterprise example's Chat Service assumes the AgentCore stack's Memory
   });
 }, 120_000);
 
-test("the enterprise example's models Endpoint is configured on the Chat Service and the Credential Service, and its Runtime learns only where its models run", async () => {
+test("the enterprise example's models Endpoint is configured on the Chat Service and the Credential Service, and its Runtime reads its models from the Deployment Config", async () => {
   const app = await appOf('enterprise');
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, 'live');
   const endpoint = Match.arrayWith([Match.objectLike({ Name: 'BOTCUBE_MODELS_ENDPOINT', Value: Match.stringLikeRegexp('models\\.example\\.com') })]);
@@ -264,6 +265,5 @@ test("the enterprise example's models Endpoint is configured on the Chat Service
   expect(tasks.map(([logicalId]) => logicalId.replace(/[0-9A-F]{8}$/, ''))).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
   origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: endpoint })]) });
   const variables = (runtime.Properties as Properties).EnvironmentVariables ?? {};
-  expect(variables.BOTCUBE_MODELS_KIND).toBe('openai-compatible');
-  expect(Object.keys(variables).filter(name => name.startsWith('BOTCUBE_MODELS_') && name !== 'BOTCUBE_MODELS_KIND')).toEqual([]);
+  expect(Object.keys(variables).filter(name => name.startsWith('BOTCUBE_MODELS_'))).toEqual([]);
 });

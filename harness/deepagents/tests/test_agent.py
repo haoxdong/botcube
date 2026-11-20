@@ -248,11 +248,12 @@ def test_model_defaults_to_sonnet(monkeypatch: pytest.MonkeyPatch, kwargs_record
 
 
 def test_an_openai_compatible_turn_with_no_model_fails_instead_of_sending_the_bedrock_default(
-    monkeypatch: pytest.MonkeyPatch, kwargs_recorder: type[KwargsRecorder]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kwargs_recorder: type[KwargsRecorder]
 ) -> None:
     from botcube_harness_deepagents import llm
+    from deployment_fixture import ENDPOINT_MODELS, deploy
 
-    monkeypatch.setenv(llm.MODELS_KIND_ENV, llm.OPENAI_COMPATIBLE)
+    deploy(monkeypatch, tmp_path, models=ENDPOINT_MODELS)
     monkeypatch.setitem(sys.modules, 'langchain_openai', _fake_module('langchain_openai', ChatOpenAI=kwargs_recorder))
     monkeypatch.delenv('BOTCUBE_MODEL', raising=False)
 

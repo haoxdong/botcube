@@ -18,10 +18,29 @@ import { placeLambdasInNetwork } from '../lib/supplied-network.js';
 
 /** The examples' deploy names and AgentCore spec, in the public example's deploy directory. */
 const EXAMPLE_DEPLOY_ROOT = path.resolve(__dirname, '../../../../examples/public/deploy');
-/** The examples' chat image, and the examples directory whose files it ships under its WORKDIR. */
-const CHAT_DOCKERFILE = path.resolve(__dirname, '../../../../chat/Dockerfile');
 export const EXAMPLES_ROOT = path.resolve(__dirname, '../../../../examples');
 export const IMAGE_EXAMPLES_ROOT = '/opt/chat-service/examples';
+export const CREDENTIAL_IMAGE_EXAMPLES_ROOT = '/opt/botcube/examples';
+
+/** An image the examples deploy: its Dockerfile, the prefix its COPY sources under botcube/examples/ carry, and where it ships them. */
+interface ExampleImage {
+  name: string;
+  dockerfile: string;
+  sources: string;
+  root: string;
+}
+
+const CHAT_IMAGE: ExampleImage = {
+  name: 'chat', dockerfile: path.resolve(__dirname, '../../../../chat/Dockerfile'), sources: '${BOTCUBE_ROOT}/examples/', root: IMAGE_EXAMPLES_ROOT,
+};
+const CREDENTIAL_IMAGE: ExampleImage = {
+  name: 'Credential Service', dockerfile: path.resolve(__dirname, '../../../../templates/always-on/deploy/credential-service/Dockerfile'),
+  sources: '${BOTCUBE_ROOT}/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
+};
+/** The Runtime image, whose COPYs public/deploy/stage-tools.sh writes into the Harness build context's .tool-dist/Dockerfile. */
+const RUNTIME_IMAGE: ExampleImage = {
+  name: 'Runtime', dockerfile: path.resolve(EXAMPLE_DEPLOY_ROOT, 'stage-tools.sh'), sources: '.tool-dist/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
+};
 
 const EXAMPLE_IDENTITIES: Readonly<Partial<Record<string, (identity: DeployIdentity) => DeployIdentity>>> = {
   'enterprise/deployment-config.json': ({ aws: { ecs: { privateEgress: _, ...ecs }, ...aws }, ...identity }) => ({ ...identity, aws: { ...aws, ecs } }),
@@ -40,11 +59,13 @@ interface ExampleOptions {
 /** Define the deployment the Deployment Config at `configPath` describes, failing on a bad field before any stack. */
 export async function defineExample(app: App, configPath: string, options: ExampleOptions): Promise<void> {
   const { config } = loadDeployment(configPath);
-  const deploymentConfig = imageDeploymentConfig(configPath, config.bot);
+  const deploymentConfig = imageDeploymentConfig(CHAT_IMAGE, configPath, [config.bot]);
+  const credentialDeploymentConfig = imageDeploymentConfig(CREDENTIAL_IMAGE, configPath, []);
+  const runtimeDeploymentConfig = imageDeploymentConfig(RUNTIME_IMAGE, configPath, []);
   const network = config.supplied?.network;
   const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
   const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(deployIdentity(EXAMPLE_DEPLOY_ROOT))), network);
-  const environment = proxyEnvironment(config);
+  const environment = standardVariables(proxyEnvironment(config));
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);
   const telemetry = telemetryDeployment(config.telemetry);
@@ -58,10 +79,10 @@ export async function defineExample(app: App, configPath: string, options: Examp
     ...(buckets?.connectionLogs ? { originConfig: { suppliedConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
       ...seams.chat, deploymentConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: config.imageRegistry,
-      telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: telemetry.chatService, secretArns: telemetry.secretArns },
+      telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: standardVariables(telemetry.chatService), secretArns: telemetry.secretArns },
     },
     credentials: {
-      environment: { ...proxyEnvironment(config), ...commandOptIn },
+      environment: { ...environment, ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: credentialDeploymentConfig },
       ...(tables?.vault ? { suppliedVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { suppliedVaultKeyArn: kmsKeys.vault } : {}),
       ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet.keyArn } : {}),
@@ -73,7 +94,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
   addAgentCoreStacks(app, { ...agentCore, identity: inNetwork(agentCore.identity, network) }, options.commit, {
     ...seams.agentCore,
     imageRegistry: config.imageRegistry,
-    runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn },
+    runtimeEnvironment: { ...environment, ...standardVariables(telemetry.harness), ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: runtimeDeploymentConfig },
     telemetry: { kind: config.telemetry.kind, secretArns: telemetry.secretArns },
     ...(kmsKeys?.memory ? { suppliedMemoryKeyArn: kmsKeys.memory } : {}),
     ...(kmsKeys?.images ? { suppliedImageKeyArn: kmsKeys.images } : {}),
@@ -82,24 +103,32 @@ export async function defineExample(app: App, configPath: string, options: Examp
 }
 
 /**
- * Where the chat image holds this Deployment Config, so the Chat Service serves what its infrastructure was built from.
- * The image ships only the files under botcube/examples/ its Dockerfile copies, each at the same path under
- * IMAGE_EXAMPLES_ROOT, so the config's relative `bot` path still resolves; any other config fails here.
+ * The standard variables (HTTP(S)_PROXY, OTEL_*) the deploy sets beside the Deployment Config, without the BOTCUBE_*
+ * values botcube/deployment-config still projects from it: every process reads those from the file (ADR 0091).
  */
-function imageDeploymentConfig(configPath: string, bot: string): string {
-  const shipped = new Set(fs.readFileSync(CHAT_DOCKERFILE, 'utf8').split('\n')
+function standardVariables(environment: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => !name.startsWith('BOTCUBE_')));
+}
+
+/**
+ * Where the image holds this Deployment Config, so each process serves what its infrastructure was built from. The
+ * image ships only the files under botcube/examples/ its Dockerfile copies, each at the same path under its root, so
+ * the config's relative paths it reads (`bot` for the chat image) still resolve; any other config fails here.
+ */
+function imageDeploymentConfig({ name, dockerfile, sources, root }: ExampleImage, configPath: string, beside: readonly string[]): string {
+  const shipped = new Set(fs.readFileSync(dockerfile, 'utf8').split('\n')
     .filter(line => /^COPY\s/.test(line) && !line.includes('--from='))
     .flatMap(line => line.trim().split(/\s+/).slice(1, -1))
-    .filter(source => source.startsWith('${BOTCUBE_ROOT}/examples/'))
-    .map(source => source.slice('${BOTCUBE_ROOT}/examples/'.length)));
+    .filter(source => source.startsWith(sources))
+    .map(source => source.slice(sources.length)));
   const config = path.relative(EXAMPLES_ROOT, path.resolve(configPath));
-  const settings = path.relative(EXAMPLES_ROOT, path.resolve(path.dirname(configPath), bot));
-  for (const file of [config, settings]) {
+  const files = beside.map(file => path.relative(EXAMPLES_ROOT, path.resolve(path.dirname(configPath), file)));
+  for (const file of [config, ...files]) {
     if (!file || !shipped.has(file.split(path.sep).join('/'))) {
-      throw new Error(`Deployment Config ${configPath}: the chat image ships only ${[...shipped].join(', ')} under ${EXAMPLES_ROOT}, not ${path.resolve(EXAMPLES_ROOT, file)}; copy it in ${CHAT_DOCKERFILE}`);
+      throw new Error(`Deployment Config ${configPath}: the ${name} image ships only ${[...shipped].join(', ')} under ${EXAMPLES_ROOT}, not ${path.resolve(EXAMPLES_ROOT, file)}; copy it in ${dockerfile}`);
     }
   }
-  return path.posix.join(IMAGE_EXAMPLES_ROOT, config.split(path.sep).join('/'));
+  return path.posix.join(root, config.split(path.sep).join('/'));
 }
 
 /** Each seam's adapter (ADR 0091) as the two CDK apps take it: models, Harness auth, schedules, Turn credentials, identity. */

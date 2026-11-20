@@ -36,6 +36,7 @@
     "test/footprint.test.ts",
     "test/supplied-resources.test.ts",
     "test/chat-deployment-config.test.ts",
+    "test/runtime-deployment-config.test.ts",
     "test/example-fixture.ts",
     "test/public-example-inventory.test.ts",
     "test/user-memory-trust.test.ts"

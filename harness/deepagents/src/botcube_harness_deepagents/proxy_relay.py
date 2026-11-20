@@ -1,8 +1,8 @@
 """The proxy Endpoint's credential and headers (ADR 0091), the Python twin of botcube/chat's `proxy-relay.ts`.
 
 Every HTTP client in the Harness, and every command it runs, reads HTTP(S)_PROXY once, so the deploy points them at
-this loopback relay (`proxyEnvironment` in botcube/deployment-config), which opens each request to the operator's proxy
-with the Credential Source's current value: a rotated or refreshed token reaches the next request.
+this loopback relay (`proxyEnvironment` in botcube/deployment-config), which opens each request to the proxy the
+Deployment Config names with the Credential Source's current value: a rotated or refreshed token reaches the next request.
 """
 from __future__ import annotations
 
@@ -14,38 +14,29 @@ import socketserver
 import ssl
 from collections.abc import Mapping
 from threading import Thread
+from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import TypeAdapter, ValidationError
-
-from .credential_source import CredentialSource, credential_source_from_env
+from .credential_source import CredentialSource, credential_source
 
 log = logging.getLogger(__name__)
 
-PROXY_URL_ENV = 'BOTCUBE_PROXY_URL'
-PROXY_CREDENTIAL_ENV = 'BOTCUBE_PROXY_CREDENTIAL'
-PROXY_HEADERS_ENV = 'BOTCUBE_PROXY_HEADERS'
 # The most a client's request head may take before the relay refuses it.
 _MAX_HEAD_BYTES = 64 * 1024
 # Request headers the relay sets itself, dropping a client's.
 _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
-_HEADERS: TypeAdapter[dict[str, str]] = TypeAdapter(dict[str, str])
 
 
-def start_proxy_relay_from_env(env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay the deploy set for this process, listening where HTTPS_PROXY points; None without one."""
-    upstream = env.get(PROXY_URL_ENV)
-    if not upstream:
+def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
+    """The relay for the Deployment Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential or headers."""
+    proxy = config['proxy']
+    if proxy['kind'] == 'none' or ('credential' not in proxy and 'headers' not in proxy):
         return None
     listen = urlsplit(env.get('HTTPS_PROXY') or '')
     if not listen.hostname or listen.port is None:
-        raise RuntimeError(f'HTTPS_PROXY is unset beside {PROXY_URL_ENV}; the deploy points it at the proxy relay')
-    credential = credential_source_from_env('proxy', PROXY_CREDENTIAL_ENV, env)
-    try:
-        headers = _HEADERS.validate_json(env.get(PROXY_HEADERS_ENV) or '{}')
-    except ValidationError:
-        raise RuntimeError(f'{PROXY_HEADERS_ENV}: expected an object of header values') from None
-    return start_proxy_relay(upstream=upstream, listen=(listen.hostname, listen.port), credential=credential, headers=headers)
+        raise RuntimeError("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers; the deploy points it at the proxy relay")
+    credential = credential_source('proxy', proxy['credential'], env=env) if 'credential' in proxy else None
+    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}))
 
 
 def start_proxy_relay(*, upstream: str, listen: tuple[str, int], credential: CredentialSource | None, headers: Mapping[str, str]) -> str:

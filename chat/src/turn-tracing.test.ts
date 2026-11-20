@@ -180,8 +180,8 @@ it('ends a Turn rejected during preparation without creating an invoke span', as
 });
 
 it('does not start an exporter unless OTLP traces are explicitly enabled', () => {
-  expect(startChatTracing({})).toBeUndefined();
-  expect(startChatTracing({ OTEL_TRACES_EXPORTER: 'none' })).toBeUndefined();
+  expect(startChatTracing({ kind: 'xray' }, {})).toBeUndefined();
+  expect(startChatTracing({ kind: 'xray' }, { OTEL_TRACES_EXPORTER: 'none' })).toBeUndefined();
 });
 
 

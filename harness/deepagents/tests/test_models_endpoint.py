@@ -8,6 +8,7 @@ import struct
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,6 +16,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from botcube_harness_deepagents import llm, turn_timing
 from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
+from botcube_harness_deepagents.deployment_config import DeploymentConfigError
+from deployment_fixture import ENDPOINT_MODELS, deploy
 
 pytestmark = pytest.mark.integration
 
@@ -89,8 +92,8 @@ def stand_in() -> Iterator[StandIn]:
 
 
 @pytest.fixture
-def deployed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_MODELS_KIND', 'openai-compatible')
+def deployed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    deploy(monkeypatch, tmp_path, models=ENDPOINT_MODELS)
 
 
 def _turn(stand_in: StandIn, token: str = 'invocation-1') -> ModelRelay:
@@ -278,8 +281,8 @@ MARKER = {'type': 'ephemeral'}
 
 
 @pytest.fixture
-def cache_markers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_MODELS_CACHE_MARKERS', 'claude')
+def cache_markers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'cacheMarkers': 'claude'})
 
 
 def _converse(stand_in: StandIn, messages: list[Any]) -> str:
@@ -337,14 +340,13 @@ def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports(stand_in: 
     assert (record['inputTokens'], record['cachedInputTokens']) == (26, 20)
 
 
-@pytest.mark.usefixtures('deployed')
-def test_a_turn_fails_on_cache_markers_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch, stand_in: StandIn) -> None:
-    monkeypatch.setenv('BOTCUBE_MODELS_CACHE_MARKERS', 'openai')
-    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_CACHE_MARKERS: expected claude, or unset for none, not 'openai'$"):
+def test_a_turn_fails_on_cache_markers_the_deployment_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
+    path = deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'cacheMarkers': 'openai'})
+    with pytest.raises(DeploymentConfigError, match=f"^Deployment Config {path}: models.cacheMarkers: 'claude' was expected$"):
         llm.build_model(model='echo', relay=lambda: _turn(stand_in))
 
 
-def test_a_turn_fails_on_a_models_kind_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch, stand_in: StandIn) -> None:
-    monkeypatch.setenv('BOTCUBE_MODELS_KIND', 'anthropic')
-    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_KIND: expected openai-compatible, or unset for Bedrock, not 'anthropic'$"):
+def test_a_turn_fails_on_a_models_kind_the_deployment_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
+    path = deploy(monkeypatch, tmp_path, models={'kind': 'anthropic'})
+    with pytest.raises(DeploymentConfigError, match=f'^Deployment Config {path}: models: '):
         llm.build_model(model='echo', relay=lambda: _turn(stand_in))

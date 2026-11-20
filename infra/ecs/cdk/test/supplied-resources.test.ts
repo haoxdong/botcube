@@ -281,12 +281,14 @@ test('prints under Build images every image the Dockerfiles it builds pull, and 
   expect(footprint(config).buildImages).toEqual([...new Set(pulled)].sort());
 });
 
-test("exports the Chat Service's and the Harness's traces straight to the collector, with its credential and headers, and no X-Ray sidecar", () => {
+/** The values projected from the Deployment Config, which each process reads from the file BOTCUBE_DEPLOYMENT_CONFIG names (ADR 0091). */
+const PROJECTED = ['BOTCUBE_TELEMETRY_CREDENTIAL', 'BOTCUBE_PROXY_URL', 'BOTCUBE_PROXY_CREDENTIAL', 'BOTCUBE_PROXY_HEADERS', 'BOTCUBE_MODELS_KIND', 'BOTCUBE_MODELS_CACHE_MARKERS'];
+
+test("exports the Chat Service's and the Harness's traces straight to the collector, its credential left to the Deployment Config, and no X-Ray sidecar", () => {
   const exported = {
     OTEL_TRACES_EXPORTER: 'otlp',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://otel-collector.example.com:4318/v1/traces',
     OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-tenant=botcube-example',
-    BOTCUBE_TELEMETRY_CREDENTIAL: JSON.stringify({ kind: 'file', path: '/run/secrets/botcube/telemetry-token' }),
   };
   expect(environment('chat-service')).toMatchObject(exported);
   const [runtime] = ofType('AWS::BedrockAgentCore::Runtime');
@@ -297,19 +299,21 @@ test("exports the Chat Service's and the Harness's traces straight to the collec
   expect(JSON.stringify(chatPolicies)).not.toContain('xray:');
 });
 
-test("sends the Chat Service, the Credential Service and the Runtime through their own relay to the proxy, with its credential and headers", () => {
-  const relayed = {
-    ...PROXY,
-    HTTP_PROXY: 'http://127.0.0.1:3128',
-    HTTPS_PROXY: 'http://127.0.0.1:3128',
-    BOTCUBE_PROXY_URL: 'http://proxy.example.com:3128',
-    BOTCUBE_PROXY_CREDENTIAL: JSON.stringify({ kind: 'file', path: '/run/secrets/botcube/proxy-token' }),
-    BOTCUBE_PROXY_HEADERS: JSON.stringify({ 'x-egress-route': 'botcube-example' }),
-  };
+test("sends the Chat Service, the Credential Service and the Runtime through their own relay, which reads the proxy from the Deployment Config", () => {
+  const relayed = { ...PROXY, HTTP_PROXY: 'http://127.0.0.1:3128', HTTPS_PROXY: 'http://127.0.0.1:3128' };
   expect(environment('chat-service')).toMatchObject(relayed);
   expect(environment('credential-service')).toMatchObject(relayed);
   const [runtime] = ofType('AWS::BedrockAgentCore::Runtime');
   expect(runtime.Properties.EnvironmentVariables).toMatchObject(relayed);
+});
+
+test('hands each process the Deployment Config by its locator, never the values projected from it', () => {
+  expect(environment('chat-service').BOTCUBE_DEPLOYMENT_CONFIG).toBe('/opt/chat-service/examples/enterprise/deployment-config.json');
+  expect(environment('credential-service').BOTCUBE_DEPLOYMENT_CONFIG).toBe('/opt/botcube/examples/enterprise/deployment-config.json');
+  const [runtime] = ofType('AWS::BedrockAgentCore::Runtime');
+  for (const variables of [environment('chat-service'), environment('credential-service'), runtime.Properties.EnvironmentVariables]) {
+    expect(Object.keys(variables ?? {}).filter(name => PROJECTED.includes(name))).toEqual([]);
+  }
 });
 
 

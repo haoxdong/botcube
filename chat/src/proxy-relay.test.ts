@@ -1,7 +1,7 @@
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { credentialSource, type CredentialSource } from './credential-source.js';
-import { startProxyRelay, type ProxyRelay } from './proxy-relay.js';
+import { startProxyRelay, startProxyRelayForConfig, type ProxyRelay } from './proxy-relay.js';
 
 /** An authenticating forward proxy: records each request head, then answers a CONNECT and echoes the tunnel. */
 class FakeUpstreamProxy {
@@ -139,5 +139,23 @@ describe('the proxy relay at startup', () => {
       credential: credentialSource('proxy', { kind: 'file', path }), headers: {},
     });
     await expect(relay).rejects.toThrow(`proxy credential (file ${path}): ENOENT`);
+  });
+
+  it("relays the Deployment Config's proxy where HTTPS_PROXY points, with its credential and headers", async () => {
+    const path = `/nonexistent/proxy-token-${Math.random().toString(36).slice(2)}`;
+    const relay = startProxyRelayForConfig(
+      { kind: 'forward', url: 'http://127.0.0.1:9', credential: { kind: 'file', path }, headers: { 'x-tenant': 'a' } },
+      { HTTPS_PROXY: 'http://127.0.0.1:0' },
+    );
+    await expect(relay).rejects.toThrow(`proxy credential (file ${path}): ENOENT`);
+  });
+
+  it.each([{ kind: 'none' } as const, { kind: 'forward', url: 'http://proxy.example.com:3128' } as const])('needs no relay for %j', (proxy) => {
+    expect(startProxyRelayForConfig(proxy, { HTTPS_PROXY: 'http://proxy.example.com:3128' })).toBeUndefined();
+  });
+
+  it('needs HTTPS_PROXY pointed at the relay beside a proxy credential or headers', () => {
+    expect(() => startProxyRelayForConfig({ kind: 'forward', url: 'http://proxy.example.com:3128', headers: { 'x-tenant': 'a' } }, {}))
+      .toThrow("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers");
   });
 });

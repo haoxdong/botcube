@@ -55,6 +55,7 @@ function repository(): string {
   const spec = JSON.parse(fs.readFileSync(path.join(EXAMPLE_DEPLOY, 'agentcore/agentcore.json'), 'utf8'));
   identity.artifacts.toolStaging.hook = 'bot/deploy/stage-tools.sh';
   spec.runtimes[0].codeLocation = '../../harness/';
+  delete spec.runtimes[0].dockerfile;
   fs.mkdirSync(path.join(deployRoot, 'agentcore'), { recursive: true });
   fs.mkdirSync(path.join(repo, 'harness'));
   fs.writeFileSync(path.join(deployRoot, 'identity.json'), JSON.stringify(identity));

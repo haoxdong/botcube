@@ -113,12 +113,15 @@ export async function startLocalStack(options: {
     await rm(home, { recursive: true, force: true });
   };
   try {
+    // Every process reads the one Deployment Config, its External Services replaced by their offline stand-ins.
+    const deploymentConfig = await standInDeploymentConfig(deploymentPath, deployment.config, home, egress?.offline);
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
     // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
+    // It stays in the environment: the stand-in is http on loopback, which models.url (https only) refuses.
     const modelsEnv = openAICompatible && models.kind === 'openai-compatible'
       ? modelsDeployment({ ...models, url: `${openAICompatible.url}/v1`, credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) } })
       : undefined;
-    Object.assign(pythonEnv, egress?.environment, modelsEnv?.harness, options.harnessEnv);
+    Object.assign(pythonEnv, egress?.environment, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -132,7 +135,13 @@ export async function startLocalStack(options: {
     const credentialService = modelsEnv && {
       BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
         `${CREDENTIAL_SERVICE_BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
-        { PATH: process.env.PATH, HOME: home, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET, ...modelsEnv.credentialService },
+        {
+          PATH: process.env.PATH,
+          HOME: home,
+          BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
+          BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
+          ...modelsEnv.credentialService,
+        },
         '/health',
         'Uvicorn running on http://127.0.0.1:',
       ),
@@ -182,7 +191,7 @@ export async function startLocalStack(options: {
         ...credentialService,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
-        BOTCUBE_DEPLOYMENT_CONFIG: await chatDeploymentConfig(deploymentPath, deployment.config, home),
+        BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
       },
       '/',
       'Chat Service listening on :',
@@ -204,14 +213,16 @@ export async function startLocalStack(options: {
 interface EgressStandIns {
   readonly proxy: FakeForwardProxy;
   readonly collector: FakeOtlpCollector | undefined;
+  /** The sections the Deployment Config stand-in takes in place of the deployed proxy and telemetry. */
+  readonly offline: Pick<DeploymentConfig, 'proxy' | 'telemetry'>;
   readonly environment: Record<string, string>;
   readonly chatEnvironment: Record<string, string>;
 }
 
 /**
  * The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
- * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the environment the deploy
- * derives. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service and the Harness
+ * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the standard variables the deploy
+ * sets beside the Deployment Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service and the Harness
  * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
  */
 async function egressStandIns(config: DeploymentConfig | undefined, home: string): Promise<EgressStandIns | undefined> {
@@ -223,11 +234,13 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     otlp && collector ? { [new URL(otlp.url).host]: collector.url } : {},
     proxy.credential ? `Bearer ${STAND_IN_PROXY_TOKEN}` : undefined,
   ).listen();
-  const telemetry = otlp && telemetryDeployment({
+  const offlineTelemetry = otlp && {
     ...otlp,
-    ...(otlp.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_TELEMETRY_TOKEN, 'telemetry-token') } } : {}),
-  });
+    ...(otlp.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_TELEMETRY_TOKEN, 'telemetry-token') } as const } : {}),
+  };
+  const telemetry = offlineTelemetry && telemetryDeployment(offlineTelemetry);
   const offline = {
+    telemetry: offlineTelemetry ?? required(config, 'Deployment Config').telemetry,
     proxy: {
       ...proxy,
       url: standIn.url,
@@ -237,9 +250,15 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
   return {
     proxy: standIn,
     collector,
-    environment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness },
-    chatEnvironment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService },
+    offline,
+    environment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness }),
+    chatEnvironment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService }),
   };
+}
+
+/** The deploy's environment without the BOTCUBE_* values it projects from the Deployment Config, which every process reads from the file. */
+function standardVariables(environment: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => !name.startsWith('BOTCUBE_')));
 }
 
 const STAND_IN_TELEMETRY_TOKEN = 'stand-in-telemetry-token';
@@ -257,16 +276,24 @@ async function keyFile(home: string, value: string, name = 'models-api-key'): Pr
 const STAND_IN_CLIENT_SECRET = 'stand-in-client-secret';
 
 /**
- * The Deployment Config the Chat Service reads: the one at `path`, its sign-in client secret a file in `home` as a
- * secret injector mounts it, so no Secrets Manager is needed offline; unchanged without an OIDC identity.
+ * The Deployment Config every process reads: the one at `path`, with its proxy and telemetry offline and its sign-in
+ * client secret a file in `home` as a secret injector mounts it, so no Secrets Manager is needed offline; unchanged
+ * when none of those apply.
  */
-async function chatDeploymentConfig(path: string, config: DeploymentConfig, home: string): Promise<string> {
-  if (config.identity.kind !== 'oidc') return path;
-  const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
+async function standInDeploymentConfig(
+  path: string,
+  config: DeploymentConfig,
+  home: string,
+  offline: Pick<DeploymentConfig, 'proxy' | 'telemetry'> | undefined,
+): Promise<string> {
+  if (config.identity.kind !== 'oidc' && offline === undefined) return path;
   const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-  const identity = { ...config.identity, clients: config.identity.clients.map(({ clientId }) => ({ clientId, clientSecret })) };
+  const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
+  const identity = config.identity.kind === 'oidc'
+    ? { identity: { ...config.identity, clients: config.identity.clients.map(({ clientId }) => ({ clientId, clientSecret })) } }
+    : {};
   const standIn = join(home, 'deployment-config.json');
-  await writeFile(standIn, JSON.stringify({ ...file, bot: resolve(dirname(path), config.bot), identity }));
+  await writeFile(standIn, JSON.stringify({ ...file, bot: resolve(dirname(path), config.bot), ...identity, ...offline }));
   return standIn;
 }
 

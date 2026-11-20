@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 import urllib.request
 from collections.abc import Iterator
@@ -15,6 +14,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 
 from botcube_harness_deepagents.trace_relay import start_trace_relay
+from deployment_fixture import deploy
 
 pytestmark = pytest.mark.integration
 
@@ -141,7 +141,7 @@ def test_relay_sends_the_telemetry_credential_as_the_bearer_in_place_of_sigv4(
 ) -> None:
     token = tmp_path / 'telemetry-token'
     token.write_text('collector-token\n')
-    monkeypatch.setenv('BOTCUBE_TELEMETRY_CREDENTIAL', json.dumps({'kind': 'file', 'path': str(token)}))
+    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}})
     relay = start_trace_relay().removesuffix('/v1/traces')
     request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
 
@@ -167,7 +167,7 @@ def test_relay_sends_the_telemetry_credential_without_aws_credentials(
     monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
     token = tmp_path / 'telemetry-token'
     token.write_text('collector-token\n')
-    monkeypatch.setenv('BOTCUBE_TELEMETRY_CREDENTIAL', json.dumps({'kind': 'file', 'path': str(token)}))
+    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}})
     relay = start_trace_relay().removesuffix('/v1/traces')
     request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
 
