@@ -124,18 +124,3 @@ export const trust = <Issuer extends z.ZodType<string>, Client extends z.ZodType
 
 /** The variable the operator sets to `1` in the deploy environment, beside `allowCommandCredentials`, for a command credential to run. */
 export const ALLOW_COMMAND_CREDENTIALS_ENV = 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS';
-
-/** The JSON the deploy set in `name`, as `schema` parses it, or undefined when unset; throws naming the variable and each bad field. */
-export function jsonFromEnv<T>(env: NodeJS.ProcessEnv, name: string, schema: z.ZodType<T>): T | undefined {
-  const value = env[name];
-  if (value === undefined || value === '') return undefined;
-  let json: unknown;
-  try {
-    json = JSON.parse(value);
-  } catch {
-    throw new Error(`${name}: not JSON`);
-  }
-  const parsed = schema.safeParse(json);
-  if (parsed.success) return parsed.data;
-  throw new Error(parsed.error.issues.map((issue) => `${name}: ${issue.path.join('.') || '(root)'}: ${issue.message}`).join('\n'));
-}

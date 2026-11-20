@@ -79,10 +79,9 @@ describe("the deploy's command credential opt-in", () => {
   });
 
   it('is never derived from the Deployment Config by a seam', () => {
-    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary', wire: 'chat-completions' });
     const telemetry = telemetryDeployment({ kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND });
-    const environments = [models?.chatService, models?.credentialService, telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
-    expect(environments.filter((environment) => environment && 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS' in environment)).toEqual([]);
+    const environments = [telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
+    expect(environments.filter((environment) => 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS' in environment)).toEqual([]);
   });
 });
 

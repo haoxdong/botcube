@@ -1,13 +1,13 @@
 import { copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import type { EndpointTls } from 'botcube-deployment-config/blocks';
-import { modelsDeployment } from 'botcube-deployment-config/models';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
 import { endpointTls } from './endpoint-tls.js';
 import { startProxyRelay } from './proxy-relay.js';
-import { turnSummarizer, turnSummaryModelFromEnv } from './turn-summaries.js';
+import { turnSummarizer, turnSummaryModel } from './turn-summaries.js';
 
 const certificates = mtlsCertificates();
 const keyFile = join(certificates.dir, 'models-api-key');
@@ -39,13 +39,13 @@ afterAll(async () => {
   certificates.remove();
 });
 
-/** The environment the deploy gives the Chat Service for a models Endpoint with TLS, at the stand-in's mTLS front. */
-function deployed(tls: EndpointTls): NodeJS.ProcessEnv {
-  return { ...modelsDeployment({ kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', wire: 'chat-completions', tls })?.chatService };
+/** The Deployment Config's `models` section for an Endpoint with TLS, at the stand-in's mTLS front. */
+function deployed(tls: EndpointTls): DeploymentConfig['models'] {
+  return { kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', wire: 'chat-completions', tls };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
-const summarize = (env: NodeJS.ProcessEnv) => turnSummarizer(turnSummaryModelFromEnv(env, 'us-east-1'))(turn);
+const summarize = (models: DeploymentConfig['models'], env: NodeJS.ProcessEnv = {}) => turnSummarizer(turnSummaryModel(models, env, 'us-east-1'))(turn);
 const SUMMARY = { title: 'Answered a question', summary: 'Replied to the user' };
 
 afterEach(() => {
@@ -61,7 +61,7 @@ describe('Turn summaries on a models Endpoint with TLS', () => {
   });
 
   it('present a certificate whose files were replaced on the next connection, without a restart', async () => {
-    const summarizer = turnSummarizer(turnSummaryModelFromEnv(deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), 'us-east-1'));
+    const summarizer = turnSummarizer(turnSummaryModel(deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), {}, 'us-east-1'));
 
     await summarizer(turn);
     rotateTo('clientB');
@@ -81,7 +81,7 @@ describe('Turn summaries on a models Endpoint with TLS', () => {
       for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) vi.stubEnv(name, relay.url);
       for (const name of ['NO_PROXY', 'no_proxy']) vi.stubEnv(name, '');
 
-      expect(await summarize({ ...deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), NODE_USE_ENV_PROXY: '1' })).toEqual(SUMMARY);
+      expect(await summarize(deployed({ clientCertificate: files, serverIdentity: SERVER_IDENTITY }), { NODE_USE_ENV_PROXY: '1' })).toEqual(SUMMARY);
 
       expect([proxy.hosts(), proxy.clients(), front.clients]).toEqual([[new URL(url).host], ['client-b'], ['client-a']]);
     } finally {

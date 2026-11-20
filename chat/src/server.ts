@@ -27,7 +27,7 @@ import { deploymentAdapters, type DeploymentAdapters, type TurnCredentialsAdapte
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
-import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModelFromEnv, type TurnSummaryModel } from './turn-summaries.js';
+import { reportUnsavedTurnSummaries, turnSummarizer, turnSummaryModel, type TurnSummaryModel } from './turn-summaries.js';
 import { harnessBearer, type ChatHarnessAuth } from './harness-auth.js';
 import { agentCoreEndpointFromEnv, agentCoreUpstream, localAgentUpstream, type AgentCoreRuntime } from './upstream.js';
 import { turnRoutes } from './turn-routes.js';
@@ -80,7 +80,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): Ch
         ? { localUrl: localSessionApiUrl }
         : null,
     warmupTimeoutMs: 60_000,
-    turnSummaryModel: turnSummaryModelFromEnv(env, region),
+    turnSummaryModel: turnSummaryModel(adapters.models, env, region),
     ...(turnIdentity ? { turnIdentity } : {}),
     turnCredentials: adapters.turnCredentials,
   };

@@ -21,10 +21,10 @@ const TEST_BOT = {
 };
 
 /** A Deployment Config naming the test bot's settings (or `bot`), in a fresh directory. */
-export function testDeploymentConfig(bot: Record<string, unknown> = TEST_BOT): string {
+export function testDeploymentConfig(bot: Record<string, unknown> = TEST_BOT, sections: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'chat-test-deployment-'));
   writeFileSync(join(dir, 'bot.json'), JSON.stringify(bot));
-  writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json' }));
+  writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json', ...sections }));
   return join(dir, 'deployment-config.json');
 }
 

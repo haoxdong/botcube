@@ -24,6 +24,7 @@ describe("the Chat Service's adapters", () => {
       schedules: { kind: 'eventbridge-scheduler' },
       telemetry: { kind: 'xray' },
       proxy: { kind: 'none' },
+      models: { kind: 'bedrock' },
     });
   });
 

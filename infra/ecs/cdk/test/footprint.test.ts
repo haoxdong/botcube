@@ -273,16 +273,15 @@ test("the enterprise example's Chat Service assumes the AgentCore stack's Memory
   });
 }, 120_000);
 
-test("the enterprise example's models Endpoint is configured on the Chat Service and the Credential Service, and its Runtime reads its models from the Deployment Config", async () => {
+test("the enterprise example's Chat Service, Credential Service and Runtime read its models Endpoint from the Deployment Config, not the environment", async () => {
   const app = await appOf('enterprise');
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, 'live');
-  const endpoint = Match.arrayWith([Match.objectLike({ Name: 'BOTCUBE_MODELS_ENDPOINT', Value: Match.stringLikeRegexp('models\\.example\\.com') })]);
-  const tasks = Object.entries(origin.findResources('AWS::ECS::TaskDefinition'))
-    .filter(([, task]) => (task.Properties as Properties).ContainerDefinitions?.some(container => (container.Environment ?? []).some(({ Name }) => Name === 'BOTCUBE_MODELS_ENDPOINT')));
+  const environments = Object.entries(origin.findResources('AWS::ECS::TaskDefinition'))
+    .map(([logicalId, task]) => [logicalId.replace(/[0-9A-F]{8}$/, ''), ((task.Properties as Properties).ContainerDefinitions ?? []).flatMap(container => (container.Environment ?? []).map(({ Name }) => Name))] as const);
   const [runtime] = Object.values(Template.fromStack(app.node.findChild(AGENTCORE_STACK) as Stack).findResources('AWS::BedrockAgentCore::Runtime'));
+  const runtimeVariables = Object.keys((runtime.Properties as Properties).EnvironmentVariables ?? {});
+  const models = (name: string) => name.startsWith('BOTCUBE_MODELS_') || name === 'BOTCUBE_TURN_SUMMARY_MODEL';
 
-  expect(tasks.map(([logicalId]) => logicalId.replace(/[0-9A-F]{8}$/, ''))).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
-  origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: endpoint })]) });
-  const variables = (runtime.Properties as Properties).EnvironmentVariables ?? {};
-  expect(Object.keys(variables).filter(name => name.startsWith('BOTCUBE_MODELS_'))).toEqual([]);
+  expect(environments.filter(([, names]) => names.includes('BOTCUBE_DEPLOYMENT_CONFIG')).map(([task]) => task)).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
+  expect([...environments.flatMap(([, names]) => names), ...runtimeVariables].filter(models)).toEqual([]);
 });

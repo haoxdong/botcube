@@ -15,11 +15,11 @@ from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
 from botcube_credential_service.credential_source import CredentialSourceError
+from botcube_credential_service.deployment_config import deployment_config_from_env
 from botcube_credential_service.invocation import sign_credential_service_invocation
-from botcube_credential_service.models import models_provider_from_env
+from botcube_credential_service.models import models_provider_from_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
 
-SCHEMA = Path(__file__).resolve().parents[2] / 'deployment-config' / 'deployment-config.schema.json'
 SECRET = 'credential-service-secret'
 START = 1_790_965_829.0
 STREAM = (
@@ -69,17 +69,20 @@ def gateway() -> FakeGateway:
     return FakeGateway()
 
 
-def _endpoint(credential: Mapping[str, Any]) -> dict[str, str]:
-    endpoint = {'url': 'https://models.example.com/v1', 'credential': credential, 'headers': {'x-tenant': 'botcube-example'}}
-    return {'BOTCUBE_MODELS_ENDPOINT': json.dumps(endpoint)}
+def _deployed(endpoint: Mapping[str, Any]) -> dict[str, Any]:
+    return {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}
+
+
+def _endpoint(credential: Mapping[str, Any]) -> dict[str, Any]:
+    return _deployed({'url': 'https://models.example.com/v1', 'credential': credential, 'headers': {'x-tenant': 'botcube-example'}})
 
 
 def _client(
-    gateway: FakeGateway, env: Mapping[str, str], *, clock: Clock | None = None, sink: ListSink | None = None,
+    gateway: FakeGateway, config: Mapping[str, Any], env: Mapping[str, str] | None = None, *, clock: Clock | None = None, sink: ListSink | None = None,
 ) -> TestClient:
     clock = clock or Clock()
-    provider = models_provider_from_env(
-        CredentialAuditRecorder(sink=sink, clock=clock), env, transport=httpx.MockTransport(gateway.handle), now=clock,
+    provider = models_provider_from_config(
+        CredentialAuditRecorder(sink=sink, clock=clock), config, env or {}, transport=httpx.MockTransport(gateway.handle), now=clock,
     )
     assert provider is not None
     settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
@@ -192,7 +195,7 @@ def test_any_other_gateway_failure_is_an_error_the_harness_does_not_retry(
 def test_a_turn_on_the_responses_wire_reaches_the_gateways_responses_api(gateway: FakeGateway, key: Path) -> None:
     body = b'{"model":"echo","input":[{"role":"user","content":"Hello"}],"stream":true}'
     endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'wire': 'responses'}
-    client = _client(gateway, {'BOTCUBE_MODELS_ENDPOINT': json.dumps(endpoint)})
+    client = _client(gateway, _deployed(endpoint))
 
     assert client.post('/models/responses', content=body, headers=_turn()).status_code == 200
 
@@ -272,7 +275,7 @@ def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_ex
     )
     command = {'kind': 'command', 'command': [sys.executable, str(helper)], 'timeoutSeconds': 30}
     clock = Clock()
-    client = _client(gateway, {**_endpoint(command), 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS': '1'}, clock=clock)
+    client = _client(gateway, _endpoint(command), {'BOTCUBE_ALLOW_COMMAND_CREDENTIALS': '1'}, clock=clock)
 
     _completion(client)
     clock.now = START + 240
@@ -286,39 +289,25 @@ def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_ex
 def test_startup_fails_naming_the_models_seam_and_its_file_when_the_credential_cannot_be_read(tmp_path: Path) -> None:
     absent = tmp_path / 'absent'
     with pytest.raises(CredentialSourceError, match=f'^models credential \\(file {absent}\\): '):
-        models_provider_from_env(CredentialAuditRecorder(), _endpoint({'kind': 'file', 'path': str(absent)}))
+        models_provider_from_config(CredentialAuditRecorder(), _endpoint({'kind': 'file', 'path': str(absent)}), {})
 
 
 def test_startup_refuses_a_command_credential_the_deploy_did_not_opt_in_to() -> None:
     command = {'kind': 'command', 'command': ['gateway-token'], 'timeoutSeconds': 30}
     with pytest.raises(CredentialSourceError, match='^models credential \\(command gateway-token\\): a command credential runs only when'):
-        models_provider_from_env(CredentialAuditRecorder(), _endpoint(command))
+        models_provider_from_config(CredentialAuditRecorder(), _endpoint(command), {})
 
 
-def _every_endpoint_field_the_deployment_config_accepts(key: Path) -> dict[str, Any]:
-    [endpoint] = [each for each in json.loads(SCHEMA.read_text())['properties']['models']['oneOf'] if 'credential' in each['properties']]
-    known = {
-        'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'},
-        'tls': {'serverIdentity': 'spiffe://example.org/models'},
-    }
-    by_type = {'string': 'summary', 'object': {}, 'array': [], 'integer': 1, 'number': 1, 'boolean': True}
-    return {
-        name: known.get(name, field.get('const', field.get('enum', [by_type.get(field.get('type'))])[-1]))
-        for name, field in endpoint['properties'].items()
-    }
+def test_the_relay_reaches_the_endpoint_the_deployment_config_file_names(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
+    path = tmp_path / 'deployment-config.json'
+    path.write_text(json.dumps({'bot': './bot.json', **_endpoint({'kind': 'file', 'path': str(key)})}))
 
+    response = _completion(_client(gateway, deployment_config_from_env({'BOTCUBE_DEPLOYMENT_CONFIG': str(path)})))
 
-def test_startup_takes_every_field_the_deployment_config_accepts_on_its_models_endpoint(key: Path) -> None:
-    config = _every_endpoint_field_the_deployment_config_accepts(key)
-
-    assert models_provider_from_env(CredentialAuditRecorder(), {'BOTCUBE_MODELS_ENDPOINT': json.dumps(config)}) is not None
-
-
-def test_startup_fails_on_an_endpoint_the_deploy_wrote_wrong() -> None:
-    env = {'BOTCUBE_MODELS_ENDPOINT': json.dumps({'url': 'https://models.example.com/v1', 'apiKey': 'sk-live'})}
-    with pytest.raises(RuntimeError, match='^BOTCUBE_MODELS_ENDPOINT: unknown field apiKey$'):
-        models_provider_from_env(CredentialAuditRecorder(), env)
+    assert response.status_code == 200
+    [call] = gateway.requests
+    assert (str(call.url), call.headers['authorization']) == ('https://models.example.com/v1/chat/completions', 'Bearer sk-mounted')
 
 
 def test_a_deployment_on_bedrock_has_no_models_relay() -> None:
-    assert models_provider_from_env(CredentialAuditRecorder(), {}) is None
+    assert models_provider_from_config(CredentialAuditRecorder(), deployment_config_from_env({}), {}) is None

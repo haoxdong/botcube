@@ -163,10 +163,8 @@ describe('the Chat Service served from the environment', () => {
     }
 
     it("the models Endpoint's", async () => {
-      const env = {
-        BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent } }),
-        BOTCUBE_TURN_SUMMARY_MODEL: 'example-summary',
-      };
+      const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent }, turnSummaryModel: 'example-summary' };
+      const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(undefined, { models }) };
       expect(await exitsWith(overrides, env)).toContain(`models credential (file ${absent}): ENOENT`);
     });
 

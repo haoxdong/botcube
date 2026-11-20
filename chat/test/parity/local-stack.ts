@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
 import { loadDeployment } from '../../../deployment-config/load.js';
-import { modelsDeployment } from '../../../deployment-config/models.js';
 import { proxyEnvironment } from '../../../deployment-config/environment.js';
 import { telemetryDeployment } from '../../../deployment-config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
@@ -122,10 +121,10 @@ export async function startLocalStack(options: {
   };
   try {
     // Every process reads the one Deployment Config, its External Services replaced by their offline stand-ins.
-    const deploymentConfig = await standInDeploymentConfig(deploymentPath, deployment.config, home, egress?.offline);
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
     // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
-    const modelsEnv = await modelsStandInEnvironment(models, openAICompatible, home, mtls);
+    const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
+    const deploymentConfig = await standInDeploymentConfig(deploymentPath, deployment.config, home, { ...egress?.offline, ...modelsStandIn });
     // The Harness serves the bot settings the Deployment Config's `bot` names, as the example bot's image does.
     Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
@@ -138,7 +137,7 @@ export async function startLocalStack(options: {
       processes.push(running);
       return new URL(running.url).origin;
     };
-    const credentialService = modelsEnv && {
+    const credentialService = modelsStandIn && {
       BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
         `${CREDENTIAL_SERVICE_BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
         {
@@ -148,7 +147,6 @@ export async function startLocalStack(options: {
           ...egress?.credentialEnvironment,
           BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
           ...mtls?.pythonTrust,
-          ...modelsEnv.credentialService,
         },
         '/health',
         'Uvicorn running on http://127.0.0.1:',
@@ -196,7 +194,6 @@ export async function startLocalStack(options: {
         } : {}),
         ...egress?.chatEnvironment,
         ...mtls?.chatTrust,
-        ...modelsEnv?.chatService,
         ...credentialService,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
@@ -314,9 +311,9 @@ async function standInDeploymentConfig(
   path: string,
   config: DeploymentConfig,
   home: string,
-  offline: Pick<DeploymentConfig, 'proxy' | 'telemetry'> | undefined,
+  offline: Partial<Pick<DeploymentConfig, 'proxy' | 'telemetry' | 'models'>>,
 ): Promise<string> {
-  if (config.identity.kind !== 'oidc' && offline === undefined) return path;
+  if (config.identity.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
   const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
   const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
   const identity = config.identity.kind === 'oidc'
@@ -333,16 +330,15 @@ function turnCredentialsEnv(config: DeploymentConfig, sts: string): NodeJS.Proce
   return { AWS_ENDPOINT_URL_STS: sts, BOTCUBE_USER_MEMORY_ROLE_ARN: 'arn:aws:iam::123456789012:role/bot-cube-user-memory' };
 }
 
-/**
- * What the deploy gives each process for the models Endpoint at its stand-in, behind the mTLS stand-ins when given. It
- * stays in the environment: the stand-in is http on loopback, which models.url (https only) refuses.
- */
-async function modelsStandInEnvironment(models: DeploymentConfig['models'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
+/** The Deployment Config's models Endpoint at its stand-in, behind the mTLS stand-ins when given. */
+async function standInModels(models: DeploymentConfig['models'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
   if (openAICompatible === undefined || models.kind !== 'openai-compatible') return undefined;
-  return modelsDeployment({
-    ...models,
-    url: mtls ? `https://${MTLS_MODELS_HOST}/v1` : `${openAICompatible.url}/v1`,
-    credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) },
-    ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY } } : {}),
-  });
+  return {
+    models: {
+      ...models,
+      url: mtls ? `https://${MTLS_MODELS_HOST}/v1` : `${openAICompatible.url}/v1`,
+      credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) },
+      ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY } } : {}),
+    } satisfies DeploymentConfig['models'],
+  };
 }

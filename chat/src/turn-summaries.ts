@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import type { ModelsWire } from 'botcube-deployment-config/blocks';
-import { MODELS_ENV, modelsEndpointFromEnv } from 'botcube-deployment-config/models';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
 import { endpoint, type Endpoint } from './endpoint.js';
@@ -42,18 +42,15 @@ You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
 /**
- * The summary model the environment names: an OpenAI-compatible Endpoint when the deploy sets the Deployment Config's
- * `models` section (`MODELS_ENV`), else Bedrock. Throws naming a missing or bad variable.
+ * The summary model the Deployment Config's `models` section names: the `turnSummaryModel` on its OpenAI-compatible
+ * Endpoint, else Bedrock's in this region.
  */
-export function turnSummaryModelFromEnv(env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
-  const models = modelsEndpointFromEnv(env);
-  const model = env[MODELS_ENV.turnSummaryModel];
-  if (models) {
-    if (!model) throw new Error(`An OpenAI-compatible models endpoint needs ${MODELS_ENV.turnSummaryModel}, the model Turn summaries run on`);
-    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model, wire: models.wire };
+export function turnSummaryModel(models: DeploymentConfig['models'], env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
+  if (models.kind === 'openai-compatible') {
+    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model: models.turnSummaryModel, wire: models.wire };
   }
   const bedrock = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
-  return { kind: 'bedrock', region, url: `${bedrock}/model/${encodeURIComponent(model || MODEL_ID)}/converse` };
+  return { kind: 'bedrock', region, url: `${bedrock}/model/${encodeURIComponent(MODEL_ID)}/converse` };
 }
 
 /** The summarizer for this summary model. */

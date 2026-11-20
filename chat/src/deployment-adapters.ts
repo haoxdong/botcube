@@ -13,19 +13,20 @@ export interface DeploymentAdapters {
   schedules: DeploymentConfig['schedules'];
   telemetry: DeploymentConfig['telemetry'];
   proxy: DeploymentConfig['proxy'];
+  models: DeploymentConfig['models'];
 }
 
-const ADAPTER_SECTIONS = deploymentSections.pick({ harnessAuth: true, turnCredentials: true, schedules: true, telemetry: true, proxy: true });
+const ADAPTER_SECTIONS = deploymentSections.pick({ harnessAuth: true, turnCredentials: true, schedules: true, telemetry: true, proxy: true, models: true });
 
 /**
  * The adapters the Chat Service runs on: each section's `kind` in the Deployment Config at BOTCUBE_DEPLOYMENT_CONFIG,
  * or the schema's defaults without one (ADR 0091). Startup stops on a chosen kind whose environment is missing.
  */
 export function deploymentAdapters(env: NodeJS.ProcessEnv): DeploymentAdapters {
-  const { harnessAuth, turnCredentials, schedules, telemetry, proxy } = env.BOTCUBE_DEPLOYMENT_CONFIG
+  const { harnessAuth, turnCredentials, schedules, telemetry, proxy, models } = env.BOTCUBE_DEPLOYMENT_CONFIG
     ? loadDeployment(env.BOTCUBE_DEPLOYMENT_CONFIG).config
     : ADAPTER_SECTIONS.parse({});
-  return { harnessAuth, turnCredentials: turnCredentialsAdapter(turnCredentials.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy };
+  return { harnessAuth, turnCredentials: turnCredentialsAdapter(turnCredentials.kind, env[USER_MEMORY_ROLE_ARN] || undefined), schedules, telemetry, proxy, models };
 }
 
 function turnCredentialsAdapter(kind: DeploymentConfig['turnCredentials']['kind'], roleArn: string | undefined): TurnCredentialsAdapter {

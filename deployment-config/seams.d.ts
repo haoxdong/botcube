@@ -16,10 +16,6 @@ export interface HarnessClient {
 }
 
 export interface ModelsDeployment {
-  /** The Endpoint, for Turn summaries, and the summary model. */
-  readonly chatService: Readonly<Record<string, string>>;
-  /** The Endpoint, whose calls the Credential Service relays for the agent with the bearer it alone holds. */
-  readonly credentialService: Readonly<Record<string, string>>;
   /** The Secrets Manager secrets its credential is read from, which the Chat Service and the Credential Service are granted. */
   readonly secretArns: readonly string[];
 }
@@ -28,11 +24,6 @@ export interface RuntimeTelemetry {
   readonly kind: 'xray' | 'otlp' | 'none';
   /** The Secrets Manager secrets its credential is read from, which the Runtime is granted. */
   readonly secretArns: readonly string[];
-}
-
-export interface ModelsEnv {
-  readonly endpoint: 'BOTCUBE_MODELS_ENDPOINT';
-  readonly turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL';
 }
 
 export interface TokenAudiences {

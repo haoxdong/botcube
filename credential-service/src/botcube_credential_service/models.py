@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import os
 import ssl
 import time
@@ -32,40 +31,31 @@ if TYPE_CHECKING:
     from .server import InvocationGuard
 
 MODELS_PROVIDER = 'models'
-MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
-# The relay reads url, credential, headers and tls; the rest of the Deployment Config's models Endpoint is the Chat Service's and the Harness's.
-_ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'tls', 'kind', 'turnSummaryModel', 'wire', 'cacheMarkers'})
 _NOT_FORWARDED = frozenset({'authorization', 'host', 'content-length', 'connection', 'transfer-encoding', 'x-botcube-account-id', 'x-botcube-session-id'})
 _READ_TIMEOUT_SECONDS = 300
 _CONNECT_TIMEOUT_SECONDS = 30
 _HOP_BY_HOP = frozenset({'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'})
 
 
-def models_provider_from_env(
+def models_provider_from_config(
     audit: CredentialAuditRecorder,
+    config: Mapping[str, Any],
     env: Mapping[str, str] = os.environ,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     now: Callable[[], float] = time.time,
 ) -> ModelsEndpointProvider | None:
-    raw = env.get(MODELS_ENDPOINT_ENV, '').strip()
-    if not raw:
+    """The relay to the Deployment Config's OpenAI-compatible `models` Endpoint, or None on Bedrock."""
+    models = config['models']
+    if models['kind'] != 'openai-compatible':
         return None
-    try:
-        config = json.loads(raw)
-    except ValueError:
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: not JSON') from None
-    if unknown := sorted(set(config) - _ENDPOINT_FIELDS):
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: unknown field {", ".join(unknown)}')
-    if missing := sorted({'url', 'credential'} - set(config)):
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: missing field {", ".join(missing)}')
-    credential = credential_source('models', config['credential'], env=env, now=now)
+    credential = credential_source('models', models['credential'], env=env, now=now)
     credential.get()
-    tls = endpoint_tls('models', config['tls'], env=env) if 'tls' in config else None
+    tls = endpoint_tls('models', models['tls'], env=env) if 'tls' in models else None
     if tls is not None:
         tls.context()
     return ModelsEndpointProvider(
-        config['url'].rstrip('/'), dict(config.get('headers') or {}), credential, audit=audit, transport=transport, tls=tls,
+        models['url'].rstrip('/'), dict(models.get('headers') or {}), credential, audit=audit, transport=transport, tls=tls,
     )
 
 

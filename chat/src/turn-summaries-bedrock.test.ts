@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { awsFetch } from './aws.js';
 import type { TurnActivity } from './session-metadata.js';
-import { bedrockTurnSummarizer, recordTurnSummary, turnSummaryModelFromEnv } from './turn-summaries.js';
+import { bedrockTurnSummarizer, recordTurnSummary, turnSummaryModel } from './turn-summaries.js';
 
 vi.mock('./aws.js', () => ({ awsFetch: vi.fn() }));
 beforeEach(() => vi.mocked(awsFetch).mockReset());
 afterEach(() => vi.restoreAllMocks());
-const defaultModel = turnSummaryModelFromEnv({}, 'us-east-1');
+const defaultModel = turnSummaryModel({ kind: 'bedrock' }, {}, 'us-east-1');
 if (defaultModel.kind !== 'bedrock') throw new Error('With no models endpoint set, turn summaries run on Bedrock');
 const model = defaultModel;
 const turn = { request: 'PRIVATE_REQUEST', answer: 'PRIVATE_ANSWER' };

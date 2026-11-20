@@ -9,7 +9,7 @@ import type { DeployIdentity } from './production-identity.js';
 import { suppliedFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
-import { addModelsEndpoint } from './models-endpoint.js';
+import { grantModelsEndpoint } from './models-endpoint.js';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
@@ -26,14 +26,13 @@ import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-cred
 import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
-import type { ModelsDeployment, ModelsEnv } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { ModelsDeployment } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
 
 const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
 const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
 
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
-const TURN_SUMMARY_MODEL_ENV: ModelsEnv['turnSummaryModel'] = 'BOTCUBE_TURN_SUMMARY_MODEL';
 
 /** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
@@ -85,7 +84,6 @@ export interface ProductionOptions {
     deploymentConfig?: string;
   };
   credentials?: Partial<Omit<import('./private-credential-service.js').PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
-  turnSummaryModel?: string;
   /** The Deployment Config's non-Bedrock `models`, as botcube/deployment-config's `modelsDeployment` gives them. */
   models?: ModelsDeployment;
   /** The Deployment Config's `turnCredentials.kind`; absent is the default, `web-identity`. */
@@ -237,7 +235,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     ...options.credentials,
   });
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
-  addModelsEndpoint(credentials, options.models, 'credentialService');
+  grantModelsEndpoint(credentials, options.models);
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
   credentials.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
   const rawHostname = rawServiceHostname(identity);
@@ -290,15 +288,13 @@ export function defineProduction(app: App, options: ProductionOptions) {
 
 /** Where Turn summaries run: the Deployment Config's OpenAI-compatible Endpoint, or Bedrock. */
 function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
-  if (addModelsEndpoint(chat, options.models, 'chatService')) return;
-  const summaryModel = options.turnSummaryModel ?? TURN_SUMMARY_MODEL;
-  if (options.turnSummaryModel) chat.container.addEnvironment(TURN_SUMMARY_MODEL_ENV, `us.${options.turnSummaryModel}`);
+  if (grantModelsEndpoint(chat, options.models)) return;
   // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({
     actions: ['bedrock:InvokeModel'],
     resources: [
-      origin.formatArn({ service: 'bedrock', resource: 'inference-profile', resourceName: `us.${summaryModel}` }),
-      `arn:aws:bedrock:*::foundation-model/${summaryModel}`,
+      origin.formatArn({ service: 'bedrock', resource: 'inference-profile', resourceName: `us.${TURN_SUMMARY_MODEL}` }),
+      `arn:aws:bedrock:*::foundation-model/${TURN_SUMMARY_MODEL}`,
     ],
   }));
 }

@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { modelsDeployment } from 'botcube-deployment-config/models';
+import type { DeploymentConfig } from 'botcube-deployment-config';
 import { errors } from 'undici';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
-import { turnSummarizer, turnSummaryModelFromEnv } from './turn-summaries.js';
+import { turnSummarizer, turnSummaryModel } from './turn-summaries.js';
 
 const API_KEY = 'sk-mounted';
 const endpoint = new FakeOpenAICompatible(API_KEY);
@@ -29,22 +29,21 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The environment the deploy gives the Chat Service for an OpenAI-compatible `models` Endpoint, at the stand-in. */
-function deployed(models: Record<string, unknown> = {}): NodeJS.ProcessEnv {
-  const config = {
-    kind: 'openai-compatible' as const,
+/** The Deployment Config's OpenAI-compatible `models` section, at the stand-in. */
+function deployed(models: Partial<Extract<DeploymentConfig['models'], { kind: 'openai-compatible' }>> = {}): DeploymentConfig['models'] {
+  return {
+    kind: 'openai-compatible',
     url: `${endpoint.url}/v1`,
-    credential: { kind: 'file' as const, path: keyFile },
+    credential: { kind: 'file', path: keyFile },
     headers: { 'x-tenant': 'botcube-example' },
     turnSummaryModel: 'example-summary',
-    wire: 'chat-completions' as const,
+    wire: 'chat-completions',
     ...models,
   };
-  return { ...modelsDeployment(config)?.chatService };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
-const summarize = (env: NodeJS.ProcessEnv) => turnSummarizer(turnSummaryModelFromEnv(env, 'us-east-1'))(turn);
+const summarize = (models: DeploymentConfig['models']) => turnSummarizer(turnSummaryModel(models, {}, 'us-east-1'))(turn);
 
 describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
   it("send the Endpoint's credential as the bearer token, and its headers", async () => {
@@ -149,14 +148,9 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
     expect(endpoint.requests).toEqual([]);
   });
 
-  it('stop at startup on an Endpoint the deploy wrote wrong, naming its variable', () => {
-    expect(() => turnSummaryModelFromEnv({ BOTCUBE_MODELS_ENDPOINT: '{"url":"https://models.example.com/v1"}', BOTCUBE_TURN_SUMMARY_MODEL: 'example-summary' }, 'us-east-1'))
-      .toThrow('BOTCUBE_MODELS_ENDPOINT: credential: ');
-  });
-
   it('stop at startup on a command credential the deploy did not opt in to', () => {
-    const env = deployed({ credential: { kind: 'command', command: ['/usr/local/bin/token-broker'], timeoutSeconds: 30 } });
-    expect(() => turnSummaryModelFromEnv(env, 'us-east-1')).toThrow('models credential (command /usr/local/bin/token-broker): a command credential runs only when BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1');
+    const models = deployed({ credential: { kind: 'command', command: ['/usr/local/bin/token-broker'], timeoutSeconds: 30 } });
+    expect(() => turnSummaryModel(models, {}, 'us-east-1')).toThrow('models credential (command /usr/local/bin/token-broker): a command credential runs only when BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1');
   });
 });
 
