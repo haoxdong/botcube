@@ -63,7 +63,11 @@ function repository(): string {
     path.join(deployRoot, 'agentcore/aws-targets.json'),
     JSON.stringify([{ name: 'template', account: '000000000000', region: 'us-east-1' }])
   );
-  fs.writeFileSync(path.join(deployRoot, 'stage-tools.sh'), '#!/bin/sh\npwd > staged-from\n', { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(deployRoot, 'stage-tools.sh'),
+    '#!/bin/sh\npwd > staged-from\nmkdir -p harness/.tool-dist && echo "FROM scratch" > harness/.tool-dist/Dockerfile\n',
+    { mode: 0o755 }
+  );
   fs.writeFileSync(path.join(repo, 'harness/Dockerfile'), 'FROM scratch\nCOPY .tool-dist/ ./\n');
   fs.writeFileSync(path.join(repo, 'harness/session-api.Dockerfile'), 'FROM scratch\n');
   git(repo, 'init', '--quiet');
