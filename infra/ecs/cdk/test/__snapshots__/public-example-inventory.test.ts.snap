@@ -31,6 +31,7 @@ exports[`the public example creates the same resources, by stack, logical ID and
     "SessionApiLogs6A247C39 AWS::Logs::LogGroup",
     "SessionApiRole0E3AB5FD AWS::IAM::Role",
     "SessionApiRoleDefaultPolicy230716C4 AWS::IAM::Policy",
+    "SessionPurgeProgress4E9C859B AWS::Logs::MetricFilter",
     "TurnIdentityProvider4C3802E6 AWS::IAM::OIDCProvider",
     "UserMemoryRoleB6E07ACB AWS::IAM::Role",
     "UserMemoryRoleDefaultPolicy24C09E37 AWS::IAM::Policy",

@@ -222,6 +222,18 @@ test('the session API logs one month under its own name', () => {
   expect(synthesized.toJSON().Resources[sessionApiLogs(synthesized)].Properties.RetentionInDays).toBe(30);
 });
 
+test("each page a purge deletes counts on the Chat Service's account-deletion progress", () => {
+  const synthesized = template();
+
+  synthesized.hasResourceProperties('AWS::Logs::MetricFilter', {
+    LogGroupName: { Ref: sessionApiLogs(synthesized) },
+    FilterPattern: '"Session purge deleted"',
+    MetricTransformations: [
+      { MetricNamespace: 'BotCube/ChatService', MetricName: 'AccountDeletionProgress', MetricValue: '1' },
+    ],
+  });
+});
+
 test('the session API image builds from the Harness source with its own Dockerfile for arm64', () => {
   const app = new cdk.App();
   const sessionApiStack = stack(app);

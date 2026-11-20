@@ -134,6 +134,19 @@ def test_a_purge_deletes_at_five_per_second(memory: FakeAgentCoreMemory, monkeyp
     assert sleeps == [0.0, pytest.approx(0.2), pytest.approx(0.2)]
 
 
+def test_a_purge_logs_each_page_it_deletes(memory: FakeAgentCoreMemory, caplog: pytest.LogCaptureFixture) -> None:
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
+    _write(saver, SESSION, 3)
+    left = _left(memory, SESSION)
+
+    with caplog.at_level(logging.INFO, logger=purge_module.__name__):
+        purge_module.purge_session(saver, 'user-1', SESSION)
+
+    assert sorted(record.getMessage() for record in caplog.records) == sorted(
+        f'Session purge deleted {count} events. session_id={name}' for name, count in left.items()
+    )
+
+
 @pytest.mark.parametrize('damage', ['missing', 'corrupt'])
 def test_a_session_whose_snapshot_no_longer_decodes_still_purges_every_writes_session(
     memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, damage: str,

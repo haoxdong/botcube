@@ -273,7 +273,7 @@ test.each([false, true])('persistent account deletion failures notify the alert 
 });
 
 // A live task whose erase hung kept renewing its lease, so the failure alarm stayed quiet.
-test('a pending account deletion with no erase progress for two 5-minute periods notifies the alert owner', () => {
+test('a pending account deletion with no deletes for two 5-minute periods notifies the alert owner', () => {
   const template = synth();
   template.hasResourceProperties('AWS::Logs::MetricFilter', {
     FilterPattern: '"Account deletion pending"',

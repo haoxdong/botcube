@@ -28,6 +28,9 @@ from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
 )
 
 log = logging.getLogger(__name__)
+# Lambda's root logger defaults to WARNING; each page's progress line must reach CloudWatch, where the
+# account-deletion stalled alarm counts it.
+log.setLevel(logging.INFO)
 
 _DELETE_INTERVAL_SECONDS = 1 / 5
 _pace_lock = Lock()
@@ -92,6 +95,7 @@ def _purge(events: Any, actor_id: str, session_id: str) -> None:
                 sessionId=session_id,
                 eventId=event['eventId'],
             )
+        log.info('Session purge deleted %d events. session_id=%s', len(page), session_id)
 
 
 def _pace() -> None:

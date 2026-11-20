@@ -352,6 +352,15 @@ export class AgentCoreStack extends Stack {
       retention: props.sessionApiLogRetention ?? logs.RetentionDays.ONE_MONTH,
     });
     logGroup.grantWrite(role);
+    // A Session's purge logs a line per page it deletes; the Chat Service logs one only when the whole
+    // Session finishes. Both count as progress on the Chat Service's account-deletion stalled alarm.
+    new logs.MetricFilter(this, 'SessionPurgeProgress', {
+      logGroup,
+      filterPattern: logs.FilterPattern.literal('"Session purge deleted"'),
+      metricNamespace: 'BotCube/ChatService',
+      metricName: 'AccountDeletionProgress',
+      metricValue: '1',
+    });
     const sessionApi = new lambda.DockerImageFunction(this, 'SessionApi', {
       functionName: identity.sessionApiFunction,
       code: sessionApiCode(codeLocation, registryArgs(props)),

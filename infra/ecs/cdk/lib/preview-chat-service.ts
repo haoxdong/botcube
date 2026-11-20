@@ -265,7 +265,8 @@ export class PreviewChatService extends Construct {
     accountDeletionAlarm.addAlarmAction(new actions.SnsAction(topic));
     accountDeletionAlarm.addOkAction(new actions.SnsAction(topic));
     // A live task whose erase hangs renews its lease and logs no failure: alarm when a sweep's pending
-    // line has no erase progress or completion beside it for two 5-minute periods running.
+    // line has no deletes or completion beside it for two 5-minute periods running. Progress counts the
+    // erase's finished Sessions here and, from the AgentCore stack, each page of deletes a purge logs.
     const deletionLines = (id: string, filterPattern: logs.IFilterPattern) => {
       const filter = new logs.MetricFilter(this, id, { logGroup, filterPattern, metricNamespace: 'BotCube/ChatService', metricName: id, metricValue: '1' });
       (filter.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
