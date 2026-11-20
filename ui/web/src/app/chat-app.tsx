@@ -297,7 +297,7 @@ export default function App({
 
       <div className="app-stage">
       <Presence>{screenOpen && (
-        <motionElement.main {...presenceMotion} layout={false} className="app-shell app-plugins">
+        <motionElement.main {...presenceMotion} className="app-shell app-plugins">
           <Suspense fallback={<LoadingSkeleton label={screenContent.label} />}>{screenContent.content}</Suspense>
         </motionElement.main>
       )}</Presence>
@@ -317,7 +317,7 @@ export default function App({
             <ChatAlerts errors={activeId === null ? [] : [auth.error, mainChatRefreshError, stopError, choiceError, warmupError?.accountId === accountId ? warmupError?.message : null]} failure={activeId === null || mainChatError === null ? null : { error: mainChatError, retry: () => void openMainChat() }} />
             <ChatColumn agent={agent} accountId={accountId} header={headerInPane ? chatHeader : undefined} request={artifactRequest}>
             <Presence>{activeId === null ? noChat : (
-            <motionElement.div {...presenceMotion} layout={false} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
+            <motionElement.div {...presenceMotion} className={covered ? "app-chat app-chat-opening" : "app-chat"}>
               <TurnStart.Provider value={runningSince}>
               <WorklogAgent.Provider value={agent}>
               <ChatThread

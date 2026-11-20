@@ -1,12 +1,13 @@
 "use client";
 
-import { LayoutGroup, LazyMotion, domMax, m as motionElement } from "motion/react";
-import { memo, useEffect, useState, type RefObject } from "react";
+import { m as motionElement } from "motion/react";
+import { useEffect, useState, type RefObject } from "react";
 
 import { Avatar } from "./avatar";
 import { Presence, presenceMotion } from "./collapse";
-import { motionTokens } from "./motion-tokens";
 
+// A state hold, not motion: a waiting message carried into the next Turn starts it a task after the last one ends, so
+// "is working" holds across the gap instead of blinking (steering.stories.tsx, chat-steering-carried-working).
 const BETWEEN_TURNS_MS = 300;
 
 export function useHeaderWorking(chatId: string | null, working: boolean) {
@@ -22,22 +23,16 @@ export function useHeaderWorking(chatId: string | null, working: boolean) {
   return chatId !== null && (working || heldFor === chatId);
 }
 
-// Memoised, the capsule measures its layout only when its name or status changes, or when "is working" has faded and
-// left: Motion re-renders the LayoutGroup then, and with no layoutDependency the capsule shrinks from that render.
-export const HeaderName = memo(function HeaderName({ name, working }: { name: string; working: boolean }) {
-  const { move } = motionTokens();
-  const transition = { layout: { ...move, visualDuration: move.visualDuration * 2 } };
+export function HeaderName({ name, working }: { name: string; working: boolean }) {
   return (
-    <LazyMotion features={domMax} strict><LayoutGroup>
-      <motionElement.span layout transition={transition} className="chat-header-name">
-        <motionElement.span layout="position" transition={transition} className="chat-header-label">
-          {name}
-          <Presence>{working && <motionElement.span {...presenceMotion} layout={false} className="chat-header-status">is working</motionElement.span>}</Presence>
-        </motionElement.span>
-      </motionElement.span>
-    </LayoutGroup></LazyMotion>
+    <span className="chat-header-name">
+      <span className="chat-header-label">
+        {name}
+        <Presence>{working && <motionElement.span {...presenceMotion} className="chat-header-status">is working</motionElement.span>}</Presence>
+      </span>
+    </span>
   );
-});
+}
 
 export function ChatHeader({ opener, working, ready, chatId, open, picture, emoji, name }: {
   opener: RefObject<HTMLButtonElement | null>;

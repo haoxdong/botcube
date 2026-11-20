@@ -1,7 +1,7 @@
 import ts from 'typescript';
 
-const owned = new Set(['Presence', 'Swap', 'Fade', 'Collapse', 'GridCollapse', 'RowCollapse', 'CollapseList', 'AnimatePresence']);
-const lifecycle = new Set(['Sheet', 'StepSheet', 'Fade', 'Collapse', 'GridCollapse', 'RowCollapse', 'CollapseItem', 'FadeItem', 'Collapsible', 'GridCollapsible', 'Fading']);
+const owned = new Set(['Presence', 'Swap', 'Fade', 'Collapse', 'RowCollapse', 'CollapseList', 'AnimatePresence']);
+const lifecycle = new Set(['Sheet', 'StepSheet', 'Fade', 'Collapse', 'RowCollapse', 'CollapseItem', 'FadeItem', 'Collapsible', 'Fading']);
 const noBox = new Set(['MomentEnds', 'ComposerFilePicker', 'ChatSurface', 'PageScroll', 'ScrollUpClosesKeyboard']);
 
 function elementName(node: ts.Node, source: ts.SourceFile): string | null {
@@ -23,7 +23,7 @@ function animated(node: ts.Node, source: ts.SourceFile): boolean {
   const opening = ts.isJsxElement(node) ? node.openingElement : node;
   return opening.attributes.properties.some((property) =>
     ts.isJsxAttribute(property) && property.name.getText(source) === 'exit' ||
-    ts.isJsxSpreadAttribute(property) && property.expression.getText(source) === 'presenceMotion');
+    ts.isJsxSpreadAttribute(property) && ['presenceMotion', 'zoomMotion'].includes(property.expression.getText(source)));
 }
 
 function providerBoundary(node: ts.Node, source: ts.SourceFile): boolean {
@@ -60,7 +60,7 @@ export function bareVisibleMounts(text: string, file = 'fixture.tsx') {
         const name = elementName(root, source);
         if (name === null || lifecycle.has(name) || noBox.has(name) || invisible(root) || providerBoundary(root, source)) continue;
         const owner = ownerOf(node, source);
-        if (owner !== null && (animated(root, source) || ['Swap', 'Collapse', 'GridCollapse', 'RowCollapse', 'Fade'].includes(owner))) continue;
+        if (owner !== null && (animated(root, source) || ['Swap', 'Collapse', 'RowCollapse', 'Fade'].includes(owner))) continue;
         failures.push({ line: source.getLineAndCharacterOfPosition(root.getStart(source)).line + 1, element: name });
       }
     }

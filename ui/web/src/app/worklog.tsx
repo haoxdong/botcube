@@ -4,7 +4,7 @@
 import { m as motionElement } from "motion/react";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { partialJSONParse } from "@copilotkit/shared";
-import { GridCollapse, Presence, presenceMotion } from "./collapse";
+import { Collapse, Fade, Presence, presenceMotion } from "./collapse";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { RiArrowRightSLine } from "@remixicon/react";
@@ -31,7 +31,7 @@ function preloadStepSheet(): void {
 
 
 export const TurnStart = createContext<string | undefined>(undefined);
-// The steps seen arriving live, so a row CopilotKit remounts mid-run doesn't grow in again; the newest CLOCKS_KEPT.
+// The steps seen arriving live, so a row CopilotKit remounts mid-run doesn't fade in again; the newest CLOCKS_KEPT.
 const arrived = new Set<string>();
 
 /** Remembers live step `id` as arrived, dropping the oldest past CLOCKS_KEPT. */
@@ -209,7 +209,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
         {title}
         <RiArrowRightSLine className="worklog-chevron" aria-hidden />
       </button>
-      <GridCollapse open={open} appear={advanceClock}>
+      <Collapse open={open} appear={advanceClock}>
         <div className="worklog-body">
           <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
             <Presence>{start && (
@@ -225,7 +225,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
             )}</Presence>
           </StepTimes.Provider>
         </div>
-      </GridCollapse>
+      </Collapse>
     </div>
   );
 }
@@ -233,7 +233,7 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
 /**
  * One step of a Turn's work: an icon, then one line that truncates, and its time in the right-hand column. A step that
  * opens to a `sheet` over the chat is a button. Live, its words shimmer, and the Worklog's head stands still.
- * Arriving live (`id` first seen), it grows in.
+ * Arriving live (`id` first seen), it fades in.
  */
 function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: {
   id?: string | undefined;
@@ -247,7 +247,7 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
 }) {
   const live = state === "live";
   const { arriving } = useContext(StepTimes);
-  const [grows] = useState(() => arriving && live && id !== undefined && !arrived.has(id));
+  const [fades] = useState(() => arriving && live && id !== undefined && !arrived.has(id));
   useEffect(() => {
     if (live && id !== undefined) arrive(id);
   }, [id, live]);
@@ -266,7 +266,7 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
       </Head>
     </div>
   );
-  return grows ? <GridCollapse open>{step}</GridCollapse> : step;
+  return fades ? <Fade open className="worklog-step-arrival">{step}</Fade> : step;
 }
 
 /** The whole seconds of step `id` in its Worklog's timeline, spoken; outside one, none. */

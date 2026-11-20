@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, domAnimation, domMax, isMotionComponent, LazyMotion, MotionConfig, m, useIsPresent, usePresence, type HTMLMotionProps } from "motion/react";
-import { Children, Fragment, cloneElement, isValidElement, useEffect, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref } from "react";
+import { Children, Fragment, cloneElement, createContext, isValidElement, useContext, useEffect, useRef, useState, type Key, type KeyboardEventHandler, type ReactNode, type ReactElement, type Ref, type TransitionEvent } from "react";
 
 import { motionTokens } from "./motion-tokens";
 
@@ -9,7 +9,9 @@ type Tag = "div" | "li" | "span";
 
 type PresenceChildProps = { children?: ReactNode; inert?: boolean | undefined; initial?: unknown };
 
-export const presenceMotion = { layout: true, initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
+export const presenceMotion = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
+// What rides a zoom (the Agent Computer's sheet) springs to its new box on --motion-move, as the zoom does.
+export const zoomMotion = { ...presenceMotion, layout: true };
 
 function presenceChildren(children: ReactNode, prefix = ""): ReactElement<PresenceChildProps>[] {
   return Children.toArray(children).flatMap((child) => {
@@ -39,11 +41,11 @@ export function Layout({ children, ...props }: HTMLMotionProps<"div">) {
 
 export function Swap({ state, children, className, as = "div" }: { state: Key; children: ReactNode; className?: string; as?: Tag }) {
   const instant = useInstant();
-  const { quick, move } = motionTokens();
+  const { quick } = motionTokens();
   const Box = as;
   if (instant) return <Box key={state} className={className}>{children}</Box>;
   return (
-    <LazyMotion features={domAnimation} strict><MotionConfig transition={{ opacity: quick, layout: move }}><AnimatePresence mode="popLayout" initial={false}>
+    <LazyMotion features={domAnimation} strict><MotionConfig transition={{ opacity: quick }}><AnimatePresence mode="popLayout" initial={false}>
       <Fading key={state} as={as} className={className ?? ""}>{children}</Fading>
     </AnimatePresence></MotionConfig></LazyMotion>
   );
@@ -57,75 +59,39 @@ export function useInstant() {
   return instant;
 }
 
-function shownHeight(box: HTMLElement | null): number {
-  if (box === null) throw new Error("A closing Collapsible has no box to close from");
-  const height = Number.parseFloat(getComputedStyle(box).height);
-  // A box with no layout box, as under a hidden ancestor, computes "auto"; it shows its layout height, 0 there.
-  return Number.isNaN(height) ? box.offsetHeight : height;
-}
-
-function Collapsible({ as = "div", children }: { as?: Tag; children: ReactNode }) {
-  const present = useIsPresent();
-  const { move, quick } = motionTokens();
-  const box = useRef<HTMLElement | null>(null);
-  const Box = as === "li" ? m.li : m.div;
-  // Motion measures an auto-height exit at zero and clamps bottom-held scrollers; give it a numeric origin.
-  const variants = { closed: () => ({ height: [shownHeight(box.current), 0], opacity: 0 }) };
-  return (
-    <LazyMotion features={domMax} strict>
-      <Box
-        ref={(node: HTMLElement | null) => {
-          box.current = node;
-        }}
-        className="collapsible"
-        data-closing={present ? undefined : true}
-        inert={present ? undefined : true}
-        initial={{ height: 0, opacity: 0 }}
-        animate={{ height: "auto", opacity: 1 }}
-        exit="closed"
-        variants={variants}
-        transition={{ height: move, opacity: quick }}
-      >
-        <div>{children}</div>
-      </Box>
-    </LazyMotion>
-  );
-}
-
-export function Collapse({ open, appear = true, children }: { open: boolean; appear?: boolean; children: ReactNode }) {
-  const instant = useInstant();
-  if (instant) return open ? <div className="collapsible"><div>{children}</div></div> : null;
-  return <AnimatePresence initial={appear}>{open && <Collapsible>{children}</Collapsible>}</AnimatePresence>;
-}
-
 const closesRows = (animation: Animation) => "transitionProperty" in animation && animation.transitionProperty === "grid-template-rows";
 
-function GridCollapsible({ still, children }: { still: boolean; children: ReactNode }) {
+// What opens and closes in the column grows its rows from nothing on --motion-move and closes them before it unmounts
+// (motion.css), so what follows moves with it: never a held gap, then a jump.
+function Collapsible({ as = "div", still, children }: { as?: Tag; still: boolean; children: ReactNode }) {
   const [present, safeToRemove] = usePresence();
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLElement>(null);
   useEffect(() => {
     if (present) return;
-    if (box.current === null) throw new Error("A closing GridCollapse has no box to close from");
+    if (box.current === null) throw new Error("A closing Collapse has no box to close from");
     // No transitionend comes when the rows start no transition: a zero --motion-move, or a box under a hidden ancestor.
     if (!box.current.getAnimations().some(closesRows)) safeToRemove();
   }, [present, safeToRemove]);
+  const Box = as;
   return (
-    <div
-      ref={box}
+    <Box
+      ref={(node: HTMLElement | null) => {
+        box.current = node;
+      }}
       className="collapsible grid-collapse"
       data-still={still || undefined}
       data-closing={present ? undefined : true}
       inert={present ? undefined : true}
-      onTransitionEnd={(event) => {
+      onTransitionEnd={(event: TransitionEvent<HTMLElement>) => {
         if (!present && event.target === event.currentTarget && event.propertyName === "grid-template-rows") safeToRemove();
       }}
     >
       <div>{children}</div>
-    </div>
+    </Box>
   );
 }
 
-export function GridCollapse({ open, appear = true, children }: { open: boolean; appear?: boolean; children: ReactNode }) {
+export function Collapse({ open, appear = true, children }: { open: boolean; appear?: boolean; children: ReactNode }) {
   const instant = useInstant();
   const [shown, setShown] = useState(open);
   const [opens, setOpens] = useState(0);
@@ -134,18 +100,25 @@ export function GridCollapse({ open, appear = true, children }: { open: boolean;
     if (open) setOpens(opens + 1);
   }
   if (instant) return open ? <div className="collapsible"><div>{children}</div></div> : null;
-  return <AnimatePresence initial={false}>{open && <GridCollapsible key={opens} still={!appear && opens === 0}>{children}</GridCollapsible>}</AnimatePresence>;
+  return <AnimatePresence initial={false}>{open && <Collapsible key="open" still={!appear && opens === 0}>{children}</Collapsible>}</AnimatePresence>;
 }
+
+// True while a CollapseList mounts its first rows, which show at once unless the list asks them to grow in.
+const ListMounting = createContext(false);
 
 export function CollapseList({ children, initial = false, ...presence }: { children: ReactNode; initial?: boolean; onExitComplete?: () => void }) {
   const instant = useInstant();
-  return instant ? children : <AnimatePresence initial={initial} {...presence}>{children}</AnimatePresence>;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (instant) return children;
+  return <ListMounting value={!mounted && !initial}><AnimatePresence initial={initial} {...presence}>{children}</AnimatePresence></ListMounting>;
 }
 
 export function CollapseItem({ as: Row = "div", children }: { as?: Tag; children: ReactNode }) {
   const instant = useInstant();
+  const [still] = useState(useContext(ListMounting));
   if (instant) return <Row className="collapsible"><div>{children}</div></Row>;
-  return <Collapsible as={Row}>{children}</Collapsible>;
+  return <Collapsible as={Row} still={still}>{children}</Collapsible>;
 }
 
 type FadeProps = {

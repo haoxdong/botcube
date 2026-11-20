@@ -1,7 +1,7 @@
 /* Motion beyond the tokens in globals.css's :root (DESIGN.md Motion). */
 
-/* What opens and closes in the column (a Worklog, a step's detail, a step arriving) grows from nothing and shrinks
-   away before it unmounts (collapse.tsx, on Motion), so what's below follows it instead of jumping. It clips only
+/* What opens and closes in the column (a Worklog, a step's detail, an alert, a sheet's row) grows its rows from
+   nothing and closes them before it unmounts (collapse.tsx), so what's below follows it instead of jumping. It clips only
    vertically, so a step's hover pill still reaches past its sides, and its inner box holds its content's margins. */
 .collapsible {
   overflow-x: visible;

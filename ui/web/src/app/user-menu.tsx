@@ -1,6 +1,6 @@
 "use client";
 
-import { Swap, Presence, presenceMotion, Layout } from "./collapse";
+import { Swap, Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "motion/react";
 import { useRef, useState } from "react";
@@ -67,7 +67,7 @@ export function UserMenu({ expanded, auth, onLogout }: {
         <Avatar picture={userInfo?.photo} name={name} blank={userLoading} size={isPhone && expanded ? 29 : 28} />
         <Presence>{expanded && <motionElement.span {...presenceMotion} className="sidebar-nav-label">{firstName}</motionElement.span>}</Presence>
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={8} render={<Layout layoutDependency={editing} />} className="user-menu-dropdown standard-popup" finalFocus={editing && isPhone ? false : triggerRef}>
+      <PopoverContent side="top" align="start" sideOffset={8} className="user-menu-dropdown standard-popup" finalFocus={editing && isPhone ? false : triggerRef}>
         <Swap state={editing && editor && !isPhone ? "editing" : "account"}>{editing && editor && !isPhone ? (
           editor
         ) : (

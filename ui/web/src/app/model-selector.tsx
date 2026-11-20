@@ -36,21 +36,21 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
     <LazyMotion features={domMax} strict><MotionConfig transition={transition}><PopoverPrimitive.Root<"main" | "effort"> open={open} actionsRef={actions} onOpenChange={(next, details) => { const nextOpen = next && !(open && details.trigger === trigger.current); if (!nextOpen) details.preventUnmountOnClose(); setOpen(nextOpen); }}>
       {({ payload }) => <>
         <div className="mep">
-          <PopoverPrimitive.Trigger ref={trigger} payload="main" render={<motionElement.button layout="position" transition={transition} />} className="mep-pill" aria-expanded={open} aria-label={`Model ${modelLabel}, reasoning ${effortLabel}`}>
-            <motionElement.span layout transition={transition} className="mep-pill-background" data-model={modelLabel} data-phone-model={modelLabel === "GPT-6-Astra" ? "6 Astra" : modelLabel} data-effort={effortLabel} aria-hidden />
-            <motionElement.span layout="position" transition={{ layout: transition }} className="mep-pill-model">
+          <PopoverPrimitive.Trigger ref={trigger} payload="main" className="mep-pill" aria-expanded={open} aria-label={`Model ${modelLabel}, reasoning ${effortLabel}`}>
+            <span className="mep-pill-background" data-model={modelLabel} data-phone-model={modelLabel === "GPT-6-Astra" ? "6 Astra" : modelLabel} data-effort={effortLabel} aria-hidden />
+            <span className="mep-pill-model">
               <span className={modelLabel === "GPT-6-Astra" ? "mep-pill-model-desktop" : undefined}>{modelLabel}</span>
               <span className="mep-pill-model-phone">{modelLabel === "GPT-6-Astra" ? "6 Astra" : ""}</span>
-            </motionElement.span>
-            <motionElement.span layout="position" transition={{ layout: transition }} className="mep-pill-effort">{effortLabel}</motionElement.span>
-            <motionElement.span layout="position" transition={{ layout: transition }} className="mep-pill-chevron" aria-hidden><svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+            </span>
+            <span className="mep-pill-effort">{effortLabel}</span>
+            <span className="mep-pill-chevron" aria-hidden><svg width="10" height="6" viewBox="0 0 10 6" fill="none">
               <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg></motionElement.span>
+            </svg></span>
           </PopoverPrimitive.Trigger>
         </div>
         <PopoverPrimitive.Portal><PopoverPrimitive.Positioner className="standard-popup-positioner" side="top" align="end" sideOffset={8} anchor={() => trigger.current?.closest(".chat-composer") ?? trigger.current} render={(positionerProps) => cloneElement(<motionElement.div layoutRoot layout={!instant} data-framer-portal-id={pickerId} transformTemplate={() => positionerProps.style?.transform ?? "none"} />, positionerProps, <PopoverPrimitive.Popup ref={popup} initialFocus={popup} finalFocus={trigger} render={<motionElement.div layoutAnchor={{ x: 1, y: 1 }} layout={!instant && positionerProps.style?.opacity !== 0} style={{ originX: 1, originY: 1 }} initial={instant ? false : { opacity: 0 }} animate={{ opacity: open ? 1 : 0 }} transition={transition} onAnimationComplete={() => { if (!open) actions.current?.unmount(); }} />} aria-label="Model and effort" className="mep-dropdown mep-spring standard-popup">
               <AnimatePresence mode="popLayout" initial={false}>
-                {payload === "effort" ? <PickerPage key="effort" {...presenceMotion} transition={transition}>
+                {payload === "effort" ? <PickerPage key="effort" {...presenceMotion} layout transition={transition}>
                   <PopoverPrimitive.Trigger id={`${pickerId}-back`} payload="main" className="mep-option mep-back" aria-label="Back to models">
                     <svg width="7" height="12" viewBox="0 0 7 12" fill="none" aria-hidden><path d="M6 1L1 6l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     <span className="mep-option-name">Effort</span>
@@ -61,7 +61,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
                       <span className="mep-option-name">{choice.label}</span>
                     </PopoverPrimitive.Trigger>)}
                   </RadioGroup>
-                </PickerPage> : <PickerPage key="main" {...presenceMotion} transition={transition}>
+                </PickerPage> : <PickerPage key="main" {...presenceMotion} layout transition={transition}>
                   <RadioGroup className="mep-choices" aria-label="Model" value={model ?? null} onValueChange={(selected: string | null) => { if (selected !== null) onModelChange(selected); }}>
                     {options.map((choice) => <PickerChoice key={choice.key} value={choice.key} className="mep-option">
                       <div>
@@ -86,7 +86,7 @@ export function ModelSelector({ models, model, effort, loadingLabel, onModelChan
 function PickerChoice({ children, ...props }: ComponentProps<typeof RadioGroupItem>) {
   return <RadioGroupItem {...props} className="mep-option" nativeButton render={(buttonProps, state) => <button {...buttonProps} type="button">
     {children}
-    <AnimatePresence initial={false}>{state.checked && <motionElement.svg {...presenceMotion} layout={false} className="mep-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></motionElement.svg>}</AnimatePresence>
+    <AnimatePresence initial={false}>{state.checked && <motionElement.svg {...presenceMotion} className="mep-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5" /></motionElement.svg>}</AnimatePresence>
   </button>} />;
 }
 

@@ -1,9 +1,9 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { m } from 'motion/react';
 import type { ReactNode } from 'react';
-import { Collapse, CollapseItem, CollapseList, Fade, GridCollapse, Presence, Swap, presenceMotion } from './collapse';
+import { Collapse, CollapseItem, CollapseList, Fade, Presence, Swap, presenceMotion } from './collapse';
 
 // globals.css's tokens, which the transitions read as they start.
 const tokens = () => {
@@ -13,97 +13,10 @@ const tokens = () => {
 };
 
 describe('Collapse', () => {
-  it('unmounts with nothing to wait for without the motion tokens (no stylesheet)', async () => {
-    const view = render(<Collapse open>Steps</Collapse>);
-    view.rerender(<Collapse open={false}>Steps</Collapse>);
-    await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
-  });
-
-  describe('with the motion tokens', () => {
-    it('shrinks away, inert, until its height has closed, then unmounts with cached features', async () => {
-      tokens();
-      const view = render(<Collapse open><button type="button">Ran ls</button></Collapse>);
-      await waitFor(() => expect(view.container.querySelector<HTMLElement>('.collapsible')?.style.height).toBe('auto'));
-      view.rerender(<Collapse open={false}><button type="button">Ran ls</button></Collapse>);
-      const box = view.container.querySelector('.collapsible');
-      expect(box).toHaveAttribute('data-closing');
-      expect(box).toHaveAttribute('inert');
-      expect(screen.queryByText('Ran ls')).not.toBeNull();
-      await waitFor(() => expect(screen.queryByText('Ran ls')).toBeNull(), { timeout: 1000 });
-    });
-
-    // Laid out at its end height for a moment, the box would shrink a scroll view held at its end, and the browser
-    // would clamp the view's scroll there and keep it: the whole chat dropped in one frame as a Worklog closed.
-    // happy-dom has no layout to clamp, so this watches the cause: Motion (motion-dom 14.7.1's measureEndState) reads
-    // the box's computed style while it holds the end height, to resolve a close from "auto".
-    it('closes from the height it shows, never laid out at its end height first', async () => {
-      tokens();
-      const view = render(<Collapse open>Steps</Collapse>);
-      const box = view.container.querySelector<HTMLElement>('.collapsible');
-      if (!box) throw new Error('The open Collapse has no box');
-      // Open at rest: its height has grown in to auto, as a Worklog's has a while into its Turn.
-      await waitFor(() => expect(box.style.height).toBe('auto'), { timeout: 1000 });
-      // Its motion value settles on "auto" only once the 300 ms opening has run.
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      const read = window.getComputedStyle;
-      const laidOutAt: string[] = [];
-      const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) => {
-        if (element === box) laidOutAt.push(box.style.height);
-        return read.call(window, element, pseudo);
-      });
-      onTestFinished(() => spy.mockRestore());
-      view.rerender(<Collapse open={false}>Steps</Collapse>);
-      await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 1000 });
-      expect(laidOutAt).not.toContain('0px');
-    });
-
-    it('opens again from where it is when reopened while closing', async () => {
-      tokens();
-      const view = render(<Collapse open>Steps</Collapse>);
-      view.rerender(<Collapse open={false}>Steps</Collapse>);
-      view.rerender(<Collapse open>Steps</Collapse>);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const box = view.container.querySelector('.collapsible');
-      expect(box).not.toHaveAttribute('data-closing');
-      expect(box).not.toHaveAttribute('inert');
-      expect(screen.getByText('Steps')).toBeVisible();
-    });
-
-    const rows = (ids: string[]) => (
-      <ul>
-        <CollapseList>
-          {ids.map((id) => (
-            <CollapseItem as="li" key={id}>{id}</CollapseItem>
-          ))}
-        </CollapseList>
-      </ul>
-    );
-
-    it("shows a list's rows at once as it mounts, and grows in a row that arrives", () => {
-      tokens();
-      const view = render(rows(['Rates recap']));
-      expect(view.container.querySelector('li')?.style.height).toBe('auto');
-      view.rerender(rows(['Rates recap', 'FX check']));
-      expect(screen.getByText('FX check').closest('li')?.style.height).toBe('0px');
-    });
-
-    it('closes a removed row up, inert, before it leaves the list', async () => {
-      tokens();
-      const view = render(rows(['Rates recap', 'FX check']));
-      view.rerender(rows(['Rates recap']));
-      const leaving = screen.getByText('FX check').closest('li');
-      expect(leaving).toHaveAttribute('inert');
-      await waitFor(() => expect(screen.queryByText('FX check')).toBeNull(), { timeout: 1000 });
-      expect(view.container.querySelectorAll('li')).toHaveLength(1);
-    });
-  });
-});
-
-describe('GridCollapse', () => {
   const running = (box: Element, ...properties: string[]) => Object.defineProperty(box, 'getAnimations', { configurable: true, value: () => properties.map((transitionProperty) => ({ transitionProperty })) });
   const boxOf = (container: HTMLElement) => {
     const box = container.querySelector<HTMLElement>('.grid-collapse');
-    if (!box) throw new Error('The open GridCollapse has no box');
+    if (!box) throw new Error('The open Collapse has no box');
     return box;
   };
   const ended = (target: Element, propertyName: string) => {
@@ -116,16 +29,16 @@ describe('GridCollapse', () => {
 
   it('never gives Motion a height to measure', () => {
     tokens();
-    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    const view = render(<Collapse open>Steps</Collapse>);
     expect(boxOf(view.container).getAttribute('style')).toBeNull();
   });
 
   it('closes its rows, inert, until their transition ends, then unmounts', () => {
     tokens();
-    const view = render(<GridCollapse open><span>Steps</span></GridCollapse>);
+    const view = render(<Collapse open><span>Steps</span></Collapse>);
     const box = boxOf(view.container);
     running(box, 'grid-template-rows', 'opacity');
-    view.rerender(<GridCollapse open={false}><span>Steps</span></GridCollapse>);
+    view.rerender(<Collapse open={false}><span>Steps</span></Collapse>);
     expect(box).toHaveAttribute('data-closing');
     expect(box).toHaveAttribute('inert');
     ended(screen.getByText('Steps'), 'grid-template-rows');
@@ -137,27 +50,28 @@ describe('GridCollapse', () => {
 
   it('unmounts at once when its close starts no transition, as under a hidden ancestor', async () => {
     tokens();
-    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    const view = render(<Collapse open>Steps</Collapse>);
     running(boxOf(view.container));
-    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
+    view.rerender(<Collapse open={false}>Steps</Collapse>);
     await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
   });
 
   it('unmounts at once when only its fade runs, as with a zero --motion-move', async () => {
     tokens();
-    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    const view = render(<Collapse open>Steps</Collapse>);
     running(boxOf(view.container), 'opacity');
-    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
+    view.rerender(<Collapse open={false}>Steps</Collapse>);
     await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
   });
 
   it('stays open when reopened while closing', () => {
     tokens();
-    const view = render(<GridCollapse open>Steps</GridCollapse>);
+    const view = render(<Collapse open>Steps</Collapse>);
     const box = boxOf(view.container);
     running(box, 'grid-template-rows', 'opacity');
-    view.rerender(<GridCollapse open={false}>Steps</GridCollapse>);
-    view.rerender(<GridCollapse open>Steps</GridCollapse>);
+    view.rerender(<Collapse open={false}>Steps</Collapse>);
+    view.rerender(<Collapse open>Steps</Collapse>);
+    expect(view.container.querySelectorAll('.grid-collapse')).toHaveLength(1);
     ended(box, 'grid-template-rows');
     expect(screen.getByText('Steps')).toBeVisible();
     expect(boxOf(view.container)).not.toHaveAttribute('data-closing');
@@ -165,12 +79,50 @@ describe('GridCollapse', () => {
 
   it('shows at once when it must not appear, and grows in when opened later', () => {
     tokens();
-    const view = render(<GridCollapse open appear={false}>Steps</GridCollapse>);
+    const view = render(<Collapse open appear={false}>Steps</Collapse>);
     expect(boxOf(view.container)).toHaveAttribute('data-still');
     running(boxOf(view.container));
-    view.rerender(<GridCollapse open={false} appear={false}>Steps</GridCollapse>);
-    view.rerender(<GridCollapse open appear={false}>Steps</GridCollapse>);
+    view.rerender(<Collapse open={false} appear={false}>Steps</Collapse>);
+    view.rerender(<Collapse open appear={false}>Steps</Collapse>);
     expect(boxOf(view.container)).not.toHaveAttribute('data-still');
+  });
+
+  const rows = (ids: string[]) => (
+    <ul>
+      <CollapseList>
+        {ids.map((id) => (
+          <CollapseItem as="li" key={id}>{id}</CollapseItem>
+        ))}
+      </CollapseList>
+    </ul>
+  );
+
+  it('unmounts with nothing to wait for without the motion tokens (no stylesheet)', async () => {
+    const view = render(<Collapse open>Steps</Collapse>);
+    view.rerender(<Collapse open={false}>Steps</Collapse>);
+    await waitFor(() => expect(screen.queryByText('Steps')).toBeNull(), { timeout: 100 });
+  });
+
+  it("shows a list's rows at once as it mounts, and grows in a row that arrives", () => {
+    tokens();
+    const view = render(rows(['Rates recap']));
+    expect(screen.getByText('Rates recap').closest('li')).toHaveAttribute('data-still');
+    view.rerender(rows(['Rates recap', 'FX check']));
+    expect(screen.getByText('FX check').closest('li')).not.toHaveAttribute('data-still');
+  });
+
+  it('closes a removed row up, inert, before it leaves the list', () => {
+    tokens();
+    const view = render(rows(['Rates recap', 'FX check']));
+    const leaving = screen.getByText('FX check').closest('li');
+    if (!leaving) throw new Error('The list has no FX check row');
+    running(leaving, 'grid-template-rows', 'opacity');
+    view.rerender(rows(['Rates recap']));
+    expect(leaving).toHaveAttribute('data-closing');
+    expect(leaving).toHaveAttribute('inert');
+    ended(leaving, 'grid-template-rows');
+    expect(screen.queryByText('FX check')).toBeNull();
+    expect(view.container.querySelectorAll('li')).toHaveLength(1);
   });
 });
 

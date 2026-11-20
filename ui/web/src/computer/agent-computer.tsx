@@ -1,7 +1,7 @@
 
 
 import { domMax, LazyMotion, m as motionElement } from "motion/react";
-import { Presence, presenceMotion } from "../app/collapse";
+import { Presence, presenceMotion, zoomMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
@@ -234,7 +234,7 @@ export function AgentComputer({
               dimmed, over the desktop: never a black frame. */}
           <div className={covered ? 'agent-computer-screen agent-computer-screen-covered' : 'agent-computer-screen'}>
             <Presence>{hasViewer && (
-              <motionElement.div {...presenceMotion} key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
+              <motionElement.div {...zoomMotion} key={`${browserSessionId}:${generation}`} className="agent-computer-live"><BrowserFrame
                 sessionId={browserSessionId}
                 expanded={sheet}
                 interactive={active && sheet && control === 'user' && !busy && app === 'Chrome'}
@@ -259,7 +259,7 @@ export function AgentComputer({
               /></motionElement.div>
             )}</Presence>
             <Presence>{covered && (
-              <motionElement.div {...presenceMotion} className="agent-computer-cover">
+              <motionElement.div {...zoomMotion} className="agent-computer-cover">
                 <Presence>{computer.screenshot !== null && (
                   <motionElement.img {...presenceMotion} className="agent-computer-screenshot" src={computer.screenshot} alt="The last screen" />
                 )}</Presence>
@@ -269,7 +269,7 @@ export function AgentComputer({
             )}</Presence>
             {/* Terminal and Files fill the window Chrome's live view fills; the dock switches between them, closing none. */}
             <Presence>{app === 'Terminal' && (
-              <motionElement.section {...presenceMotion} className="agent-computer-app" aria-label="Terminal">
+              <motionElement.section {...zoomMotion} className="agent-computer-app" aria-label="Terminal">
                 <div className="agent-computer-terminal-bar">
                   <Folder aria-hidden="true" />
                   <span>workspace — zsh</span>
@@ -277,7 +277,7 @@ export function AgentComputer({
                 <Terminal commands={commands} error={terminalError} prompt={`agent@${host} workspace %`} />
               </motionElement.section>
             )}</Presence>
-            <Presence>{app === 'Files' && <motionElement.section {...presenceMotion} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}</Presence>
+            <Presence>{app === 'Files' && <motionElement.section {...zoomMotion} className="agent-computer-app" aria-label="Files">{files}</motionElement.section>}</Presence>
             <Presence>{!sheet && app === 'Chrome' && <motionElement.button {...presenceMotion} type="button" className="agent-computer-screen-open" aria-label="View computer" disabled={!active} onClick={() => zoom(true)} />}</Presence>
           </div>
         </div>
