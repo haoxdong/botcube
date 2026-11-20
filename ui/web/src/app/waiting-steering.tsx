@@ -4,14 +4,11 @@ import { useContext, useEffect, useLayoutEffect, useState, type PointerEvent as 
 import { LazyMotion, domMax, m } from "motion/react";
 import { Pencil, X } from "lucide-react";
 import { USER_MESSAGE_CLASS } from "./bubble-width";
-import { Fade, GridCollapse, Presence, useInstant } from "./collapse";
+import { Fade, GridCollapse, useInstant } from "./collapse";
 import { motionTokens } from "./motion-tokens";
 import { sentFilesOf } from "./composer-files";
 import { MessageEntranceHistory } from "./message-entrance";
 import type { PendingMessage, Withdrawal } from "./steering";
-
-export const SHOWS_WAITING_STEERING = process.env.NEXT_PUBLIC_WAITING_STEERING === "1";
-const SHOWS_SEND_NOW = process.env.NEXT_PUBLIC_SEND_NOW === "1";
 
 type Closing = { message: PendingMessage; after: string | null };
 type Row = { message: PendingMessage; shown: boolean };
@@ -51,7 +48,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
   onClosed: () => void;
   open: boolean;
   onToggle: () => void;
-  onSendNow: (() => void) | undefined;
+  onSendNow: () => void;
   onEdit: () => void;
   onCancel: () => void;
   outcome: Withdrawal | undefined;
@@ -89,11 +86,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
         <div className="waiting-message-actions">
           <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
           <span className="waiting-message-swap">
-            <Presence>{onSendNow && (
-              <m.span key="send-now" exit={{ opacity: 0 }}>
-                <button type="button" className="waiting-message-send-now" onClick={onSendNow}>Send now</button>
-              </m.span>
-            )}</Presence>
+            <button type="button" className="waiting-message-send-now" onClick={onSendNow}>Send now</button>
             <span className="waiting-message-icons">
               <button type="button" className="waiting-message-icon" aria-label={`Edit ${text}`} onClick={onEdit}><Pencil aria-hidden="true" /></button>
               <button type="button" className="waiting-message-icon" aria-label={`Cancel ${text}`} onClick={onCancel}><X aria-hidden="true" /></button>
@@ -108,7 +101,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
 export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
   waiting: PendingMessage[];
   withdraw: (id: string) => Promise<Withdrawal>;
-  sendNow: ((id: string) => Promise<Withdrawal>) | undefined;
+  sendNow: (id: string) => Promise<Withdrawal>;
   onEdit: (message: PendingMessage) => void;
 }) {
   const entrances = useContext(MessageEntranceHistory);
@@ -126,7 +119,6 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
     setClosing((now) => new Map(now).set(message.id, { message, after }));
     return outcome;
   };
-  const send = SHOWS_SEND_NOW ? sendNow : undefined;
   const rows = rowsOf(waiting, closing);
   const closed = (id: string) => () => setClosing((now) => {
     const next = new Map(now);
@@ -144,7 +136,7 @@ export function WaitingMessages({ waiting, withdraw, sendNow, onEdit }: {
             onClosed={closed(message.id)}
             open={open === message.id}
             onToggle={() => setOpen(open === message.id ? null : message.id)}
-            onSendNow={send && (() => void act(message, send, false))}
+            onSendNow={() => void act(message, sendNow, false)}
             onEdit={() => void act(message, withdraw, true).then((outcome) => outcome === "withdrawn" && onEdit(message))}
             onCancel={() => void act(message, withdraw, true)}
             outcome={outcomes.get(message.id)}

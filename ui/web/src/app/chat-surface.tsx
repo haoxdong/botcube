@@ -40,7 +40,7 @@ import { showsProposalCard } from "./worklog-tools";
 import { fitBubbles } from "./bubble-width";
 import { prefetchPlotly } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
-import { SHOWS_WAITING_STEERING, WaitingMessages } from "./waiting-steering";
+import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
 import { useAgentRunning } from "./agent-running";
 import { ThreadScrollView } from "./conversation-thread";
@@ -148,7 +148,7 @@ function useLendComposer(text: { current: string }, onChange: (value: string) =>
 function ThreadWaiting() {
   const steering = useContext(SteeringWaiting);
   const composer = useContext(WaitingComposer);
-  if (!SHOWS_WAITING_STEERING || !steering || !composer) return null;
+  if (!steering || !composer) return null;
   const sendNow = async (id: string) => {
     const outcome = await steering.sendNow(id);
     if (outcome === "withdrawn") composer.current?.stopTurn?.();
