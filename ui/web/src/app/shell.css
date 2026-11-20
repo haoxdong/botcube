@@ -358,22 +358,10 @@
   overflow: hidden;
 }
 
-/* Undo the stock ghost Button's own box: the rule above draws the row. */
+/* The stock ghost Button centres its content and sets h-8; the row keeps its left edge and 40px height. */
 .sidebar-nav-item[data-slot="button"] {
-  height: auto;
-  justify-content: normal;
-  background-clip: border-box;
-  font-weight: inherit;
-  line-height: inherit;
-  user-select: auto;
-  outline-style: revert;
-  box-shadow: none;
-  translate: none;
-}
-
-.sidebar-nav-item[data-slot="button"]:disabled {
-  opacity: 1;
-  pointer-events: auto;
+  height: 40px;
+  justify-content: flex-start;
 }
 
 .sidebar-nav-icon {
