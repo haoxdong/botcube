@@ -231,6 +231,9 @@ class OpenAIProvider:
         self._access.pop(invocation.account_id, None)
         return {'status': 'stored', 'subject': sign_in['subject']}
 
+    async def linked(self, account_id: str) -> bool:
+        return False
+
     async def revoke(self, account_id: str) -> None:
         self._access.pop(account_id, None)
         await asyncio.to_thread(self._vault().delete_durable_credential, account_id, OPENAI_PROVIDER)

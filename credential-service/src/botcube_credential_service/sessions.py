@@ -345,6 +345,10 @@ class SessionCache:
             if token is not None:
                 self.vault.discard_session(account, self.provider, token=token)
 
+    def linked(self, account_id: str) -> bool:
+        """Whether the Vault holds the account's Durable Credential: its item exists, read with no decrypt or re-mint."""
+        return self.vault.credential_revision(require_account_id(account_id), self.provider) is not None
+
     def delete_linked_credential(self, account_id: str) -> None:
         account = require_account_id(account_id)
         with self._account_lock(account):

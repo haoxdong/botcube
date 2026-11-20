@@ -70,6 +70,9 @@ class FakeSiteProvider:
         await asyncio.to_thread(self.sessions().store_linked_credential, invocation.account_id, credential, [])
         return {'status': 'linked'}
 
+    async def linked(self, account_id: str) -> bool:
+        return await asyncio.to_thread(self.sessions().linked, account_id)
+
     async def revoke(self, account_id: str) -> None:
         await asyncio.to_thread(self.sessions().delete_linked_credential, account_id)
 

@@ -26,10 +26,15 @@ import { testUserConnectorRoutes } from './test-user-connector.js';
 import { tokenIntrospectionRoutes } from './token-introspection.js';
 
 const ACCOUNT_DELETION_SESSION = 'account-deletion';
+const ACCOUNT_SESSION = 'account-session';
 const CREDENTIAL_SERVICE_TIMEOUT_MS = 30_000;
 
 /** POST to the Credential Service as the account, under an invocation of the given scope. */
 async function credentialServiceCall(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<void> {
+  await credentialServiceResponse(url, secret, accountId, sessionId, scope, failure);
+}
+
+async function credentialServiceResponse(url: string, secret: string, accountId: string, sessionId: string, scope: string, failure: string): Promise<Response> {
   const token = signCredentialServiceInvocation(secret, accountId, sessionId, { scope });
   const response = await fetch(url, {
     method: 'POST',
@@ -45,6 +50,7 @@ async function credentialServiceCall(url: string, secret: string, accountId: str
     throw new HttpError(503, `Credential Service request failed: ${String(error)}`);
   });
   if (!response.ok) throw new HttpError(503, `${failure} failed with HTTP ${response.status}`);
+  return response;
 }
 
 function deployment(env: NodeJS.ProcessEnv) {
@@ -112,6 +118,17 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
     ? { revoke: (accountId: string) => credentialServiceCall(`${new URL(credentialServiceUrl).origin}/account/revoke`, invocationSecret ?? '', accountId,
       ACCOUNT_DELETION_SESSION, 'credential_revocation', 'Credential Service account revoke') }
     : null;
+  const linkedAccounts = credentialServiceUrl
+    ? async (accountId: string): Promise<string[]> => {
+      const response = await credentialServiceResponse(`${new URL(credentialServiceUrl).origin}/account/linked-accounts`, invocationSecret ?? '', accountId,
+        ACCOUNT_SESSION, 'linked_accounts', 'Credential Service Linked Accounts');
+      const { linkedAccounts: providers } = await response.json() as { linkedAccounts?: unknown };
+      if (!Array.isArray(providers) || !providers.every((provider) => typeof provider === 'string')) {
+        throw new HttpError(503, 'Credential Service Linked Accounts answered an invalid body');
+      }
+      return providers;
+    }
+    : null;
   const planOwner = env.BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID?.trim() || undefined;
   const testUserConnector = testUserConnectorRoutes({
     store,
@@ -128,7 +145,10 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   });
   return (history) => {
     const accounts = accountRoutes({ store, cookies, signIns: async () => [],
-      ...(identity === null ? {} : { session: () => ({ signIn: 'oidc' }) }),
+      session: async (account) => ({
+        ...(identity === null ? {} : { signIn: 'oidc' }),
+        ...(linkedAccounts === null ? {} : { linkedAccounts: await linkedAccounts(account.accountId) }),
+      }),
       deleteTestUser: (accountId) => lifecycle.deleteAccount(accountId),
     });
     const requester = async (c: Context): Promise<Requester> => {

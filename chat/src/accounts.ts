@@ -20,7 +20,7 @@ export interface AccountRoutesOptions<A extends Account> {
   store: () => AccountStore<A>;
   cookies: AccountCookies;
   /** The bot's own fields of `GET /account/session`. */
-  session?: (account: A) => Record<string, unknown>;
+  session?: (account: A) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** The Agent Profile's Sign-ins tab: the sites the account's agent is signed in to. */
   signIns: (account: A) => Promise<SignIn[]>;
   /** What else signing out clears, once the session is gone. */
@@ -120,7 +120,7 @@ export function accountRoutes<A extends Account>({ store, cookies, session, sign
       status: account.status,
       rateTier: account.rateTier,
       authenticated: trusted !== null,
-      ...session?.(account),
+      ...await session?.(account),
       signInNeeded: Boolean(account.signInNeeded),
     });
   });

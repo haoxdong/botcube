@@ -95,6 +95,9 @@ class ModelsEndpointProvider:
     async def revoke(self, account_id: str) -> None:
         return
 
+    async def linked(self, account_id: str) -> bool:
+        return False
+
     def allows_upstream(self, method: str, path: str) -> bool:
         return True
 

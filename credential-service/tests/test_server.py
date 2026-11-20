@@ -31,6 +31,7 @@ class FakeProvider:
         self.name = name
         self.owner_only = owner_only
         self.calls: list[tuple[str, object]] = []
+        self.linked_accounts: set[str] = set()
 
     async def aclose(self) -> None:
         return None
@@ -44,6 +45,9 @@ class FakeProvider:
 
     async def revoke(self, account_id: str) -> None:
         self.calls.append(('revoke', account_id))
+
+    async def linked(self, account_id: str) -> bool:
+        return account_id in self.linked_accounts
 
     def allows_upstream(self, method: str, path: str) -> bool:
         return (method, path) == ('GET', 'v1/items')
@@ -169,6 +173,20 @@ def test_revoking_an_account_revokes_it_at_every_provider() -> None:
     assert revoked.json() == {'status': 'revoked'}
     assert site.calls == [('revoke', 'acct-1')]
     assert plan.calls == [('revoke', 'acct-1')]
+
+
+def test_linked_accounts_lists_the_providers_holding_the_accounts_linked_account_under_its_own_scope() -> None:
+    site, other, plan = FakeProvider('site'), FakeProvider('other'), FakeProvider('plan')
+    site.linked_accounts.add('acct-1')
+    other.linked_accounts.add('acct-2')
+    client = _client(site, other, plan)
+
+    refused = client.post('/account/linked-accounts', headers=_bearer(scope='credential_revocation'))
+    listed = client.post('/account/linked-accounts', headers=_bearer(scope='linked_accounts'))
+
+    assert refused.json() == {'detail': 'This call requires a linked_accounts-scoped Credential Service invocation token'}
+    assert listed.json() == {'linkedAccounts': ['site']}
+    assert site.calls == other.calls == plan.calls == []
 
 
 def test_provider_authorization_runs_before_any_access_is_minted() -> None:

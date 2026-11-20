@@ -229,6 +229,26 @@ def test_a_refresh_replaces_the_cookie_of_its_name_until_a_new_sign_in_fences_it
         cache.update_session_cookies('acct-1', [_session('late')], expected_generation=revision)
 
 
+def test_linked_reads_that_the_credential_exists_with_no_decrypt_or_mint(
+    vault: DynamoDbCredentialVault, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    minted: list[str] = []
+    cache = _cache(vault, lambda credential: minted.append(credential) or {'cookies': [_session('live')]})
+    cache.store_linked_credential('acct-1', 'durable-1', [])
+    minted.clear()
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError('linked decrypted the Durable Credential or a session')
+
+    for name in ('load_durable_credential', 'load_revised_credential', 'load_session'):
+        monkeypatch.setattr(vault, name, refuse)
+
+    assert (cache.linked('acct-1'), cache.linked('acct-2')) == (True, False)
+    assert minted == []
+    cache.delete_linked_credential('acct-1')
+    assert not cache.linked('acct-1')
+
+
 def test_an_unlinked_account_has_no_session(vault: DynamoDbCredentialVault) -> None:
     cache = _cache(vault, lambda credential: {'cookies': [_session('live')]})
     cache.store_linked_credential('acct-1', 'durable-1', [_session('live')])

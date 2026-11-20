@@ -55,6 +55,10 @@ class CredentialProvider(Protocol[Access]):
         """Delete the account's Durable Credential and any access minted from it."""
         ...
 
+    async def linked(self, account_id: str) -> bool:
+        """Whether the Vault holds the account's Linked Account at this provider; a plan provider's Sign-in is none."""
+        ...
+
     def allows_upstream(self, method: str, path: str) -> bool:
         """Whether access may be attached to this upstream call; `path` has no leading slash."""
         ...

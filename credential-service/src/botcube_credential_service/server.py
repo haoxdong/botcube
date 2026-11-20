@@ -21,6 +21,7 @@ _LOG = logging.getLogger(__name__)
 
 CREDENTIAL_CAPTURE_SCOPE = 'credential_capture'
 CREDENTIAL_REVOCATION_SCOPE = 'credential_revocation'
+LINKED_ACCOUNTS_SCOPE = 'linked_accounts'
 # The headers callers name the invoking account and Session in.
 ACCOUNT_HEADER = 'X-BotCube-Account-Id'
 SESSION_HEADER = 'X-BotCube-Session-Id'
@@ -130,6 +131,12 @@ def create_app(settings: CredentialServiceSettings, providers: Sequence[Credenti
         for provider in providers:
             await provider.revoke(invocation.account_id)
         return {'status': 'revoked'}
+
+    @app.post('/account/linked-accounts')
+    async def linked_accounts(request: Request) -> dict[str, list[str]]:
+        """The providers whose Linked Account the Vault holds for the account, for `/account/session`."""
+        invocation = guard.verify_request(request, LINKED_ACCOUNTS_SCOPE)
+        return {'linkedAccounts': [provider.name for provider in providers if await provider.linked(invocation.account_id)]}
 
     for provider in providers:
         _mount(app, settings, guard, provider)

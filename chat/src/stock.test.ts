@@ -470,6 +470,9 @@ describe("the stock Chat Service's account deletion", () => {
       copies.push({ accountId: invocation.accountId, sessionId: String(request.headers['x-botcube-session-id']) });
       return sendJson(response, 200, { status: 'copied' });
     }
+    if (`${request.method} ${request.path}` === 'POST /account/linked-accounts' && invocation.scope === 'linked_accounts') {
+      return sendJson(response, 200, { linkedAccounts: vault.has(invocation.accountId) ? ['site'] : [] });
+    }
     if (`${request.method} ${request.path}` !== 'POST /account/revoke' || invocation.scope !== 'credential_revocation') {
       return sendJson(response, 404, { detail: 'Not Found' });
     }
@@ -885,5 +888,58 @@ describe('a signed-in User deleting their own account', () => {
         issuer.authenticatedAt.delete(user);
       }
     });
+  });
+});
+
+describe("the stock Chat Service's /account/session Linked Accounts", () => {
+  const SECRET = 'invocation-secret';
+  const vault = new Map<string, string[]>();
+  let failing = false;
+  const credentialService = new HttpFake((request, response) => {
+    const invocation = verifyCredentialServiceInvocation(SECRET, String(request.headers.authorization).replace(/^Bearer /, ''));
+    if (invocation === null || request.headers['x-botcube-account-id'] !== invocation.accountId) {
+      return sendJson(response, 401, { detail: 'Invalid Credential Service invocation token' });
+    }
+    if (`${request.method} ${request.path}` !== 'POST /account/linked-accounts' || invocation.scope !== 'linked_accounts') {
+      return sendJson(response, 404, { detail: 'Not Found' });
+    }
+    if (failing) return sendJson(response, 500, { detail: 'Vault unavailable' });
+    sendJson(response, 200, { linkedAccounts: vault.get(invocation.accountId) ?? [] });
+  });
+  beforeAll(async () => { await credentialService.listen(); });
+  afterAll(async () => { await credentialService.close(); });
+
+  const routes = (credentialServiceUrl: string | null = credentialService.url) => {
+    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl ?? undefined, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET };
+    return new Hono()
+      .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 503 : 500))
+      .route('/', stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history).routes);
+  };
+
+  it('reports the Linked Accounts the Vault holds for the User, and fails loud when the Credential Service cannot say', async () => {
+    const route = routes();
+    const first = await route.request('/account/session');
+    const cookie = first.headers.get('set-cookie')?.split(';')[0] ?? '';
+    const { accountId, linkedAccounts } = await first.json() as { accountId: string; linkedAccounts: unknown };
+    expect(linkedAccounts).toEqual([]);
+
+    vault.set(accountId, ['site']);
+    const linked = await route.request('/account/session', { headers: { Cookie: cookie } });
+    expect(await linked.json()).toMatchObject({ accountId, linkedAccounts: ['site'] });
+
+    failing = true;
+    try {
+      const failed = await route.request('/account/session', { headers: { Cookie: cookie } });
+      expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service Linked Accounts failed with HTTP 500' }]);
+    } finally {
+      failing = false;
+    }
+  });
+
+  it('reports no Linked Accounts field, and calls nothing, when no Credential Service is configured', async () => {
+    const before = credentialService.requests.length;
+    const session = await routes(null).request('/account/session');
+    expect(await session.json()).not.toHaveProperty('linkedAccounts');
+    expect(credentialService.requests.length).toBe(before);
   });
 });
