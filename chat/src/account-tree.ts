@@ -1,11 +1,16 @@
 import { constants } from 'node:fs';
-import { type FileHandle, link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from 'node:fs/promises';
+import { type FileHandle, link, lstat, mkdir, open, readdir, realpath, rename, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { HttpError } from './http-error.js';
 
 export const errorCode = (error: unknown) => error instanceof Error && 'code' in error ? error.code : undefined;
 
-/** An account's Files, read and written only along paths with no symbolic link, and never past their root. */
+/**
+ * An account's Files, read and written only along paths with no symbolic link, and never past their root.
+ * The lstat walk in `refuseLink` is the fast path. Every operation then goes through its folder, opened one folder
+ * at a time from the root with O_NOFOLLOW and checked by the realpath of its fd: the agent can swap a folder for a link
+ * after the walk looked, and only what was actually opened is trusted.
+ */
 export class AccountTree {
   private constructor(private readonly root: string) {}
 
@@ -56,58 +61,78 @@ export class AccountTree {
   }
 
   /**
-   * A regular file at `name`, opened without following a link even if one replaced it since the walk.
-   * Throws ENOENT when there is none, and refuses anything that is not a regular file.
+   * A regular file at `name`, opened through its pinned folder with O_NOFOLLOW, so a link that replaced it, or a folder
+   * on its way, since the walk is refused. Throws ENOENT when there is none, and refuses anything that is not a regular file.
    */
   async open(name: string, flags: number, mode?: number): Promise<FileHandle> {
-    await this.refuseLink(name);
-    const file = await open(this.full(name), flags | constants.O_NOFOLLOW, mode).catch((error: unknown) => {
-      throw errorCode(error) === 'ELOOP' ? this.linked(name) : error;
-    });
-    if (!(await file.stat()).isFile()) {
+    const file = await this.inFolder(name, (flags & constants.O_CREAT) !== 0, (at) => open(at, flags | constants.O_NOFOLLOW, mode))
+      .catch((error: unknown) => {
+        throw errorCode(error) === 'ELOOP' ? this.linked(name) : error;
+      });
+    try {
+      await this.refuseOutside(file, name);
+      if (!(await file.stat()).isFile()) throw new HttpError(400, `/${name} in Files is not a file`);
+    } catch (error) {
       await file.close();
-      throw new HttpError(400, `/${name} in Files is not a file`);
+      throw error;
     }
     return file;
   }
 
   /** Gives `from` the name `to` without ever replacing a file there: link refuses a taken name. */
   async moveNoClobber(from: string, to: string): Promise<boolean> {
-    await this.refuseLink(from);
-    return this.linkInto(this.full(from), to);
+    return this.moveTo(this, from, to);
   }
 
-  /** Moves the file at the absolute path `source`, already checked by its own tree, to `to` here, never replacing one. */
-  async linkInto(source: string, to: string): Promise<boolean> {
-    await this.folders(path.posix.dirname(to));
-    await this.refuseLink(to);
-    try {
-      // link never follows `source` itself, and every folder of `to` was just checked.
-      await link(source, this.full(to));
-    } catch (error) {
-      if (errorCode(error) === 'EEXIST') return false;
-      throw error;
-    }
-    await unlink(source);
-    return true;
+  /** Moves the file at `from` here to `to` in `destination`, never replacing one there: both go through their pinned folders. */
+  async moveTo(destination: AccountTree, from: string, to: string): Promise<boolean> {
+    return this.inFolder(from, false, (source) => destination.inFolder(to, true, async (target) => {
+      try {
+        // link never follows `source` itself, and both folders are the ones opened and checked.
+        await link(source, target);
+      } catch (error) {
+        if (errorCode(error) === 'EEXIST') return false;
+        throw error;
+      }
+      await unlink(source);
+      return true;
+    }));
   }
 
   /** Removes the file at `name`: a link there is removed itself, never what it points at. */
   async unlink(name: string): Promise<void> {
-    const folder = path.posix.dirname(name);
-    if (folder !== '.') await this.refuseLink(folder);
-    await unlink(this.full(name));
+    await this.inFolder(name, false, (at) => unlink(at), 'itself');
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await this.refuseLink(from);
-    await this.refuseLink(to);
-    await rename(this.full(from), this.full(to));
+    await this.inFolder(from, false, (source) => this.inFolder(to, false, (target) => rename(source, target)));
   }
 
   async remove(name: string): Promise<void> {
-    await this.refuseLink(path.posix.dirname(name));
-    await rm(this.full(name), { recursive: true, force: true });
+    await this.removeTree(name);
+  }
+
+  /**
+   * Removes `name` and everything under it, or with no name everything in the tree, as `rm -rf` would, but never
+   * by path: each folder is opened through its parent's fd with O_NOFOLLOW and read through its own fd, and anything
+   * that is not a folder, a link included, is unlinked itself. A folder swapped for a link mid-walk is never entered.
+   * Something already gone is fine.
+   */
+  async removeTree(name?: string): Promise<void> {
+    try {
+      if (name === undefined) {
+        const root = await this.pin([], false);
+        try {
+          await this.removeEntries(root);
+        } finally {
+          await root.close();
+        }
+        return;
+      }
+      await this.inFolder(name, false, (at) => this.removeAt(at), 'itself');
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT') throw error;
+    }
   }
 
   async refuseLink(name: string): Promise<void> {
@@ -117,18 +142,98 @@ export class AccountTree {
   }
 
   /** Makes each folder of `folder` from the root in turn, refusing a link or a file in the way. */
-  async folders(folder: string, depth = 1): Promise<void> {
+  async folders(folder: string): Promise<void> {
     // A file at the root of Files has no folder to make: its dirname is `.`.
     if (folder === '.') return;
-    const segments = folder.split('/');
-    if (depth > segments.length) return;
-    const walked = segments.slice(0, depth).join('/');
-    await this.refuseLink(walked);
-    await mkdir(this.full(walked)).catch((error: unknown) => {
-      if (errorCode(error) !== 'EEXIST') throw error;
+    await this.refuseLink(folder);
+    await (await this.pin(folder.split('/'), true)).close();
+  }
+
+  /**
+   * Runs `body` on `name` as a path through its folder's open fd: the kernel resolves it through that folder, so
+   * swapping a folder on the way for a link after the walk no longer redirects it. A `link` that acts on a link
+   * `itself` (unlink, rm) may find one at `name`; only its folders are refused.
+   */
+  private async inFolder<T>(name: string, create: boolean, body: (at: string) => Promise<T>, link: 'refused' | 'itself' = 'refused'): Promise<T> {
+    const folder = path.posix.dirname(name);
+    const leaf = path.posix.basename(name);
+    if (leaf === '' || leaf === '.' || leaf === '..' || leaf.includes('/')) throw new HttpError(400, `${name} is not a path in Files`);
+    if (link === 'refused') await this.refuseLink(name);
+    else if (folder !== '.') await this.refuseLink(folder);
+    const handle = await this.pin(folder === '.' ? [] : folder.split('/'), create);
+    try {
+      return await body(`/proc/self/fd/${handle.fd}/${leaf}`);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  /**
+   * Opens the root, then each folder in `segments` through the one before it with O_NOFOLLOW, making it first when
+   * `create`: a link on the way fails the open itself. The last folder's fd must then resolve inside the root.
+   */
+  private async pin(segments: readonly string[], create: boolean): Promise<FileHandle> {
+    const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+    let folder = await open(this.root, flags);
+    try {
+      for (const [index, segment] of segments.entries()) {
+        const next = `/proc/self/fd/${folder.fd}/${segment}`;
+        const walked = segments.slice(0, index + 1).join('/');
+        // eslint-disable-next-line no-await-in-loop -- each folder through the one opened before it
+        if (create) await mkdir(next).catch((error: unknown) => {
+          if (errorCode(error) !== 'EEXIST') throw error;
+        });
+        // eslint-disable-next-line no-await-in-loop -- each folder through the one opened before it
+        const opened = await open(next, flags).catch(async (error: unknown) => {
+          // O_DIRECTORY | O_NOFOLLOW fails a link with ENOTDIR on Linux, as it does a file.
+          if (errorCode(error) === 'ELOOP' || (errorCode(error) === 'ENOTDIR' && (await lstat(next)).isSymbolicLink())) throw this.linked(walked);
+          if (errorCode(error) === 'ENOTDIR') throw new HttpError(400, `/${walked} in Files is not a folder`);
+          throw error;
+        });
+        // eslint-disable-next-line no-await-in-loop -- closes the folder before it
+        await folder.close();
+        folder = opened;
+      }
+      await this.refuseOutside(folder, segments.join('/'));
+      return folder;
+    } catch (error) {
+      await folder.close().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async removeAt(at: string): Promise<void> {
+    const folder = await open(at, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch((error: unknown) => {
+      // A file, or a link (O_DIRECTORY | O_NOFOLLOW fails one with ENOTDIR or ELOOP): removed itself.
+      if (errorCode(error) === 'ENOTDIR' || errorCode(error) === 'ELOOP') return null;
+      throw error;
     });
-    if (!(await lstat(this.full(walked))).isDirectory()) throw new HttpError(400, `/${walked} in Files is not a folder`);
-    await this.folders(folder, depth + 1);
+    if (folder === null) {
+      await unlink(at);
+      return;
+    }
+    try {
+      await this.removeEntries(folder);
+    } finally {
+      await folder.close();
+    }
+    await rmdir(at);
+  }
+
+  private async removeEntries(folder: FileHandle): Promise<void> {
+    const listed = `/proc/self/fd/${folder.fd}`;
+    for (const entry of await readdir(listed)) {
+      // eslint-disable-next-line no-await-in-loop -- one entry at a time keeps the open fds bounded by the depth
+      await this.removeAt(`${listed}/${entry}`).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+      });
+    }
+  }
+
+  /** Refuses an open fd that resolves outside the root, as the kernel sees it now. */
+  private async refuseOutside(handle: FileHandle, name: string): Promise<void> {
+    const opened = await realpath(`/proc/self/fd/${handle.fd}`);
+    if (opened !== this.root && !opened.startsWith(`${this.root}${path.sep}`)) throw this.linked(name);
   }
 
   /** Each folder from the root in turn, down to the first that does not exist yet: none may be a link or lead out. */

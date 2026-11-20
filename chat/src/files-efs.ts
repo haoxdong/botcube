@@ -1,6 +1,6 @@
 import { localCleanupWorker, type CleanupWorker } from './files-cleanup-worker.js';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rmdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -186,6 +186,14 @@ export function accountFilesEfs({
     }
   }
 
+  /** Removes an account's Files. Its agent may still write until its credentials expire, so the tree is emptied by fd, never by path. */
+  async function removeFiles(userId: string): Promise<void> {
+    await (await treeOf(userId))?.removeTree();
+    await rmdir(await directory(userId)).catch((error: unknown) => {
+      if (!missing(error)) throw error;
+    });
+  }
+
   /** A missing file, or a missing account folder, answers 404. */
   async function inFiles<T>(userId: string, name: string, body: (tree: AccountTree) => Promise<T>): Promise<T> {
     const notFound = (cause?: unknown) => Object.assign(new HttpError(404, `No file ${name} in Files`), { cause });
@@ -235,18 +243,22 @@ export function accountFilesEfs({
       const taken = new Set((await walk(await directory(destinationUserId))).map(({ name }) => name));
       const destination = await treeOf(destinationUserId, true);
       if (destination === null) throw new HttpError(503, 'The claiming account has no Files folder');
-      // The source walk never descends a link (a Dirent is not a directory); the destination tree refuses one.
-      for (const { name, file } of await walk(await directory(sourceUserId))) {
-        let moved = freeName(name, taken);
-        // A file written into the destination since it was listed takes the name first; try the next.
-        // eslint-disable-next-line no-await-in-loop -- one file at a time: a retried claim moves what is left
-        while (!await destination.linkInto(file, moved)) {
+      const source = await treeOf(sourceUserId);
+      // The source walk never descends a link (a Dirent is not a directory); each move then goes through
+      // folders opened in both trees, so a link either agent swaps in after the walk is refused.
+      if (source !== null) {
+        for (const { name } of await walk(await directory(sourceUserId))) {
+          let moved = freeName(name, taken);
+          // A file written into the destination since it was listed takes the name first; try the next.
+          // eslint-disable-next-line no-await-in-loop -- one file at a time: a retried claim moves what is left
+          while (!await source.moveTo(destination, filePath(name), filePath(moved))) {
+            taken.add(moved);
+            moved = freeName(name, taken);
+          }
           taken.add(moved);
-          moved = freeName(name, taken);
         }
-        taken.add(moved);
       }
-      await rm(await directory(sourceUserId), { recursive: true, force: true });
+      await removeFiles(sourceUserId);
       await removeAccessPoint(sourceUserId);
     });
   }
@@ -276,7 +288,7 @@ export function accountFilesEfs({
     const retirement = await records().filesRetirement(userId);
     if (retirement === null) return;
     const destination = await cleanupDestination(retirement.destinationAccountId);
-    if (destination === null) await rm(await directory(userId), { recursive: true, force: true });
+    if (destination === null) await removeFiles(userId);
     else await transferFiles(userId, destination);
     await removeAccessPoint(userId);
     // A session mounted before retirement may write until its credentials expire, and a day past that.
@@ -319,7 +331,7 @@ export function accountFilesEfs({
     async delete(userId) {
       await retirementOperation(userId, async () => {
         await records().retireFiles(userId, null, Date.now() + MOUNT_SECONDS * 1000);
-        await rm(await directory(userId), { recursive: true, force: true });
+        await removeFiles(userId);
         await removeAccessPoint(userId);
       });
     },
