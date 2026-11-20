@@ -148,7 +148,7 @@
   },
   "artifacts": {
     "toolStaging": {
-      "hook": "templates/always-on/deploy/stage-tools.sh"
+      "hook": "examples/public/deploy/stage-tools.sh"
     }
   },
   "verification": {

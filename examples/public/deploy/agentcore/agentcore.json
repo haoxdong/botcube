@@ -5,7 +5,8 @@
   },
   "runtimes": [
     {
-      "name": "bot_cube"
+      "name": "bot_cube",
+      "dockerfile": ".tool-dist/Dockerfile"
     }
   ],
   "memories": [
