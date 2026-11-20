@@ -107,16 +107,16 @@
 
 /*
  * ── Worklog (worklog.tsx) ──
- * A Turn's work, folded under one "Worked for 38s" header above its answer. Three levels, each closed until asked for:
+ * A Turn's work, folded under one "Worked for 38s" header above its answer, built on the stock Trace parts
+ * (components/ui/trace.tsx); these rules set the decided look over theirs. Three levels, each closed until asked for:
  * the Turn, its steps (one line each, its time in a right-aligned column), a step's sheet (a thought's summary, a
  * command's input and output). Notes speak in the body role and text colour; steps in the small role, muted. Notes and
- * step icons start at --worklog-indent from the header's edge. One 8px gap
- * between every item; a 1px rail 6px in runs down the open body, and it ends 20px above the answer. Live words
- * shimmer; nothing else moves. Notes read on the loose line, steps on the page's.
+ * step icons start 26px from the header's edge. One 8px gap between every item; a 1px rail 6px in runs down the open
+ * body, and it ends 20px above the answer. Live words shimmer; nothing else moves. Notes read on the loose line, steps
+ * on the page's.
  */
 /* WebKit clamps the scroll whenever the list gets shorter. */
 .worklog {
-  --worklog-indent: 26px;
   min-height: calc(var(--font-small) * var(--leading-loose) + 2 * var(--space-4));
 }
 
@@ -132,59 +132,75 @@
 }
 
 /* A short answer can end inside its Worklog's own fold: its cards wait the fold out, so they paint once, in place. */
-.worklog:not([data-chosen]):has(> .collapsible[data-closing]) + * .artifact-card {
+.worklog:not([data-chosen]):has(> [data-slot="trace-collapsible-content"][data-ending-style]) + * .artifact-card {
   display: none;
 }
 
+/* Every line takes its row's size and the page's line, not Trace's 14px on its own. */
+.worklog [data-slot="trace-line"] {
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .worklog-head {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  max-width: 100%;
   padding: var(--space-4) var(--space-8) var(--space-4) 0;
   font-size: var(--font-small);
-  color: var(--color-text-muted);
 }
 
-button.worklog-head {
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-    button.worklog-head:hover {
-      color: var(--color-text);
-    }
-}
-
-.worklog-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.worklog-chevron {
-  flex: none;
+/* The trigger's chevron at 14px, turning at once. */
+.worklog-head > [data-slot="trace-icon"],
+.worklog-head > [data-slot="trace-icon"] svg {
   width: 14px;
   height: 14px;
+  transition: none;
 }
 
-.worklog[data-open] .worklog-chevron {
-  transform: rotate(90deg);
+/* The open and close are stock's height tween at the column's pace, with a fade, so what's below follows it. It clips
+   only vertically, so a step's hover pill still reaches past its sides. */
+.worklog > [data-slot="trace-collapsible-content"] {
+  display: flow-root;
+  overflow-x: visible;
+  overflow-y: clip;
+  transition:
+    height var(--motion-move) var(--ease),
+    opacity var(--motion-quick) var(--ease);
 }
 
-/* A note's message holds its steps, and a step its detail, so each level stacks the same way. */
+/* The body's bottom space is a box, not a margin: Base UI tweens to the panel's scrollHeight, which leaves out a
+   clipped child's bottom margin, so a margin would land in one frame after the tween. */
+.worklog > [data-slot="trace-collapsible-content"]::after {
+  content: "";
+  display: block;
+  height: var(--space-12);
+}
+
+.worklog > [data-slot="trace-collapsible-content"]:is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+}
+
+/* A live Worklog's body fades in as its first row arrives; a kept chat's shows at once. */
+@starting-style {
+  .worklog:not([data-still]) > [data-slot="trace-collapsible-content"] {
+    opacity: 0;
+  }
+}
+
+/* A note's message holds its steps, so each level stacks the same way. The rail is the content's own left border, 6px
+   in, so a row's 26px indent is 19px inside it. */
 .worklog-body,
-.worklog-body .copilotKitAssistantMessage,
-.worklog-step {
+.worklog-body .copilotKitAssistantMessage {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
 }
 
 .worklog-body {
-  position: relative;
-  margin: var(--space-4) 0 var(--space-12);
+  --worklog-indent: 19px;
+  margin: var(--space-4) 0 0 6px;
+  padding: 0;
+  line-height: inherit;
+  color: inherit;
+  overflow-wrap: inherit;
 }
 
 .worklog-body .copilotKitMessage {
@@ -194,17 +210,6 @@ button.worklog-head {
 /* A row with nothing to show takes no gap: a thought's row in the kept chat, or one with no words and no time. */
 .worklog-body > :empty {
   display: none;
-}
-
-/* The rail: 1px down the open body, under the start of "Worked"; it takes no room. */
-.worklog-body::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 6px;
-  width: 1px;
-  background: var(--color-line);
 }
 
 /* A tool call's message with no words takes no gap. */
@@ -239,22 +244,24 @@ button.worklog-head {
 
 /* A step: icon, one truncating line, and its time. The row stands 7px over its size
    (20px on a desktop, 22px on a phone): the hover pill reaches 2px over and under it and 6px past the icon, and an
-   equal negative margin takes that back out of the layout. Everything in the row inherits the header's muted colour, so the hover darkens it all at once. */
+   equal negative margin takes that back out of the layout. Every line stays muted, hovered or not. */
 .worklog-step {
   font-size: var(--font-small);
 }
 
 .worklog-step-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
   width: calc(100% - var(--worklog-indent) + 12px);
   min-height: calc(var(--font-small) + 11px);
   margin: -2px -6px -2px calc(var(--worklog-indent) - 6px);
   padding: 2px 6px;
-  border-radius: var(--radius-md);
-  text-align: left;
+}
+
+.worklog-step [data-slot="trace-line"] {
   color: var(--color-text-muted);
+}
+
+.worklog-step-head > [data-slot="trace-line"] {
+  width: 100%;
 }
 
 button.worklog-step-head {
@@ -264,46 +271,37 @@ button.worklog-step-head {
 @media (hover: hover) {
     button.worklog-step-head:hover {
       background: var(--color-fill);
-      color: var(--color-text-muted);
     }
 }
 
-/* Every step's stock Remix icon at one size, whole, so all keep Remix's even weight: its box is its own width,
-   centred on the step's line, and one shared 1px lift sets it on the words at every width. */
+/* Every step's stock Remix icon at one size, whole, so all keep Remix's even weight. Its box is one of the words'
+   lines, so it shares their baseline, and the icon's middle sits half a cap height above that baseline: on the
+   capitals' middle, from the font's own metrics, whatever the platform's rasterising, zoom or pixel ratio. */
 .worklog-step-icon {
-  display: flex;
-  flex: none;
-  align-items: center;
+  display: block;
+  width: auto;
+  height: 1lh;
 }
 
 .worklog-step-icon svg {
+  display: inline-block;
   width: 15px;
   height: 15px;
-  translate: 0 -1px;
+  vertical-align: calc(0.5cap - 7.5px);
 }
 
-.worklog-step-label {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Every step's time sits in one right-aligned column; the label truncates before it. */
+/* Every step's time sits in one right-aligned column, in the words' grey; the title truncates before it. */
 .worklog-step-time {
-  flex: none;
   margin-left: auto;
   padding-left: var(--space-8);
-  font-variant-numeric: tabular-nums;
+  color: inherit;
 }
 
-/* One live line shimmers, colourless: the thought or call under way while the Worklog is open, else the Turn's clock.
-   The header's "is working" stays still. Muted grey text with a light band sweeping left to right. The gradient is 2.5 times the words' width, the band its middle
-   fifth; sliding the gradient from its right end to its left carries the band from just before the words' start to just
-   past their end, so each loop starts and ends unlit. */
-.worklog:not([data-open]:has(.worklog-step[data-state="live"])) .worklog-title[data-live],
-.worklog-step[data-state="live"] .worklog-step-label {
+/* One live line shimmers, colourless, Reduce Motion or not: the thought or call under way while the Worklog is open,
+   else the Turn's clock. Muted grey text with a light band sweeping left to right. The gradient is 2.5 times the
+   words' width, the band its middle fifth; sliding the gradient from its right end to its left carries the band from
+   just before the words' start to just past their end, so each loop starts and ends unlit. */
+.worklog [data-status="running"] > [data-slot="trace-title"] {
   background: linear-gradient(
       90deg,
       var(--color-text-muted) 40%,
@@ -313,12 +311,14 @@ button.worklog-step-head {
     100% 0 / 250% 100% no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
   animation: worklogShimmer var(--motion-loop) linear infinite;
 }
 
-.worklog-step[data-state="live"] .worklog-step-label * {
-  color: transparent;
+.worklog[data-open]:has(.worklog-step[data-state="live"]) > .worklog-head [data-slot="trace-title"] {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
 }
 
 /* ── Empty state: center greeting in viewport ── */

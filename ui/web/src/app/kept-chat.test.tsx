@@ -302,7 +302,8 @@ it("folds a Turn's work into its Worklog, as the chat surface will, so its answe
   const view = render(<KeptChat messages={turn} disclaimer="Check important info." />);
   const list = view.container.querySelector('.copilotKitMessages');
 
-  expect([...(list?.children ?? [])].map((row) => row.className.split(' ').find((name) => name !== 'copilotKitMessage'))).toEqual([
+  const roles = ['copilotKitUserMessage', 'worklog', 'copilotKitAssistantMessage'];
+  expect([...(list?.children ?? [])].map((row) => roles.find((name) => row.classList.contains(name)))).toEqual([
     'copilotKitUserMessage',
     'worklog',
     'copilotKitAssistantMessage',

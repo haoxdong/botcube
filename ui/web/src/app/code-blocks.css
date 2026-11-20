@@ -181,6 +181,12 @@
   min-height: 0;
 }
 
+/* A zoom or pan is a change of view, not a travel: it lands in one frame (DESIGN.md Motion), whatever transition
+   Streamdown's pan-zoom layer names, since a stock component can make Tailwind generate that class. */
+[data-streamdown="mermaid"] [role="application"] {
+  transition: none;
+}
+
 [data-streamdown="mermaid-fullscreen"] [data-streamdown="mermaid"] > div > div:first-child:not(:last-child) {
   position: absolute;
   bottom: 1rem;

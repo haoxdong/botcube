@@ -4,10 +4,10 @@
 import { m as motionElement } from "motion/react";
 import { useRenderToolCall } from "@copilotkit/react-core/v2";
 import { partialJSONParse } from "@copilotkit/shared";
-import { Collapse, Fade, Presence, presenceMotion } from "./collapse";
+import { Fade, Presence, presenceMotion } from "./collapse";
+import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 
 import { createContext, lazy, Suspense, useContext, useEffect, useState, type ReactElement, type ReactNode } from "react";
-import { RiArrowRightSLine } from "@remixicon/react";
 import { argumentOf, ICONS, lookOf, type StepIcon } from "./worklog-tools";
 
 import { UNANSWERED_CALL } from "botcube-ui-web/interrupted-call";
@@ -164,6 +164,9 @@ function RenderedCall({ call, result }: { call: NonNullable<TurnMessage["toolCal
   });
 }
 
+/** A line under way shimmers; Trace's `status` is optional without `undefined`, so a line at rest leaves it out. */
+const lineStatus = (running: boolean) => (running ? { status: "running" as const } : {});
+
 /** Each step's whole seconds in the Worklog around it, by the step's id; none where its Turn has no timeline. */
 const StepTimes = createContext<{ each: ReadonlyMap<string, number> | undefined; arriving: boolean }>({ each: undefined, arriving: true });
 
@@ -195,38 +198,35 @@ export function Worklog({ id, turn, question, took, startedAt, running, expandin
   const timeline = timelineOf(question?.id ?? id, turn, question, running, serverStart ?? (startedAt === undefined ? undefined : new Date(startedAt).toISOString()), { viewId: id, advanceClock, clock });
   const total = totalOf(timeline, took);
   const title = (
-    <span className="worklog-title" data-live={running || undefined}>
-      {running ? `Working · ${total ?? seconds(0)}` : total === undefined ? "Worked" : `Worked for ${total}`}
-    </span>
+    <TraceLine {...lineStatus(running)}>
+      <TraceTitle className="worklog-title" data-live={running || undefined}>
+        {running ? `Working · ${total ?? seconds(0)}` : total === undefined ? "Worked" : `Worked for ${total}`}
+      </TraceTitle>
+    </TraceLine>
   );
   const start = stepOf(timeline, "start");
   const answer = stepOf(timeline, "answer");
   const diagnosticView = timeline?.steps.find(step => step.kind !== "start")?.id ?? id;
   if (children === undefined) return <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id}><div className="worklog-head">{title}</div></div>;
   return (
-    <div className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined} data-chosen={current || undefined}>
-      <button type="button" className="worklog-head" aria-expanded={open} onClick={() => setChosen({ open: !open, phase, asked })}>
-        {title}
-        <RiArrowRightSLine className="worklog-chevron" aria-hidden />
-      </button>
-      <Collapse open={open} appear={advanceClock}>
-        <div className="worklog-body">
-          <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
-            <Presence>{start && (
-              <motionElement.div {...presenceMotion} key="start">
-                <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon="start" label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
-              </motionElement.div>
-            )}</Presence>
-            {children}
-            <Presence>{answer && (
-              <motionElement.div {...presenceMotion} key="answer">
-                <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon="answer" label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
-              </motionElement.div>
-            )}</Presence>
-          </StepTimes.Provider>
-        </div>
-      </Collapse>
-    </div>
+    <TraceCollapsible className="worklog" data-worklog-turn={question?.id ?? asked ?? id} data-open={open || undefined} data-chosen={current || undefined} data-still={!advanceClock || undefined} open={open} onOpenChange={(next) => setChosen({ open: next, phase, asked })}>
+      <TraceCollapsibleTrigger className="worklog-head">{title}</TraceCollapsibleTrigger>
+      <TraceCollapsibleContent className="worklog-body">
+        <StepTimes.Provider value={{ each: timeline?.each, arriving: advanceClock }}>
+          <Presence>{start && (
+            <motionElement.div {...presenceMotion} key="start">
+              <Step diagnosticId={`${start.id}:${diagnosticView}`} kind="start" state="done" icon="start" label={<span className="worklog-step-verb">Started up</span>} time={start.time} />
+            </motionElement.div>
+          )}</Presence>
+          {children}
+          <Presence>{answer && (
+            <motionElement.div {...presenceMotion} key="answer">
+              <Step diagnosticId={`${answer.id}:${diagnosticView}`} kind="answer" state={running ? "live" : "done"} icon="answer" label={<span className="worklog-step-verb">{running ? "Answering" : "Answered"}</span>} time={answer.time} />
+            </motionElement.div>
+          )}</Presence>
+        </StepTimes.Provider>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 }
 
@@ -253,18 +253,22 @@ function Step({ id, diagnosticId = id, kind, state, icon, label, time, sheet }: 
   }, [id, live]);
   const shown = state === "failed" ? "failed" : icon;
   const Icon = ICONS[shown];
-  const words = <span className="worklog-step-label">{label}</span>;
-  const column = <span className="worklog-step-time">{time}</span>;
+  const line = (
+    <TraceLine {...lineStatus(live)}>
+      <TraceIcon className="worklog-step-icon">
+        <Icon data-icon={shown} />
+      </TraceIcon>
+      <TraceTitle className="worklog-step-label">{label}</TraceTitle>
+      <TraceDescription className="worklog-step-time">{time}</TraceDescription>
+    </TraceLine>
+  );
   const Head = sheet ? "button" : "div";
   const step = (
-    <div className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
+    <Trace className="worklog-step" data-step-id={diagnosticId} data-kind={kind} data-state={state}>
       <Head type={sheet ? "button" : undefined} className="worklog-step-head" onClick={sheet?.show} aria-haspopup={sheet ? "dialog" : undefined} aria-expanded={sheet?.open}>
-        <span className="worklog-step-icon">
-          <Icon data-icon={shown} aria-hidden />
-        </span>
-        {words}{column}
+        {line}
       </Head>
-    </div>
+    </Trace>
   );
   return fades ? <Fade open className="worklog-step-arrival">{step}</Fade> : step;
 }

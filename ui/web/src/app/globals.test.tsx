@@ -124,7 +124,7 @@ it('hides a Worklog row with nothing to show, so it adds no gap', () => {
   document.body.append(body);
 
   expect(styleOf(body, ':scope > :empty').display).toBe('none');
-  expect(styleOf(body, '.worklog-step').display).toBe('flex');
+  expect(styleOf(body, '.worklog-step').display).not.toBe('none');
   body.remove();
 });
 
