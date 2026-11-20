@@ -1,4 +1,5 @@
 export { Button } from "./button"
+export { Dialog, DialogContent } from "./dialog"
 export { Field } from "./field"
 export { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "./list-row"
 export { Sheet } from "./sheet"
