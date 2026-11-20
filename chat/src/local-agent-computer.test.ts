@@ -614,6 +614,39 @@ it('answers a usable page when Chromium exposes DevTools before creating its sta
   }
 });
 
+it('waits for the startup navigation instead of handing the agent about:blank', async () => {
+  const discovery = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await new Promise<void>((resolve) => discovery.once('listening', resolve));
+  const endpoint = `ws://127.0.0.1:${(discovery.address() as AddressInfo).port}`;
+  const startPage = 'http://example.test/login';
+  const blankObserved = new Promise<() => void>((resolve) => discovery.once('connection', (socket) => {
+    socket.once('message', () => {
+      socket.send(JSON.stringify({ method: 'Target.targetCreated', params: { targetInfo: { type: 'page', url: 'about:blank' } } }));
+      socket.once('close', () => resolve(() => undefined));
+      socket.once('pong', () => resolve(() => socket.send(JSON.stringify({
+        method: 'Target.targetInfoChanged', params: { targetInfo: { type: 'page', url: startPage } },
+      }))));
+      socket.ping();
+    });
+  }));
+  executableDirectory = await mkdtemp(resolve(tmpdir(), 'chromium-startup-navigation-'));
+  const executable = resolve(executableDirectory, 'chromium');
+  await writeFile(executable, `#!/usr/bin/env python3\nimport signal, sys\nsys.stderr.write('DevTools listening on ${endpoint}\\n')\nsys.stderr.flush()\nsignal.pause()\n`, { mode: 0o755 });
+  let ready = false;
+  const started = startLocalChromium(executable, startPage, new AbortController().signal).then((value) => {
+    browser = value;
+    ready = true;
+    return value;
+  });
+  try {
+    const navigate = await blankObserved;
+    try { expect(ready).toBe(false); } finally { navigate(); }
+    expect((await started).endpoint).toBe(endpoint);
+  } finally {
+    try { await started; } finally { discovery.close(); }
+  }
+});
+
 it('cleans a browser fixture whose profile cleanup first fails during teardown', async () => {
   const local = newComputer({ startPage: await fakeSite() });
   await local.warmSession({ owner: 'fixture-owner' }, 'fixture-session');

@@ -193,13 +193,15 @@ export async function startLocalChromium(
           try {
             const message = JSON.parse(String(event.data)) as {
               method?: string;
-              params?: { targetInfo?: { type?: string } };
+              params?: { targetInfo?: { type?: string; url?: string } };
               error?: { message: string };
             };
+            const target = message.params?.targetInfo;
             if (message.error) finish(new Error(message.error.message));
             else if (
-              message.method === 'Target.targetCreated' &&
-              message.params?.targetInfo?.type === 'page'
+              (message.method === 'Target.targetCreated' || message.method === 'Target.targetInfoChanged') &&
+              target?.type === 'page' && target.url &&
+              (startPage === 'about:blank' || target.url !== 'about:blank')
             )
               finish(undefined, endpoint);
           } catch (error) {
