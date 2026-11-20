@@ -30,6 +30,13 @@ function lockedSdk(infraRoot: string) {
   return installed;
 }
 
+const DEPLOY_LEASES = 'deploy-leases/';
+
+/** The stacks a production deploy changes: harness, origin and web (DEPLOYED_STACKS in parking_transition.py). */
+export function deployedStacks(identity: DeployIdentity) {
+  return [`AgentCore-${identity.aws.cloudFormation.stackFamily}-default`, identity.aws.ecs.previewOriginStackName, identity.aws.ecs.webLatency.stackName];
+}
+
 export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, imageRegistry?: string) {
   const { ecs, agentCore } = identity.aws;
   const worker = new lambda.Function(stack, 'Transition', {
@@ -57,6 +64,11 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
   allow(['cloudformation:DescribeStacks', 'cloudformation:DescribeStackResources', 'cloudformation:ListStackResources', 'cloudformation:UpdateStack'],
     stackNames.map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` })));
   allow(['iam:PassRole'], [stack.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: `cdk-hnb659fds-cfn-exec-role-${stack.account}-${stack.region}` })]);
+  // A park's first state refuses while a deploy holds a lease or left one of its stacks unsettled (require_no_deploy).
+  allow(['cloudformation:DescribeStacks'], deployedStacks(identity).map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` })));
+  worker.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:ListBucket'], resources: [`arn:aws:s3:::${ecs.parking.slotBucket}`],
+    conditions: { StringLike: { 's3:prefix': `${DEPLOY_LEASES}*` } } }));
+  allow(['s3:GetObject'], [`arn:aws:s3:::${ecs.parking.slotBucket}/${DEPLOY_LEASES}*`]);
   allow(['ssm:GetParameters'], [stack.formatArn({ service: 'ssm', resource: 'parameter/cdk-bootstrap/hnb659fds/version' })]);
   allow(['ssm:GetParameter', 'ssm:PutParameter'], [stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` }),
     stack.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}/backstop` })]);

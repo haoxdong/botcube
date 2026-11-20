@@ -2,12 +2,15 @@
 import importlib.util
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from email.message import Message
+from io import BytesIO
 from pathlib import Path
 from typing import TypedDict
 
 import pytest
+from botocore.exceptions import ClientError
 
 from deploy_script_support import DEPLOY_ECS
 
@@ -111,9 +114,19 @@ class Production(CloudFormation):
         self.stored = 'parked' if parked else 'live'
         self.probe = Probe(self)
         self.monitoring = []
+        self.leases: dict[str, str] = {}
 
     def describe_stacks(self, *, StackName):
+        if StackName not in self.stacks:
+            raise ClientError({'Error': {'Code': 'ValidationError', 'Message': f'Stack with id {StackName} does not exist'}}, 'DescribeStacks')
         return {'Stacks': [self.stacks[StackName]]}
+
+    def list_objects_v2(self, *, Bucket, Prefix):
+        assert (Bucket, Prefix) == ('bot-cube-sessions', 'deploy-leases/')
+        return {'Contents': [{'Key': key} for key in self.leases]} if self.leases else {}
+
+    def get_object(self, *, Bucket, Key):
+        return {'Body': BytesIO(self.leases[Key].encode())}
 
     def update_stack(self, **request):
         super().update_stack(**request)
@@ -148,7 +161,8 @@ class Production(CloudFormation):
 
     def advance(self, module, state):
         return module.handler(state, None, cloudformation=self, ssm=self, verify=self.verify,
-                              capacity=self.capacity, refresh=self.refresh, spares=self.spares, probe=self.probe, executions=self)
+                              capacity=self.capacity, refresh=self.refresh, spares=self.spares, probe=self.probe, executions=self,
+                              leases=self)
 
     def start_execution(self, **request):
         assert self.stored == 'live'
@@ -165,6 +179,50 @@ class Production(CloudFormation):
             if state.get('done'):
                 return state
         raise AssertionError('transition never finished')
+
+
+def lease(minutes_ago, now=10_000.0):
+    at = datetime.fromtimestamp(now - minutes_ago * 60, UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return f'https://github.example/owner/repo/actions/runs/1/attempts/1 {at}'
+
+
+def test_park_is_refused_by_a_fresh_deploy_lease_before_any_effect(monkeypatch):
+    world, module = Production(False), load()
+    monkeypatch.setattr(module.time, 'time', lambda: 10_000.0)
+    world.leases['deploy-leases/harness'] = lease(5)
+    with pytest.raises(sys.modules['deploy_guard'].DeployInFlight, match=r"harness slot's deploy lease s3://bot-cube-sessions/deploy-leases/harness is 5 min old"):
+        world.advance(module, {'mode': 'parked', 'op': 'advance'})
+    assert world.effects == []
+    assert world.stored == 'live'
+
+
+def test_park_proceeds_past_a_stale_deploy_lease(monkeypatch):
+    world, module = Production(False), load()
+    monkeypatch.setattr(module.time, 'time', lambda: 10_000.0)
+    world.leases['deploy-leases/origin'] = lease(121)
+    assert world.complete(module, 'park')['done'] is True
+    assert world.stored == 'parked'
+
+
+@pytest.mark.parametrize('stack', ['AgentCore-bot-cube-default', 'bot-cube-preview-origin', 'bot-cube-web-latency'])
+def test_park_is_refused_by_a_deployed_stack_in_update_rollback_failed(stack):
+    world, module = Production(False), load()
+    world.stacks[stack] = {'StackStatus': 'UPDATE_ROLLBACK_FAILED', 'Parameters': []}
+    with pytest.raises(sys.modules['deploy_guard'].DeployInFlight, match=f'{stack} is UPDATE_ROLLBACK_FAILED'):
+        world.advance(module, {'mode': 'parked', 'op': 'advance'})
+    assert world.effects == []
+
+
+def test_park_accepts_update_rollback_complete_and_missing_deployed_stacks():
+    world, module = Production(False), load()
+    world.stacks['AgentCore-bot-cube-default'] = {'StackStatus': 'UPDATE_ROLLBACK_COMPLETE', 'Parameters': []}
+    assert world.complete(module, 'park')['done'] is True
+
+
+def test_wake_is_not_held_by_a_deploy_lease():
+    world, module = Production(True), load()
+    world.leases['deploy-leases/web'] = lease(0, datetime.now(UTC).timestamp())
+    assert world.complete(module, 'unpark')['done'] is True
 
 
 class Probe:
@@ -377,10 +435,10 @@ def test_backstop_returns_partial_mode_to_parked_and_ignores_a_superseded_lease(
     monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
     world, executions, module = Production(True), Executions(), load()
     world.stored = 'lease-1'
-    assert module.backstop({'lease': 'lease-1'}, world, executions) == {'executionArn': 'new'}
+    assert module.backstop({'lease': 'lease-1'}, world, executions, world, world) == {'executionArn': 'new'}
     assert json.loads(executions.started[0]['input']) == {'mode': 'parked', 'op': 'advance'}
     world.stored = 'none'
-    assert module.backstop({'lease': 'lease-1'}, world, executions) == {'expired': False}
+    assert module.backstop({'lease': 'lease-1'}, world, executions, world, world) == {'expired': False}
     assert len(executions.started) == 1
 
 
@@ -389,8 +447,21 @@ def test_backstop_waits_for_an_inflight_transition_instead_of_overlapping_it(mon
     world, executions, module = Production(True), Executions(running=True), load()
     world.stored = 'lease-1'
     with pytest.raises(module.TransientServiceError):
-        module.backstop({'lease': 'lease-1'}, world, executions)
+        module.backstop({'lease': 'lease-1'}, world, executions, world, world)
     assert executions.started == []
+
+
+def test_backstop_waits_out_a_fresh_deploy_lease_then_parks(monkeypatch):
+    monkeypatch.setenv('TRANSITION_STATE_MACHINE', 'state-machine')
+    world, executions, module = Production(True), Executions(), load()
+    world.stored = 'lease-1'
+    world.leases['deploy-leases/harness'] = lease(0, module.time.time())
+    with pytest.raises(module.TransientServiceError, match="harness slot's deploy lease"):
+        module.backstop({'lease': 'lease-1'}, world, executions, world, world)
+    assert executions.started == []
+    del world.leases['deploy-leases/harness']
+    assert module.backstop({'lease': 'lease-1'}, world, executions, world, world) == {'executionArn': 'new'}
+    assert json.loads(executions.started[0]['input']) == {'mode': 'parked', 'op': 'advance'}
 
 
 def test_workflow_entrypoint_uses_deployed_dispatcher_and_native_waiter_without_lambda_environment(monkeypatch):
@@ -496,7 +567,7 @@ def test_nonpartial_start_invalidates_existing_egress_lease_even_if_transition_f
         # The accepted execution later fails, so no final store invalidates the lease.
     assert lease['value'] == 'none'
     before = list(executions.started)
-    assert module.backstop({'lease': old_lease}, world, executions) == {'expired': False}
+    assert module.backstop({'lease': old_lease}, world, executions, world, world) == {'expired': False}
     assert executions.started == before
 
 

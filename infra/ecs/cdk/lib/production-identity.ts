@@ -21,6 +21,7 @@ export interface DeployIdentity {
     };
     account: string;
     region: string;
+    cloudFormation: { stackFamily: string };
     agentCore: {
       runtime: string;
       runtimeNetworkParameter: string;

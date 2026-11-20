@@ -11,6 +11,7 @@ from typing import NotRequired, TypedDict
 from urllib.error import HTTPError
 
 from botocore.exceptions import ClientError
+from deploy_guard import SETTLED, require_no_deploy
 from deploy_identity import load_identity
 from egress_probe import RunningProbe
 
@@ -54,7 +55,6 @@ STEPS = {mode: tuple(step for step in steps if OWNED_EGRESS or step not in ('egr
     'live': ('prepare', 'capacity', 'refresh', 'origin', 'health', 'verify', 'origin-proof', 'alarm-configuration', 'spares', 'store'),
 }.items()}
 SPARE_DEADLINE_SECONDS = 285
-SETTLED = {'CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE'}
 
 
 class TransientServiceError(RuntimeError):
@@ -76,13 +76,13 @@ def handler(event, context, **ports):
         raise
 
 
-def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None, probe=None):
+def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None, probe=None, leases=None):
     import boto3
     if event.get('op') == 'monitor':
         return establish_monitoring(event)
     cloudformation = cloudformation or boto3.client('cloudformation')
     if event.get('op') == 'backstop':
-        return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'))
+        return backstop(event, ssm or boto3.client('ssm'), executions or boto3.client('stepfunctions'), cloudformation, leases or boto3.client('s3'))
     if event.get('op') == 'state':
         stored = event.get('stored') or (ssm or boto3.client('ssm')).get_parameter(Name=IDENTITY['ssm']['parkState'])['Parameter']['Value']
         return production_state(cloudformation, stored)
@@ -91,7 +91,7 @@ def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capac
         raise ValueError(f'Unknown transition {event}')
     if event['op'] == 'start':
         return start(action, cloudformation, executions or boto3.client('stepfunctions'), ssm or boto3.client('ssm'))
-    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe, executions)
+    return advance(event, cloudformation, ssm, verify, capacity, refresh, spares, action, probe, executions, leases)
 
 
 def production_state(cloudformation, stored):
@@ -121,10 +121,10 @@ def mode_parameter(stack):
     raise RuntimeError('Stack has neither productionMode nor a valid legacy parked parameter')
 
 
-def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe, executions=None) -> TransitionState:
+def advance(event: TransitionState, cloudformation, ssm, verify, capacity, refresh, spares, action: str, probe, executions=None, leases=None) -> TransitionState:
     index = event.get('index', 0)
     if index == 0 and 'startedAt' not in event:
-        preflight(cloudformation, action)
+        first_state_checks(cloudformation, leases, action)
     target = action
     step = STEPS[action][index]
     state: TransitionState = {**event, 'startedAt': event.get('startedAt', time.time())}
@@ -248,7 +248,7 @@ def start(action, cloudformation, executions, ssm):
     return {'executionArn': result['executionArn']}
 
 
-def backstop(event, ssm, executions):
+def backstop(event, ssm, executions, cloudformation, leases):
     lease = ssm.get_parameter(Name=IDENTITY['ssm']['parkState'] + '/backstop')['Parameter']['Value']
     if lease != event['lease']:
         return {'expired': False}
@@ -256,8 +256,17 @@ def backstop(event, ssm, executions):
     running = executions.list_executions(stateMachineArn=arn, statusFilter='RUNNING', maxResults=1)['executions']
     if running:
         raise TransientServiceError('Production transition still running at backstop deadline')
+    # Its retries (1 min x 120) outlast a lease: a deploy delays this park, not cancels it.
+    require_no_deploy(cloudformation, leases, time.time(), refusal=TransientServiceError)
     result = executions.start_execution(stateMachineArn=arn, input=json.dumps({'mode': 'parked', 'op': 'advance'}))
     return {'executionArn': result['executionArn']}
+
+
+def first_state_checks(cloudformation, leases, action):
+    if action != 'live':
+        import boto3
+        require_no_deploy(cloudformation, leases or boto3.client('s3'), time.time())
+    preflight(cloudformation, action)
 
 
 def preflight(cloudformation, target):

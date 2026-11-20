@@ -117,6 +117,15 @@ cat > "$ROLE_POLICY" <<EOF
     },
     {
       "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::haoxdong-collective-sessions/deploy-leases/harness",
+        "arn:aws:s3:::haoxdong-collective-sessions/deploy-leases/origin",
+        "arn:aws:s3:::haoxdong-collective-sessions/deploy-leases/web"
+      ]
+    },
+    {
+      "Effect": "Allow",
       "Action": "sts:AssumeRole",
       "Resource": "arn:aws:iam::$AWS_ACCOUNT_ID:role/cdk-hnb659fds-*-role-$AWS_ACCOUNT_ID-$AWS_REGION"
     },

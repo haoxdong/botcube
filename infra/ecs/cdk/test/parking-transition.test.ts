@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { deployIdentity } from '../lib/deploy-root.js';
-import { parkingTransition } from '../lib/parking-transition.js';
+import { deployedStacks, parkingTransition } from '../lib/parking-transition.js';
 
 const identity = deployIdentity(path.resolve(__dirname, '../../../../examples/public/deploy'));
 
@@ -49,6 +49,22 @@ test('lets the transition register the Session API scalable target', () => {
     .flatMap(policy => (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }).Properties.PolicyDocument.Statement)
     .flatMap(statement => [statement.Action].flat());
   expect(actions).toEqual(expect.arrayContaining(['lambda:GetProvisionedConcurrencyConfig', 'cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'application-autoscaling:RegisterScalableTarget']));
+});
+
+test('lets the transition read only deploy leases and the deployed stacks it guards a park with', () => {
+  const stack = new Stack(new App(), 'Guard', { env: { account: identity.aws.account, region: identity.aws.region } });
+  parkingTransition(stack, path.resolve(__dirname, '../../..'), identity);
+  const statements = Object.values(Template.fromStack(stack).findResources('AWS::IAM::Policy'))
+    .flatMap(policy => (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[]; Resource: unknown; Condition?: unknown }[] } } }).Properties.PolicyDocument.Statement)
+    .map(statement => stack.resolve(statement) as { Action: string | string[]; Resource: unknown; Condition?: unknown });
+  const bucket = identity.aws.ecs.parking.slotBucket;
+  expect(statements.filter(statement => [statement.Action].flat().some(action => action.startsWith('s3:')))).toEqual([
+    { Action: 's3:ListBucket', Effect: 'Allow', Resource: `arn:aws:s3:::${bucket}`, Condition: { StringLike: { 's3:prefix': 'deploy-leases/*' } } },
+    { Action: 's3:GetObject', Effect: 'Allow', Resource: `arn:aws:s3:::${bucket}/deploy-leases/*` },
+  ]);
+  expect(deployedStacks(identity)).toEqual(['AgentCore-bot-cube-default', 'bot-cube-preview-origin', 'bot-cube-web-latency']);
+  expect(statements).toContainEqual({ Action: 'cloudformation:DescribeStacks', Effect: 'Allow',
+    Resource: stack.resolve(deployedStacks(identity).map(name => stack.formatArn({ service: 'cloudformation', resource: 'stack', resourceName: `${name}/*` }))) });
 });
 
 test('rechecks a transition stack every 5 seconds, so a finished update starts the next step promptly', () => {
