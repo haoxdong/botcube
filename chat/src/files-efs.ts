@@ -120,7 +120,7 @@ export function accountFilesEfs({
   cleanupWorker?: CleanupWorker;
   root: string;
   fileSystemArn: string;
-  mountTargetIp: string;
+  mountTargetIp: () => Promise<string>;
   accessPoints: AccessPoints;
   mountCredentials: MountCredentials;
   records: () => FilesRecords;
@@ -339,11 +339,12 @@ export function accountFilesEfs({
     },
     async mountBinding(userId) {
       await requireActive(userId);
+      const ip = await mountTargetIp();
       const accessPointArn = await accessPoint(userId);
       await requireActive(userId, accessPointArn);
       const credentials = await mountCredentials(accessPointArn, `files-${accountOf(userId)}`);
       await requireActive(userId, accessPointArn);
-      return { fileSystemId, mountTargetIp, accessPointId: accessPointArn.split('/').pop() ?? '', region, ...credentials };
+      return { fileSystemId, mountTargetIp: ip, accessPointId: accessPointArn.split('/').pop() ?? '', region, ...credentials };
     },
   };
 }

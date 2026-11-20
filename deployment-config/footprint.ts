@@ -1,23 +1,10 @@
 import { outsideIssuer } from './credential-fields.js';
 import type { DeploymentConfig } from './schema.js';
 import type { CredentialSource } from './blocks.js';
+import { PRINCIPALS, type Principal } from './principals.js';
+import { SUPPLIABLE, VPC_ACCESS } from './suppliable.js';
 
 const XRAY = ['xray:PutTelemetryRecords', 'xray:PutTraceSegments'];
-
-/** The roles BotCube's processes run as. A role the deploy machinery alone uses (custom resources, image builds, ops) is not one. */
-export const PRINCIPALS = {
-  chatService: 'Chat Service task',
-  credentialService: 'Credential Service task',
-  scheduledRuns: 'EventBridge Scheduler, sending scheduled runs to their queue',
-  agentComputerBrowser: 'Agent Computer browser',
-  filesMount: "a Turn's Files mount",
-  filesLinks: 'Files links function',
-  harness: 'Harness (AgentCore Runtime)',
-  sessionApi: 'session API function',
-  userMemory: "a Turn's own Memory credentials",
-} as const;
-
-export type Principal = keyof typeof PRINCIPALS;
 
 export interface Grant {
   readonly actions: readonly string[];
@@ -35,6 +22,8 @@ export interface Need {
   readonly commands?: readonly string[];
   /** Sidecar images pulled from the image registry, by their path in it. */
   readonly pulled?: readonly string[];
+  /** As `Footprint.runtime`. */
+  readonly runtime?: readonly string[];
 }
 
 /** A resource the operator supplies instead of BotCube creating it, and the grants they give on it in its place. */
@@ -50,6 +39,8 @@ export interface Footprint {
   readonly supplied: SuppliedResource[];
   /** What BotCube creates that the Deployment Config could supply instead, as `<field>: <what it is>`. */
   readonly created: string[];
+  /** AWS infrastructure BotCube creates after deploy, as `<action> on <resource> (<who>, <when>)`. */
+  readonly runtime: string[];
   readonly iam: Partial<Record<Principal, { actions: string[]; managedPolicies: string[] }>>;
   readonly egressHosts: string[];
   readonly egressFrom: Partial<Record<string, Principal[]>>;
@@ -74,13 +65,9 @@ const PULLED = {
     'lambda/python:3.13', 'sam/build-python3.12'],
 };
 
-const CHAT_TABLE_ACTIONS = ['BatchGetItem', 'BatchWriteItem', 'ConditionCheckItem', 'DeleteItem', 'DescribeTable', 'GetItem', 'GetRecords',
-  'GetShardIterator', 'PutItem', 'Query', 'Scan', 'UpdateItem'].map(action => `dynamodb:${action}`);
 const BROWSERS = ['ConnectBrowserAutomationStream', 'CreateBrowserProfile', 'DeleteBrowserProfile', 'GetBrowser',
   'GetBrowserSession', 'ListBrowserSessions', 'SaveBrowserSessionProfile', 'StartBrowserSession', 'StopBrowserSession', 'UpdateBrowserStream']
   .map(action => `bedrock-agentcore:${action}`);
-const VPC_ACCESS = 'AWSLambdaVPCAccessExecutionRole';
-const EFS_CLIENT = ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'];
 const SCHEDULED_RUNS_CONSUMER = ['ChangeMessageVisibility', 'DeleteMessage', 'GetQueueAttributes', 'GetQueueUrl', 'ReceiveMessage'].map(action => `sqs:${action}`);
 const aws = (...services: string[]) => services.map(service => `${service}.<region>.amazonaws.com`);
 
@@ -88,17 +75,15 @@ const aws = (...services: string[]) => services.map(service => `${service}.<regi
 const BUILT_IN: Need = {
   iam: {
     chatService: { actions: [
-      ...BROWSERS, ...EFS_CLIENT, ...SCHEDULED_RUNS_CONSUMER,
-      // Files: the access-point pool, and the role each Turn's Files mount assumes.
-      'elasticfilesystem:CreateAccessPoint', 'elasticfilesystem:DeleteAccessPoint', 'elasticfilesystem:DescribeAccessPoints', 'sts:AssumeRole',
+      ...BROWSERS, ...SCHEDULED_RUNS_CONSUMER,
+      // Files: the role each Turn's Files mount assumes.
+      'sts:AssumeRole',
       // The Agent Computer's Chrome policy.
       's3:GetBucket*', 's3:GetObject*', 's3:List*',
       'ecs:DescribeTasks', 'ssm:GetParameterHistory',
     ] },
     credentialService: { actions: ['bedrock-agentcore:ConnectBrowserAutomationStream', 'bedrock-agentcore:GetBrowserSession'] },
-    agentComputerBrowser: { actions: EFS_CLIENT },
-    filesMount: { actions: EFS_CLIENT },
-    filesLinks: { actions: EFS_CLIENT, managedPolicies: ['AWSLambdaBasicExecutionRole', VPC_ACCESS] },
+    filesLinks: { actions: [], managedPolicies: ['AWSLambdaBasicExecutionRole', VPC_ACCESS] },
     harness: { actions: [
       'ecr:BatchCheckLayerAvailability', 'ecr:BatchGetImage', 'ecr:GetAuthorizationToken', 'ecr:GetDownloadUrlForLayer',
       'logs:CreateLogGroup', 'logs:CreateLogStream', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:PutLogEvents',
@@ -116,48 +101,18 @@ const BUILT_IN: Need = {
   ],
 };
 
-const VAULT_TABLE_ACTIONS = ['ConditionCheckItem', 'DeleteItem', 'GetItem', 'PutItem', 'Query', 'UpdateItem'].map(action => `dynamodb:${action}`);
-const KEY_USE = ['kms:Decrypt', 'kms:DescribeKey', 'kms:GenerateDataKey'];
-const PARKING = 'production parking functions';
-const ORIGIN_SMOKE = "the deploy role's origin smoke test";
-
-type Supplied = NonNullable<DeploymentConfig['supplied']>;
-interface Suppliable {
-  /** What BotCube creates in its place; absent, it creates nothing, as for AgentCore Memory on its AWS owned key. */
-  readonly created?: string;
-  readonly name: (supplied: Supplied) => string | undefined;
-  /** What a BotCube role needs on it, granted when BotCube creates it and supplied with it otherwise. */
-  readonly grant?: { readonly to: Principal; readonly actions: readonly string[] };
-  /** What the deploy machinery and AWS services need on it, granted the same way. */
-  readonly others?: Readonly<Record<string, readonly string[]>>;
+export type FilesAccessPointMode = 'runtime' | 'pool';
+export interface FootprintOptions {
+  /** Mirrors the CDK context: `runtime` (default) creates a User's access point on first use; `pool` leases a deploy-time one. */
+  readonly filesAccessPointMode?: FilesAccessPointMode;
 }
 
-/** Each resource BotCube creates unless the Deployment Config supplies it with its grants (ADR 0091). */
-const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
-  network: {
-    created: "the private subnets' NAT gateway, its Elastic IP and route",
-    name: ({ network }) => network?.vpcId,
-    others: { "every other Lambda function's role, the deploy's own included": [`AWS managed policy ${VPC_ACCESS}`] },
+const FILES_ACCESS_POINTS: Readonly<Record<FilesAccessPointMode, Need>> = {
+  runtime: {
+    iam: { chatService: { actions: ['elasticfilesystem:CreateAccessPoint', 'elasticfilesystem:DeleteAccessPoint', 'elasticfilesystem:DescribeAccessPoints'] } },
+    runtime: [`elasticfilesystem:CreateAccessPoint on the Files file system (Chat Service, on a User's first Files use)`],
   },
-  'kmsKeys.vault': { created: "the Credential Service's vault key", name: ({ kmsKeys }) => kmsKeys?.vault, grant: { to: 'credentialService', actions: KEY_USE } },
-  'kmsKeys.sheet': { created: "the Sign-in Sheet's RSA key", name: ({ kmsKeys }) => kmsKeys?.sheet, grant: { to: 'credentialService', actions: ['kms:Decrypt', 'kms:GetPublicKey'] } },
-  'kmsKeys.memory': { name: ({ kmsKeys }) => kmsKeys?.memory, others: { 'AgentCore Memory execution role': KEY_USE } },
-  'kmsKeys.images': { created: "the bot image repository's key", name: ({ kmsKeys }) => kmsKeys?.images, grant: { to: 'harness', actions: ['kms:Decrypt'] } },
-  'tables.chat': {
-    created: 'the chat table and its stream',
-    name: ({ tables }) => tables?.chat?.tableName,
-    grant: { to: 'chatService', actions: CHAT_TABLE_ACTIONS },
-    others: {
-      [PARKING]: ['DeleteItem', 'DescribeStream', 'GetItem', 'GetRecords', 'GetShardIterator', 'ListStreams', 'PutItem', 'Query', 'UpdateItem'].map(action => `dynamodb:${action}`),
-      [ORIGIN_SMOKE]: ['dynamodb:DeleteItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
-    },
-  },
-  'tables.vault': { created: "the Credential Service's vault table", name: ({ tables }) => tables?.vault?.tableName, grant: { to: 'credentialService', actions: VAULT_TABLE_ACTIONS } },
-  'buckets.connectionLogs': {
-    created: "the origin load balancer's connection logs bucket",
-    name: ({ buckets }) => buckets?.connectionLogs,
-    others: { 'Elastic Load Balancing log delivery': ['s3:PutObject'] },
-  },
+  pool: {},
 };
 
 /** Each resource BotCube would create: supplied, with the grants on it moved to its entry, or created and granted. */
@@ -167,22 +122,22 @@ function suppliedResources({ supplied = {}, identity }: DeploymentConfig): { nee
     field: `supplied.${key}`,
     name,
     grants: [
-      ...(resource.grant ? [{ to: PRINCIPALS[resource.grant.to], actions: resource.grant.actions }] : []),
+      ...(resource.grant ?? []).map(({ to, role, actions }) => ({ to: role ? `${PRINCIPALS[to]} (role ${role})` : PRINCIPALS[to], actions })),
       ...Object.entries(resource.others ?? {}).map(([to, actions]) => ({ to, actions })),
     ],
   }]));
   const providerResources = identity.kind === 'oidc'
     ? (identity.resources ?? []).map(({ type, name }) => ({ field: 'identity.resources', name: `${type} ${name}`, grants: [] }))
     : [];
-  const createdEntries = entries.filter(({ name }) => name === undefined);
+  const createdEntries = entries.filter(({ name, resource }) => name === undefined && resource.created !== undefined);
   const iam: Partial<Record<Principal, Grant>> = {};
   for (const { resource: { grant } } of createdEntries) {
-    if (grant) iam[grant.to] = { actions: [...(iam[grant.to]?.actions ?? []), ...grant.actions] };
+    for (const { to, actions } of grant ?? []) iam[to] = { actions: [...(iam[to]?.actions ?? []), ...actions] };
   }
   if (supplied.network) iam.sessionApi = { actions: [], managedPolicies: [VPC_ACCESS] };
   return {
     need: { iam, supplied: [...suppliedEntries, ...providerResources] },
-    created: createdEntries.flatMap(({ key, resource }) => (resource.created ? [`supplied.${key}: ${resource.created}`] : [])),
+    created: createdEntries.map(({ key, resource }) => `supplied.${key}: ${resource.created}`),
   };
 }
 
@@ -299,10 +254,11 @@ function credentialNeed(field: string, credential: CredentialSource, readers: re
   }
 }
 
-/** The supplied and created resources, IAM actions, egress hosts, images and commands this Deployment Config needs. */
-export function footprint(config: DeploymentConfig): Footprint {
+/** The supplied, created and runtime resources, IAM actions, egress hosts, images and commands this Deployment Config needs. */
+export function footprint(config: DeploymentConfig, { filesAccessPointMode = 'runtime' }: FootprintOptions = {}): Footprint {
   const resources = suppliedResources(config);
-  const needs = [BUILT_IN, ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, config[section])), resources.need];
+  const needs = [BUILT_IN, config.supplied?.files ? {} : FILES_ACCESS_POINTS[filesAccessPointMode],
+    ...(Object.keys(ADAPTERS) as Section[]).flatMap(section => adapter(section, config[section])), resources.need];
   const iam: Footprint['iam'] = {};
   for (const principal of Object.keys(PRINCIPALS) as Principal[]) {
     const grants = needs.flatMap(need => need.iam?.[principal] ?? []);
@@ -315,6 +271,7 @@ export function footprint(config: DeploymentConfig): Footprint {
   return {
     supplied: needs.flatMap(need => need.supplied ?? []).map(resource => ({ ...resource, grants: resource.grants.map(({ to, actions }) => ({ to, actions: sorted(actions) })) })),
     created: resources.created,
+    runtime: needs.flatMap(need => need.runtime ?? []),
     iam,
     egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])),
     egressFrom: Object.fromEntries(needs.flatMap(need => Object.entries(need.egressFrom ?? {})).map(([host, from]) => [host, [...from]])),
@@ -333,7 +290,7 @@ function adapter(section: Section, config: { kind: string }): Need[] {
 const sorted = (values: readonly string[]) => [...new Set(values)].sort();
 
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ supplied, created, iam, egressHosts, egressFrom, images, buildImages, commands }: Footprint): string {
+export function formatFootprint({ supplied, created, runtime, iam, egressHosts, egressFrom, images, buildImages, commands }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
@@ -345,6 +302,7 @@ export function formatFootprint({ supplied, created, iam, egressHosts, egressFro
       ...grants.map(({ to, actions }) => `    grant ${to}: ${actions.join(' ')}`),
     ]),
     'Created resources', ...created.map(resource => `  ${resource}`),
+    'Created at runtime', ...runtime.map(action => `  ${action}`),
     'IAM actions', ...roles,
     'Egress hosts', ...egressHosts.map(host => `  ${host}${egressFrom[host] ? ` (${egressFrom[host].join(', ')})` : ''}`),
     'Images', ...images.map(image => `  ${image}`),

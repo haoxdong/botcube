@@ -6,6 +6,7 @@ import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
+import { suppliedFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
 import { addModelsEndpoint } from './models-endpoint.js';
@@ -20,6 +21,7 @@ import { publishCredentialService, rawServiceHostname } from './credential-servi
 import { addFilesLinks } from './files-links.js';
 import { PreviewChatService } from './preview-chat-service.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
+import type { CredentialServiceImage } from './credential-audit-copy.js';
 import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-credential-service.js';
 import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
@@ -56,7 +58,7 @@ export interface Serving {
   credentials: PrivateCredentialService;
   agentComputerBrowser: CfnBrowserCustom;
   /** The images the services run; a product's own task can run one of them. */
-  images: { chat: ContainerImage; credential: ContainerImage };
+  images: { chat: ContainerImage; credential: CredentialServiceImage };
 }
 
 export interface ProductionOptions {
@@ -103,7 +105,7 @@ export interface ProductionOptions {
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
     input: OriginInput;
-    images: { chat: ContainerImage; credential: ContainerImage };
+    images: Serving['images'];
     /** The checkout's commit, tagged on each task definition for `scripts/dev-status.sh`. */
     commit: string;
   } | undefined;
@@ -175,6 +177,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   }
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
+  const filesRoles = suppliedFilesRoleNames(storage, identity.aws.iam);
   const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableSupplied, identity, options.imageRegistry);
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(parking).apply(options.permissionsBoundary);
   const origin = createServingOrigin(app, options, input, health, egress, parking.wakeUrl);
@@ -216,10 +219,13 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
   if (options.turnCredentials === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
+  nameTaskRoles(chat.task, filesRoles?.chatServiceTaskRole, undefined, undefined);
   grantSecrets(chat, options.chatSecretArns);
   const planUsageOwner = ssm.StringParameter.valueForStringParameter(origin, identity.aws.ecs.chatService.planUsageOwnerAccountParameter);
   chat.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
-  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), options.originConfig);
+  const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), {
+    ...options.originConfig, ...optionalPhysicalName('agentComputerBrowserRoleName', filesRoles?.agentComputerBrowserRole),
+  });
   const credentialConfig = identity.aws.ecs.credentialService;
   const credentials = new PrivateCredentialService(origin, 'CredentialService', {
     ...(options.executionRole ? { executionRole: options.executionRole } : {}),
@@ -248,7 +254,8 @@ export function defineProduction(app: App, options: ProductionOptions) {
     Tags.of(task).add('commit', commit, { includeResourceTypes: ['AWS::ECS::TaskDefinition'] });
   }
   addFilesPolicy(origin, chat);
-  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork, agentComputer.network]);
+  addFilesLinks(origin, chat, storage, agentComputer, cubeRoot, identity.domains.corsOrigins, [agentNetwork, agentComputer.network],
+    filesRoles?.links);
   // The agent reaches its Agent Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).
   chat.network.connections.allowFrom(agentNetwork, ec2.Port.tcp(options.chat?.port ?? 8123), 'Harness Agent Computer CDP');
   // The Chat Service puts its own task address in for the host, so each Turn reaches the task holding its Agent Computer.
@@ -364,10 +371,9 @@ function addAgentComputerBrowser(
     ...optionalPhysicalName('roleName', names?.agentComputerBrowserRoleName),
     assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', { conditions: { StringEquals: { 'aws:SourceAccount': origin.account } } }),
   });
-  const fileSystemArn = storage.filesEfs.attrArn;
-  role.addToPrincipalPolicy(new iam.PolicyStatement({
+  if (!storage.suppliedFiles) role.addToPrincipalPolicy(new iam.PolicyStatement({
     actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
-    resources: [fileSystemArn],
+    resources: [storage.filesEfs.attrArn],
     conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
   }));
   const { subnets } = agentCore.privateNatBrowser;

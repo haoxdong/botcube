@@ -21,7 +21,7 @@ afterEach(() => vi.restoreAllMocks());
 
 it('leases one slot for concurrent wakes and refuses a second User when full', async () => {
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   expect(await Promise.all(Array.from({ length: 8 }, () => pool.create('/accounts/a', 'a', 'acct_a')))).toEqual(Array(8).fill(arn));
   expect(await store.filesPoolUsage()).toBe(1);
   await expect(pool.create('/accounts/b', 'b', 'acct_b')).rejects.toThrow('pool is full');
@@ -30,7 +30,7 @@ it('leases one slot for concurrent wakes and refuses a second User when full', a
 
 it('never leases one slot to two Users', async () => {
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const results = await Promise.allSettled(['acct_a', 'acct_b'].map(user => pool.create(`/accounts/${user}`, user, user)));
   expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
   expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
@@ -38,7 +38,7 @@ it('never leases one slot to two Users', async () => {
 
 it('refuses retirement and propagates storage failures', async () => {
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   await store.retireFiles('acct_a', null, Date.now());
   await expect(pool.create('/accounts/a', 'a', 'acct_a')).rejects.toThrow('pool is full');
   vi.spyOn(store, 'claimFilesPoolSlot').mockRejectedValue(new Error('DynamoDB unavailable'));
@@ -48,10 +48,10 @@ it('refuses retirement and propagates storage failures', async () => {
 it('quarantines retirement, wipes late writes, and reuses an empty slot', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-'));
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
+    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
     links: { url: 'https://files.test', key: 'key' },
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -85,9 +85,9 @@ it('quarantines retirement, wipes late writes, and reuses an empty slot', async 
 
 it('keeps ownership when an access point is replaced at the same directory', async () => {
   const store = records();
-  const old = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const old = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   await old.create('/accounts/a', 'a', 'acct_a');
-  const replacement = pooledAccessPoints([{ arn: `${arn}2`, directory }], () => store, () => 0);
+  const replacement = pooledAccessPoints([{ arn: `${arn}2`, directory }], () => store, { startingSlot: () => 0 });
   await expect(replacement.create('/accounts/b', 'b', 'acct_b')).rejects.toThrow('pool is full');
 });
 
@@ -104,10 +104,10 @@ it('allows only one cleanup worker until its filesystem work is complete', async
 it('blocks a competing cleanup worker before it can wipe a reassigned directory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-workers-'));
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
+    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
     links: { url: 'https://files.test', key: 'key' },
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -148,10 +148,10 @@ it('prevents destination retirement while an incoming transfer is writing', asyn
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-transfer-'));
   const store = records();
   const second = '/accounts/00000000000000000000000000000002';
-  const pool = pooledAccessPoints([{ arn, directory }, { arn: `${arn}2`, directory: second }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }, { arn: `${arn}2`, directory: second }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
+    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
     links: { url: 'https://files.test', key: 'key' },
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -191,10 +191,10 @@ it('prevents destination retirement while an incoming transfer is writing', asyn
 it('retains capacity when a retirement wipe fails', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-wipe-'));
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
+    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
     links: { url: 'https://files.test', key: 'key' },
     mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
   });
@@ -213,14 +213,14 @@ it('retains capacity when a retirement wipe fails', async () => {
 it('refuses credentials from a paused wake after retirement and slot reuse', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-paused-wake-'));
   const store = records();
-  const pool = pooledAccessPoints([{ arn, directory }], () => store, () => 0);
+  const pool = pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 });
   let resume: () => void = () => undefined;
   let entered: () => void = () => undefined;
   const gate = new Promise<void>(resolve => { resume = resolve; });
   const started = new Promise<void>(resolve => { entered = resolve; });
   const files = userFilesEfs({
     root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
-    mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store,
+    mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store,
     links: { url: 'https://files.test', key: 'key' },
     mountCredentials: async () => {
       entered();
@@ -251,7 +251,7 @@ it('refuses credentials from a paused wake after retirement and slot reuse', asy
 it('starts at the chosen slot and wraps around occupied slots', async () => {
   const store = records();
   const second = { arn: `${arn}2`, directory: '/accounts/00000000000000000000000000000002' };
-  const pool = pooledAccessPoints([{ arn, directory }, second], () => store, () => 1);
+  const pool = pooledAccessPoints([{ arn, directory }, second], () => store, { startingSlot: () => 1 });
   expect(await pool.create('/accounts/a', 'a', 'acct_a')).toBe(second.arn);
   expect(await pool.create('/accounts/b', 'b', 'acct_b')).toBe(arn);
 });
@@ -260,8 +260,8 @@ it('recovers both claims of a crashed transfer without a DynamoDB edit', async (
   const root = await mkdtemp(path.join(tmpdir(), 'files-pool-crash-'));
   const store = records();
   const second = { arn: `${arn}2`, directory: '/accounts/00000000000000000000000000000002' };
-  const pool = pooledAccessPoints([{ arn, directory }, second], () => store, () => 0);
-  const files = userFilesEfs({ root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001', mountTargetIp: '192.0.2.1', accessPoints: pool, records: () => store, links: { url: 'https://files.test', key: 'key' }, mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }), cleanupWorker: { identity: async () => ({ cluster: 'cluster', taskArn: 'new-task' }), stopped: async claim => claim.taskArn === 'dead-task' } });
+  const pool = pooledAccessPoints([{ arn, directory }, second], () => store, { startingSlot: () => 0 });
+  const files = userFilesEfs({ root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001', mountTargetIp: () => Promise.resolve('192.0.2.1'), accessPoints: pool, records: () => store, links: { url: 'https://files.test', key: 'key' }, mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }), cleanupWorker: { identity: async () => ({ cluster: 'cluster', taskArn: 'new-task' }), stopped: async claim => claim.taskArn === 'dead-task' } });
   try {
     await files.mount('acct_a');
     await files.mount('acct_b');
@@ -282,4 +282,22 @@ it('recovers both claims of a crashed transfer without a DynamoDB edit', async (
     await files.mount('acct_c');
     expect(await files.list('acct_c')).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it('leases no access point when the mount target cannot be found', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'files-pool-dns-'));
+  const store = records();
+  const files = userFilesEfs({
+    root, fileSystemArn: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0001',
+    mountTargetIp: () => Promise.reject(new Error('getaddrinfo ENOTFOUND')),
+    accessPoints: pooledAccessPoints([{ arn, directory }], () => store, { startingSlot: () => 0 }), records: () => store,
+    links: { url: 'https://files.test', key: 'key' },
+    mountCredentials: async () => ({ accessKeyId: 'key', secretAccessKey: 'secret', sessionToken: 'token', expiration: new Date().toISOString() }),
+  });
+  try {
+    await expect(files.mountBinding('acct_a')).rejects.toThrow('ENOTFOUND');
+    expect(await store.filesAccessPoint('acct_a')).toBeNull();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

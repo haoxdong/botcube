@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { footprint, formatFootprint } from './footprint.js';
 import { loadDeployment } from './load.js';
+import { SUPPLIABLE } from './suppliable.js';
 import type { CredentialSource } from './blocks.js';
 
 const example = (name: string) => fileURLToPath(new URL(`../examples/${name}/deployment-config.json`, import.meta.url));
@@ -15,9 +16,9 @@ function section(printed: string, heading: string): string[] {
   return lines.slice(start + 1, end < 0 ? undefined : end).filter(Boolean);
 }
 
-it.each(['public', 'enterprise'])('prints the %s example as supplied and created resources, IAM actions, egress hosts, images and commands', (name) => {
+it.each(['public', 'enterprise'])('prints the %s example as supplied, created and runtime-created resources, IAM actions, egress hosts, images and commands', (name) => {
   const headings = printedFor(name).split('\n').filter((line) => line && !line.startsWith(' '));
-  expect(headings).toEqual(['Supplied resources', 'Created resources', 'IAM actions', 'Egress hosts', 'Images', 'Build images', 'Commands']);
+  expect(headings).toEqual(['Supplied resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Egress hosts', 'Images', 'Build images', 'Commands']);
 });
 
 it("names the enterprise example's OIDC issuer host among its egress hosts", () => {
@@ -53,6 +54,9 @@ describe('the enterprise example', () => {
       '    grant AgentCore Memory execution role: kms:Decrypt kms:DescribeKey kms:GenerateDataKey',
       '  supplied.kmsKeys.images arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444',
       '    grant Harness (AgentCore Runtime): kms:Decrypt',
+      '  supplied.kmsKeys.functions arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555',
+      "    grant the Credential Service's audit-copy function's role: kms:Decrypt",
+      "    grant the deploy role, which sets the function's environment: kms:CreateGrant kms:Encrypt",
       '  supplied.tables.chat corp-botcube-chat',
       '    grant Chat Service task: dynamodb:BatchGetItem dynamodb:BatchWriteItem dynamodb:ConditionCheckItem dynamodb:DeleteItem dynamodb:DescribeTable dynamodb:GetItem dynamodb:GetRecords dynamodb:GetShardIterator dynamodb:PutItem dynamodb:Query dynamodb:Scan dynamodb:UpdateItem',
       '    grant production parking functions: dynamodb:DeleteItem dynamodb:DescribeStream dynamodb:GetItem dynamodb:GetRecords dynamodb:GetShardIterator dynamodb:ListStreams dynamodb:PutItem dynamodb:Query dynamodb:UpdateItem',
@@ -61,11 +65,31 @@ describe('the enterprise example', () => {
       '    grant Credential Service task: dynamodb:ConditionCheckItem dynamodb:DeleteItem dynamodb:GetItem dynamodb:PutItem dynamodb:Query dynamodb:UpdateItem',
       '  supplied.buckets.connectionLogs corp-botcube-connection-logs',
       '    grant Elastic Load Balancing log delivery: s3:PutObject',
+      '  supplied.credentialService http://credentials.example.com',
+      '  supplied.files fs-0fea7e5f11e5 (KMS key arn:aws:kms:us-east-1:000000000000:key/66666666-ffff-4fff-8fff-666666666666)',
+      '    grant Chat Service task (role aws.iam.chatServiceTaskRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
+      '    grant Agent Computer browser (role aws.iam.agentComputerBrowserRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
+      "    grant a Turn's Files mount (role aws.iam.filesMountRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite",
+      '    grant Files links function (role aws.iam.filesLinksRole): elasticfilesystem:ClientMount elasticfilesystem:ClientWrite',
+      "    grant NFS clients in the supplied private subnets: TCP 2049 to the file system's mount target in each subnet",
+      "    grant the supplied VPC: Amazon-provided DNS, by which the Chat Service finds the mount target as <fileSystemId>.efs.<region>.amazonaws.com",
     ]);
+  });
+
+  it.each(['runtime', 'pool'] as const)('creates no Files access point at runtime, in %s mode too, and grants no access-point management', (filesAccessPointMode) => {
+    const supplied = footprint(loadDeployment(example('enterprise')).config, { filesAccessPointMode });
+    expect(section(formatFootprint(supplied), 'Created at runtime')).toEqual([]);
+    expect(supplied.iam.chatService?.actions.filter((action) => action.startsWith('elasticfilesystem:'))).toEqual([]);
   });
 
   it('creates none of the resources it supplies', () => {
     expect(section(printedFor('enterprise'), 'Created resources')).toEqual([]);
+  });
+
+  it('supplies every resource an operator can supply, those BotCube would create only at runtime included', () => {
+    const { supplied, runtime } = footprint(loadDeployment(example('enterprise')).config);
+    expect(supplied.map(({ field }) => field)).toEqual(Object.keys(SUPPLIABLE).map((key) => `supplied.${key}`));
+    expect(runtime).toEqual([]);
   });
 
   it('grants no BotCube role anything on a resource it supplies', () => {
@@ -108,23 +132,50 @@ describe('the public example', () => {
     expect(section(printed, 'Created resources')).toEqual([
       "  supplied.network: the private subnets' NAT gateway, its Elastic IP and route",
       "  supplied.kmsKeys.vault: the Credential Service's vault key",
-      "  supplied.kmsKeys.sheet: the Sign-in Sheet's RSA key",
       "  supplied.kmsKeys.images: the bot image repository's key",
       '  supplied.tables.chat: the chat table and its stream',
       "  supplied.tables.vault: the Credential Service's vault table",
       "  supplied.buckets.connectionLogs: the origin load balancer's connection logs bucket",
+      "  supplied.credentialService: the Credential Service's private DNS namespace and Cloud Map service",
+      '  supplied.files: the Files file system, its mount targets and access points',
     ]);
   });
 
   it('grants the roles what the resources BotCube creates need', () => {
     const { iam } = footprint(loadDeployment(example('public')).config);
-    expect(iam.credentialService?.actions).toEqual(expect.arrayContaining(['dynamodb:GetItem', 'kms:GenerateDataKey', 'kms:GetPublicKey']));
+    expect(iam.credentialService?.actions).toEqual(expect.arrayContaining(['dynamodb:GetItem', 'kms:GenerateDataKey']));
     expect(iam.harness?.actions).toContain('kms:Decrypt');
     expect(iam.sessionApi?.managedPolicies).toEqual(['AWSLambdaBasicExecutionRole']);
   });
 
+  it('runs the stock Credential Service, which mounts no Sign-in Sheet routes: no sheet key is created or granted', () => {
+    expect(printedFor('public')).not.toContain('Sign-in Sheet');
+    expect(footprint(loadDeployment(example('public')).config).iam.credentialService?.actions).not.toContain('kms:GetPublicKey');
+  });
+
+  it("creates each User's Files access point at runtime, and holds the grants to", () => {
+    expect(section(printedFor('public'), 'Created at runtime')).toEqual([
+      "  elasticfilesystem:CreateAccessPoint on the Files file system (Chat Service, on a User's first Files use)",
+    ]);
+    expect(footprint(loadDeployment(example('public')).config).iam.chatService?.actions).toEqual(expect.arrayContaining([
+      'elasticfilesystem:CreateAccessPoint', 'elasticfilesystem:DeleteAccessPoint', 'elasticfilesystem:DescribeAccessPoints']));
+  });
+
   it('pulls from Amazon ECR Public', () => {
     expect(section(printedFor('public'), 'Images')).toContain('  public.ecr.aws/aws-observability/aws-otel-collector:v0.50.0');
+  });
+});
+
+describe('Files access points from the deploy-time pool', () => {
+  const pooled = footprint(loadDeployment(example('public')).config, { filesAccessPointMode: 'pool' });
+
+  it('creates nothing at runtime', () => {
+    expect(section(formatFootprint(pooled), 'Created at runtime')).toEqual([]);
+  });
+
+  it('grants the Chat Service no access-point management, as CDK grants none in pool mode', () => {
+    expect(pooled.iam.chatService?.actions.filter((action) => /AccessPoint/.test(action))).toEqual([]);
+    expect(pooled.iam.chatService?.actions).toContain('sts:AssumeRole');
   });
 });
 

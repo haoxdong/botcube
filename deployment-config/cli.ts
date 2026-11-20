@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `botcube footprint <deployment-config.json>`: what that Deployment Config needs from its AWS account (ADR 0091).
+// `botcube footprint [--files-access-point-mode <runtime|pool>] <deployment-config.json>`: what that Deployment Config needs from its AWS account (ADR 0091).
 import { registerHooks } from 'node:module';
 
 // Node strips the seam's types but keeps its `.js` import specifiers, which name the `.ts` file beside them.
@@ -14,19 +14,8 @@ registerHooks({
   },
 });
 
-const { footprint, formatFootprint } = await import('./footprint.ts');
-const { loadDeployment } = await import('./load.ts');
-const { DeploymentConfigError } = await import('./parse.ts');
-
-const [command, path, ...rest] = process.argv.slice(2);
-if (command !== 'footprint' || !path || rest.length) {
-  process.stderr.write('Usage: botcube footprint <deployment-config.json>\n');
-  process.exit(2);
-}
-try {
-  process.stdout.write(formatFootprint(footprint(loadDeployment(path).config)));
-} catch (error) {
-  if (!(error instanceof DeploymentConfigError)) throw error;
-  process.stderr.write(`${error.message}\n`);
-  process.exit(1);
-}
+const { main } = await import('./footprint-cli.ts');
+process.exitCode = main(process.argv.slice(2), {
+  stdout: (text) => process.stdout.write(text),
+  stderr: (text) => process.stderr.write(text),
+});

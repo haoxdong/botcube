@@ -7,7 +7,13 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { credentialServiceImage } from '../lib/credential-audit-copy';
 import { PrivateCredentialService, type PrivateCredentialServiceProps } from '../lib/private-credential-service';
+import { registryCredentialImage } from './credential-image.js';
 
 function synth(corporate = false, invocationTokenLength?: number, overrides: Partial<PrivateCredentialServiceProps> | ((stack: Stack) => Partial<PrivateCredentialServiceProps>) = {}) {
   const stack = new Stack(new App(), 'Credentials', { env: { account: '123456789012', region: 'us-east-1' } });
@@ -25,7 +31,7 @@ function synth(corporate = false, invocationTokenLength?: number, overrides: Par
     } : {}),
     cluster, chatNetwork: ec2.SecurityGroup.fromSecurityGroupId(stack, 'Chat', 'sg-fixture11111111'),
     agentNetwork: ec2.SecurityGroup.fromSecurityGroupId(stack, 'Agent', 'sg-fixture22222222'),
-    image: ecs.ContainerImage.fromRegistry('test-image'), tableName: 'test-vault',
+    image: registryCredentialImage('test-image'), tableName: 'test-vault',
     ...(invocationTokenLength === undefined ? {} : { invocationTokenLength }),
     rpcPath: '/rpc',
     namespaceName: 'namespace.test', alertsTopicName: 'existing-alerts', port: 8081,
@@ -113,7 +119,6 @@ test('the service reads its port, vault key, vault table and invocation token fr
     { Name: 'PORT', Value: '8081' },
     { Name: 'BOTCUBE_VAULT_KMS_KEY_ID', Value: { 'Fn::GetAtt': [id('AWS::KMS::Key'), 'Arn'] } },
     { Name: 'BOTCUBE_VAULT_TABLE', Value: { Ref: id('AWS::DynamoDB::Table') } },
-    { Name: 'BOTCUBE_SHEET_KMS_KEY_ID', Value: { 'Fn::GetAtt': [Object.keys(template.findResources('AWS::KMS::Key', { Properties: { KeySpec: 'RSA_2048' } }))[0], 'Arn'] } },
     { Name: 'AGENTCORE_BROWSER_ID', Value: 'test_auth_browser-1234567890' },
     { Name: 'AGENTCORE_AGENT_COMPUTER_BROWSER_ID', Value: 'test_agent_computer-1234567890' },
   ]);
@@ -162,9 +167,13 @@ test('audit events are copied into the group the service used to log to, which k
   expect(audit).toMatchObject({ id: 'ServiceLogs205D48C6', Properties: { RetentionInDays: 365 } });
   const copy = only(template, 'AWS::Lambda::Function');
   expect(copy.Properties).toMatchObject({
-    Handler: 'credential_audit_copy.handler', Runtime: 'python3.12',
+    PackageType: 'Image', Code: { ImageUri: 'test-image' }, Architectures: ['x86_64'],
+    ImageConfig: { EntryPoint: ['python', '-m', 'awslambdaric'], Command: ['botcube_credential_service.audit_copy.handler'] },
     Environment: { Variables: { AUDIT_LOG_GROUP: { Ref: audit.id } } },
   });
+  expect(copy.Properties).not.toHaveProperty('Handler');
+  expect(copy.Properties).not.toHaveProperty('Runtime');
+  expect(copy.Properties).not.toHaveProperty('KmsKeyArn');
   const subscription = only(template, 'AWS::Logs::SubscriptionFilter');
   expect(subscription.Properties).toEqual({
     LogGroupName: { Ref: recent.id }, FilterPattern: '{ $.event = * && $.accountId = * }',
@@ -177,6 +186,33 @@ test('audit events are copied into the group the service used to log to, which k
   expect(only(template, 'AWS::ECS::Service').DependsOn).toContain(subscription.id);
   const copyLogs = template.toJSON().Resources[copy.Properties.LoggingConfig.LogGroup.Ref];
   expect(copyLogs.Properties.RetentionInDays).toBe(30);
+});
+
+test("a supplied functions key encrypts the audit copy's environment, and nothing is granted on it", () => {
+  const keyArn = 'arn:aws:kms:us-east-1:123456789012:key/55555555-eeee-4eee-8eee-555555555555';
+  const template = synth(false, undefined, { suppliedFunctionsKeyArn: keyArn });
+  expect(only(template, 'AWS::Lambda::Function').Properties.KmsKeyArn).toBe(keyArn);
+  expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain(keyArn);
+});
+
+test('the audit copy runs the image the task runs, from one build and no directory asset', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-image-'));
+  fs.writeFileSync(path.join(directory, 'Dockerfile'), 'FROM public.ecr.aws/docker/library/python:3.13-slim\n');
+  let stack: Stack | undefined;
+  const template = synth(false, undefined, scope => {
+    stack = scope;
+    return { image: credentialServiceImage(directory, { file: 'Dockerfile', buildArgs: { REGISTRY: 'mirror.example.com' }, platform: Platform.LINUX_AMD64 }) };
+  });
+  assert(stack);
+  const assembly = App.of(stack)?.synth();
+  assert(assembly);
+  const manifest = JSON.parse(fs.readFileSync(path.join(assembly.directory, `${stack.artifactId}.assets.json`), 'utf8')) as
+    { files?: Record<string, { source: { path: string } }>; dockerImages?: Record<string, unknown> };
+  const images = Object.keys(manifest.dockerImages ?? {});
+  expect(images).toHaveLength(1);
+  expect(Object.values(manifest.files ?? {}).map(({ source }) => source.path).filter(file => !file.endsWith('.template.json'))).toEqual([]);
+  expect(JSON.stringify(only(template, 'AWS::Lambda::Function').Properties.Code.ImageUri)).toContain(images[0]);
+  expect(JSON.stringify(only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions[0].Image)).toContain(images[0]);
 });
 
 test('a failed audit copy alarms on the alerts topic within five minutes and clears with OK', () => {
@@ -213,7 +249,6 @@ test('the vault key rotates, and the vault is keyed by account and provider, bil
   assert(policy);
   expect(policy.Properties.PolicyDocument.Statement).toEqual([
     { Action: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'], Effect: 'Allow', Resource: { 'Fn::GetAtt': [key.id, 'Arn'] } },
-    { Action: ['kms:GetPublicKey', 'kms:Decrypt'], Effect: 'Allow', Resource: { 'Fn::GetAtt': [Object.keys(template.findResources('AWS::KMS::Key', { Properties: { KeySpec: 'RSA_2048' } }))[0], 'Arn'] } },
     { Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem'], Effect: 'Allow', Resource: [{ 'Fn::GetAtt': [only(template, 'AWS::DynamoDB::Table').id, 'Arn'] }] },
     expect.objectContaining({ Action: ['bedrock-agentcore:GetBrowserSession', 'bedrock-agentcore:ConnectBrowserAutomationStream'] }),
   ]);
@@ -293,7 +328,7 @@ test('corporate resources supply the real execution role and vault key without g
   });
   template.hasResourceProperties('AWS::ECS::Service', { ServiceName: 'corporate-credentials' });
   template.hasOutput('CredentialServiceUrl', { Value: 'http://vault.namespace.test:8081/rpc' });
-  template.resourceCountIs('AWS::KMS::Key', 1);
+  template.resourceCountIs('AWS::KMS::Key', 0);
   for (const role of Object.values(template.findResources('AWS::IAM::Role'))) expect(role.Properties.PermissionsBoundary).toBe('arn:aws:iam::123456789012:policy/boundary');
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('corporate-ecs');
 });
@@ -320,8 +355,25 @@ test('adopter invocation secret is reused and retains ownership of its name', ()
   expect(() => synth(true, undefined, { executionRoleName: 'replacement' })).toThrow('imported executionRole owns its name');
 });
 
-test('Sign-in Sheets use a retained RSA key shared by replacement tasks and decryptable only by Credential Service', () => {
+test('a Credential Service that mounts no Sign-in Sheet routes gets no sheet key, no sheet key variable and no grant on one', () => {
   const template = synth();
+  template.resourceCountIs('AWS::KMS::Key', 1);
+  const task = only(template, 'AWS::ECS::TaskDefinition').Properties;
+  expect(JSON.stringify(task.ContainerDefinitions[0].Environment)).not.toContain('BOTCUBE_SHEET_KMS_KEY_ID');
+  expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('kms:GetPublicKey');
+});
+
+test('a supplied sheet key reaches the service by ARN, with no key created, whether or not it mounts sheet routes', () => {
+  const arn = 'arn:aws:kms:us-east-1:123456789012:key/supplied-sheet';
+  for (const sheetRoutes of [false, true]) {
+    const template = synth(false, undefined, { sheetRoutes, suppliedSheetKeyArn: arn });
+    template.resourceCountIs('AWS::KMS::Key', 1);
+    expect(only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions[0].Environment).toContainEqual({ Name: 'BOTCUBE_SHEET_KMS_KEY_ID', Value: arn });
+  }
+});
+
+test('Sign-in Sheets use a retained RSA key shared by replacement tasks and decryptable only by Credential Service', () => {
+  const template = synth(false, undefined, { sheetRoutes: true });
   const entries = Object.entries(template.findResources('AWS::KMS::Key', { Properties: { KeySpec: 'RSA_2048' } }));
   expect(entries).toHaveLength(1);
   const [entry] = entries;
@@ -338,4 +390,17 @@ test('Sign-in Sheets use a retained RSA key shared by replacement tasks and decr
   expect(taskPolicies.flatMap(policy => policy.Properties.PolicyDocument.Statement)).toContainEqual({
     Effect: 'Allow', Action: ['kms:GetPublicKey', 'kms:Decrypt'], Resource: { 'Fn::GetAtt': [id, 'Arn'] },
   });
+});
+
+test('a supplied Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {
+  const targetGroupArn = 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/corp-credentials/0123456789abcdef';
+  const template = synth(false, undefined, { suppliedEndpoint: { url: 'http://credentials.example.com', targetGroupArn, securityGroupId: 'sg-0loadbalancer1' } });
+  template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', { SourceSecurityGroupId: 'sg-0loadbalancer1', IpProtocol: 'tcp', FromPort: 8081, ToPort: 8081 });
+  template.resourceCountIs('AWS::ServiceDiscovery::PrivateDnsNamespace', 0);
+  template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);
+  template.hasResourceProperties('AWS::ECS::Service', {
+    ServiceRegistries: Match.absent(),
+    LoadBalancers: [{ TargetGroupArn: targetGroupArn, ContainerName: 'credential-service', ContainerPort: 8081 }],
+  });
+  expect(template.toJSON().Outputs.CredentialServiceUrl).toEqual({ Value: 'http://credentials.example.com' });
 });

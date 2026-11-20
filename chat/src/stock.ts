@@ -103,7 +103,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
-  const files = accountFilesFromEnv(env, store);
+  const files = accountFilesFromEnv(env, store, config.supplied?.files);
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.
   const invocationSecret = env.BOTCUBE_CREDENTIAL_INVOCATION_SECRET;

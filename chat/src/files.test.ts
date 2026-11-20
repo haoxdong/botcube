@@ -32,3 +32,30 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("leases a User's access point from the supplied pool on first use, and names that pool when none is free", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'files-supplied-'));
+  try {
+    const documents = memoryDocuments();
+    for (const user of ['acct_a', 'acct_b']) documents.items.set(`ACCOUNT#${user}\u0000META`, { pk: `ACCOUNT#${user}`, sk: 'META', record: { accountId: user } });
+    const store = new AccountResources('chat', documents);
+    const env = {
+      BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
+      BOTCUBE_FILES_EFS_ROOT: root,
+      BOTCUBE_FILES_LINKS_URL: 'https://files.example.test/',
+      BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
+      BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
+    };
+    const supplied = {
+      fileSystemId: 'fs-0abc', kmsKey: 'arn:aws:kms:us-east-1:123456789012:key/files', accountsAccessPointId: 'fsap-0acc',
+      accessPoints: [{ accessPointId: 'fsap-0a1', rootDirectory: '/accounts/00000000000000000000000000000001' }],
+    };
+    const files = accountFilesFromEnv(env, () => store, supplied)();
+
+    await files.uploadUrl('acct_a', 'first.txt');
+    expect(await store.filesAccessPoint('acct_a')).toBe('arn:aws:elasticfilesystem:us-east-1:123456789012:access-point/fsap-0a1');
+    await expect(files.uploadUrl('acct_b', 'second.txt')).rejects.toMatchObject({ status: 503, message: expect.stringContaining('supplied.files.accessPoints') });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

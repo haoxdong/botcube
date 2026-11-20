@@ -1264,9 +1264,22 @@
               "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
             },
             "sheet": {
-              "description": "Decrypts what the Sign-in Sheet encrypts: an RSA_2048 ENCRYPT_DECRYPT key.",
-              "type": "string",
-              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+              "description": "Decrypts what the Sign-in Sheet encrypts: an RSA ENCRYPT_DECRYPT key. Only a Credential Service that mounts the Sign-in Sheet routes uses it.",
+              "type": "object",
+              "properties": {
+                "keyArn": {
+                  "type": "string",
+                  "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$",
+                  "description": "A KMS key, by ARN."
+                },
+                "keySpec": {
+                  "type": "string",
+                  "enum": ["RSA_2048", "RSA_3072", "RSA_4096"],
+                  "description": "The key's KeySpec, which its ARN cannot show."
+                }
+              },
+              "required": ["keyArn", "keySpec"],
+              "additionalProperties": false
             },
             "memory": {
               "description": "Encrypts the agent's AgentCore Memory.",
@@ -1275,6 +1288,11 @@
             },
             "images": {
               "description": "Encrypts the bot's image repository.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
+            },
+            "functions": {
+              "description": "Encrypts the Credential Service's audit-copy Lambda's environment in place of the AWS managed key.",
               "type": "string",
               "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
             }
@@ -1324,6 +1342,77 @@
               "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
             }
           },
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "fileSystemId": {
+              "type": "string",
+              "pattern": "^fs-[0-9a-f]+$",
+              "description": "The Files file system, with a mount target in each supplied private subnet."
+            },
+            "kmsKey": {
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$",
+              "description": "The key the file system is encrypted with."
+            },
+            "accountsAccessPointId": {
+              "type": "string",
+              "pattern": "^fsap-[0-9a-f]+$",
+              "description": "The Chat Service's and the Files links function's access point: root directory /accounts, as uid and gid 1000."
+            },
+            "accessPoints": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "accessPointId": {
+                    "type": "string",
+                    "pattern": "^fsap-[0-9a-f]+$"
+                  },
+                  "rootDirectory": {
+                    "type": "string",
+                    "pattern": "^\\/accounts\\/[0-9a-f]{32}$"
+                  }
+                },
+                "required": ["accessPointId", "rootDirectory"],
+                "additionalProperties": false
+              },
+              "description": "The pool each User's access point is leased from on their first Files use, each as uid and gid 1000; none free, Files fail naming this field."
+            }
+          },
+          "required": [
+            "fileSystemId",
+            "kmsKey",
+            "accountsAccessPointId",
+            "accessPoints"
+          ],
+          "additionalProperties": false,
+          "description": "The Files file system and the access points Users lease from it: BotCube creates neither, and no access point at runtime. The supplied VPC must use Amazon-provided DNS (enableDnsSupport and enableDnsHostnames): the Chat Service finds the file system's mount target as <fileSystemId>.efs.<region>.amazonaws.com."
+        },
+        "credentialService": {
+          "description": "A Credential Service Endpoint, for a network that refuses a private DNS namespace: BotCube creates no Cloud Map namespace or service.",
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "description": "The URL the Chat Service and the Harness call the Credential Service at, such as a DNS name in front of the target group; it authenticates them with its own invocation token."
+            },
+            "targetGroupArn": {
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:\\d{12}:targetgroup\\/[a-zA-Z0-9-]{1,32}\\/[0-9a-f]+$",
+              "description": "The IP target group in front of that URL, which BotCube registers the Credential Service's tasks into."
+            },
+            "securityGroupId": {
+              "type": "string",
+              "pattern": "^sg-[0-9a-z]+$",
+              "description": "The security group of the load balancer in front of that target group: BotCube admits it to the Credential Service's port."
+            }
+          },
+          "required": ["url", "targetGroupArn", "securityGroupId"],
           "additionalProperties": false
         }
       },

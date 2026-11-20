@@ -1,4 +1,4 @@
-import { CfnOutput, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
+import { CfnOutput, CfnWaitConditionHandle, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, StreamViewType, Table, type ITable } from 'aws-cdk-lib/aws-dynamodb';
 import * as efs from 'aws-cdk-lib/aws-efs';
 import { Construct } from 'constructs';
@@ -8,6 +8,15 @@ export interface ChatStorageProps extends StackProps {
   tableName?: string;
   /** A supplied chat table to import instead of creating one, with its grants: BotCube grants nothing on it. Parking reads its NEW_IMAGE stream. */
   suppliedChatTable?: { tableName: string; streamArn: string };
+  /** A supplied Files file system, its shared `/accounts` access point and the pool Users lease theirs from: BotCube creates and grants none of them. */
+  suppliedFiles?: SuppliedFiles;
+}
+
+/** As the Deployment Config's `supplied.files` gives them. */
+export interface SuppliedFiles {
+  fileSystemId: string;
+  accountsAccessPointId: string;
+  accessPoints: readonly { accessPointId: string; rootDirectory: string }[];
 }
 
 /** Durable shared Chat Service storage: the chat table, and every account's Files (ADR 0077). */
@@ -16,7 +25,8 @@ export class ChatStorageStack extends Stack {
   /** The operator supplied the chat table with its grants, so no BotCube policy names it. */
   readonly chatTableSupplied: boolean;
   /** The EFS file system that replaces S3 Files for every account's Files; each account is `/accounts/<hash>`. */
-  readonly filesEfs: efs.CfnFileSystem;
+  readonly filesEfs: Pick<efs.CfnFileSystem, 'ref' | 'attrArn'>;
+  readonly suppliedFiles: SuppliedFiles | undefined;
 
   constructor(scope: Construct, id: string, props: ChatStorageProps) {
     super(scope, id, props);
@@ -37,9 +47,17 @@ export class ChatStorageStack extends Stack {
     });
     new CfnOutput(this, 'ChatTableName', { value: this.chatTable.tableName });
 
+    this.suppliedFiles = props.suppliedFiles;
+    if (props.suppliedFiles) {
+      const { fileSystemId } = props.suppliedFiles;
+      this.filesEfs = { ref: fileSystemId, attrArn: this.formatArn({ service: 'elasticfilesystem', resource: 'file-system', resourceName: fileSystemId }) };
+      // CloudFormation refuses a template with no resource: everything here supplied, the stack holds a no-op one.
+      if (supplied) new CfnWaitConditionHandle(this, 'Supplied');
+      return;
+    }
     // Files on EFS. Only IAM principals of this account mount it, over TLS, each through
     // an access point their policy names: nothing mounts it anonymously, and nothing gets root.
-    this.filesEfs = new efs.CfnFileSystem(this, 'FilesEfs', {
+    const filesEfs = new efs.CfnFileSystem(this, 'FilesEfs', {
       encrypted: true,
       performanceMode: 'generalPurpose',
       throughputMode: 'elastic',
@@ -55,7 +73,8 @@ export class ChatStorageStack extends Stack {
         }],
       },
     });
-    this.filesEfs.applyRemovalPolicy(RemovalPolicy.RETAIN);
-    new CfnOutput(this, 'FilesEfsArn', { value: this.filesEfs.attrArn });
+    filesEfs.applyRemovalPolicy(RemovalPolicy.RETAIN);
+    this.filesEfs = filesEfs;
+    new CfnOutput(this, 'FilesEfsArn', { value: filesEfs.attrArn });
   }
 }

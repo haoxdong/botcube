@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 const secretArn = z.string().regex(/^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:.+$/, 'Expected a Secrets Manager secret ARN');
 
+export const kmsKeyArn = z.string().regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:key\/.+$/).describe('A KMS key, by ARN.');
+
 /** The seconds a command credential may run before it is stopped, as Google's executable sources default to. */
 export const COMMAND_TIMEOUT_SECONDS = 30;
 

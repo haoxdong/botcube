@@ -7,6 +7,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
 import { cartridgeIdentity } from '../lib/cartridge.js';
 import { defineProduction } from '../lib/production.js';
+import { registryCredentialImage } from './credential-image.js';
 
 const identity = cartridgeIdentity(path.resolve(__dirname, '../../../../templates/always-on/deploy'));
 const roots: string[] = [];
@@ -40,7 +41,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
     repositoryRoot: root, deployRoot, identity, webLatency,
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
-      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
   });
@@ -111,7 +112,7 @@ test('a waking Credential Service passes its ALB health check as fast as Chat', 
     repositoryRoot: root, deployRoot, identity: published, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
-      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
   });
@@ -129,7 +130,7 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
     repositoryRoot: root, deployRoot, identity, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
-      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
   });
@@ -203,7 +204,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
     },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
-      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
   });
@@ -249,7 +250,7 @@ test.each([
     repositoryRoot: root, deployRoot, identity,
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', turnIdentityKeysVersion: 'key-revision', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
-      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: ContainerImage.fromRegistry('template-credentials') },
+      images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
       commit: 'local-fixture',
     },
   });

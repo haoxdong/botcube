@@ -12,6 +12,7 @@ dependencies = [
   "httpx>=0.28.1",
   "pyjwt[crypto]>=2.15.1",
   "uvicorn>=0.54.0",
+  "awslambdaric>=4.2.3",
 ]
 
 [project.scripts]
@@ -19,10 +20,10 @@ botcube-openai-plan-usage = "botcube_credential_service.openai_sign_in:main"
 
 [dependency-groups]
 dev = [
-  "moto[dynamodb,kms,secretsmanager]>=5.2.3",
+  "moto[dynamodb,kms,logs,secretsmanager]>=5.2.3",
   "ty==0.0.99",
   "pytest>=9.1.1",
-  "types-boto3[dynamodb,kms,secretsmanager]>=1.43.108",
+  "types-boto3[dynamodb,kms,logs,secretsmanager]>=1.43.108",
 ]
 
 [tool.ty.environment]

@@ -6,17 +6,15 @@ import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import * as destinations from 'aws-cdk-lib/aws-logs-destinations';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as discovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import { Construct } from 'constructs';
-import * as path from 'node:path';
-import { projectDir } from './project-dir.js';
+import { copyAuditEvents, type CredentialServiceImage } from './credential-audit-copy.js';
 import { nameTaskRoles } from './task-role-names.js';
 
 /** The environment names every Cartridge's Credential Service, and the Chat Service that calls it, read. */
@@ -69,7 +67,7 @@ export interface PrivateCredentialServiceProps {
   cluster: ecs.Cluster;
   chatNetwork: ec2.ISecurityGroup;
   agentNetwork: ec2.ISecurityGroup;
-  image: ecs.ContainerImage;
+  image: CredentialServiceImage;
   /** The Vault: one Durable Credential per (accountId, provider) (ADR 0078 decision 3). */
   tableName: string;
   /** A supplied vault table, with its grants, to use instead of creating `tableName`: the task is granted nothing on it. */
@@ -78,6 +76,15 @@ export interface PrivateCredentialServiceProps {
   suppliedVaultKeyArn?: string;
   /** A supplied RSA_2048 ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
   suppliedSheetKeyArn?: string;
+  /** A supplied key, with its grants, encrypting the audit-copy Lambda's environment instead of the AWS managed key. */
+  suppliedFunctionsKeyArn?: string;
+  /**
+   * A supplied Credential Service Endpoint: callers get its URL, the tasks register into its target group and admit its
+   * load balancer's security group, in place of the private DNS namespace and Cloud Map service, which are not created.
+   */
+  suppliedEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
+  /** Whether the service's image mounts the Sign-in Sheet routes; only then is a sheet key created when none is supplied. */
+  sheetRoutes?: boolean;
   namespaceName: string;
   alertsTopicName: string;
   port: number;
@@ -106,8 +113,8 @@ export class PrivateCredentialService extends Construct {
   readonly service: ecs.FargateService;
   readonly url: string;
   readonly invocationSecret: secretsmanager.Secret | secretsmanager.ISecret;
-  /** The private DNS namespace the Harness resolves its callees in. */
-  readonly namespace: discovery.PrivateDnsNamespace;
+  /** The private DNS namespace the Harness resolves its callees in; absent behind a supplied Endpoint. */
+  readonly namespace: discovery.PrivateDnsNamespace | undefined;
 
   constructor(scope: Construct, id: string, props: PrivateCredentialServiceProps) {
     super(scope, id);
@@ -164,14 +171,14 @@ export class PrivateCredentialService extends Construct {
     const logGroup = new logs.LogGroup(this, 'ServiceLogs', {
       logGroupName: props.logGroupName ?? `/${props.cluster.clusterName}/credential-service-logs`, retention: props.logRetention ?? logs.RetentionDays.ONE_MONTH,
     });
-    const audit = copyAuditEvents(this, logGroup, props.auditLogGroupName ?? `/${props.cluster.clusterName}/credential-service`);
+    const audit = copyAuditEvents(this, logGroup, props.auditLogGroupName ?? `/${props.cluster.clusterName}/credential-service`, props.image, props.suppliedFunctionsKeyArn);
     this.container = task.addContainer('credential-service', {
-      image: props.image, portMappings: [{ containerPort: props.port }],
+      image: props.image.service, portMappings: [{ containerPort: props.port }],
       environment: {
         ...props.environment,
         AWS_REGION: stack.region, [CREDENTIAL_SERVICE_ENV.port]: String(props.port),
         [CREDENTIAL_SERVICE_ENV.keyId]: key.keyArn, [CREDENTIAL_SERVICE_ENV.vaultTable]: table.tableName,
-        [CREDENTIAL_SERVICE_ENV.sheetKeyId]: sheetKey.keyArn,
+        ...(sheetKey ? { [CREDENTIAL_SERVICE_ENV.sheetKeyId]: sheetKey.keyArn } : {}),
         AGENTCORE_BROWSER_ID: props.authBrowserId,
         AGENTCORE_AGENT_COMPUTER_BROWSER_ID: props.agentComputerBrowserId,
       },
@@ -184,7 +191,8 @@ export class PrivateCredentialService extends Construct {
         interval: Duration.seconds(props.healthIntervalSeconds ?? 10), timeout: Duration.seconds(props.healthTimeoutSeconds ?? 5), retries: props.healthRetries ?? 9, startPeriod: Duration.seconds(props.healthStartPeriodSeconds ?? 5),
       },
     });
-    const namespace = this.namespace = new discovery.PrivateDnsNamespace(this, 'Namespace', {
+    const endpoint = props.suppliedEndpoint;
+    const namespace = this.namespace = endpoint ? undefined : new discovery.PrivateDnsNamespace(this, 'Namespace', {
       name: props.namespaceName, vpc: props.cluster.vpc,
     });
     const service = this.service = new ecs.FargateService(this, 'Service', {
@@ -195,10 +203,17 @@ export class PrivateCredentialService extends Construct {
       assignPublicIp: false,
       securityGroups: [network, ...(props.securityGroups ?? [])], minHealthyPercent: props.minHealthyPercent ?? 100, maxHealthyPercent: props.maxHealthyPercent ?? 200,
       circuitBreaker: { rollback: true },
-      cloudMapOptions: { name: props.dnsName ?? 'credentials', cloudMapNamespace: namespace, dnsRecordType: discovery.DnsRecordType.A, dnsTtl: Duration.seconds(props.dnsTtlSeconds ?? 10) },
+      ...(namespace ? {
+        cloudMapOptions: { name: props.dnsName ?? 'credentials', cloudMapNamespace: namespace, dnsRecordType: discovery.DnsRecordType.A, dnsTtl: Duration.seconds(props.dnsTtlSeconds ?? 10) },
+      } : {}),
     });
     service.node.addDependency(audit.subscription);
-    this.url = `http://${props.dnsName ?? 'credentials'}.${props.namespaceName}:${props.port}${props.rpcPath}`;
+    if (endpoint) {
+      const balancer = ec2.SecurityGroup.fromSecurityGroupId(this, 'EndpointBalancer', endpoint.securityGroupId, { mutable: false });
+      network.connections.allowFrom(balancer, ec2.Port.tcp(props.port), "The supplied Endpoint's load balancer");
+      service.attachToApplicationTargetGroup(elbv2.ApplicationTargetGroup.fromTargetGroupAttributes(this, 'EndpointTargets', { targetGroupArn: endpoint.targetGroupArn }));
+    }
+    this.url = endpoint?.url ?? `http://${props.dnsName ?? 'credentials'}.${props.namespaceName}:${props.port}${props.rpcPath}`;
     const errors = new logs.MetricFilter(this, 'Errors', {
       ...optionalPhysicalName('filterName', props.errorMetricFilterName),
       logGroup, filterPattern: logs.FilterPattern.anyTerm('ERROR', 'Traceback'),
@@ -247,24 +262,6 @@ export class PrivateCredentialService extends Construct {
   }
 }
 
-function copyAuditEvents(scope: Construct, source: logs.LogGroup, auditLogGroupName: string) {
-  // The construct id 'Logs' fixes the CloudFormation logical id, so the deployed group is updated in place, not replaced.
-  const logGroup = new logs.LogGroup(scope, 'Logs', { logGroupName: auditLogGroupName, retention: logs.RetentionDays.ONE_YEAR });
-  const copy = new lambda.Function(scope, 'AuditCopy', {
-    runtime: lambda.Runtime.PYTHON_3_12, handler: 'credential_audit_copy.handler',
-    code: lambda.Code.fromAsset(path.resolve(projectDir(__dirname), '../credential-audit-copy'), { exclude: ['__pycache__'] }),
-    timeout: Duration.seconds(30), memorySize: 128,
-    environment: { AUDIT_LOG_GROUP: logGroup.logGroupName },
-    logGroup: new logs.LogGroup(scope, 'AuditCopyLogs', { retention: logs.RetentionDays.ONE_MONTH }),
-  });
-  copy.addToRolePolicy(new iam.PolicyStatement({ actions: ['logs:CreateLogStream', 'logs:PutLogEvents'], resources: [logGroup.logGroupArn] }));
-  const subscription = new logs.SubscriptionFilter(scope, 'AuditEvents', {
-    logGroup: source, destination: new destinations.LambdaDestination(copy),
-    filterPattern: logs.FilterPattern.literal('{ $.event = * && $.accountId = * }'),
-  });
-  return { logGroup, copy, subscription };
-}
-
 /** Only the task may decrypt with a key this construct creates. */
 function denyDecryptToOthers(key: kms.Key, task: ecs.TaskDefinition) {
   key.addToResourcePolicy(new iam.PolicyStatement({
@@ -290,9 +287,10 @@ function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: 
   return key;
 }
 
-/** The Sign-in Sheet's RSA key: a supplied one by ARN, or a new one only the task may decrypt with. */
-function signInSheetKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
+/** The Sign-in Sheet's RSA key: a supplied one by ARN, else a new one only the task may decrypt with, for a service that mounts sheet routes. */
+function signInSheetKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey | undefined {
   if (props.suppliedSheetKeyArn) return kms.Key.fromKeyArn(scope, 'SheetKey', props.suppliedSheetKeyArn);
+  if (!props.sheetRoutes) return undefined;
   const sheetKey = new kms.Key(scope, 'SheetKey', {
     keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
     removalPolicy: RemovalPolicy.RETAIN,

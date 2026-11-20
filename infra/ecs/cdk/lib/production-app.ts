@@ -5,6 +5,7 @@ import { App } from 'aws-cdk-lib';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
 import { cartridgeDeployRoot, cartridgeIdentity, projectDir } from './cartridge.js';
 import { defineProduction, type ProductionOptions } from './production.js';
+import { credentialServiceImage } from './credential-audit-copy.js';
 import { repositoryImageProps } from './repository-image.js';
 
 /** Where a Cartridge keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
@@ -30,7 +31,7 @@ function checkoutCommit(root: string): string {
 }
 
 /** The production stacks of the active Cartridge, from its deploy identity and this app's context and inputs. */
-export function productionApp(product: Pick<ProductionOptions, 'serving'> = {}): App {
+export function productionApp(product: Pick<ProductionOptions, 'serving' | 'credentials'> = {}): App {
   const app = new App();
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = cartridgeDeployRoot();
@@ -47,7 +48,7 @@ export function productionApp(product: Pick<ProductionOptions, 'serving'> = {}):
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
       images: {
         chat: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, chatImage.file)),
-        credential: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, cartridgeFile('credential-service/Dockerfile'))),
+        credential: credentialServiceImage(repositoryRoot, repositoryImageProps(repositoryRoot, cartridgeFile('credential-service/Dockerfile'))),
       },
       commit: checkoutCommit(repositoryRoot),
     };

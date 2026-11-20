@@ -1,13 +1,25 @@
 interface Subnet {
   id: string;
   availabilityZone: string;
+  /** A supplied file system's mount target in the subnet takes NFS from the Files links function at this range. */
+  cidrBlock?: string;
 }
 
 /** The fields of the Cartridge's deploy identity the ECS app reads. */
 export interface DeployIdentity {
   aws: {
-    /** `chatServiceTaskRole` names the Chat Service's task role, which the `assume-role` adapter's Memory role trusts. */
-    iam: { runtimeRole: string; userMemoryRole: string; chatServiceTaskRole?: string };
+    /**
+     * `chatServiceTaskRole` names the Chat Service's task role, which the `assume-role` adapter's Memory role trusts. With
+     * `supplied.files`, it and the other roles that mount Files take these names, which the operator's grants name.
+     */
+    iam: {
+      runtimeRole: string;
+      userMemoryRole: string;
+      chatServiceTaskRole?: string;
+      filesMountRole?: string;
+      filesLinksRole?: string;
+      agentComputerBrowserRole?: string;
+    };
     account: string;
     region: string;
     agentCore: {

@@ -10,7 +10,9 @@ export const filesPoolSlots = z.array(z.object({
 })).min(1);
 export type FilesPoolSlot = z.infer<typeof filesPoolSlots>[number];
 
-export function pooledAccessPoints(slots: readonly FilesPoolSlot[], records: () => FilesRecords, startingSlot: (capacity: number) => number = randomInt) {
+export function pooledAccessPoints(slots: readonly FilesPoolSlot[], records: () => FilesRecords, {
+  startingSlot = randomInt, pool = 'the deploy-time pool',
+}: { startingSlot?: (capacity: number) => number; pool?: string } = {}) {
   if (slots.length === 0 || new Set(slots.map(slot => slot.arn)).size !== slots.length || new Set(slots.map(slot => slot.directory)).size !== slots.length) {
     throw new Error('Files access point pool requires distinct access points and directories');
   }
@@ -47,7 +49,7 @@ export function pooledAccessPoints(slots: readonly FilesPoolSlot[], records: () 
         directory(saved);
         return saved;
       }
-      throw new HttpError(503, 'Files access point pool is full. Ask the deployer to increase the pool capacity.');
+      throw new HttpError(503, `Files access point pool is full: every access point in ${pool} is leased. Ask the deployer to add access points to it.`);
     },
     async delete(arn, userId) {
       if (!userId) throw new Error('Files pool release requires a User');

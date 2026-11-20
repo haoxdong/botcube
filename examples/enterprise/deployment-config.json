@@ -60,9 +60,13 @@
     },
     "kmsKeys": {
       "vault": "arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111",
-      "sheet": "arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222",
+      "sheet": {
+        "keyArn": "arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222",
+        "keySpec": "RSA_2048"
+      },
       "memory": "arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333",
-      "images": "arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444"
+      "images": "arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444",
+      "functions": "arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555"
     },
     "tables": {
       "chat": {
@@ -73,6 +77,26 @@
     },
     "buckets": {
       "connectionLogs": "corp-botcube-connection-logs"
+    },
+    "files": {
+      "fileSystemId": "fs-0fea7e5f11e5",
+      "kmsKey": "arn:aws:kms:us-east-1:000000000000:key/66666666-ffff-4fff-8fff-666666666666",
+      "accountsAccessPointId": "fsap-0acc0047",
+      "accessPoints": [
+        {
+          "accessPointId": "fsap-0a1",
+          "rootDirectory": "/accounts/00000000000000000000000000000001"
+        },
+        {
+          "accessPointId": "fsap-0a2",
+          "rootDirectory": "/accounts/00000000000000000000000000000002"
+        }
+      ]
+    },
+    "credentialService": {
+      "url": "http://credentials.example.com",
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef",
+      "securityGroupId": "sg-fixturecredentials"
     }
   },
   "telemetry": {

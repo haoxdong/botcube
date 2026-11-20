@@ -1,17 +1,21 @@
 import base64
 import gzip
+import importlib
 import json
 import time
 from collections.abc import Iterator
 
+import awslambdaric
 import boto3
 import pytest
-from credential_audit_copy import handler
 from moto import mock_aws
 from types_boto3_logs import CloudWatchLogsClient
 
+from botcube_credential_service.audit_copy import handler
+
 AUDIT = '/cube/credential-service'
 STREAM = 'credential-service/credential-service/task-1'
+LAMBDA_HANDLER = 'botcube_credential_service.audit_copy.handler'
 
 
 @pytest.fixture
@@ -74,3 +78,9 @@ def test_a_copied_event_keeps_its_fields_but_not_its_metric_so_the_metric_is_pub
 
     [message] = copied(logs)
     assert json.loads(message or '') == {key: value for key, value in timing.items() if key != '_aws'}
+
+
+def test_the_lambda_runtime_interface_client_loads_the_handler_the_lambda_command_names() -> None:
+    module, _, name = LAMBDA_HANDLER.rpartition('.')
+    assert getattr(importlib.import_module(module), name) is handler
+    assert awslambdaric.__name__ == 'awslambdaric'

@@ -19,10 +19,12 @@ interface StackTemplate { Resources: Record<string, Resource>; Parameters?: Reco
 let templates: StackTemplate[];
 let resources: Resource[];
 let app: App;
+let pooled: App;
 beforeAll(async () => {
   app = await synthesizeExample('enterprise');
+  pooled = await synthesizeExample('enterprise', undefined, { filesAccessPointMode: 'pool' });
   templates = app.node.children.filter((child): child is Stack => child instanceof Stack).map(stack => Template.fromStack(stack).toJSON() as StackTemplate);
-  resources = templates.flatMap(template => Object.values(template.Resources));
+  resources = templates.flatMap(template => Object.values(template.Resources)).map(resource => ({ Properties: {}, ...resource }));
 }, 180_000);
 
 /** The logical IDs a value refers to with `Ref` or `Fn::GetAtt`, pseudo parameters aside. */
@@ -57,7 +59,9 @@ test('creates no network, KMS key, table or bucket', () => {
 /** Each supplied resource as the enterprise example's file names it. */
 const SUPPLIED = [
   'corp-botcube-chat', 'corp-botcube-vault', 'corp-botcube-connection-logs',
-  ...['11111111-aaaa-4aaa-8aaa-111111111111', '22222222-bbbb-4bbb-8bbb-222222222222', '33333333-cccc-4ccc-8ccc-333333333333', '44444444-dddd-4ddd-8ddd-444444444444'],
+  'fs-0fea7e5f11e5', 'fsap-0acc0047', 'fsap-0a1', 'fsap-0a2',
+  ...['11111111-aaaa-4aaa-8aaa-111111111111', '22222222-bbbb-4bbb-8bbb-222222222222', '33333333-cccc-4ccc-8ccc-333333333333', '44444444-dddd-4ddd-8ddd-444444444444',
+    '55555555-eeee-4eee-8eee-555555555555', '66666666-ffff-4fff-8fff-666666666666'],
 ];
 const POLICY_TYPES = ['AWS::IAM::Role', 'AWS::IAM::Policy', 'AWS::IAM::ManagedPolicy', 'AWS::KMS::Key', 'AWS::S3::BucketPolicy', 'AWS::DynamoDB::ResourcePolicy'];
 
@@ -73,6 +77,16 @@ test("places every Lambda function in the supplied network's private subnets", (
   expect(functions.length).toBeGreaterThan(0);
   const outside = functions.filter(([, { Properties }]) => JSON.stringify((Properties.VpcConfig as { SubnetIds?: unknown } | undefined)?.SubnetIds) !== JSON.stringify(PRIVATE_SUBNETS));
   expect(outside.map(([logicalId]) => logicalId)).toEqual([]);
+});
+
+test("runs the Credential Service's audit copy from its image, in the private subnets, its environment under the supplied key", () => {
+  const copies = templates.flatMap(template => Object.entries(template.Resources))
+    .filter(([logicalId, { Type }]) => Type === 'AWS::Lambda::Function' && logicalId.includes('CredentialServiceAuditCopy'));
+  expect(copies.map(([, { Properties }]) => ({
+    image: (Properties.Code as { ImageUri?: unknown }).ImageUri,
+    subnets: (Properties.VpcConfig as { SubnetIds?: unknown } | undefined)?.SubnetIds,
+    key: Properties.KmsKeyArn,
+  }))).toEqual([{ image: 'botcube-credential-service', subnets: PRIVATE_SUBNETS, key: 'arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555' }]);
 });
 
 test('lets each Lambda function attach to the supplied network: its role holds the VPC access policy', () => {
@@ -121,6 +135,64 @@ test('runs in the supplied network', () => {
     .toEqual([['subnet-fixturepublica', 'subnet-fixturepublicb']]);
 });
 
+test('names each role that mounts the supplied Files from its deploy identity, so the operator can grant it before the first deploy', () => {
+  const roleNames = templates.flatMap(template => Object.entries(template.Resources))
+    .filter(([, { Type }]) => Type === 'AWS::IAM::Role')
+    .flatMap(([logicalId, { Properties }]) => {
+      const role = ['ChatServiceTaskTaskRole', 'FilesMountRole', 'FilesLinksServiceRole', 'AgentComputerBrowserRole'].find(prefix => logicalId.startsWith(prefix));
+      return role ? [[role, Properties.RoleName]] : [];
+    });
+  expect(Object.fromEntries(roleNames)).toEqual({
+    ChatServiceTaskTaskRole: 'bot-cube-chat-service',
+    FilesMountRole: 'bot-cube-files-mount',
+    FilesLinksServiceRole: 'bot-cube-files-links',
+    AgentComputerBrowserRole: 'bot-cube-agent-computer-browser',
+  });
+});
+
+test('fails when its deploy identity leaves a role that mounts the supplied Files unnamed, naming the field', async () => {
+  const unnamed = ({ aws: { iam: { filesLinksRole: _, ...iam }, ...aws }, ...identity }: DeployIdentity) => ({ ...identity, aws: { ...aws, iam } });
+  await expect(synthesizeExample('enterprise', unnamed)).rejects.toThrow('Deploy identity aws.iam.filesLinksRole: required with supplied.files');
+});
+
+test("lets the Files links function reach NFS only in the supplied private subnets, where the file system's mount targets are", () => {
+  const [links] = templates.flatMap(template => Object.entries(template.Resources))
+    .filter(([logicalId, { Type }]) => Type === 'AWS::EC2::SecurityGroup' && logicalId.startsWith('FilesLinksNetwork'));
+  expect(links[1].Properties.SecurityGroupEgress).toEqual([
+    expect.objectContaining({ CidrIp: '198.51.100.0/24', IpProtocol: 'tcp', FromPort: 2049, ToPort: 2049 }),
+    expect.objectContaining({ CidrIp: '203.0.113.0/24', IpProtocol: 'tcp', FromPort: 2049, ToPort: 2049 }),
+  ]);
+});
+
+test('creates no Files file system, mount target or access point, nor the access-point pool that would fill it', () => {
+  const files = ['AWS::EFS::FileSystem', 'AWS::EFS::MountTarget', 'AWS::EFS::AccessPoint'];
+  expect(resources.filter(({ Type }) => files.includes(Type)).map(({ Type }) => Type)).toEqual([]);
+  const pool = templates.flatMap(template => Object.entries(template.Resources).filter(([logicalId]) => logicalId.startsWith('FilesPool')).map(([, { Type }]) => Type));
+  expect(pool.sort()).toEqual(['AWS::CloudWatch::Alarm', 'AWS::Logs::MetricFilter']);
+  expect(ofType('AWS::CloudWatch::Alarm').filter(({ Properties }) => String(Properties.AlarmDescription).includes('supplied.files.accessPoints'))
+    .map(({ Properties }) => Properties.Threshold)).toEqual([2]);
+});
+
+test('creates no Files pool, file system or access point in pool mode either: it leases only the supplied access points', () => {
+  const created = pooled.node.children.filter((child): child is Stack => child instanceof Stack)
+    .flatMap(stack => Object.entries((Template.fromStack(stack).toJSON() as StackTemplate).Resources))
+    .filter(([logicalId, { Type }]) => Type.startsWith('AWS::EFS::') || Type === 'AWS::S3::Bucket'
+      || (logicalId.startsWith('FilesPool') && !['AWS::CloudWatch::Alarm', 'AWS::Logs::MetricFilter'].includes(Type)))
+    .map(([logicalId, { Type }]) => `${logicalId} ${Type}`);
+  expect(created).toEqual([]);
+});
+
+test("serves Files from the supplied file system, leasing Users' access points from the Deployment Config", () => {
+  const chat = environment('chat-service');
+  expect(JSON.stringify(chat.BOTCUBE_FILES_EFS_ARN)).toContain(':elasticfilesystem:us-east-1:000000000000:file-system/fs-0fea7e5f11e5');
+  expect(Object.keys(chat).filter(name => ['BOTCUBE_FILES_POOL_MANIFEST', 'BOTCUBE_FILES_MOUNT_TARGET_IP'].includes(name))).toEqual([]);
+  const volumes = ofType('AWS::ECS::TaskDefinition').flatMap(({ Properties }) => (Properties.Volumes as { EFSVolumeConfiguration?: unknown }[] | undefined) ?? [])
+    .map(volume => volume.EFSVolumeConfiguration);
+  expect(volumes).toEqual([{ FilesystemId: 'fs-0fea7e5f11e5', TransitEncryption: 'ENABLED', AuthorizationConfig: { AccessPointId: 'fsap-0acc0047', IAM: 'ENABLED' } }]);
+  const [links] = ofType('AWS::Lambda::Function').filter(({ Properties }) => Properties.FileSystemConfigs);
+  expect(JSON.stringify(links.Properties.FileSystemConfigs)).toContain(':elasticfilesystem:us-east-1:000000000000:access-point/fsap-0acc0047');
+});
+
 test('uses the supplied tables and their stream', () => {
   expect(environment('chat-service')).toMatchObject({ BOTCUBE_CHAT_TABLE: 'corp-botcube-chat' });
   expect(environment('credential-service')).toMatchObject({ BOTCUBE_VAULT_TABLE: 'corp-botcube-vault' });
@@ -137,6 +209,18 @@ test('encrypts with the supplied KMS keys', () => {
     .toEqual(['arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333']);
   expect(ofType('AWS::ECR::Repository').map(({ Properties }) => Properties.EncryptionConfiguration))
     .toEqual([{ EncryptionType: 'KMS', KmsKey: 'arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444' }]);
+});
+
+test('reaches the Credential Service at the supplied Endpoint, with no Cloud Map namespace or service', () => {
+  expect(ofType('AWS::ServiceDiscovery::PrivateDnsNamespace')).toEqual([]);
+  expect(ofType('AWS::ServiceDiscovery::Service')).toEqual([]);
+  expect(environment('chat-service')).toMatchObject({ BOTCUBE_CREDENTIAL_SERVICE_URL: 'http://credentials.example.com' });
+  expect(ofType('AWS::ECS::Service').flatMap(({ Properties }) => (Properties.LoadBalancers as { TargetGroupArn: unknown }[] | undefined) ?? [])
+    .map(({ TargetGroupArn }) => TargetGroupArn))
+    .toContain('arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef');
+  expect(ofType('AWS::EC2::SecurityGroupIngress').map(({ Properties }) => Properties)
+    .filter(({ SourceSecurityGroupId }) => SourceSecurityGroupId === 'sg-fixturecredentials')
+    .map(({ FromPort }) => FromPort)).toEqual([8081]);
 });
 
 test('logs connections to the supplied bucket', () => {

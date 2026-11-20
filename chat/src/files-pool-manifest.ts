@@ -6,13 +6,13 @@ import { filesPoolSlots, pooledAccessPoints } from './files-pool.js';
 
 export const filesPoolManifest = z.object({ bucket: z.string().min(1), key: z.string().min(1) });
 
-export function manifestAccessPoints(read: () => Promise<unknown>, records: () => FilesRecords): AccessPoints {
+export function manifestAccessPoints(read: () => Promise<unknown>, records: () => FilesRecords, options: { pool?: string } = {}): AccessPoints {
   let loaded: ReturnType<typeof pooledAccessPoints> | undefined;
   let reading: Promise<ReturnType<typeof pooledAccessPoints>> | undefined;
   const load = (fresh = false) => {
     if (reading) return reading;
     if (loaded && !fresh) return Promise.resolve(loaded);
-    reading = read().then(value => loaded = pooledAccessPoints(filesPoolSlots.parse(value), records)).finally(() => { reading = undefined; });
+    reading = read().then(value => loaded = pooledAccessPoints(filesPoolSlots.parse(value), records, options)).finally(() => { reading = undefined; });
     return reading;
   };
   return {
@@ -33,5 +33,5 @@ export function s3PoolAccessPoints(location: z.infer<typeof filesPoolManifest>, 
     const response = await s3.send(new GetObjectCommand({ Bucket: location.bucket, Key: location.key }));
     if (!response.Body) throw new Error('Files pool manifest body is missing');
     return JSON.parse(await response.Body.transformToString());
-  }, records);
+  }, records, { pool: `the deploy-time pool's manifest s3://${location.bucket}/${location.key}` });
 }

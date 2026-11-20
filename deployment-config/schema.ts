@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-deployment-config/credential-fields';
 import { cacheMarkers, credentialSource, endpoint, endpointHeaders, headersBeside, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-deployment-config/blocks';
+import { supplied } from 'botcube-deployment-config/supplied';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
 // Every object is strict, so an unknown key fails startup instead of being ignored.
@@ -165,56 +166,6 @@ const liveView = z.discriminatedUnion('kind', [
 ]);
 
 // Plain parameters (ADR 0091): no seam and no `kind`; each points at something the integrator already runs.
-
-const subnet = z.strictObject({ subnetId: z.string().regex(/^subnet-[0-9a-z]+$/), availabilityZone: z.string().min(1) });
-const kmsKeyArn = z.string().regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:key\/.+$/).describe('A KMS key, by ARN.');
-const tableName = z.string().regex(/^[a-zA-Z0-9_.-]{3,255}$/);
-const bucketName = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
-const STREAM_ARN = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/([a-zA-Z0-9_.-]+)\/stream\/.+$/;
-
-const supplied = z
-  .strictObject({
-    network: z
-      .strictObject({
-        vpcId: z.string().regex(/^vpc-[0-9a-z]+$/),
-        publicSubnets: z.array(subnet).min(2).describe("The origin load balancer's subnets."),
-        privateSubnets: z
-          .array(subnet.extend({ cidrBlock: z.string().min(1) }))
-          .min(2)
-          .describe("The services', browsers' and Lambdas' subnets, which must already reach the internet; the proxy carries only the services' own traffic."),
-      })
-      .optional()
-      .describe("A network that brings its own egress: BotCube creates, routes and parks no NAT in it, so the deploy identity names no aws.ecs.privateEgress."),
-    kmsKeys: z
-      .strictObject({
-        vault: kmsKeyArn.optional().describe("Encrypts the Credential Service's vault."),
-        sheet: kmsKeyArn.optional().describe('Decrypts what the Sign-in Sheet encrypts: an RSA_2048 ENCRYPT_DECRYPT key.'),
-        memory: kmsKeyArn.optional().describe("Encrypts the agent's AgentCore Memory."),
-        images: kmsKeyArn.optional().describe("Encrypts the bot's image repository."),
-      })
-      .optional(),
-    tables: z
-      .strictObject({
-        chat: z
-          .strictObject({ tableName, streamArn: z.string().regex(STREAM_ARN).describe("The table's NEW_IMAGE stream, which parking reads.") })
-          .optional(),
-        vault: z.strictObject({ tableName }).optional().describe("The Credential Service's vault: partition key accountId, sort key provider."),
-      })
-      .optional(),
-    buckets: z
-      .strictObject({
-        connectionLogs: bucketName.optional().describe("The origin load balancer's connection logs."),
-      })
-      .optional(),
-  })
-  .superRefine(({ tables }, context) => {
-    const chat = tables?.chat;
-    const streamTable = chat && STREAM_ARN.exec(chat.streamArn)?.[1];
-    if (chat && streamTable !== chat.tableName) {
-      context.addIssue({ code: 'custom', path: ['tables', 'chat', 'streamArn'], message: `The stream is table ${streamTable}'s, not ${chat.tableName}'s` });
-    }
-  })
-  .describe("Resources the operator supplies, with their grants, instead of BotCube creating them: BotCube creates neither a supplied resource nor a policy on it, and `botcube footprint` lists the grants each one needs. Each one left out, BotCube creates and grants.");
 
 const imageRegistry = z
   .string()

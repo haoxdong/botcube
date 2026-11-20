@@ -20,7 +20,7 @@ package = false
 
 [tool.ty.environment]
 python-version = "3.11"
-extra-paths = ["ecs", "ecs/origin-provider", "ecs/credential-audit-copy"]
+extra-paths = ["ecs", "ecs/origin-provider"]
 
 [tool.ty.src]
 include = ["ecs", "tests"]
@@ -29,4 +29,4 @@ exclude = ["ecs/cdk", "**/node_modules", "**/__pycache__"]
 [tool.pytest.ini_options]
 markers = ["integration: runs a real subprocess, server or socket (ADR 0083 decision 1)"]
 # The deploy scripts import their shared identity module from their own directory.
-pythonpath = ["ecs", "ecs/credential-audit-copy"]
+pythonpath = ["ecs"]

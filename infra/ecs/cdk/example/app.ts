@@ -48,13 +48,13 @@ export async function defineExample(app: App, configPath: string, options: Examp
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);
   const telemetry = telemetryDeployment(config.telemetry);
-  const { kmsKeys, tables, buckets } = config.supplied ?? {};
+  const { kmsKeys, tables, buckets, credentialService } = config.supplied ?? {};
   const seams = seamWiring(config);
   defineProduction(app, {
     ...seams.production,
     repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, suppliedNetwork: network !== undefined, imageRegistry: config.imageRegistry,
     origin: options.origin?.(identity),
-    ...(tables?.chat ? { storage: { suppliedChatTable: tables.chat } } : {}),
+    storage: { ...(tables?.chat ? { suppliedChatTable: tables.chat } : {}), ...(config.supplied?.files ? { suppliedFiles: config.supplied.files } : {}) },
     ...(buckets?.connectionLogs ? { originConfig: { suppliedConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
       ...seams.chat, deploymentConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: config.imageRegistry,
@@ -64,7 +64,9 @@ export async function defineExample(app: App, configPath: string, options: Examp
       environment: { ...proxyEnvironment(config), ...commandOptIn },
       ...(tables?.vault ? { suppliedVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { suppliedVaultKeyArn: kmsKeys.vault } : {}),
-      ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet } : {}),
+      ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet.keyArn } : {}),
+      ...(kmsKeys?.functions ? { suppliedFunctionsKeyArn: kmsKeys.functions } : {}),
+      ...(credentialService ? { suppliedEndpoint: credentialService } : {}),
     },
   });
   const agentCore = await loadDeployConfig(EXAMPLE_DEPLOY_ROOT, process.cwd());

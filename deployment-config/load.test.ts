@@ -49,12 +49,21 @@ const ENTERPRISE_MODELS = {
 
 const SECRET_ARN = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube-example/models-api-key';
 const COMMAND = { kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'] };
+const CREDENTIAL_TARGET_GROUP = 'arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef';
+const CREDENTIAL_ENDPOINT = { url: 'http://credentials.example.com', targetGroupArn: CREDENTIAL_TARGET_GROUP, securityGroupId: 'sg-fixturecredentials' };
 
 const OIDC_CLIENT_SECRET = { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret' };
 const OIDC = {
   kind: 'oidc',
   issuer: 'https://login.example.com',
   clients: [{ clientId: 'botcube', clientSecret: OIDC_CLIENT_SECRET }],
+};
+
+const FILES = {
+  fileSystemId: 'fs-0a',
+  kmsKey: 'arn:aws:kms:us-east-1:000000000000:key/66666666-ffff-4fff-8fff-666666666666',
+  accountsAccessPointId: 'fsap-0a',
+  accessPoints: [{ accessPointId: 'fsap-0b', rootDirectory: `/accounts/${'a'.repeat(32)}` }],
 };
 
 const OAUTH = {
@@ -100,7 +109,13 @@ describe('the examples', () => {
 
   it('the enterprise example supplies its own resources, collector, proxy and image mirror', () => {
     const { config } = loadDeployment(example('enterprise'));
-    expect(Object.keys(config.supplied ?? {})).toEqual(['network', 'kmsKeys', 'tables', 'buckets']);
+    expect(Object.keys(config.supplied ?? {})).toEqual(['network', 'kmsKeys', 'tables', 'buckets', 'files', 'credentialService']);
+    expect(config.supplied?.credentialService).toEqual({
+      url: 'http://credentials.example.com',
+      targetGroupArn: 'arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/corp-botcube-credentials/0123456789abcdef',
+      securityGroupId: 'sg-fixturecredentials',
+    });
+    expect(config.supplied?.files?.accessPoints).toHaveLength(2);
     expect(config.imageRegistry).toBe('mirror.example.com/ecr-public');
     expect(config.telemetry).toEqual({
       kind: 'otlp',
@@ -219,12 +234,41 @@ describe('a Deployment Config', () => {
     ['an OIDC issuer over http beyond this machine', { bot: './bot.json', identity: { ...OIDC, issuer: 'http://login.example.com' } }, 'identity.issuer: '],
     ['an unknown supplied resource', { bot: './bot.json', supplied: { queues: {} } }, 'supplied.queues: Unrecognized key'],
     ['the old existing section', { bot: './bot.json', existing: {} }, 'existing: Unrecognized key'],
+    ['supplied Files without their access points', { bot: './bot.json', supplied: { files: { fileSystemId: FILES.fileSystemId, kmsKey: FILES.kmsKey, accountsAccessPointId: FILES.accountsAccessPointId } } },
+      'supplied.files.accessPoints: '],
+    ['supplied Files in a network BotCube creates', { bot: './bot.json', supplied: { files: FILES } },
+      'supplied.files: Supplied Files need supplied.network'],
+    ['supplied Files with no access point', { bot: './bot.json', supplied: { files: { ...FILES, accessPoints: [] } } }, 'supplied.files.accessPoints: '],
+    ['an unknown supplied Files field', { bot: './bot.json', supplied: { files: { ...FILES, mountTargets: [] } } }, 'supplied.files.mountTargets: Unrecognized key'],
+    ['a supplied access point outside the Users\' directories', { bot: './bot.json', supplied: { files: { ...FILES, accessPoints: [{ accessPointId: 'fsap-0b', rootDirectory: '/users/alice' }] } } },
+      'supplied.files.accessPoints.0.rootDirectory: '],
+    ['one access point supplied twice', { bot: './bot.json', supplied: { files: { ...FILES, accessPoints: [FILES.accessPoints[0], { ...FILES.accessPoints[0], rootDirectory: `/accounts/${'b'.repeat(32)}` }] } } },
+      'supplied.files.accessPoints.1.accessPointId: Access point fsap-0b is already supplied.files.accessPoints.0'],
+    ['one directory supplied twice', { bot: './bot.json', supplied: { files: { ...FILES, accessPoints: [FILES.accessPoints[0], { ...FILES.accessPoints[0], accessPointId: 'fsap-0c' }] } } },
+      `supplied.files.accessPoints.1.rootDirectory: Directory /accounts/${'a'.repeat(32)} is already supplied.files.accessPoints.0`],
+    ['the shared access point leased to a User', { bot: './bot.json', supplied: { files: { ...FILES, accessPoints: [{ ...FILES.accessPoints[0], accessPointId: FILES.accountsAccessPointId }] } } },
+      'supplied.files.accessPoints.0.accessPointId: Access point fsap-0a is already supplied.files.accountsAccessPointId'],
     ['a KMS key that is not an ARN', { bot: './bot.json', supplied: { kmsKeys: { vault: 'alias/vault' } } }, 'supplied.kmsKeys.vault: '],
+    [
+      'a sheet key that is not RSA',
+      { bot: './bot.json', supplied: { kmsKeys: { sheet: { keyArn: 'arn:aws:kms:us-east-1:000000000000:key/sheet', keySpec: 'SYMMETRIC_DEFAULT' } } } },
+      'supplied.kmsKeys.sheet.keySpec: The Sign-in Sheet key must be an RSA key (RSA_2048, RSA_3072 or RSA_4096)',
+    ],
+    ['a sheet key named by its ARN alone', { bot: './bot.json', supplied: { kmsKeys: { sheet: 'arn:aws:kms:us-east-1:000000000000:key/sheet' } } }, 'supplied.kmsKeys.sheet: '],
     [
       "another table's stream",
       { bot: './bot.json', supplied: { tables: { chat: { tableName: 'chat', streamArn: 'arn:aws:dynamodb:us-east-1:000000000000:table/other/stream/2026' } } } },
       "supplied.tables.chat.streamArn: The stream is table other's, not chat's",
     ],
+    ...([
+      ['a Credential Service Endpoint that is not an http(s) URL', { ...CREDENTIAL_ENDPOINT, url: 'ftp://credentials.example.com' }, 'supplied.credentialService.url: '],
+      ['a Credential Service Endpoint with no target group', { url: CREDENTIAL_ENDPOINT.url, securityGroupId: CREDENTIAL_ENDPOINT.securityGroupId }, 'supplied.credentialService.targetGroupArn: '],
+      ['a Credential Service target group that is not a target group ARN', { ...CREDENTIAL_ENDPOINT, targetGroupArn: 'corp-botcube-credentials' }, 'supplied.credentialService.targetGroupArn: '],
+      ['a Credential Service Endpoint with no load balancer security group', { url: CREDENTIAL_ENDPOINT.url, targetGroupArn: CREDENTIAL_TARGET_GROUP }, 'supplied.credentialService.securityGroupId: '],
+      ['a load balancer security group that is not a security group id', { ...CREDENTIAL_ENDPOINT, securityGroupId: 'corp-load-balancer' }, 'supplied.credentialService.securityGroupId: '],
+      ['a Credential Service Endpoint with a bearer credential', { ...CREDENTIAL_ENDPOINT, credential: { kind: 'file', path: '/run/secrets/x' } },
+        'supplied.credentialService.credential: Unrecognized key'],
+    ] satisfies [string, object, string][]).map(([name, credentialService, field]): [string, object, string] => [name, { bot: './bot.json', supplied: { credentialService } }, field]),
     ['a proxy that is not an http(s) URL', { bot: './bot.json', proxy: { kind: 'forward', url: 'socks5://proxy:1080' } }, 'proxy.url: '],
     ['a proxy in the old shape, with no kind', { bot: './bot.json', proxy: { url: 'http://proxy:3128' } }, 'proxy.kind: '],
     ['a Proxy-Authorization header beside the proxy credential', { bot: './bot.json', proxy: { kind: 'forward', url: 'http://proxy:3128', headers: { 'Proxy-Authorization': 'Basic x' } } },

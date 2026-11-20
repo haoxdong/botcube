@@ -5,7 +5,8 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { footprint, IMAGES, type Principal } from '../../../../deployment-config/footprint.js';
+import { footprint, IMAGES } from '../../../../deployment-config/footprint.js';
+import type { Principal } from '../../../../deployment-config/principals.js';
 import { loadDeployment } from '../../../../deployment-config/load.js';
 import { EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
 import { cartridgeIdentity } from '../lib/cartridge.js';
@@ -65,6 +66,9 @@ const MACHINERY = new Set([
   'PreviewOrigin/OriginSmokePolicy',
   'PreviewOrigin/ChatService/Task/ExecutionRole', 'PreviewOrigin/CredentialService/Task/ExecutionRole',
   'PreviewOrigin/CredentialService/AuditCopy/ServiceRole',
+  ...['onEvent', 'isComplete', 'worker'].map(handler => `PreviewOrigin/FilesPool/${handler}/ServiceRole`),
+  ...['framework-onEvent', 'framework-isComplete', 'framework-onTimeout'].map(handler => `PreviewOrigin/FilesPool/Provider/${handler}/ServiceRole`),
+  'PreviewOrigin/FilesPool/Provider/waiter-state-machine/Role',
   `${AGENTCORE_STACK}/Application/MemoryBotCube/ExecutionRole`,
   `${AGENTCORE_STACK}/Application/AgentBotCube/ContainerImageBuilder/ContainerBuildHandler/ServiceRole`,
   `${AGENTCORE_STACK}/ContainerBuildProject/ContainerBuildExecutionRole`,
@@ -100,7 +104,7 @@ function granted(app: App) {
     egressHosts.push(...configuredHosts(resources));
   }
   const iamByPrincipal: Partial<Record<Principal, Granted>> = {};
-  for (const [principal, { actions, managedPolicies }] of grants) {
+  for (const [principal, { actions, managedPolicies }] of grants.filter(([, { actions, managedPolicies }]) => actions.length + managedPolicies.length > 0)) {
     const grant = (iamByPrincipal[principal] ??= { actions: [], managedPolicies: [] });
     grant.actions = sorted([...grant.actions, ...actions]);
     grant.managedPolicies = sorted([...grant.managedPolicies, ...managedPolicies]);
@@ -137,7 +141,8 @@ function principalGrants(resources: Resources, principals: Map<string, Principal
 }
 
 const OWN_HOSTS = new Set([EXAMPLE_IDENTITY.domains.chatService, EXAMPLE_IDENTITY.domains.chatServicePreview,
-  ...EXAMPLE_IDENTITY.domains.corsOrigins].map(origin => new URL(origin).host));
+  ...EXAMPLE_IDENTITY.domains.corsOrigins,
+  ...EXAMPLES.flatMap(example => loadDeployment(deploymentConfigPath(example)).config.supplied?.credentialService?.url ?? [])].map(origin => new URL(origin).host));
 const isOwn = ({ host, hostname }: URL) =>
   OWN_HOSTS.has(host) || ['localhost', '127.0.0.1', '[::1]', 'task-address'].includes(hostname) || hostname.endsWith(`.${EXAMPLE_IDENTITY.aws.ecs.privateNamespace}`);
 
@@ -195,12 +200,18 @@ function appOf(example: string): Promise<App> {
 describe.each(EXAMPLES)('the %s example', example => {
   const needs = footprint(loadDeployment(deploymentConfigPath(example)).config);
   let synthesized: ReturnType<typeof granted>;
+  let pooled: ReturnType<typeof granted>;
   beforeAll(async () => {
     synthesized = granted(await appOf(example));
+    pooled = granted(await synthesizeExample(example, undefined, { filesAccessPointMode: 'pool' }));
   }, 120_000);
 
   test('grants each BotCube role exactly the IAM actions its footprint prints', () => {
     expect(synthesized.iam).toEqual(needs.iam);
+  });
+
+  test('grants each BotCube role exactly the IAM actions its footprint prints with Files access points from the deploy-time pool', () => {
+    expect(pooled.iam).toEqual(footprint(loadDeployment(deploymentConfigPath(example)).config, { filesAccessPointMode: 'pool' }).iam);
   });
 
   test('runs exactly the images its footprint prints', () => {
