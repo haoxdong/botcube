@@ -19,7 +19,7 @@ export function useSheetHeight(snapped: boolean) {
       const to = size.blockSize + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
       if (height.get() === to) return;
       animation?.stop();
-      animation = animate(height, to, { ...move, velocity: retargetVelocity(height.get(), to, height.getVelocity(), move.visualDuration) });
+      animation = animate(height, to, move);
     });
     observer.observe(content);
     return () => {
@@ -30,12 +30,4 @@ export function useSheetHeight(snapped: boolean) {
     };
   }, [popup, content, snapped]);
   return [setPopup, setContent] as const;
-}
-
-// A critically damped spring overshoots when it arrives faster than its natural frequency times the distance left, so
-// the carried speed is capped there: the box keeps its momentum into a moving target without sinking past it.
-export function retargetVelocity(from: number, to: number, velocity: number, visualDuration: number) {
-  const toward = Math.sign(to - from);
-  const limit = ((2 * Math.PI) / (1.2 * visualDuration)) * Math.abs(to - from);
-  return velocity * toward > limit ? toward * limit : velocity;
 }
