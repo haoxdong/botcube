@@ -166,6 +166,18 @@ it("draws a PDF's first page above its name from one plain GET, and lets pdf.js 
   expect(task.destroy).toHaveBeenCalled();
 });
 
+it("draws the page across the card's laid-out width in device pixels, at the page's own proportions", async () => {
+  files({ 'auction-tails.pdf': 'https://files.test/auction-tails.pdf' });
+  cardWidth(280);
+  vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(3);
+  const { page } = pdfTask(async () => {});
+  const view = render(<MarkdownRenderer content={'[Download auction-tails.pdf](/auction-tails.pdf)'} />);
+  await waitFor(() => expect(page.render).toHaveBeenCalled());
+  const canvas = view.container.querySelector<HTMLCanvasElement>('.reply-file-preview canvas');
+  // pdf.js draws at a pixel size it is given: 280 CSS px at 3x is 840 px across, and the 600×800 page keeps its 3:4.
+  expect([canvas?.width, canvas?.height]).toEqual([840, 1120]);
+});
+
 it('says in the page box why pdf.js cannot draw the page, the card still downloading', async () => {
   files({ 'auction-tails.pdf': 'https://files.test/auction-tails.pdf' });
   cardWidth(280);
