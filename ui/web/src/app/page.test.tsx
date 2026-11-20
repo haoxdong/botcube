@@ -830,9 +830,29 @@ describe('sending a message', () => {
     expect(performance.getEntriesByName('latency:send-acknowledged', 'measure')).toHaveLength(1);
   });
 
-  it.each(['Enter', 'the Send button'])('hides the welcome screen and refreshes the Side Chats at once and a second later, sent by %s', async (how) => {
-    vi.useFakeTimers();
-    await renderPage();
+  /** Sends run on the agent against a stream this returns, so a test sends the Chat Service's events itself. */
+  async function streamedTurns() {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === 'http://chat.test' && init?.method === 'POST'
+        ? new Response(new ReadableStream<Uint8Array>({ start(controller) { streams.push(controller); } }), { headers: { 'content-type': 'text/event-stream' } })
+        : chatService(url, init),
+    );
+    copilot.runAgent = vi.fn(({ agent: running }) => { void running?.runAgent().catch(() => undefined); });
+    const view = await renderPage();
+    const send = async (event: Record<string, unknown>) => {
+      streams.at(-1)?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ threadId: agent().threadId, runId: 'turn', ...event })}\n\n`));
+      await settle();
+    };
+    const close = async () => {
+      streams.at(-1)?.close();
+      await settle();
+    };
+    return { view, send, close };
+  }
+
+  it.each(['Enter', 'the Send button'])('hides the welcome screen and refreshes the Side Chats at once and when the Turn starts, sent by %s', async (how) => {
+    const { send } = await streamedTurns();
 
     if (how === 'Enter') await sendMessage('  What moved rates?  ');
     else {
@@ -841,50 +861,49 @@ describe('sending a message', () => {
       await settle();
     }
     expect(welcome()).toBeNull();
-    expect(requests()).toEqual(['GET /main-chat', 'GET /threads', 'GET /threads']);
+    expect(requests().filter((request) => request !== 'POST ')).toEqual(['GET /main-chat', 'GET /threads', 'GET /threads']);
 
     service.sideChats = [sideChat('other-tab', 'From another tab')];
-    await act(async () => {
-      vi.advanceTimersByTime(999);
-    });
     await settle();
     expect(recents()).toEqual([]);
-    await act(async () => {
-      vi.advanceTimersByTime(1);
-    });
-    await settle();
+    await send({ type: 'RUN_STARTED' });
+    expect(recents()).toEqual(['From another tab']);
+    await send({ type: 'RUN_FINISHED' });
+  });
+
+  it('refreshes the Side Chats when a Turn ends without starting', async () => {
+    const { send, close } = await streamedTurns();
+    await sendMessage('What moved rates?');
+
+    service.sideChats = [sideChat('other-tab', 'From another tab')];
+    await send({ type: 'RUN_ERROR', message: 'The Harness refused the Turn' });
+    await close();
+
     expect(recents()).toEqual(['From another tab']);
   });
 
   it('refreshes the Side Chats only for the first message of a conversation', async () => {
-    vi.useFakeTimers();
-    await renderPage();
+    const { send } = await streamedTurns();
     await sendMessage('first');
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-    });
-    await settle();
+    await send({ type: 'RUN_STARTED' });
+    await send({ type: 'RUN_FINISHED' });
 
     service.sideChats = [sideChat('other-tab', 'From another tab')];
     await sendMessage('second');
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-    });
-    await settle();
+    await send({ type: 'RUN_STARTED' });
+    await send({ type: 'RUN_FINISHED' });
 
     expect(recents()).toEqual([]);
   });
 
   it('drops the second refresh once the chat is gone', async () => {
-    vi.useFakeTimers();
-    const { unmount } = await renderPage();
+    const { view, send } = await streamedTurns();
     await sendMessage('What moved rates?');
-    unmount();
+    view.unmount();
 
-    vi.advanceTimersByTime(1000);
-    await settle();
+    await send({ type: 'RUN_STARTED' });
 
-    expect(requests()).toEqual(['GET /main-chat', 'GET /threads', 'GET /threads']);
+    expect(requests().filter((request) => request !== 'POST ')).toEqual(['GET /main-chat', 'GET /threads', 'GET /threads']);
   });
 
   it.each([

@@ -460,8 +460,22 @@ function ChatThread({
   const { copilotkit } = useCopilotKit();
   const openingAttempted = useRef(false);
   const firedRef = useRef(false);
-  const refreshTimerRef = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(refreshTimerRef.current), []);
+  // The Chat Service records a Turn, its title included, before it relays RUN_STARTED: a first message lists the Side
+  // Chats again then, or once its run ends without one. A run takes its subscribers when it starts, so this one is
+  // already on the agent.
+  const listAgain = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const again = () => {
+      const list = listAgain.current;
+      listAgain.current = null;
+      list?.();
+    };
+    const subscription = agent.subscribe({ onRunStartedEvent: again, onRunFinalized: again });
+    return () => {
+      listAgain.current = null;
+      subscription.unsubscribe();
+    };
+  }, [agent]);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [opensAt] = useState(() => (openAt != null && agent.messages.some(({ id }) => id === openAt) ? openAt : null));
 
@@ -517,7 +531,7 @@ function ChatThread({
     if (firedRef.current) return;
     firedRef.current = true;
     onMessageSubmitted();
-    refreshTimerRef.current = window.setTimeout(onMessageSubmitted, 1000);
+    listAgain.current = onMessageSubmitted;
   };
   const submitTurn = (message: string, submit: Submit, retry: () => void = () => submitTurn(message, submit)) => {
     const sent = runningRef.current ? steer(message) : startTurn(message, submit, retry);
