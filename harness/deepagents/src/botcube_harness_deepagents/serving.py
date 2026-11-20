@@ -101,7 +101,8 @@ from .llm import (
     PLAN_MODEL_PREFIX,
     PlanUsageError,
     build_model,
-    models_endpoint,
+    cache_markers_on,
+    models_on_endpoint,
     resolve_effort,
     resolve_model,
 )
@@ -1459,8 +1460,8 @@ def main() -> None:
         restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
-    # A models endpoint lacking its key fails startup, not a Turn.
-    models_endpoint()
+    models_on_endpoint()
+    cache_markers_on()
     if _cartridge is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
         if bot := bot_from_env(module_name):

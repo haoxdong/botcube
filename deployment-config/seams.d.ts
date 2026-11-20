@@ -16,8 +16,13 @@ export interface HarnessClient {
 }
 
 export interface ModelsDeployment {
-  readonly environment: Readonly<Record<string, string>>;
-  /** The Secrets Manager secrets its credential is read from, which each process reading it is granted. */
+  /** The Endpoint, for Turn summaries, and the summary model. */
+  readonly chatService: Readonly<Record<string, string>>;
+  /** The Endpoint, whose calls the Credential Service relays for the agent with the bearer it alone holds. */
+  readonly credentialService: Readonly<Record<string, string>>;
+  /** Where the agent's models run, and none of the Endpoint. */
+  readonly harness: Readonly<Record<string, string>>;
+  /** The Secrets Manager secrets its credential is read from, which the Chat Service and the Credential Service are granted. */
   readonly secretArns: readonly string[];
 }
 
@@ -30,6 +35,8 @@ export interface RuntimeTelemetry {
 export interface ModelsEnv {
   readonly endpoint: 'BOTCUBE_MODELS_ENDPOINT';
   readonly turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL';
+  readonly kind: 'BOTCUBE_MODELS_KIND';
+  readonly cacheMarkers: 'BOTCUBE_MODELS_CACHE_MARKERS';
 }
 
 export interface TokenAudiences {

@@ -242,3 +242,18 @@ test("the enterprise example's Chat Service assumes the AgentCore stack's Memory
     PolicyDocument: { Statement: Match.arrayWith([{ Effect: 'Allow', Action: 'sts:AssumeRole', Resource: roleArn }]) },
   });
 }, 120_000);
+
+test("the enterprise example's models Endpoint is configured on the Chat Service and the Credential Service, and its Runtime learns only where its models run", async () => {
+  const app = await appOf('enterprise');
+  const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, 'live');
+  const endpoint = Match.arrayWith([Match.objectLike({ Name: 'BOTCUBE_MODELS_ENDPOINT', Value: Match.stringLikeRegexp('models\\.example\\.com') })]);
+  const tasks = Object.entries(origin.findResources('AWS::ECS::TaskDefinition'))
+    .filter(([, task]) => (task.Properties as Properties).ContainerDefinitions?.some(container => (container.Environment ?? []).some(({ Name }) => Name === 'BOTCUBE_MODELS_ENDPOINT')));
+  const [runtime] = Object.values(Template.fromStack(app.node.findChild(AGENTCORE_STACK) as Stack).findResources('AWS::BedrockAgentCore::Runtime'));
+
+  expect(tasks.map(([logicalId]) => logicalId.replace(/[0-9A-F]{8}$/, ''))).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
+  origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: endpoint })]) });
+  const variables = (runtime.Properties as Properties).EnvironmentVariables ?? {};
+  expect(variables.BOTCUBE_MODELS_KIND).toBe('openai-compatible');
+  expect(Object.keys(variables).filter(name => name.startsWith('BOTCUBE_MODELS_') && name !== 'BOTCUBE_MODELS_KIND')).toEqual([]);
+});

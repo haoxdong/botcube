@@ -142,31 +142,37 @@ describe("the models Endpoint's credential", () => {
     expect(needs.commands.filter((command) => command.startsWith('models.'))).toEqual([]);
   });
 
-  it('from a secret grants its readers, the Chat Service and the Harness, its value', () => {
+  it("is reached by the Chat Service for Turn summaries and the Credential Service for the agent's relayed calls, never the Harness", () => {
+    expect(section(formatFootprint(footprint(config)), 'Egress hosts')).toContain('  models.example.com (chatService, credentialService)');
+  });
+
+  it('from a secret grants its readers, the Chat Service and the Credential Service, its value, and the Harness nothing', () => {
     const needs = withCredential({ kind: 'secret', secretArn });
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
-    expect(needs.iam.harness?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
     expect(needs.egressHosts).toContain('secretsmanager.<region>.amazonaws.com');
   });
 
-  it('from a command lists the command its readers may run', () => {
+  it('from a command lists the command its readers may run, and the Harness runs none', () => {
     const printed = formatFootprint(withCredential({ kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'], timeoutSeconds: 30 }));
-    expect(printed).toContain('\nCommands\n  models.credential (chatService, harness): /usr/local/bin/token-broker --audience models\n');
+    expect(printed).toContain('\nCommands\n  models.credential (chatService, credentialService): /usr/local/bin/token-broker --audience models\n');
   });
 
   const oauth = (clientSecret: Extract<CredentialSource, { kind: 'oauth-client-credentials' }>['clientSecret']) =>
     withCredential({ kind: 'oauth-client-credentials', tokenEndpoint: 'https://idp.example.com:8443/oauth2/token', clientId: 'botcube-models', clientSecret });
 
-  it('from OAuth client credentials reaches the token endpoint, and grants its readers the client secret', () => {
+  it('from OAuth client credentials reaches the token endpoint, and grants its readers the client secret and the Harness nothing', () => {
     const needs = oauth({ kind: 'secret', secretArn });
     expect(needs.egressHosts).toEqual(expect.arrayContaining(['idp.example.com:8443', 'secretsmanager.<region>.amazonaws.com']));
     expect(needs.iam.chatService?.actions).toContain('secretsmanager:GetSecretValue');
-    expect(needs.iam.harness?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.credentialService?.actions).toContain('secretsmanager:GetSecretValue');
+    expect(needs.iam.harness?.actions).not.toContain('secretsmanager:GetSecretValue');
   });
 
   it("from OAuth client credentials lists the command its readers may run for the client secret", () => {
     const printed = formatFootprint(oauth({ kind: 'command', command: ['/usr/local/bin/client-secret'], timeoutSeconds: 30 }));
-    expect(printed).toContain('\nCommands\n  models.credential.clientSecret (chatService, harness): /usr/local/bin/client-secret\n');
+    expect(printed).toContain('\nCommands\n  models.credential.clientSecret (chatService, credentialService): /usr/local/bin/client-secret\n');
   });
 });
 

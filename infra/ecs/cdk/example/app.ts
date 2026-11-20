@@ -61,7 +61,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
       telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: telemetry.chatService, secretArns: telemetry.secretArns },
     },
     credentials: {
-      environment: proxyEnvironment(config),
+      environment: { ...proxyEnvironment(config), ...commandOptIn },
       ...(tables?.vault ? { suppliedVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { suppliedVaultKeyArn: kmsKeys.vault } : {}),
       ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet } : {}),

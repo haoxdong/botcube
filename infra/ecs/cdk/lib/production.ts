@@ -8,6 +8,7 @@ import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
+import { addModelsEndpoint } from './models-endpoint.js';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Asset } from 'aws-cdk-lib/aws-s3-assets';
@@ -232,6 +233,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     ...options.credentials,
   });
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
+  addModelsEndpoint(credentials, options.models, 'credentialService');
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
   credentials.container.addEnvironment('BOTCUBE_ISSUER', publicOrigin);
   const rawHostname = rawServiceHostname(identity);
@@ -284,15 +286,9 @@ export function defineProduction(app: App, options: ProductionOptions) {
   addTurnSummaryModel(origin, chat, options);
 }
 
-/** Where Turn summaries run: the Deployment Config's OpenAI-compatible Endpoint, granted the secret its credential is read from if any, or Bedrock. */
+/** Where Turn summaries run: the Deployment Config's OpenAI-compatible Endpoint, or Bedrock. */
 function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
-  if (options.models) {
-    for (const [name, value] of Object.entries(options.models.environment)) chat.container.addEnvironment(name, value);
-    if (options.models.secretArns.length) {
-      chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...options.models.secretArns] }));
-    }
-    return;
-  }
+  if (addModelsEndpoint(chat, options.models, 'chatService')) return;
   const summaryModel = options.turnSummaryModel ?? TURN_SUMMARY_MODEL;
   if (options.turnSummaryModel) chat.container.addEnvironment(TURN_SUMMARY_MODEL_ENV, `us.${options.turnSummaryModel}`);
   // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.

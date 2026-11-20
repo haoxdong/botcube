@@ -18,6 +18,11 @@ class ModelRelay:
     headers: Mapping[str, str]
     session_id: str
 
+    @property
+    def models_url(self) -> str:
+        url = urlsplit(self.base_url)
+        return f'{url.scheme}://{url.netloc}/models'
+
 
 def openai_model_relay(
     credential_service_url: str, token: str, session_id: str, account_id: str | None = None,

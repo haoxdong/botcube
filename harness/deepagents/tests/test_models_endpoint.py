@@ -8,20 +8,19 @@ import struct
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from botcube_harness_deepagents import llm, turn_timing
-from botcube_harness_deepagents.credential_source import CredentialSourceError
+from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
 
 pytestmark = pytest.mark.integration
 
 
 class StandIn:
-    """An OpenAI-compatible endpoint answering each chat completion with `Echo: <text>`, after any gateway failures and dropped connections."""
+    """The Credential Service's models relay, answering each chat completion with `Echo: <text>`, after any gateway failures and dropped connections."""
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
@@ -77,7 +76,7 @@ class StandIn:
                 self.wfile.write(payload)
 
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        self.url = f'http://127.0.0.1:{self.server.server_port}/v1'
+        self.url = f'http://127.0.0.1:{self.server.server_port}'
 
 
 @pytest.fixture
@@ -90,36 +89,39 @@ def stand_in() -> Iterator[StandIn]:
 
 
 @pytest.fixture
-def endpoint_settings() -> dict[str, Any]:
-    return {}
+def deployed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BOTCUBE_MODELS_KIND', 'openai-compatible')
 
 
-@pytest.fixture
-def deployed(stand_in: StandIn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, endpoint_settings: dict[str, Any]) -> Iterator[Path]:
-    """The environment the deploy gives the Harness for the enterprise example's models Endpoint, at the stand-in."""
-    key = tmp_path / 'models-api-key'
-    key.write_text('sk-mounted\n')
-    endpoint = {'url': stand_in.url, 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'}, **endpoint_settings}
-    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps(endpoint))
-    monkeypatch.setenv('BOTCUBE_TURN_SUMMARY_MODEL', 'example-summary')
-    llm.models_endpoint.cache_clear()
-    yield key
-    llm.models_endpoint.cache_clear()
+def _turn(stand_in: StandIn, token: str = 'invocation-1') -> ModelRelay:
+    return openai_model_relay(f'{stand_in.url}/template', token, 'thread-1')
 
 
-def _reply(model_key: str = 'echo') -> str:
-    return str(asyncio.run(llm.build_model(model=model_key).ainvoke('Hello, who are you?')).content)
+def _reply(stand_in: StandIn, model_key: str = 'echo') -> str:
+    return str(asyncio.run(llm.build_model(model=model_key, relay=lambda: _turn(stand_in)).ainvoke('Hello, who are you?')).content)
 
 
 @pytest.mark.usefixtures('deployed')
-def test_a_turn_reaches_the_endpoint_with_its_credential_and_headers(stand_in: StandIn) -> None:
-    assert _reply() == 'Echo: Hello, who are you?'
+def test_a_turn_reaches_the_endpoint_through_the_credential_service_under_its_invocation_and_no_bearer(stand_in: StandIn) -> None:
+    assert _reply(stand_in) == 'Echo: Hello, who are you?'
 
     [request] = stand_in.requests
-    assert request['path'] == '/v1/chat/completions'
+    assert request['path'] == '/models/chat/completions'
     assert request['body']['model'] == 'echo'
-    assert request['headers']['authorization'] == 'Bearer sk-mounted'
-    assert request['headers']['x-tenant'] == 'botcube-example'
+    assert request['headers']['authorization'] == 'Bearer invocation-1'
+    assert request['headers']['x-botcube-session-id'] == 'thread-1'
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_cached_endpoint_model_takes_each_turns_invocation(stand_in: StandIn) -> None:
+    current = {'token': 'invocation-1'}
+    model = llm.build_model(model='echo', relay=lambda: _turn(stand_in, current['token']))
+
+    asyncio.run(model.ainvoke('Hello'))
+    current['token'] = 'invocation-2'
+    asyncio.run(model.ainvoke('Hello'))
+
+    assert [request['headers']['authorization'] for request in stand_in.requests] == ['Bearer invocation-1', 'Bearer invocation-2']
 
 
 @pytest.mark.usefixtures('deployed')
@@ -127,7 +129,7 @@ def test_a_turn_reaches_the_endpoint_with_its_credential_and_headers(stand_in: S
 def test_a_turn_retries_a_gateway_failure_before_the_first_byte(stand_in: StandIn, status: int) -> None:
     stand_in.gateway_failures.extend([status, status])
 
-    assert _reply() == 'Echo: Hello, who are you?'
+    assert _reply(stand_in) == 'Echo: Hello, who are you?'
     assert len(stand_in.requests) == 3
 
 
@@ -135,7 +137,7 @@ def test_a_turn_retries_a_gateway_failure_before_the_first_byte(stand_in: StandI
 def test_a_turn_retries_a_connection_dropped_before_the_response(stand_in: StandIn) -> None:
     stand_in.drops.extend(['before-response', 'before-response'])
 
-    assert _reply() == 'Echo: Hello, who are you?'
+    assert _reply(stand_in) == 'Echo: Hello, who are you?'
     assert len(stand_in.requests) == 3
 
 
@@ -145,7 +147,7 @@ def test_a_turn_fails_after_three_dropped_connections(stand_in: StandIn) -> None
 
     stand_in.drops.extend(['before-response', 'before-response', 'before-response'])
     with pytest.raises(openai.APIConnectionError):
-        _reply()
+        _reply(stand_in)
     assert len(stand_in.requests) == 3
 
 
@@ -155,7 +157,7 @@ def test_a_turn_fails_without_retrying_a_connection_closed_before_the_response(s
 
     stand_in.drops.append('closed-before-response')
     with pytest.raises(openai.APIConnectionError):
-        _reply()
+        _reply(stand_in)
     assert len(stand_in.requests) == 1
 
 
@@ -217,7 +219,7 @@ def test_a_turn_fails_once_on_a_stream_dropped_mid_response(stand_in: StandIn) -
     streamed = io.StringIO()
 
     async def stream() -> None:
-        async for chunk in llm.build_model(model='echo').astream('Hello, who are you?'):
+        async for chunk in llm.build_model(model='echo', relay=lambda: _turn(stand_in)).astream('Hello, who are you?'):
             streamed.write(str(chunk.content))
 
     with pytest.raises(httpx.TransportError):
@@ -231,7 +233,7 @@ def test_a_turn_fails_once_on_a_body_dropped_mid_response_without_streaming(stan
     import openai
 
     stand_in.drops.append('mid-response')
-    model = llm.build_model(model='echo').model_copy(update={'streaming': False})
+    model = llm.build_model(model='echo', relay=lambda: _turn(stand_in)).model_copy(update={'streaming': False})
     with pytest.raises(openai.APIConnectionError):
         asyncio.run(model.ainvoke('Hello, who are you?'))
     assert len(stand_in.requests) == 1
@@ -243,7 +245,7 @@ def test_a_turn_fails_after_three_gateway_failures(stand_in: StandIn) -> None:
 
     stand_in.gateway_failures.extend([503, 503, 503])
     with pytest.raises(openai.InternalServerError):
-        _reply()
+        _reply(stand_in)
     assert len(stand_in.requests) == 3
 
 
@@ -254,8 +256,14 @@ def test_a_turn_fails_on_other_errors_without_retrying(stand_in: StandIn, status
 
     stand_in.gateway_failures.append(status)
     with pytest.raises(openai.APIStatusError):
-        _reply()
+        _reply(stand_in)
     assert len(stand_in.requests) == 1
+
+
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_without_the_credential_service_fails_naming_it() -> None:
+    with pytest.raises(RuntimeError, match='^Model "echo" runs on the models Endpoint, which needs the Credential Service relay; this Turn has none$'):
+        llm.build_model(model='echo')
 
 
 CONVERSATION = [
@@ -269,14 +277,18 @@ CONVERSATION = [
 MARKER = {'type': 'ephemeral'}
 
 
-def _converse(messages: list[Any]) -> str:
-    return str(asyncio.run(llm.build_model(model='echo').ainvoke(messages)).content)
+@pytest.fixture
+def cache_markers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BOTCUBE_MODELS_CACHE_MARKERS', 'claude')
 
 
-@pytest.mark.usefixtures('deployed')
-@pytest.mark.parametrize('endpoint_settings', [{'cacheMarkers': 'claude'}])
+def _converse(stand_in: StandIn, messages: list[Any]) -> str:
+    return str(asyncio.run(llm.build_model(model='echo', relay=lambda: _turn(stand_in)).ainvoke(messages)).content)
+
+
+@pytest.mark.usefixtures('deployed', 'cache_markers')
 def test_cache_markers_land_on_the_system_prompt_and_the_latest_messages(stand_in: StandIn) -> None:
-    assert _converse(CONVERSATION) == 'Echo: Read it.'
+    assert _converse(stand_in, CONVERSATION) == 'Echo: Read it.'
 
     [request] = stand_in.requests
     assert request['body']['messages'] == [
@@ -289,10 +301,9 @@ def test_cache_markers_land_on_the_system_prompt_and_the_latest_messages(stand_i
     ]
 
 
-@pytest.mark.usefixtures('deployed')
-@pytest.mark.parametrize('endpoint_settings', [{'cacheMarkers': 'claude'}])
+@pytest.mark.usefixtures('deployed', 'cache_markers')
 def test_cache_markers_mark_a_tool_result_but_not_a_call_with_no_text(stand_in: StandIn) -> None:
-    _converse(CONVERSATION[:4])
+    _converse(stand_in, CONVERSATION[:4])
 
     [request] = stand_in.requests
     assert [message.get('content') for message in request['body']['messages']] == [
@@ -305,7 +316,7 @@ def test_cache_markers_mark_a_tool_result_but_not_a_call_with_no_text(stand_in: 
 
 @pytest.mark.usefixtures('deployed')
 def test_no_request_carries_a_cache_marker_unless_the_operator_turns_them_on(stand_in: StandIn) -> None:
-    _converse(CONVERSATION)
+    _converse(stand_in, CONVERSATION)
 
     [request] = stand_in.requests
     assert 'cache_control' not in json.dumps(request['body'])
@@ -319,31 +330,21 @@ def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports(stand_in: 
     async def turn() -> dict[str, Any]:
         timing = turn_timing.TurnTiming('run', 'session', 'echo', warmup=False, receipt=turn_timing.perf_counter())
         with turn_timing.use(timing):
-            await llm.build_model(model='echo').ainvoke(CONVERSATION)
+            await llm.build_model(model='echo', relay=lambda: _turn(stand_in)).ainvoke(CONVERSATION)
         return timing.record(turn_timing.perf_counter(), 'finished')
 
     record = asyncio.run(turn())
     assert (record['inputTokens'], record['cachedInputTokens']) == (26, 20)
 
 
-def test_startup_fails_on_cache_markers_it_cannot_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': '/run/key'}, 'cacheMarkers': 'openai'}
-    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps(endpoint))
-    llm.models_endpoint.cache_clear()
-    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_ENDPOINT: cacheMarkers 'openai' is not 'claude'$"):
-        llm.models_endpoint()
-    llm.models_endpoint.cache_clear()
+@pytest.mark.usefixtures('deployed')
+def test_a_turn_fails_on_cache_markers_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch, stand_in: StandIn) -> None:
+    monkeypatch.setenv('BOTCUBE_MODELS_CACHE_MARKERS', 'openai')
+    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_CACHE_MARKERS: expected claude, or unset for none, not 'openai'$"):
+        llm.build_model(model='echo', relay=lambda: _turn(stand_in))
 
 
-def test_startup_fails_naming_the_seam_and_source_when_the_credential_cannot_be_read(deployed: Path) -> None:
-    deployed.unlink()
-    with pytest.raises(CredentialSourceError, match=f'^models credential \\(file {deployed}\\): '):
-        llm.models_endpoint()
-
-
-def test_startup_fails_on_an_endpoint_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_MODELS_ENDPOINT', json.dumps({'url': 'https://models.example.com/v1', 'apiKey': 'sk-live'}))
-    llm.models_endpoint.cache_clear()
-    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_ENDPOINT: unknown field apiKey$"):
-        llm.models_endpoint()
-    llm.models_endpoint.cache_clear()
+def test_a_turn_fails_on_a_models_kind_the_deploy_wrote_wrong(monkeypatch: pytest.MonkeyPatch, stand_in: StandIn) -> None:
+    monkeypatch.setenv('BOTCUBE_MODELS_KIND', 'anthropic')
+    with pytest.raises(RuntimeError, match="^BOTCUBE_MODELS_KIND: expected openai-compatible, or unset for Bedrock, not 'anthropic'$"):
+        llm.build_model(model='echo', relay=lambda: _turn(stand_in))

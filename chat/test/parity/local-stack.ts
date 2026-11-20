@@ -108,12 +108,12 @@ export async function startLocalStack(options: {
     await rm(home, { recursive: true, force: true });
   };
   try {
-    // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for both the Chat Service and
-    // the Harness; the Endpoint's headers are the Deployment Config's own.
+    // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
+    // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
     const modelsEnv = openAICompatible && models.kind === 'openai-compatible'
-      ? modelsDeployment({ ...models, url: `${openAICompatible.url}/v1`, credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) } })?.environment
+      ? modelsDeployment({ ...models, url: `${openAICompatible.url}/v1`, credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) } })
       : undefined;
-    Object.assign(pythonEnv, egress?.environment, modelsEnv, options.harnessEnv);
+    Object.assign(pythonEnv, egress?.environment, modelsEnv?.harness, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -123,6 +123,15 @@ export async function startLocalStack(options: {
       }));
       processes.push(running);
       return new URL(running.url).origin;
+    };
+    const credentialService = modelsEnv && {
+      BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
+        `${BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
+        { PATH: process.env.PATH, HOME: home, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET, ...modelsEnv.credentialService },
+        '/health',
+        'Uvicorn running on http://127.0.0.1:',
+      ),
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
     };
     let harnessProcess: RunningProcess | undefined;
     let harnessOptions: Parameters<typeof startProcess>[0] | undefined;
@@ -164,7 +173,8 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
         ...egress?.chatEnvironment,
-        ...modelsEnv,
+        ...modelsEnv?.chatService,
+        ...credentialService,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
         ...options.chatEnv,
         BOTCUBE_DEPLOYMENT_CONFIG: await chatDeploymentConfig(deploymentPath, deployment.config, home),
@@ -228,6 +238,7 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
 }
 
 const STAND_IN_TELEMETRY_TOKEN = 'stand-in-telemetry-token';
+const MODELS_INVOCATION_SECRET = 'local-models-invocation-secret';
 const STAND_IN_PROXY_TOKEN = 'stand-in-proxy-token';
 
 /** A file in `home` holding `value`, by its path. */

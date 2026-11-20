@@ -1,4 +1,4 @@
-"""A Cartridge's Credential Service: its site provider beside the OpenAI plan provider, served by uvicorn."""
+"""A Cartridge's Credential Service: its site provider beside the OpenAI plan provider and any models Endpoint, served by uvicorn."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder
+from .models import models_provider_from_env
 from .openai import OpenAIProvider
 from .provider import CredentialProvider
 from .server import CredentialServiceSettings, create_app
@@ -21,6 +22,7 @@ def credential_service_app(
     *,
     audit: CredentialAuditRecorder,
 ) -> FastAPI:
-    """The site provider and OpenAI under one audit recorder, so an account's decrypts count toward one rate limit
-    whichever provider made them; the site provider must audit into the same `audit`."""
-    return create_app(settings, [site, OpenAIProvider(openai_vault, audit=audit)])
+    """The site provider, OpenAI and the deploy's models Endpoint under one audit recorder, so an account's decrypts
+    count toward one rate limit whichever provider made them; the site provider must audit into the same `audit`."""
+    models = models_provider_from_env(audit)
+    return create_app(settings, [site, OpenAIProvider(openai_vault, audit=audit), *([models] if models else [])])

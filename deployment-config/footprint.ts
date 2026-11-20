@@ -29,6 +29,7 @@ export interface Need {
   readonly iam?: Partial<Record<Principal, Grant>>;
   /** `<region>` stands for the deployment's Region. */
   readonly egressHosts?: readonly string[];
+  readonly egressFrom?: Readonly<Record<string, readonly Principal[]>>;
   readonly supplied?: readonly SuppliedResource[];
   /** Each command credential, as `<field> (<principals>): <command>`. */
   readonly commands?: readonly string[];
@@ -51,6 +52,7 @@ export interface Footprint {
   readonly created: string[];
   readonly iam: Partial<Record<Principal, { actions: string[]; managedPolicies: string[] }>>;
   readonly egressHosts: string[];
+  readonly egressFrom: Partial<Record<string, Principal[]>>;
   /** The images the deployment runs. */
   readonly images: string[];
   /** The images BotCube builds its own FROM. */
@@ -209,8 +211,11 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
       },
       egressHosts: aws('bedrock-runtime'),
     },
-    // Both read the endpoint's credential, the Harness for the agent and the Chat Service for turn summaries.
-    'openai-compatible': ({ url, credential }) => [{ egressHosts: [new URL(url).host] }, credentialNeed('models.credential', credential, ['chatService', 'harness'])],
+    'openai-compatible': ({ url, credential }) => {
+      const host = new URL(url).host;
+      const readers = ['chatService', 'credentialService'] as const;
+      return [{ egressHosts: [host], egressFrom: { [host]: readers } }, credentialNeed('models.credential', credential, readers)];
+    },
   },
   harnessAuth: {
     sigv4: {
@@ -312,6 +317,7 @@ export function footprint(config: DeploymentConfig): Footprint {
     created: resources.created,
     iam,
     egressHosts: sorted(needs.flatMap(need => need.egressHosts ?? [])),
+    egressFrom: Object.fromEntries(needs.flatMap(need => Object.entries(need.egressFrom ?? {})).map(([host, from]) => [host, [...from]])),
     images: sorted([...Object.values(IMAGES), ...pulled(needs.flatMap(need => need.pulled ?? []))]),
     buildImages: sorted(pulled(PULLED.build)),
     commands: sorted(needs.flatMap(need => need.commands ?? [])),
@@ -327,7 +333,7 @@ function adapter(section: Section, config: { kind: string }): Need[] {
 const sorted = (values: readonly string[]) => [...new Set(values)].sort();
 
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ supplied, created, iam, egressHosts, images, buildImages, commands }: Footprint): string {
+export function formatFootprint({ supplied, created, iam, egressHosts, egressFrom, images, buildImages, commands }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
@@ -340,7 +346,7 @@ export function formatFootprint({ supplied, created, iam, egressHosts, images, b
     ]),
     'Created resources', ...created.map(resource => `  ${resource}`),
     'IAM actions', ...roles,
-    'Egress hosts', ...egressHosts.map(host => `  ${host}`),
+    'Egress hosts', ...egressHosts.map(host => `  ${host}${egressFrom[host] ? ` (${egressFrom[host].join(', ')})` : ''}`),
     'Images', ...images.map(image => `  ${image}`),
     'Build images', ...buildImages.map(image => `  ${image}`),
     'Commands', ...commands.map(command => `  ${command}`),

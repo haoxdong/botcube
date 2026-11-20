@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { commandCredentialOptIn, proxyEnvironment, proxyRelayFromEnv } from './environment.js';
-import { MODELS_ENV, modelsDeployment, modelsEndpointFromEnv } from './models.js';
+import { modelsDeployment } from './models.js';
 import { deploymentConfig, type DeploymentConfig } from './schema.js';
 import { telemetryDeployment } from './telemetry.js';
 
@@ -78,21 +78,8 @@ describe("the deploy's command credential opt-in", () => {
   it('is never derived from the Deployment Config by a seam', () => {
     const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary' });
     const telemetry = telemetryDeployment({ kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND });
-    const environments = [models?.environment, telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
+    const environments = [models?.chatService, models?.credentialService, models?.harness, telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
     expect(environments.filter((environment) => environment && 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS' in environment)).toEqual([]);
-  });
-});
-
-describe('the models environment the deploy hands over', () => {
-  const MODELS = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: FILE, turnSummaryModel: 'summary' } as const;
-
-  it('carries the cache markers the operator turned on, and none otherwise', () => {
-    const marked = modelsDeployment({ ...MODELS, cacheMarkers: 'claude' })?.environment ?? {};
-    expect(JSON.parse(marked[MODELS_ENV.endpoint] ?? '{}')).toEqual({ url: 'https://models.example.com/v1', credential: FILE, cacheMarkers: 'claude' });
-    expect(modelsEndpointFromEnv(marked)).toMatchObject({ cacheMarkers: 'claude' });
-
-    const unmarked = modelsDeployment(MODELS)?.environment ?? {};
-    expect(JSON.parse(unmarked[MODELS_ENV.endpoint] ?? '{}')).toEqual({ url: 'https://models.example.com/v1', credential: FILE });
   });
 });
 

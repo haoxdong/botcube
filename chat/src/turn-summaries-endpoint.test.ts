@@ -39,7 +39,7 @@ function deployed(models: Record<string, unknown> = {}): NodeJS.ProcessEnv {
     turnSummaryModel: 'example-summary',
     ...models,
   };
-  return { ...modelsDeployment(config)?.environment };
+  return { ...modelsDeployment(config)?.chatService };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };

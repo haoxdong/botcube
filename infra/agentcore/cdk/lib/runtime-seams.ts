@@ -70,7 +70,6 @@ function chatServiceDiscoveryUrl(chatServiceIssuer: string | undefined): string 
   return `${chatServiceIssuer}/.well-known/openid-configuration`;
 }
 
-/** The agent's models run on the Deployment Config's OpenAI-compatible Endpoint, granted the secret its credential is read from if any. */
 type AgentCoreRuntime =
   ReturnType<AgentCoreApplication['environments']['values']> extends Iterator<infer E>
     ? E extends { runtime: infer R }
@@ -79,11 +78,7 @@ type AgentCoreRuntime =
     : never;
 function applyModelsEndpoint(runtime: AgentCoreRuntime, models: ModelsDeployment | undefined): void {
   if (!models) return;
-  for (const [name, value] of Object.entries(models.environment)) runtime.addEnvironmentVariable(name, value);
-  if (models.secretArns.length)
-    runtime.role.addToPrincipalPolicy(
-      new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [...models.secretArns] })
-    );
+  for (const [name, value] of Object.entries(models.harness)) runtime.addEnvironmentVariable(name, value);
 }
 
 /**

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import functools
-import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +13,6 @@ from langchain_core.outputs import ChatGenerationChunk
 from opentelemetry import baggage, propagate
 
 from . import aws_clients, turn_timing
-from .credential_source import CredentialSource, credential_source
 from .definition import ModelRelay
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
@@ -32,9 +28,9 @@ DEFAULT_EFFORT = 'medium'
 DEFAULT_MAX_TOKENS = 128
 # A model on the account's ChatGPT plan, named by its slug in the plan's catalog (ADR 0078).
 PLAN_MODEL_PREFIX = 'openai-plan:'
-# The Deployment Config's `models` Endpoint, as JSON the deploy hands over: `MODELS_ENV` in botcube/deployment-config.
-MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
-ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'cacheMarkers'})
+MODELS_KIND_ENV = 'BOTCUBE_MODELS_KIND'
+MODELS_CACHE_MARKERS_ENV = 'BOTCUBE_MODELS_CACHE_MARKERS'
+OPENAI_COMPATIBLE = 'openai-compatible'
 CLAUDE_CACHE_MARKERS = 'claude'
 CACHE_MARKER = {'type': 'ephemeral'}
 MARKED_LATEST_MESSAGES = 2
@@ -101,12 +97,8 @@ def build_model(
     """
     selected_model = resolve_model(model)
 
-    if not selected_model.startswith(PLAN_MODEL_PREFIX) and (endpoint := models_endpoint()) is not None:
-        # Every model but Plan Usage's runs on the endpoint, by its key in the bot settings; the Bedrock default is no key there.
-        key = model or os.environ.get('BOTCUBE_MODEL')
-        if not key:
-            raise RuntimeError('The OpenAI-compatible models endpoint needs a model key, and this Turn names no model and BOTCUBE_MODEL is unset')
-        return _openai_compatible_model(key, endpoint, max_tokens)
+    if not selected_model.startswith(PLAN_MODEL_PREFIX) and models_on_endpoint():
+        return _endpoint_model(model, relay, max_tokens)
 
     if selected_model == 'echo':
         return EchoChatModel()
@@ -148,41 +140,18 @@ def build_model(
     return ChatBedrockConverse(**kwargs)
 
 
-@dataclass(frozen=True)
-class ModelsEndpoint:
-    """The Deployment Config's `models` section on an OpenAI-compatible Endpoint (ADR 0091)."""
-
-    base_url: str
-    headers: Mapping[str, str]
-    credential: CredentialSource = field(repr=False)
-    cache_markers: bool = False
+def models_on_endpoint() -> bool:
+    kind = os.getenv(MODELS_KIND_ENV, '').strip()
+    if kind not in ('', OPENAI_COMPATIBLE):
+        raise RuntimeError(f'{MODELS_KIND_ENV}: expected {OPENAI_COMPATIBLE}, or unset for Bedrock, not {kind!r}')
+    return kind == OPENAI_COMPATIBLE
 
 
-@functools.cache
-def models_endpoint() -> ModelsEndpoint | None:
-    """The Endpoint the deploy names in `BOTCUBE_MODELS_ENDPOINT`, its credential read once now so startup fails on it; None on Bedrock."""
-    raw = os.getenv(MODELS_ENDPOINT_ENV, '').strip()
-    if not raw:
-        return None
-    try:
-        config = json.loads(raw)
-    except ValueError:
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: not JSON') from None
-    if unknown := sorted(set(config) - ENDPOINT_FIELDS):
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: unknown field {", ".join(unknown)}')
-    if missing := sorted({'url', 'credential'} - set(config)):
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: missing field {", ".join(missing)}')
-    markers = config.get('cacheMarkers')
-    if markers is not None and markers != CLAUDE_CACHE_MARKERS:
-        raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: cacheMarkers {markers!r} is not {CLAUDE_CACHE_MARKERS!r}')
-    endpoint = ModelsEndpoint(
-        base_url=config['url'].rstrip('/'),
-        headers=dict(config.get('headers') or {}),
-        credential=credential_source('models', config['credential']),
-        cache_markers=markers == CLAUDE_CACHE_MARKERS,
-    )
-    endpoint.credential.get()
-    return endpoint
+def cache_markers_on() -> bool:
+    markers = os.getenv(MODELS_CACHE_MARKERS_ENV, '').strip()
+    if markers not in ('', CLAUDE_CACHE_MARKERS):
+        raise RuntimeError(f'{MODELS_CACHE_MARKERS_ENV}: expected {CLAUDE_CACHE_MARKERS}, or unset for none, not {markers!r}')
+    return markers == CLAUDE_CACHE_MARKERS
 
 
 def _endpoint_client() -> Any:
@@ -218,14 +187,6 @@ def _endpoint_client() -> Any:
     return EndpointClient()
 
 
-def _mark_cache_breakpoint(message: dict[str, Any]) -> None:
-    content = message.get('content')
-    if isinstance(content, str) and content:
-        message['content'] = [{'type': 'text', 'text': content, 'cache_control': CACHE_MARKER}]
-    elif isinstance(content, list) and content and content[-1].get('type') == 'text':
-        content[-1] = {**content[-1], 'cache_control': CACHE_MARKER}
-
-
 def _dropped_before_response(error: BaseException | None) -> bool:
     import httpx
 
@@ -236,13 +197,28 @@ def _dropped_before_response(error: BaseException | None) -> bool:
     return error is not None and _dropped_before_response(error.__cause__ or error.__context__)
 
 
-def _openai_compatible_model(key: str, endpoint: ModelsEndpoint, max_tokens: int | None) -> Any:
+def _mark_cache_breakpoint(message: dict[str, Any]) -> None:
+    content = message.get('content')
+    if isinstance(content, str) and content:
+        message['content'] = [{'type': 'text', 'text': content, 'cache_control': CACHE_MARKER}]
+    elif isinstance(content, list) and content and content[-1].get('type') == 'text':
+        content[-1] = {**content[-1], 'cache_control': CACHE_MARKER}
+
+
+def _endpoint_model(model_key: str | None, relay: Callable[[], ModelRelay] | None, max_tokens: int | None) -> Any:
     from langchain_openai import ChatOpenAI
+
+    key = model_key or os.environ.get('BOTCUBE_MODEL')
+    if not key:
+        raise RuntimeError('The OpenAI-compatible models endpoint needs a model key, and this Turn names no model and BOTCUBE_MODEL is unset')
+    if relay is None:
+        raise RuntimeError(f'Model "{key}" runs on the models Endpoint, which needs the Credential Service relay; this Turn has none')
+    marked = cache_markers_on()
 
     class EndpointModel(ChatOpenAI):
         def _get_request_payload(self, input_: Any, **kwargs: Any) -> dict[str, Any]:
             payload = super()._get_request_payload(input_, **kwargs)
-            if endpoint.cache_markers:
+            if marked:
                 messages = payload['messages']
                 if messages and messages[0].get('role') == 'system':
                     _mark_cache_breakpoint(messages[0])
@@ -250,11 +226,12 @@ def _openai_compatible_model(key: str, endpoint: ModelsEndpoint, max_tokens: int
                     _mark_cache_breakpoint(message)
             return payload
 
+    current = relay()
     model = EndpointModel(
         model=key,
-        base_url=endpoint.base_url,
-        api_key=lambda: endpoint.credential.get().value,
-        default_headers=dict(endpoint.headers),
+        base_url=current.models_url,
+        api_key=lambda: relay().token,
+        default_headers=dict(current.headers),
         http_async_client=_endpoint_client(),
         max_retries=0,
         max_completion_tokens=DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens,
