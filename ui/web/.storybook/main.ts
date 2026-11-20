@@ -2,7 +2,6 @@ import { resolveRepositoryRoot } from '../src/config/repository-root.js';
 import type { StorybookConfig } from '@storybook/nextjs-vite';
 import { CHAT_SERVICE_ORIGIN } from './chat-origin';
 import path from 'node:path';
-import { createRequire } from 'node:module';
 import { loadCartridgeConfig } from './cartridge-config.cjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -81,7 +80,7 @@ const config: StorybookConfig = {
     // import got its own copy and threw "useCopilotKit must be used within CopilotKitProvider".
     config.optimizeDeps = {
       ...config.optimizeDeps,
-      include: [...(config.optimizeDeps?.include ?? []), 'motion/react', '@copilotkit/react-core/v2', '@copilotkit/react-core/v2/headless', ...(visual ? ['@storybook/nextjs-vite > @storybook/react-vite > @storybook/react > @storybook/react-dom-shim', '@base-ui/react/radio', '@base-ui/react/radio-group', createRequire(cartridge.aliases['@cartridge-ui']).resolve('@radix-ui/react-focus-scope'), '@base-ui/react/popover', 'next/dynamic', 'rxjs', '@use-gesture/react', '@base-ui/react/context-menu', '@base-ui/react/menu', '@base-ui/react/use-render', '@univerjs/presets', '@univerjs/preset-sheets-core', '@univerjs/preset-sheets-core/locales/en-US', 'marked', 'cronstrue', '@streamdown/cjk', '@streamdown/code', '@streamdown/math', 'remark-breaks', 'streamdown', 'pdfjs-dist', '@streamdown/mermaid', '@base-ui/react/dialog'] : [])],
+      include: [...(config.optimizeDeps?.include ?? []), 'motion/react', '@copilotkit/react-core/v2', '@copilotkit/react-core/v2/headless', ...(visual ? ['@storybook/nextjs-vite > @storybook/react-vite > @storybook/react > @storybook/react-dom-shim', '@base-ui/react/radio', '@base-ui/react/radio-group', '@base-ui/react/popover', 'next/dynamic', 'rxjs', '@use-gesture/react', '@base-ui/react/context-menu', '@base-ui/react/menu', '@base-ui/react/use-render', '@univerjs/presets', '@univerjs/preset-sheets-core', '@univerjs/preset-sheets-core/locales/en-US', 'marked', 'cronstrue', '@streamdown/cjk', '@streamdown/code', '@streamdown/math', 'remark-breaks', 'streamdown', 'pdfjs-dist', '@streamdown/mermaid', '@base-ui/react/dialog'] : [])],
     };
     return config;
   },
