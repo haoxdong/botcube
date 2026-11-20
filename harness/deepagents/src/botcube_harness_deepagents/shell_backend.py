@@ -11,6 +11,7 @@ from collections.abc import Collection
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import ExecuteResponse, GrepResult, ReadResult
@@ -164,28 +165,34 @@ class WorkerShellBackend(LocalShellBackend):
     def __init__(self, *, trace_relay_endpoint: str | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._trace_relay_endpoint = trace_relay_endpoint
-        # Every user token a command ever ran with. One left in the workspace stays usable after the next
-        # Turn rotates the shell's token, so each stays redacted for the life of the backend.
-        self._held_user_tokens: set[str] = set()
+        self._held_credentials: set[str] = set()
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         result = super().read(file_path, offset, limit)
         if result.file_data is None or result.file_data['encoding'] != 'utf-8':
             return result
-        return replace(result, file_data={**result.file_data, 'content': self._without_user_token(result.file_data['content'])})
+        return replace(result, file_data={**result.file_data, 'content': self._without_credentials(result.file_data['content'])})
 
     def grep(self, pattern: str, path: str | None = None, glob: str | None = None, **options: Any) -> GrepResult:
         result = super().grep(pattern, path, glob, **options)
         if result.matches is None:
             return result
-        return replace(result, matches=[{**match, 'text': self._without_user_token(match['text'])} for match in result.matches])
+        return replace(result, matches=[{**match, 'text': self._without_credentials(match['text'])} for match in result.matches])
 
-    def _user_tokens(self) -> list[str]:
-        current = self._env.get(USER_TOKEN_ENV)
-        return sorted(self._held_user_tokens | ({current} if current else set()), key=len, reverse=True)
+    def _credentials(self) -> list[str]:
+        current = set(environment_secrets(self._env, include_session_names=False))
+        if token := self._env.get(USER_TOKEN_ENV):
+            current.add(token)
+        if cdp := self._env.get('AGENT_BROWSER_CDP'):
+            current.add(cdp)
+            current.update(value for values in parse_qs(urlsplit(cdp).query).values() for value in values)
+        return sorted(
+            (value for value in self._held_credentials | current if len(value) >= MIN_LITERAL_SECRET),
+            key=len, reverse=True,
+        )
 
-    def _without_user_token(self, text: str) -> str:
-        tokens = self._user_tokens()
+    def _without_credentials(self, text: str) -> str:
+        tokens = self._credentials()
         return strip_literals(text, tokens) if tokens else text
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
@@ -199,7 +206,7 @@ class WorkerShellBackend(LocalShellBackend):
         context = trace.get_current_span().get_span_context()
         kept_command, stdin = _strip_stdin(command)
         echoed_stdin = [literal for literal in stdin if len(literal) >= MIN_LITERAL_SECRET]
-        literals = sorted(environment_secrets(self._env) + self._user_tokens() + cookie_secrets(command) + echoed_stdin, key=len, reverse=True)
+        literals = sorted(environment_secrets(self._env) + self._credentials() + cookie_secrets(command) + echoed_stdin, key=len, reverse=True)
         output = _strip_words(strip_secrets(response.output, literals), [literal for literal in stdin if len(literal) < MIN_LITERAL_SECRET])
         log.info(json.dumps({
             'event': 'harness_shell_output',
@@ -238,8 +245,7 @@ class WorkerShellBackend(LocalShellBackend):
 
     def _command_env(self) -> dict[str, str]:
         env = dict(self._env)
-        if token := env.get(USER_TOKEN_ENV):
-            self._held_user_tokens.add(token)
+        self._held_credentials.update(self._credentials())
         if python_path := env.get('PYTHONPATH'):
             instrumentation = str(Path(auto_instrumentation.__file__).parent)
             env['PYTHONPATH'] = os.pathsep.join(part for part in python_path.split(os.pathsep) if part != instrumentation)
@@ -288,7 +294,7 @@ class WorkerShellBackend(LocalShellBackend):
         output_parts = [stdout] if stdout else []
         if stderr:
             output_parts.extend(f'[stderr] {line}' for line in stderr.strip().split('\n'))
-        output = self._without_user_token('\n'.join(output_parts)) if output_parts else '<no output>'
+        output = self._without_credentials('\n'.join(output_parts)) if output_parts else '<no output>'
         truncated = overflow or len(output.encode()) > self._max_output_bytes
         if truncated:
             output = output.encode()[: self._max_output_bytes].decode('utf-8', errors='ignore') + f'\n\n... Output truncated at {self._max_output_bytes} bytes.'

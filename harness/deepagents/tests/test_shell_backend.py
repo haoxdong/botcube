@@ -781,3 +781,102 @@ def test_a_file_holding_an_earlier_turn_s_user_token_stays_redacted_after_the_to
     assert f'{USER_TOKEN_ENV}=[redacted]' in read.file_data['content']
     assert f'{USER_TOKEN_ENV}=[redacted]' in shown.output
     assert _USER_TOKEN not in repr((read, grep, shown.output, caplog.text))
+
+
+@pytest.mark.integration
+def test_mount_discovery_keeps_bound_credentials_out_of_tool_output(tmp_path: Path) -> None:
+    environment = {
+        'SERVICE_AUTH_TOKEN': 'invocation-secret',
+        'AGENT_BROWSER_CDP': 'ws://browser.test/cdp?token=browser-secret',
+        USER_TOKEN_ENV: _USER_TOKEN,
+        'VISIBLE_SETTING': 'ordinary-value',
+        'AGENT_BROWSER_SESSION': 'visible-browser-session',
+        'BOTCUBE_SESSION_ID': 'visible-logical-session',
+    }
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, env=environment)
+    command = (
+        "pwd; printf '\\nProcess identity\\n'; id; printf '\\nMounts\\n'; df -h; "
+        "printf '\\nFiles mount candidates\\n'; printf '%s\\n' \"$HOME\" \"$PWD\"; printenv | sort"
+    )
+
+    result = backend.execute(command)
+
+    assert result.exit_code == 0
+    assert 'VISIBLE_SETTING=ordinary-value' in result.output
+    assert 'Process identity' in result.output
+    assert 'AGENT_BROWSER_SESSION=visible-browser-session' in result.output
+    assert 'BOTCUBE_SESSION_ID=visible-logical-session' in result.output
+    assert 'invocation-secret' not in result.output
+    assert 'browser-secret' not in result.output
+    assert _USER_TOKEN not in result.output
+    assert backend.execute('test "$SERVICE_AUTH_TOKEN" = invocation-secret').exit_code == 0
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(('redirect', 'exit_code'), [('', 0), ('>&2', 7)])
+def test_turn_credentials_are_hidden_without_hiding_command_failures(
+    tmp_path: Path, redirect: str, exit_code: int,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, inherit_env=False, env={
+        'SERVICE_AUTH_TOKEN': 'invocation-secret',
+        'AGENT_BROWSER_CDP': 'ws://browser.test/cdp?token=browser-secret',
+    })
+
+    result = backend.execute(
+        f"printf '%s\\n' \"$SERVICE_AUTH_TOKEN\" \"$AGENT_BROWSER_CDP\" browser-secret {redirect}; exit {exit_code}"
+    )
+
+    assert result.exit_code == exit_code
+    assert 'invocation-secret' not in result.output
+    assert 'browser-secret' not in result.output
+    assert result.output.count('[redacted]') == 3
+    if exit_code:
+        assert result.output.endswith('Exit code: 7')
+
+
+@pytest.mark.integration
+def test_files_holding_rotated_turn_credentials_stay_redacted(tmp_path: Path) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False, env={
+        'SERVICE_AUTH_TOKEN': 'invocation-secret',
+        'AGENT_BROWSER_CDP': 'ws://browser.test/cdp?token=browser-secret',
+    })
+    assert backend.execute('printenv > environment.txt').exit_code == 0
+    backend.set_environment_variable('SERVICE_AUTH_TOKEN', 'next-invocation')
+    backend.set_environment_variable('AGENT_BROWSER_CDP', 'ws://browser.test/cdp?token=next-browser')
+
+    read = backend.read('/environment.txt')
+    grep = backend.grep('secret', '/')
+    shown = backend.execute('cat environment.txt')
+
+    assert read.file_data is not None
+    assert 'SERVICE_AUTH_TOKEN=[redacted]' in read.file_data['content']
+    assert 'AGENT_BROWSER_CDP=[redacted]' in read.file_data['content']
+    assert len(grep.matches or []) == 2
+    for result in (read.file_data['content'], *(match['text'] for match in grep.matches or []), shown.output):
+        assert 'invocation-secret' not in result
+        assert 'browser-secret' not in result
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(('user_token', 'shown'), [
+    ('1', '1'), ('1234567', '1234567'), ('12345678', '[redacted]'),
+])
+def test_short_bound_values_preserve_output_and_long_credentials_stay_redacted(
+    tmp_path: Path, user_token: str, shown: str,
+) -> None:
+    backend = WorkerShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False, env={
+        USER_TOKEN_ENV: user_token,
+        'AGENT_BROWSER_CDP': 'ws://browser.test/cdp?headless=1&v=2&target=page&token=browser-secret',
+    })
+    (tmp_path / 'report.txt').write_text(f'1 2 page {user_token} browser-secret\n')
+    expected = f'1 2 page {shown} [redacted]\n'
+
+    assert backend.execute('cat report.txt').output == expected
+    read = backend.read('/report.txt')
+    assert read.file_data is not None
+    assert read.file_data['content'] == expected
+    assert [match['text'] for match in backend.grep('page', '/').matches or []] == [expected.rstrip('\n')]
+
+    backend.set_environment_variable(USER_TOKEN_ENV, _USER_TOKEN)
+    backend.set_environment_variable('AGENT_BROWSER_CDP', 'ws://browser.test/cdp?token=next-browser')
+    assert backend.execute('cat report.txt').output == expected

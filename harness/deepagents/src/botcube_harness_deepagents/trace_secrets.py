@@ -6,7 +6,9 @@ from itertools import groupby
 
 REDACTED = '[redacted]'
 
-_SECRET_NAME = r'token|secret|password|passwd|cookie|session|credential|authorization|api[-_]?key|signature'
+_CREDENTIAL_NAME = r'token|secret|password|passwd|cookie|credential|authorization|api[-_]?key|signature'
+_SECRET_NAME = f'{_CREDENTIAL_NAME}|session'
+_CREDENTIAL_NAME_RE = re.compile(_CREDENTIAL_NAME, re.IGNORECASE)
 _SECRET_NAME_RE = re.compile(_SECRET_NAME, re.IGNORECASE)
 _SIGNING_PARAM = re.compile(r'^(x-amz-[\w-]+|x-goog-[\w-]+|signature|sig|policy|key-pair-id|se|sp|sv|sr|skoid)$', re.IGNORECASE)
 _JWT = re.compile(r'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}')
@@ -103,9 +105,10 @@ def _strip_secret_arguments(text: str) -> str:
     return ''.join(parts) + text[cursor:]
 
 
-def environment_secrets(env: Mapping[str, str]) -> list[str]:
-    """Values of secret-named environment variables, such as an `*_AUTH_TOKEN`, longest first."""
-    values = {value for name, value in env.items() if _SECRET_NAME_RE.search(name) and len(value) >= MIN_LITERAL_SECRET}
+def environment_secrets(env: Mapping[str, str], *, include_session_names: bool = True) -> list[str]:
+    """Credential values, with Session identifiers included for log redaction, longest first."""
+    pattern = _SECRET_NAME_RE if include_session_names else _CREDENTIAL_NAME_RE
+    values = {value for name, value in env.items() if pattern.search(name) and len(value) >= MIN_LITERAL_SECRET}
     return sorted(values, key=len, reverse=True)
 
 

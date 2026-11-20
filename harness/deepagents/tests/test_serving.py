@@ -625,13 +625,19 @@ def no_browser_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures('no_browser_env')
 def test_agent_browser_drives_the_sessions_agent_computer_through_each_turns_url(service: _Service) -> None:
-    first = _browser_env(service.turn(_BROWSER_ENV, agentComputerCdpUrl='ws://chat.test/cdp?token=first'))
-    renewed = _browser_env(service.turn(_BROWSER_ENV, agentComputerCdpUrl='ws://chat.test/cdp?token=renewed'))
-    other_owner = _browser_env(service.turn(_BROWSER_ENV, user='user-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
-    other_session = _browser_env(service.turn(_BROWSER_ENV, thread='thread-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
+    command = (
+        'run: python -c \'import hashlib, os; '
+        'print(hashlib.sha256(os.environ["AGENT_BROWSER_CDP"].encode()).hexdigest(), '
+        'os.environ["AGENT_BROWSER_SESSION"], os.environ["AGENT_BROWSER_IDLE_TIMEOUT_MS"], '
+        '"[" + os.getenv("AGENT_BROWSER_SOCKET_DIR", "") + "]")\''
+    )
+    first = _browser_env(service.turn(command, agentComputerCdpUrl='ws://chat.test/cdp?token=first'))
+    renewed = _browser_env(service.turn(command, agentComputerCdpUrl='ws://chat.test/cdp?token=renewed'))
+    other_owner = _browser_env(service.turn(command, user='user-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
+    other_session = _browser_env(service.turn(command, thread='thread-2', agentComputerCdpUrl='ws://chat.test/cdp?token=other'))
 
-    assert first[0] == 'ws://chat.test/cdp?token=first'
-    assert renewed[0] == 'ws://chat.test/cdp?token=renewed'
+    assert first[0] == '44475985bd3f46c4b18d178faa93998e0e4778e80e2ace18491b889c24e04e69'
+    assert renewed[0] == 'dda9b4e72396c8496b489f19f9c7e47c9181e4ab34270e6cbd77ad942f8068dd'
     # One agent-browser session per Session keeps its snapshot refs; the cached agent takes each Turn's URL.
     assert renewed[1] == first[1]
     assert len(service.recorder.builds) == 3
