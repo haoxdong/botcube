@@ -85,5 +85,10 @@ def build_model(**_kwargs: Any) -> ComputerModel:
 
 
 serving.configure_harness_definition(replace(FAKE_SITE_DEFINITION, prepare_invocation=prepare_invocation))
+async def answer_nothing(_model: Any, _text: str) -> None:
+    """The snapshot build answers once through the model's HTTP client; this scripted model has none."""
+
+
 serving.build_model = build_model
+serving.answer_once = answer_nothing
 serving.main()
