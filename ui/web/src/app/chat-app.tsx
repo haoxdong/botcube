@@ -38,7 +38,7 @@ import { AgentComputerView } from "../computer/agent-computer-view";
 import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../cartridge/index.js";
 import { chatServiceUrl } from "../cartridge/chat-service-url";
-import { SidebarRow } from "@/components/ui/sidebar-row";
+import { SidebarRow } from "./sidebar-row";
 
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";

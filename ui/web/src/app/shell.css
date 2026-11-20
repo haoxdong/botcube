@@ -358,6 +358,24 @@
   overflow: hidden;
 }
 
+/* Undo the stock ghost Button's own box: the rule above draws the row. */
+.sidebar-nav-item[data-slot="button"] {
+  height: auto;
+  justify-content: normal;
+  background-clip: border-box;
+  font-weight: inherit;
+  line-height: inherit;
+  user-select: auto;
+  outline-style: revert;
+  box-shadow: none;
+  translate: none;
+}
+
+.sidebar-nav-item[data-slot="button"]:disabled {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .sidebar-nav-icon {
   flex-shrink: 0;
   width: 20px;
