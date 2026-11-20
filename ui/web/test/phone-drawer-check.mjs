@@ -39,7 +39,17 @@ const DYNAMIC_ISLAND_STATUS_BAR_HEIGHT = 62;
 export async function checkPageScroll(page) {
   if (await page.evaluate(() => window.innerWidth > 640)) return null;
   await page.evaluate(scrollHalfwayUp);
-  await page.waitForTimeout(300);
+  // Scrolling up joins earlier history above, and the chat holds the reader's row on the next frame (WebKit has no
+  // scroll anchoring): read the page once its height and scroll have rested, not between the join and the hold.
+  await page.waitForFunction(() => new Promise((rested) => {
+    const marks = /** @type {string[]} */ ([]);
+    const sample = () => {
+      marks.push(`${document.documentElement.scrollHeight}:${window.scrollY}`);
+      if (marks.length < 10) requestAnimationFrame(sample);
+      else rested(marks.every((mark) => mark === marks[0]));
+    };
+    requestAnimationFrame(sample);
+  }), undefined, { polling: 200, timeout: 30000 });
   const before = await page.evaluate(PAGE_HOLD);
   if (before.scrollY === 0 || before.chatScrolls) return "phone chat must scroll the page";
   if (before.header !== 0 || before.composer > before.height) return "phone controls scrolled away";
