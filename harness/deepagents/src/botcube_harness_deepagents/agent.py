@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Awaitable, Callable, Iterable, Sequence
+from functools import cache
 from pathlib import PurePosixPath
 from typing import Annotated, Any, NotRequired
 
@@ -274,10 +275,16 @@ class _ReadOnlyFolder(FilesystemBackend):
         return [FileUploadResponse(path=path, error='permission_denied') for path, _ in files]
 
 
+@cache
+def _static_skill_folder(folder: str) -> _ReadOnlyFolder:
+    return _ReadOnlyFolder(root_dir=folder, virtual_mode=True)
+
+
 def tool_skills(tools: Iterable[Any]) -> dict[str, Any]:
     """The skill sources `tools` bring, by path, each served read-only from its folder."""
     return {
-        source: _ReadOnlyFolder(root_dir=folder, virtual_mode=True)
+        source: (_static_skill_folder(str(folder)) if PurePosixPath(folder).is_absolute()
+                 else _ReadOnlyFolder(root_dir=folder, virtual_mode=True))
         for tool in tools if isinstance(tool, BaseTool)
         for source, folder in (tool.metadata or {}).get(TOOL_SKILLS, {}).items()
     }
