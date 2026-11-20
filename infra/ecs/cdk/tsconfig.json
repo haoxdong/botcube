@@ -39,6 +39,7 @@
     "test/runtime-deployment-config.test.ts",
     "test/example-fixture.ts",
     "test/public-example-inventory.test.ts",
-    "test/user-memory-trust.test.ts"
+    "test/user-memory-trust.test.ts",
+    "test/environment-rule.test.ts"
   ]
 }
