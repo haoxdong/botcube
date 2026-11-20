@@ -1,4 +1,4 @@
-"""Every deploy-root reader takes `BOTCUBE_DEPLOY_ROOT`, and the old `CARTRIDGE_DEPLOY_ROOT` until its setters move."""
+"""Every deploy-root reader takes `BOTCUBE_DEPLOY_ROOT` and `BOTCUBE_DEPLOY_REPOSITORY_ROOT`, and no longer the old names."""
 
 import json
 import os
@@ -10,8 +10,9 @@ import pytest
 
 INFRA = Path(__file__).resolve().parents[1]
 EXAMPLE_IDENTITY = INFRA.parent / 'examples/public/deploy/identity.json'
-NAMES = ('BOTCUBE_DEPLOY_ROOT', 'CARTRIDGE_DEPLOY_ROOT')
-REPOSITORY_NAMES = ('BOTCUBE_DEPLOY_REPOSITORY_ROOT', 'CARTRIDGE_REPOSITORY_ROOT')
+NAME, REPOSITORY = 'BOTCUBE_DEPLOY_ROOT', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT'
+OLD_NAME, OLD_REPOSITORY = 'CARTRIDGE_DEPLOY_ROOT', 'CARTRIDGE_REPOSITORY_ROOT'
+ALL_NAMES = (NAME, REPOSITORY, OLD_NAME, OLD_REPOSITORY)
 
 
 def deploy_root(tmp_path: Path, name: str) -> Path:
@@ -26,36 +27,30 @@ def deploy_root(tmp_path: Path, name: str) -> Path:
 
 def environment(**names: str) -> dict[str, str]:
     """This process's environment with only the deploy-root names given."""
-    kept = {key: value for key, value in os.environ.items() if key not in NAMES + REPOSITORY_NAMES}
+    kept = {key: value for key, value in os.environ.items() if key not in ALL_NAMES}
     return {**kept, **names}
 
 
-@pytest.mark.parametrize('name', NAMES)
-def test_the_identity_loads_from_either_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str) -> None:
-    for each in NAMES:
-        monkeypatch.delenv(each, raising=False)
-    monkeypatch.setenv(name, str(deploy_root(tmp_path, name)))
-    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{name}-cluster'
+def test_the_identity_loads_from_the_deploy_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv(OLD_NAME, raising=False)
+    monkeypatch.setenv(NAME, str(deploy_root(tmp_path, NAME)))
+    assert deploy_identity.load_identity()['aws']['ecs']['cluster'] == f'{NAME}-cluster'
 
 
-def test_the_new_name_wins_over_the_old(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for name in NAMES:
-        monkeypatch.setenv(name, str(deploy_root(tmp_path, name)))
-    assert deploy_identity.deploy_root() == tmp_path / 'BOTCUBE_DEPLOY_ROOT'
-
-
-def test_a_missing_deploy_root_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in NAMES:
+@pytest.mark.parametrize('names', [(), (OLD_NAME,)])
+def test_a_missing_deploy_root_fails_loud(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, names: tuple[str, ...]) -> None:
+    for name in (NAME, OLD_NAME):
         monkeypatch.delenv(name, raising=False)
+    for name in names:
+        monkeypatch.setenv(name, str(deploy_root(tmp_path, name)))
     with pytest.raises(RuntimeError, match='BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'):
         deploy_identity.deploy_root()
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize('name', NAMES)
-def test_the_github_environment_export_reads_either_name(tmp_path: Path, name: str) -> None:
-    root = deploy_root(tmp_path, name)
-    result = subprocess.run(['node', str(INFRA / 'export-github-env.mjs')], env=environment(**{name: str(root)}),
+def test_the_github_environment_export_reads_the_deploy_root(tmp_path: Path) -> None:
+    root = deploy_root(tmp_path, NAME)
+    result = subprocess.run(['node', str(INFRA / 'export-github-env.mjs')], env=environment(**{NAME: str(root)}),
                             capture_output=True, text=True, check=True)
     assert 'AWS_ACCOUNT_ID=000000000000\n' in result.stdout
 
@@ -70,38 +65,38 @@ def fake_aws(tmp_path: Path, exit_code: int) -> tuple[dict[str, str], Path]:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize('name', NAMES)
 @pytest.mark.parametrize(('script', 'call'), [
     ('bootstrap-deploy-role.sh', 'iam get-role --role-name {name}-role'),
     ('bootstrap-rollback-role.sh', '--cluster {name}-cluster'),
 ])
-def test_the_role_bootstraps_read_the_identity_from_either_name(tmp_path: Path, name: str, script: str, call: str) -> None:
-    root = deploy_root(tmp_path, name)
+def test_the_role_bootstraps_read_the_identity_from_the_deploy_root(tmp_path: Path, script: str, call: str) -> None:
+    root = deploy_root(tmp_path, NAME)
     path, calls = fake_aws(tmp_path, exit_code=1)
-    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**{name: str(root)}, **path),
+    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**{NAME: str(root)}, **path),
                             capture_output=True, text=True, check=False)
     assert result.returncode != 0
-    assert call.format(name=name) in calls.read_text()
+    assert call.format(name=NAME) in calls.read_text()
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(('name', 'repository'), list(zip(NAMES, REPOSITORY_NAMES, strict=True)))
-def test_the_origin_pull_bootstrap_reads_either_pair_of_names(tmp_path: Path, name: str, repository: str) -> None:
-    root = deploy_root(tmp_path, name)
+def test_the_origin_pull_bootstrap_reads_both_roots(tmp_path: Path) -> None:
+    root = deploy_root(tmp_path, NAME)
     path, _ = fake_aws(tmp_path, exit_code=0)
     result = subprocess.run(['bash', str(INFRA / 'ecs/bootstrap-origin-pull.sh')],
-                            env=environment(**{name: str(root), repository: str(tmp_path)}, **path),
+                            env=environment(**{NAME: str(root), REPOSITORY: str(tmp_path)}, **path),
                             capture_output=True, text=True, check=False)
-    assert (result.returncode, result.stderr) == (1, f'{name}-secret already exists; pass --rotate to issue new material\n')
+    assert (result.returncode, result.stderr) == (1, f'{NAME}-secret already exists; pass --rotate to issue new material\n')
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize('old', [False, True])
 @pytest.mark.parametrize(('script', 'message'), [
     ('bootstrap-deploy-role.sh', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'),
     ('bootstrap-rollback-role.sh', 'BOTCUBE_DEPLOY_ROOT must point to the active deploy directory'),
     ('bootstrap-origin-pull.sh', 'BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root'),
 ])
-def test_a_bootstrap_without_its_roots_fails_loud(script: str, message: str) -> None:
-    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(), capture_output=True, text=True, check=False)
+def test_a_bootstrap_without_its_roots_fails_loud(tmp_path: Path, script: str, message: str, old: bool) -> None:
+    names = {OLD_NAME: str(deploy_root(tmp_path, OLD_NAME)), OLD_REPOSITORY: str(tmp_path)} if old else {}
+    result = subprocess.run(['bash', str(INFRA / 'ecs' / script)], env=environment(**names), capture_output=True, text=True, check=False)
     assert result.returncode != 0
     assert message in result.stderr

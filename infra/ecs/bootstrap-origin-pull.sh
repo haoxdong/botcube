@@ -8,8 +8,8 @@ set -euo pipefail
 # new client certificates until Cloudflare switches; then drop the old CA.
 
 # The CARTRIDGE_* names are the old ones, read until every setter moves to the BOTCUBE_* names.
-REPO_ROOT="${BOTCUBE_DEPLOY_REPOSITORY_ROOT:-${CARTRIDGE_REPOSITORY_ROOT:?BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root}}"
-DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:-${CARTRIDGE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}}"
+REPO_ROOT="${BOTCUBE_DEPLOY_REPOSITORY_ROOT:?BOTCUBE_DEPLOY_REPOSITORY_ROOT must point to the checkout root}"
+DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}"
 
 ROTATE=false
 while [[ "$#" -gt 0 ]]; do

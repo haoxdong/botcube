@@ -13,7 +13,6 @@ beforeEach(() => {
   fs.copyFileSync(path.resolve(__dirname, '../../../../examples/public/deploy/identity.json'), path.join(root, 'examples/public/deploy/identity.json'));
   savedEnvironment = { ...process.env };
   process.env.BOTCUBE_REPOSITORY_ROOT = root;
-  delete process.env.CARTRIDGE_DEPLOY_ROOT;
   process.env.BOTCUBE_DEPLOY_ROOT = path.join(root, 'examples/public/deploy');
 });
 

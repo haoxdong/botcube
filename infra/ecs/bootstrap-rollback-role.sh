@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Add only rollback exercise privileges; preserve concurrent preview deploy policy updates.
 set -euo pipefail
-# CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
-DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:-${CARTRIDGE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}}"
+DEPLOY_ROOT="${BOTCUBE_DEPLOY_ROOT:?BOTCUBE_DEPLOY_ROOT must point to the active deploy directory}"
 if [[ "${1:-}" == '--profile' ]]; then
   export AWS_PROFILE="${2:?profile required}"
   shift 2

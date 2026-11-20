@@ -19,8 +19,8 @@ def _over(defaults: Any, cartridge: Any) -> Any:
 
 
 def deploy_root() -> Path:
-    """The active deploy directory, `BOTCUBE_DEPLOY_ROOT`, or the old `CARTRIDGE_DEPLOY_ROOT` until every setter moves."""
-    root = os.environ.get('BOTCUBE_DEPLOY_ROOT') or os.environ.get('CARTRIDGE_DEPLOY_ROOT')
+    """The active deploy directory, `BOTCUBE_DEPLOY_ROOT`."""
+    root = os.environ.get('BOTCUBE_DEPLOY_ROOT')
     if not root:
         raise RuntimeError('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory')
     return Path(root)

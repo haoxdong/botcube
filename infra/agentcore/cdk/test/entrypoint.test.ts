@@ -25,7 +25,6 @@ jest.mock('../lib/cdk-context', () => {
 
 const tempRoots: string[] = [];
 const originalDeployRoot = process.env.BOTCUBE_DEPLOY_ROOT;
-const originalOldDeployRoot = process.env.CARTRIDGE_DEPLOY_ROOT;
 const originalOutdir = process.env.CDK_OUTDIR;
 
 afterEach(() => {
@@ -34,20 +33,12 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   if (originalDeployRoot === undefined) delete process.env.BOTCUBE_DEPLOY_ROOT;
   else process.env.BOTCUBE_DEPLOY_ROOT = originalDeployRoot;
-  if (originalOldDeployRoot === undefined) delete process.env.CARTRIDGE_DEPLOY_ROOT;
-  else process.env.CARTRIDGE_DEPLOY_ROOT = originalOldDeployRoot;
   if (originalOutdir === undefined) delete process.env.CDK_OUTDIR;
   else process.env.CDK_OUTDIR = originalOutdir;
 });
 
-/** Name the deploy root by `name` alone, so the other name cannot shadow it. */
-function setDeployRoot(
-  root: string,
-  name: 'BOTCUBE_DEPLOY_ROOT' | 'CARTRIDGE_DEPLOY_ROOT' = 'BOTCUBE_DEPLOY_ROOT'
-): void {
-  delete process.env.BOTCUBE_DEPLOY_ROOT;
-  delete process.env.CARTRIDGE_DEPLOY_ROOT;
-  process.env[name] = root;
+function setDeployRoot(root: string): void {
+  process.env.BOTCUBE_DEPLOY_ROOT = root;
 }
 
 function tempDir(): string {
@@ -166,21 +157,8 @@ test('marks the deployed commit dirty when tracked files differ from it', async 
   expect(deployedCommit(outdir)).toBe(`${git(repo, 'rev-parse', 'HEAD')}-dirty`);
 });
 
-test('still reads the deploy root from the old CARTRIDGE_DEPLOY_ROOT while BOTCUBE_DEPLOY_ROOT is unset', async () => {
-  const repo = repository();
-  setDeployRoot(path.join(repo, 'bot/deploy'), 'CARTRIDGE_DEPLOY_ROOT');
-  process.env.CDK_OUTDIR = tempDir();
-
-  const { app, errors, exitCode } = await runEntrypoint();
-
-  expect({ errors, exitCode }).toEqual({ errors: [], exitCode: undefined });
-  assert(app, 'the entrypoint synthesized its app from the old name');
-  expect(fs.readFileSync(path.join(repo, 'staged-from'), 'utf8').trim()).toBe(repo);
-});
-
 test('prints why synthesis failed and exits 1', async () => {
   delete process.env.BOTCUBE_DEPLOY_ROOT;
-  delete process.env.CARTRIDGE_DEPLOY_ROOT;
 
   const { exitCode, errors } = await runEntrypoint();
 

@@ -4,11 +4,10 @@ import type { DeployIdentity } from './production-identity.js';
 import { projectDir } from './project-dir.js';
 
 /**
- * The active deploy directory, named by `BOTCUBE_DEPLOY_ROOT` and resolved from the working directory. Until every
- * setter moves to that name, the old `CARTRIDGE_DEPLOY_ROOT` names it when the new one is unset.
+ * The active deploy directory, named by `BOTCUBE_DEPLOY_ROOT` and resolved from the working directory.
  */
 export function activeDeployRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const root = env.BOTCUBE_DEPLOY_ROOT || env.CARTRIDGE_DEPLOY_ROOT;
+  const root = env.BOTCUBE_DEPLOY_ROOT;
   if (!root) throw new Error('BOTCUBE_DEPLOY_ROOT must point to the active deploy directory');
   return path.resolve(root);
 }

@@ -2,8 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// CARTRIDGE_DEPLOY_ROOT is the old name, read until every setter moves to BOTCUBE_DEPLOY_ROOT.
-const deployRoot = process.env.BOTCUBE_DEPLOY_ROOT || process.env.CARTRIDGE_DEPLOY_ROOT;
+const deployRoot = process.env.BOTCUBE_DEPLOY_ROOT;
 if (!deployRoot) throw new Error('BOTCUBE_DEPLOY_ROOT is required');
 const identity = JSON.parse(readFileSync(join(deployRoot, 'identity.json'), 'utf8'));
 const values = {
