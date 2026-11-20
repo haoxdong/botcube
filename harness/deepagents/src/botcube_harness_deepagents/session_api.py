@@ -375,7 +375,7 @@ def main() -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format='%(name)s %(message)s')
-    uvicorn.run(app, host=os.getenv('BOTCUBE_SESSION_API_HOST', '0.0.0.0'), port=int(os.getenv('PORT', '8081')))
+    uvicorn.run(app, host='0.0.0.0', port=int(os.getenv('PORT', '8081')))
 
 
 if __name__ == '__main__':

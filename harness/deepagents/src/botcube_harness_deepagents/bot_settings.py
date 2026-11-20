@@ -80,7 +80,7 @@ def load_bot_settings(path: Path) -> BotSettings:
     )
 
 
-def bot_from_env(cartridge_module: str) -> tuple[HarnessDefinition, str] | None:
+def bot_from_env() -> tuple[HarnessDefinition, str] | None:
     """The definition and default model of the bot `BOTCUBE_BOT_SETTINGS` names, if it names one.
 
     The Harness then serves the bot with BotCube's own definition and runs no bot code.
@@ -88,8 +88,6 @@ def bot_from_env(cartridge_module: str) -> tuple[HarnessDefinition, str] | None:
     path = os.getenv('BOTCUBE_BOT_SETTINGS', '').strip()
     if not path:
         return None
-    if cartridge_module:
-        raise BotSettingsError('BOTCUBE_BOT_SETTINGS and BOTCUBE_CARTRIDGE_MODULE are both set: a bot is its settings or a Cartridge, not both')
     bot = load_bot_settings(Path(path))
     return bot_definition(bot), bot.models[0]
 

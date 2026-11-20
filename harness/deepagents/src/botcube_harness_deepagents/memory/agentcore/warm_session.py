@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import threading
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -47,7 +46,7 @@ from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from ... import turn_timing
 from ...session_format import SessionFormatLegacyError
-from .serializer import CompressedSerializer
+from .serializer import CompressedReadingSerializer
 from .snapshot import FragmentedSnapshotClient
 
 __all__ = ['WarmSessionSaver']
@@ -245,9 +244,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
     checkpoint_event_client: _WarmSnapshotClient
 
     def __init__(self, memory_id: str, client: Any) -> None:
-        BaseCheckpointSaver.__init__(self, serde=CompressedSerializer(
-            compress=os.getenv('BOTCUBE_COMPRESS_CHECKPOINTS') == '1',
-        ))
+        BaseCheckpointSaver.__init__(self, serde=CompressedReadingSerializer())
         self.memory_id = memory_id
         self.limit = None
         self.max_results = 100

@@ -52,7 +52,7 @@ def main(
 ) -> int:
     args = _parser().parse_args(argv)
     configured_port = int(os.environ.get('BOTCUBE_OPENAI_LOOPBACK_PORT', str(LOOPBACK_PORT))) if port is None else port
-    OpenAISettings.from_env()
+    OpenAISettings()
     timeout = httpx.Timeout(positive_seconds('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', 30))
     secret = _invocation_secret(args.secret_id, args.region)
     with http or httpx.Client(timeout=timeout) as client:
@@ -114,7 +114,7 @@ class _Registration:
 
 
 def _registration(url: str, account: str) -> _Registration:
-    settings = OpenAISettings.from_env()
+    settings = OpenAISettings()
     identity = json.dumps([settings.issuer, settings.resource, url, account])
     key = hashlib.sha256(identity.encode()).hexdigest()
     config_home = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
@@ -131,7 +131,7 @@ def _sign_in(
     client: httpx.Client, open_browser: Callable[[str], object], port: int, agent_name: str,
     registration: _Registration,
 ) -> dict[str, str]:
-    settings = OpenAISettings.from_env()
+    settings = OpenAISettings()
     discovery = _answer(client.get(f'{settings.issuer}/.well-known/openid-configuration'))
     state, nonce, verifier = (secrets.token_urlsafe() for _ in range(3))
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()

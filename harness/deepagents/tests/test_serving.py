@@ -2674,8 +2674,7 @@ def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[A
     module = ModuleType(CARTRIDGE_MODULE)
     vars(module)['CARTRIDGE'] = _definition([])
     monkeypatch.setitem(sys.modules, CARTRIDGE_MODULE, module)
-    monkeypatch.setitem(sys.modules, 'serving_test_empty_module', ModuleType('serving_test_empty_module'))
-    monkeypatch.setenv('BOTCUBE_CARTRIDGE_MODULE', CARTRIDGE_MODULE)
+    _install(monkeypatch, f'{CARTRIDGE_MODULE}:CARTRIDGE')
     monkeypatch.delenv('PORT', raising=False)
     # main() configures process logging; restore it afterwards.
     cache_logger = logging.getLogger('botcube_harness_deepagents.prompt_cache')
@@ -2717,29 +2716,7 @@ def test_the_service_serves_on_the_configured_port(start: Callable[[], list[tupl
     assert start() == [(serving.app, {'host': '0.0.0.0', 'port': 9123})]
 
 
-def test_the_service_serves_the_cartridge_module_it_is_given(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
-    _install(monkeypatch)
-
-    start()
-
-    assert serving._require_bot().agent_name == 'test-agent'
-
-
-def test_a_cartridge_module_must_export_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_CARTRIDGE_MODULE', 'serving_test_empty_module')
-
-    with pytest.raises(RuntimeError, match=r'^serving_test_empty_module does not export CARTRIDGE$'):
-        start()
-
-
-@pytest.mark.parametrize('module', [None, '  '])
-def test_without_a_cartridge_module_the_service_serves_the_installed_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch, module: str | None) -> None:
-    if module is None:
-        monkeypatch.delenv('BOTCUBE_CARTRIDGE_MODULE')
-    else:
-        monkeypatch.setenv('BOTCUBE_CARTRIDGE_MODULE', module)
-    _install(monkeypatch, f'{CARTRIDGE_MODULE}:CARTRIDGE')
-
+def test_the_service_serves_the_installed_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
     start()
 
     assert serving._require_bot().agent_name == 'test-agent'
@@ -2747,7 +2724,6 @@ def test_without_a_cartridge_module_the_service_serves_the_installed_cartridge(s
 
 @pytest.mark.parametrize('installed', [0, 2])
 def test_the_service_needs_exactly_one_installed_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch, installed: int) -> None:
-    monkeypatch.delenv('BOTCUBE_CARTRIDGE_MODULE')
     _install(monkeypatch, *[f'{CARTRIDGE_MODULE}:CARTRIDGE'] * installed)
 
     with pytest.raises(
@@ -2760,7 +2736,7 @@ def test_the_service_needs_exactly_one_installed_cartridge(start: Callable[[], l
 def test_a_configured_service_starts_with_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
     serving.configure_harness_definition(_definition([]))
     configured = serving._require_bot()
-    monkeypatch.setenv('BOTCUBE_CARTRIDGE_MODULE', 'serving_test_empty_module')
+    _install(monkeypatch)
 
     start()
 
@@ -2827,11 +2803,10 @@ def test_a_failed_checkpoint_write_fails_its_turn_loud_and_the_next_turn_answers
     assert _replay('user-1', 'thread-1')[-2:] == [('user', 'two'), ('assistant', 'Echo: two')]
 
 
-def test_a_compressed_cold_turn_resumes_tools_and_rejects_a_corrupt_snapshot(
+def test_a_cold_turn_resumes_tools_and_rejects_a_corrupt_snapshot(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1')
     install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
@@ -2849,7 +2824,7 @@ def test_a_compressed_cold_turn_resumes_tools_and_rejects_a_corrupt_snapshot(
     for item in latest['payload']:
         blob = json.loads(item['blob'])
         if blob.get('channel') == 'messages':
-            blob['value']['data'] = 'Y29ycnVwdA=='
+            blob['value']['data'] = 'wQ=='
             item['blob'] = json.dumps(blob)
     fresh_warm_sessions(monkeypatch)
     calls, writes = len(service.recorder.prompts), memory.create_event_calls

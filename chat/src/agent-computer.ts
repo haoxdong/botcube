@@ -14,7 +14,7 @@ import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { sweepEvery } from './task-drain.js';
 
-const DEFAULT_IDLE_SECONDS = 600;
+export const AGENT_COMPUTER_IDLE_SECONDS = 600;
 /** AgentCore's ceiling: a browser the Chat Service lost track of stops on its own by then. */
 const SESSION_TIMEOUT_SECONDS = 8 * 60 * 60;
 /**
@@ -570,6 +570,3 @@ export function agentComputers({ browser, records, started, files, idleSeconds, 
     },
   };
 }
-
-export const agentComputerIdleSeconds = (env: NodeJS.ProcessEnv) =>
-  Number(env.BOTCUBE_AGENT_COMPUTER_IDLE_SECONDS ?? DEFAULT_IDLE_SECONDS);

@@ -343,7 +343,7 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
     return app.fetch(request, ...rest);
   };
   activity.report(table);
-  const server = serve({ fetch, port, hostname: env.BOTCUBE_CHAT_HOST || '0.0.0.0', websocket }, () =>
+  const server = serve({ fetch, port, hostname: '0.0.0.0', websocket }, () =>
     console.log(`Chat Service listening on :${port}`),
   );
   const sleepAgentComputers = chat.sleepAgentComputers?.bind(chat);

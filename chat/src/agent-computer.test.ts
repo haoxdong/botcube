@@ -5,7 +5,6 @@ import { memoryDocuments } from '../test/memory-documents.js';
 import { AccountResources } from './account-resources.js';
 import {
   agentComputerBrowserFromEnv,
-  agentComputerIdleSeconds,
   agentComputers,
   type AgentComputerBrowser,
 } from './agent-computer.js';
@@ -1032,13 +1031,6 @@ describe('Agent Computer handover between Chat tasks', () => {
     expect(letGo).toHaveBeenCalledOnce();
     expect(log).not.toContain('stop browser-1');
     await expect(computer.wake(ACCOUNT, 'chat-2')).rejects.toThrow('The Chat Service is stopping');
-  });
-});
-
-describe('the Agent Computer idle time', () => {
-  it('is ten minutes unless BOTCUBE_AGENT_COMPUTER_IDLE_SECONDS sets it', () => {
-    expect(agentComputerIdleSeconds({})).toBe(600);
-    expect(agentComputerIdleSeconds({ BOTCUBE_AGENT_COMPUTER_IDLE_SECONDS: '5' })).toBe(5);
   });
 });
 

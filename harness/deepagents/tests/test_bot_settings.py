@@ -48,7 +48,6 @@ def bot_service(request: pytest.FixtureRequest, start: Start, tmp_path: Path, mo
     for name, value in {'HOME': str(home), 'BOTCUBE_CHECKPOINT_PATH': str(tmp_path / 'checkpoints.sqlite3'), 'LANGSMITH_TRACING': 'false',
                         'BOTCUBE_WORKSPACE': str(tmp_path / 'workspace'), 'BOTCUBE_BOT_SETTINGS': str(bot)}.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.delenv('BOTCUBE_CARTRIDGE_MODULE')
     for name, value in {'AGENTCORE_MEMORY_ID': '', '_AGENTS': {}, '_BACKENDS': {}, '_BACKEND_BY_AGENT': {}, '_CHECKPOINTER': None,
                         '_STORE': None, '_SESSION_TURNS': serving._SessionTurns()}.items():
         monkeypatch.setattr(serving, name, value)
@@ -203,16 +202,8 @@ def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: 
     (tmp_path / 'other' / 'greeting').mkdir(parents=True)
     (tmp_path / 'other' / 'greeting' / 'SKILL.md').write_text(SKILL)
     monkeypatch.setenv('BOTCUBE_BOT_SETTINGS', str(path))
-    monkeypatch.delenv('BOTCUBE_CARTRIDGE_MODULE')
 
     with pytest.raises(BotSettingsError, match=rf'^Bot settings {path}: {re.escape(field)}: '):
-        start()
-
-
-def test_a_bot_is_settings_or_a_cartridge_never_both(start: Start, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_BOT_SETTINGS', str(_bot(tmp_path)))
-
-    with pytest.raises(BotSettingsError, match=r'^BOTCUBE_BOT_SETTINGS and BOTCUBE_CARTRIDGE_MODULE are both set'):
         start()
 
 

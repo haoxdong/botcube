@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import type { AccountStore } from './account-store.js';
-import { agentComputerBrowserFromEnv, agentComputerIdleSeconds, agentComputers } from './agent-computer.js';
+import { AGENT_COMPUTER_IDLE_SECONDS, agentComputerBrowserFromEnv, agentComputers } from './agent-computer.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
 import type { AgentComputerStarted } from './agent-computer-started.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
@@ -34,7 +34,7 @@ export function managedAgentComputer({ history, requester, env, store, files, st
     records: store,
     started,
     files,
-    idleSeconds: agentComputerIdleSeconds(env),
+    idleSeconds: AGENT_COMPUTER_IDLE_SECONDS,
     draining: ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4),
   });
   const cdpUrls = agentComputerCdpUrls(

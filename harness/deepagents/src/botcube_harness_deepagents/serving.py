@@ -254,14 +254,6 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
     )
 
 
-def configure_harness_from_module(module_name: str) -> None:
-    module = importlib.import_module(module_name)
-    definition = getattr(module, 'CARTRIDGE', None)
-    if definition is None:
-        raise RuntimeError(f'{module_name} does not export CARTRIDGE')
-    configure_harness_definition(definition)
-
-
 def configure_installed_cartridge() -> None:
     entries = list(importlib.metadata.entry_points(group='botcube.cartridge'))
     if len(entries) != 1:
@@ -1461,11 +1453,8 @@ def main() -> None:
     models_on_endpoint()
     cache_markers_on()
     if _bot is None:
-        module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
-        if bot := bot_from_env(module_name):
+        if bot := bot_from_env():
             configure_harness_definition(*bot)
-        elif module_name:
-            configure_harness_from_module(module_name)
         else:
             configure_installed_cartridge()
     # Prompt cache lines go out bare, one JSON object per line.
@@ -1487,7 +1476,7 @@ def main() -> None:
     _prime_snapshot()
     process_observation.name_spans(trace.get_tracer_provider())
     process_observation.mark('serve_handoff')
-    uvicorn.run(app, host=os.getenv('BOTCUBE_HARNESS_HOST', '0.0.0.0'), port=int(os.getenv('PORT', '8080')))
+    uvicorn.run(app, host='0.0.0.0', port=int(os.getenv('PORT', '8080')))
 
 
 if __name__ == '__main__':

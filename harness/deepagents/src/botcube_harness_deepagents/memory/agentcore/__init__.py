@@ -44,7 +44,7 @@ from ...memory_document import opening_memory
 from ...memory_tools import memory_tool
 from ...session_memory import SessionMemoryMiddleware
 from ...turn_memory import TurnMemoryMiddleware
-from .serializer import CompressedSerializer
+from .serializer import CompressedReadingSerializer
 from .snapshot import FragmentedSnapshotClient
 from .warm_session import WarmSessionSaver
 
@@ -103,7 +103,7 @@ def build_checkpointer(memory_id: str, *, region_name: str) -> AgentCoreMemorySa
     # A non-checkpoint head sends the stock saver to a filtered page of full historical snapshots.
     saver = AgentCoreMemorySaver(
         memory_id, checkpoint_format='snapshot', limit=None, max_results=4, region_name=region_name,
-        serde=CompressedSerializer(),
+        serde=CompressedReadingSerializer(),
     )
     saver.checkpoint_event_client = FragmentedSnapshotClient(
         memory_id, saver.serializer, saver.checkpoint_event_client.client,

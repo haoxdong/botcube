@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import random
-
 import boto3
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import CheckpointMetadata, empty_checkpoint
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
@@ -13,21 +11,18 @@ from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from agentcore_fake import MEMORY_ID, FakeAgentCoreMemory, fresh_warm_sessions
 from botcube_harness_deepagents.memory import agentcore
-from botcube_harness_deepagents.memory.agentcore.serializer import CompressedSerializer
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
 
 CONFIG: RunnableConfig = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
 
 
-@pytest.mark.parametrize('compress', [False, True])
 @pytest.mark.parametrize('writer', ['runtime', 'session-api'])
 def test_a_large_chat_survives_a_cold_resume_and_session_api_replay(
-    monkeypatch: pytest.MonkeyPatch, compress: bool, writer: str,
+    monkeypatch: pytest.MonkeyPatch, writer: str,
 ) -> None:
     memory = FakeAgentCoreMemory()
-    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1' if compress else '0')
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    content = random.Random(7029).randbytes(8_000_000).hex() if compress else 'x' * 7_500_000
+    content = 'x' * 7_500_000
     messages = [HumanMessage(content[index:index + 25_000]) for index in range(0, len(content), 25_000)]
     checkpoint = empty_checkpoint()
     checkpoint['channel_values'] = {'messages': messages}
@@ -81,7 +76,6 @@ def test_a_damaged_fragment_fails_instead_of_returning_partial_history(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     checkpoint = empty_checkpoint()
     checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 200_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
@@ -108,7 +102,6 @@ def test_an_incomplete_snapshot_keeps_the_preceding_checkpoint(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     saver = WarmSessionSaver(MEMORY_ID, memory)
     previous = empty_checkpoint()
     saved = saver.put(CONFIG, previous, {'source': 'loop', 'step': 1, 'parents': {}}, {})
@@ -143,7 +136,6 @@ def test_an_incomplete_snapshot_keeps_the_preceding_checkpoint(
 def test_stock_snapshot_saver_reads_unfragmented_writes(
     monkeypatch: pytest.MonkeyPatch, writer: str,
 ) -> None:
-    monkeypatch.setenv('BOTCUBE_COMPRESS_CHECKPOINTS', '1')
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
     saver = (WarmSessionSaver(MEMORY_ID, memory) if writer == 'runtime'
@@ -153,7 +145,7 @@ def test_stock_snapshot_saver_reads_unfragmented_writes(
     checkpoint['channel_versions'] = {'messages': '1'}
     saver.put(CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'})
     reader = AgentCoreMemorySaver(
-        MEMORY_ID, checkpoint_format='snapshot', region_name='us-east-1', serde=CompressedSerializer(),
+        MEMORY_ID, checkpoint_format='snapshot', region_name='us-east-1',
     )
 
     assert reader.get_tuple(CONFIG) == saver.get_tuple(CONFIG)
@@ -164,7 +156,6 @@ def test_a_fresh_session_api_reader_loads_fragmented_checkpoints(
 ) -> None:
     memory = FakeAgentCoreMemory()
     monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
-    monkeypatch.delenv('BOTCUBE_COMPRESS_CHECKPOINTS', raising=False)
     checkpoint = empty_checkpoint()
     checkpoint['channel_values'] = {'messages': [HumanMessage('x' * 200_000)]}
     checkpoint['channel_versions'] = {'messages': '1'}
@@ -176,3 +167,20 @@ def test_a_fresh_session_api_reader_loads_fragmented_checkpoints(
     loaded = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1').get_tuple(CONFIG)
 
     assert loaded is not None and loaded.checkpoint == checkpoint
+
+
+def test_new_readers_resume_stock_snapshots_and_pending_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory = FakeAgentCoreMemory()
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: memory)
+    old = AgentCoreMemorySaver(MEMORY_ID, checkpoint_format='snapshot', region_name='us-east-1')
+    checkpoint = empty_checkpoint()
+    checkpoint['channel_values'] = {'messages': [HumanMessage('Existing question ' * 300)]}
+    checkpoint['channel_versions'] = {'messages': '1'}
+    saved = old.put(CONFIG, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'})
+    old.put_writes(saved, [('messages', [AIMessage('Existing pending answer ' * 200)])], 'task-1')
+    fresh_warm_sessions(monkeypatch)
+
+    assert WarmSessionSaver(MEMORY_ID, memory).get_tuple(CONFIG) == old.get_tuple(CONFIG)
+    assert agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1').get_tuple(CONFIG) == old.get_tuple(CONFIG)

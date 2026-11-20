@@ -119,19 +119,6 @@ test('the Session API decoder is deployed before a runtime can write its snapsho
   });
 });
 
-test('checkpoint compression stays off until the decoder rollout is verified', () => {
-  const synthesized = template();
-
-  synthesized.hasParameter('CheckpointCompression', {
-    Type: 'String',
-    Default: '0',
-    AllowedValues: ['0', '1'],
-  });
-  synthesized.hasResourceProperties('AWS::BedrockAgentCore::Runtime', {
-    EnvironmentVariables: Match.objectLike({ BOTCUBE_COMPRESS_CHECKPOINTS: { Ref: 'CheckpointCompression' } }),
-  });
-});
-
 test('a purge fits in one invocation at the per-Session delete rate', () => {
   // 5 deletes a second; the Chat Service waits up to 900 s for a purge.
   expect(SESSION_API_TIMEOUT_SECONDS).toBe(900);

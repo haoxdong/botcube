@@ -4,7 +4,7 @@ import type { AccountHistory } from './account-history.js';
 import { HttpError } from './http-error.js';
 import type { Requester } from './requester.js';
 import { agentComputerCdp } from './agent-computer-cdp.js';
-import { agentComputerIdleSeconds } from './agent-computer.js';
+import { AGENT_COMPUTER_IDLE_SECONDS } from './agent-computer.js';
 import type { AgentComputerStarted } from './agent-computer-started.js';
 import type { TaskStopSleep } from './task-stop.js';
 import { agentComputerCdpUrls } from './agent-computer-token.js';
@@ -55,7 +55,7 @@ export function localAgentComputer({
     env
   );
   const startUrl = new URL(startPage).href;
-  const idleMs = agentComputerIdleSeconds(env) * 1000;
+  const idleMs = AGENT_COMPUTER_IDLE_SECONDS * 1000;
   const running = new Map<string, RunningComputer>();
   const cleanupFailures = new Map<string, HttpError>();
   const retiring = new Set<Promise<void>>();

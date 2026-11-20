@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .answer_boundary import CredentialAnswerBoundary
-from .config import OpenAISettings, positive_seconds
+from .config import OpenAISettings
 from .cookies import isolated_cookie_jar
 from .provider import UpstreamRefusal
 from .vault import (
@@ -73,6 +73,7 @@ _LEASE_WAIT_SECONDS = 45
 _LEASE_POLL_SECONDS = 0.2
 # How long a relayed call waits on OpenAI between reads: Codex's stream idle timeout (DEFAULT_STREAM_IDLE_TIMEOUT_MS).
 _READ_TIMEOUT_SECONDS = 300
+_CONNECT_TIMEOUT_SECONDS = 30
 # Request headers OpenAI gets from the Harness's call; the invocation's own headers stay here.
 _FORWARDED_HEADERS = ('accept', 'content-type')
 _UPSTREAM_TRACE_PHASES = {
@@ -193,13 +194,13 @@ class OpenAIProvider:
         self._vault = vault
         self._audit = audit
         self._clock = clock
-        self._settings = OpenAISettings.from_env()
-        self._expiry_margin_seconds = positive_seconds('BOTCUBE_OPENAI_EXPIRY_MARGIN_SECONDS', _EXPIRY_MARGIN_SECONDS)
-        self._refresh_lease_seconds = positive_seconds('BOTCUBE_OPENAI_REFRESH_LEASE_SECONDS', _REFRESH_LEASE_SECONDS)
-        self._lease_wait_seconds = positive_seconds('BOTCUBE_OPENAI_LEASE_WAIT_SECONDS', _LEASE_WAIT_SECONDS)
-        self._lease_poll_seconds = positive_seconds('BOTCUBE_OPENAI_LEASE_POLL_SECONDS', _LEASE_POLL_SECONDS)
-        self._read_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_READ_TIMEOUT_SECONDS', _READ_TIMEOUT_SECONDS)
-        self._connect_timeout_seconds = positive_seconds('BOTCUBE_OPENAI_CONNECT_TIMEOUT_SECONDS', 30)
+        self._settings = OpenAISettings()
+        self._expiry_margin_seconds = _EXPIRY_MARGIN_SECONDS
+        self._refresh_lease_seconds = _REFRESH_LEASE_SECONDS
+        self._lease_wait_seconds = _LEASE_WAIT_SECONDS
+        self._lease_poll_seconds = _LEASE_POLL_SECONDS
+        self._read_timeout_seconds = _READ_TIMEOUT_SECONDS
+        self._connect_timeout_seconds = _CONNECT_TIMEOUT_SECONDS
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
         self._access: dict[str, tuple[str, float, str]] = {}
