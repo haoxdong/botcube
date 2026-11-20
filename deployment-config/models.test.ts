@@ -15,10 +15,6 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
     expect(deployed?.credentialService).toEqual({ BOTCUBE_MODELS_ENDPOINT: endpoint });
     expect(deployed?.secretArns).toEqual([credential.secretArn]);
   });
-
-  it('gives the Harness only where its models run, and none of the Endpoint', () => {
-    expect(deployed?.harness).toEqual({ BOTCUBE_MODELS_KIND: 'openai-compatible' });
-  });
 });
 
 describe('the Responses wire on an OpenAI-compatible Endpoint', () => {
@@ -44,11 +40,10 @@ describe('the Responses wire on an OpenAI-compatible Endpoint', () => {
 describe('cache markers on an OpenAI-compatible Endpoint', () => {
   const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'summary', wire: 'chat-completions' } as const;
 
-  it('reach the Harness, which writes them, and stay out of the Endpoint the others read', () => {
+  it('stay out of the Endpoint the services read', () => {
     const deployed = modelsDeployment({ ...models, cacheMarkers: 'claude' });
     const endpoint = JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' } });
 
-    expect(deployed?.harness).toEqual({ BOTCUBE_MODELS_KIND: 'openai-compatible', BOTCUBE_MODELS_CACHE_MARKERS: 'claude' });
     expect(deployed?.credentialService).toEqual({ BOTCUBE_MODELS_ENDPOINT: endpoint });
     expect(deployed?.chatService).toEqual({ BOTCUBE_MODELS_ENDPOINT: endpoint, BOTCUBE_TURN_SUMMARY_MODEL: 'summary' });
   });
@@ -72,25 +67,6 @@ describe('TLS on an OpenAI-compatible Endpoint', () => {
     const environment = { BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'http://127.0.0.1:8080/v1', credential: { kind: 'file', path: '/run/key' }, tls }) };
 
     expect(() => modelsEndpointFromEnv(environment)).toThrow('BOTCUBE_MODELS_ENDPOINT: url: an Endpoint with tls is an https URL');
-  });
-
-  it('stays out of the Harness, which never reaches the Endpoint', () => {
-    expect(deployed?.harness).toEqual({ BOTCUBE_MODELS_KIND: 'openai-compatible' });
-  });
-});
-
-describe("the Harness's models environment", () => {
-  it.each([
-    { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/models-api-key' },
-    { kind: 'file', path: '/run/secrets/botcube/models-api-key' },
-    { kind: 'command', command: ['/usr/local/bin/token-broker', '--audience', 'models'], timeoutSeconds: 30 },
-    { kind: 'aws', audience: 'models.example.com' },
-  ] as const)('carries no bearer and no Credential Source for a $kind credential', (credential) => {
-    const deployed = modelsDeployment({
-      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary', wire: 'chat-completions', cacheMarkers: 'claude',
-    });
-
-    expect(deployed?.harness).toEqual({ BOTCUBE_MODELS_KIND: 'openai-compatible', BOTCUBE_MODELS_CACHE_MARKERS: 'claude' });
   });
 });
 

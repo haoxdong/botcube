@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-deployment-config/credential-fields';
-import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, modelsWire, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-deployment-config/blocks';
+import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, httpsOrLoopback, modelsWire, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-deployment-config/blocks';
 import { supplied } from 'botcube-deployment-config/supplied';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
@@ -105,7 +105,8 @@ const models = z.discriminatedUnion('kind', [
   kindOnly('bedrock'),
   endpoint.extend({
     kind: z.literal('openai-compatible'),
-    url: endpoint.shape.url.describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
+    url: z.url().refine(httpsOrLoopback, 'A models endpoint is an https URL; only a stand-in on this machine may use http')
+      .describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
     turnSummaryModel: z.string().min(1).describe('The model on the endpoint that summarizes each finished Turn for the Activity.'),
     wire: modelsWire.default('chat-completions'),
     cacheMarkers: cacheMarkers.optional(),
@@ -275,7 +276,11 @@ export const jsonSchemas = () => ({
   'deployment-config.schema.json': z.toJSONSchema(deploymentConfig, { io: 'input' }),
 });
 
-/** Where a schema is committed besides here, relative to this file: the Harness checks the bot settings in Python. */
+/** Where a schema is committed besides here, relative to this file: the Python packages check their files with it. */
 export const jsonSchemaCopies: Readonly<Partial<Record<string, readonly string[]>>> = {
   'bot-settings.schema.json': ['../harness/deepagents/src/botcube_harness_deepagents/bot-settings.schema.json'],
+  'deployment-config.schema.json': [
+    '../credential-service/src/botcube_credential_service/deployment-config.schema.json',
+    '../harness/deepagents/src/botcube_harness_deepagents/deployment-config.schema.json',
+  ],
 };

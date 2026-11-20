@@ -202,7 +202,8 @@ describe('a Deployment Config', () => {
     ['a header that is not a header name', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, headers: { 'x tenant': 'a' } } }, 'models.headers.x tenant: '],
     ['an authorization header beside the credential', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, headers: { Authorization: 'Bearer sk-live' } } },
       'models.headers.Authorization: The credential sets Authorization'],
-    ['an OpenAI-compatible endpoint over plain HTTP', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } }, 'models.url: '],
+    ['an OpenAI-compatible endpoint over http beyond this machine', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, url: 'http://models.example.com/v1' } },
+      'models.url: A models endpoint is an https URL; only a stand-in on this machine may use http'],
     ['an OpenAI-compatible endpoint without a turn summary model', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, turnSummaryModel: undefined } }, 'models.turnSummaryModel: '],
     ['cache markers in a format BotCube does not write', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, cacheMarkers: 'openai' } }, 'models.cacheMarkers: '],
     ['cache markers turned on as a flag', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, cacheMarkers: true } }, 'models.cacheMarkers: '],
@@ -360,6 +361,11 @@ describe('a Deployment Config', () => {
   ])('signs Users in with the OIDC client secret from %s', (_, clientSecret) => {
     const identity = { ...OIDC, clients: [{ clientId: 'botcube', clientSecret }] };
     expect(loadDeployment(configFile({ bot: './bot.json', identity })).config.identity).toEqual(identity);
+  });
+
+  it.each(['http://localhost:8080/v1', 'http://127.0.0.1:8080/v1', 'http://[::1]:8080/v1'])('takes a stand-in models endpoint over http on this machine at %s', (url) => {
+    const models = { ...ENTERPRISE_MODELS, url };
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual({ ...models, wire: 'chat-completions' });
   });
 
   it('takes a stand-in OIDC issuer over http on this machine', () => {

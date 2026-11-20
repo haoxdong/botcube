@@ -1,6 +1,5 @@
-import { z } from 'zod';
 import { commandFields, type DeploymentConfig } from './schema.js';
-import { ALLOW_COMMAND_CREDENTIALS_ENV, credentialSource, jsonFromEnv, type CredentialSource } from './blocks.js';
+import { ALLOW_COMMAND_CREDENTIALS_ENV } from './blocks.js';
 
 /** Reached directly whatever the proxy: loopback (a task's sidecars) and the EC2 and ECS metadata endpoints (its credentials). */
 const ALWAYS_DIRECT = ['localhost', '127.0.0.1', '::1', '169.254.169.254', '169.254.170.2'];
@@ -11,13 +10,6 @@ const ALWAYS_DIRECT = ['localhost', '127.0.0.1', '::1', '169.254.169.254', '169.
  */
 export const PROXY_RELAY_PORT = 3128;
 const RELAY_HOST = '127.0.0.1';
-
-/** The variables the relay reads: the operator's proxy, and its Credential Source and headers as JSON. */
-const PROXY_URL_ENV = 'BOTCUBE_PROXY_URL';
-const PROXY_CREDENTIAL_ENV = 'BOTCUBE_PROXY_CREDENTIAL';
-const PROXY_HEADERS_ENV = 'BOTCUBE_PROXY_HEADERS';
-
-type ForwardProxy = Extract<DeploymentConfig['proxy'], { kind: 'forward' }>;
 
 /**
  * The standard proxy variables every BotCube process gets from the Deployment Config's `proxy`, or none without one.
@@ -38,15 +30,6 @@ export function proxyEnvironment({ proxy }: Pick<DeploymentConfig, 'proxy'>, { r
     HTTPS_PROXY: url,
     NO_PROXY: noProxy,
     NODE_USE_ENV_PROXY: '1',
-    ...(relayed ? relayEnvironment(proxy) : {}),
-  };
-}
-
-function relayEnvironment({ url, credential, headers }: ForwardProxy): Record<string, string> {
-  return {
-    [PROXY_URL_ENV]: url,
-    ...(credential ? { [PROXY_CREDENTIAL_ENV]: JSON.stringify(credential) } : {}),
-    ...(headers ? { [PROXY_HEADERS_ENV]: JSON.stringify(headers) } : {}),
   };
 }
 
@@ -62,31 +45,4 @@ export function commandCredentialOptIn(config: DeploymentConfig, deployEnvironme
     throw new Error(commands.map((field) => `${field} is a command credential, which runs only when the deploy environment sets ${ALLOW_COMMAND_CREDENTIALS_ENV}=1`).join('\n'));
   }
   return {};
-}
-
-export interface ProxyRelaySettings {
-  readonly upstream: URL;
-  readonly listen: { readonly host: string; readonly port: number };
-  readonly credential?: CredentialSource;
-  readonly headers: Readonly<Record<string, string>>;
-}
-
-/** The relay the deploy set for this process, or undefined; throws naming the variable on a malformed one. */
-export function proxyRelayFromEnv(env: NodeJS.ProcessEnv): ProxyRelaySettings | undefined {
-  const upstream = env[PROXY_URL_ENV];
-  if (!upstream) return undefined;
-  const listen = new URL(required(env, 'HTTPS_PROXY'));
-  const credential = jsonFromEnv(env, PROXY_CREDENTIAL_ENV, credentialSource);
-  return {
-    upstream: new URL(upstream),
-    listen: { host: listen.hostname, port: Number(listen.port) },
-    ...(credential ? { credential } : {}),
-    headers: jsonFromEnv(env, PROXY_HEADERS_ENV, z.record(z.string(), z.string())) ?? {},
-  };
-}
-
-function required(env: NodeJS.ProcessEnv, name: string): string {
-  const value = env[name];
-  if (!value) throw new Error(`${name} is unset beside ${PROXY_URL_ENV}; the deploy points it at the proxy relay`);
-  return value;
 }

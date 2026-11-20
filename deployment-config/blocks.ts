@@ -28,7 +28,7 @@ const secretSources = [
 ] as const;
 
 const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost']);
-const httpsOrLoopback = (url: string) => {
+export const httpsOrLoopback = (url: string) => {
   const { protocol, hostname } = new URL(url);
   return protocol === 'https:' || (protocol === 'http:' && LOOPBACK.has(hostname));
 };

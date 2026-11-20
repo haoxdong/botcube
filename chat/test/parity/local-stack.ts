@@ -285,15 +285,10 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     proxy: standIn,
     collector,
     offline,
-    environment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness }),
-    chatEnvironment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService }),
-    credentialEnvironment: standardVariables(proxyEnvironment(offline, { relayPort: await freePort() })),
+    environment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness },
+    chatEnvironment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService },
+    credentialEnvironment: proxyEnvironment(offline, { relayPort: await freePort() }),
   };
-}
-
-/** The deploy's environment without the BOTCUBE_* values it projects from the Deployment Config, which every process reads from the file. */
-function standardVariables(environment: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => !name.startsWith('BOTCUBE_')));
 }
 
 const STAND_IN_TELEMETRY_TOKEN = 'stand-in-telemetry-token';

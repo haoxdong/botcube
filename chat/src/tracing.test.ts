@@ -94,7 +94,7 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
     await sdk.shutdown();
   `], {
     cwd: new URL('..', import.meta.url),
-    env: { ...process.env, ...standardVariables(deployed.chatService), OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none' },
+    env: { ...process.env, ...deployed.chatService, OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -112,11 +112,6 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-/** The OpenTelemetry variables the deploy sets beside the Deployment Config, which holds the credential. */
-function standardVariables(environment: Readonly<Record<string, string>>): Record<string, string> {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => name.startsWith('OTEL_')));
-}
 
 it('exports nothing under none telemetry', () => {
   expect(telemetryDeployment({ kind: 'none' }).chatService).toEqual({});

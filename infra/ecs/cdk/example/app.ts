@@ -66,7 +66,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const network = config.supplied?.network;
   const exampleIdentity = EXAMPLE_IDENTITIES[path.relative(EXAMPLES_ROOT, path.resolve(configPath)).split(path.sep).join('/')] ?? (same => same);
   const identity = inNetwork((options.identity ?? (same => same))(exampleIdentity(deployIdentity(EXAMPLE_DEPLOY_ROOT))), network);
-  const environment = standardVariables(proxyEnvironment(config));
+  const environment = proxyEnvironment(config);
   // The operator's opt-in from where the deploy runs, never from the file; it fails here on a command credential without it.
   const commandOptIn = commandCredentialOptIn(config, process.env);
   const telemetry = telemetryDeployment(config.telemetry);
@@ -80,7 +80,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
     ...(buckets?.connectionLogs ? { originConfig: { suppliedConnectionLogsBucketName: buckets.connectionLogs } } : {}),
     chat: {
       ...seams.chat, deploymentConfig, environment: commandOptIn, proxyEnvironment: environment, imageRegistry: config.imageRegistry,
-      telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: standardVariables(telemetry.chatService), secretArns: telemetry.secretArns },
+      telemetry: config.telemetry.kind === 'xray' ? { kind: 'xray' } : { kind: config.telemetry.kind, environment: telemetry.chatService, secretArns: telemetry.secretArns },
     },
     credentials: {
       environment: { ...environment, ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: credentialDeploymentConfig },
@@ -95,21 +95,13 @@ export async function defineExample(app: App, configPath: string, options: Examp
   addAgentCoreStacks(app, { ...agentCore, identity: inNetwork(agentCore.identity, network) }, options.commit, {
     ...seams.agentCore,
     imageRegistry: config.imageRegistry,
-    runtimeEnvironment: { ...environment, ...standardVariables(telemetry.harness), ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: runtimeDeploymentConfig },
+    runtimeEnvironment: { ...environment, ...telemetry.harness, ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: runtimeDeploymentConfig },
     telemetry: { kind: config.telemetry.kind, secretArns: telemetry.secretArns },
     ...(kmsKeys?.memory ? { suppliedMemoryKeyArn: kmsKeys.memory } : {}),
     ...(kmsKeys?.images ? { suppliedImageKeyArn: kmsKeys.images } : {}),
   }, config.turnCredentials.kind);
   if (network) placeLambdasInNetwork(app, { vpcId: network.vpcId, privateSubnetIds: network.privateSubnets.map(({ subnetId }) => subnetId) });
   grantLambdasInline(app);
-}
-
-/**
- * The standard variables (HTTP(S)_PROXY, OTEL_*) the deploy sets beside the Deployment Config, without the BOTCUBE_*
- * values botcube/deployment-config still projects from it: every process reads those from the file (ADR 0091).
- */
-function standardVariables(environment: Readonly<Record<string, string>>): Record<string, string> {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => !name.startsWith('BOTCUBE_')));
 }
 
 /**
