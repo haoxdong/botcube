@@ -72,7 +72,6 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
       className="copilotKitMessage copilotKitUserMessage cpk:flex cpk:flex-col cpk:items-end cpk:group cpk:pt-10 waiting-message"
       data-waiting-id={message.id}
       data-open={open || hovered ? "" : undefined}
-      onPointerEnter={(event: ReactPointerEvent<HTMLDivElement>) => setHovered(event.pointerType === "mouse")}
       onPointerLeave={() => setHovered(false)}
       inert={shown ? undefined : true}
       style={{ overflow: shown ? undefined : "hidden" }}
@@ -81,7 +80,7 @@ function WaitingMessage({ message, shown, last, onClosed, open, onToggle, onSend
       transition={{ height: move, marginTop: move, marginBottom: move, opacity: quick }}
       {...(shown || instant ? {} : { onAnimationComplete: onClosed })}
     >
-      <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
+      <div className={`${USER_MESSAGE_CLASS} waiting-message-bubble`} onPointerEnter={(event: ReactPointerEvent<HTMLDivElement>) => setHovered(event.pointerType === "mouse")} onClick={sent ? undefined : () => { if (!matchMedia("(hover: hover)").matches) onToggle(); }}>{text}</div>
       <GridCollapse open={!sent} appear={false}>
         <div className="waiting-message-actions">
           <Fade open={outcome === "failed"} className="waiting-message-note">Your message is still waiting.</Fade>
