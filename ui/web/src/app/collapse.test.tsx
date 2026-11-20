@@ -144,6 +144,13 @@ describe('Fade', () => {
 
 
 describe('Presence', () => {
+  // Little travels (DESIGN.md Motion): what Presence shows fades in place. With `layout`, every Presence child, Marq's
+  // monocle chain among them, re-projected when the phone drawer closed, and WebKit then left the header figure
+  // unpainted for 9 to 15 frames.
+  it('fades in place, with no layout projection', () => {
+    expect(presenceMotion).not.toHaveProperty('layout');
+  });
+
   it('preserves a custom component render prop while assigning presence keys', () => {
     const Content = ({ children }: { children: () => ReactNode }) => children();
     render(<Presence><Content>{() => <button>Open Memory</button>}</Content></Presence>);
