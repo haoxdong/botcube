@@ -134,11 +134,6 @@ def config(event: Mapping[str, Any]):
     return props
 
 
-def origin_zone(props: Mapping[str, Any]) -> str:
-    # Expand step: the ORIGIN_ZONE fallback serves a rollback that sends the old properties; delete it once Zone has deployed.
-    return props.get('Zone') or os.environ['ORIGIN_ZONE']
-
-
 def certificate_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], props: Mapping[str, Any]):
     acm = boto3.client('acm')
     request, physical = event['RequestType'], event.get('PhysicalResourceId')
@@ -225,7 +220,7 @@ def deploy_parked_worker(cf: Cloudflare, zone: str, account: str, props: Mapping
 
 
 def parked_worker_event(cf: Cloudflare, zone: str, event: Mapping[str, Any], props: Mapping[str, Any]):
-    account = cf.account(origin_zone(props))
+    account = cf.account(props['Zone'])
     if event['RequestType'] == 'Delete':
         delete_parked_worker(cf, zone, account, props['Hostnames'])
     else:
@@ -243,7 +238,7 @@ def on_event(event: Mapping[str, Any], _context: object) -> dict[str, object]:
     props = config(event)
     kind = props['Kind']
     cf = Cloudflare()
-    zone = cf.zone(origin_zone(props))
+    zone = cf.zone(props['Zone'])
     if kind not in EVENT_HANDLERS:
         raise ProviderError('Unknown resource kind')
     physical = EVENT_HANDLERS[kind](cf, zone, event, props)
@@ -305,7 +300,7 @@ def is_complete(event: Mapping[str, Any], _context: object) -> dict[str, bool]:
     if kind in ('Dns', 'ParkedWorker') or (kind == 'Certificate' and request == 'Delete'):
         return {'IsComplete': True}
     cf = Cloudflare()
-    zone = cf.zone(origin_zone(props))
+    zone = cf.zone(props['Zone'])
     physical = event['PhysicalResourceId']
     if kind == 'Certificate':
         return {'IsComplete': certificate_issued(cf, zone, physical)}

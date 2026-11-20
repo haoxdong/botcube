@@ -193,7 +193,6 @@ test('each provider handler reads both secrets and both hostnames and may manage
       Runtime: 'python3.12', Timeout: 120,
       Environment: { Variables: { TOKEN_SECRET: '/test/token', CLIENT_SECRET: '/test/client', HOSTNAMES: 'preview.example.com,api.example.com' } },
     });
-    expect(fn.Environment.Variables.ORIGIN_ZONE).toBe('example.com');
     expect(template.toJSON().Resources[fn.LoggingConfig.LogGroup.Ref].Properties).toEqual({ RetentionInDays: 7 });
     const [policy] = Object.values(template.findResources('AWS::IAM::Policy'))
       .filter(resource => resource.Properties.Roles[0].Ref === fn.Role['Fn::GetAtt'][0]);

@@ -77,13 +77,6 @@ class ParkedWorkerTests(unittest.TestCase):
         self.run_event(event)
         self.assertEqual({path for method, path in self.calls if method == 'GET' and path.startswith('zones?')}, {'zones?name=operator.example'})
 
-    def test_a_resource_without_a_zone_uses_the_provider_zone_during_a_rollback(self):
-        event = self.event()
-        event['ResourceProperties'] = {key: value for key, value in event['ResourceProperties'].items() if key != 'Zone'}
-        with patch.dict(handler.os.environ, {'ORIGIN_ZONE': 'rollback.example'}):
-            self.run_event(event)
-        self.assertEqual({path for method, path in self.calls if method == 'GET' and path.startswith('zones?')}, {'zones?name=rollback.example'})
-
     def test_create_is_idempotent_on_existing_owned_routes(self):
         self.routes = [{'id': f'r{i}', 'pattern': f'{host}/*', 'script': 'bot-cube-parked'} for i, host in enumerate(self.HOSTNAMES)]
         self.run_event(self.event())

@@ -47,7 +47,6 @@ export const PENDING: readonly string[] = [
   'BOTCUBE_DEPLOY_ROOT',
   'BOTCUBE_PLAN_USAGE_OWNER_ACCOUNT_ID',
   'BOTCUBE_PRODUCT_NAME',
-  'ORIGIN_ZONE',
 ];
 
 /** The variable names one process is deployed with: an ECS container, a Lambda or a Harness Runtime. */

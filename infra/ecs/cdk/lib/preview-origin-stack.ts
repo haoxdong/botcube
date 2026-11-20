@@ -123,7 +123,7 @@ export class PreviewOriginStack extends Stack {
         ...optionalPhysicalName('functionName', names?.functionName),
         runtime: lambda.Runtime.PYTHON_3_12, code: providerCode, handler: `handler.${handler}`,
         timeout: Duration.seconds(props.providerTimeoutSeconds ?? 120),
-        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, ORIGIN_ZONE: zone, TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.service ? [props.service.hostname] : []), ...(props.additionalHostnames ?? [])].join(',') },
+        environment: { ORIGIN_OWNERSHIP: props.originOwnership ?? `${props.stackName}:preview-origin`, PARKED_WORKER_NAME: props.parkedWorkerName ?? `${props.stackName}-parked`, TOKEN_SECRET: props.tokenSecretName, CLIENT_SECRET: props.clientSecretName, HOSTNAMES: [props.hostname, props.production.hostname, ...(props.service ? [props.service.hostname] : []), ...(props.additionalHostnames ?? [])].join(',') },
         logGroup: new logs.LogGroup(this, `${handler}Logs`, { ...optionalPhysicalName('logGroupName', names?.logGroupName), retention: props.providerLogRetention ?? logs.RetentionDays.ONE_WEEK }),
       });
       if (names?.roleName !== undefined) (fn.role?.node.defaultChild as iam.CfnRole).roleName = names.roleName;
