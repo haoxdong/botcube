@@ -3,6 +3,12 @@
 #   stories.sh [vitest args]
 #   stories.sh --screenshots <out-dir> [vitest args]   also writes each passing state to <out-dir>
 set -eu
+if [ "${1:-}" = '--visual' ]; then
+  shift
+  export STORYBOOK_VISUAL_COMPARE=1 UI_RENDERING_PROFILE=software
+  pnpm exec vitest run --config vitest.storybook.config.ts "$@"
+  exit "$?"
+fi
 if [ "${1:-}" = '--screenshots' ]; then
   shift
   if [ "${1:-}" = '--' ]; then shift; fi

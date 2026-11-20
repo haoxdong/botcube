@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, inject } from 'vitest';
 import { commands, page } from 'vitest/browser';
+import { MotionGlobalConfig } from 'motion/react';
 import { configure } from 'storybook/test';
 import { animationsSettled } from './animations-settled';
 import { frameTimings, startFrameSampling, stopFrameSampling } from '../../../../scripts/web-checks/frame-timings.mjs';
@@ -12,6 +13,7 @@ let renderingProof: RenderingProof | undefined;
 declare module 'vitest' {
   export interface ProvidedContext {
     screenshotDirectory: string;
+    visualCompare: boolean;
     screen: 'phone' | 'desktop';
     renderingProfile: string;
     renderingTrace: boolean;
@@ -20,6 +22,7 @@ declare module 'vitest' {
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
+    resetMousePosition: () => Promise<void>;
     emulateMedia: (reducedMotion: 'reduce' | 'no-preference') => Promise<void>;
     prepareRendering: () => Promise<RenderingProof>;
     recordRendering: (record: RenderingRecord) => Promise<void>;
@@ -32,6 +35,7 @@ const nativeFrame = window.requestAnimationFrame.bind(window);
 const REDUCE_MOTION = /-reduce-motion$/;
 
 beforeEach(async (context) => {
+  if (inject('visualCompare')) MotionGlobalConfig.skipAnimations = true;
   if (REDUCE_MOTION.test(context.task.name)) await commands.emulateMedia('reduce');
   if (inject('renderingProfile')) {
     configure({ asyncUtilTimeout: 60000 });
@@ -53,7 +57,7 @@ afterEach(async (context) => {
       await commands.recordRendering({ ...renderingProof, story: context.task.name, state: context.task.result?.state ?? 'unknown', timing });
       if (timing.frames < 2) throw new Error('Rendering sample has fewer than two frames');
     } finally {
-      renderingProof = undefined;
+      if (!inject('visualCompare')) renderingProof = undefined;
       if (inject('renderingTrace')) await commands.finishRenderingTrace();
     }
   }
@@ -62,9 +66,17 @@ afterEach(async (context) => {
 
 afterEach(async (context) => {
   const output = inject('screenshotDirectory');
-  if (!output || context.task.result?.state === 'fail') return;
+  if ((!output && !inject('visualCompare')) || context.task.result?.state === 'fail') return;
+  if (inject('visualCompare')) {
+    await commands.resetMousePosition();
+    if (renderingProof?.viewport) await expect(window.innerWidth).toBe(renderingProof.viewport.width);
+  }
   await document.fonts.ready;
-  await animationsSettled(document);
+  await animationsSettled(document, inject('visualCompare') ? [...document.querySelectorAll('[role=region], .mep-dropdown, .mep-dropdown *, .mep-pill, .mep-pill *')] : []);
+  if (inject('visualCompare')) {
+    await expect(document.documentElement).toMatchScreenshot(context.task.name.replace(/[^a-zA-Z0-9-]+/g, '-'));
+  }
+  if (!output) return;
   await page.screenshot({
     path: `${output}/${context.task.name}-${inject('screen')}.png`,
   });

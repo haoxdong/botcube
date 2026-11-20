@@ -1,6 +1,10 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { BaseSequencer, type TestSpecification } from 'vitest/node';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { STORYBOOK_TEST_INITIAL_GLOBALS_PROVIDE_KEY, STORYBOOK_TEST_PROVIDE_KEY } from '@storybook/addon-vitest/constants';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 import type { BrowserCommandContext } from 'vitest/node';
@@ -15,6 +19,7 @@ type DriverFrame = ReturnType<DriverPage['mainFrame']>;
 type DriverElement = NonNullable<Awaited<ReturnType<DriverFrame['$']>>>;
 
 const resolve = createRequire(import.meta.url).resolve;
+const appRoot = fileURLToPath(new URL('.', import.meta.url));
 /** Requests each URL `serveScript` stands in for has had. */
 const scriptRequests = new Map<string, number>();
 /** Elements `holdFrameElement` keeps hold of, by the index it returned. */
@@ -48,48 +53,90 @@ async function titled(frame: DriverFrame, name: string, path: readonly string[])
 }
 
 const screen = process.env.STORYBOOK_SCREEN ?? 'desktop';
+const visual = process.env.STORYBOOK_VISUAL_COMPARE === '1';
+
+class VisualSequencer extends BaseSequencer {
+  override sort(files: TestSpecification[]) {
+    const raw: unknown = JSON.parse(readFileSync(path.resolve(appRoot, 'visual/internal/coverage.json'), 'utf8'));
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Visual coverage must map fixtures to states');
+    const weights = new Map<string, number>();
+    for (const [file, states] of Object.entries(raw)) {
+      if (!Array.isArray(states)) throw new Error(`Visual states are missing for ${file}`);
+      weights.set(path.resolve(appRoot, '../../..', file), states.length);
+    }
+    return Promise.resolve(files.toSorted((left, right) => (weights.get(right.moduleId) ?? 0) - (weights.get(left.moduleId) ?? 0)));
+  }
+}
+
+const update: 'all' | 'none' = process.env.VISUAL_UPDATE === '1' ? 'all' : 'none';
 const profile = process.env.UI_RENDERING_PROFILE ?? '';
-const renderingDirectory = process.env.UI_RENDERING_OUTPUT ?? path.resolve('../../../.tmp/rendering');
+const renderingDirectory = process.env.UI_RENDERING_OUTPUT ?? path.resolve(appRoot, '../../../.tmp/rendering');
 const traceStories = process.env.UI_RENDERING_TRACE_STORIES;
 const traceMatcher = traceStories ? new RegExp(traceStories) : undefined;
 let finishTrace: (() => Promise<string>) | undefined;
 if (traceMatcher && !profile) throw new Error('UI_RENDERING_TRACE_STORIES requires UI_RENDERING_PROFILE');
+if (visual && traceMatcher) throw new Error('Run rendering traces separately from parallel visual comparisons');
 if (screen !== 'phone' && screen !== 'desktop')
   throw new Error(`Unknown Storybook viewport ${screen}`);
 
 export default defineConfig({
+  root: appRoot,
   server: {
     fs: {
       allow: process.env.STORYBOOK_SCREENSHOT_DIR
         ? [path.resolve(process.env.STORYBOOK_SCREENSHOT_DIR)]
-        : [],
+        : [path.resolve(appRoot, 'visual'), path.resolve(appRoot, '../../../.tmp/visual-diffs')],
     },
   },
   plugins: [
     storybookTest({
-      configDir: path.resolve('.storybook'),
-      initialGlobals: { viewport: { value: screen, isRotated: false } },
+      configDir: path.resolve(appRoot, '.storybook'),
+      tags: visual ? { include: ['visual'] } : { exclude: ['visual'] },
+      initialGlobals: { viewport: { value: visual ? null : screen, isRotated: false } },
     }),
   ],
   test: {
     setupFiles: ['./.storybook/vitest.setup.ts'],
-    fileParallelism: false,
+    fileParallelism: visual,
+    ...(visual ? { maxWorkers: 4, sequence: { sequencer: VisualSequencer }, api: { allowWrite: true } } : {}),
+    ...(visual ? { update } : {}),
     testTimeout: 60000,
     provide: {
       screenshotDirectory: process.env.STORYBOOK_SCREENSHOT_DIR ?? '',
       screen,
       renderingProfile: profile,
+      visualCompare: visual,
+      ...(visual ? { [STORYBOOK_TEST_PROVIDE_KEY]: { a11y: false } } : {}),
       renderingTrace: Boolean(traceMatcher),
     },
     browser: {
       enabled: true,
+      api: { allowWrite: true },
       headless: true,
-      viewport: viewports[screen].viewport,
+      viewport: visual ? { width: screen === 'phone' ? 390 : 1440, height: 900 } : viewports[screen].viewport,
       provider: playwright({
         contextOptions: viewports[screen],
         launchOptions: profile ? { args: renderingProfile(profile).args } : {},
       }),
-      instances: [{ browser: 'chromium' }],
+      instances: visual ? (['phone', 'desktop'] as const).map(name => ({
+        browser: 'chromium', name: `${name}-light`,
+        viewport: { width: name === 'phone' ? 390 : 1440, height: 900 },
+        provide: { screen: name, [STORYBOOK_TEST_INITIAL_GLOBALS_PROVIDE_KEY]: { viewport: { value: name, isRotated: false } } },
+        provider: playwright({
+          contextOptions: { ...viewports[name], viewport: { width: name === 'phone' ? 390 : 1440, height: 900 }, isMobile: false, deviceScaleFactor: 1, colorScheme: 'light', locale: 'en-US', timezoneId: 'UTC' },
+          launchOptions: { args: renderingProfile('software').args },
+        }),
+      })) : [{ browser: 'chromium' }],
+      expect: {
+        toMatchScreenshot: {
+          // Vitest leaves this timer referenced after success; hook and job deadlines still bound capture.
+          ...(visual ? { timeout: 0 } : {}),
+          comparatorName: 'pixelmatch',
+          comparatorOptions: { threshold: 0.02, allowedMismatchedPixels: 0 },
+          resolveScreenshotPath: ({ arg, ext, project }) => path.resolve(appRoot, 'visual/internal/baselines', project.name, `${arg}${ext}`),
+          resolveDiffPath: ({ arg, ext, project }) => path.resolve(appRoot, '../../../.tmp/visual-diffs', project.name, `${arg}${ext}`),
+        },
+      },
       // A story named `…-reduce-motion` runs with the OS's Reduce Motion on (vitest.setup.ts), to prove BotCube still
       // moves in full.
       commands: {
