@@ -7,7 +7,7 @@ import { dispatcherService, IDLE_MS, wakeService, WAKES_PER_DAY } from './parkin
 // @ts-expect-error -- see above.
 import { answer as wakeUrl, handler as wakeHandler } from './wake.mjs';
 
-type Heartbeat = { instance: string; at: number; lastUserRequestAt: number; runningTurns: number; runningTurnIds: string[] };
+type Heartbeat = { instance: string; at: number; lastUserRequestAt: number; runningTurns: number; runningTurnIds: string[]; accountErases: number };
 type Claim = { kind: string; day: string; at: number };
 
 function production({ state = 'live', paused = state === 'parked', heartbeats = [] as Heartbeat[], claimed = false, refuse = false } = {}) {
@@ -55,7 +55,7 @@ function production({ state = 'live', paused = state === 'parked', heartbeats = 
 }
 
 const beat = (now: number, quietMs: number, runningTurns = 0, instance = 'task-1'): Heartbeat =>
-  ({ instance, at: now - 30_000, lastUserRequestAt: now - quietMs, runningTurns, runningTurnIds: Array.from({ length: runningTurns }, (_, n) => `chat-${n}/run-${n}`) });
+  ({ instance, at: now - 30_000, lastUserRequestAt: now - quietMs, runningTurns, runningTurnIds: Array.from({ length: runningTurns }, (_, n) => `chat-${n}/run-${n}`), accountErases: 0 });
 
 describe('the idle check', () => {
   it('parks Live production after 30 minutes with no user request and no Turn running', async () => {
@@ -69,6 +69,8 @@ describe('the idle check', () => {
   it.each([
     ['a user came 29 minutes ago', (now: number) => [beat(now, IDLE_MS - 60_000)], 'last user request 29 min ago'],
     ['a Turn is running', (now: number) => [beat(now, IDLE_MS, 1)], '1 Turn(s) running: chat-0/run-0 on task-1'],
+    // Window 2 of an account erase parked at 613 of 1,736 Sessions: no user request for 35 min.
+    ['an account erase is running', (now: number) => [{ ...beat(now, IDLE_MS), accountErases: 1 }], '1 account erase(s) running'],
     ['a draining task still streams a Turn', (now: number) => [beat(now, IDLE_MS), beat(now, IDLE_MS * 2, 1, 'draining')], '1 Turn(s) running: chat-0/run-0 on draining'],
     ['a Chat Service from before Turn ids counts one', (now: number) => [{ ...beat(now, IDLE_MS, 1), runningTurnIds: [] }], '1 Turn(s) running'],
     ['a user reached the newer task', (now: number) => [beat(now, IDLE_MS * 2), beat(now, 60_000, 0, 'new')], 'last user request 1 min ago'],
@@ -83,7 +85,7 @@ describe('the idle check', () => {
 
   it('ignores a heartbeat older than 3 minutes and forgets one from an hour ago', async () => {
     const { world, dispatcher: service } = production();
-    world.heartbeats = [{ instance: 'gone', at: world.now - IDLE_MS * 2 - 1, lastUserRequestAt: world.now, runningTurns: 3, runningTurnIds: [] }, { ...beat(world.now, IDLE_MS), at: world.now - 3 * 60_000 - 1 }];
+    world.heartbeats = [{ instance: 'gone', at: world.now - IDLE_MS * 2 - 1, lastUserRequestAt: world.now, runningTurns: 3, runningTurnIds: [], accountErases: 0 }, { ...beat(world.now, IDLE_MS), at: world.now - 3 * 60_000 - 1 }];
 
     expect(await service.check()).toEqual({ action: 'none', reason: 'no Chat Service heartbeat in the last 3 minutes' });
     expect(world.heartbeats.map(({ instance }) => instance)).toEqual(['task-1']);

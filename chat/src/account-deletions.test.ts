@@ -118,4 +118,22 @@ describe('the first deletion sweep after a wake', () => {
     await deletions.recover();
     await vi.waitFor(() => expect(store.deletions.get(intent.accountId)?.status).toBe('completed'));
   });
+
+  // A live task whose erase hangs renews its lease, so only a sweep's own line shows the deletion still pending.
+  it('logs each pending deletion every sweep, including one an erase is still finishing', async () => {
+    const store = deletionStore();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const deletions = accountDeletions({ store: () => store, deleteAccount: () => new Promise<void>(() => {}) });
+
+    const pendingLines = () => info.mock.calls.filter(([line]) => line === 'Account deletion pending operation_id=op_1').length;
+
+    await deletions.recover();
+    await settle();
+    const first = pendingLines();
+    await deletions.recover();
+    await settle();
+
+    expect(first).toBeGreaterThan(0);
+    expect(pendingLines()).toBeGreaterThan(first);
+  });
 });

@@ -59,7 +59,7 @@ describe('the parking Lambda over DynamoDB and SSM', () => {
     }
 
     expect(await parking.heartbeats()).toEqual([
-      { instance: 'a', at: 5, lastUserRequestAt: 4, runningTurns: 1, runningTurnIds: [] }, { instance: 'b', at: 5, lastUserRequestAt: 4, runningTurns: 1, runningTurnIds: [] },
+      { instance: 'a', at: 5, lastUserRequestAt: 4, runningTurns: 1, runningTurnIds: [], accountErases: 0 }, { instance: 'b', at: 5, lastUserRequestAt: 4, runningTurns: 1, runningTurnIds: [], accountErases: 0 },
     ]);
     await parking.forget(['a']);
     expect((await parking.heartbeats()).map(({ instance }: { instance: string }) => instance)).toEqual(['b']);
@@ -71,7 +71,7 @@ describe('the parking Lambda over DynamoDB and SSM', () => {
     const stop = activity.report(table, DynamoDBDocumentClient.from(dynamodb));
     try {
       await expect.poll(async () => (await ports().heartbeats()).find(({ instance }: { instance: string }) => instance === activity.instance))
-        .toEqual({ instance: activity.instance, at: 7_000, lastUserRequestAt: 7_000, runningTurns: 1, runningTurnIds: ['chat/run-1'] });
+        .toEqual({ instance: activity.instance, at: 7_000, lastUserRequestAt: 7_000, runningTurns: 1, runningTurnIds: ['chat/run-1'], accountErases: 0 });
     } finally {
       stop();
     }

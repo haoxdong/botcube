@@ -5,21 +5,29 @@ at a time. ``DeleteEvent`` allows 5 TPS per actor and Session and 20 TPS per
 account, so every delete in this process is paced to 5 TPS, within both.
 
 The checkpointer files each checkpoint's pending writes in its own AgentCore
-session, named by the Session ID's writes prefix (ADR 0067 decision 9), so a
-purge empties the Session and then each of those. ``ListSessions`` keeps
-listing a session once its events are gone, so a session counts as purged when
-``ListEvents`` returns none.
+session, named from the Session ID and the checkpoint ID (ADR 0067 decision 9).
+A purge reads the Session's checkpoints, empties each one's writes session, and
+empties the Session last, so a retried purge still finds every writes session
+left. Only a Session whose snapshots no longer decode lists the actor's
+sessions by the writes prefix instead, so a damaged Session still purges. A
+session counts as purged when ``ListEvents`` returns none.
 """
 
 from __future__ import annotations
 
+import logging
 from threading import Lock
 from time import monotonic, sleep
 from typing import Any
 
+from langgraph_checkpoint_aws.checkpoint.agentcore.constants import EventDecodingError
+from langgraph_checkpoint_aws.checkpoint.agentcore.models import CheckpointEvent
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
+    writes_session_id,
 )
+
+log = logging.getLogger(__name__)
 
 _DELETE_INTERVAL_SECONDS = 1 / 5
 _pace_lock = Lock()
@@ -29,12 +37,24 @@ _next_delete_at = 0.0
 def purge_session(saver: Any, actor_id: str, session_id: str) -> None:
     """Delete every event of the Session and its writes sessions under the filing ID. Purging a purged Session is a no-op."""
     events = saver.checkpoint_event_client
-    _purge(events, actor_id, session_id)
     for writes_session in _writes_sessions(events, actor_id, session_id):
         _purge(events, actor_id, writes_session)
+    _purge(events, actor_id, session_id)
 
 
 def _writes_sessions(events: Any, actor_id: str, session_id: str) -> list[str]:
+    try:
+        read = events.read_events(session_id, actor_id)
+    except (EventDecodingError, events.client.exceptions.ResourceNotFoundException):
+        # A missing or corrupt fragment hides the checkpoint IDs; the writes prefix still finds every writes session.
+        log.warning('Session snapshot does not decode; listing its writes sessions by prefix. session_id=%s', session_id)
+        return _listed_writes_sessions(events, actor_id, session_id)
+    # Subgraphs run without the saver, so every checkpoint is in the root namespace.
+    checkpoints = {event.checkpoint_id for event in read.events if isinstance(event, CheckpointEvent)}
+    return [writes_session_id(session_id, checkpoint) for checkpoint in sorted(checkpoints)]
+
+
+def _listed_writes_sessions(events: Any, actor_id: str, session_id: str) -> list[str]:
     prefix = _writes_session_prefix(session_id)
     params: dict[str, Any] = {'memoryId': events.memory_id, 'actorId': actor_id, 'maxResults': 100}
     sessions: list[str] = []

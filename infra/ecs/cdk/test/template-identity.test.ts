@@ -274,5 +274,5 @@ test.each([
   const health = parkingTemplate(app.node.findChild('ApiHealth') as Stack, mode);
   health.resourceCountIs('AWS::CloudWatch::Alarm', chat);
   if (chat) health.hasResourceProperties('AWS::CloudWatch::Alarm', { ActionsEnabled: true });
-  origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 12 : credentials ? 4 : 1);
+  origin.resourceCountIs('AWS::CloudWatch::Alarm', chat ? 13 : credentials ? 4 : 1);
 });

@@ -140,7 +140,7 @@ describe('production activity', () => {
     try {
       await vi.waitFor(async () => expect((await documents.send(new GetCommand({
         TableName: defined(stack, 'the stack').table.name, Key: { pk: PARKING_PARTITION, sk: `ACTIVITY#${activity.instance}` },
-      }))).Item).toEqual({ pk: PARKING_PARTITION, sk: `ACTIVITY#${activity.instance}`, at: 42, lastUserRequestAt: 42, runningTurns: 0, runningTurnIds: [] }));
+      }))).Item).toEqual({ pk: PARKING_PARTITION, sk: `ACTIVITY#${activity.instance}`, at: 42, lastUserRequestAt: 42, runningTurns: 0, runningTurnIds: [], accountErases: 0 }));
     } finally {
       stop();
     }

@@ -272,6 +272,26 @@ test.each([false, true])('persistent account deletion failures notify the alert 
   });
 });
 
+// A live task whose erase hung kept renewing its lease, so the failure alarm stayed quiet.
+test('a pending account deletion with no erase progress for two 5-minute periods notifies the alert owner', () => {
+  const template = synth();
+  template.hasResourceProperties('AWS::Logs::MetricFilter', {
+    FilterPattern: '"Account deletion pending"',
+    MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'AccountDeletionPending', MetricValue: '1' }],
+  });
+  template.hasResourceProperties('AWS::Logs::MetricFilter', {
+    FilterPattern: '?"Account history erase purged" ?"Account deletion completed"',
+    MetricTransformations: [{ MetricNamespace: 'BotCube/ChatService', MetricName: 'AccountDeletionProgress', MetricValue: '1' }],
+  });
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    AlarmName: 'test-account-deletion-stalled', ActionsEnabled: true,
+    Metrics: Match.arrayWith([Match.objectLike({ Expression: 'IF(FILL(pending, 0) > 0 AND FILL(progress, 0) == 0, 1, 0)' })]),
+    Threshold: 1, ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+    EvaluationPeriods: 2, DatapointsToAlarm: 2, TreatMissingData: 'notBreaching',
+    AlarmActions: [alerts], OKActions: [alerts],
+  });
+});
+
 test('parked Chat retains only the persistent deletion alarm and no serving failure metrics', () => {
   const template = synth(undefined, true);
   template.hasResourceProperties('AWS::ECS::Service', { DesiredCount: 0 });

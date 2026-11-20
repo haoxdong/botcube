@@ -33,7 +33,7 @@ from langchain_core.messages import (
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.base import BaseCheckpointSaver, empty_checkpoint
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph_checkpoint_aws import AgentCoreMemorySaver
@@ -178,25 +178,27 @@ def test_a_purge_deletes_every_event_of_the_session_and_its_writes_sessions_at_a
     others = 'lgw-' + hashlib.sha256(b'session-2').hexdigest()[:32]
     for _ in range(PAGE_SIZE + 12):  # more than one page of events
         memory.seed('user-1', 'session-1')
-    for key in ('checkpoint-1', 'checkpoint-2'):
-        memory.seed('user-1', f'{writes}-{key}')
+    # Two checkpoints, each with pending writes in its own writes session, as a Turn files them.
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
+    config: RunnableConfig = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
+    for step in range(2):
+        config = saver.put(config, empty_checkpoint(), {'source': 'loop', 'step': step, 'parents': {}}, {})
+        saver.put_writes(config, [('messages', f'write {step}')], task_id=f'task-{step}')
+    purged = {key for key, events in memory.events.items() if key[0] == 'user-1' and (key[1] == 'session-1' or key[1].startswith(writes)) and events}
+    assert len(purged) == 3
     memory.seed('user-1', 'session-2')
     memory.seed('user-1', f'{others}-checkpoint-1')
     memory.seed('user-2', 'session-1')
     memory.seed('user-2', f'{writes}-checkpoint-1')
     purge = {'operation': 'purge', 'sessionId': 'session-1', 'userId': 'user-1'}
-    deleted = PAGE_SIZE + 12 + 2
+    deleted = sum(len(memory.events[key]) for key in purged)
 
     assert asyncio.run(session_api.handle(purge)) == {}
 
-    assert memory.events[('user-1', 'session-1')] == []
-    assert memory.events[('user-1', f'{writes}-checkpoint-1')] == []
-    assert memory.events[('user-1', f'{writes}-checkpoint-2')] == []
+    for key in purged:
+        assert memory.events[key] == [], key
     for kept in [('user-1', 'session-2'), ('user-1', f'{others}-checkpoint-1'), ('user-2', 'session-1'), ('user-2', f'{writes}-checkpoint-1')]:
         assert len(memory.events[kept]) == 1
-    # AgentCore keeps listing emptied sessions: the purge is done once their events are gone.
-    listed = memory.list_sessions(memoryId=MEMORY_ID, actorId='user-1')['sessionSummaries']
-    assert {f'{writes}-checkpoint-1', f'{writes}-checkpoint-2'} <= {summary['sessionId'] for summary in listed}
     # DeleteEvent allows 5 TPS per actor and Session: no 6 deletes within one second.
     assert len(memory.deleted_at) == deleted
     assert all(

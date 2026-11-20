@@ -76,6 +76,8 @@ export function accountDeletions<A extends Account>({ store, deleteAccount, cred
 
   async function enqueuePending(): Promise<void> {
     for (const intent of await store().pendingAccountDeletions()) {
+      // Each sweep, so an alarm sees a pending deletion that logs no progress.
+      console.info(`Account deletion pending operation_id=${intent.operationId}`);
       if (finishing.has(intent.accountId)) continue;
       finishing.add(intent.accountId);
       void finish(intent).catch((error: unknown) => {

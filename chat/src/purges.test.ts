@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { RuntimeAdmissionUnprovedError } from './session-lifecycle.js';
-import { purgeQueue } from './purges.js';
+import { accountErasesRunning, purgeQueue } from './purges.js';
 import type { SessionApi } from './session-api.js';
 import { SessionDispatchPendingError, type SessionPurge, type SessionSummary } from './session-metadata.js';
 import { defined } from '../test/defined.js';
@@ -138,6 +138,43 @@ describe('a background Session purge', () => {
     expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining('retrying in 5s with 2 at once. session_id=session-0'), expect.any(Error));
   });
 
+  // A width that only halved held a 1,736-Session erase at one at a time after three throttles.
+  it('regrows account erasure by one after each minute without a failure, up to four', async () => {
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    let running = 0;
+    const widths: number[] = [];
+    let failures = 0;
+    const queue = purgeQueue(async (event) => {
+      if (event.operation !== 'purge') throw new Error('expected a purge');
+      running += 1;
+      widths.push(running);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        // The first two erases to finish fail once each: 4 → 2 → 1.
+        if (failures < 2) {
+          failures += 1;
+          throw new Error('throttled');
+        }
+        return {};
+      } finally {
+        running -= 1;
+      }
+    }, filed, async () => undefined, [1_000, 1_000]);
+    const erasure = queue.wait(Array.from({ length: 60 }, (_, index) => session(`session-${index}`)));
+    await vi.advanceTimersByTimeAsync(10_000);
+    const afterThrottles = widths.length;
+    await vi.advanceTimersByTimeAsync(400_000);
+    await erasure;
+    const regrown = widths.slice(afterThrottles);
+    expect(Math.min(...regrown)).toBe(1);
+    expect(Math.max(...regrown)).toBe(4);
+    expect(consoleInfo.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('regrew'))).toEqual([
+      'Account history erase regrew to 2 at once',
+      'Account history erase regrew to 3 at once',
+      'Account history erase regrew to 4 at once',
+    ]);
+  });
+
   it('skips a Session whose writer is still registered, erases the rest, then rejects with that error', async () => {
     const pending = new SessionDispatchPendingError('Session dispatch is still registered');
     const completed: string[] = [];
@@ -148,6 +185,23 @@ describe('a background Session purge', () => {
     await expect(erasure).rejects.toBe(pending);
     expect(completed.sort()).toEqual(Array.from({ length: 10 }, (_, index) => `session-${index}`).filter((id) => id !== 'session-2').sort());
     expect(consoleWarn).not.toHaveBeenCalled();
+  });
+
+  // Production parking idled origin out from under a running erase; it counts each running erase as activity.
+  it('counts an account erase as running until it settles, whether it succeeds or fails', async () => {
+    const failure = new Error('writer still running');
+    const queue = purgeQueue(async () => ({}), filed, async ({ session_id }) => {
+      if (session_id === 'fails') throw failure;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }, []);
+    const erased = queue.wait([session('session-0')]);
+    const failed = queue.wait([session('fails')]);
+    expect(accountErasesRunning()).toBe(2);
+    await expect(failed).rejects.toBe(failure);
+    expect(accountErasesRunning()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await erased;
+    expect(accountErasesRunning()).toBe(0);
   });
 
   it('stops starting Sessions once an account erase fails for good, and rejects', async () => {

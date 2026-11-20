@@ -43,7 +43,7 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   executionRoleName?: string;
   securityGroupName?: string;
   targetGroupName?: string;
-  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'account-deletion-failures' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
+  alarmNames?: Partial<Record<'task-deficit' | 'session-purge-failures' | 'turn-summary-failures' | 'agent-computer-stop-sleep-failures' | 'files-mount-failures' | 'account-deletion-failures' | 'account-deletion-stalled' | 'alb-5xx' | 'target-5xx' | 'unhealthy-hosts', string>>;
   ingress?: ChatServiceIngress;
   vpc?: ec2.IVpc;
   subnets?: ec2.SubnetSelection;
@@ -264,6 +264,30 @@ export class PreviewChatService extends Construct {
     });
     accountDeletionAlarm.addAlarmAction(new actions.SnsAction(topic));
     accountDeletionAlarm.addOkAction(new actions.SnsAction(topic));
+    // A live task whose erase hangs renews its lease and logs no failure: alarm when a sweep's pending
+    // line has no erase progress or completion beside it for two 5-minute periods running.
+    const deletionLines = (id: string, filterPattern: logs.IFilterPattern) => {
+      const filter = new logs.MetricFilter(this, id, { logGroup, filterPattern, metricNamespace: 'BotCube/ChatService', metricName: id, metricValue: '1' });
+      (filter.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
+      return filter.metric({ statistic: 'Sum', period: Duration.minutes(5) });
+    };
+    const stalled = new cloudwatch.Alarm(this, 'AccountDeletionStalledAlarm', {
+      alarmName: props.alarmNames?.['account-deletion-stalled'] ?? `${props.clusterName}-account-deletion-stalled`,
+      actionsEnabled: true,
+      metric: new cloudwatch.MathExpression({
+        expression: 'IF(FILL(pending, 0) > 0 AND FILL(progress, 0) == 0, 1, 0)',
+        usingMetrics: {
+          pending: deletionLines('AccountDeletionPending', logs.FilterPattern.literal('"Account deletion pending"')),
+          progress: deletionLines('AccountDeletionProgress', logs.FilterPattern.anyTerm('Account history erase purged', 'Account deletion completed')),
+        },
+        period: Duration.minutes(5),
+      }),
+      threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      evaluationPeriods: 2, datapointsToAlarm: 2, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    (stalled.node.defaultChild as CfnResource).cfnOptions.condition = parkState(this).liveCondition;
+    stalled.addAlarmAction(new actions.SnsAction(topic));
+    stalled.addOkAction(new actions.SnsAction(topic));
     new CfnOutput(outputScope, 'AlertsTopicArn', { value: topic.topicArn });
     new CfnOutput(outputScope, 'ClusterName', { value: cluster.clusterName });
     new CfnOutput(outputScope, 'ServiceName', { value: service.serviceName });

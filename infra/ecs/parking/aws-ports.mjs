@@ -98,6 +98,8 @@ export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new S
         instance: String(item.sk?.S).slice(ACTIVITY.length),
         at: Number(item.at?.N), lastUserRequestAt: Number(item.lastUserRequestAt?.N), runningTurns: Number(item.runningTurns?.N),
         runningTurnIds: (item.runningTurnIds?.L ?? []).map((id) => String(id.S)),
+        // A Chat Service from before account erases counted reports none.
+        accountErases: Number(item.accountErases?.N ?? 0),
       }));
     },
     async forget(/** @type {string[]} */ instances) {

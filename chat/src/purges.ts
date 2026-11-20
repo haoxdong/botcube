@@ -18,6 +18,16 @@ const ERASE_AT_ONCE = 4;
 /** An account erase logs its progress at most this often. */
 const PROGRESS_EVERY_MS = 60_000;
 
+let accountErases = 0;
+
+/** Account erases running in this process: production parking counts each as activity, like a running Turn. */
+export function accountErasesRunning(): number {
+  return accountErases;
+}
+
+/** After this long without a failure, an account erase runs one more Session at once, up to ERASE_AT_ONCE. */
+const REGROW_AFTER_MS = 60_000;
+
 /**
  * Purges fenced Sessions' events one at a time, after the response, retrying a
  * failure after each backoff in turn. A Session is purged under every actor that
@@ -127,7 +137,7 @@ export function purgeQueue(
 
   /**
    * Erases an account's Sessions, ERASE_AT_ONCE at a time. A failure halves how many run at once and is retried
-   * after each backoff in turn. Once a failure is final, the erase stops starting Sessions and rejects after the
+   * after each backoff in turn; each minute without one adds one back. Once a failure is final, the erase stops starting Sessions and rejects after the
    * running ones settle. A registered writer or an unproved admission is no throttling: that Session is skipped at
    * once, the rest are erased, and the erase then rejects with the first such error. Completed Sessions stay
    * completed, so a later erase resumes.
@@ -139,6 +149,9 @@ export function purgeQueue(
     let failure: { error: unknown } | undefined;
     let skipped: { error: unknown } | undefined;
     let reported = Date.now();
+    let cleanSince = Date.now();
+    const active = new Set<number>();
+    const workers: Promise<void>[] = [];
     // Another worker sets `failure` while this one awaits.
     const failed = () => failure !== undefined;
     /** Erases one Session, retrying a failure after each backoff; whether it was erased, or skipped as fenced. */
@@ -159,6 +172,7 @@ export function purgeQueue(
             return 'failed';
           }
           atOnce = Math.max(1, Math.floor(atOnce / 2));
+          cleanSince = Date.now();
           console.warn(`Session purge attempt failed; retrying in ${backoff / 1000}s with ${atOnce} at once. session_id=${session.session_id}`, error);
           // eslint-disable-next-line no-await-in-loop -- retries after each backoff
           await new Promise((resolve) => setTimeout(resolve, backoff));
@@ -175,9 +189,28 @@ export function purgeQueue(
           reported = Date.now();
           console.info(`Account history erase purged ${done} of ${sessions.length} Sessions`);
         }
+        if (atOnce < eraseAtOnce && Date.now() - cleanSince >= REGROW_AFTER_MS) {
+          atOnce += 1;
+          cleanSince = Date.now();
+          console.info(`Account history erase regrew to ${atOnce} at once`);
+          start(atOnce - 1);
+        }
       }
+      // Synchronously, so a regrow after this sees the slot free.
+      active.delete(slot);
     };
-    await Promise.all(Array.from({ length: eraseAtOnce }, (_, slot) => worker(slot)));
+    /** Starts a worker in the slot, unless the one there has not yet seen the slot close. */
+    const start = (slot: number) => {
+      if (active.has(slot)) return;
+      active.add(slot);
+      workers.push(worker(slot));
+    };
+    for (let slot = 0; slot < eraseAtOnce; slot += 1) start(slot);
+    // A regrow adds workers while these settle.
+    for (let index = 0; index < workers.length; index += 1) {
+      // eslint-disable-next-line no-await-in-loop -- awaits workers started meanwhile too
+      await workers[index];
+    }
     const rejection = failure ?? skipped;
     if (rejection !== undefined) throw rejection.error;
   }
@@ -203,7 +236,8 @@ export function purgeQueue(
       tail = tail.then(recoverNext);
     },
     wait(sessions: SessionPurge[]) {
-      const result = eraseAll(sessions);
+      accountErases += 1;
+      const result = eraseAll(sessions).finally(() => { accountErases -= 1; });
       void result.catch((error: unknown) => { console.error('Session purge failed; account history deletion remains pending', error); });
       return result;
     },

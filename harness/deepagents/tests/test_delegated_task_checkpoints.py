@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from deepagents.backends import LocalShellBackend
@@ -18,7 +18,9 @@ from agentcore_fake import (
     turn_identity,
 )
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import turn_memory
+from botcube_harness_deepagents.memory.agentcore.purge import purge_session
 from conftest import ToolBindableFakeMessagesModel
 
 SESSION = '1bbd3f2b-e731-4cf9-a81d-23a3e98f79dc'
@@ -65,3 +67,10 @@ def test_a_delegated_task_completes_and_resumes_writing_only_its_session_and_wri
     sessions = {session for (actor, session), events in scoped_memory.events.items() if events and actor == 'filing-fixture'}
     assert SESSION in sessions
     assert all(session == SESSION or session.startswith(WRITES_PREFIX) for session in sessions), sessions
+    assert len(sessions) > 1, 'the run filed no pending writes'
+
+    # A purge finds writes sessions only through root-namespace checkpoints: a subgraph's would be left behind.
+    saver = agentcore.build_checkpointer(MEMORY_ID, region_name='us-east-1')
+    saver.checkpoint_event_client.client = cast(Any, scoped_memory)
+    purge_session(saver, 'filing-fixture', SESSION)
+    assert not any(events for (actor, session), events in scoped_memory.events.items() if actor == 'filing-fixture')

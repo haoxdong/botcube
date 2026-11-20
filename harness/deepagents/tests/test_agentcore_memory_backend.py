@@ -1,4 +1,4 @@
-"""The AgentCore memory backend's factory slots and Session purge, against the bedrock-agentcore API."""
+"""The AgentCore memory backend's factory slots, against the bedrock-agentcore API."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ import json
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 
 import boto3
 import pytest
 from botocore.awsrequest import AWSResponse, HTTPHeaders
 from botocore.credentials import Credentials
-from botocore.stub import Stubber
 from langchain_core.messages import HumanMessage
 from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
     _writes_session_prefix,
@@ -22,7 +20,6 @@ from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
 
 from agentcore_fake import USER_MEMORY_ROLE_ARN, FakeSts, turn_identity
 from botcube_harness_deepagents.memory import agentcore
-from botcube_harness_deepagents.memory.agentcore import purge as purge_module
 from botcube_harness_deepagents.session_memory import SessionMemoryMiddleware
 from botcube_harness_deepagents.turn_memory import (
     TurnFeedError,
@@ -67,101 +64,6 @@ def test_the_actor_gets_one_memory_tool_its_turns_recorded_and_memory_loaded_onc
     assert (turns.actor_id, turns.session_id) == ('jane.doe_ny', 'thread-1')
     assert isinstance(session, SessionMemoryMiddleware)
 
-
-# -- Session purge ---------------------------------------------------------------
-
-
-def _event(event_id: str) -> dict[str, Any]:
-    return {
-        'memoryId': MEMORY_ID,
-        'actorId': 'user-1',
-        'sessionId': 'session-1',
-        'eventId': event_id,
-        'eventTimestamp': datetime(2026, 7, 2, tzinfo=UTC),
-        'payload': [],
-    }
-
-
-@pytest.fixture
-def events_client() -> Iterator[tuple[Any, Stubber]]:
-    client = boto3.client('bedrock-agentcore', region_name='us-east-1')
-    with Stubber(client) as stubber:
-        yield client, stubber
-        stubber.assert_no_pending_responses()
-
-
-def test_a_purge_lists_event_ids_only_and_deletes_each_at_five_per_second_in_the_session_and_its_writes_sessions(events_client: tuple[Any, Stubber], monkeypatch: pytest.MonkeyPatch) -> None:
-    client, stubber = events_client
-    clock = [10.0]
-    sleeps: list[float] = []
-
-    def sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        clock[0] += seconds
-
-    monkeypatch.setattr(purge_module, '_next_delete_at', 0.0)
-    monkeypatch.setattr(purge_module, 'monotonic', lambda: clock[0])
-    monkeypatch.setattr(purge_module, 'sleep', sleep)
-    list_request = {
-        'memoryId': MEMORY_ID,
-        'actorId': 'user-1',
-        'sessionId': 'session-1',
-        'maxResults': 100,
-        'includePayloads': False,
-    }
-    stubber.add_response('list_events', {'events': [_event('1#a1'), _event('2#b2')]}, list_request)
-    for event_id in ('1#a1', '2#b2'):
-        stubber.add_response(
-            'delete_event',
-            {'eventId': event_id},
-            {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': 'session-1', 'eventId': event_id},
-        )
-    stubber.add_response('list_events', {'events': []}, list_request)
-    writes = 'lgw-84097828fc31a8c8d29210df48901a85-checkpoint-1'
-    others = 'lgw-5d9061408048c12d053925aed45333a1-checkpoint-1'
-    listed = datetime(2026, 7, 2, tzinfo=UTC)
-    sessions = {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'maxResults': 100}
-    stubber.add_response('list_sessions', {'sessionSummaries': [
-        {'sessionId': session, 'actorId': 'user-1', 'createdAt': listed} for session in ('session-1', writes)
-    ], 'nextToken': 'page-2'}, sessions)
-    stubber.add_response('list_sessions', {'sessionSummaries': [
-        {'sessionId': others, 'actorId': 'user-1', 'createdAt': listed},
-    ]}, {**sessions, 'nextToken': 'page-2'})
-    writes_request = {**list_request, 'sessionId': writes}
-    stubber.add_response('list_events', {'events': [{**_event('3#c3'), 'sessionId': writes}]}, writes_request)
-    stubber.add_response(
-        'delete_event', {'eventId': '3#c3'},
-        {'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': writes, 'eventId': '3#c3'},
-    )
-    stubber.add_response('list_events', {'events': []}, writes_request)
-    saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
-
-    purge_module.purge_session(saver, 'user-1', 'session-1')
-
-    # The first delete goes at once; each next waits out the rest of its 0.2 s slot.
-    assert sleeps == [0.0, pytest.approx(0.2), pytest.approx(0.2)]
-
-
-def test_a_purge_of_an_actor_that_never_wrote_an_event_finds_nothing_to_delete(events_client: tuple[Any, Stubber]) -> None:
-    # AgentCore answers ListSessions for an actor without events as not found (a Session deleted before its first Turn).
-    client, stubber = events_client
-    stubber.add_response('list_events', {'events': []}, {
-        'memoryId': MEMORY_ID, 'actorId': 'user-1', 'sessionId': 'session-1', 'maxResults': 100, 'includePayloads': False,
-    })
-    stubber.add_client_error('list_sessions', 'ResourceNotFoundException', 'Actor user-1 not found', 404)
-    saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
-
-    purge_module.purge_session(saver, 'user-1', 'session-1')
-
-
-def test_a_purge_fails_loud_when_its_memory_is_not_found(events_client: tuple[Any, Stubber]) -> None:
-    client, stubber = events_client
-    stubber.add_response('list_events', {'events': []})
-    stubber.add_client_error('list_sessions', 'ResourceNotFoundException', f'Memory {MEMORY_ID} not found', 404)
-    saver = SimpleNamespace(checkpoint_event_client=SimpleNamespace(client=client, memory_id=MEMORY_ID))
-
-    with pytest.raises(client.exceptions.ResourceNotFoundException):
-        purge_module.purge_session(saver, 'user-1', 'session-1')
 
 
 @pytest.fixture
@@ -212,7 +114,7 @@ def _assumed(actor: str, key: str, *, session: str = 'thread-1') -> dict[str, st
 
 
 def test_assumed_turn_credentials_sign_memory_calls_without_sts(microvm: FakeSts) -> None:
-    saver, store = agentcore.turn_memory(MEMORY_ID, _assumed('user-1', 'ASIAUSER1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
+    _saver, store = agentcore.turn_memory(MEMORY_ID, _assumed('user-1', 'ASIAUSER1'), region_name='us-west-2', run_id='run-1', turn=agentcore.next_turn())
     signed = _signed_keys(store)
     store.client.list_memory_records(memoryId=MEMORY_ID, namespace='/actors/user-1/facts/')
 

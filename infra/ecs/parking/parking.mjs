@@ -10,7 +10,7 @@ export const DISPATCH = 'DISPATCH#';
 /**
  * @typedef {'park' | 'unpark'} Action
  * @typedef {{ kind: 'park' | 'wake', day: string, at: number }} Claim
- * @typedef {{ instance: string, at: number, lastUserRequestAt: number, runningTurns: number, runningTurnIds: string[] }} Heartbeat
+ * @typedef {{ instance: string, at: number, lastUserRequestAt: number, runningTurns: number, runningTurnIds: string[], accountErases: number }} Heartbeat
  * @typedef {{
  *   now(): number,
  *   paused(): Promise<boolean>,
@@ -74,6 +74,9 @@ export function dispatcherService(/** @type {DispatcherPorts} */ ports) {
       const turns = fresh.flatMap(({ instance, runningTurnIds }) => runningTurnIds.map((id) => `${id} on ${instance}`));
       return { idle: false, reason: `${running} Turn(s) running${turns.length === 0 ? '' : `: ${turns.join(', ')}`}` };
     }
+    // An account erase outlasts any idle window and logs progress only while a task serves it.
+    const erases = fresh.reduce((sum, { accountErases }) => sum + accountErases, 0);
+    if (erases > 0) return { idle: false, reason: `${erases} account erase(s) running` };
     const quietMs = now - Math.max(...fresh.map(({ lastUserRequestAt }) => lastUserRequestAt));
     if (quietMs < IDLE_MS) return { idle: false, reason: `last user request ${Math.round(quietMs / 60_000)} min ago` };
     return { idle: true, reason: `no user request for ${Math.round(quietMs / 60_000)} min and no Turn running` };

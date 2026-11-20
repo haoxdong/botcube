@@ -1,6 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { accountErasesRunning } from './purges.js';
 import type { SessionMetadata } from './session-metadata.js';
 import { MAX_RUNNING_TURN_AGE_MS } from './sessions.js';
 
@@ -28,7 +29,7 @@ export class ProductionActivity {
   private lastUserRequestAt: number;
   private readonly running = new Map<string, Running>();
 
-  constructor(private readonly now: () => number = Date.now) {
+  constructor(private readonly now: () => number = Date.now, private readonly accountErases: () => number = accountErasesRunning) {
     this.lastUserRequestAt = now();
   }
 
@@ -60,7 +61,10 @@ export class ProductionActivity {
       console.warn(`Production activity stopped counting Turn ${id} as running: ${reason}`);
     }
     const runningTurnIds = [...this.running.values()].map(({ id }) => id);
-    return { pk: PARKING_PARTITION, sk: `ACTIVITY#${this.instance}`, at: now, lastUserRequestAt: this.lastUserRequestAt, runningTurns: runningTurnIds.length, runningTurnIds };
+    return {
+      pk: PARKING_PARTITION, sk: `ACTIVITY#${this.instance}`, at: now, lastUserRequestAt: this.lastUserRequestAt,
+      runningTurns: runningTurnIds.length, runningTurnIds, accountErases: this.accountErases(),
+    };
   }
 
   observe(metadata: SessionMetadata): SessionMetadata {
