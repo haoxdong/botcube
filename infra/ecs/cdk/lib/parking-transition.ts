@@ -1,4 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { ArnFormat, AssetHashType, DockerImage, Duration, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
@@ -11,6 +14,22 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import type { DeployIdentity } from './production-identity.js';
 
+/** The SDK in botcube/infra/transition-requirements.txt, installed once per pin set: the runtime's built-in boto3 is
+ * older than the locked one the tests run against, and dropped GetAgentRuntime's platformVersion. */
+function lockedSdk(infraRoot: string) {
+  const requirements = path.join(infraRoot, 'transition-requirements.txt');
+  const installed = path.join(os.tmpdir(), `transition-sdk-${createHash('sha256').update(fs.readFileSync(requirements)).digest('hex').slice(0, 16)}`);
+  if (fs.existsSync(installed)) return installed;
+  const staging = `${installed}.${process.pid}`;
+  execFileSync('python3', ['-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', '--target', staging, '--no-deps',
+    '--require-hashes', '--only-binary=:all:', '--no-compile', '-r', requirements], { stdio: ['ignore', 'ignore', 'inherit'] });
+  // jmespath's bin/jp.py names the build interpreter, and each RECORD hashes it: drop both so the output hash is stable.
+  fs.rmSync(path.join(staging, 'bin'), { recursive: true, force: true });
+  for (const info of fs.readdirSync(staging).filter(name => name.endsWith('.dist-info'))) fs.rmSync(path.join(staging, info, 'RECORD'));
+  try { fs.renameSync(staging, installed); } catch { fs.rmSync(staging, { recursive: true, force: true }); }
+  return installed;
+}
+
 export function parkingTransition(stack: Stack, infraRoot: string, identity: DeployIdentity, imageRegistry?: string) {
   const { ecs, agentCore } = identity.aws;
   const worker = new lambda.Function(stack, 'Transition', {
@@ -21,6 +40,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
       image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
+        fs.cpSync(lockedSdk(infraRoot), outputDir, { recursive: true });
         fs.mkdirSync(path.join(outputDir, 'cartridge'), { recursive: true });
         fs.writeFileSync(path.join(outputDir, 'cartridge/identity.json'), JSON.stringify(identity));
         fs.copyFileSync(path.join(infraRoot, 'identity-defaults.json'), path.join(outputDir, 'identity-defaults.json'));

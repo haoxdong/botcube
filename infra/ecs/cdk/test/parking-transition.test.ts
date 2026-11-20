@@ -16,6 +16,7 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
       fs.writeFileSync(path.join(infraRoot, file), '');
     }
     fs.writeFileSync(path.join(infraRoot, 'identity-defaults.json'), '{}');
+    fs.copyFileSync(path.resolve(__dirname, '../../../transition-requirements.txt'), path.join(infraRoot, 'transition-requirements.txt'));
     const app = new App({ outdir: path.join(infraRoot, 'ecs/cdk/cdk.out') });
     const stack = new Stack(app, 'Parking', { env: { account: identity.aws.account, region: identity.aws.region } });
     parkingTransition(stack, infraRoot, identity);
@@ -31,6 +32,10 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
     const bundled = (relative: string) => fs.existsSync(path.join(outdir, asset, relative));
     expect([bundled('ecs/parking_transition.py'), bundled('ecs/verify/live.py'), bundled('cartridge/identity.json'), bundled('identity-defaults.json')]).toEqual([true, true, true, true]);
     expect([bundled('ecs/cdk'), bundled('ecs/parking'), bundled('ecs/verify/__pycache__')]).toEqual([false, false, false]);
+    // The Lambda imports this botocore, not the runtime's older built-in one that dropped platformVersion.
+    const locked = fs.readFileSync(path.resolve(__dirname, '../../../transition-requirements.txt'), 'utf8').match(/^botocore==(\S+)/m)?.[1];
+    expect(fs.readFileSync(path.join(outdir, asset, 'botocore/__init__.py'), 'utf8')).toContain(`__version__ = '${locked}'`);
+    expect([bundled('boto3/__init__.py'), bundled('bin')]).toEqual([true, false]);
   } finally {
     fs.rmSync(infraRoot, { recursive: true, force: true });
   }
