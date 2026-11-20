@@ -10,11 +10,11 @@ const meta = {
   decorators: [(Story) => <div style={{ height: '100dvh' }}><Story /></div>],
   args: {
     agentName: 'BotCube',
-    chatId: 'template-chat',
+    chatId: 'example-chat',
     app: 'Chrome',
     files: <FilesWindow files={[]} error={null} onReload={() => {}} onDownload={() => {}} onDelete={() => {}} onRename={() => null} thumbnailUrl={() => Promise.reject(new Error('The fixture has no pictures'))} />,
     computer: { state: 'asleep', screenshot: null },
-    commands: [{ command: 'template-cli data', output: 'Sample item: 42' }],
+    commands: [{ command: 'fake-cli data', output: 'Sample item: 42' }],
     control: 'agent',
     running: false,
     busy: false,

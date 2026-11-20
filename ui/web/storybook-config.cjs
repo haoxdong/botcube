@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { dcvAliases } = require('botcube-ui-web/dcv-assets');
 
-// The template's full-app Storybook: `CARTRIDGE_STORYBOOK_BUILD_CONFIG` names this file.
+// BotCube's full-app Storybook on the default UI plugin: `CARTRIDGE_STORYBOOK_BUILD_CONFIG` names this file.
 module.exports = ({ appRoot }) => ({
   stories: [
     path.relative(
@@ -11,8 +11,8 @@ module.exports = ({ appRoot }) => ({
   ],
   previewAnnotations: [path.join(__dirname, 'storybook/preview.ts')],
   aliases: {
-    '@cartridge-ui': path.join(__dirname, 'src/index.ts'),
-    '@bot-settings': path.join(__dirname, '../../../../examples/bot/bot.json'),
+    '@cartridge-ui': path.join(__dirname, 'src/cartridge/default.tsx'),
+    '@bot-settings': path.join(__dirname, '../../examples/bot/bot.json'),
     'botcube-ui-web/storybook-page': path.join(appRoot, 'src/app/page.tsx'),
     ...dcvAliases,
   },

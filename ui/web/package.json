@@ -121,6 +121,7 @@
     "mdast-util-math": "^3.0.0",
     "micromark-util-types": "^2.0.3",
     "msw": "^2.15.0",
+    "msw-storybook-addon": "^3.0.3",
     "postal-mime": "4.1.4",
     "postcss": "^8.5.32",
     "postcss-load-config": "^6.0.1",

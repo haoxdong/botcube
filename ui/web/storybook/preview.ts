@@ -2,9 +2,9 @@ import type { Preview } from '@storybook/nextjs-vite';
 import { mswLoader } from 'msw-storybook-addon/csf3';
 import { setupWorker } from 'msw/browser';
 import { handlers, unhandledChatRequests } from './chat-service';
-import { viewports } from '../../../../../ui/web/.storybook/viewports';
+import { viewports } from '../.storybook/viewports';
 import { expect } from 'storybook/test';
-import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
+import { CHAT_SERVICE_ORIGIN } from '../.storybook/chat-origin';
 
 const loadMocks = mswLoader(async () => {
   const worker = setupWorker();

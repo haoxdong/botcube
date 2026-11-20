@@ -2,13 +2,13 @@ import type { Meta, StoryObj } from '@storybook/nextjs-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { http, HttpResponse } from 'msw';
 import Page from 'botcube-ui-web/storybook-page';
-import { animationsSettled } from '../../../../../ui/web/.storybook/animations-settled';
-import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
-import { LiveBrowserWindow } from '../../../../../ui/web/src/computer/live-browser-window';
-import { SESSION, awakeComputer, noLiveViewComputer, reply } from './chat-service';
+import { animationsSettled } from '../.storybook/animations-settled';
+import { CHAT_SERVICE_ORIGIN } from '../.storybook/chat-origin';
+import { LiveBrowserWindow } from '../src/computer/live-browser-window';
+import { awakeComputer, noLiveViewComputer, reply } from './chat-service';
 
 const meta = {
-  title: 'Template',
+  title: 'BotCube/App',
   component: Page,
   play: resting(async ({ canvasElement }) => ready(canvasElement)),
 } satisfies Meta<typeof Page>;
@@ -46,7 +46,7 @@ async function computerGeometry(panel: HTMLElement) {
 }
 
 async function ready(root: HTMLElement) {
-  const message = await within(root).findByText('What is on the template site?', {}, { timeout: 30000 });
+  const message = await within(root).findByText('What is on the example site?', {}, { timeout: 30000 });
   await waitFor(() => expect(message).toBeVisible());
   await visible(root, '.chat-composer textarea:not([readonly])');
 }
@@ -70,80 +70,11 @@ export const Chat: Story = {
     await noPageScroll(canvasElement);
   }),
 };
-const openingGreeting = 'Hi. I can read the template site for you.';
-/** An empty Main Chat opens with the agent's greeting, not the welcome screen. */
-export const Welcome: Story = {
-  name: 'welcome',
-  parameters: {
-    msw: {
-      handlers: {
-        '/main-chat': reply('/main-chat', { id: 'main-shots', messages: [] }),
-        turn: http.post(CHAT_SERVICE_ORIGIN, async ({ request }) => {
-          const { threadId, runId, forwardedProps } = (await request.json()) as { threadId: string; runId: string; forwardedProps: { opening?: boolean } };
-          if (!forwardedProps.opening) throw new Error('The welcome story expects only the opening turn');
-          const messageId = 'opening-greeting';
-          const events = [
-            { type: 'RUN_STARTED', threadId, runId },
-            { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' },
-            { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: openingGreeting },
-            { type: 'TEXT_MESSAGE_END', messageId },
-            { type: 'RUN_FINISHED', threadId, runId },
-          ];
-          const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('');
-          return new HttpResponse(body, { headers: { 'content-type': 'text/event-stream' } });
-        }),
-      },
-    },
-  },
-  play: resting(async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await waitFor(() => expect(canvas.getByText(openingGreeting)).toBeVisible(), { timeout: 30000 });
-    await expect(canvasElement.querySelectorAll('.copilotKitUserMessage')).toHaveLength(0);
-    await expect(canvasElement.querySelector('.welcome-screen')).toBeNull();
-  }),
-};
-export const SignInNeeded: Story = {
-  name: 'chat-sign-in-needed',
-  parameters: {
-    msw: {
-      handlers: {
-        '/account/session': reply('/account/session', { ...SESSION, signInNeeded: true }),
-        '/account/sign-ins': reply('/account/sign-ins', { signIns: [{ site: 'fake-site', name: 'Template site', status: 'not_linked' }] }),
-      },
-    },
-  },
-  play: resting(async ({ canvasElement }) => {
-    await ready(canvasElement);
-    const chip = await within(canvasElement).findByRole('button', { name: /Sign in needed/ }, { timeout: 30000 });
-    const chipBox = chip.getBoundingClientRect();
-    const composer = box(canvasElement, '.chat-composer');
-    // Above the composer, on its left edge, a finger's target on a phone.
-    await near(chipBox.left, composer.left);
-    await expect(chipBox.bottom).toBeLessThanOrEqual(composer.top);
-    await expect(chipBox.height).toBeGreaterThanOrEqual(window.innerWidth <= 640 ? 44 : 32);
-    await noPageScroll(canvasElement);
-  }),
-};
 export const ProfilePersonalization: Story = {
   name: 'profile-personalization',
   play: resting(async ({ canvasElement }) => {
     await profile(canvasElement, 'Personalization');
     await visible(canvasElement.ownerDocument.body, '.agent-file-cards');
-  }),
-};
-export const ProfileSignIns: Story = {
-  name: 'profile-sign-ins',
-  play: resting(async ({ canvasElement }) => {
-    const panel = await profile(canvasElement, 'Sign-ins');
-    await panel.findByText('Template site', {}, { timeout: 30000 });
-    await panel.findByText('Linked');
-    const tab = canvasElement.ownerDocument.querySelector<HTMLElement>('[role="tabpanel"][aria-label="Sign-ins"]');
-    if (!tab) throw new Error('Missing Sign-ins panel');
-    const content = tab.getBoundingClientRect().right - parseFloat(getComputedStyle(tab).paddingRight);
-    // BotCube's built-in Sign-ins list: the status ends at the panel's edge; the action starts under the site's name.
-    await near(box(tab, '.sign-in-status').right, content);
-    await near(box(tab, '.sign-in-actions').left, box(tab, '.sign-in-name').left);
-    await noPageScroll(canvasElement);
   }),
 };
 const computerPanel = (root: HTMLElement) => {
@@ -202,7 +133,7 @@ export const TurnLiveBrowser: Story = {
             { type: 'RUN_STARTED', threadId, runId },
             { type: 'CUSTOM', name: 'botcube:browser-live-view', value: { open: true, sessionId: 'browser-shot' } },
             { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' },
-            { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: "I opened the template site's sign-in page." },
+            { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: "I opened the example site's sign-in page." },
             { type: 'TEXT_MESSAGE_END', messageId },
             { type: 'RUN_FINISHED', threadId, runId },
           ];
@@ -215,9 +146,9 @@ export const TurnLiveBrowser: Story = {
   play: resting(async ({ canvasElement }) => {
     await ready(canvasElement);
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByRole('textbox'), 'Open the template site');
+    await userEvent.type(canvas.getByRole('textbox'), 'Open the example site');
     await userEvent.click(canvas.getByRole('button', { name: 'Send' }));
-    await canvas.findByText("I opened the template site's sign-in page.", {}, { timeout: 30000 });
+    await canvas.findByText("I opened the example site's sign-in page.", {}, { timeout: 30000 });
     const phone = window.innerWidth <= 640;
     await visible(canvasElement, phone ? '.live-browser-panel .computer-screen-bar' : '.live-browser-panel .computer-screen-image');
     const panel = box(canvasElement, '.live-browser-panel');

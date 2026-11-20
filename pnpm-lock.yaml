@@ -467,9 +467,6 @@ importers:
         specifier: ^19
         version: 19.3.1(react@19.3.1)
     devDependencies:
-      '@storybook/nextjs-vite':
-        specifier: ^10.6.4
-        version: 10.6.5(@babel/core@7.29.7(supports-color@7.2.0))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(@typescript/typescript6@6.0.2)(next@16.4.5(@babel/core@7.29.7(supports-color@7.2.0))(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rollup@4.64.0)(storybook@10.6.5(@types/react@19.3.0)(prettier@3.9.10)(react@19.3.1))(supports-color@7.2.0)(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(yaml@2.9.1))
       '@types/react':
         specifier: ^19
         version: 19.3.0
@@ -479,15 +476,6 @@ importers:
       happy-dom:
         specifier: ^21.0.4
         version: 21.0.4
-      msw:
-        specifier: ^2.15.0
-        version: 2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2)
-      msw-storybook-addon:
-        specifier: ^3.0.3
-        version: 3.0.3(msw@2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2))(storybook@10.6.5(@types/react@19.3.0)(prettier@3.9.10)(react@19.3.1))
-      storybook:
-        specifier: ^10.6.4
-        version: 10.6.5(@types/react@19.3.0)(prettier@3.9.10)(react@19.3.1)
       supports-color:
         specifier: ^7.2.0
         version: 7.2.0
@@ -732,6 +720,9 @@ importers:
       msw:
         specifier: ^2.15.0
         version: 2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2)
+      msw-storybook-addon:
+        specifier: ^3.0.3
+        version: 3.0.3(msw@2.15.0(@types/node@24.19.2)(@typescript/typescript6@6.0.2))(storybook@10.6.5(@types/react@19.3.0)(prettier@3.9.10)(react@19.3.1))
       postal-mime:
         specifier: 4.1.4
         version: 4.1.4

@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
-import { CHAT_SERVICE_ORIGIN } from '../../../../../ui/web/.storybook/chat-origin';
-import bot from '../../../../../examples/bot/bot.json';
+import { CHAT_SERVICE_ORIGIN } from '../.storybook/chat-origin';
+import bot from '../../../examples/bot/bot.json';
 
 export const unhandledChatRequests: string[] = [];
 
@@ -8,7 +8,7 @@ const now = Date.parse('2026-10-06T05:00:00Z');
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 const DATA_CALL = 'call-data';
 const messages = [
-  { id: 'm0', role: 'user', content: 'What is on the template site?' },
+  { id: 'm0', role: 'user', content: 'What is on the example site?' },
   {
     id: 'm1',
     role: 'assistant',
@@ -17,7 +17,7 @@ const messages = [
       {
         id: DATA_CALL,
         type: 'function',
-        function: { name: 'execute', arguments: JSON.stringify({ command: 'template-cli data' }) },
+        function: { name: 'execute', arguments: JSON.stringify({ command: 'fake-cli data' }) },
       },
     ],
   },
@@ -30,21 +30,21 @@ const messages = [
   {
     id: 'm3',
     role: 'assistant',
-    content: 'The template site lists one item: **Sample item**, with a value of **42**.',
+    content: 'The example site lists one item: **Sample item**, with a value of **42**.',
   },
 ];
 /** The fake site's login page, as the Agent Computer's browser shows it. */
 const SCREEN = `data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="#fff"/><text x="16" y="52" font-family="Times New Roman, serif" font-size="32" font-weight="bold" fill="#000">Template site</text><rect x="16" y="76" width="64" height="24" rx="3" fill="#efefef" stroke="#767676"/><text x="48" y="93" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000">Sign in</text></svg>'
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="#fff"/><text x="16" y="52" font-family="Times New Roman, serif" font-size="32" font-weight="bold" fill="#000">Example site</text><rect x="16" y="76" width="64" height="24" rx="3" fill="#efefef" stroke="#767676"/><text x="48" y="93" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000">Sign in</text></svg>'
 )}`;
 
-export const SESSION = { accountId: 'template-account', signInNeeded: false };
+const SESSION = { accountId: 'example-account', signInNeeded: false };
 const ANSWERS: Record<string, unknown> = {
   '/account/session': SESSION,
-  '/account/sign-ins': { signIns: [{ site: 'fake-site', name: 'Template site', status: 'linked' }] },
+  '/account/sign-ins': { signIns: [{ site: 'fake-site', name: 'Example site', status: 'linked' }] },
   '/agent/identity': {
     name: bot.agentIdentity.name,
-    character: 'A template agent',
+    character: 'An example agent',
     vibe: 'Direct, precise, and calm',
     avatar: bot.agentIdentity.avatar,
   },
@@ -54,7 +54,7 @@ const ANSWERS: Record<string, unknown> = {
   '/main-chat': { id: 'main-shots', messages },
   '/threads': {
     threads: [
-      { id: 't1', title: 'Read the template site', updatedAt: ago(30) },
+      { id: 't1', title: 'Read the example site', updatedAt: ago(30) },
       { id: 't2', title: 'say hi', updatedAt: ago(3000) },
     ],
   },
@@ -62,7 +62,7 @@ const ANSWERS: Record<string, unknown> = {
   '/agent/models': { models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] },
   '/scheduled-tasks': { tasks: [] },
   '/activity': {
-    tasks: [{ title: 'Read the template site', summary: 'Read one item from the template site', completedAt: ago(30) }],
+    tasks: [{ title: 'Read the example site', summary: 'Read one item from the example site', completedAt: ago(30) }],
   },
 };
 
