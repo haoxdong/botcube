@@ -96,10 +96,6 @@ describe("an account's allowed models", () => {
           { key: 'quick', label: 'Quick', provider: 'anthropic' },
           { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
         ],
-        cartridgeModels: [
-          { key: 'quick', label: 'Quick', provider: 'anthropic' },
-          { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
-        ],
       });
     } finally {
       await failing.stop();
@@ -114,10 +110,6 @@ describe("an account's allowed models", () => {
       expect(await response.json()).toEqual({
         detail: 'Plan Usage was revoked',
         botModels: [
-          { key: 'quick', label: 'Quick', provider: 'anthropic' },
-          { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
-        ],
-        cartridgeModels: [
           { key: 'quick', label: 'Quick', provider: 'anthropic' },
           { key: 'thorough', label: 'Thorough', description: 'Slower, more careful', provider: 'anthropic' },
         ],

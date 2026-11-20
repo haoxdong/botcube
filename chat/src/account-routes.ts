@@ -93,8 +93,7 @@ export function accountRoutes(
       return c.json({ models: await accountModelList(bot, requester, { refresh: true }) });
     } catch (error) {
       if (error instanceof HttpError && (error.status === 502 || error.status === 503)) {
-        // `cartridgeModels` stays only for the deployed web UI until it reads `botModels`.
-        return c.json({ detail: error.detail, botModels: bot.models, cartridgeModels: bot.models }, error.status);
+        return c.json({ detail: error.detail, botModels: bot.models }, error.status);
       }
       throw error;
     }
