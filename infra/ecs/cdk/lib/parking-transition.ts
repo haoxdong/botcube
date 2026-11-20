@@ -36,7 +36,7 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     functionName: `${ecs.parking.functionName}-transition`,
     runtime: lambda.Runtime.PYTHON_3_12, handler: 'parking_transition.handler',
     timeout: Duration.minutes(15), memorySize: 512,
-    environment: { PYTHONPATH: '/var/task/ecs', CARTRIDGE_DEPLOY_ROOT: '/var/task/cartridge', CARTRIDGE_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
+    environment: { PYTHONPATH: '/var/task/ecs', BOTCUBE_DEPLOY_ROOT: '/var/task/cartridge', BOTCUBE_DEPLOY_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
       image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {

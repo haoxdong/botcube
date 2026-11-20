@@ -56,7 +56,7 @@ Supply your event names through the `webLatencyMoments` context as a JSON array 
 For example, after installing the CDK package dependencies, synthesize the foundation stacks from the repository root with:
 
 ```sh
-CARTRIDGE_DEPLOY_ROOT="$PWD/templates/always-on/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
+BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
   corepack pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
   -c 'webLatencyMoments=["first-response","tool-result"]'
 ```

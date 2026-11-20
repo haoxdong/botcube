@@ -12,7 +12,7 @@ corepack pnpm --dir infra/ecs/cdk test --runInBand
 Synthesize the template's foundation stacks from that same directory:
 
 ```sh
-CARTRIDGE_DEPLOY_ROOT="$PWD/templates/always-on/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
+BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
   corepack pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
   -c 'webLatencyMoments=["first-response","tool-result"]'
 ```

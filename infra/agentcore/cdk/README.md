@@ -21,7 +21,7 @@ This CDK project is managed by the AgentCore CLI. It deploys your agent infrastr
 From the public repository root, select your Cartridge deploy directory and build the CDK package:
 
 ```bash
-export CARTRIDGE_DEPLOY_ROOT="$PWD/templates/always-on/deploy"
+export BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy"
 corepack pnpm --dir infra/agentcore/cdk run build
 corepack pnpm --dir infra/agentcore/cdk exec cdk synth
 corepack pnpm --dir infra/agentcore/cdk exec cdk diff

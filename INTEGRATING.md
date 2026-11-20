@@ -34,7 +34,7 @@ corepack pnpm test:chat --reporter=verbose
 
 `pnpm test:chat` runs generic Chat Service unit tests and the neutral HTTP smoke check. `pnpm test:chat:unit` runs only the generic unit tests. The pretest hook prepares the template Python environment, Chat Service bundle, and staged tools. The container startup and smoke commands above verify the complete local application separately.
 
-Run each CDK package's build and tests from its directory. Set `CARTRIDGE_DEPLOY_ROOT` to your Cartridge's deploy directory for composition and synthesis. The template's deployment settings are placeholders; replace them before using your AWS account.
+Run each CDK package's build and tests from its directory. Set `BOTCUBE_DEPLOY_ROOT` to your Cartridge's deploy directory for composition and synthesis. The template's deployment settings are placeholders; replace them before using your AWS account.
 
 ## Build production artifacts
 
@@ -110,7 +110,7 @@ Your [tool staging hook](templates/always-on/deploy/stage-tools.sh) prepares you
 1. Copy `templates/always-on/` into your application and rename its Python, Chat, and UI packages. Keep its local echo model until the three pieces work together.
 2. Set your account, region, names, and domains in [deploy/identity.json](templates/always-on/deploy/identity.json). Set the same account and region in [agentcore/aws-targets.json](templates/always-on/deploy/agentcore/aws-targets.json).
 3. Set the runtime, memory, and artifact inputs in [agentcore/agentcore.json](templates/always-on/deploy/agentcore/agentcore.json). Configure your Cartridge's model and tool policy before enabling a real model.
-4. Build the generic AgentCore CDK package and load your deploy directory with `CARTRIDGE_DEPLOY_ROOT`. An AWS target that disagrees with `identity.json` fails before synthesis.
+4. Build the generic AgentCore CDK package and load your deploy directory with `BOTCUBE_DEPLOY_ROOT`. An AWS target that disagrees with `identity.json` fails before synthesis.
 5. Compose the CDK stacks in your application. Pass existing resources through the props in the reference below. Imported resources remain your application's responsibility, including trust policies, network routing, and access grants.
 6. Synthesize with your overrides, inspect the templates, and compare with your deployed stack before your organization's deployment process runs. See [AgentCore CDK commands](infra/agentcore/cdk/README.md) and [ECS CDK commands](infra/ecs/cdk/README.md).
 7. Set the Chat Service's Harness endpoint, signing choice, session API, storage, and origins. Build the UI with your Cartridge and its Chat Service URL. Verify a successful turn, session replay, and a rejected request.
@@ -118,7 +118,7 @@ Your [tool staging hook](templates/always-on/deploy/stage-tools.sh) prepares you
 From the root of the standalone mirror, use the pinned Corepack/pnpm workspace installation above, then run the template synth.
 
 ```bash
-export CARTRIDGE_DEPLOY_ROOT="$PWD/templates/always-on/deploy"
+export BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy"
 corepack pnpm --dir infra/agentcore/cdk build
 corepack pnpm --dir infra/agentcore/cdk cdk synth
 ```
@@ -138,7 +138,7 @@ import { loadDeployConfig } from './lib/deploy-config';
 async function main() {
   const app = new App();
   const config = await loadDeployConfig(
-    process.env.CARTRIDGE_DEPLOY_ROOT,
+    process.env.BOTCUBE_DEPLOY_ROOT,
     process.cwd()
   );
   const target = config.targets[0];
@@ -268,7 +268,7 @@ Unset options preserve the current behavior. Names below are environment variabl
 | `BOTCUBE_OPENAI_AGENT_NAME`, `--agent-name`; Sign-in `--region`                                                                                           | `BotCube Plan Usage`; SDK region                                                                             | Credential Service Sign-in                                                              |
 | `CredentialAuditRecorder(decrypt_rate_limit=, decrypt_window_seconds=)`; `sign_credential_service_invocation(ttl_seconds=)`                               | `30`, `60`; `600` seconds                                                                                    | Credential Service Python inputs                                                        |
 | `CredentialServiceSettings`; `DynamoDbCredentialVault(table, kms)`; `KmsDataKeyProvider(key_id=, region_name=)`                                           | Caller supplies service identity, headers, table, and key; SDK region                                        | Credential Service composition                                                          |
-| `CARTRIDGE_DEPLOY_ROOT`; Cartridge `identity.json`, `agentcore.json`, `aws-targets.json`                                                                  | Deploy root required; names, account, region, domains, ARNs, and build inputs come from the Cartridge        | `infra/agentcore/cdk/lib/deploy-config.ts`                                              |
+| `BOTCUBE_DEPLOY_ROOT`; Cartridge `identity.json`, `agentcore.json`, `aws-targets.json`                                                                    | Deploy root required; names, account, region, domains, ARNs, and build inputs come from the Cartridge        | `infra/agentcore/cdk/lib/deploy-config.ts`                                              |
 | `executionRole`, `vpc`, `subnets`, `securityGroups`, `kmsKey`, `permissionsBoundary`                                                                      | Role generated, public runtime or configured network, no Memory KMS key, no boundary                         | `AgentCoreStackProps`; `addAgentCoreStacks` overrides                                   |
 | `executionRole`, `vpc`, `publicSubnets`, `privateSubnets`, `kmsKey`, `permissionsBoundary`                                                                | Execution role and Vault key generated, identity-based VPC and subnets, no boundary                          | `ProductionOptions`                                                                     |
 | `chatTableName`, `turnSummaryModel`                                                                                                                       | `chat`, `anthropic.claude-haiku-4-5-20251001-v1:0`                                                           | `ProductionOptions`                                                                     |
