@@ -18,11 +18,14 @@
   overflow: hidden;
 }
 
-.step-popup-backdrop {
+/* The stock dialog overlay has no class prop; these undo its tint, blur and isolation. */
+[data-slot="dialog-overlay"]:has(~ .step-popup) {
   position: fixed;
   inset: 0;
   z-index: 500;
   background: var(--scrim);
+  backdrop-filter: none;
+  isolation: auto;
   transition: opacity var(--motion-quick) var(--ease);
 }
 
@@ -41,15 +44,19 @@
   border-radius: var(--radius-xl);
   background: var(--color-white);
   box-shadow: var(--shadow-float);
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
   outline: 0;
+  translate: none;
   transform: translate(-50%, -50%);
   transition:
     opacity var(--motion-quick) var(--ease),
     transform var(--motion-move) var(--ease);
 }
 
-.step-popup-backdrop[data-starting-style],
-.step-popup-backdrop[data-ending-style] {
+[data-slot="dialog-overlay"]:has(~ .step-popup)[data-starting-style],
+[data-slot="dialog-overlay"]:has(~ .step-popup)[data-ending-style] {
   opacity: 0;
 }
 
@@ -57,6 +64,10 @@
 .step-popup[data-ending-style] {
   opacity: 0;
   transform: translate(-50%, -50%) scale(0.96);
+}
+
+.step-popup .sheet-title {
+  line-height: inherit;
 }
 
 .step-section {

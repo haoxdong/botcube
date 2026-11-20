@@ -4,11 +4,11 @@ import { Swap, Presence, presenceMotion } from "./collapse";
 
 import { m as motionElement } from "motion/react";
 
-import { Dialog } from "@base-ui/react/dialog";
 import type { HighlightResult } from "@streamdown/code";
 import { CheckIcon, CopyIcon, X } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "../components/ui/dialog";
 import { Sheet } from "../components/ui/sheet";
 import { CodeWords } from "./code-words";
 import KeptMarkdown from "./kept-markdown";
@@ -57,20 +57,17 @@ export function StepSheet(props: StepSheetProps) {
     return <Sheet open={open} onClose={onClose} title={title} container={null} snapPoints={SNAP_POINTS} className="step-sheet">{body}</Sheet>;
   }
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="step-popup-backdrop" />
-        <Dialog.Popup className="step-popup">
-          <div className="sheet-head">
-            <Dialog.Close className="header-btn sheet-close" aria-label="Close">
-              <X size={20} aria-hidden />
-            </Dialog.Close>
-            <Dialog.Title className="sheet-title">{title}</Dialog.Title>
-          </div>
-          {body}
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent className="step-popup" showCloseButton={false}>
+        <div className="sheet-head">
+          <DialogClose className="header-btn sheet-close" aria-label="Close">
+            <X size={20} aria-hidden />
+          </DialogClose>
+          <DialogTitle className="sheet-title">{title}</DialogTitle>
+        </div>
+        {body}
+      </DialogContent>
+    </Dialog>
   );
 }
 
