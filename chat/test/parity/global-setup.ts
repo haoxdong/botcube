@@ -27,7 +27,7 @@ export default async function setup(project: TestProject) {
     });
     return `node ${entry}`;
   };
-  const [parity, fakeSite] = await Promise.all([bundle('../../src/main.ts'), bundle('./fake-site-service.ts')]);
+  const [parity, fakeSite] = await Promise.all([bundle('./chat-service.ts'), bundle('./fake-site-service.ts')]);
   project.provide('parityServiceCommand', parity);
   project.provide('fakeSiteServiceCommand', fakeSite);
   const stop = await setupMoto(project);

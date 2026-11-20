@@ -9,7 +9,7 @@ import type { AccountFiles, FilesRecords } from './files-shared.js';
 
 export type { AccountFiles, FileEntry, FilesMount, FilesRecords } from './files-shared.js';
 
-const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_EFS_ROOT', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN', 'BOTCUBE_FILES_MOUNT_TARGET_IP'] as const;
+const EFS_SETTINGS = ['BOTCUBE_FILES_EFS_ARN', 'BOTCUBE_FILES_SIGNING_KEY', 'BOTCUBE_FILES_MOUNT_ROLE_ARN', 'BOTCUBE_FILES_MOUNT_TARGET_IP'] as const;
 
 /** The operator's file system and the access points Users lease from it (ADR 0091), as the Deployment Config supplies them. */
 export type SuppliedFiles = NonNullable<NonNullable<DeploymentConfig['supplied']>['files']>;
@@ -28,14 +28,14 @@ const mountTargetOf = ({ fileSystemId }: SuppliedFiles, fileSystemArn: string) =
   return (await lookup(`${fileSystemId}.efs.${region}.amazonaws.com`, { family: 4 })).address;
 };
 
-function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, supplied?: SuppliedFiles): AccountFiles {
+function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, root: string, supplied?: SuppliedFiles): AccountFiles {
   const required = supplied ? EFS_SETTINGS.filter((name) => name !== 'BOTCUBE_FILES_MOUNT_TARGET_IP') : EFS_SETTINGS;
   const missing = required.filter((name) => !env[name]?.trim());
   if (missing.length > 0) throw new HttpError(503, `Files on EFS are not configured: ${missing.join(', ')} required`);
   const setting = (name: (typeof EFS_SETTINGS)[number]) => env[name]?.trim() ?? '';
   const fileSystemArn = setting('BOTCUBE_FILES_EFS_ARN');
   return accountFilesEfs({
-    root: setting('BOTCUBE_FILES_EFS_ROOT'),
+    root,
     mountTargetIp: supplied ? mountTargetOf(supplied, fileSystemArn) : () => Promise.resolve(setting('BOTCUBE_FILES_MOUNT_TARGET_IP')),
     fileSystemArn,
     accessPoints: supplied ? suppliedAccessPoints(supplied, fileSystemArn, records) : env.BOTCUBE_FILES_POOL_MANIFEST !== undefined
@@ -51,7 +51,7 @@ function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, su
 
 export const filesConfigured = (env: NodeJS.ProcessEnv) => EFS_SETTINGS.some((name) => env[name]?.trim());
 
-export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, supplied?: SuppliedFiles): () => AccountFiles {
+export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, supplied?: SuppliedFiles, root = '/mnt/files-efs'): () => AccountFiles {
   let files: AccountFiles | undefined;
-  return () => files ??= efsFilesFromEnv(env, records, supplied);
+  return () => files ??= efsFilesFromEnv(env, records, root, supplied);
 }

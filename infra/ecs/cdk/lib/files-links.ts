@@ -70,7 +70,6 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
     chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_TARGET_IP', target.attrIpAddress);
   }
   chat.container.addEnvironment('BOTCUBE_FILES_EFS_ARN', storage.filesEfs.attrArn);
-  chat.container.addEnvironment('BOTCUBE_FILES_EFS_ROOT', '/mnt/files-efs');
   chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_ROLE_ARN', mount.roleArn);
   // CDK Secret's `T | undefined` getters conflict with ISecret's optional properties under exactOptionalPropertyTypes.
   chat.container.addSecret('BOTCUBE_FILES_SIGNING_KEY', ContainerSecret.fromSecretsManager(key as ISecret));

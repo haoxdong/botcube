@@ -48,7 +48,6 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
       Environment: Match.arrayWith([
         { Name: 'BOTCUBE_FILES_MOUNT_TARGET_IP', Value: { 'Fn::GetAtt': ['FilesEfsMountTarget0', 'IpAddress'] } },
         { Name: 'BOTCUBE_FILES_EFS_ARN', Value: Match.anyValue() },
-        { Name: 'BOTCUBE_FILES_EFS_ROOT', Value: '/mnt/files-efs' },
         { Name: 'BOTCUBE_FILES_MOUNT_ROLE_ARN', Value: Match.anyValue() },
       ]),
       Secrets: Match.arrayWith([{ Name: 'BOTCUBE_FILES_SIGNING_KEY', ValueFrom: Match.anyValue() }]),
@@ -57,6 +56,7 @@ test.each([false, true])('Chat mounts the accounts access point with IAM and TLS
   const tasks = template.findResources('AWS::ECS::TaskDefinition');
   expect(JSON.stringify(tasks)).not.toContain('BOTCUBE_FILES_STORE');
   expect(JSON.stringify(tasks)).not.toContain('BOTCUBE_FILES_LINKS_URL');
+  expect(JSON.stringify(tasks)).not.toContain('BOTCUBE_FILES_EFS_ROOT');
   const targets = Object.keys(template.findResources('AWS::EFS::MountTarget'));
   template.hasResource('AWS::ECS::Service', { DependsOn: Match.arrayWith([accounts, ...targets]) });
   template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {

@@ -81,7 +81,7 @@ export async function startStack(options: StackOptions = {}) {
     await rm(home, { recursive: true, force: true });
   };
   const startService = () => startOnFreePort((port) => ({
-    command: inject('parityServiceCommand'), env: { ...env, PORT: String(port) },
+    command: `${inject('parityServiceCommand')} ${JSON.stringify(files.root)}`, env: { ...env, PORT: String(port) },
     url: `http://127.0.0.1:${port}/`, listening: `Chat Service listening on :${port}`,
   }));
   const service = await startService().catch(async (error: unknown) => {

@@ -16,13 +16,12 @@ it('serves persisted EFS files without a store selector or S3 configuration', as
     await writeFile(path.join(directory, 'reopened.txt'), 'persisted');
     const env = {
       BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
-      BOTCUBE_FILES_EFS_ROOT: root,
       BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
       BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
     };
     expect(filesConfigured(env)).toBe(true);
-    const files = accountFilesFromEnv(env, () => new AccountResources('chat', memoryDocuments()))();
+    const files = accountFilesFromEnv(env, () => new AccountResources('chat', memoryDocuments()), undefined, root)();
     expect(await files.list(account)).toEqual([{ name: 'reopened.txt', size: 9, lastModified: expect.any(String) }]);
     expect(await files.downloadUrl(account, 'reopened.txt')).toMatch(/^\/files\/link\?t=/);
     await expect(files.downloadUrl('acct_other', 'reopened.txt')).rejects.toMatchObject({ status: 404 });
@@ -39,7 +38,6 @@ it("leases a User's access point from the supplied pool on first use, and names 
     const store = new AccountResources('chat', documents);
     const env = {
       BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
-      BOTCUBE_FILES_EFS_ROOT: root,
       BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
     };
@@ -47,7 +45,7 @@ it("leases a User's access point from the supplied pool on first use, and names 
       fileSystemId: 'fs-0abc', kmsKey: 'arn:aws:kms:us-east-1:123456789012:key/files', accountsAccessPointId: 'fsap-0acc',
       accessPoints: [{ accessPointId: 'fsap-0a1', rootDirectory: '/accounts/00000000000000000000000000000001' }],
     };
-    const files = accountFilesFromEnv(env, () => store, supplied)();
+    const files = accountFilesFromEnv(env, () => store, supplied, root)();
 
     await files.uploadUrl('acct_a', 'first.txt');
     expect(await store.filesAccessPoint('acct_a')).toBe('arn:aws:elasticfilesystem:us-east-1:123456789012:access-point/fsap-0a1');

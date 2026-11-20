@@ -122,6 +122,7 @@ export interface StockOptions {
   agentComputer?: (computer: ReturnType<typeof localAgentComputer>) => ReturnType<typeof localAgentComputer>;
   /** Hooks a test or acceptance check replaces on BotCube's own Chat, or a function of that Chat answering them. */
   overrides?: StockOverrides | ((chat: StockChat) => StockOverrides);
+  filesRoot?: string | undefined;
 }
 
 /** BotCube's own Chat Service, composed from the Deployment Config and the bot settings it names (ADR 0091). */
@@ -134,7 +135,7 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
   const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies }) : null;
-  const files = accountFilesFromEnv(env, store, config.supplied?.files);
+  const files = accountFilesFromEnv(env, store, config.supplied?.files, options.filesRoot);
   const started = agentComputerStartedFromEnv(env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.

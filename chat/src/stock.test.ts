@@ -515,7 +515,6 @@ const GUEST_START = new Date('2026-11-01T12:00:00Z');
 /** EFS Files over a local directory, as the Chat Service's own Files tests mount it. */
 const efsFiles = () => ({
   BOTCUBE_FILES_EFS_ARN: 'arn:aws:elasticfilesystem:us-east-1:123456789012:file-system/fs-0abc',
-  BOTCUBE_FILES_EFS_ROOT: mkdtempSync(join(tmpdir(), 'stock-files-')),
   BOTCUBE_FILES_SIGNING_KEY: 'k'.repeat(64),
   BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
   BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12',
@@ -562,6 +561,7 @@ describe("the stock Chat Service's account deletion", () => {
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
       ...efsFiles(),
     };
+    const filesRoot = mkdtempSync(join(tmpdir(), 'stock-files-'));
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
     const testUser = async (accountId: string) => {
       const token = `test_${accountId}`;
@@ -570,7 +570,7 @@ describe("the stock Chat Service's account deletion", () => {
       await documents.send(new PutCommand({ TableName: table, Item: { pk: `TOKEN#${token}`, sk: 'META',
         record: { accountId, kind: 'test-user', createdAt: 1, expiresAt: Math.floor(Date.now() / 1000) + 600 } } }));
       vault.add(accountId);
-      const directory = join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf(accountId)));
+      const directory = join(filesRoot, basename(directoryOf(accountId)));
       mkdirSync(directory);
       writeFileSync(join(directory, 'kept.txt'), 'kept');
       return token;
@@ -579,7 +579,7 @@ describe("the stock Chat Service's account deletion", () => {
     const refused = await testUser('acct_stock_delete_refused');
     refusing.add('acct_stock_delete_refused');
     const store = stockAccountStore(env);
-    const server = serveChatService(env);
+    const server = serveChatService(env, { filesRoot });
     try {
       await once(server, 'listening');
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -588,13 +588,13 @@ describe("the stock Chat Service's account deletion", () => {
       expect((await deleteTestUser(deleted)).status).toBe(204);
       expect(vault.has('acct_stock_delete_revoked')).toBe(false);
       expect(await store.loadAccount('acct_stock_delete_revoked')).toBeNull();
-      expect(existsSync(join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_delete_revoked'))))).toBe(false);
+      expect(existsSync(join(filesRoot, basename(directoryOf('acct_stock_delete_revoked'))))).toBe(false);
 
       const failed = await deleteTestUser(refused);
       expect([failed.status, await failed.json()]).toEqual([503, { detail: 'Credential Service account revoke failed with HTTP 500' }]);
       expect(vault.has('acct_stock_delete_refused')).toBe(true);
       expect(await store.operatorTestUser(refused)).toMatchObject({ accountId: 'acct_stock_delete_refused', status: 'test' });
-      expect(existsSync(join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_delete_refused')), 'kept.txt'))).toBe(true);
+      expect(existsSync(join(filesRoot, basename(directoryOf('acct_stock_delete_refused')), 'kept.txt'))).toBe(true);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       vi.unstubAllEnvs();
@@ -697,13 +697,14 @@ describe("the stock Chat Service's account deletion", () => {
     await createChatTable(endpoint, table);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const env = { PORT: '0', AWS_REGION: 'us-east-1', BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, ...efsFiles() };
-    const retired = join(env.BOTCUBE_FILES_EFS_ROOT, basename(directoryOf('acct_stock_files_retired')));
+    const filesRoot = mkdtempSync(join(tmpdir(), 'stock-files-'));
+    const retired = join(filesRoot, basename(directoryOf('acct_stock_files_retired')));
     mkdirSync(retired);
     writeFileSync(join(retired, 'left.txt'), 'left');
     const store = stockAccountStore(env);
     // Its last Files credential ran out two days ago, past the grace day.
     await store.retireFiles('acct_stock_files_retired', null, Date.now() - 2 * DAY_MS);
-    const server = serveChatService(env);
+    const server = serveChatService(env, { filesRoot });
     try {
       await once(server, 'listening');
       await vi.waitFor(async () => expect([existsSync(retired), await store.pendingFilesCleanup()]).toEqual([false, []]));

@@ -29,7 +29,7 @@ export class FakeEfs extends HttpFake {
 
   get environment(): NodeJS.ProcessEnv {
     return {
-      BOTCUBE_FILES_EFS_ARN: FILE_SYSTEM_ARN, BOTCUBE_FILES_EFS_ROOT: this.root,
+      BOTCUBE_FILES_EFS_ARN: FILE_SYSTEM_ARN,
       BOTCUBE_FILES_SIGNING_KEY: this.key,
       BOTCUBE_FILES_MOUNT_ROLE_ARN: 'arn:aws:iam::123456789012:role/files-mount',
       BOTCUBE_FILES_MOUNT_TARGET_IP: '192.0.2.12', AWS_ENDPOINT_URL_EFS: this.url,
