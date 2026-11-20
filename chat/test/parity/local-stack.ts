@@ -139,6 +139,7 @@ export async function startLocalStack(options: {
           PATH: process.env.PATH,
           HOME: home,
           BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
+          ...egress?.credentialEnvironment,
           BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
           ...modelsEnv.credentialService,
         },
@@ -217,12 +218,13 @@ interface EgressStandIns {
   readonly offline: Pick<DeploymentConfig, 'proxy' | 'telemetry'>;
   readonly environment: Record<string, string>;
   readonly chatEnvironment: Record<string, string>;
+  readonly credentialEnvironment: Record<string, string>;
 }
 
 /**
  * The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
  * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the standard variables the deploy
- * sets beside the Deployment Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service and the Harness
+ * sets beside the Deployment Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service, the Harness and the Credential Service
  * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
  */
 async function egressStandIns(config: DeploymentConfig | undefined, home: string): Promise<EgressStandIns | undefined> {
@@ -253,6 +255,7 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     offline,
     environment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness }),
     chatEnvironment: standardVariables({ ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService }),
+    credentialEnvironment: standardVariables(proxyEnvironment(offline, { relayPort: await freePort() })),
   };
 }
 
