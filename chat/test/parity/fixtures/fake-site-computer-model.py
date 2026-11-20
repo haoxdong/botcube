@@ -1,3 +1,4 @@
+"""The Harness serving the fake site's definition with a scripted model that drives the computer's browser to the fake site."""
 from __future__ import annotations
 
 import json
@@ -6,6 +7,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import Any
 
+from fake_site_harness import FAKE_SITE_DEFINITION
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessageChunk,
@@ -16,14 +18,14 @@ from langchain_core.messages import (
 from langchain_core.messages.tool import tool_call_chunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 
-from botcube_always_on.harness import CARTRIDGE, InvocationAuth
 from botcube_harness_deepagents import serving
+from botcube_harness_deepagents.definition import InvocationAuth
 
 _environment: dict[str, str] = {}
 
 
 def prepare_invocation(input_data: Any) -> InvocationAuth:
-    auth = CARTRIDGE.prepare_invocation(input_data)
+    auth = FAKE_SITE_DEFINITION.prepare_invocation(input_data)
     _environment.clear()
     _environment.update(auth.environment or {})
     _environment['AGENT_BROWSER_CDP'] = input_data.forwarded_props['agentComputerCdpUrl']
@@ -33,7 +35,7 @@ def prepare_invocation(input_data: Any) -> InvocationAuth:
 class ComputerModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
-        return 'template-computer-test'
+        return 'fake-site-computer-test'
 
     def _generate(self, *_args: Any, **_kwargs: Any) -> ChatResult:
         raise AssertionError('The Harness must stream')
@@ -45,7 +47,7 @@ class ComputerModel(BaseChatModel):
         request = next(message.content for message in reversed(messages) if isinstance(message, HumanMessage))
         private_value = {
             'Report the private CDP URL.': 'AGENT_BROWSER_CDP',
-            'Report the private site invocation.': 'TEMPLATE_CREDENTIAL_INVOCATION',
+            'Report the private site invocation.': 'FAKE_SITE_CREDENTIAL_INVOCATION',
         }.get(str(request))
         if private_value:
             yield ChatGenerationChunk(message=AIMessageChunk(content=_environment[private_value]))
@@ -54,11 +56,11 @@ class ComputerModel(BaseChatModel):
         if not results:
             paths = re.findall(r'(/skills/[^\s<>`\"]+/SKILL\.md)', str(messages[0].content))
             if len(set(paths)) != 1:
-                raise AssertionError('Expected one packaged template skill')
+                raise AssertionError('Expected one fake site skill')
             name, arguments = 'read_file', {'file_path': paths[0]}
         elif len(results) == 1:
             if 'agent-browser get url' not in str(results[0].content):
-                raise AssertionError('The packaged skill does not expose the browser tool')
+                raise AssertionError('The fake site skill does not expose the browser tool')
             name, arguments = 'execute', {'command': 'agent-browser get url'}
         elif len(results) == 2:
             url = str(results[-1].content).strip().splitlines()[0]
@@ -70,7 +72,7 @@ class ComputerModel(BaseChatModel):
         else:
             url = str(results[1].content).strip().splitlines()[0]
             heading = str(results[-1].content).strip().splitlines()[0]
-            if heading != 'Template site':
+            if heading != 'Fake site':
                 raise AssertionError(f'The actual browser tool read an unexpected heading: {heading}')
             yield ChatGenerationChunk(message=AIMessageChunk(content=f'Computer opened {url}\nHeading: {heading}'))
             return
@@ -82,6 +84,6 @@ def build_model(**_kwargs: Any) -> ComputerModel:
     return ComputerModel()
 
 
-serving.configure_harness_definition(replace(CARTRIDGE, prepare_invocation=prepare_invocation))
+serving.configure_harness_definition(replace(FAKE_SITE_DEFINITION, prepare_invocation=prepare_invocation))
 serving.build_model = build_model
 serving.main()

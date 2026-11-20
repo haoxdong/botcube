@@ -13,7 +13,7 @@
     "build:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
     "test:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
     "screenshots:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
-    "pretest:chat": "sh -c 'uv sync --directory harness/deepagents --frozen --quiet && uv sync --directory templates/always-on --frozen --quiet && pnpm --filter botcube-chat build && templates/always-on/deploy/stage-tools.sh'",
+    "pretest:chat": "sh -c 'uv sync --directory harness/deepagents --frozen --quiet && uv sync --directory credential-service --frozen --quiet && pnpm --filter botcube-chat build'",
     "pretest:chat:unit": "sh -c 'uv sync --directory harness/deepagents --frozen --quiet'",
     "storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=templates/always-on/ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
   },

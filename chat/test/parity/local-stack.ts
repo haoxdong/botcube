@@ -21,14 +21,19 @@ import type { DeploymentConfig } from '../../../deployment-config/schema.js';
 export const PUBLIC_ORIGIN = 'https://chat.example.test';
 
 /**
- * The template Python environment: it holds the Harness (and, for now, the template Harness half).
- * The services start from their console scripts' entry points, as the Harness image does, so
- * each module runs under its own name rather than as `__main__`.
+ * The Harness's Python environment. The Harness and its session API start from their console scripts' entry points,
+ * as the Harness image does, so each module runs under its own name rather than as `__main__`.
  */
-const BIN = fileURLToPath(new URL('../../../templates/always-on/.venv/bin', import.meta.url));
+export const HARNESS_BIN = fileURLToPath(new URL('../../../harness/deepagents/.venv/bin', import.meta.url));
+
+/** The Credential Service's own Python environment, for the fixtures that compose a Credential Service. */
+export const CREDENTIAL_SERVICE_BIN = fileURLToPath(new URL('../../../credential-service/.venv/bin', import.meta.url));
+
+/** The parity fixtures, run by path: the fake site, its CLI, its Credential Service provider and its Harness definition. */
+export const FIXTURES = fileURLToPath(new URL('fixtures', import.meta.url));
 
 const HARNESS_COMMAND =
-  `${BIN}/python -c "from botcube_harness_deepagents import llm, serving; ` +
+  `${HARNESS_BIN}/python -c "from botcube_harness_deepagents import llm, serving; ` +
   `llm.AVAILABLE_MODELS.update(dict.fromkeys(llm.AVAILABLE_MODELS, 'echo')); serving.main()"`;
 
 const EXAMPLE_BOT = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
@@ -126,7 +131,7 @@ export async function startLocalStack(options: {
     };
     const credentialService = modelsEnv && {
       BOTCUBE_CREDENTIAL_SERVICE_URL: await start(
-        `${BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
+        `${CREDENTIAL_SERVICE_BIN}/python ${fileURLToPath(new URL('models-credential-service.py', import.meta.url))}`,
         { PATH: process.env.PATH, HOME: home, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET, ...modelsEnv.credentialService },
         '/health',
         'Uvicorn running on http://127.0.0.1:',
@@ -140,7 +145,7 @@ export async function startLocalStack(options: {
         harnessOptions = { command: options.harnessCommand ?? HARNESS_COMMAND, env: { ...pythonEnv, PORT: String(port) }, url: `http://127.0.0.1:${port}/ping`, listening: `Uvicorn running on http://0.0.0.0:${port}` };
         return harnessOptions;
       }).then((running) => { harnessProcess = running; processes.push(running); return new URL(running.url).origin; }),
-      start(`${BIN}/botcube-session-api`, pythonEnv, '/ping', 'Uvicorn running on http://0.0.0.0:'),
+      start(`${HARNESS_BIN}/botcube-session-api`, pythonEnv, '/ping', 'Uvicorn running on http://0.0.0.0:'),
     ]);
     if (harnessAuth.kind === 'jwt-bearer') authorizer = await new FakeJwtAuthorizer(harness, harnessAuth.clients.map(({ clientId }) => clientId)).listen();
     const harnessUrl = authorizer?.url ?? harness;

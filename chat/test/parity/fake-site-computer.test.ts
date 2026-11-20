@@ -1,18 +1,23 @@
 import { afterEach, expect, it, vi, inject } from 'vitest';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
-import { startLocalStack, type LocalStack } from './local-stack.js';
+import { HttpFake } from '../fakes/http-fake.js';
+import { FIXTURES, HARNESS_BIN, startLocalStack, type LocalStack } from './local-stack.js';
 import { frameData, sseFrames } from './browser.js';
 import { testChromiumPath } from '../chromium.js';
 
 let site: RunningProcess | undefined;
 let stack: LocalStack | undefined;
 let temporaryRoot: string | undefined;
+let credentialService: HttpFake | undefined;
 afterEach(async () => {
   await stack?.stop();
   await site?.stop();
+  await credentialService?.close();
+  credentialService = undefined;
   vi.unstubAllEnvs();
   if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true });
   temporaryRoot = undefined;
@@ -24,17 +29,16 @@ it(
   'opens the actual browser event on a default Echo Turn without a model-generated Session marker',
   { timeout: 120_000 },
   async () => {
-    const bin = resolve('templates/always-on/.venv/bin');
     site = await startOnFreePort((port) => ({
-      command: `${bin}/template-site`,
+      command: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site.py')}`,
       env: { PORT: String(port) },
       url: `http://127.0.0.1:${port}/login`,
-      listening: `Template site listening on :${port}`,
+      listening: `Fake site listening on :${port}`,
     }));
     stack = await startLocalStack({
       chatServiceCommand: inject('fakeSiteServiceCommand'),
       chatEnv: {
-        TEMPLATE_SITE_URL: new URL(site.url).origin,
+        FAKE_SITE_URL: new URL(site.url).origin,
         BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
       },
     });
@@ -49,13 +53,13 @@ it(
     expect(await unownedWarmup.json()).toEqual({ detail: 'This account does not own the Session' });
     const echoComputer = await owner.newSideChat();
     const turn = await owner.sendTurn(echoComputer, {
-      text: 'Open the template site.',
+      text: 'Open the fake site.',
     });
     const events = sseFrames(await turn.text()).map(frameData);
     expect(events.filter(({ type }) => type === 'RUN_ERROR')).toEqual([]);
     expect(
       events.find(({ type }) => type === 'TEXT_MESSAGE_CONTENT')
-    ).toMatchObject({ delta: 'Echo: Open the template site.' });
+    ).toMatchObject({ delta: 'Echo: Open the fake site.' });
     const state = (await (
       await owner.get(`/agent-computer?thread_id=${echoComputer}`)
     ).json()) as { state: string; browserSessionId: string };
@@ -84,36 +88,42 @@ it(
 );
 
 it(
-  'warms the template computer and hands the Harness a working CDP URL for the fake site',
+  'warms the computer and hands the Harness a working CDP URL for the fake site',
   { timeout: 120_000 },
   async () => {
-    temporaryRoot = await mkdtemp(`${tmpdir()}/template-computer-`);
+    temporaryRoot = await mkdtemp(`${tmpdir()}/fake-site-computer-`);
     const deepTemp = resolve(temporaryRoot, 'generated-workspace-with-a-temporary-directory-longer-than-a-unix-socket-path');
     await mkdir(deepTemp);
     vi.stubEnv('TMPDIR', deepTemp);
-    const bin = resolve('templates/always-on/.venv/bin');
     site = await startOnFreePort((port) => ({
-      command: `${bin}/template-site`,
+      command: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site.py')}`,
       env: { PORT: String(port) },
       url: `http://127.0.0.1:${port}/login`,
-      listening: `Template site listening on :${port}`,
+      listening: `Fake site listening on :${port}`,
     }));
+    // `/account/session` asks the Credential Service which Linked Accounts the account holds; this account holds none,
+    // and nothing else here may reach the Credential Service.
+    credentialService = new HttpFake((request, response) => {
+      response.writeHead(request.path === '/account/linked-accounts' ? 200 : 404, { 'content-type': 'application/json' });
+      response.end(request.path === '/account/linked-accounts' ? JSON.stringify({ linkedAccounts: [] }) : '{}');
+    });
+    await credentialService.listen();
     stack = await startLocalStack({
       chatServiceCommand: inject('fakeSiteServiceCommand'),
-      harnessCommand: `${bin}/python ${resolve('chat/test/parity/template-computer-model.py')}`,
-      harnessEnv: { PATH: `${resolve('harness/deepagents/.tool-dist/bin')}:${resolve('chat/node_modules/.bin')}:${process.env.PATH ?? ''}` },
+      harnessCommand: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site-computer-model.py')}`,
+      harnessEnv: { PATH: `${fileURLToPath(new URL('../../node_modules/.bin', import.meta.url))}:${process.env.PATH ?? ''}` },
       chatEnv: {
-        TEMPLATE_SITE_URL: new URL(site.url).origin,
+        FAKE_SITE_URL: new URL(site.url).origin,
         BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
-        BOTCUBE_CREDENTIAL_SERVICE_URL: 'http://credential-service.invalid',
-        BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'template-computer-fixture-secret',
+        BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
+        BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'fake-site-computer-fixture-secret',
       },
     });
     const browser = stack.browser();
     const owner = await browser.openAccountSession();
     const computerSession = await browser.newSideChat();
     const turn = await browser.sendTurn(computerSession, {
-      text: 'Open the template site.',
+      text: 'Open the fake site.',
     });
     expect(turn.status).toBe(200);
     const events = sseFrames(await turn.text()).map(frameData);
@@ -126,7 +136,7 @@ it(
     expect(
       events.find(({ type }) => type === 'TEXT_MESSAGE_CONTENT')
     ).toMatchObject({
-      delta: expect.stringContaining('Heading: Template site'),
+      delta: expect.stringContaining('Heading: Fake site'),
     });
     const response = await browser.get(
       `/agent-computer?thread_id=${computerSession}`
@@ -173,13 +183,13 @@ it(
     const otherWarmup = await other.post('/warmup', { threadId: computerSession });
     expect(otherWarmup.status).toBe(404);
     expect(await otherWarmup.json()).toEqual({ detail: 'This account does not own the Session' });
-    const foreign = await other.sendTurn(computerSession, { text: 'Open the template site.' });
+    const foreign = await other.sendTurn(computerSession, { text: 'Open the fake site.' });
     expect(foreign.status).toBe(404);
     expect(await foreign.json()).toEqual({ detail: 'Session not found' });
-    const independent = await other.sendTurn(await other.newSideChat(), { text: 'Open the template site.' });
+    const independent = await other.sendTurn(await other.newSideChat(), { text: 'Open the fake site.' });
     const independentEvents = sseFrames(await independent.text()).map(frameData);
     expect(independentEvents.filter(({ type }) => type === 'RUN_ERROR')).toEqual([]);
-    expect(independentEvents.find(({ type }) => type === 'TEXT_MESSAGE_CONTENT')).toMatchObject({ delta: expect.stringContaining('Heading: Template site') });
+    expect(independentEvents.find(({ type }) => type === 'TEXT_MESSAGE_CONTENT')).toMatchObject({ delta: expect.stringContaining('Heading: Fake site') });
     expect(site.output()).toContain('GET /login HTTP/1.1" 200');
     const expectWithheld = async (text: string) => {
       const withheld = await browser.sendTurn(computerSession, { text });
