@@ -1,7 +1,7 @@
 // The design system is locked (DESIGN.md): ten colours, four sizes, two weights, two line-heights, six radii, two
 // shadows, two durations, one curve, one loop and seven spacing steps. These checks find what strays from it; each
 // UI's own test runs them over its stylesheets and components.
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import postcss from 'postcss';
 
@@ -102,8 +102,11 @@ export function offences(rules: string, tokens: string[]) {
 const filesIn = (root: string, name: RegExp) => readdirSync(root, { recursive: true, encoding: 'utf8' }).filter((file) => name.test(file));
 
 const STOCK_DIRECTORY = path.join(import.meta.dirname, '../components/ui/');
+// The public mirror publishes no internal/ (scripts/mirror/mirror-test-data.mjs), so there every components/ui file counts as stock;
+// private CI, which has the register, still checks the edited ones.
+const UI_EXCEPTIONS = path.join(import.meta.dirname, '../../../../internal/ui-exceptions.json');
 const MODIFIED_STOCK = new Set(
-  (JSON.parse(readFileSync(path.join(import.meta.dirname, '../../../../internal/ui-exceptions.json'), 'utf8')) as { file: string; pattern: string }[])
+  (existsSync(UI_EXCEPTIONS) ? (JSON.parse(readFileSync(UI_EXCEPTIONS, 'utf8')) as { file: string; pattern: string }[]) : [])
     .filter((entry) => entry.pattern === 'stock component diff')
     .map((entry) => path.join(import.meta.dirname, '../../../../..', entry.file)),
 );
