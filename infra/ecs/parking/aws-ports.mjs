@@ -13,7 +13,7 @@ const env = (/** @type {string} */ name) => {
 /** @typedef {import('./parking.mjs').Claim} Claim */
 
 export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThis.fetch } = {}) {
-  const TableName = env('CHAT_TABLE');
+  const TableName = env('BOTCUBE_CHAT_TABLE');
   const claimKey = (/** @type {string} */ kind, /** @type {string} */ day) => ({ pk: { S: PARTITION }, sk: { S: `${kind.toUpperCase()}#${day}` } });
   const lastClaim = async (/** @type {string} */ kind, /** @type {string} */ day) => {
     const { Item } = await dynamodb.send(new GetItemCommand({ TableName, Key: claimKey(kind, day), ConsistentRead: true }));
@@ -61,7 +61,7 @@ export function wakePorts({ dynamodb = new DynamoDBClient({}), fetch = globalThi
 }
 
 export function dispatcherPorts({ dynamodb = new DynamoDBClient({}), ssm = new SSMClient({}), s3 = new S3Client({}), lambda = new LambdaClient({}), fetch = globalThis.fetch } = {}) {
-  const TableName = env('CHAT_TABLE');
+  const TableName = env('BOTCUBE_CHAT_TABLE');
   const invoke = async (/** @type {object} */ event) => {
     const response = await lambda.send(new InvokeCommand({ FunctionName: env('TRANSITION_FUNCTION'), InvocationType: 'RequestResponse', Payload: Buffer.from(JSON.stringify(event)) }));
     const payload = Buffer.from(response.Payload ?? []).toString();

@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -80,12 +83,24 @@ def test_the_session_api_refuses_to_start_without_a_shared_session_record(monkey
         session_api._graph()
 
 
+@pytest.mark.integration
+def test_the_session_api_reads_its_memory_in_aws_region_the_name_lambda_sets() -> None:
+    script = ('from botcube_harness_deepagents import session_api\n'
+              'print(session_api._build_checkpointer().checkpoint_event_client.client.meta.region_name)')
+    env = {**os.environ, 'AWS_ACCESS_KEY_ID': 'test', 'AWS_SECRET_ACCESS_KEY': 'test', 'AGENTCORE_MEMORY_ID': 'memory_1-0123456789',
+           'AWS_REGION': 'eu-west-1', 'AGENTCORE_REGION': 'ap-south-1'}
+
+    result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True, check=True)
+
+    assert result.stdout.strip() == 'eu-west-1'
+
+
 def test_the_session_record_is_the_configured_agentcore_memory_in_its_region(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'test')
     monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'test')
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'us-west-2')
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', 'memory_1-0123456789')
-    monkeypatch.setattr(session_api, 'AGENTCORE_REGION', 'eu-west-1')
+    monkeypatch.setattr(session_api, 'AWS_REGION', 'eu-west-1')
 
     events = session_api._build_checkpointer().checkpoint_event_client
 
@@ -179,7 +194,7 @@ def test_session_history_reads_snapshot_chunks(
     checkpoint = empty_checkpoint()
     checkpoint['channel_values'] = {'messages': [HumanMessage('Saved question', id='saved-question')]}
     checkpoint['channel_versions'] = {'messages': '1'}
-    writer = agentcore.build_checkpointer(MEMORY_ID, region_name=session_api.AGENTCORE_REGION)
+    writer = agentcore.build_checkpointer(MEMORY_ID, region_name=session_api.AWS_REGION)
     writer.put_with_writes(
         config, checkpoint, {'source': 'loop', 'step': 1, 'parents': {}}, {'messages': '1'},
         [PendingWrite(config, [('messages', [HumanMessage(f'Pending {index}')])], f'task-{index}', '')
@@ -204,7 +219,7 @@ def test_each_get_reads_the_record_as_the_harness_left_it(agentcore_record: Fake
         model=EchoChatModel(),
         backend=None,
         skills=[],
-        checkpointer=agentcore.build_checkpointer(MEMORY_ID, region_name=session_api.AGENTCORE_REGION),
+        checkpointer=agentcore.build_checkpointer(MEMORY_ID, region_name=session_api.AWS_REGION),
     )
     config = {'configurable': {'thread_id': 'session-1', 'actor_id': 'user-1'}}
 
@@ -586,7 +601,7 @@ def _record(record_id: str, text: str, actor: str, kind: str = 'facts') -> dict[
 def memory(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> FakeAgentCoreMemory:
     fake = FakeAgentCoreMemory()
     fake.records += [_record(OWN_RECORD, 'Trades copper', 'user-1'), _record(OTHERS_RECORD, 'Trades gold', OTHER_USER)]
-    monkeypatch.setattr(session_api, 'AGENTCORE_REGION', 'eu-west-1')
+    monkeypatch.setattr(session_api, 'AWS_REGION', 'eu-west-1')
     monkeypatch.setattr(
         boto3,
         'client',

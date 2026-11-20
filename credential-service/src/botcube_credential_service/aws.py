@@ -28,7 +28,7 @@ def env_vault(table_env: str, kms_key_env: str, *, local_key_env: str | None = N
     if not table_name or not (kms_key_id or local_key):
         key = f'{kms_key_env} (or {local_key_env})' if local_key_env else kms_key_env
         raise ValueError(f'{table_env} and {key} are required together')
-    region = os.getenv('AGENTCORE_REGION') or os.getenv('AWS_REGION')
+    region = os.getenv('AWS_REGION')
     if local_key:
         return DynamoDbCredentialVault(_dynamodb(region).Table(table_name), LocalDataKeyProvider(Path(local_key)))
     import boto3

@@ -62,7 +62,7 @@ def test_compose_local_credentials_boot_link_persist_and_revoke(tmp_path: Path) 
     key = tmp_path / 'vault' / 'key'
     environment = {
         **os.environ, 'AWS_ACCESS_KEY_ID': 'local', 'AWS_SECRET_ACCESS_KEY': 'local',
-        'AWS_SESSION_TOKEN': '', 'AWS_DEFAULT_REGION': 'us-east-1', 'AGENTCORE_REGION': 'us-east-1',
+        'AWS_SESSION_TOKEN': '', 'AWS_DEFAULT_REGION': 'us-east-1', 'AWS_REGION': 'us-east-1',
         'AWS_ENDPOINT_URL_DYNAMODB': endpoint, 'BOTCUBE_VAULT_TABLE': 'credential-vault',
         'BOTCUBE_VAULT_KMS_KEY_ID': '', 'BOTCUBE_LOCAL_VAULT_KEY_FILE': str(key),
         'BOTCUBE_CREDENTIAL_INVOCATION_SECRET': 'local-secret',

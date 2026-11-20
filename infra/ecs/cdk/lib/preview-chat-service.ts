@@ -176,7 +176,7 @@ export class PreviewChatService extends Construct {
         ...props.environment,
         ...props.proxyEnvironment,
         AWS_DEFAULT_REGION: origin.region,
-        AGENTCORE_REGION: origin.region,
+        AWS_REGION: origin.region,
         ...(props.runtimeArn ? { AGENTCORE_RUNTIME_ARN: props.runtimeArn } : {}),
         BOTCUBE_SESSION_API_FUNCTION_ARN: sessionApiArn,
         AGENTCORE_BROWSER_ID: browserId,

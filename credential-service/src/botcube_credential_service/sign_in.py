@@ -91,7 +91,7 @@ class KmsSheetKey(SheetKey):
         self._key_id = key_id
         try:
             self._client: KMSClient = boto3.client(
-                'kms', region_name=os.getenv('AGENTCORE_REGION') or os.getenv('AWS_REGION'),
+                'kms', region_name=os.getenv('AWS_REGION'),
             )
         except BotoCoreError:
             raise SheetKeyUnavailable('Sign-in Sheet encryption key is unavailable') from None

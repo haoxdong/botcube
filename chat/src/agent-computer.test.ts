@@ -1322,7 +1322,7 @@ describe('the AgentCore browser of Agent Computers', () => {
   it("uses the region's control plane unless AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL sets one", async () => {
     const { requests } = agentCore({ answers: { '/browser-profiles': Response.json({ profileId: 'profile-1' }) } });
 
-    await client({ ...ENV, AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL: undefined, AGENTCORE_REGION: 'us-west-2' }).createProfile(ACCOUNT);
+    await client({ ...ENV, AWS_ENDPOINT_URL_BEDROCK_AGENTCORE_CONTROL: undefined, AWS_REGION: 'us-west-2' }).createProfile(ACCOUNT);
 
     expect(requests[0]?.url).toBe('https://bedrock-agentcore-control.us-west-2.amazonaws.com/browser-profiles');
   });

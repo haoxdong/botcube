@@ -19,7 +19,7 @@ const dynamodb = new DynamoDBClient(aws);
 
 beforeAll(async () => {
   await createChatTable(endpoint, table);
-  Object.assign(process.env, { CHAT_TABLE: table, PARK_STATE_PARAMETER: parameter, TRANSITION_FUNCTION: 'transition' });
+  Object.assign(process.env, { BOTCUBE_CHAT_TABLE: table, PARK_STATE_PARAMETER: parameter, TRANSITION_FUNCTION: 'transition' });
 });
 afterAll(() => { process.env = saved; });
 

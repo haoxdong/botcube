@@ -240,7 +240,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   credentials.container.addEnvironment(CHAT_SERVICE_ENV.planUsageOwnerAccountId, planUsageOwner);
   addModelsEndpoint(credentials, options.models, 'credentialService');
   // The product's service verifies BotCube's signed user tokens against this issuer's JWKS (ADR 0091).
-  credentials.container.addEnvironment('BOTCUBE_ISSUER', publicOrigin);
+  credentials.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
   const rawHostname = rawServiceHostname(identity);
   if (credentialConfig.publicHostname !== undefined) publishCredentialService(origin, credentials, {
     hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,

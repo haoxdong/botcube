@@ -111,9 +111,9 @@ describe.each([
 describe('the AgentCore endpoint', () => {
   it.each([
     [{}, { region: 'us-east-1', endpoint: 'https://bedrock-agentcore.us-east-1.amazonaws.com' }],
-    [{ AGENTCORE_REGION: 'eu-west-1' }, { region: 'eu-west-1', endpoint: 'https://bedrock-agentcore.eu-west-1.amazonaws.com' }],
+    [{ AWS_REGION: 'eu-west-1' }, { region: 'eu-west-1', endpoint: 'https://bedrock-agentcore.eu-west-1.amazonaws.com' }],
     [
-      { AGENTCORE_REGION: 'eu-west-1', AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://127.0.0.1:9000//' },
+      { AWS_REGION: 'eu-west-1', AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://127.0.0.1:9000//' },
       { region: 'eu-west-1', endpoint: 'http://127.0.0.1:9000' },
     ],
   ])('from %o is %o', (env, expected) => {

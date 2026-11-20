@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 AGENTCORE_MEMORY_ID = os.getenv('AGENTCORE_MEMORY_ID', '')
-AGENTCORE_REGION = os.getenv('AGENTCORE_REGION', 'us-east-1')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 
 VALID_ACTIONS = ('record', 'retrieve', 'list', 'get', 'delete')
 # A new Session reads Pending Memory at once; extraction takes 20-90 s and the record listing ~25 s more (ADR 0032 §6).

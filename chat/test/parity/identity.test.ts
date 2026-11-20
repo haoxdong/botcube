@@ -45,7 +45,7 @@ beforeAll(async () => {
   stops.push(() => stack.stop());
   product = await startOnFreePort((port) => ({
     command: `node ${PRODUCT_SERVICE}`,
-    env: { PATH: process.env.PATH, PORT: String(port), BOTCUBE_ISSUER: PUBLIC_ORIGIN, BOTCUBE_JWKS_URL: `${stack.url}/.well-known/jwks.json` },
+    env: { PATH: process.env.PATH, PORT: String(port), BOTCUBE_PUBLIC_ORIGIN: PUBLIC_ORIGIN, BOTCUBE_JWKS_URL: `${stack.url}/.well-known/jwks.json` },
     url: `http://127.0.0.1:${port}/whoami`,
     listening: `Product service listening on :${port}`,
   }));

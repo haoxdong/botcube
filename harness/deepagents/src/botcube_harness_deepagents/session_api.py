@@ -64,7 +64,7 @@ from .memory_document import (
     edit_memory_line,
     memory_lines,
 )
-from .memory_tools import AGENTCORE_MEMORY_ID, AGENTCORE_REGION
+from .memory_tools import AGENTCORE_MEMORY_ID, AWS_REGION
 from .pending_memory import record_pending_memory
 from .session_format import SessionFormatLegacyError, latest_checkpoint
 
@@ -119,7 +119,7 @@ _GRAPH: Any | None = None
 def _build_checkpointer() -> Any:
     if AGENTCORE_MEMORY_ID:
         return agentcore_memory_backend.build_checkpointer(
-            AGENTCORE_MEMORY_ID, region_name=AGENTCORE_REGION
+            AGENTCORE_MEMORY_ID, region_name=AWS_REGION
         )
     checkpoint_path = os.getenv('BOTCUBE_CHECKPOINT_PATH', '').strip()
     if checkpoint_path:
@@ -258,7 +258,7 @@ def _memory_operation(operation: str, event: Mapping[str, Any]) -> dict[str, Any
     user_id = _required(event, 'userId')
     if not AGENTCORE_MEMORY_ID:
         raise MemoryNotConfiguredError('Memory needs AgentCore Memory: set AGENTCORE_MEMORY_ID')
-    client = boto3.client('bedrock-agentcore', region_name=AGENTCORE_REGION)
+    client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
     if operation == 'memory':
         return {'lines': memory_lines(client, memory_id=AGENTCORE_MEMORY_ID, actor_id=user_id)}
     if operation == 'memory-add':

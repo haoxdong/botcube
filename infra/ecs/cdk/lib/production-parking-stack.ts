@@ -42,7 +42,7 @@ export class ProductionParkingStack extends Stack {
       code: lambda.Code.fromAsset(props.parkingPath, { exclude: ['*.test.ts'] }),
       timeout: Duration.seconds(30),
       memorySize: 256,
-      environment: { CHAT_TABLE: chatTable.tableName, HEALTH_URL: `https://${props.hostname}/health`, ...environment },
+      environment: { BOTCUBE_CHAT_TABLE: chatTable.tableName, HEALTH_URL: `https://${props.hostname}/health`, ...environment },
       logGroup: new logs.LogGroup(this, `${handler}Logs`, { logGroupName: `/aws/lambda/${name}`, retention: logs.RetentionDays.ONE_MONTH }),
     });
     const grantItems = (fn: lambda.Function, actions: string[]) => props.chatTableSupplied || fn.addToRolePolicy(new iam.PolicyStatement({

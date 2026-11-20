@@ -58,10 +58,8 @@ test('the session API is its own function beside the runtime, reading the Sessio
     Architectures: ['arm64'],
     Timeout: SESSION_API_TIMEOUT_SECONDS,
     Environment: {
-      Variables: Match.objectLike({
-        AGENTCORE_MEMORY_ID: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryId'] },
-        AGENTCORE_REGION: 'us-east-1',
-      }),
+      // Lambda sets AWS_REGION itself and reserves the name.
+      Variables: Match.exact({ AGENTCORE_MEMORY_ID: { 'Fn::GetAtt': [memoryId(synthesized), 'MemoryId'] } }),
     },
   });
   synthesized.hasResourceProperties('AWS::IAM::Role', { RoleName: IDENTITY.aws.iam.sessionApiRole });

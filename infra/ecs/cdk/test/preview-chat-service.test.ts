@@ -331,7 +331,7 @@ test('the Chat Service container serves port 8123 on Linux x86-64 with its full 
     DependsOn: [{ ContainerName: 'otel-collector', Condition: 'START' }],
     Environment: [
       { Name: 'AWS_DEFAULT_REGION', Value: 'us-east-1' },
-      { Name: 'AGENTCORE_REGION', Value: 'us-east-1' },
+      { Name: 'AWS_REGION', Value: 'us-east-1' },
       { Name: 'AGENTCORE_RUNTIME_ARN', Value: 'arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/test-runtime' },
       { Name: 'BOTCUBE_SESSION_API_FUNCTION_ARN', Value: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':lambda:us-east-1:123456789012:function:test-session-api:live']] } },
       { Name: 'AGENTCORE_BROWSER_ID', Value: 'aws.browser.v1' },

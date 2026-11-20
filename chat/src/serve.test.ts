@@ -343,11 +343,11 @@ describe('the Chat Service served from the environment', () => {
     expect(response.headers.get('access-control-allow-origin')).toBe('https://bot.example.com');
   });
 
-  it('presigns live views of the AGENTCORE_BROWSER_ID browser in AGENTCORE_REGION', async () => {
+  it('presigns live views of the AGENTCORE_BROWSER_ID browser in AWS_REGION', async () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await newTable(),
-      AGENTCORE_REGION: 'eu-west-1',
+      AWS_REGION: 'eu-west-1',
       AGENTCORE_BROWSER_ID: 'custom-browser',
     });
 
@@ -384,7 +384,7 @@ describe('the Chat Service served from the environment', () => {
     expect(sessionApi.requests.map(({ path }) => path)).toEqual(['/invocations']);
   });
 
-  it('invokes the BOTCUBE_SESSION_API_FUNCTION_ARN function in AGENTCORE_REGION, over a local session API', async () => {
+  it('invokes the BOTCUBE_SESSION_API_FUNCTION_ARN function in AWS_REGION, over a local session API', async () => {
     const lambdaCalls: string[] = [];
     const realFetch = globalThis.fetch;
     vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
@@ -398,7 +398,7 @@ describe('the Chat Service served from the environment', () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await allocatedTable('env-function'),
-      AGENTCORE_REGION: 'eu-west-1',
+      AWS_REGION: 'eu-west-1',
       AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: agentcore.url,
       BOTCUBE_SESSION_API_FUNCTION_ARN: 'arn:aws:lambda:eu-west-1:123456789012:function:session-api',

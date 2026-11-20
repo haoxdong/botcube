@@ -38,11 +38,11 @@ export interface AgentCoreRuntime {
 }
 
 /**
- * AGENTCORE_REGION and the AgentCore data-plane endpoint. AWS_ENDPOINT_URL_BEDROCK_AGENTCORE
+ * AWS_REGION and the AgentCore data-plane endpoint. AWS_ENDPOINT_URL_BEDROCK_AGENTCORE
  * overrides the regional endpoint, as the AWS SDKs honour it; the parity suite points it at a local fake.
  */
 export function agentCoreEndpointFromEnv(env: NodeJS.ProcessEnv): { region: string; endpoint: string } {
-  const region = env.AGENTCORE_REGION || 'us-east-1';
+  const region = env.AWS_REGION || 'us-east-1';
   const endpoint = env.AWS_ENDPOINT_URL_BEDROCK_AGENTCORE || `https://bedrock-agentcore.${region}.amazonaws.com`;
   return { region, endpoint: endpoint.replace(/\/+$/, '') };
 }

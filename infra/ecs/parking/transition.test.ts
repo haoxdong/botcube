@@ -8,7 +8,7 @@ import { dispatch } from './dispatcher.mjs';
 afterEach(() => vi.unstubAllEnvs());
 
 function production(refused = false) {
-  vi.stubEnv('CHAT_TABLE', 'chat');
+  vi.stubEnv('BOTCUBE_CHAT_TABLE', 'chat');
   vi.stubEnv('TRANSITION_FUNCTION', 'parking-transition');
   const requests: InvokeCommand['input'][] = [];
   const ports = dispatcherPorts({ lambda: {
@@ -41,7 +41,7 @@ it('a stack mismatch is reported as transition incomplete by the dispatcher chec
 
 
 it('the dispatcher reads transition incomplete through its AWS boundary', async () => {
-  vi.stubEnv('CHAT_TABLE', 'chat');
+  vi.stubEnv('BOTCUBE_CHAT_TABLE', 'chat');
   vi.stubEnv('PARK_STATE_PARAMETER', '/state');
   vi.stubEnv('TRANSITION_FUNCTION', 'transition');
   const ports = dispatcherPorts({

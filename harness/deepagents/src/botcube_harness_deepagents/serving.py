@@ -111,7 +111,7 @@ from .memory import inmem as inmem_memory_backend
 from .memory import local as local_memory_backend
 from .memory.agentcore import TurnIdentity, TurnIdentityError
 from .memory.agentcore.warm_session import WarmSessionSaver
-from .memory_tools import AGENTCORE_MEMORY_ID, AGENTCORE_REGION
+from .memory_tools import AGENTCORE_MEMORY_ID, AWS_REGION
 from .prompt_cache_observability import (
     PromptCacheUsageMiddleware,
     prompt_cache_turn,
@@ -812,7 +812,7 @@ async def _turn_memory(turn_identity: TurnIdentity, run_id: str) -> tuple[Any, A
     with turn_timing.phase('memory_credentials'):
         return await asyncio.to_thread(
             agentcore_memory_backend.turn_memory, AGENTCORE_MEMORY_ID, turn_identity,
-            region_name=AGENTCORE_REGION, run_id=run_id, turn=turn,
+            region_name=AWS_REGION, run_id=run_id, turn=turn,
         )
 
 
@@ -1437,11 +1437,10 @@ def _prime_snapshot() -> None:
             ))
             model = build_model(model=_SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
             asyncio.run(answer_once(model, _SNAPSHOT_ID))
-        agentcore_memory_backend.prime_memory_client(AGENTCORE_REGION)
-        region = os.environ.get('AWS_REGION') or AGENTCORE_REGION
-        aws_clients.prime(region)
+        agentcore_memory_backend.prime_memory_client(AWS_REGION)
+        aws_clients.prime(AWS_REGION)
         if AGENTCORE_MEMORY_ID:
-            agentcore_memory_backend.prime_spare(AGENTCORE_MEMORY_ID, region)
+            agentcore_memory_backend.prime_spare(AGENTCORE_MEMORY_ID, AWS_REGION)
     finally:
         _AGENTS.clear()
         _BACKENDS.clear()
@@ -1455,9 +1454,9 @@ def main() -> None:
     # Listening before any client connects: every client, and every command the agent runs, sends through it.
     start_proxy_relay_from_env()
     importlib.import_module('openai.resources.responses')
-    restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
+    restore_prime.prime_if_enabled(AWS_REGION)
     if AGENTCORE_MEMORY_ID:
-        agentcore_memory_backend.sts_client(AGENTCORE_REGION)
+        agentcore_memory_backend.sts_client(AWS_REGION)
     models_on_endpoint()
     cache_markers_on()
     if _bot is None:

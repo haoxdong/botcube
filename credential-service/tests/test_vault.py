@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 from typing import Any
 
 import boto3
@@ -28,8 +29,8 @@ def vault() -> Iterator[DynamoDbCredentialVault]:
         yield DynamoDbCredentialVault(_vault_table(), _kms())
 
 
-def _vault_table() -> Table:
-    return boto3.resource('dynamodb', region_name='us-east-1').create_table(
+def _vault_table(region: str = 'us-east-1') -> Table:
+    return boto3.resource('dynamodb', region_name=region).create_table(
         TableName='vault',
         KeySchema=[
             {'AttributeName': 'accountId', 'KeyType': 'HASH'},
@@ -132,6 +133,19 @@ def test_a_missing_table_is_a_storage_failure_not_an_absent_credential(vault: Dy
             vault.load_durable_credential('acct-1', 'site')
         else:
             vault.delete_durable_credential('acct-1', 'site')
+
+
+def test_the_environments_vault_is_in_aws_region(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from botcube_credential_service.aws import env_vault
+
+    for name, value in {'AWS_REGION': 'eu-west-1', 'AGENTCORE_REGION': 'ap-south-1', 'VAULT_TABLE': 'vault',
+                        'VAULT_KEY_FILE': str(tmp_path / 'key')}.items():
+        monkeypatch.setenv(name, value)
+    with mock_aws():
+        table = _vault_table('eu-west-1')
+        env_vault('VAULT_TABLE', 'VAULT_KMS_KEY_ID', local_key_env='VAULT_KEY_FILE').store_durable_credential('acct-1', 'site', 'secret')
+
+        assert table.get_item(Key={'accountId': 'acct-1', 'provider': 'site'}).get('Item') is not None
 
 
 class _ListSink:

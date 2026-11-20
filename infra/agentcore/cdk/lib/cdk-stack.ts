@@ -366,10 +366,8 @@ export class AgentCoreStack extends Stack {
       timeout: Duration.seconds(props.sessionApiTimeoutSeconds ?? SESSION_API_TIMEOUT_SECONDS),
       role,
       logGroup,
-      environment: {
-        AGENTCORE_MEMORY_ID: memory.memoryId,
-        AGENTCORE_REGION: this.region,
-      },
+      // Lambda sets AWS_REGION, the function's region, and reserves the name.
+      environment: { AGENTCORE_MEMORY_ID: memory.memoryId },
     });
     const sessionApiAlias = sessionApi.addAlias(identity.sessionApiAlias);
     scaleSessionApi(sessionApiAlias);

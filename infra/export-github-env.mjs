@@ -7,7 +7,7 @@ if (!deployRoot) throw new Error('BOTCUBE_DEPLOY_ROOT is required');
 const identity = JSON.parse(readFileSync(join(deployRoot, 'identity.json'), 'utf8'));
 const values = {
   AWS_ACCOUNT_ID: identity.aws.account,
-  AGENTCORE_REGION: identity.aws.region,
+  AWS_REGION: identity.aws.region,
   AGENTCORE_MEMORY_NAME: identity.aws.agentCore.memory,
   AGENTCORE_RUNTIME_NAME: identity.aws.agentCore.runtime,
   CLOUDFORMATION_STACK_FAMILY: identity.aws.cloudFormation.stackFamily,

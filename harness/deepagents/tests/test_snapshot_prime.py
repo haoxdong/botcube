@@ -56,8 +56,8 @@ def test_main_builds_one_throwaway_agent_before_serving_without_network_or_the_r
 
         def serve(app, **options):
             spare = serving.agentcore_memory_backend._SPARE
-            clients = [serving.agentcore_memory_backend.sts_client(serving.AGENTCORE_REGION),
-                       *aws_clients.bedrock(serving.AGENTCORE_REGION)]
+            clients = [serving.agentcore_memory_backend.sts_client(serving.AWS_REGION),
+                       *aws_clients.bedrock(serving.AWS_REGION)]
             if spare is not None:
                 clients.append(spare[0].client)
             print(json.dumps({
@@ -163,14 +163,14 @@ def test_after_the_snapshot_build_a_turns_first_model_and_memory_requests_read_n
         extract_graph_structure(agent.graph)
         model = serving.build_model(model=serving._SNAPSHOT_MODEL, max_tokens=16000, relay=lambda: relay)
         asyncio.run(answer_once(model, 'turn'))
-        _, store = memory.turn_memory('snapshot-memory', identity, region_name=serving.AGENTCORE_REGION,
+        _, store = memory.turn_memory('snapshot-memory', identity, region_name=serving.AWS_REGION,
                                       run_id='turn', turn=memory.next_turn())
         store.client.meta.events.register_first('before-send.bedrock-agentcore.ListEvents', answer)
         assert store.client.list_events(memoryId=store.memory_id, actorId='turn', sessionId='turn')['events'] == []
         assert 'Credential=turn-key/' in signed[-1][0] and signed[-1][1] == 'turn-token'
         try:
             memory.turn_memory('snapshot-memory', {**identity, 'sessionId': 'other-session'},
-                               region_name=serving.AGENTCORE_REGION, run_id='other', turn=memory.next_turn())
+                               region_name=serving.AWS_REGION, run_id='other', turn=memory.next_turn())
         except memory.MemorySandboxError:
             pass
         else:
