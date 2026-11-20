@@ -33,8 +33,21 @@ export async function startMotos(project: TestProject, python: string, launcher:
   };
 }
 
-/** The workers the run can hold at once: Stryker's Vitest runner runs a project in the threads pool with `maxThreads: 1`. */
-function workerCount({ globalConfig: { maxWorkers, pool, poolOptions } }: TestProject): number {
+/** A pool's worker cap in Vitest 3. Vitest 4 dropped `poolOptions` and folds the cap into `maxWorkers`. */
+interface PoolCap {
+  singleThread?: boolean;
+  maxThreads?: number | string;
+  singleFork?: boolean;
+  maxForks?: number | string;
+}
+
+/**
+ * The workers the run can hold at once: Stryker's Vitest runner runs a project in the threads pool with `maxThreads: 1`.
+ * The root's runner is Vitest 3 and botcube's is Vitest 4, so `poolOptions` is read only where it exists.
+ */
+function workerCount({ globalConfig }: TestProject): number {
+  const { maxWorkers, pool } = globalConfig;
+  const { poolOptions } = globalConfig as { poolOptions?: { threads?: PoolCap; forks?: PoolCap } };
   const [single, max] = pool === 'threads'
     ? [poolOptions?.threads?.singleThread, poolOptions?.threads?.maxThreads]
     : [poolOptions?.forks?.singleFork, poolOptions?.forks?.maxForks];
