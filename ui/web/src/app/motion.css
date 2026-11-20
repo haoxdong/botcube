@@ -40,50 +40,22 @@
   overflow-y: clip;
 }
 
-/* Desktop: toggling the docked sidebar is a View Transition (motion.ts's glide). The chat stage glides to its new
-   width, its snapshots unscaled and centred as its column is, so words never stretch; the sidebar slides in from the
-   left edge and back out. Every View Transition runs on --motion-move and --ease. */
-::view-transition-group(*) {
-  animation-duration: var(--motion-move);
-  animation-timing-function: var(--ease);
-}
-
+/* Desktop: the docked sidebar and Agent Profile slide in from their edges and back out, drawer-swipe.ts springing
+   --<name>-shown from 0 to 1, while the chat stage beside them takes the rest of the row, so words never stretch. The
+   sidebar's seam lies outside its width. Until the spring binds, the margin is invalid and so 0: shown. */
 @media (min-width: 641px) {
-  :root[data-glide] {
-    view-transition-name: none;
+  .sidebar-expanded {
+    --docked-travel: calc(var(--docked-width) + 1px);
+
+    margin-left: calc(var(--sidebar-shown) * var(--docked-travel) - var(--docked-travel));
   }
 
-  [data-glide] .app-shell {
-    view-transition-name: chat-stage;
-  }
-
-  [data-glide] .sidebar-expanded {
-    view-transition-name: sidebar;
-  }
-
-  [data-glide] .agent-profile {
-    view-transition-name: profile;
+  .agent-profile {
+    margin-right: calc(var(--profile-shown) * var(--docked-width) - var(--docked-width));
   }
 }
 
-::view-transition-group(chat-stage) {
-  overflow: clip;
-}
-
-::view-transition-old(chat-stage),
-::view-transition-new(chat-stage) {
-  width: 100%;
-  height: 100%;
-  object-fit: none;
-  object-position: 50% 0;
-}
-
-/* The Agent Computer's window glides between its place and its full-screen sheet. The dock's apps fade in over it
-   in CSS, not a View Transition, which would drop a tap made on the next app while it ran. */
-[data-glide] .agent-computer-window {
-  view-transition-name: computer-window;
-}
-
+/* The dock's apps fade in over the Agent Computer's window. */
 .agent-computer-app,
 .agent-computer-cover {
   transition: opacity var(--motion-quick) var(--ease);
@@ -100,47 +72,6 @@
    lands: the line's height and the header's gap. */
 .agent-profile-name + .agent-profile-status {
   margin-top: calc(var(--font-small) * var(--leading) + var(--space-4));
-}
-
-/* The desktop profile slides in from the right edge and back out as the chat stage glides beside it. */
-::view-transition-new(profile):only-child {
-  animation-name: profileIn;
-}
-
-::view-transition-old(profile):only-child {
-  animation-name: profileOut;
-}
-
-@keyframes profileIn {
-  from {
-    transform: translateX(100%);
-  }
-}
-
-@keyframes profileOut {
-  to {
-    transform: translateX(100%);
-  }
-}
-
-::view-transition-new(sidebar):only-child {
-  animation-name: sidebarIn;
-}
-
-::view-transition-old(sidebar):only-child {
-  animation-name: sidebarOut;
-}
-
-@keyframes sidebarIn {
-  from {
-    transform: translateX(-100%);
-  }
-}
-
-@keyframes sidebarOut {
-  to {
-    transform: translateX(-100%);
-  }
 }
 
 @keyframes tableEdgeFade {

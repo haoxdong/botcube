@@ -1,7 +1,9 @@
 import { useDrag } from '@use-gesture/react';
+import { styleEffect, useSpring } from 'motion/react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 
-import { glide, moveMs } from './motion';
+import { moveMs } from './motion';
+import { motionTokens } from './motion-tokens';
 
 type DragSession =
   | { phase: 'idle' }
@@ -18,6 +20,8 @@ type Options = {
   /** Names the style's `--<name>-drag-offset` and `--<name>-drag-progress`. */
   name: string;
   enabled: boolean;
+  /** A desktop panel docked beside the chat: it slides in from its edge and back out as the chat beside it resizes. */
+  docked?: boolean;
   expanded: boolean;
   /** The panel slides in by itself as it shows (its own CSS), so a tap opens it at once. */
   slides?: boolean;
@@ -64,7 +68,7 @@ function recognize(session: DragSession, dx: number, dy: number, last: boolean, 
 }
 
 // UI SDK 0.1.0-beta.3 cannot swipe open from chat; Base UI 1.9 SwipeArea leaves it open on touch cancellation.
-export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, expanded, slides = false, onExpandedChange }: Options) {
+export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, docked = false, expanded, slides = false, onExpandedChange }: Options) {
   const sessionRef = useRef<DragSession>(IDLE);
   const [session, setSession] = useState<DragSession>(sessionRef.current);
   const suppressClickUntil = useRef(0);
@@ -178,20 +182,46 @@ export function useDrawerSwipe({ layoutRef, drawerRef, side, name, enabled, expa
     [`--${name}-drag-offset`]: `${pixels}px`,
     [`--${name}-drag-progress`]: width ? pixels / width : 0,
   } : {};
-  /** Opens the panel: on a phone it settles in as a released swipe does; elsewhere it glides in (motion.ts). */
+  // A docked panel's `--<name>-shown` springs from 0, out past its edge, to 1, in place (motion.css), carrying its speed
+  // when a toggle turns it back; `leaving` keeps the panel shown until it is out.
+  const [move] = useState(() => motionTokens().move);
+  const shown = useSpring(expanded ? 1 : 0, move);
+  const docking = useRef(false);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => shown.on('animationComplete', () => {
+    docking.current = false;
+    setLeaving(false);
+  }), [shown]);
+  useLayoutEffect(() => {
+    if (!docking.current) shown.jump(expanded ? 1 : 0);
+  }, [expanded, shown]);
+  useLayoutEffect(() => {
+    const layout = layoutRef.current;
+    return layout === null ? undefined : styleEffect(layout, { [`--${name}-shown`]: shown });
+  }, [layoutRef, name, shown]);
+  const dock = (to: boolean) => {
+    if (to === expanded && !docking.current) return;
+    docking.current = true;
+    setLeaving(!to);
+    onExpandedChange(to);
+    shown.set(to ? 1 : 0);
+  };
+  /** Opens the panel: on a phone it settles in as a released swipe does; docked, it slides in. */
   const open = () => {
-    if (!enabled) return glide(() => onExpandedChange(true));
+    if (docked) return dock(true);
+    if (!enabled) return onExpandedChange(true);
     if (!expanded && !slides) changeSession({ phase: 'settling', targetExpanded: true, width: 0, offset: 0 });
     onExpandedChange(true);
   };
-  /** Shuts the panel: on a phone as a released swipe does, shown while what covers it slides back; elsewhere it glides. */
+  /** Shuts the panel: on a phone as a released swipe does, shown while what covers it slides back; docked, it slides out. */
   const close = () => {
-    if (!enabled) return glide(() => onExpandedChange(false));
+    if (docked) return dock(false);
+    if (!enabled) return onExpandedChange(false);
     const width = drawerRef.current?.getBoundingClientRect().width ?? 0;
     if (expanded && width > 0) changeSession({ phase: 'settling', targetExpanded: false, width, offset: width });
     onExpandedChange(false);
   };
   // `open`: the panel stands open on a phone, no swipe moving it.
   const toggle = () => (expanded ? close() : open());
-  return { visible: expanded || swiping, open: enabled && expanded && !swiping, dragging, swiping, style, show: open, toggle, close };
+  return { visible: expanded || swiping || leaving, open: enabled && expanded && !swiping, dragging, swiping, style, show: open, toggle, close };
 }

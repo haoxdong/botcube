@@ -12,7 +12,7 @@
   gap: var(--space-12);
   --agent-computer-chrome: 124px;
 }
-.agent-computer-sheet { justify-content: center; --agent-computer-chrome: 150px; }
+.agent-computer-sheet { position: fixed; inset: 0; z-index: 200; height: auto; justify-content: center; --agent-computer-chrome: 150px; }
 /* Who drives, centred under the desktop (dots Fig 4, Fig 6). */
 .agent-computer-bar {
   display: flex;
@@ -549,16 +549,11 @@
 
 .agent-computer-sheet-title { display: inline-flex; align-items: center; gap: var(--space-8); font-size: var(--font-body); font-weight: var(--weight-semibold); }
 
+/* The sheet's ground fades behind the springing desktop. */
+.agent-computer-sheet-backdrop { position: fixed; inset: 0; z-index: 199; background: var(--color-white); }
+
 @media (min-width: 641px) {
-  .agent-computer-sheet {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    height: auto;
-    min-height: 0;
-    padding: calc(var(--space-32) * 2) var(--space-24) var(--space-24);
-    background: var(--color-white);
-  }
+  .agent-computer-sheet { min-height: 0; padding: calc(var(--space-32) * 2) var(--space-24) var(--space-24); }
 
   .agent-computer-sheet-head { gap: var(--space-8); min-height: 52px; padding: var(--space-8) var(--space-16); border-bottom: 1px solid var(--color-line); }
   .agent-computer-sheet-close { width: 32px; height: 32px; background: none; color: var(--color-text); }
@@ -630,14 +625,9 @@
   .agent-computer-touch > .agent-computer-error { flex-basis: 100%; }
 
   /* The sheet: the computer on black over the whole screen, its title at the top and its tools at the bottom (dots Fig 8). */
-  .agent-computer-sheet {
-    position: fixed;
-    inset: 0;
-    z-index: 200;
-    height: auto;
-    background: var(--color-text);
-    color: var(--color-white);
-  }
+  .agent-computer-sheet { color: var(--color-white); }
+
+  .agent-computer-sheet-backdrop { background: var(--color-text); }
 
   .agent-computer-sheet-head { justify-content: center; min-height: 44px; padding: max(var(--space-12), env(safe-area-inset-top)) var(--space-16) var(--space-12); }
 

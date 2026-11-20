@@ -840,7 +840,7 @@ it("keeps the profile's status where it lands as the agent's character line come
 });
 
 it("fades the Agent Computer's dock apps in, leaving the next tap to the dock", () => {
-  // A View Transition takes every tap while it runs, so the dock fades in CSS and only the sheet's zoom glides.
+  // The dock's apps fade in CSS, leaving every tap to the dock; only the sheet's zoom moves the desktop.
   expect(motion).toMatch(/\.agent-computer-app,\s*\.agent-computer-cover \{\s*transition: opacity var\(--motion-quick\) var\(--ease\);/);
   expect(motion).toMatch(/@starting-style \{\s*\.agent-computer-app,\s*\.agent-computer-cover \{\s*opacity: 0;/);
   expect(readFileSync(path.join(here, '../computer/agent-computer.tsx'), 'utf8')).toMatch(/onClick=\{\(\) => onOpenApp\(dockApp\)\}/);

@@ -1,14 +1,15 @@
 
 
-import { m as motionElement } from "motion/react";
+import { domMax, LazyMotion, m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "../app/collapse";
 import { ClipboardPaste, Copy, Folder, Keyboard, Laptop, MousePointer2, X, type LucideIcon } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { useCallback, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type ComponentType } from 'react';
 
 import { BrowserLiveFrame, type LiveViewConnection, type BrowserLiveFrameProps } from './browser-live-frame';
 import { failureDetail } from './failure-detail';
 import { FOLDER_ICON } from './files-app';
-import { glide } from '../app/motion';
+import { motionTokens } from '../app/motion-tokens';
 import { Terminal, type ShellCommand } from './terminal';
 
 /**
@@ -142,8 +143,9 @@ export function AgentComputer({
   const [generation, setGeneration] = useState(0);
   const [ended, setEnded] = useState<AgentComputerState | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [layer, setLayer] = useState<HTMLElement | null>(null);
   const returning = useRef(false);
-  const zoom = (open: boolean) => { returning.current = false; glide(() => setSheet(open)); };
+  const zoom = (open: boolean) => { returning.current = false; setSheet(open); };
   useLayoutEffect(() => {
     if (!active) { returning.current = false; setSheet(false); }
   }, [active]);
@@ -196,6 +198,7 @@ export function AgentComputer({
   };
   return (
     <div
+      ref={(element) => setLayer(element?.parentElement ?? null)}
       className={sheet ? 'agent-computer agent-computer-sheet' : 'agent-computer'}
       role={sheet ? 'dialog' : undefined}
       aria-label={sheet ? title : undefined}
@@ -206,6 +209,8 @@ export function AgentComputer({
         zoom(false);
       }}
     >
+      {/* Beside this size container, not in it, so it still covers the screen as the desktop springs back. */}
+      {layer !== null && createPortal(<Presence>{sheet && <motionElement.div {...presenceMotion} className="agent-computer-sheet-backdrop" />}</Presence>, layer)}
       <Presence>{sheet && (
         <motionElement.div {...presenceMotion} className="agent-computer-sheet-head">
           <button type="button" className="agent-computer-sheet-close" aria-label="Close computer" title="Close computer" onClick={() => zoom(false)}>
@@ -214,7 +219,8 @@ export function AgentComputer({
           <span className="agent-computer-sheet-title"><Laptop aria-hidden="true" />{title}</span>
         </motionElement.div>
       )}</Presence>
-      <div className="agent-computer-desktop">
+      {/* The desktop springs between its place and the full-screen sheet; only a zoom moves it, not each render. */}
+      <LazyMotion features={domMax} strict><motionElement.div layout layoutDependency={sheet} transition={{ layout: motionTokens().move }} className="agent-computer-desktop">
         <div className="agent-computer-window">
           {/* Every app draws on the agent's 16:9 screen. The live view stays connected under Terminal and Files, so
               going back to Chrome shows the browser at once. Until it shows the browser, its last screen stands in,
@@ -285,7 +291,7 @@ export function AgentComputer({
               </button>
           ))}
         </nav>
-      </div>
+      </motionElement.div></LazyMotion>
       {/* Who drives, attached under the desktop as in dots. */}
       <div className="agent-computer-bar">
         <Presence>{browserSessionId !== null && (

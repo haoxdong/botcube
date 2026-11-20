@@ -82,7 +82,7 @@ export default function App({
   const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(null);
   useLayoutEffect(() => setLayoutElement(layoutRef.current), []);
   const drawerRef = useRef<HTMLElement>(null);
-  const swipe = useDrawerSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
+  const swipe = useDrawerSwipe({ layoutRef, drawerRef, side: "left", name: "sidebar", enabled: isPhone, docked: !isPhone, expanded: sidebarExpanded, onExpandedChange: setSidebarExpanded });
   useEffect(() => {
     if (!window.matchMedia(PHONE_QUERY).matches && withStorage(() => localStorage.getItem(SIDEBAR_EXPANDED_KEY)) === 'true') setSidebarExpanded(true);
   }, []);
@@ -136,6 +136,7 @@ export default function App({
   const profileSwipe = useDrawerSwipe({
     layoutRef, drawerRef: agentProfileRef, side: "right", name: "profile", slides: true,
     enabled: isPhone && activeId !== null && ready && !screenOpen && !sidebarExpanded && !swipe.dragging,
+    docked: !isPhone,
     expanded: agentProfileOpen,
     onExpandedChange: setAgentProfileOpen,
   });

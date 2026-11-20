@@ -280,7 +280,10 @@ describe("the Agent Computer's sheet", () => {
   it('fills a phone screen on black (dots Fig 8)', () => {
     const phone = css.slice(css.indexOf('@media (max-width: 640px)'));
 
-    expect(phone).toMatch(/\.agent-computer-sheet\s*\{[^}]*position: fixed;[^}]*inset: 0;[^}]*background: var\(--color-text\);/);
+    expect(css).toMatch(/\n\.agent-computer-sheet \{[^}]*position: fixed;[^}]*inset: 0;/);
+    // The black is the sheet's backdrop, which fades in behind the desktop.
+    expect(phone).toMatch(/\.agent-computer-sheet-backdrop \{ background: var\(--color-text\); \}/);
+    expect(css).toMatch(/\n\.agent-computer-sheet-backdrop \{[^}]*position: fixed;[^}]*inset: 0;/);
   });
 
   it('fills the screen with Terminal and Files, Files at the page’s own sizes', () => {

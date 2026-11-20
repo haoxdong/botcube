@@ -4877,8 +4877,9 @@ describe('sidebar', () => {
 
     menu.focus();
     await userEvent.keyboard(' ');
-    expect(aside).toHaveClass('sidebar-collapsed');
     expect(menu).toHaveAttribute('aria-expanded', 'false');
+    // It stays expanded while it slides out.
+    await waitFor(() => expect(aside).toHaveClass('sidebar-collapsed'));
     await userEvent.click(menu);
     expect(aside).toHaveClass('sidebar-expanded');
   });
@@ -4890,8 +4891,8 @@ describe('sidebar', () => {
 
     const menu = sidebar().getByRole('button', { name: 'Toggle sidebar' });
     await userEvent.click(menu);
-    expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed');
     expect(localStorage.getItem('botcube.sidebar-expanded')).toBe('false');
+    await waitFor(() => expect(document.querySelector('aside')).toHaveClass('sidebar-collapsed'));
     await userEvent.click(menu);
     expect(localStorage.getItem('botcube.sidebar-expanded')).toBe('true');
   });
@@ -5595,7 +5596,7 @@ describe('agent profile', () => {
     expect(await within(openProfile()).findByText('No scheduled tasks yet.')).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText('Close agent profile'));
-    expect(profile()).toBeNull();
+    await waitFor(() => expect(profile()).toBeNull());
   });
 
   it('lists the sites the sign-in provider reports in the built-in Sign-ins tab, and opens its sign-in', async () => {
@@ -6866,6 +6867,8 @@ describe('agent profile', () => {
     expect(await within(openProfile()).findByText('No scheduled tasks yet.')).toBeInTheDocument();
     expect(within(openProfile()).queryByRole('list')).toBeNull();
     await userEvent.click(screen.getByLabelText('Close agent profile'));
+    // Out of its slide, so the next open loads the tab afresh rather than turning the closing profile back.
+    await waitFor(() => expect(profile()).toBeNull());
     service.failing.set('GET /scheduled-tasks', 503);
 
     await userEvent.click(avatar());
@@ -7054,7 +7057,8 @@ describe('agent profile', () => {
     expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Personalization');
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));
     await userEvent.click(screen.getByLabelText('Close agent profile'));
-    expect(profile()).toBeNull();
+    // The desktop profile stays mounted while it slides out.
+    await waitFor(() => expect(profile()).toBeNull());
     await userEvent.click(avatar());
 
     expect(within(openProfile()).getByRole('tab', { selected: true })).toHaveAccessibleName('Computer');
