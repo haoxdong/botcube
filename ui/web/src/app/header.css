@@ -140,6 +140,8 @@
     right: auto;
     translate: -50% 0;
     padding-top: calc(1px + var(--chat-header-safe-top));
+    /* The live browser pill hangs from this edge (live-browser.css). */
+    anchor-name: --chat-header;
   }
 
   .chat-header,

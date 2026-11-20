@@ -168,7 +168,9 @@
 /* Phones have no room beside the chat for a screen: the panel is a pill naming the live browser, with Pop out. */
 @media (max-width: 640px) {
   .live-browser-panel {
+    /* Just under the header's real bottom edge, which its content sets; 128px where anchors are unsupported. */
     top: calc(128px + var(--app-safe-top));
+    top: anchor(--chat-header bottom);
     right: calc(12px + var(--app-safe-right));
     bottom: auto;
     width: auto;
