@@ -247,14 +247,15 @@
   white-space: nowrap;
 }
 
-/* The table's controls take no row of their own: with a pointer they float over the header's right end, on
-   a white chip, while the table is hovered or focused; on touch they sit small under the table. */
+/* The table's controls sit small in a row under the table on every device, always shown: there they cover no
+   header or cell, and nothing below moves when they show. */
 .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
   display: flex;
+  order: 2;
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  margin: 0;
+  margin: 2px 0 0;
   padding: 2px;
 }
 
@@ -269,28 +270,6 @@
   .copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="table-wrapper"] > div:first-child:not(:last-child), [data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) button:hover {
     color: var(--color-text);
     background: var(--color-fill);
-  }
-
-  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    z-index: 2;
-    border-radius: var(--radius-md);
-    background: var(--color-white);
-    opacity: 0;
-    transition: opacity var(--motion-quick) var(--ease);
-  }
-
-  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"]:is(:hover, :focus-within) > div:first-child:not(:last-child) {
-    opacity: 1;
-  }
-}
-
-@media (hover: none) {
-  .copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="table-wrapper"] > div:first-child:not(:last-child) {
-    order: 2;
-    margin-top: 2px;
   }
 }
 
