@@ -5,7 +5,7 @@ import { agentDocumentEdit, type AgentDocumentSet, type AgentDocuments } from '.
 import { botMemory, type TurnRouteSource } from './turn-preparation.js';
 import type { AgentModel } from './models.js';
 import { HttpError } from './http-error.js';
-import { aliasBotSystemPrompt, requireCandidatePrompts } from './candidate-prompt.js';
+import { requireCandidatePrompts } from './candidate-prompt.js';
 import type { Requester } from './requester.js';
 import { warmingSessions, warmupTiming } from './warming-sessions.js';
 import { accountDefaultModel, accountModelList, requireAllowedModel } from './models.js';
@@ -90,7 +90,6 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
     for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...bot.credentialProps, ...(bot.identityProps ?? [])]) delete forwardedProps[prop];
-    aliasBotSystemPrompt(forwardedProps);
     const preparing = bot.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
       captureCredentials?.(turnCredentials(payload.forwardedProps, bot.credentialProps));
       return payload;

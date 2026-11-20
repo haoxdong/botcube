@@ -41,7 +41,7 @@ export interface TurnRouteSource<R extends Requester = Requester> extends TurnSo
    * The Chat Service strips any a client sent, with the credential props and BotCube's own.
    */
   readonly identityProps?: readonly string[];
-  /** Whether the requester may run a Turn on a candidate `agentSystemPrompt` or `botSystemPrompt` (or its old name `cartridgeSystemPrompt`); none may without it. */
+  /** Whether the requester may run a Turn on a candidate `agentSystemPrompt` or `botSystemPrompt`; none may without it. */
   tunesPrompts?(requester: R): boolean;
   /** Ready the bot's own side of a chat the requester opened, alongside its agent's warmup, such as its browser. */
   warmSession(requester: R, sessionId: string): Promise<void>;
