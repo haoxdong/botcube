@@ -268,11 +268,14 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     const source = resolve(fixture, 'source');
     mkdirSync(resolve(source, 'tools/.venv/lib'), { recursive: true });
     mkdirSync(resolve(source, 'src'), { recursive: true });
+    mkdirSync(resolve(source, 'artifact-check/node_modules'), { recursive: true });
+    writeFileSync(resolve(source, 'artifact-check/node_modules/installed.js'), 'installed dependency');
     writeFileSync(resolve(source, 'session-api.Dockerfile'), 'FROM scratch\nCOPY src/ /src/\n');
     writeFileSync(resolve(source, 'src/session_api.py'), 'source fixture');
     writeFileSync(resolve(source, 'tools/.venv/lib/numpy-fixture.py'), 'installed dependency');
-    mkdirSync(resolve(source, '.tool-dist/cartridge-contract'), { recursive: true });
-    for (const file of ['pyproject.toml', 'uv.lock', '.tool-dist/cartridge-contract/contract.py']) {
+    mkdirSync(resolve(source, '.tool-dist/bot/cli'), { recursive: true });
+    writeFileSync(resolve(source, '.tool-dist/bot/cli/tool.js'), 'unrelated staged CLI');
+    for (const file of ['pyproject.toml', 'uv.lock']) {
       writeFileSync(resolve(source, file), file);
     }
     const app = new App({ outdir: resolve(fixture, 'out') });
@@ -283,13 +286,15 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
     const sessionAsset = assets.find(name => existsSync(resolve(app.outdir, name, 'src/session_api.py')));
     if (sessionAsset === undefined) throw new Error('Session API asset missing');
     expect(readFileSync(resolve(app.outdir, sessionAsset, 'src/session_api.py'), 'utf8')).toBe('source fixture');
-    for (const file of ['pyproject.toml', 'uv.lock', '.tool-dist/cartridge-contract/contract.py']) {
+    for (const file of ['pyproject.toml', 'uv.lock']) {
       expect(readFileSync(resolve(app.outdir, sessionAsset, file), 'utf8')).toBe(file);
     }
     expect(readFileSync(resolve(app.outdir, sessionAsset, 'session-api.Dockerfile'), 'utf8')).toBe(
       'FROM scratch\nCOPY src/ /src/\n'
     );
     expect(existsSync(resolve(app.outdir, sessionAsset, 'tools/.venv/lib/numpy-fixture.py'))).toBe(false);
+    expect(existsSync(resolve(app.outdir, sessionAsset, 'artifact-check/node_modules/installed.js'))).toBe(false);
+    expect(existsSync(resolve(app.outdir, sessionAsset, '.tool-dist/bot/cli/tool.js'))).toBe(false);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

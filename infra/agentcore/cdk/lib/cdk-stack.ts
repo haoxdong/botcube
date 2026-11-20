@@ -8,7 +8,7 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
+import { sessionApiCode } from './predeploy-assets';
 import { applyRuntimeNetwork, type RuntimeNetwork } from './runtime-network';
 import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-platform';
 import { scaleSessionApi } from './session-api-scaling';
@@ -360,12 +360,7 @@ export class AgentCoreStack extends Stack {
     });
     const sessionApi = new lambda.DockerImageFunction(this, 'SessionApi', {
       functionName: identity.sessionApiFunction,
-      code: lambda.DockerImageCode.fromImageAsset(codeLocation, {
-        file: 'session-api.Dockerfile',
-        buildArgs: registryArgs(props),
-        exclude: ['tools'],
-        platform: Platform.LINUX_ARM64,
-      }),
+      code: sessionApiCode(codeLocation, registryArgs(props)),
       architecture: lambda.Architecture.ARM_64,
       memorySize: props.sessionApiMemoryMiB ?? 1024,
       timeout: Duration.seconds(props.sessionApiTimeoutSeconds ?? SESSION_API_TIMEOUT_SECONDS),
