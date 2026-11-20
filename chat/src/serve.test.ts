@@ -9,6 +9,7 @@ import { FakeAgentCore } from '../test/fakes/fake-agentcore.js';
 import { FakeBedrock, FakeSessionApi } from '../test/fakes/fake-backends.js';
 import { HttpFake } from '../test/fakes/http-fake.js';
 import { RUNTIME_ARN, createChatTable } from '../test/fakes/stack.js';
+import { dispatcherFetch } from './dispatcher-fetch.js';
 import { serveChatService } from './server.js';
 import type { StockOverrides } from './stock.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
@@ -16,6 +17,11 @@ import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { credentialSource } from './credential-source.js';
 import { testDeploymentConfig } from '../test/stock-bot.js';
+
+vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
+  return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
+});
 
 const DEPLOYMENT_CONFIG = testDeploymentConfig();
 
@@ -384,10 +390,10 @@ describe('the Chat Service served from the environment', () => {
 
   it('invokes the BOTCUBE_SESSION_API_FUNCTION_ARN function in AWS_REGION, over a local session API', async () => {
     const lambdaCalls: string[] = [];
-    const realFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-      const target = String(input instanceof Request ? input.url : input);
-      if (!target.startsWith('https://lambda.')) return realFetch(input, init);
+    const transport = vi.mocked(dispatcherFetch);
+    const { dispatcherFetch: passThrough } = await vi.importActual<typeof import('./dispatcher-fetch.js')>('./dispatcher-fetch.js');
+    transport.mockImplementation(async (target, init) => {
+      if (!target.startsWith('https://lambda.')) return passThrough(target, init);
       lambdaCalls.push(target);
       return Response.json({ statusCode: 200, body: { messages: [] } });
     });
@@ -404,7 +410,7 @@ describe('the Chat Service served from the environment', () => {
     });
     await (await postTurn(url, 'env-function')).text();
 
-    expect((await realFetch(`${url}/threads/env-function`)).status).toBe(200);
+    expect((await fetch(`${url}/threads/env-function`)).status).toBe(200);
     expect(lambdaCalls).toEqual([
       'https://lambda.eu-west-1.amazonaws.com/2015-03-31/functions/arn%3Aaws%3Alambda%3Aeu-west-1%3A123456789012%3Afunction%3Asession-api/invocations',
     ]);

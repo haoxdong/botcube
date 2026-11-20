@@ -5,12 +5,18 @@ import { DeleteTableCommand, DynamoDBClient, ResourceNotFoundException, Transact
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
+import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 import { filed } from '../test/stock-bot.js';
+
+vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
+  return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
+});
 
 // The test bot's templates (botcube/chat/test/stock-bot.ts), its vibe the bot settings' default.
 const TEMPLATE_IDENTITY = { name: 'Test Bot', character: 'A test agent', vibe: 'Direct, precise, and calm', avatar: '' };
@@ -393,13 +399,13 @@ describe('Memory', () => {
   it('surfaces a failed deletion with the session API diagnostics', async () => {
     const user = remembering('acct_memory-upstream-failure');
     const diagnostics = { error: 'Memory unavailable', stackTrace: ['at memory_delete (/var/task/session_api.py:3484)'] };
-    const originalFetch = globalThis.fetch;
-    const transport = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url === `${stack.sessionApi.url}/invocations` && typeof init?.body === 'string' && JSON.parse(init.body).operation === 'memory-delete') {
+    const transport = vi.mocked(dispatcherFetch);
+    const { dispatcherFetch: passThrough } = await vi.importActual<typeof import('./dispatcher-fetch.js')>('./dispatcher-fetch.js');
+    transport.mockImplementation((url, init) => {
+      if (url === `${stack.sessionApi.url}/invocations` && typeof init.body === 'string' && JSON.parse(init.body).operation === 'memory-delete') {
         return Promise.resolve(new Response(JSON.stringify(diagnostics), { status: 503 }));
       }
-      return originalFetch(input, init);
+      return passThrough(url, init);
     });
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
@@ -411,7 +417,7 @@ describe('Memory', () => {
       }));
       expect(stack.sessionApi.memories.get(filed('acct_memory-upstream-failure'))).toHaveLength(2);
     } finally {
-      transport.mockRestore();
+      transport.mockImplementation(passThrough);
       errors.mockRestore();
     }
   });

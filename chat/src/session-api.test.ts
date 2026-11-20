@@ -1,15 +1,42 @@
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { afterEach, assert, describe, expect, it, vi } from 'vitest';
 import { FakeSessionApi } from '../test/fakes/fake-backends.js';
+import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
 import { sessionApi, type SessionApi } from './session-api.js';
+
+vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
+  return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
+});
 
 const EVENT: Parameters<SessionApi>[0] = { operation: 'get', sessionId: 'session-1', userId: 'filed-account-1' };
 
 const httpError = (status: number, detail: string) => expect.objectContaining({ constructor: HttpError, status, detail });
 
 afterEach(() => vi.unstubAllGlobals());
+
+/**
+ * Runs `test` with a global dispatcher whose headers timeout is 100 ms, standing in for undici's 300 s default,
+ * against a server that answers `answer` after 1.5 s; undici checks its timeouts about once a second.
+ */
+async function pastDefaultHeadersTimeout(answer: string, test: (url: string) => Promise<void>): Promise<void> {
+  const server = createServer((_, response) => setTimeout(() => response.writeHead(200).end(answer), 1500));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const global = getGlobalDispatcher();
+  const capped = new Agent({ headersTimeout: 100 });
+  setGlobalDispatcher(capped);
+  try {
+    await test(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  } finally {
+    setGlobalDispatcher(global);
+    await capped.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
 
 it('answers 503 when the session API is not configured', async () => {
   await expect(sessionApi(null)(EVENT)).rejects.toEqual(httpError(503, 'The session API is not configured'));
@@ -112,6 +139,12 @@ describe('local mode', () => {
     expect(await sessionApi({ localUrl: url })(EVENT, 5)).toEqual({ messages: [] });
   });
 
+  it("waits past undici's default headers timeout for an answer within the call's timeout", async () => {
+    await pastDefaultHeadersTimeout('{"messages":[]}', async (url) => {
+      expect(await sessionApi({ localUrl: url })(EVENT, 5)).toEqual({ messages: [] });
+    });
+  });
+
   it('answers 503 when the answer outlasts the timeout', async () => {
     const url = await localServer(() => undefined);
 
@@ -127,10 +160,14 @@ describe('AWS mode', () => {
     'https://lambda.eu-west-1.amazonaws.com/2015-03-31/functions/arn%3Aaws%3Alambda%3Aeu-west-1%3A123456789012%3Afunction%3Asession-api/invocations';
   const invoke = sessionApi({ functionArn: FUNCTION_ARN, region: 'eu-west-1' });
 
+  afterEach(() => vi.mocked(dispatcherFetch).mockRestore());
+
+  type Init = Parameters<typeof dispatcherFetch>[1];
+
   /** Lambda Invoke, answered by `answer`; returns the requests it received. */
-  function lambda(answer: (init: RequestInit) => Promise<Response>): { url: string; init: RequestInit }[] {
-    const requests: { url: string; init: RequestInit }[] = [];
-    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+  function lambda(answer: (init: Init) => Promise<Response>): { url: string; init: Init }[] {
+    const requests: { url: string; init: Init }[] = [];
+    vi.mocked(dispatcherFetch).mockImplementation(async (url, init) => {
       requests.push({ url, init });
       return answer(init);
     });
@@ -162,7 +199,14 @@ describe('AWS mode', () => {
     const configured = sessionApi({ functionArn: FUNCTION_ARN, region: 'eu-west-1', endpoint: 'https://lambda.corporate.example/' });
     expect(await configured(EVENT)).toEqual({ messages: [] });
     expect(requests[0]?.url).toBe(INVOKE_URL.replace('https://lambda.eu-west-1.amazonaws.com', 'https://lambda.corporate.example'));
-    expect(new Headers(requests[0]?.init.headers).get('authorization')).toContain('/eu-west-1/lambda/aws4_request');
+    expect((requests[0]?.init.headers as Record<string, string>).authorization).toContain('/eu-west-1/lambda/aws4_request');
+  });
+
+  it("waits past undici's default headers timeout for an answer within the call's timeout", async () => {
+    await pastDefaultHeadersTimeout(JSON.stringify({ statusCode: 200, body: { messages: [] } }), async (url) => {
+      const configured = sessionApi({ functionArn: FUNCTION_ARN, region: 'eu-west-1', endpoint: url });
+      expect(await configured(EVENT, 5)).toEqual({ messages: [] });
+    });
   });
 
   it("answers 404 with the function's error", async () => {

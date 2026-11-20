@@ -1,5 +1,7 @@
 import pLimit from 'p-limit';
+import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 import { awsFetch } from './aws.js';
+import { dispatcherFetch } from './dispatcher-fetch.js';
 import { HttpError } from './http-error.js';
 
 /**
@@ -59,16 +61,27 @@ export type SessionApi = (event: SessionApiEvent, timeoutSeconds?: number) => Pr
  */
 const SESSION_API_CALLS_AT_ONCE = 5;
 
+/**
+ * The session API's connections, with no headers or body timeout: a call's own timeout is its only deadline.
+ * Undici's defaults, 300 s each, would cut short a purge the function runs for up to 900 s.
+ * Under the Deployment Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
+ */
+function sessionApiDispatcher(): Dispatcher {
+  const options = { headersTimeout: 0, bodyTimeout: 0 };
+  return process.env.NODE_USE_ENV_PROXY === '1' ? new EnvHttpProxyAgent(options) : new Agent(options);
+}
+
 /** The process's session API: one per Chat Service, so its calls share SESSION_API_CALLS_AT_ONCE. */
 export function sessionApi(config: SessionApiConfig): SessionApi {
   const limit = pLimit(SESSION_API_CALLS_AT_ONCE);
+  const dispatcher = sessionApiDispatcher();
   return (event, timeoutSeconds = 60) =>
     limit(async () => {
       if (config === null) throw new HttpError(503, 'The session API is not configured');
       const { status, body } =
         'functionArn' in config
-          ? await invokeFunction(config, event, timeoutSeconds)
-          : await invokeLocal(config.localUrl, event, timeoutSeconds);
+          ? await invokeFunction(config, event, timeoutSeconds, dispatcher)
+          : await invokeLocal(config.localUrl, event, timeoutSeconds, dispatcher);
       if (status === 404) {
         const { error, code } = body as { error: unknown; code?: unknown };
         throw code === 'SESSION_NOT_FOUND' ? new SessionNotFoundError(String(error)) : new HttpError(404, String(error));
@@ -94,6 +107,7 @@ async function invokeFunction(
   { functionArn, region, endpoint }: { functionArn: string; region: string; endpoint?: string },
   event: SessionApiEvent,
   timeoutSeconds: number,
+  dispatcher: Dispatcher,
 ): Promise<{ status: number; body: unknown }> {
   const baseUrl = (endpoint || `https://lambda.${region}.amazonaws.com`).replace(/\/+$/, '');
   const url = `${baseUrl}/2015-03-31/functions/${encodeURIComponent(functionArn)}/invocations`;
@@ -105,6 +119,7 @@ async function invokeFunction(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(event),
       signal: AbortSignal.timeout(timeoutSeconds * 1000),
+      dispatcher,
     });
     payload = await response.text();
   } catch (error) {
@@ -125,15 +140,17 @@ async function invokeLocal(
   baseUrl: string,
   event: SessionApiEvent,
   timeoutSeconds: number,
+  dispatcher: Dispatcher,
 ): Promise<{ status: number; body: unknown }> {
   let response: Response;
   let text: string;
   try {
-    response = await fetch(`${baseUrl}/invocations`, {
+    response = await dispatcherFetch(`${baseUrl}/invocations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(event),
       signal: AbortSignal.timeout(timeoutSeconds * 1000),
+      dispatcher,
     });
     text = await response.text();
   } catch (error) {
