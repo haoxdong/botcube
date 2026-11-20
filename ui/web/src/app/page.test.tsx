@@ -357,7 +357,6 @@ const service = {
   running: new Set<string>(),
   /** The Side Chats from before the one Session ID cutover, which take no more Turns. */
   readOnly: new Set<string>(),
-  activity: [] as { title?: string; summary: string; failed?: string; completedAt: string }[],
   scheduled: [] as Record<string, unknown>[],
   /** Requests answered with this status instead. */
   failing: new Map<string, number>(),
@@ -440,7 +439,6 @@ async function chatService(url: string, init?: RequestInit): Promise<Response> {
   if (route === 'GET /main-chat') return answer(200, service.mainChat);
   const profile = profileService(route, init);
   if (profile !== undefined) return profile;
-  if (route === 'GET /activity') return answer(200, { tasks: service.activity });
   if (route === 'GET /account/sign-ins') return answer(200, { signIns: [{ site: 'example', name: 'Example site', status: 'not_linked', username: null }] });
   if (pathname.startsWith('/agent/memory')) return memoryService(pathname, init);
   if (route === 'PUT /agent/identity') {
@@ -585,7 +583,6 @@ beforeEach(() => {
   service.providers = new Map();
   service.running = new Set();
   service.readOnly = new Set();
-  service.activity = [];
   service.scheduled = [];
   service.failing = new Map();
   service.agentIdentity = { name: 'Ada Bot', character: 'A research assistant', vibe: 'Warm', avatar: '' };
@@ -5454,11 +5451,6 @@ describe('agent profile', () => {
   const avatar = () => screen.getByLabelText('Agent profile', { selector: 'button' });
   const profile = () => document.querySelector<HTMLElement>('.agent-profile:not([hidden])');
   const openProfile = () => present(profile(), 'the agent profile');
-  // The profile opens on the Computer tab.
-  const openActivity = async () => {
-    await userEvent.click(avatar());
-    await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Activity' }));
-  };
 
   // Main hid the chat under the open phone profile, out of focus and the accessibility tree. Slid in over it, the
   // profile leaves it on screen beneath, inert. Beside the desktop profile, the chat stays in use.
@@ -5557,7 +5549,7 @@ describe('agent profile', () => {
       const page = await renderPage();
       await userEvent.click(avatar());
       expect(close()).toHaveFocus();
-      within(openProfile()).getByRole('tab', { name: 'Activity' }).focus();
+      within(openProfile()).getByRole('tab', { name: 'Scheduled' }).focus();
       await userEvent.keyboard('{Escape}');
       expect(avatar()).toHaveFocus();
 
@@ -5639,7 +5631,7 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
 
     expect(within(openProfile()).getByRole('tab', { name: 'Scheduled' })).toHaveAttribute('aria-selected', 'true');
-    expect(within(openProfile()).getByRole('tab', { name: 'Activity' })).toHaveAttribute('aria-selected', 'false');
+    expect(within(openProfile()).getByRole('tab', { name: 'Sign-ins' })).toHaveAttribute('aria-selected', 'false');
     expect(within(openProfile()).getByRole('tabpanel')).toHaveAccessibleName('Scheduled');
     expect(await within(openProfile()).findByText('No scheduled tasks yet.')).toBeInTheDocument();
 
@@ -5671,179 +5663,6 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Sign-ins' }));
 
     expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Nothing here yet\.$/);
-  });
-
-  it("lists what the agent did under each day, newest first: each task's title, summary and time", async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date(2026, 9, 2, 15, 0));
-    const at = (month: number, day: number, hour: number) => new Date(2026, month, day, hour, 5).toISOString();
-    service.activity = [
-      { title: 'Compare with MSFT', summary: 'Found Microsoft grew faster', completedAt: at(9, 2, 11) },
-      { title: 'Summarize AAPL earnings', summary: 'Found Apple beat on revenue', completedAt: at(9, 2, 9) },
-      { summary: 'Chart the 10y yield', completedAt: at(9, 1, 16) },
-      { title: 'Morning brief', summary: 'Reported rates down overnight', completedAt: at(8, 29, 8) },
-    ];
-    await renderPage();
-
-    await openActivity();
-
-    const days = await within(openProfile()).findAllByRole('region');
-    expect(days.map((day) => day.querySelector('h3')?.textContent)).toEqual(['Today', 'Yesterday', 'Tuesday, September 29']);
-    const tasks = days.map((day) =>
-      within(day)
-        .getAllByRole('listitem')
-        .map((task) => [
-          task.querySelector('.agent-activity-title')?.textContent,
-          task.querySelector('.agent-activity-summary')?.textContent,
-          task.querySelector('time')?.getAttribute('datetime'),
-        ]),
-    );
-    expect(tasks).toEqual([
-      [
-        ['Compare with MSFT', 'Found Microsoft grew faster', at(9, 2, 11)],
-        ['Summarize AAPL earnings', 'Found Apple beat on revenue', at(9, 2, 9)],
-      ],
-      [['Chart the 10y yield', undefined, at(9, 1, 16)]],
-      [['Morning brief', 'Reported rates down overnight', at(8, 29, 8)]],
-    ]);
-    expect(within(days[0] as HTMLElement).getAllByRole('listitem')[0]).toHaveTextContent(/11:05\sAM$/);
-    expect(fetchMock).toHaveBeenCalledWith('http://chat.test/activity', { credentials: 'include', cache: 'no-store' });
-  });
-
-  it('shows a task that ended in a run error as failed, under its request', async () => {
-    service.activity = [{ summary: 'Plot EURUSD', failed: 'Model overloaded', completedAt: new Date().toISOString() }];
-    await renderPage();
-
-    await openActivity();
-
-    const [task] = await within(openProfile()).findAllByRole('listitem');
-    expect(task?.querySelector('.agent-activity-title')).toHaveTextContent('Plot EURUSD');
-    expect(task?.querySelector('.agent-activity-failed')).toHaveTextContent('Failed: Model overloaded');
-  });
-
-  it('lays out a long Activity a page at a time, adding the next as its end scrolls into view', async () => {
-    const { observed, report: reachEnd } = intersections;
-    stubIntersectionObserver();
-    const start = Date.UTC(2026, 9, 2, 12);
-    service.activity = Array.from({ length: 70 }, (_, index) => ({
-      summary: `Task ${index}`,
-      completedAt: new Date(start - index * 3_600_000).toISOString(),
-    }));
-    await renderPage();
-
-    await openActivity();
-    const shown = async () =>
-      (await within(openProfile()).findAllByRole('listitem')).map((task) => task.querySelector('.agent-activity-title')?.textContent);
-
-    expect(await shown()).toEqual(Array.from({ length: 30 }, (_, index) => `Task ${index}`));
-    await reachEnd(false);
-    expect(await shown()).toHaveLength(30);
-    await reachEnd(true);
-    expect(await shown()).toHaveLength(60);
-    await reachEnd(true);
-    expect(await shown()).toEqual(Array.from({ length: 70 }, (_, index) => `Task ${index}`));
-    expect(observed).toEqual([]);
-  });
-
-  it('adds the next page of Activity when one report carries its end leaving the view and coming back', async () => {
-    stubIntersectionObserver();
-    const start = Date.UTC(2026, 9, 2, 12);
-    service.activity = Array.from({ length: 70 }, (_, index) => ({ summary: `Task ${index}`, completedAt: new Date(start - index * 3_600_000).toISOString() }));
-    await renderPage();
-    await openActivity();
-    expect(await within(openProfile()).findAllByRole('listitem')).toHaveLength(30);
-    await intersections.reportAll([false, true]);
-    expect(await within(openProfile()).findAllByRole('listitem')).toHaveLength(60);
-  });
-
-  it('renders only the new page of Activity as one is added', async () => {
-    const { report: reachEnd } = intersections;
-    stubIntersectionObserver();
-    const start = Date.UTC(2026, 9, 2, 12);
-    service.activity = Array.from({ length: 70 }, (_, index) => ({
-      summary: `Task ${index}`,
-      completedAt: new Date(start - index * 3_600_000).toISOString(),
-    }));
-    await renderPage();
-    await openActivity();
-    expect(await within(openProfile()).findAllByRole('listitem')).toHaveLength(30);
-    const toLocale = vi.spyOn(Date.prototype, 'toLocaleTimeString');
-    const descriptor = Object.getOwnPropertyDescriptor(Intl.DateTimeFormat.prototype, 'format');
-    const format = descriptor?.get;
-    assert(descriptor && format, 'Intl.DateTimeFormat format is a getter');
-    let formatted = 0;
-    Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', {
-      ...descriptor,
-      get(this: Intl.DateTimeFormat) {
-        const bound = format.call(this) as (date?: Date | number) => string;
-        return (date?: Date | number) => {
-          if (this.resolvedOptions().hour !== undefined) formatted++;
-          return bound(date);
-        };
-      },
-    });
-    onTestFinished(() => {
-      Object.defineProperty(Intl.DateTimeFormat.prototype, 'format', descriptor);
-    });
-
-    await reachEnd(true);
-    expect(await within(openProfile()).findAllByRole('listitem')).toHaveLength(60);
-
-    expect(toLocale.mock.calls.length + formatted).toBe(30);
-  });
-
-  // The activity moment runs from opening the tab to its list.
-  it('times the Activity tab from its opening until its list shows', async () => {
-    performance.clearMeasures();
-    await renderPage();
-
-    await openActivity();
-    expect(await within(openProfile()).findByText('No tasks yet.')).toBeInTheDocument();
-
-    expect(performance.getEntriesByName('latency:activity', 'measure')).toHaveLength(1);
-  });
-
-  it('shows the Activity loading until it arrives, and why it could not load, with a Retry', async () => {
-    const held: ((response: Response) => void)[] = [];
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
-      url === 'http://chat.test/activity' ? new Promise<Response>((resolve) => held.push(resolve)) : chatService(url, init),
-    );
-    await renderPage();
-    await openActivity();
-    const panel = within(within(openProfile()).getByRole('tabpanel'));
-
-    expect(panel.getByRole('status')).toHaveAccessibleName('Loading Activity');
-    expect(panel.queryByText('No tasks yet.')).toBeNull();
-
-    await act(async () => held[0]?.(answer(502)));
-
-    expect(panel.getByRole('alert')).toHaveTextContent(/^Activity failed: 502$/);
-    expect(panel.queryByRole('status')).toBeNull();
-    expect(panel.queryByText('No tasks yet.')).toBeNull();
-
-    await userEvent.click(panel.getByRole('button', { name: 'Retry' }));
-
-    expect(panel.getByRole('status')).toHaveAccessibleName('Loading Activity');
-    expect(panel.queryByRole('alert')).toBeNull();
-
-    await act(async () =>
-      held[1]?.(answer(200, { tasks: [{ summary: 'Chart the 10y yield', completedAt: '2026-10-01T16:05:00.000Z' }] })),
-    );
-
-    expect(panel.getByText('Chart the 10y yield')).toBeInTheDocument();
-    expect(panel.queryByRole('status')).toBeNull();
-  });
-
-  it("says why the Activity could not load in the Chat Service's words", async () => {
-    const detail = 'Session API request failed: Lambda Invoke returned HTTP 429';
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
-      url === 'http://chat.test/activity' ? answer(503, { detail }) : chatService(url, init),
-    );
-    await renderPage();
-
-    await openActivity();
-
-    expect(await within(openProfile()).findByRole('alert')).toHaveTextContent(`Activity failed: ${detail}`);
   });
 
   const MORNING_BRIEF = {

@@ -1,6 +1,6 @@
 "use client";
 
-export type Moment = "history-returning" | "history-first-visit" | "computer-return" | "computer-cold" | "files-menu" | "send-acknowledged" | "activity";
+export type Moment = "history-returning" | "history-first-visit" | "computer-return" | "computer-cold" | "files-menu" | "send-acknowledged";
 
 export type HistoryMoment = Extract<Moment, "history-returning" | "history-first-visit">;
 

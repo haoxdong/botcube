@@ -17,7 +17,7 @@ const mount = (props: Parameters<typeof AgentProfile>[0]) => {
 };
 
 describe('AgentProfile', () => {
-  it('shows the five tabs as labelled icons with tooltips, opening on the Computer', () => {
+  it('shows the four tabs as labelled icons with tooltips, opening on the Computer', () => {
     const profile = mount({
       profile: { name: 'Ada Bot', avatar: '', picture: null, status: 'online' },
       error: null,
@@ -27,19 +27,19 @@ describe('AgentProfile', () => {
     });
 
     const tabs = within(profile).getAllByRole('tab');
-    expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual(['Activity', 'Sign-ins', 'Computer', 'Scheduled', 'Personalization']);
+    expect(tabs.map((tab) => tab.getAttribute('aria-label'))).toEqual(['Sign-ins', 'Computer', 'Scheduled', 'Personalization']);
     for (const tab of tabs) {
       expect(tab).toHaveTextContent(/^$/);
       expect(tab.querySelector('svg')).not.toBeNull();
       expect(tab.getAttribute('title')).toBe(tab.getAttribute('aria-label'));
     }
-    expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual(['false', 'false', 'true', 'false', 'false']);
+    expect(tabs.map((tab) => tab.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false', 'false']);
   });
 
-  it('opens on the Activity for a bot with no Agent Computer', () => {
+  it('opens on the Sign-ins for a bot with no Agent Computer', () => {
     const profile = mount({ profile: { name: 'Ada Bot', avatar: '', picture: null, status: 'online' }, error: null, onClose: () => {}, ...IDENTITY_TAB });
 
-    expect(within(profile).getByRole('tab', { selected: true })).toHaveAccessibleName('Activity');
+    expect(within(profile).getByRole('tab', { selected: true })).toHaveAccessibleName('Sign-ins');
   });
 
   it('shows an offline agent as not connected', () => {

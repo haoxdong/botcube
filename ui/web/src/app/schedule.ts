@@ -97,7 +97,7 @@ export function describeSchedule(expression: string): string {
   const cron = /^cron\((.+)\)$/.exec(expression)?.[1];
   if (cron !== undefined) {
     try {
-      // EventBridge numbers the days of the week from 1, Sunday. Times read as Activity's do: 7:00 AM, not 07:00 AM.
+      // EventBridge numbers the days of the week from 1, Sunday. Times read 7:00 AM, not 07:00 AM.
       return cronstrue.toString(cron, { dayOfWeekStartIndexZero: false, trimHoursLeadingZero: true });
     } catch {
       return expression;
@@ -110,7 +110,7 @@ export function describeSchedule(expression: string): string {
   return count === "1" ? `Every ${unit}` : `Every ${count} ${unit}s`;
 }
 
-/** 7:00 AM, as the Scheduled list, Activity and the Edit form's Time show times. */
+/** 7:00 AM, as the Scheduled list and the Edit form's Time show times. */
 export function clock(time: string): string {
   const [hour = 0, minute = 0] = time.split(":").map(Number);
   return `${hour % 12 || 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;

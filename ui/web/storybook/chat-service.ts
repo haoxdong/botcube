@@ -61,9 +61,6 @@ const ANSWERS: Record<string, unknown> = {
   '/agent': { name: bot.agentIdentity.name, avatar: bot.agentIdentity.avatar, picture: null, status: 'online' },
   '/agent/models': { models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] },
   '/scheduled-tasks': { tasks: [] },
-  '/activity': {
-    tasks: [{ title: 'Read the example site', summary: 'Read one item from the example site', completedAt: ago(30) }],
-  },
 };
 
 export function reply(path: string, body: unknown, status = 200) {

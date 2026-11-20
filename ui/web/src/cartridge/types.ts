@@ -110,4 +110,4 @@ export interface WebUiPlugin {
   AuthProvider: ComponentType<AuthProviderProps>;
 }
 
-export type AgentProfileTab = 'Activity' | 'Sign-ins' | 'Computer' | 'Scheduled' | 'Personalization';
+export type AgentProfileTab = 'Sign-ins' | 'Computer' | 'Scheduled' | 'Personalization';

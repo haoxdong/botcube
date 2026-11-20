@@ -3,7 +3,7 @@
 import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, Swap } from "./collapse";
 
-import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, List, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
+import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 
 import type { AgentProfileTab } from "../cartridge/index.js";
@@ -19,7 +19,6 @@ import { throwIfRefused } from "./refusal";
 const MotionButton = motionElement.create(Button);
 const MotionField = motionElement.create(Field);
 const ScheduledPanel = lazy(() => import("./scheduled-tasks").then(({ ScheduledPanel }) => ({ default: ScheduledPanel })));
-const ActivityPanel = lazy(() => import("./agent-activity").then(({ ActivityPanel }) => ({ default: ActivityPanel })));
 
 /** The agent as the Chat Service's `GET /agent` describes it. */
 export interface AgentProfileData {
@@ -643,7 +642,6 @@ function PersonalizationPanel({ chatServiceUrl, revision, onSaved, memory }: { c
 
 /** The tabs in order, each shown as its icon. */
 const TABS: readonly (readonly [AgentProfileTab, LucideIcon])[] = [
-  ["Activity", List],
   ["Sign-ins", ShieldCheck],
   ["Computer", Monitor],
   ["Scheduled", Clock],
@@ -692,8 +690,8 @@ export function AgentProfile({
   ref?: Ref<HTMLDivElement> | undefined;
   closeRef?: Ref<HTMLButtonElement> | undefined;
 }) {
-  // A bot with an Agent Computer opens on it; one without, on its Activity. Each opening starts there again.
-  const firstTab: AgentProfileTab = computer === undefined ? "Activity" : "Computer";
+  // A bot with an Agent Computer opens on it; one without, on its first tab. Each opening starts there again.
+  const firstTab: AgentProfileTab = computer === undefined ? "Sign-ins" : "Computer";
   const [tab, setTab] = useState<AgentProfileTab>(firstTab);
   // The avatar's pencil opens Agent Identity's editor in the tab's place; closing it shows the tab again.
   const [editing, setEditing] = useState(false);
@@ -710,7 +708,6 @@ export function AgentProfile({
   const editor = editing && profile !== null;
   const keptComputer = computer !== undefined && tab === "Computer" && !editor;
   const builtIn: Partial<Record<AgentProfileTab, ReactNode>> = {
-    Activity: <Suspense fallback={<LoadingSkeleton label="Activity" />}><ActivityPanel chatServiceUrl={chatServiceUrl} /></Suspense>,
     Scheduled: <Suspense fallback={<LoadingSkeleton label="Scheduled tasks" />}><ScheduledPanel chatServiceUrl={chatServiceUrl} onOpenChat={onOpenChat} /></Suspense>,
     Personalization: <PersonalizationPanel chatServiceUrl={chatServiceUrl} revision={revision} onSaved={onSaved} memory={memory} />,
     ...(signIns ? { "Sign-ins": <SignInsTab chatServiceUrl={chatServiceUrl} control={signIns} /> } : {}),

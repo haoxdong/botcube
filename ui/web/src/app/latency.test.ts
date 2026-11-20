@@ -24,21 +24,21 @@ describe("latency moments", () => {
     startMoment("computer-return");
     endMoment("computer-return");
     const recordEvent = recorded();
-    startMoment("activity");
-    endMoment("activity");
+    startMoment("files-menu");
+    endMoment("files-menu");
 
     await vi.waitFor(() => expect(recordEvent).toHaveBeenCalledTimes(2));
     expect(recordEvent.mock.calls.map(([type, { moment }]) => [type, moment])).toEqual([
       ["latency", "computer-return"],
-      ["latency", "activity"],
+      ["latency", "files-menu"],
     ]);
     expect(recordEvent.mock.calls.every(([, { durationMs }]) => Number.isInteger(durationMs) && durationMs >= 0)).toBe(true);
   });
 
   it.each([false, true])("marks each moment automated when an automation drives the browser (%s), so budgets judge real users", async (webdriver) => {
     vi.spyOn(navigator, "webdriver", "get").mockReturnValue(webdriver);
-    startMoment("activity");
-    endMoment("activity");
+    startMoment("files-menu");
+    endMoment("files-menu");
     const recordEvent = recorded();
 
     await vi.waitFor(() => expect(recordEvent).toHaveBeenCalledOnce());
