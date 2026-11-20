@@ -7,7 +7,7 @@ import { webUiPlugin } from "@cartridge-ui";
 import { ChevronDown } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "../components/pill-button";
-import { StatusPill } from "../components/ui/status-pill";
+import { Badge } from "../components/ui/badge";
 import type { AgentModel } from "./conversations";
 import { DAY_NAMES, WEEKDAYS, clock, dayName, dayTime, stopInstant, unitOf, wallWords, zoneName, type Weekday } from "./schedule";
 import { RUN_STATUS, type ScheduledTask, type TaskChanges } from "./scheduled-task";
@@ -60,7 +60,7 @@ function TaskDetails({ task, models, modelsFailed, runsOn }: {
           {next}
           <Presence>{last && (
             <MotionDetail {...presenceMotion} term="Last run">
-              <StatusPill tone={RUN_STATUS[last.status].tone}>{RUN_STATUS[last.status].label}</StatusPill>
+              <Badge variant={RUN_STATUS[last.status].variant}>{RUN_STATUS[last.status].label}</Badge>
               {dayTime(last.at, task.timezone)}
             </MotionDetail>
           )}</Presence>

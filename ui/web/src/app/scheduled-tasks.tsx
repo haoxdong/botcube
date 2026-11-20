@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "../components/pill-button";
 import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { Sheet } from "../components/ui/sheet";
-import { StatusPill } from "../components/ui/status-pill";
+import { Badge } from "../components/ui/badge";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
 import { LoadingSkeleton } from "./load-state";
 import { fromExpression, listing, runs, stopInstant, summary, toExpression, unitOf, type Cadence, type Ending } from "./schedule";
@@ -144,8 +144,8 @@ function passed(schedule: string, timezone: string): boolean {
 }
 
 function TaskStatus({ task }: { task: ScheduledTask }) {
-  if (task.ended) return <StatusPill>Ended</StatusPill>;
-  return task.paused ? <StatusPill>Paused</StatusPill> : null;
+  if (task.ended) return <Badge variant="secondary">Ended</Badge>;
+  return task.paused ? <Badge variant="secondary">Paused</Badge> : null;
 }
 
 function ScheduledTaskRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void }) {

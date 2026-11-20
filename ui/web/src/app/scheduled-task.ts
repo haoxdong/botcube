@@ -14,11 +14,11 @@ export interface ScheduledRun {
   text: string;
 }
 
-export const RUN_STATUS: Record<ScheduledRun["status"], { label: string; tone: "neutral" | "blue" | "danger" }> = {
-  done: { label: "Done", tone: "neutral" },
-  failed: { label: "Failed", tone: "danger" },
-  "sign-in": { label: "Needs sign-in", tone: "blue" },
-  skipped: { label: "Skipped", tone: "neutral" },
+export const RUN_STATUS: Record<ScheduledRun["status"], { label: string; variant: "secondary" | "destructive" }> = {
+  done: { label: "Done", variant: "secondary" },
+  failed: { label: "Failed", variant: "destructive" },
+  "sign-in": { label: "Needs sign-in", variant: "secondary" },
+  skipped: { label: "Skipped", variant: "secondary" },
 };
 
 /** A task the agent runs on its schedule, as the Chat Service's `/scheduled-tasks` lists it. */

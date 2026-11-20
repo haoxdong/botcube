@@ -5,7 +5,7 @@ import { failureDetail } from '../computer/failure-detail';
 import { Collapse, Fade, Swap } from './collapse';
 import { LoadingSkeleton } from './load-state';
 import { Button } from '../components/pill-button';
-import { StatusPill } from '../components/ui/status-pill';
+import { Badge } from '../components/ui/badge';
 import type { SignIn, SignInsControl } from '../cartridge/types';
 
 export async function loadSignIns({ chatServiceUrl, fetchImpl = fetch }: { chatServiceUrl: string; fetchImpl?: typeof fetch }): Promise<SignIn[]> {
@@ -21,7 +21,7 @@ const STATUS_LABELS: Record<SignIn['status'], string> = {
   not_linked: 'Not linked',
 };
 
-const STATUS_TONES = { linked: 'blue', relink_required: 'danger', not_linked: 'neutral' } as const satisfies Record<SignIn['status'], string>;
+const STATUS_VARIANTS = { linked: 'secondary', relink_required: 'destructive', not_linked: 'secondary' } as const satisfies Record<SignIn['status'], string>;
 
 interface SignInsListProps {
   /** Null until loaded. */
@@ -46,7 +46,7 @@ export function SignInsList({ signIns, error, busy, ...actions }: SignInsListPro
             <li key={signIn.site} className="sign-in">
               <span className="sign-in-name">{signIn.name}</span>
               <Fade open={signIn.username != null} className="sign-in-username">{signIn.username}</Fade>
-              <StatusPill className="sign-in-status" tone={STATUS_TONES[signIn.status]}>{STATUS_LABELS[signIn.status]}</StatusPill>
+              <Badge variant={STATUS_VARIANTS[signIn.status]} className="sign-in-status">{STATUS_LABELS[signIn.status]}</Badge>
               <Swap state={signIn.status} className="sign-in-actions">
                 {signIn.status === 'not_linked' ? (
                   <Button type="button" disabled={busy} onClick={actions.onSignIn}>Sign in</Button>

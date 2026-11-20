@@ -381,10 +381,6 @@ textarea.settings-text {
   font-weight: var(--weight-semibold);
 }
 
-.scheduled-run-heading .status-pill {
-  flex: none;
-}
-
 .scheduled-run-time {
   color: var(--color-text-muted);
 }
@@ -438,10 +434,6 @@ textarea.settings-text {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-}
-
-.scheduled-task-heading .status-pill {
-  flex: none;
 }
 
 /* A paused task's icon and name dim beside its Paused pill; its detail lines are already muted. Colours, not

@@ -24,7 +24,7 @@ it.each([
 ] as const)('labels a %s run as the task sheet does: %s', (status, label) => {
   card({ ...RUN, status, sideChat: 'task-1', messageId: 'm-1' });
 
-  expect(screen.getByText(label)).toHaveClass('status-pill');
+  expect(screen.getByText(label)).toHaveAttribute('data-slot', 'badge');
 });
 
 it('opens a run that reached its Side Chat there, at its request', async () => {
@@ -40,6 +40,6 @@ it('opens a run that reached its Side Chat there, at its request', async () => {
 it('offers no Open for a run that never reached its Side Chat', () => {
   const { card: shown } = card({ ...RUN, status: 'skipped', text: 'the task was paused' });
 
-  expect(shown.getByText('Skipped')).toHaveClass('status-pill');
+  expect(shown.getByText('Skipped')).toHaveAttribute('data-slot', 'badge');
   expect(shown.queryByRole('button', { name: 'Open' })).toBeNull();
 });

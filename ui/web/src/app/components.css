@@ -182,24 +182,6 @@
   font-weight: var(--weight-semibold);
 }
 
-.status-pill {
-  padding: var(--space-4) var(--space-12);
-  border-radius: var(--radius-pill);
-  background: var(--color-fill);
-  font-size: var(--font-label);
-  color: var(--color-text-muted);
-}
-
-.status-pill-blue {
-  color: var(--color-blue);
-  background: var(--color-fill);
-}
-
-.status-pill-danger {
-  color: var(--color-red);
-  background: var(--color-fill);
-}
-
 /* Rows across the nav pills' width; a column, so the rows' margins never collapse */
 .sidebar-list {
   flex: 1;

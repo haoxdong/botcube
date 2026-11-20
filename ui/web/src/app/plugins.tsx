@@ -3,7 +3,7 @@
 import { BookOpen, Cable, Package, SquareTerminal, type LucideIcon } from "lucide-react";
 
 import { ListRow, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
-import { StatusPill } from "../components/ui/status-pill";
+import { Badge } from "../components/ui/badge";
 
 /** The kinds of App the agent will take (botcube/GLOSSARY.md → Apps), in the decided order, none available yet. */
 const KINDS: readonly { name: string; none: string; Icon: LucideIcon }[] = [
@@ -29,7 +29,7 @@ export function AppsScreen({ agentName }: { agentName: string }) {
             <ListRowText>
               <ListRowTitle>{none}</ListRowTitle>
             </ListRowText>
-            <StatusPill className="plugins-soon">Coming soon</StatusPill>
+            <Badge variant="secondary" className="plugins-soon">Coming soon</Badge>
           </ListRow>
         </section>
       ))}

@@ -5796,7 +5796,7 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Scheduled' }));
     const [ended, later] = await within(openProfile()).findAllByRole('listitem');
 
-    expect(within(present(ended, 'the ended task')).getByText('Ended')).toHaveClass('status-pill');
+    expect(within(present(ended, 'the ended task')).getByText('Ended')).toHaveAttribute('data-slot', 'badge');
     expect(within(present(ended, 'the ended task')).queryByText('Paused')).toBeNull();
     expect(within(present(later, 'the later task')).queryByText('Ended')).toBeNull();
     const sheet = await openTask(present(ended, 'the ended task'));
@@ -5818,7 +5818,7 @@ describe('agent profile', () => {
     await renderPage();
     const task = await openScheduled();
 
-    expect(within(task).getByText('Ended')).toHaveClass('status-pill');
+    expect(within(task).getByText('Ended')).toHaveAttribute('data-slot', 'badge');
     const sheet = await openTask(task);
     expect(within(sheet).queryByRole('button', { name: /^(Pause|Resume)$/ })).toBeNull();
   });
@@ -5829,7 +5829,7 @@ describe('agent profile', () => {
     await renderPage();
     const task = await openScheduled();
 
-    expect(within(task).getByText('Ended')).toHaveClass('status-pill');
+    expect(within(task).getByText('Ended')).toHaveAttribute('data-slot', 'badge');
     const sheet = await openTask(task);
     expect(within(sheet).getByText('Ended', { selector: 'dd' })).toBeInTheDocument();
     // Its stop time reads as a time; Next run alone says Ended.
@@ -6253,7 +6253,7 @@ describe('agent profile', () => {
     await more(within(sheet));
     expect(within(sheet).getByText('Paused', { selector: 'dd' })).toBeInTheDocument();
     expect(task.querySelector('.scheduled-task-title')).toHaveTextContent(/^Morning brief$/);
-    expect(within(task).getByText('Paused')).toHaveClass('status-pill');
+    expect(within(task).getByText('Paused')).toHaveAttribute('data-slot', 'badge');
     expect(task.querySelector('.scheduled-task')).toHaveClass('scheduled-task-paused');
 
     await userEvent.click(within(sheet).getByRole('button', { name: 'Resume' }));

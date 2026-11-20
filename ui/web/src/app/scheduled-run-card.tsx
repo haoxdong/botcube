@@ -8,7 +8,7 @@ import { createContext, useContext, type ReactNode } from "react";
 
 import { Button } from "../components/pill-button";
 import { RUN_STATUS, type ScheduledRun } from "./scheduled-task";
-import { StatusPill } from "../components/ui/status-pill";
+import { Badge } from "../components/ui/badge";
 
 const MotionButton = motionElement.create(Button);
 
@@ -37,13 +37,13 @@ function ranAt(iso: string): string {
 /** A run's card in the Main Chat: the task, when it ran, how it ended, two lines of what it said, and Open. */
 export function ScheduledRunCard({ run, children }: { run: ScheduledRun; children: ReactNode }) {
   const open = useContext(OpenScheduledRun);
-  const { label, tone } = RUN_STATUS[run.status];
+  const { label, variant } = RUN_STATUS[run.status];
   return (
     <div className="scheduled-run">
       <div className="scheduled-run-heading">
         <Clock size={16} aria-hidden className="scheduled-run-icon" />
         <span className="scheduled-run-title">{run.title}</span>
-        <StatusPill tone={tone}>{label}</StatusPill>
+        <Badge variant={variant}>{label}</Badge>
       </div>
       <time className="scheduled-run-time" dateTime={run.ranAt}>{ranAt(run.ranAt)}</time>
       <div className="scheduled-run-text">

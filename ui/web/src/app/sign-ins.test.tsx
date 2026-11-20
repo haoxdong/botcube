@@ -14,6 +14,10 @@ const site = (status: SignIn['status'], username: string | null): SignIn => ({
   username,
 });
 
+/** The classes of the status Badge that reads `label`. */
+const badgeClasses = (html: string, label: string) =>
+  html.match(new RegExp(`<span[^>]*data-slot="badge"[^>]*>${label}</span>`))?.[0].match(/class="([^"]*)"/)?.[1]?.split(' ');
+
 describe('loadSignIns', () => {
   it("reads the account's Sign-ins from the Chat Service", async () => {
     const fetchImpl = vi.fn(async () => Response.json({ signIns: [site('linked', 'ann@example.com')] }));
@@ -57,7 +61,7 @@ describe('SignInsList', () => {
 
     expect(html).toContain('<span class="sign-in-name">Example site</span>');
     expect(html).toContain('<div class="sign-in-username">ann@example.com</div>');
-    expect(html).toContain('<span class="status-pill status-pill-blue sign-in-status">Linked</span>');
+    expect(badgeClasses(html, 'Linked')).toEqual(expect.arrayContaining(['bg-secondary', 'sign-in-status']));
     expect(buttons(html)).toEqual(['Sign out']);
     expect(html).not.toContain('sign-in-error');
   });
@@ -65,14 +69,14 @@ describe('SignInsList', () => {
   it('offers Re-link and Sign out when the site needs re-linking', () => {
     const html = render({ signIns: [site('relink_required', 'ann@example.com')] });
 
-    expect(html).toContain('<span class="status-pill status-pill-danger sign-in-status">Re-link required</span>');
+    expect(badgeClasses(html, 'Re-link required')).toEqual(expect.arrayContaining(['text-destructive', 'sign-in-status']));
     expect(buttons(html)).toEqual(['Re-link', 'Sign out']);
   });
 
   it('offers Sign in for a site the agent is not signed in to', () => {
     const html = render({ signIns: [site('not_linked', null)] });
 
-    expect(html).toContain('<span class="status-pill sign-in-status">Not linked</span>');
+    expect(badgeClasses(html, 'Not linked')).toEqual(expect.arrayContaining(['bg-secondary', 'sign-in-status']));
     expect(html).not.toContain('sign-in-username');
     expect(buttons(html)).toEqual(['Sign in']);
   });
