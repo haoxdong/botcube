@@ -116,6 +116,17 @@ def runtime_update(name: str, current: Mapping[str, Any]) -> dict[str, Any]:
     return configuration
 
 
+def serving_runtime(agentcore: Any, name: str, runtime_id: str) -> dict[str, Any]:
+    """The version the DEFAULT endpoint serves, which must be READY. A failed later update leaves DEFAULT on its last
+    READY version (461 and 462 on 2026-11-20), so the runtime's own status can't gate a wake."""
+    live = agentcore.get_agent_runtime_endpoint(agentRuntimeId=runtime_id, endpointName='DEFAULT')['liveVersion']
+    current = agentcore.get_agent_runtime(agentRuntimeId=runtime_id, agentRuntimeVersion=live)
+    if current['status'] != 'READY':
+        raise RuntimeError(f'{name} DEFAULT version {live} is {current["status"]}, not READY; '
+                           're-run unpark once its update finishes')
+    return current
+
+
 def refresh_runtime_spares(agentcore: Any = None, pause: Callable[[float], None] = time.sleep, timeout: float = 600):
     """A V1 AgentCore runtime starts its spare microVMs when a version is created, and replaces each one that ends.
     Without the NAT Gateway a microVM can't start, so a version created while Parked, or one whose spares ended
@@ -130,18 +141,23 @@ def refresh_runtime_spares(agentcore: Any = None, pause: Callable[[float], None]
     if len(found) != 1:
         raise RuntimeError(f'expected one AgentCore runtime named {name}, found {len(found)}')
     runtime_id = found[0]['agentRuntimeId']
-    current = agentcore.get_agent_runtime(agentRuntimeId=runtime_id)
-    if current.get('platformVersion') == 'V2' and current['status'] == 'READY':
+    current = serving_runtime(agentcore, name, runtime_id)
+    if current.get('platformVersion') == 'V2':
         print(f'{name} refresh skipped: V2 restores from its snapshot', flush=True)
         return current
+    latest = agentcore.get_agent_runtime(agentRuntimeId=runtime_id)
+    if latest['status'] != 'READY' and not latest['status'].endswith('FAILED'):
+        raise RuntimeError(f'{name} is {latest["status"]}, not READY; re-run unpark once its update finishes')
     agentcore.update_agent_runtime(agentRuntimeId=runtime_id, **runtime_update(name, current))
     deadline = time.monotonic() + timeout
     while True:
         updated = agentcore.get_agent_runtime(agentRuntimeId=runtime_id)
-        if updated['status'] == 'READY' and updated['agentRuntimeVersion'] != current['agentRuntimeVersion']:
+        if updated['agentRuntimeVersion'] == latest['agentRuntimeVersion']:
+            pass  # The update has not made its version yet; a failed earlier version is not this refresh.
+        elif updated['status'] == 'READY':
             print(f'{name} refreshed: version {current["agentRuntimeVersion"]} -> {updated["agentRuntimeVersion"]}', flush=True)
             return updated
-        if updated['status'].endswith('FAILED'):
+        elif updated['status'].endswith('FAILED'):
             raise RuntimeError(f'{name} refresh {updated["status"]}: {updated.get("failureReason")}')
         if time.monotonic() > deadline:
             raise RuntimeError(f'{name} refresh still {updated["status"]} after {timeout:.0f} s')

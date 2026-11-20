@@ -497,16 +497,20 @@ class AgentCoreProduction:
         self.version, self.status, self.fail, self.extra = '204', status, fail, extra or {}
         self.reported_network = {'requireServiceS3Endpoint': False}
         self.updates: list[dict[str, Any]] = []
+        self.earlier: dict[str, str] = {}  # status of each version before the latest
+        self.serving: str | None = None  # the DEFAULT endpoint's version; None follows the latest
 
     def get_paginator(self, operation: str) -> Any:
         assert operation == 'list_agent_runtimes'
         runtimes = [{'agentRuntimeName': 'other_runtime', 'agentRuntimeId': 'other-1'}, {'agentRuntimeName': self.name, 'agentRuntimeId': 'rt-1'}]
         return Mock(paginate=lambda: iter([{'agentRuntimes': runtimes[:1]}, {'agentRuntimes': runtimes[1:]}]))
 
-    def get_agent_runtime(self, agentRuntimeId: str) -> dict[str, Any]:
+    def get_agent_runtime(self, agentRuntimeId: str, agentRuntimeVersion: str | None = None) -> dict[str, Any]:
         assert agentRuntimeId == 'rt-1'
-        return {'agentRuntimeId': 'rt-1', 'agentRuntimeName': self.name, 'agentRuntimeVersion': self.version,
-                'status': self.status, 'workloadIdentityDetails': {}, **self.configuration, **self.extra,
+        version = agentRuntimeVersion or self.version
+        status = self.status if version == self.version else self.earlier[version]
+        return {'agentRuntimeId': 'rt-1', 'agentRuntimeName': self.name, 'agentRuntimeVersion': version,
+                'status': status, 'workloadIdentityDetails': {}, **self.configuration, **self.extra,
                 'networkConfiguration': {**self.configuration['networkConfiguration'],
                                          'networkModeConfig': {**self.configuration['networkConfiguration']['networkModeConfig'], **self.reported_network}}}
 
@@ -515,10 +519,22 @@ class AgentCoreProduction:
         if 'requireServiceS3Endpoint' in configuration['networkConfiguration']['networkModeConfig']:
             raise ValueError('Agents created after 2026-06-11T00:00:00Z cannot modify requireServiceS3Endpoint')
         self.updates.append(configuration)
+        previous, self.earlier[self.version] = self.version, self.status
+        self.version = str(int(self.version) + 1)
         if self.fail:
-            self.status = self.fail
+            self.status, self.serving = self.fail, self.serving or previous
         else:
-            self.version = str(int(self.version) + 1)
+            self.status, self.serving = 'READY', None
+
+    def get_agent_runtime_endpoint(self, agentRuntimeId: str, endpointName: str) -> dict[str, str]:
+        assert (agentRuntimeId, endpointName) == ('rt-1', 'DEFAULT')
+        return {'liveVersion': self.serving or self.version, 'status': 'READY'}
+
+    def fail_an_update(self) -> None:
+        """A version update that failed, as 461 and 462 did on 2026-11-20: DEFAULT stays on the last READY version."""
+        self.fail = 'UPDATE_FAILED'
+        self.update_agent_runtime('rt-1', **transition['runtime_update'](self.name, self.get_agent_runtime('rt-1')))
+        self.fail, self.updates = None, []
 
 
 class RuntimeSparesTests(unittest.TestCase):
@@ -539,7 +555,7 @@ class RuntimeSparesTests(unittest.TestCase):
         self.assertIs(result, current)
         self.assertEqual(result['agentRuntimeVersion'], '204')
         self.assertEqual(agentcore.updates, [])
-        get.assert_called_once_with(agentRuntimeId='rt-1')
+        get.assert_called_once_with(agentRuntimeId='rt-1', agentRuntimeVersion='204')
         pause.assert_not_called()
         self.assertIn('skipped: V2 restores from its snapshot', printed.call_args.args[0])
 
@@ -549,13 +565,46 @@ class RuntimeSparesTests(unittest.TestCase):
         current = agentcore.get_agent_runtime('rt-1')
         updating = {**current, 'status': 'UPDATING'}
         ready = {**current, 'agentRuntimeVersion': '457'}
-        with patch.object(agentcore, 'get_agent_runtime', side_effect=[current, updating, ready]):
+        with patch.object(agentcore, 'get_agent_runtime', side_effect=[current, current, updating, ready]):
             pause = Mock()
             result = transition['refresh_runtime_spares'](agentcore, pause=pause)
         self.assertEqual(result['agentRuntimeVersion'], '457')
         self.assertEqual(len(agentcore.updates), 1)
         self.assertEqual(agentcore.updates[0]['platformVersion'], 'V1')
         pause.assert_called_once_with(5)
+
+    def test_v2_wakes_on_the_ready_version_default_serves_after_a_failed_update(self):
+        agentcore = AgentCoreProduction()
+        agentcore.configuration['platformVersion'] = 'V2'
+        agentcore.fail_an_update()
+        with patch('builtins.print'):
+            result = transition['refresh_runtime_spares'](agentcore, pause=Mock(side_effect=AssertionError('no wait')))
+        self.assertEqual((result['agentRuntimeVersion'], result['status'], agentcore.updates), ('204', 'READY', []))
+
+    def test_v1_refreshes_from_the_ready_version_default_serves_after_a_failed_update(self):
+        agentcore = AgentCoreProduction()
+        agentcore.fail_an_update()
+        with patch('builtins.print') as printed:
+            result = transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
+        self.assertEqual((result['agentRuntimeVersion'], result['status']), ('206', 'READY'))
+        self.assertEqual(agentcore.updates, [agentcore.configuration])
+        self.assertIn('version 204 -> 206', printed.call_args.args[0])
+
+    def test_v1_does_not_update_while_a_later_version_is_still_updating(self):
+        agentcore = AgentCoreProduction()
+        agentcore.fail_an_update()
+        agentcore.status = 'UPDATING'
+        with self.assertRaisesRegex(RuntimeError, 'is UPDATING, not READY'):
+            transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
+        self.assertEqual(agentcore.updates, [])
+
+    def test_a_default_version_that_is_not_ready_blocks_the_wake(self):
+        agentcore = AgentCoreProduction()
+        agentcore.configuration['platformVersion'] = 'V2'
+        agentcore.fail_an_update()
+        agentcore.earlier['204'] = 'UPDATE_FAILED'
+        with self.assertRaisesRegex(RuntimeError, 'DEFAULT version 204 is UPDATE_FAILED, not READY'):
+            transition['refresh_runtime_spares'](agentcore, pause=lambda _: None)
 
     def test_nonready_v2_still_fails_loud_without_updating(self):
         for status in ('UPDATING', 'UPDATE_FAILED'):
