@@ -188,7 +188,12 @@ test.each([true, false])('parks idle production and wakes it from the paused pag
     .toContain('ProductionParking:ExportsOutputFnGetAttwakeFunctionUrlA2A050A1FunctionUrl3B1B4F3E');
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, parked);
   if (parked) origin.hasResourceProperties('AWS::CloudFormation::CustomResource', { Kind: 'ParkedWorker', WakeUrl: Match.anyValue(), Script: Match.stringLikeRegexp('^[0-9a-f]{64}$') });
-  origin.hasResourceProperties('AWS::ECS::TaskDefinition', { ContainerDefinitions: Match.arrayWith([Match.objectLike({ Environment: Match.arrayWith([{ Name: 'BOTCUBE_REPORT_ACTIVITY', Value: 'true' }]) })]) });
+  const chatEnvironment = Object.values(origin.findResources('AWS::ECS::TaskDefinition'))
+    .flatMap(({ Properties }) => Properties.ContainerDefinitions as { Name: string; Environment?: { Name: string }[] }[])
+    .filter(({ Name }) => Name === 'chat-service')
+    .flatMap(({ Environment }) => (Environment ?? []).map(({ Name }) => Name));
+  expect(chatEnvironment).toContain('BOTCUBE_PARK_STATE_PARAMETER');
+  expect(chatEnvironment).not.toContain('BOTCUBE_REPORT_ACTIVITY');
 });
 test.each([true, false])('composition names adopter-owned networks and browser role with parked=%s', parked => {
   const { root, deployRoot, app } = fixture();

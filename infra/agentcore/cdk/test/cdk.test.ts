@@ -688,6 +688,20 @@ test('example Memory keeps its resource identity and supplies only valid runtime
   expect(Object.keys(variables).every(name => /^[A-Za-z][A-Za-z0-9_]*$/.test(name))).toBe(true);
 });
 
+test("the Harness reads its Memory only as AGENTCORE_MEMORY_ID, without the L3's per-Memory alias", () => {
+  const template = Template.fromStack(
+    new AgentCoreStack(new cdk.App(), 'MemoryAlias', {
+      spec: readProjectSpec(DEPLOY_ROOT),
+      physicalIdentity: PHYSICAL_IDENTITY,
+    })
+  );
+  const runtime = Object.values(template.findResources('AWS::BedrockAgentCore::Runtime'))[0];
+  assert(runtime);
+  const names = Object.keys(runtime.Properties.EnvironmentVariables);
+  expect(names).toContain('AGENTCORE_MEMORY_ID');
+  expect(names.filter(name => /^MEMORY_.*_ID$/.test(name))).toEqual([]);
+});
+
 test.each([
   ['runtimeMaxLifetimeSeconds', 3601, 3600],
   ['runtimeIdleTimeoutSeconds', 301, 300],

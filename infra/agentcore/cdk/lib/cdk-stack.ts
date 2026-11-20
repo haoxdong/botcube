@@ -38,8 +38,8 @@ const RUNTIME_SESSION_STORAGE = '/mnt/workspace';
 /** Every actor's long-term records: the trailing slashes refuse `/actors/` and an actor ID without its slash (ADR 0033). */
 const MEMORY_ACTOR_NAMESPACES = { StringLike: { 'bedrock-agentcore:namespace': '/actors/*/' } };
 
-function removeInvalidMemoryAlias(runtime: bedrockagentcore.CfnRuntime, generatedAlias: string): void {
-  if (/^[A-Za-z][A-Za-z0-9_]*$/.test(generatedAlias)) return;
+/** The `@aws/agentcore-cdk` L3 also names each Memory as `MEMORY_<NAME>_ID`; the Harness reads only AGENTCORE_MEMORY_ID. */
+function removeMemoryAlias(runtime: bedrockagentcore.CfnRuntime, generatedAlias: string): void {
   const variables = { ...(runtime.environmentVariables as Record<string, string>) };
   delete variables[generatedAlias];
   runtime.environmentVariables = variables;
@@ -244,7 +244,7 @@ export class AgentCoreStack extends Stack {
       // The Harness persists each Session in this memory (ADR 0067 §1).
       for (const env of this.application.environments.values()) {
         env.runtime.addEnvironmentVariable('AGENTCORE_MEMORY_ID', memory.memoryId);
-        removeInvalidMemoryAlias(env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime, memory.getEnvVarName());
+        removeMemoryAlias(env.runtime.node.defaultChild as bedrockagentcore.CfnRuntime, memory.getEnvVarName());
       }
       if (props.harnessCodeLocation) {
         this.addSessionApi(props.harnessCodeLocation, memory, physicalIdentity, props);

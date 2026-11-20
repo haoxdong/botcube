@@ -186,10 +186,7 @@ test("the template names only its project, runtime and memory: BotCube's default
     codeLocation: HARNESS,
     runtimeVersion: 'PYTHON_3_13',
     protocol: 'AGUI',
-    envVars: expect.arrayContaining([
-      { name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' },
-      { name: 'BOTCUBE_SNAPSHOT_PRIME', value: '1' },
-    ]),
+    envVars: expect.arrayContaining([{ name: 'OTEL_PYTHON_DISTRO', value: 'aws_distro' }]),
   });
   expect(fs.existsSync(path.join(HARNESS, 'Dockerfile'))).toBe(true);
   const [memory] = config.spec.memories;
@@ -242,9 +239,17 @@ test('SDK metrics stay off while Turn tracing remains enabled', async () => {
       { name: 'OTEL_PYTHON_CONFIGURATOR', value: 'aws_configurator' },
       { name: 'OTEL_TRACES_SAMPLER', value: 'always_on' },
       { name: 'TRACELOOP_TRACE_CONTENT', value: 'false' },
-      { name: 'UNIFIED_TRACES_DESTINATION_ENABLED', value: 'false' },
       { name: 'OTEL_METRICS_EXPORTER', value: 'none' },
       { name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED', value: 'false' },
     ])
   );
+});
+
+test('the default Harness environment carries no dead var or rolled-out flag', async () => {
+  const config = await loadDeployConfig(EXAMPLE_DEPLOY, '/');
+  const { envVars } = runtimeOf(config.spec);
+  assert(envVars, 'the default Harness declares an environment');
+  const names = envVars.map(variable => variable.name);
+  expect(names).not.toContain('UNIFIED_TRACES_DESTINATION_ENABLED');
+  expect(names).not.toContain('BOTCUBE_SNAPSHOT_PRIME');
 });

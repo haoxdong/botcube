@@ -35,9 +35,6 @@ const RUNTIME_DEFAULTS = {
     { name: 'OTEL_METRICS_EXPORTER', value: 'none' },
     { name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED', value: 'false' },
     { name: 'TRACELOOP_TRACE_CONTENT', value: 'false' },
-    { name: 'UNIFIED_TRACES_DESTINATION_ENABLED', value: 'false' },
-    // Builds a throwaway agent before the first /ping, so a Runtime V2 snapshot holds that work.
-    { name: 'BOTCUBE_SNAPSHOT_PRIME', value: '1' },
   ],
 };
 /** Memory keeps Session events for 365 days, the AgentCore maximum, and files every long-term record under its actor first (ADR 0033). */

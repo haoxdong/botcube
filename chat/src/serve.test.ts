@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { ServerType } from '@hono/node-server';
-import { DeleteTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DeleteTableCommand, DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { Hono } from 'hono';
 import * as scheduledRuns from './scheduled-runs.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -209,6 +209,24 @@ describe('the Chat Service served from the environment', () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
     expect(await (await fetch(`${url}/health`)).json()).toEqual({ status: 'ok' });
+  });
+
+  it('reports production activity to BOTCUBE_CHAT_TABLE for the parking Lambda', async () => {
+    const table = await newTable();
+    await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: table });
+    const client = new DynamoDBClient(motoAws());
+    try {
+      await vi.waitFor(async () => {
+        const { Items = [] } = await client.send(new QueryCommand({
+          TableName: table,
+          KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+          ExpressionAttributeValues: { ':pk': { S: 'PRODUCTION_PARKING' }, ':sk': { S: 'ACTIVITY#' } },
+        }));
+        expect(Items).toHaveLength(1);
+      });
+    } finally {
+      client.destroy();
+    }
   });
 
   it.each([1, 2])('keeps Session Metadata in the "chat" table by default on fixture run %i', async () => {

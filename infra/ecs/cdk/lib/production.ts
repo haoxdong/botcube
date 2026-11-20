@@ -211,7 +211,6 @@ export function defineProduction(app: App, options: ProductionOptions) {
   // The per-Turn JWT's issuer is the origin the AgentCore app registers as the Memory role's OIDC provider.
   chat.container.addEnvironment('BOTCUBE_PARK_STATE_PARAMETER', identity.ssm.parkState);
   chat.container.addEnvironment('BOTCUBE_PRODUCT_NAME', identity.product.name);
-  chat.container.addEnvironment('BOTCUBE_REPORT_ACTIVITY', 'true');
   chat.container.addEnvironment('BOTCUBE_AUTOMATION_USER_AGENTS', identity.aws.ecs.parking.automationUserAgents.join(','));
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameterHistory'], resources: [origin.formatArn({ service: 'ssm', resource: `parameter${identity.ssm.parkState}` })] }));
   const publicOrigin = `https://${new URL(identity.domains.chatService).hostname}`;

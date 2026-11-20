@@ -1455,8 +1455,7 @@ def main() -> None:
     # Listening before any client connects: every client, and every command the agent runs, sends through it.
     start_proxy_relay_from_env()
     importlib.import_module('openai.resources.responses')
-    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
-        restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
+    restore_prime.prime_if_enabled(os.environ.get('AWS_REGION') or AGENTCORE_REGION)
     if AGENTCORE_MEMORY_ID:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     models_on_endpoint()
@@ -1485,8 +1484,7 @@ def main() -> None:
             'botcube_harness_deepagents.prompt_cache': {'level': 'INFO', 'handlers': ['bare'], 'propagate': False},
         },
     })
-    if os.getenv('BOTCUBE_SNAPSHOT_PRIME') == '1':
-        _prime_snapshot()
+    _prime_snapshot()
     process_observation.name_spans(trace.get_tracer_provider())
     process_observation.mark('serve_handoff')
     uvicorn.run(app, host=os.getenv('BOTCUBE_HARNESS_HOST', '0.0.0.0'), port=int(os.getenv('PORT', '8080')))

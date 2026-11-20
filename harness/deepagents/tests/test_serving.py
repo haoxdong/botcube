@@ -2669,6 +2669,7 @@ def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[A
     """Start the service with main(), recording how uvicorn would serve it."""
     served: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, **options: served.append((app, options)))
+    monkeypatch.setattr(serving, '_prime_snapshot', lambda: None)
     monkeypatch.setattr(serving, '_bot', None)
     module = ModuleType(CARTRIDGE_MODULE)
     vars(module)['CARTRIDGE'] = _definition([])

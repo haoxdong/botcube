@@ -302,14 +302,14 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   }
   const table = chatTable(env);
   const scheduling = chatScheduling(adapters.schedules, env, table);
-  const activity = env.BOTCUBE_REPORT_ACTIVITY === 'true' ? new ProductionActivity() : null;
+  const activity = new ProductionActivity();
   const metadata = new DynamoDBSessionMetadata(table);
   const draining = ecsTaskDraining(env.ECS_CONTAINER_METADATA_URI_V4);
   let stopScheduledRuns: (() => void) | undefined;
   const { app, chat } = createChatService(
     { ...options, env },
     config,
-    activity?.observe(metadata) ?? metadata,
+    activity.observe(metadata),
     new DynamoDBAgentDocuments(table),
     sessionApi(config.sessionApi),
     scheduling && {
@@ -339,10 +339,10 @@ export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: 
   const webOrigins = config.corsOrigins ?? chat.corsOrigins ?? LOCAL_UI_ORIGINS;
   const automation = (env.BOTCUBE_AUTOMATION_USER_AGENTS ?? '').split(',').filter(Boolean);
   const fetch: typeof app.fetch = (request, ...rest) => {
-    if (activity !== null && isUserRequest(request, webOrigins, automation)) activity.userRequest();
+    if (isUserRequest(request, webOrigins, automation)) activity.userRequest();
     return app.fetch(request, ...rest);
   };
-  activity?.report(table);
+  activity.report(table);
   const server = serve({ fetch, port, hostname: env.BOTCUBE_CHAT_HOST || '0.0.0.0', websocket }, () =>
     console.log(`Chat Service listening on :${port}`),
   );
