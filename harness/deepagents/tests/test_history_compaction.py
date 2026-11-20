@@ -231,7 +231,7 @@ def test_the_serving_lifecycle_surfaces_a_failed_compaction_on_the_next_turn(
     from botcube_harness_deepagents import serving
     from conftest import prepared
 
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
 
     async def exercise() -> None:
         model = CompactionModel(responses=[], summary_started=asyncio.Event(), release_summary=asyncio.Event(), fail_summary=True)

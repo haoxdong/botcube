@@ -60,7 +60,7 @@ def final_write(monkeypatch: pytest.MonkeyPatch) -> Iterator[FinalWrite]:
 
 @pytest.fixture
 def streaming_url(service: _Service) -> Iterator[str]:
-    """Match the per-test Cartridge and Memory fixture lifecycle."""
+    """Match the per-test bot and Memory fixture lifecycle."""
     ready = threading.Event()
 
     class Server(uvicorn.Server):

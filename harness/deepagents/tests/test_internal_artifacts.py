@@ -58,14 +58,14 @@ def configured_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LocalSh
     from botcube_harness_deepagents.definition import HarnessDefinition
 
     monkeypatch.delenv('PYTHONDONTWRITEBYTECODE', raising=False)
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
     monkeypatch.setattr(serving, '_workspace', lambda: tmp_path)
     serving.configure_harness_definition(HarnessDefinition(
         skills=(), agent_name='artifacts', prepare_invocation=lambda invocation: invocation,
         prepare_root=lambda root: None, session_id_env_var='TEST_SESSION_ID',
         environment_cache_key=lambda environment: (),
     ))
-    return serving._require_cartridge().build_backend({})
+    return serving._require_bot().build_backend({})
 
 
 @pytest.mark.integration

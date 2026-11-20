@@ -48,7 +48,7 @@ def test_a_turn_saves_the_file_its_answer_links_by_path_before_finishing(
     workspace.mkdir()
     saved.write_bytes(content)
     source = filesystem / 'mnt/data' / name
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
     link_import = files.import_linked_files
     monkeypatch.setattr(files, 'import_linked_files', lambda root, text, excluded: link_import(
         root, text, excluded, filesystem=filesystem,

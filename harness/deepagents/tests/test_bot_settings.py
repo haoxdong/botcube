@@ -69,7 +69,7 @@ def bot_service(request: pytest.FixtureRequest, start: Start, tmp_path: Path, mo
 def test_the_harness_serves_the_bot_its_settings_describe(bot_service: _Service) -> None:
     events = bot_service.turn('read: /skills/greeting/SKILL.md', actor=None)
 
-    assert serving._require_cartridge().agent_name == 'Cubey'
+    assert serving._require_bot().agent_name == 'Cubey'
     # A Turn that names no model runs on the bot's first.
     assert bot_service.recorder.builds[-1]['model'] == 'sonnet-4.6'
     assert '- greeting:' in bot_service.recorder.prompts[0]

@@ -59,7 +59,7 @@ async def exercise(session_id: str, mode: str) -> None:
         return {'messages': [AIMessage(result)]}
 
     patch = pytest.MonkeyPatch()
-    patch.setattr(serving, '_require_cartridge', lambda: serving.HarnessCartridge(
+    patch.setattr(serving, '_require_bot', lambda: serving.HarnessBot(
         skills=(), agent_name='test', system_prompt='',
         build_backend=lambda _: LocalShellBackend(root_dir='.', virtual_mode=True, inherit_env=False),
         environment_cache_key=lambda _: (), prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
@@ -110,12 +110,12 @@ async def exercise_command(command: str, *, sync: bool = False) -> None:
         executable.write_text('#!/bin/sh\ncase "$*" in *--fail*) echo "command failed" >&2; exit 7;; esac\nprintf "command completed\\n%s\\n" "$*"\n')
         executable.chmod(0o755)
         os.environ['BOTCUBE_WORKSPACE'] = root
-        serving._cartridge = None
+        serving._bot = None
         serving.configure_harness_definition(HarnessDefinition(
             skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
         ))
-        backend = serving._require_cartridge().build_backend({'PATH': root + ':/usr/bin:/bin'})
+        backend = serving._require_bot().build_backend({'PATH': root + ':/usr/bin:/bin'})
         model = ToolBindableFakeMessagesModel(responses=[
             AIMessage(content='', tool_calls=[{
                 'name': 'execute', 'args': {'command': command},
@@ -205,12 +205,12 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         executable.write_text(_EXPORTING_CLI.format(python=sys.executable))
         executable.chmod(0o755)
         os.environ['BOTCUBE_WORKSPACE'] = root
-        serving._cartridge = None
+        serving._bot = None
         serving.configure_harness_definition(HarnessDefinition(
             skills=(), agent_name='test', prepare_invocation=lambda _: serving.InvocationAuth('owner', False, None),
             prepare_root=lambda _: None, session_id_env_var='TEST_SESSION', environment_cache_key=lambda _: (),
         ))
-        backend = serving._require_cartridge().build_backend({'PATH': root + ':/usr/bin:/bin'})
+        backend = serving._require_bot().build_backend({'PATH': root + ':/usr/bin:/bin'})
         model = _CommandModel(command=command, answer_fails=answer_fails)
         agent = serving._SessionAgent(name='test', graph=build_agent(backend=backend, skills=[], model=model, checkpointer=MemorySaver()))
 

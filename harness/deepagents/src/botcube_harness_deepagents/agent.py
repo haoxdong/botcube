@@ -386,7 +386,7 @@ def _reject_dropped_settings(model: Any, permissions: list[FilesystemPermission]
 
 
 def general_purpose_subagent(instructions: str, skills: Sequence[str]) -> dict[str, Any]:
-    """deepagents' general-purpose subagent, with the Cartridge's instructions after its stock prompt.
+    """deepagents' general-purpose subagent, with the bot's instructions after its stock prompt.
 
     Like Claude Code's subagents, which load CLAUDE.md but not its system prompt, it gets the bot's
     instructions but not the Harness's voice: it reports to the main agent, not the user.

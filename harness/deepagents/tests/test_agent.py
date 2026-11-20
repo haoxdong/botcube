@@ -62,7 +62,7 @@ def _fake_module(name: str, **attributes: object) -> ModuleType:
     return module
 
 
-def test_agent_requires_cartridge_backend_and_skills() -> None:
+def test_agent_requires_bot_backend_and_skills() -> None:
     model = ToolBindableFakeModel(responses=['unused'])
 
     # Deliberately incomplete keywords: the call must fail at runtime.
@@ -430,7 +430,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
             tool_results.extend(message.text for message in messages if isinstance(message, ToolMessage))
             return super()._generate(messages, *args, **kwargs)
 
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
     model = CapturingModel(responses=[
         AIMessage(content='', tool_calls=[{
             'id': 'delegate', 'name': 'task', 'args': {

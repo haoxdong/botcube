@@ -200,7 +200,7 @@ class MissingUserIdError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class HarnessCartridge:
+class HarnessBot:
     skills: Sequence[str]
     agent_name: str
     system_prompt: str
@@ -211,14 +211,14 @@ class HarnessCartridge:
     default_model: str | None = None
 
 
-_cartridge: HarnessCartridge | None = None
+_bot: HarnessBot | None = None
 
 
-def configure_harness(cartridge: HarnessCartridge) -> None:
-    global _cartridge
-    if _cartridge is not None:
-        raise RuntimeError('Harness Cartridge is already configured')
-    _cartridge = cartridge
+def configure_harness(bot: HarnessBot) -> None:
+    global _bot
+    if _bot is not None:
+        raise RuntimeError('Harness bot is already configured')
+    _bot = bot
 
 
 def configure_harness_definition(definition: HarnessDefinition, default_model: str | None = None) -> None:
@@ -240,7 +240,7 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
         )
 
     configure_harness(
-        HarnessCartridge(
+        HarnessBot(
             skills=definition.skills,
             agent_name=definition.agent_name,
             system_prompt=definition.system_prompt,
@@ -271,14 +271,14 @@ def configure_installed_cartridge() -> None:
     configure_harness_definition(entries[0].load())
 
 
-def _require_cartridge() -> HarnessCartridge:
-    if _cartridge is None:
-        raise RuntimeError('Harness Cartridge is not configured')
-    return _cartridge
+def _require_bot() -> HarnessBot:
+    if _bot is None:
+        raise RuntimeError('Harness bot is not configured')
+    return _bot
 
 
 # AgentCore passes the runtime session id on this header (what AGUIApp read via
-# RequestContext). The Cartridge maps it into its tool session environment.
+# RequestContext). The bot definition maps it into its tool session environment.
 SESSION_ID_HEADER = 'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id'
 # An SSE comment the Turn's stream sends after each quiet stretch this long: the Chat Service's read of the
 # stream fails after 300 s with nothing sent. The interval is the SSE spec's suggestion for proxies.
@@ -313,7 +313,7 @@ class _AgentKey(NamedTuple):
     invocation_prompt: str
     scheduled_run: bool
     agent_system_prompt: str
-    cartridge_system_prompt: str | None
+    bot_system_prompt: str | None
 
 
 def _error_code(error: Exception) -> str:
@@ -642,8 +642,8 @@ def _user_prompt(profile: str, synced_skills: Sequence[str] | None, documents: A
     )
 
 
-def _cartridge_instructions(cartridge: HarnessCartridge, candidate: str | None) -> str:
-    return cartridge.system_prompt if candidate is None else candidate
+def _bot_instructions(bot: HarnessBot, candidate: str | None) -> str:
+    return bot.system_prompt if candidate is None else candidate
 
 
 def _get_agent(
@@ -656,7 +656,7 @@ def _get_agent(
     thread_id: str | None = None,
     invocation_prompt: str = '',
     agent_system_prompt: str = AGENT_SYSTEM_PROMPT,
-    cartridge_system_prompt: str | None = None,
+    bot_system_prompt: str | None = None,
     environment: Mapping[str, str] | None = None,
     model_relay: ModelRelay | None = None,
     documents: AgentDocuments | None = None,
@@ -668,7 +668,7 @@ def _get_agent(
         conversation_id = thread_id or 'default'
         resolved_model = resolve_model(model)
         resolved_effort = resolve_effort(effort)
-        environment_key = _require_cartridge().environment_cache_key(
+        environment_key = _require_bot().environment_cache_key(
             {name: value for name, value in (environment or {}).items() if name != 'AGENT_BROWSER_CDP'}
         )
         key = _AgentKey(
@@ -684,7 +684,7 @@ def _get_agent(
             invocation_prompt,
             scheduled_run,
             agent_system_prompt,
-            cartridge_system_prompt,
+            bot_system_prompt,
         )
         cached = _AGENTS.get(key)
         if preparing and cached is not None:
@@ -721,7 +721,7 @@ def _get_agent(
         ]
         tools: list[Any] = [] if scheduled_run else [propose_scheduled_task]
         if syncs_files:
-            tools.append(artifact_tool(Path(backend.cwd), _require_cartridge().skills))
+            tools.append(artifact_tool(Path(backend.cwd), _require_bot().skills))
         if persistent_memory:
             memory_tools, memory_middleware = _memory_tools(store, actor_id, conversation_id)
             tools.extend(memory_tools)
@@ -729,12 +729,12 @@ def _get_agent(
         middleware.append(_TodayMiddleware())
         if documents:
             tools.extend(agent_document_tools(documents))
-        cartridge = _require_cartridge()
-        cartridge_prompt = _cartridge_instructions(cartridge, cartridge_system_prompt)
+        bot = _require_bot()
+        bot_prompt = _bot_instructions(bot, bot_system_prompt)
         system_prompt = '\n\n'.join(
-            part for part in (agent_system_prompt, cartridge_prompt) if part
+            part for part in (agent_system_prompt, bot_prompt) if part
         )
-        user_prompt = _user_prompt(invocation_prompt, cartridge.skills if syncs_files else None, documents)
+        user_prompt = _user_prompt(invocation_prompt, bot.skills if syncs_files else None, documents)
         with turn_timing.phase('graph_build'):
             graph = build_agent(
                 model=m,
@@ -743,8 +743,8 @@ def _get_agent(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 backend=backend,
-                skills=_require_cartridge().skills,
-                subagents=[general_purpose_subagent(cartridge_prompt, cartridge.skills)] if cartridge_prompt else None,
+                skills=_require_bot().skills,
+                subagents=[general_purpose_subagent(bot_prompt, bot.skills)] if bot_prompt else None,
                 checkpointer=_CHECKPOINTER,
                 store=store if persistent_memory else None,
             )
@@ -753,7 +753,7 @@ def _get_agent(
             'configurable': {'actor_id': session_user_id},
         }
         # The base adapter requires a name; its clone and naming endpoint are unused here.
-        identity: dict[str, Any] = {'name': _require_cartridge().agent_name}  # pragma: no mutate: the name is never read
+        identity: dict[str, Any] = {'name': _require_bot().agent_name}  # pragma: no mutate: the name is never read
         with turn_timing.phase('stream_adapter'):
             agent = _SessionAgent(**identity, graph=graph, config=config)
         _AGENTS[key] = agent
@@ -781,7 +781,7 @@ def _backend_for(
 ) -> LocalShellBackend:
     backend = _BACKENDS.get(backend_key)
     if backend is None:
-        backend = _require_cartridge().build_backend(dict(environment or {}))
+        backend = _require_bot().build_backend(dict(environment or {}))
         _BACKENDS[backend_key] = backend
     else:
         _apply_environment(backend, environment)
@@ -879,7 +879,7 @@ async def invoke(input_data: RunAgentInput, context: _RequestContext):
         documents = None
     files = pop_files_mount(forwarded)
     with turn_timing.phase('invocation_auth'):
-        auth = _require_cartridge().prepare_invocation(input_data)
+        auth = _require_bot().prepare_invocation(input_data)
     forwarded.pop('sessionUserId', None)
     # Only an opted-in bot's shell holds the user token, for its CLIs to call its own service as the User (ADR 0091):
     # minted per Turn, user-token audience, redacted from tool output, never in the model's context.
@@ -930,12 +930,12 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         actor_id=auth.actor_id,
         session_user_id=session_user_id,
         persistent_memory=persistent_memory,
-        model=forwarded.get('model') or _require_cartridge().default_model,
+        model=forwarded.get('model') or _require_bot().default_model,
         effort=forwarded.get('effort'),
         thread_id=input_data.thread_id,
         invocation_prompt=_opening_prompt(input_data, auth.system_prompt),
         agent_system_prompt=forwarded.get('agentSystemPrompt', AGENT_SYSTEM_PROMPT),
-        cartridge_system_prompt=forwarded.get('botSystemPrompt'),
+        bot_system_prompt=forwarded.get('botSystemPrompt'),
         environment=auth.environment,
         model_relay=auth.model_relay,
         documents=documents,
@@ -954,7 +954,7 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
             if AGENTCORE_MEMORY_ID and persistent_memory:
                 store = agent.graph.store
                 session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
-            _require_cartridge().apply_session_id(backend, input_data.thread_id)
+            _require_bot().apply_session_id(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
 
         read_locked = partial(
@@ -1037,7 +1037,7 @@ async def _prepare_agent(
                 if memory_warmup is not None:
                     memory_read = results[1]
 
-        TurnFiles(files, Path(backend.cwd), excluded_paths(_require_cartridge().skills)).prefetch()
+        TurnFiles(files, Path(backend.cwd), excluded_paths(_require_bot().skills)).prefetch()
         if reads_history:
             await read_history()
         if reads_history and isinstance(saver, WarmSessionSaver):
@@ -1197,7 +1197,7 @@ class _SessionTurns:
                     return
                 reply = _OpenReply()
 
-                with turn_files(files, root, excluded_paths(_require_cartridge().skills)) as readiness:
+                with turn_files(files, root, excluded_paths(_require_bot().skills)) as readiness:
                     readiness.prefetch()
                     with prompt_cache_turn(context.session_id), collecting_turn_feeds() as feeds:
                         publish = partial(turn.publish, put=put, files=readiness)
@@ -1208,7 +1208,7 @@ class _SessionTurns:
                         if not turn.work.cancelled():
                             turn.work.result()
                             readiness.raise_if_failed()
-                            await import_finished_files(files, root, readiness.used, turn.completion, reply.text, _require_cartridge().skills)
+                            await import_finished_files(files, root, readiness.used, turn.completion, reply.text, _require_bot().skills)
                     finally:
                         if turn.work.cancelled():
                             await reply.keep(agent, session)
@@ -1461,7 +1461,7 @@ def main() -> None:
         agentcore_memory_backend.sts_client(AGENTCORE_REGION)
     models_on_endpoint()
     cache_markers_on()
-    if _cartridge is None:
+    if _bot is None:
         module_name = os.getenv('BOTCUBE_CARTRIDGE_MODULE', '').strip()
         if bot := bot_from_env(module_name):
             configure_harness_definition(*bot)

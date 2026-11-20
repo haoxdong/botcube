@@ -339,7 +339,7 @@ def _serve_session(
         '_AGENTS': {},
         '_BACKENDS': {},
         'build_model': lambda **_kwargs: _ToolCallingModel(),
-        '_cartridge': serving.HarnessCartridge(
+        '_bot': serving.HarnessBot(
             system_prompt='',
             skills=[],
             agent_name='round-trip',

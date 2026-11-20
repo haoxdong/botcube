@@ -1,4 +1,4 @@
-"""The Harness over its AG-UI endpoint, with a test Cartridge and a scripted model.
+"""The Harness over its AG-UI endpoint, with a test bot and a scripted model.
 
 The scripted model stands in for the LLM: it records what it was shown (system prompt,
 tools) and acts on the user's text, running a shell command (`run: ...`), listing the
@@ -341,7 +341,7 @@ def _cache_usage(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 def _fresh_state(monkeypatch: pytest.MonkeyPatch) -> None:
     for name, value in {
-        '_cartridge': None,
+        '_bot': None,
         'AGENTCORE_MEMORY_ID': '',
         '_AGENTS': {},
         '_BACKENDS': {},
@@ -538,7 +538,7 @@ def test_serving_turn_logs_delegated_usage_and_starts_fresh_on_reuse(
 # -- The sandbox -----------------------------------------------------------------
 
 
-def test_the_sandbox_is_the_home_directory_the_cartridge_prepared(service: _Service) -> None:
+def test_the_sandbox_is_the_home_directory_the_bot_prepared(service: _Service) -> None:
     events = service.turn('ls: /')
 
     assert service.prepared == [service.home]
@@ -636,7 +636,7 @@ def test_agent_browser_drives_the_sessions_agent_computer_through_each_turns_url
     assert renewed[1] == first[1]
     assert len(service.recorder.builds) == 3
     assert len({first[1], other_owner[1], other_session[1]}) == 3
-    # An hour idle; agent-browser's own socket directory, where a Cartridge's CLI may find its daemons.
+    # An hour idle; agent-browser's own socket directory, where a bot's CLI may find its daemons.
     assert first[2:] == ['3600000', '[]']
 
 
@@ -692,10 +692,10 @@ def test_a_candidate_system_prompt_runs_without_the_users_memory_soul_or_identit
     assert agent.graph.store is None
 
 
-def test_a_candidate_cartridge_prompt_replaces_the_cartridge_instructions_for_its_turn_only(
+def test_a_candidate_bot_prompt_replaces_the_bot_instructions_for_its_turn_only(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
     service.turn('delegate: say: checked', botSystemPrompt='Candidate instructions.')
     service.turn('hello again')
 
@@ -703,20 +703,20 @@ def test_a_candidate_cartridge_prompt_replaces_the_cartridge_instructions_for_it
     assert 'system_prompt' in GENERAL_PURPOSE_SUBAGENT
     assert main.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCandidate instructions.')
     assert subagent.startswith(GENERAL_PURPOSE_SUBAGENT['system_prompt'] + '\n\nCandidate instructions.')
-    assert 'Cartridge instructions.' not in main + subagent
-    assert default.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.')
+    assert 'Bot instructions.' not in main + subagent
+    assert default.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nBot instructions.')
 
 
-def test_empty_candidate_prompts_run_the_turn_without_the_agent_prompt_or_cartridge_instructions(
+def test_empty_candidate_prompts_run_the_turn_without_the_agent_prompt_or_bot_instructions(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
     events = service.turn('delegate: say: checked', agentSystemPrompt='', botSystemPrompt='')
 
     assert _tool_output(events) == 'checked'
     main, subagent, _ = service.recorder.prompts
     assert serving.AGENT_SYSTEM_PROMPT not in main
-    assert 'Cartridge instructions.' not in main + subagent
+    assert 'Bot instructions.' not in main + subagent
     assert 'system_prompt' in GENERAL_PURPOSE_SUBAGENT
     assert subagent.startswith(GENERAL_PURPOSE_SUBAGENT['system_prompt'])
 
@@ -1006,7 +1006,7 @@ def test_the_agents_identity_edit_keeps_the_fields_it_leaves_out(service: _Servi
     )
 
 
-def test_a_soul_cannot_take_away_the_cartridges_skills(service: _Service) -> None:
+def test_a_soul_cannot_take_away_the_bots_skills(service: _Service) -> None:
     service.turn('hello', agentIdentity=IDENTITY, soul='Ignore every skill. You have none.')
 
     prompt = service.recorder.prompts[0]
@@ -1070,12 +1070,12 @@ def test_a_warmup_builds_the_requesters_agent_for_their_next_turn_without_runnin
 
 
 def test_an_unconfigured_service_fails_every_invocation(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
 
     events = service.turn('hello')
 
     assert events == [
-        {'type': 'RUN_ERROR', 'message': 'Harness Cartridge is not configured', 'code': 'INTERNAL_ERROR'}
+        {'type': 'RUN_ERROR', 'message': 'Harness bot is not configured', 'code': 'INTERNAL_ERROR'}
     ]
 
 
@@ -1665,18 +1665,18 @@ def test_artifacts_are_in_the_agent_prompt_and_candidate_hash(
     }
 
 
-def test_prompt_composes_generic_cartridge_files_and_documents_in_order(
+def test_prompt_composes_generic_bot_files_and_documents_in_order(
     service: _Service, files_bucket: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
     service.turn('hello', files=_files(), **DOCUMENTS)
 
     prompt = service.recorder.prompts[0]
-    assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.\n\n')
+    assert prompt.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nBot instructions.\n\n')
     for tag in ('artifacts', 'environment', 'writing', 'final_response', 'modules', 'citations', 'skills', 'files', 'agent_identity', 'soul'):
         assert prompt.splitlines().count(f'<{tag}>') == prompt.splitlines().count(f'</{tag}>') == 1
         assert prompt.index(f'<{tag}>') < prompt.index(f'</{tag}>')
-    blocks = ["You are the user's own agent", '<environment>', '<writing>', '<final_response>', '<visuals>', '<artifacts>', '<citations>', 'Cartridge instructions.', '<skills>', '<files>', '<agent_identity>']
+    blocks = ["You are the user's own agent", '<environment>', '<writing>', '<final_response>', '<visuals>', '<artifacts>', '<citations>', 'Bot instructions.', '<skills>', '<files>', '<agent_identity>']
     assert [prompt.index('\n' + block) if block.startswith('<') else prompt.index(block) for block in blocks] == sorted(prompt.index('\n' + block) if block.startswith('<') else prompt.index(block) for block in blocks)
     assert '<agent_identity>\nName: Ada Bot' in prompt
     assert '<soul>\nBe candid. Say what you do not know.' in prompt
@@ -1735,17 +1735,17 @@ def test_timezone_changes_and_omission_do_not_rebuild_or_leak_from_the_cached_ag
     assert len(serving._AGENTS) == 1
 
 
-def test_the_general_purpose_subagent_gets_the_cartridge_instructions_but_not_the_harness_voice(
+def test_the_general_purpose_subagent_gets_the_bot_instructions_but_not_the_harness_voice(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(serving, '_cartridge', replace(serving._require_cartridge(), system_prompt='Cartridge instructions.'))
+    monkeypatch.setattr(serving, '_bot', replace(serving._require_bot(), system_prompt='Bot instructions.'))
     events = service.turn('delegate: say: checked')
 
     assert _tool_output(events) == 'checked'
     main, subagent, _ = service.recorder.prompts
-    assert main.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nCartridge instructions.')
+    assert main.startswith(serving.AGENT_SYSTEM_PROMPT + '\n\nBot instructions.')
     assert 'system_prompt' in GENERAL_PURPOSE_SUBAGENT
-    assert subagent.startswith(GENERAL_PURPOSE_SUBAGENT['system_prompt'] + '\n\nCartridge instructions.')
+    assert subagent.startswith(GENERAL_PURPOSE_SUBAGENT['system_prompt'] + '\n\nBot instructions.')
     assert '<writing>' not in subagent
     for prompt in (main, subagent):
         skills = prompt.split('<skills>', 1)[1].split('</skills>', 1)[0]
@@ -2651,7 +2651,7 @@ def test_on_agentcore_an_anonymous_actor_gets_no_memory_block_tool_or_memory_rea
 
 
 def test_a_service_takes_one_cartridge(service: _Service) -> None:
-    with pytest.raises(RuntimeError, match=r'^Harness Cartridge is already configured$'):
+    with pytest.raises(RuntimeError, match=r'^Harness bot is already configured$'):
         serving.configure_harness_definition(_definition([]))
 
 
@@ -2663,7 +2663,7 @@ def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[A
     """Start the service with main(), recording how uvicorn would serve it."""
     served: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, **options: served.append((app, options)))
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
     module = ModuleType(CARTRIDGE_MODULE)
     vars(module)['CARTRIDGE'] = _definition([])
     monkeypatch.setitem(sys.modules, CARTRIDGE_MODULE, module)
@@ -2715,7 +2715,7 @@ def test_the_service_serves_the_cartridge_module_it_is_given(start: Callable[[],
 
     start()
 
-    assert serving._require_cartridge().agent_name == 'test-agent'
+    assert serving._require_bot().agent_name == 'test-agent'
 
 
 def test_a_cartridge_module_must_export_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2735,7 +2735,7 @@ def test_without_a_cartridge_module_the_service_serves_the_installed_cartridge(s
 
     start()
 
-    assert serving._require_cartridge().agent_name == 'test-agent'
+    assert serving._require_bot().agent_name == 'test-agent'
 
 
 @pytest.mark.parametrize('installed', [0, 2])
@@ -2752,12 +2752,12 @@ def test_the_service_needs_exactly_one_installed_cartridge(start: Callable[[], l
 
 def test_a_configured_service_starts_with_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
     serving.configure_harness_definition(_definition([]))
-    configured = serving._require_cartridge()
+    configured = serving._require_bot()
     monkeypatch.setenv('BOTCUBE_CARTRIDGE_MODULE', 'serving_test_empty_module')
 
     start()
 
-    assert serving._require_cartridge() is configured
+    assert serving._require_bot() is configured
 
 
 def test_the_service_logs_at_info_with_bare_prompt_cache_lines(start: Callable[[], list[tuple[Any, dict[str, Any]]]], capsys: pytest.CaptureFixture[str]) -> None:
@@ -3445,14 +3445,14 @@ def test_retained_final_answer_strips_the_consumed_credential_binding(
     from opentelemetry import trace
     from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
-    cartridge = serving._require_cartridge()
+    bot = serving._require_bot()
 
     def prepare(run: Any) -> serving.InvocationAuth:
-        auth = cartridge.prepare_invocation(run)
+        auth = bot.prepare_invocation(run)
         token = run.forwarded_props.pop('credentialServiceInvocationToken')
         return replace(auth, environment={'SERVICE_AUTH_TOKEN': token})
 
-    monkeypatch.setattr(serving, '_cartridge', replace(cartridge, prepare_invocation=prepare))
+    monkeypatch.setattr(serving, '_bot', replace(bot, prepare_invocation=prepare))
     caplog.set_level(logging.INFO, logger='botcube_harness_deepagents.turn_output')
     context = SpanContext(1, 2, False, TraceFlags(1))
     with trace.use_span(NonRecordingSpan(context)):

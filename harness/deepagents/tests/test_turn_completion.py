@@ -233,7 +233,7 @@ def test_replacement_after_completion_does_not_cancel_iterator_cleanup(
                     await release.wait()
 
 
-        monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+        monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
         files = cast(FilesMount, SimpleNamespace(pull=lambda *args: None))
         turns = serving._SessionTurns()
         stream = turns.stream(('owner', 'session'), prepared(cast(LangGraphAgent, Agent()), tmp_path), _input(), files, serving._RequestContext(None))
@@ -269,7 +269,7 @@ def test_an_errored_graph_does_not_import_linked_files(monkeypatch: pytest.Monke
             yield RunErrorEvent(message='Graph failed', code='GRAPH_FAILED')
 
 
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
     files = cast(FilesMount, SimpleNamespace(pull=lambda *args: None))
 
     async def exercise() -> None:
@@ -304,7 +304,7 @@ def test_an_errored_stream_drains_background_files_before_eof(
             assert await asyncio.to_thread(entered.wait, 5)
             yield RunErrorEvent(message='Arguments failed', code='GRAPH_FAILED')
 
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(skills=()))
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(skills=()))
     files = cast(FilesMount, SimpleNamespace(pull=pull))
 
     async def exercise() -> None:

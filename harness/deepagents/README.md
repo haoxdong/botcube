@@ -5,7 +5,7 @@ container wire contract. It owns agent composition, AG-UI serving, model
 factories, prompt-cache observability, and the in-memory and AgentCore memory
 backends.
 
-Applications must configure an `HarnessCartridge` before serving. The Cartridge
+Applications must configure an `HarnessBot` before serving. The Cartridge
 supplies the tool backend, skill sources, identity behavior, invocation
 environment, session binding, and bot-facing name and prompt. `build_agent`
 likewise requires explicit `backend` and `skills` arguments; there are no

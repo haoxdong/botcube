@@ -16,10 +16,10 @@ def test_template_harness_installs_its_skill(tmp_path: Path) -> None:
 def test_deepagents_harness_constructs_from_the_template_cartridge(monkeypatch: pytest.MonkeyPatch) -> None:
     from botcube_harness_deepagents import serving
 
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
 
     serving.configure_harness_definition(HARNESS_CARTRIDGE)
-    configured = serving._require_cartridge()
+    configured = serving._require_bot()
     configured.build_backend({})
 
     assert configured.agent_name == 'BotCube'
@@ -56,7 +56,7 @@ def test_shared_invocation_preserves_each_templates_filing_identity(monkeypatch:
 
     from botcube_harness_deepagents import serving
 
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', None)
     serving.configure_harness_definition(HARNESS_CARTRIDGE)
 
@@ -83,7 +83,7 @@ def test_shared_invocation_without_template_identity_is_classified(monkeypatch: 
 
     from botcube_harness_deepagents import serving
 
-    monkeypatch.setattr(serving, '_cartridge', None)
+    monkeypatch.setattr(serving, '_bot', None)
     serving.configure_harness_definition(HARNESS_CARTRIDGE)
 
     async def invoke() -> None:

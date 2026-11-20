@@ -98,7 +98,7 @@ def _assert_closed_replies(events: list[Any]) -> None:
 def test_turn_crossing_the_token_limit_finishes_with_a_persisted_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, advance: int,
 ) -> None:
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(
         skills=(), apply_session_id=lambda *args: None, default_model=None,
     ))
 
@@ -162,7 +162,7 @@ def test_an_expired_invocation_keeps_the_user_message_and_streams_a_complete_ans
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr('time.time', lambda: EPOCH)
-    monkeypatch.setattr(serving, '_require_cartridge', lambda: SimpleNamespace(
+    monkeypatch.setattr(serving, '_require_bot', lambda: SimpleNamespace(
         skills=(), apply_session_id=lambda *args: None, default_model=None,
     ))
     graph = build_agent(model=StreamingToolModel(responses=[AIMessage('Unexpected model call')]),

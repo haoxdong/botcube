@@ -1,4 +1,4 @@
-"""Checkpoint fakes shared by the serving and Session API tests, in a plain module: the Cartridge suite imports
+"""Checkpoint fakes shared by the serving and Session API tests, in a plain module: the bot suites imports
 `test_serving` under its own conftest."""
 
 from __future__ import annotations
