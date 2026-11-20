@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import type { ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { answer } from '../../../infra/ecs/files/files.mjs';
@@ -86,19 +87,24 @@ export class FakeEfs extends HttpFake {
     const result = await answer({ key: this.key, root: this.root, disk, now: Date.now() }, {
       method: request.method, query: Object.fromEntries(url.searchParams), ...(request.headers.range ? { range: request.headers.range } : {}), body: request.bodyBytes,
     });
-    if (result.file === undefined) {
+    if (result.opened === undefined) {
       response.writeHead(result.status, { 'content-type': 'text/plain' });
       response.end(result.text ?? String(result.status));
       return;
     }
-    const data = await readFile(result.file);
     const start = result.start ?? 0;
     const end = result.end ?? -1;
     response.writeHead(result.status, {
       'content-length': String(end - start + 1), 'content-type': 'application/octet-stream',
       ...(result.status === 206 ? { 'content-range': `bytes ${start}-${end}/${result.size}` } : {}),
     });
-    response.end(data.subarray(start, end + 1));
+    if ((result.size ?? 0) === 0) {
+      await result.opened.close();
+      response.end();
+      return;
+    }
+    // Streams the file the Lambda opened and checked, as index.mjs does.
+    await pipeline(result.opened.stream(start, end), response);
   }
 
   private accessPoint(request: RecordedRequest, response: ServerResponse, url: URL): void {

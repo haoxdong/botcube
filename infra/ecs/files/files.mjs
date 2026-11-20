@@ -8,11 +8,13 @@ export const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /**
  * @typedef {{ op: 'get' | 'put', account: string, name: string, exp: number }} Claims
- * @typedef {{ size: number }} Stat
+ * @typedef {{ size: number, stream(start: number, end: number): NodeJS.ReadableStream, close(): Promise<void> }} Opened
+ * A Disk works on `file` inside the account `directory`, and answers 'refused' when the file it opened, or a folder on its way, lies outside it.
  * @typedef {{
- *   stat(file: string): Promise<Stat | null>,
- *   write(file: string, offset: number, body: Buffer): Promise<void>,
- *   finish(part: string, file: string, size: number, sha256: string): Promise<'created' | 'incomplete' | 'exists'>,
+ *   linked(directory: string, file: string): Promise<boolean>,
+ *   read(directory: string, file: string): Promise<Opened | null | 'refused'>,
+ *   write(directory: string, file: string, offset: number, body: Buffer): Promise<'ok' | 'refused'>,
+ *   finish(directory: string, part: string, file: string, size: number, sha256: string): Promise<'created' | 'incomplete' | 'exists' | 'refused'>,
  * }} Disk
  */
 
@@ -43,7 +45,7 @@ export function fileOf(root, claims) {
   const directory = path.join(root, claims.account);
   const file = path.resolve(directory, claims.name);
   if (!file.startsWith(`${directory}${path.sep}`)) return null;
-  return { file, part: path.join(directory, '.uploads', createHash('sha256').update(claims.name).digest('hex')) };
+  return { directory, file, part: path.join(directory, '.uploads', createHash('sha256').update(claims.name).digest('hex')) };
 }
 
 /** @param {string | undefined} header @param {number} size @returns {{ start: number, end: number } | null | 'unsatisfiable'} */
@@ -56,7 +58,7 @@ export function rangeOf(header, size) {
   return start <= end ? { start, end } : 'unsatisfiable';
 }
 
-/** @typedef {{ status: number, text?: string, file?: string, start?: number, end?: number, size?: number, name?: string }} Answer */
+/** @typedef {{ status: number, text?: string, opened?: Opened, start?: number, end?: number, size?: number, name?: string }} Answer */
 
 const REFUSED = { status: 403, text: 'This link is not valid or has expired' };
 
@@ -76,38 +78,43 @@ export async function answer({ key, root, disk, now }, request) {
   const claims = verify(key, request.query.t, now);
   const target = claims?.op === op ? fileOf(root, claims) : null;
   if (target === null) return REFUSED;
-  return op === 'put' ? upload(disk, target, request) : download(disk, target.file, request.range);
+  // The agent can write in its own folder: a symbolic link it planted there must lead nowhere. This is the fast
+  // path; the Disk checks again what it actually opened, so a link swapped in after this look is refused too.
+  if (await disk.linked(target.directory, target.file) || await disk.linked(target.directory, target.part)) return REFUSED;
+  return op === 'put' ? upload(disk, target, request) : download(disk, target, request.range);
 }
 
-/** @param {Disk} disk @param {{ file: string, part: string }} target @param {{ query: Record<string, string | undefined>, body: Buffer }} request @returns {Promise<Answer>} */
-async function upload(disk, { file, part }, { query, body }) {
+/** @param {Disk} disk @param {{ directory: string, file: string, part: string }} target @param {{ query: Record<string, string | undefined>, body: Buffer }} request @returns {Promise<Answer>} */
+async function upload(disk, { directory, file, part }, { query, body }) {
   const offset = Number(query.offset);
   if (!Number.isSafeInteger(offset) || offset < 0 || offset % UPLOAD_CHUNK_BYTES !== 0) return { status: 400, text: 'offset must be a multiple of the chunk size' };
   if (body.length > UPLOAD_CHUNK_BYTES) return { status: 413, text: `chunks are at most ${UPLOAD_CHUNK_BYTES} bytes` };
-  if (query.done === undefined) {
-    await disk.write(part, offset, body);
-    return { status: 200, text: 'ok' };
-  }
+  if (query.done === undefined) return await disk.write(directory, part, offset, body) === 'ok' ? { status: 200, text: 'ok' } : REFUSED;
   const size = Number(query.done);
   if (!Number.isSafeInteger(size) || size < 0) return { status: 400, text: 'done must be the file size' };
   const sha256 = query.sha256 ?? '';
   if (!/^[0-9a-f]{64}$/.test(sha256)) return { status: 400, text: 'sha256 must be the hex digest of the whole file' };
   // An empty file has no chunk 0 of its own, so its finishing request starts it.
-  if (body.length > 0 || size === 0) await disk.write(part, offset, body);
+  if ((body.length > 0 || size === 0) && await disk.write(directory, part, offset, body) === 'refused') return REFUSED;
   // Files never overwrite: a name already taken stays as it is.
   return {
     created: { status: 201, text: 'created' },
     incomplete: { status: 409, text: 'The upload is incomplete' },
     exists: { status: 409, text: 'A file with this name is already in Files' },
-  }[await disk.finish(part, file, size, sha256)];
+    refused: REFUSED,
+  }[await disk.finish(directory, part, file, size, sha256)];
 }
 
-/** @param {Disk} disk @param {string} file @param {string | undefined} header @returns {Promise<Answer>} */
-async function download(disk, file, header) {
-  const stat = await disk.stat(file);
-  if (stat === null) return { status: 404, text: 'No such file' };
-  const range = rangeOf(header, stat.size);
-  if (range === 'unsatisfiable') return { status: 416, text: 'Range not satisfiable', size: stat.size };
-  const { start, end } = range ?? { start: 0, end: stat.size - 1 };
-  return { status: range ? 206 : 200, file, start, end, size: stat.size, name: path.basename(file) };
+/** The answer carries the file already open: what streams is what was checked, never the path opened again. @param {Disk} disk @param {{ directory: string, file: string }} target @param {string | undefined} header @returns {Promise<Answer>} */
+async function download(disk, { directory, file }, header) {
+  const opened = await disk.read(directory, file);
+  if (opened === 'refused') return REFUSED;
+  if (opened === null) return { status: 404, text: 'No such file' };
+  const range = rangeOf(header, opened.size);
+  if (range === 'unsatisfiable') {
+    await opened.close();
+    return { status: 416, text: 'Range not satisfiable', size: opened.size };
+  }
+  const { start, end } = range ?? { start: 0, end: opened.size - 1 };
+  return { status: range ? 206 : 200, opened, start, end, size: opened.size, name: path.basename(file) };
 }

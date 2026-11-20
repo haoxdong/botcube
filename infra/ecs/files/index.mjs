@@ -1,6 +1,5 @@
 // The Files Lambda: an EFS access point at /mnt/files, behind a streaming Function URL.
 /* global awslambda */
-import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { answer } from './files.mjs';
 import { disk } from './disk.mjs';
@@ -18,11 +17,16 @@ export const handler = awslambda.streamifyResponse(async (event, stream) => {
     body: Buffer.from(event.body ?? '', event.isBase64Encoded ? 'base64' : 'utf8'),
   });
   const headers = { 'cache-control': 'no-store' };
-  if (result.file === undefined) {
-    const out = awslambda.HttpResponseStream.from(stream, { statusCode: result.status, headers: { ...headers, 'content-type': 'text/plain' } });
+  /** @param {number} status @param {string} text */
+  const answerText = (status, text) => {
+    const out = awslambda.HttpResponseStream.from(stream, { statusCode: status, headers: { ...headers, 'content-type': 'text/plain' } });
     // A streamed response sends its status with the first write; `end(text)` alone answers 502.
-    out.write(result.text ?? result.status.toString());
+    out.write(text);
     out.end();
+  };
+  const { opened } = result;
+  if (opened === undefined) {
+    answerText(result.status, result.text ?? result.status.toString());
     return;
   }
   const { start = 0, end = -1, size = 0 } = result;
@@ -38,9 +42,11 @@ export const handler = awslambda.streamifyResponse(async (event, stream) => {
     },
   });
   if (size === 0) {
+    await opened.close();
     out.write('');
     out.end();
     return;
   }
-  await pipeline(createReadStream(result.file, { start, end, highWaterMark: 1 << 20 }), out);
+  // The file `answer` opened and checked, never its path opened again.
+  await pipeline(opened.stream(start, end), out);
 });

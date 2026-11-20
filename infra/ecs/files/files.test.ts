@@ -1,5 +1,12 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Readable } from 'node:stream';
+import { text } from 'node:stream/consumers';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { disk as efs } from './disk.mjs';
 import { answer, fileOf, rangeOf, sign, UPLOAD_CHUNK_BYTES, verify, type Disk } from './files.mjs';
 
 const KEY = 'k'.repeat(32);
@@ -10,13 +17,18 @@ const link = (op: 'get' | 'put', name: string, secondsLeft = 300) => sign(KEY, {
 function memoryDisk() {
   const files = new Map<string, Buffer>();
   const disk: Disk = {
-    async stat(file) { const found = files.get(file); return found ? { size: found.length } : null; },
-    async write(file, offset, body) {
+    async read(_, file) {
+      const found = files.get(file);
+      return found ? { size: found.length, stream: (start, end) => Readable.from([found.subarray(start, end + 1)]), close: async () => {} } : null;
+    },
+    async linked() { return false; },
+    async write(_, file, offset, body) {
       const before = offset === 0 ? Buffer.alloc(0) : files.get(file) ?? Buffer.alloc(0);
       const next = Buffer.alloc(Math.max(before.length, offset + body.length));
       before.copy(next); body.copy(next, offset); files.set(file, next);
+      return 'ok';
     },
-    async finish(part, file, size, sha256) {
+    async finish(_, part, file, size, sha256) {
       const found = files.get(part);
       if (found?.length !== size || digest(found) !== sha256) return 'incomplete';
       if (files.has(file)) return 'exists';
@@ -47,6 +59,7 @@ describe('signed links', () => {
 describe('a link names one file inside its account', () => {
   it('resolves nested names and refuses climbing out or a malformed account', () => {
     expect(fileOf('/mnt/files', { op: 'get', account: ACCOUNT, name: 'reports/q3.pdf', exp: 0 })).toEqual({
+      directory: `/mnt/files/${ACCOUNT}`,
       file: `/mnt/files/${ACCOUNT}/reports/q3.pdf`,
       // A hidden folder, which the Files list skips, collects the upload under a fixed-length name.
       part: expect.stringMatching(new RegExp(`^/mnt/files/${ACCOUNT}/\\.uploads/[0-9a-f]{64}$`)),
@@ -112,5 +125,126 @@ describe('answer', () => {
     expect(await answer(deps, request('PUT', { t: link('put', 'a'), offset: '0', done: '0', sha256: 'nope' }))).toMatchObject({ status: 400 });
     expect(await answer(deps, request('DELETE', { t: link('get', 'a') }))).toMatchObject({ status: 405 });
     expect(await answer(deps, request('GET', { t: link('get', '../escape') }))).toMatchObject({ status: 403 });
+  });
+});
+
+describe('a link on EFS never follows a symbolic link out of its account', () => {
+  let root: string;
+  let outside: string;
+  const account = () => path.join(root, ACCOUNT);
+  const deps = () => ({ key: KEY, root, disk: efs, now: NOW });
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'files-lambda-'));
+    outside = await mkdtemp(path.join(tmpdir(), 'files-lambda-outside-'));
+    await mkdir(account());
+    await writeFile(path.join(outside, 'secret.txt'), 'outside');
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('still serves and stores a plain file', async () => {
+    await writeFile(path.join(account(), 'plain.txt'), 'plain');
+    const got = await answer(deps(), request('GET', { t: link('get', 'plain.txt') }));
+    expect(got).toMatchObject({ status: 200, size: 5 });
+    const stream = got.opened?.stream(0, 4);
+    expect(stream && await text(stream)).toBe('plain');
+    const body = Buffer.from('new');
+    expect(await answer(deps(), request('PUT', { t: link('put', 'reports/new.txt'), offset: '0', done: '3', sha256: digest(body) }, body))).toEqual({ status: 201, text: 'created' });
+    expect(await readFile(path.join(account(), 'reports/new.txt'), 'utf8')).toBe('new');
+  });
+
+  it("stores an account's first upload, before any mount made its folder", async () => {
+    await rm(account(), { recursive: true });
+    const body = Buffer.from('first');
+    expect(await answer(deps(), request('PUT', { t: link('put', 'first.txt'), offset: '0', done: '5', sha256: digest(body) }, body))).toEqual({ status: 201, text: 'created' });
+    expect(await readFile(path.join(account(), 'first.txt'), 'utf8')).toBe('first');
+  });
+
+  it('answers 404 for a download before the account has a folder', async () => {
+    await rm(account(), { recursive: true });
+    expect(await answer(deps(), request('GET', { t: link('get', 'a.txt') }))).toEqual({ status: 404, text: 'No such file' });
+  });
+
+  it('refuses a FIFO in place of a file at once, never waiting for a writer', async () => {
+    execFileSync('mkfifo', [path.join(account(), 'pipe.txt')]);
+    expect(await answer(deps(), request('GET', { t: link('get', 'pipe.txt') }))).toEqual({ status: 403, text: 'This link is not valid or has expired' });
+  }, 2000);
+
+  it.each([
+    ['a file outside the account', () => path.join(outside, 'secret.txt')],
+    ['the Lambda environment', () => '/proc/self/environ'],
+  ])('refuses a download link to a symbolic link to %s', async (_, target) => {
+    await symlink(target(), path.join(account(), 'notes.txt'));
+    expect(await answer(deps(), request('GET', { t: link('get', 'notes.txt') }))).toEqual({ status: 403, text: 'This link is not valid or has expired' });
+  });
+
+  it('refuses a symbolic link to a folder on the way to the file, for a download and every upload step', async () => {
+    await symlink(outside, path.join(account(), 'reports'));
+    expect(await answer(deps(), request('GET', { t: link('get', 'reports/secret.txt') }))).toMatchObject({ status: 403 });
+    const body = Buffer.from('mine');
+    expect(await answer(deps(), request('PUT', { t: link('put', 'reports/mine.txt'), offset: '0' }, body))).toMatchObject({ status: 403 });
+    expect(await answer(deps(), request('PUT', { t: link('put', 'reports/mine.txt'), offset: '0', done: '4', sha256: digest(body) }, body))).toMatchObject({ status: 403 });
+    expect(await readdir(outside)).toEqual(['secret.txt']);
+  });
+
+  it.each([
+    ['the upload folder', '.uploads', () => outside],
+    ['the upload part', `.uploads/${digest(Buffer.from('a.txt'))}`, () => path.join(outside, 'secret.txt')],
+  ])('writes nothing outside the account when %s is a symbolic link', async (_, linked, target) => {
+    await mkdir(path.join(account(), '.uploads'));
+    await rm(path.join(account(), linked), { recursive: true, force: true });
+    await symlink(target(), path.join(account(), linked));
+    const body = Buffer.from('mine');
+    expect(await answer(deps(), request('PUT', { t: link('put', 'a.txt'), offset: '0' }, body))).toMatchObject({ status: 403 });
+    expect(await answer(deps(), request('PUT', { t: link('put', 'a.txt'), offset: '0', done: '4', sha256: digest(body) }, body))).toMatchObject({ status: 403 });
+    expect(await readdir(outside)).toEqual(['secret.txt']);
+    expect(await readFile(path.join(outside, 'secret.txt'), 'utf8')).toBe('outside');
+  });
+
+  describe('when a folder becomes a symbolic link after the fast check looked', () => {
+    // `linked` is the look before; a stub that never sees the link stands for the agent swapping a folder right after it.
+    const late = () => ({ ...deps(), disk: { ...efs, linked: async () => false } });
+
+    it.each([
+      ['a file outside the account', () => path.join(outside, 'secret.txt')],
+      ['the Lambda environment', () => '/proc/self/environ'],
+    ])('refuses a download of a symbolic link to %s', async (_, target) => {
+      await symlink(target(), path.join(account(), 'notes.txt'));
+      expect(await answer(late(), request('GET', { t: link('get', 'notes.txt') }))).toEqual({ status: 403, text: 'This link is not valid or has expired' });
+    });
+
+    it('refuses a download and a finish through a linked folder, and writes nothing outside', async () => {
+      await symlink(outside, path.join(account(), 'reports'));
+      expect(await answer(late(), request('GET', { t: link('get', 'reports/secret.txt') }))).toEqual({ status: 403, text: 'This link is not valid or has expired' });
+      const body = Buffer.from('mine');
+      // A chunk lands in `.uploads`, inside the account; only the finish reaches the linked folder.
+      expect(await answer(late(), request('PUT', { t: link('put', 'reports/mine.txt'), offset: '0' }, body))).toEqual({ status: 200, text: 'ok' });
+      expect(await answer(late(), request('PUT', { t: link('put', 'reports/mine.txt'), offset: '0', done: '4', sha256: digest(body) }, body))).toMatchObject({ status: 403 });
+      expect(await readdir(outside)).toEqual(['secret.txt']);
+    });
+
+    it('refuses a finish whose part was checked but whose folder is then swapped for a link', async () => {
+      const body = Buffer.from('mine');
+      expect(await answer(late(), request('PUT', { t: link('put', 'reports/deep/mine.txt'), offset: '0' }, body))).toEqual({ status: 200, text: 'ok' });
+      await symlink(outside, path.join(account(), 'reports'));
+      expect(await answer(late(), request('PUT', { t: link('put', 'reports/deep/mine.txt'), offset: '0', done: '4', sha256: digest(body) }))).toMatchObject({ status: 403 });
+      expect(await readdir(outside)).toEqual(['secret.txt']);
+    });
+
+    it.each([
+      ['the upload folder', '.uploads', () => outside],
+      ['the upload part', `.uploads/${digest(Buffer.from('a.txt'))}`, () => path.join(outside, 'secret.txt')],
+    ])('writes nothing outside the account when %s is a symbolic link', async (_, linked, target) => {
+      await mkdir(path.join(account(), '.uploads'));
+      await rm(path.join(account(), linked), { recursive: true, force: true });
+      await symlink(target(), path.join(account(), linked));
+      const body = Buffer.from('mine');
+      expect(await answer(late(), request('PUT', { t: link('put', 'a.txt'), offset: '0' }, body))).toMatchObject({ status: 403 });
+      expect(await answer(late(), request('PUT', { t: link('put', 'a.txt'), offset: '0', done: '4', sha256: digest(body) }, body))).toMatchObject({ status: 403 });
+      expect(await readdir(outside)).toEqual(['secret.txt']);
+      expect(await readFile(path.join(outside, 'secret.txt'), 'utf8')).toBe('outside');
+    });
   });
 });
