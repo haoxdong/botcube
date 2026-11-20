@@ -95,7 +95,7 @@ describe("the deploy's command credential opt-in", () => {
   });
 
   it('is never derived from the Deployment Config by a seam', () => {
-    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary' });
+    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: COMMAND, turnSummaryModel: 'summary', wire: 'chat-completions' });
     const telemetry = telemetryDeployment({ kind: 'otlp', url: 'http://collector:4318/v1/traces', credential: COMMAND });
     const environments = [models?.chatService, models?.credentialService, models?.harness, telemetry.chatService, telemetry.harness, proxyEnvironment(forward({ credential: FILE }))];
     expect(environments.filter((environment) => environment && 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS' in environment)).toEqual([]);
@@ -112,7 +112,7 @@ describe("the deploy's secret grants", () => {
   } as const;
 
   it("grants the secret an OAuth client's secret is read from, for models and telemetry", () => {
-    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient, turnSummaryModel: 'summary' });
+    const models = modelsDeployment({ kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: oauthClient, turnSummaryModel: 'summary', wire: 'chat-completions' });
     const telemetry = telemetryDeployment({ kind: 'otlp', url: 'https://collector.example.com/v1/traces', credential: oauthClient });
 
     expect(models?.secretArns).toEqual([SECRET_ARN]);

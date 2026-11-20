@@ -1,10 +1,11 @@
 import { createPrivateKey, generateKeyPairSync, type JsonWebKey } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
+import type { ModelsWire } from '../../../deployment-config/blocks.js';
 import { loadDeployment } from '../../../deployment-config/load.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
@@ -15,31 +16,60 @@ afterAll(() => Promise.all(stacks.map((stack) => stack.stop())));
 
 const deploymentConfig = (example: string) => fileURLToPath(new URL(`../../../examples/${example}/deployment-config.json`, import.meta.url));
 
+const scratch: string[] = [];
+afterAll(() => Promise.all(scratch.map((dir) => rm(dir, { recursive: true, force: true }))));
 
-/** The example deployed offline, its External Services on their stand-ins, after one Turn and its summary. */
-async function conversation(example: string) {
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig(example) });
+/** The enterprise example with its models Endpoint on the Responses wire, as a Responses-only gateway needs. */
+async function enterpriseOnTheResponsesWire(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'responses-wire-'));
+  scratch.push(dir);
+  const example = deploymentConfig('enterprise');
+  const file = JSON.parse(await readFile(example, 'utf8')) as { bot: string; models: object };
+  const path = join(dir, 'deployment-config.json');
+  await writeFile(path, JSON.stringify({ ...file, bot: resolve(dirname(example), file.bot), models: { ...file.models, wire: 'responses' } }));
+  return path;
+}
+
+/** The tool the agent's model calls on an OpenAI-compatible Endpoint before it answers, and its arguments. */
+const AGENT_TOOL_CALL = { name: 'ls', arguments: { path: '/' } };
+
+/**
+ * The example deployed offline, its External Services on their stand-ins, after one Turn and its summary. On an
+ * OpenAI-compatible Endpoint the agent's model calls a tool first, and answers once the tool's result is back.
+ */
+async function conversation(path: string) {
+  const stack = await startLocalStack({ deploymentConfig: path });
   stacks.push(stack);
+  if (stack.openAICompatible) stack.openAICompatible.agentToolCall = AGENT_TOOL_CALL;
   const browser = stack.browser();
   await browser.openAccountSession();
   const thread = await browser.newSideChat();
   const turn = await browser.sendTurn(thread, { text: 'Hello, who are you?' });
-  const deltas = sseFrames(await turn.text()).map(frameData).filter(({ type }) => type === 'TEXT_MESSAGE_CONTENT').map(({ delta }) => delta);
+  const frames = sseFrames(await turn.text()).map(frameData);
   // The Turn's summary is made after its stream closes.
   const summaries = stack.openAICompatible ?? stack.bedrock;
   await summaries.waitForRequests(() => summaries.summarizedTurns().length > 0);
   return {
     stack,
     identity: await (await browser.get('/agent/identity')).json(),
-    reply: deltas.join(''),
+    reply: frames.filter(({ type }) => type === 'TEXT_MESSAGE_CONTENT').map(({ delta }) => delta).join(''),
+    toolCalls: frames.filter(({ type }) => type === 'TOOL_CALL_START').map(({ toolCallName }) => toolCallName),
+    toolResults: frames.filter(({ type }) => type === 'TOOL_CALL_RESULT').length,
   };
 }
 
-describe('the public and the enterprise example', () => {
+describe('the public and the enterprise example, on each wire of its OpenAI-compatible endpoint', () => {
   let pub: Awaited<ReturnType<typeof conversation>>;
-  let enterprise: Awaited<ReturnType<typeof conversation>>;
+  /** The enterprise example's conversation on each wire. */
+  let enterprise: Record<ModelsWire, Awaited<ReturnType<typeof conversation>>>;
   beforeAll(async () => {
-    [pub, enterprise] = await Promise.all([conversation('public'), conversation('enterprise')]);
+    const [onPublic, onChatCompletions, onResponses] = await Promise.all([
+      conversation(deploymentConfig('public')),
+      conversation(deploymentConfig('enterprise')),
+      enterpriseOnTheResponsesWire().then(conversation),
+    ]);
+    pub = onPublic;
+    enterprise = { 'chat-completions': onChatCompletions, responses: onResponses };
   }, 120_000);
 
   it('hold the same conversation with the example bot', () => {
@@ -47,21 +77,32 @@ describe('the public and the enterprise example', () => {
       identity: { name: 'BotCube', character: 'A template agent', vibe: 'Direct, precise, and calm', avatar: '🧊' },
       reply: 'Echo: Hello, who are you?',
     });
-    expect({ identity: enterprise.identity, reply: enterprise.reply }).toEqual({ identity: pub.identity, reply: pub.reply });
+    for (const { identity, reply } of Object.values(enterprise)) expect({ identity, reply }).toEqual({ identity: pub.identity, reply: pub.reply });
   });
 
-  it('reach their models, turn summaries included, on Bedrock and on the OpenAI-compatible endpoint', () => {
+  it.each(['chat-completions', 'responses'] as const)("stream the agent's tool call and its result over %s", (wire) => {
+    const turn = enterprise[wire];
+    const endpoint = required(turn.stack.openAICompatible, 'the models endpoint stand-in');
+
+    expect({ toolCalls: turn.toolCalls, toolResults: turn.toolResults }).toEqual({ toolCalls: [AGENT_TOOL_CALL.name], toolResults: 1 });
+    // The model's first answer called the tool; its second request carried the tool's result back, and it answered.
+    expect(endpoint.toolResults()).toHaveLength(1);
+    expect(endpoint.wires()).toEqual([wire, wire, wire]);
+  });
+
+  it.each(['chat-completions', 'responses'] as const)('reach their models over %s, turn summaries included, on Bedrock and on the OpenAI-compatible endpoint', (wire) => {
     const summarized = [{ request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' }];
     expect(pub.stack.bedrock.summarizedTurns()).toEqual(summarized);
     expect(pub.stack.openAICompatible).toBeUndefined();
 
-    const endpoint = required(enterprise.stack.openAICompatible, 'the models endpoint stand-in');
-    expect(enterprise.stack.bedrock.requests).toEqual([]);
-    // The agent's model by its key in the bot settings, then the summary model the Deployment Config names.
-    expect(endpoint.models()).toEqual(['echo', 'example-summary']);
+    const turn = enterprise[wire];
+    const endpoint = required(turn.stack.openAICompatible, 'the models endpoint stand-in');
+    expect(turn.stack.bedrock.requests).toEqual([]);
+    // The agent's model by its key in the bot settings, before and after its tool call, then the summary model the Deployment Config names.
+    expect(endpoint.models()).toEqual(['echo', 'echo', 'example-summary']);
     expect(endpoint.summarizedTurns()).toEqual(summarized);
     // The Deployment Config's header reaches the endpoint on the Turn and on its summary.
-    expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example']);
+    expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example', 'botcube-example']);
   });
 });
 

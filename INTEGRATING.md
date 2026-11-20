@@ -99,7 +99,7 @@ Import `HarnessDefinition`, `InvocationAuth`, and `ModelRelay` from the Harness'
 which imports no agent framework. The Harness image provides it; keep sign-in,
 skills, and model policy in your own Cartridge.
 
-The [stock Chat Service](chat/src/stock.ts) needs no Chat Cartridge: it composes itself from the Deployment Config that `BOTCUBE_DEPLOYMENT_CONFIG` names and the bot settings it points to.
+The [stock Chat Service](chat/src/stock.ts) needs no Chat Cartridge: it reads the Deployment Config `BOTCUBE_DEPLOYMENT_CONFIG` names, and its bot settings. Its `openai-compatible` `models` take `wire`: `chat-completions` (default), or `responses` for a Responses-only gateway; Turn summaries and the Harness use it, and `botcube footprint` prints it.
 
 Use [the template UI plugin](templates/always-on/ui/web/src/index.ts) to supply copy, Chat Service URL, auth UI, views, and theme through the [typed UI contract](ui/web/src/cartridge/types.ts). Bind the plugin with `CARTRIDGE_UI_PACKAGE` at build time.
 

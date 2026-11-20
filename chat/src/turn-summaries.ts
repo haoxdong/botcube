@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { ModelsWire } from 'botcube-deployment-config/blocks';
 import { MODELS_ENV, modelsEndpointFromEnv } from 'botcube-deployment-config/models';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
@@ -25,6 +26,8 @@ export interface OpenAICompatibleSummaryModel {
   kind: 'openai-compatible';
   endpoint: Endpoint;
   model: string;
+  /** The OpenAI API the Endpoint is called over. */
+  wire: ModelsWire;
 }
 
 /** Where the summary model is called. */
@@ -47,7 +50,7 @@ export function turnSummaryModelFromEnv(env: NodeJS.ProcessEnv, region: string):
   const model = env[MODELS_ENV.turnSummaryModel];
   if (models) {
     if (!model) throw new Error(`An OpenAI-compatible models endpoint needs ${MODELS_ENV.turnSummaryModel}, the model Turn summaries run on`);
-    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model };
+    return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model, wire: models.wire };
   }
   const bedrock = (env.AWS_ENDPOINT_URL_BEDROCK_RUNTIME || `https://bedrock-runtime.${region}.amazonaws.com`).replace(/\/+$/, '');
   return { kind: 'bedrock', region, url: `${bedrock}/model/${encodeURIComponent(model || MODEL_ID)}/converse` };
@@ -70,30 +73,61 @@ const SUMMARY_PARAMETERS = {
   required: ['title', 'summary'],
 };
 
-type ChatCompletion = { choices?: { message?: { tool_calls?: { function?: { name?: unknown; arguments?: unknown } }[] } }[] };
+const SUMMARY_TOOL_DESCRIPTION = "Record the task's activity log entry.";
 
-/** The summary model on an OpenAI-compatible endpoint, answering with the same forced tool as on Bedrock. */
-export function openAICompatibleTurnSummarizer({ endpoint, model }: OpenAICompatibleSummaryModel): TurnSummarizer {
+const chatCompletion = z.object({
+  choices: z.array(z.object({
+    message: z.object({ tool_calls: z.array(z.object({ function: z.object({ name: z.string(), arguments: z.string() }) })).optional() }),
+  })),
+});
+const responsesAnswer = z.object({
+  output: z.array(z.object({ type: z.string(), name: z.string().optional(), arguments: z.string().optional() })),
+});
+
+/** The forced summary tool's call on each wire: its path and request body, and the call's arguments in the answer. */
+const SUMMARY_CALL: { readonly [W in ModelsWire]: { path: string; body(model: string, turn: FinishedTurn): unknown; arguments(answer: unknown): string | undefined } } = {
+  'chat-completions': {
+    path: '/chat/completions',
+    body: (model, turn) => ({
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: JSON.stringify(turn) },
+      ],
+      max_tokens: 512,
+      temperature: 0,
+      tools: [{ type: 'function', function: { name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, parameters: SUMMARY_PARAMETERS } }],
+      tool_choice: { type: 'function', function: { name: SUMMARY_TOOL } },
+    }),
+    arguments: (answer) => chatCompletion.safeParse(answer).data?.choices[0]?.message.tool_calls?.find((call) => call.function.name === SUMMARY_TOOL)?.function.arguments,
+  },
+  responses: {
+    path: '/responses',
+    body: (model, turn) => ({
+      model,
+      instructions: SYSTEM_PROMPT,
+      input: [{ role: 'user', content: JSON.stringify(turn) }],
+      max_output_tokens: 512,
+      temperature: 0,
+      tools: [{ type: 'function', name: SUMMARY_TOOL, description: SUMMARY_TOOL_DESCRIPTION, parameters: SUMMARY_PARAMETERS }],
+      tool_choice: { type: 'function', name: SUMMARY_TOOL },
+    }),
+    arguments: (answer) => responsesAnswer.safeParse(answer).data?.output.find((item) => item.type === 'function_call' && item.name === SUMMARY_TOOL)?.arguments,
+  },
+};
+
+/** The summary model on an OpenAI-compatible endpoint, over its wire, answering with the same forced tool as on Bedrock. */
+export function openAICompatibleTurnSummarizer({ endpoint, model, wire }: OpenAICompatibleSummaryModel): TurnSummarizer {
+  const call = SUMMARY_CALL[wire];
   return async (turn) => {
-    const response = await endpoint.fetch('/chat/completions', {
+    const response = await endpoint.fetch(call.path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: JSON.stringify(turn) },
-        ],
-        max_tokens: 512,
-        temperature: 0,
-        tools: [{ type: 'function', function: { name: SUMMARY_TOOL, description: "Record the task's activity log entry.", parameters: SUMMARY_PARAMETERS } }],
-        tool_choice: { type: 'function', function: { name: SUMMARY_TOOL } },
-      }),
+      body: JSON.stringify(call.body(model, turn)),
     });
     if (!response.ok) throw new Error(`The summary model answered HTTP ${response.status}`);
-    const body = (await response.json()) as ChatCompletion;
-    const call = body.choices?.[0]?.message?.tool_calls?.find((candidate) => candidate.function?.name === SUMMARY_TOOL)?.function;
-    return summaryInput(typeof call?.arguments === 'string' ? parsedArguments(call.arguments) : undefined);
+    const args = call.arguments(await response.json());
+    return summaryInput(args === undefined ? undefined : parsedArguments(args));
   };
 }
 
@@ -120,7 +154,7 @@ export function bedrockTurnSummarizer({ region, url }: BedrockSummaryModel): Tur
             {
               toolSpec: {
                 name: SUMMARY_TOOL,
-                description: "Record the task's activity log entry.",
+                description: SUMMARY_TOOL_DESCRIPTION,
                 inputSchema: { json: SUMMARY_PARAMETERS },
               },
             },

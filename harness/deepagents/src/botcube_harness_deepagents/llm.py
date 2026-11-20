@@ -29,6 +29,7 @@ DEFAULT_EFFORT = 'medium'
 DEFAULT_MAX_TOKENS = 128
 # A model on the account's ChatGPT plan, named by its slug in the plan's catalog (ADR 0078).
 PLAN_MODEL_PREFIX = 'openai-plan:'
+RESPONSES = 'responses'
 OPENAI_COMPATIBLE = 'openai-compatible'
 CLAUDE_CACHE_MARKERS = 'claude'
 CACHE_MARKER = {'type': 'ephemeral'}
@@ -144,6 +145,10 @@ def models_on_endpoint() -> bool:
     return deployment_config_from_env()['models']['kind'] == OPENAI_COMPATIBLE
 
 
+def responses_wire() -> bool:
+    return deployment_config_from_env()['models'].get('wire') == RESPONSES
+
+
 def cache_markers_on() -> bool:
     return deployment_config_from_env()['models'].get('cacheMarkers') == CLAUDE_CACHE_MARKERS
 
@@ -191,12 +196,35 @@ def _dropped_before_response(error: BaseException | None) -> bool:
     return error is not None and _dropped_before_response(error.__cause__ or error.__context__)
 
 
-def _mark_cache_breakpoint(message: dict[str, Any]) -> None:
-    content = message.get('content')
+def _mark_cache_breakpoint(message: dict[str, Any], field: str = 'content', text_type: str = 'text') -> None:
+    content = message.get(field)
     if isinstance(content, str) and content:
-        message['content'] = [{'type': 'text', 'text': content, 'cache_control': CACHE_MARKER}]
-    elif isinstance(content, list) and content and content[-1].get('type') == 'text':
+        message[field] = [{'type': text_type, 'text': content, 'cache_control': CACHE_MARKER}]
+    elif isinstance(content, list) and content and content[-1].get('type') == text_type:
         content[-1] = {**content[-1], 'cache_control': CACHE_MARKER}
+
+
+def _mark_chat_completions(payload: dict[str, Any]) -> None:
+    messages = payload['messages']
+    if messages and messages[0].get('role') == 'system':
+        _mark_cache_breakpoint(messages[0])
+    for message in messages[-MARKED_LATEST_MESSAGES:]:
+        _mark_cache_breakpoint(message)
+
+
+def _mark_responses_item(item: dict[str, Any]) -> None:
+    if item.get('type') == 'function_call_output':
+        _mark_cache_breakpoint(item, 'output', 'input_text')
+    elif 'role' in item:
+        _mark_cache_breakpoint(item, text_type='output_text' if item['role'] == 'assistant' else 'input_text')
+
+
+def _mark_responses(payload: dict[str, Any]) -> None:
+    items = payload['input']
+    if items and items[0].get('role') == 'system':
+        _mark_responses_item(items[0])
+    for item in items[-MARKED_LATEST_MESSAGES:]:
+        _mark_responses_item(item)
 
 
 def _endpoint_model(model_key: str | None, relay: Callable[[], ModelRelay] | None, max_tokens: int | None) -> Any:
@@ -208,16 +236,14 @@ def _endpoint_model(model_key: str | None, relay: Callable[[], ModelRelay] | Non
     if relay is None:
         raise RuntimeError(f'Model "{key}" runs on the models Endpoint, which needs the Credential Service relay; this Turn has none')
     marked = cache_markers_on()
+    responses = responses_wire()
+    mark = _mark_responses if responses else _mark_chat_completions
 
     class EndpointModel(ChatOpenAI):
         def _get_request_payload(self, input_: Any, **kwargs: Any) -> dict[str, Any]:
             payload = super()._get_request_payload(input_, **kwargs)
             if marked:
-                messages = payload['messages']
-                if messages and messages[0].get('role') == 'system':
-                    _mark_cache_breakpoint(messages[0])
-                for message in messages[-MARKED_LATEST_MESSAGES:]:
-                    _mark_cache_breakpoint(message)
+                mark(payload)
             return payload
 
     current = relay()
@@ -231,7 +257,7 @@ def _endpoint_model(model_key: str | None, relay: Callable[[], ModelRelay] | Non
         max_completion_tokens=DEFAULT_MAX_TOKENS if max_tokens is None else max_tokens,
         streaming=True,
         stream_usage=True,
-        use_responses_api=False,
+        use_responses_api=responses,
     )
     model.root_async_client._client.event_hooks['request'].append(turn_timing.dispatched)
     return model

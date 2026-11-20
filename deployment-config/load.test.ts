@@ -141,6 +141,14 @@ describe('a Deployment Config', () => {
     expect(loadDeployment(off).config.liveView).toEqual({ kind: 'none' });
   });
 
+  it.each([
+    [{}, 'chat-completions'],
+    [{ wire: 'chat-completions' }, 'chat-completions'],
+    [{ wire: 'responses' }, 'responses'],
+  ])('calls the models Endpoint over Chat Completions unless it sets the Responses wire: %o', (wire, expected) => {
+    expect(loadDeployment(configFile({ bot: './bot.json', models: { ...ENTERPRISE_MODELS, ...wire } })).config.models).toMatchObject({ wire: expected });
+  });
+
   it('opens every missing section on its default adapter', () => {
     expect(loadDeployment(configFile({ bot: './bot.json' })).config).toEqual({ bot: './bot.json', ...DEFAULT_SECTIONS, imageRegistry: 'public.ecr.aws' });
   });
@@ -149,6 +157,7 @@ describe('a Deployment Config', () => {
     ['an unknown key', { bot: './bot.json', identty: { kind: 'botcube-accounts' } }, 'identty: Unrecognized key'],
     ['an unknown key in a section', { bot: './bot.json', schedules: { kind: 'eventbridge-scheduler', table: 'x' } }, 'schedules.table: Unrecognized key'],
     ['an unknown kind', { bot: './bot.json', models: { kind: 'vertex' } }, "models.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'"],
+    ['an unknown models wire', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, wire: 'messages' } }, 'models.wire: '],
     ['the deleted API key field', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, apiKey: { secretArn: SECRET_ARN } } }, 'models.apiKey: Unrecognized key'],
     ['an OpenAI-compatible endpoint without its credential', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: undefined } }, 'models.credential: '],
     ['an API key written in place of its source', { bot: './bot.json', models: { ...ENTERPRISE_MODELS, credential: 'sk-live' } }, 'models.credential: '],
@@ -302,13 +311,13 @@ describe('a Deployment Config', () => {
     ['a mounted file', { kind: 'file', path: '/run/secrets/botcube/models-api-key' }],
   ])('gives the models endpoint its credential from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
-    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual({ ...models, wire: 'chat-completions' });
   });
 
   it('marks Claude cache breakpoints on the models endpoint only when the operator turns them on', () => {
     expect(loadDeployment(configFile({ bot: './bot.json', models: ENTERPRISE_MODELS })).config.models).not.toHaveProperty('cacheMarkers');
     const models = { ...ENTERPRISE_MODELS, cacheMarkers: 'claude' };
-    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual({ ...models, wire: 'chat-completions' });
   });
 
   it.each([
@@ -317,7 +326,7 @@ describe('a Deployment Config', () => {
     ['a stand-in token endpoint on this machine', { ...OAUTH, tokenEndpoint: 'http://127.0.0.1:9400/token' }],
   ])('gives the models endpoint an OAuth client-credentials token from %s', (_, credential) => {
     const models = { ...ENTERPRISE_MODELS, credential };
-    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual(models);
+    expect(loadDeployment(configFile({ bot: './bot.json', models })).config.models).toEqual({ ...models, wire: 'chat-completions' });
   });
 
   it('runs an opted-in command for an OAuth client secret', () => {
@@ -388,7 +397,7 @@ describe('Endpoint TLS', () => {
     ['both', { clientCertificate: FILES, serverIdentity: 'https://models.example.com/gateway' }],
   ])('gives the models Endpoint and the proxy %s', (_, tls) => {
     const { config } = loadDeployment(configFile({ bot: './bot.json', models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls } }));
-    expect([config.models, config.proxy]).toEqual([{ ...ENTERPRISE_MODELS, tls }, { ...PROXY, tls }]);
+    expect([config.models, config.proxy]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }]);
   });
 
   it('runs an opted-in command for a client certificate, 30 s at most unless it says otherwise', () => {

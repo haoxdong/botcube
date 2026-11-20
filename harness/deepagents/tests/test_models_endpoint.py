@@ -12,22 +12,69 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from deepagents.backends import LocalShellBackend
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 from botcube_harness_deepagents import llm, turn_timing
+from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
 from botcube_harness_deepagents.deployment_config import DeploymentConfigError
+from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from deployment_fixture import ENDPOINT_MODELS, deploy
 
 pytestmark = pytest.mark.integration
 
 
+def _responses_stream(body: dict[str, Any], tool_call: str | None) -> bytes:
+    """The Responses API's event stream for one output item: a call to `tool_call` until its result is back, else `Echo: <text>`."""
+    items = [{'role': 'user', 'content': body['input']}] if isinstance(body['input'], str) else body['input']
+    asked = max(index for index, item in enumerate(items) if item.get('role') == 'user')
+    content = items[asked]['content']
+    text = 'Echo: ' + (content if isinstance(content, str) else ''.join(part['text'] for part in content))
+    answered = any(item.get('type') == 'function_call_output' for item in items[asked + 1:])
+    if tool_call is not None and not answered:
+        item: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'status': 'completed', 'call_id': 'call-1', 'name': tool_call, 'arguments': '{}'}
+        streamed = [
+            {'type': 'response.output_item.added', 'output_index': 0, 'item': {**item, 'status': 'in_progress', 'arguments': ''}},
+            {'type': 'response.function_call_arguments.delta', 'item_id': 'fc_1', 'output_index': 0, 'delta': '{}'},
+            {'type': 'response.function_call_arguments.done', 'item_id': 'fc_1', 'output_index': 0, 'arguments': '{}'},
+        ]
+    else:
+        part = {'type': 'output_text', 'annotations': [], 'logprobs': [], 'text': text}
+        item = {'id': 'msg_1', 'type': 'message', 'status': 'completed', 'role': 'assistant', 'content': [part]}
+        at = {'item_id': 'msg_1', 'output_index': 0, 'content_index': 0}
+        streamed = [
+            {'type': 'response.output_item.added', 'output_index': 0, 'item': {**item, 'status': 'in_progress', 'content': []}},
+            {'type': 'response.content_part.added', **at, 'part': {**part, 'text': ''}},
+            {'type': 'response.output_text.delta', **at, 'delta': text, 'logprobs': []},
+            {'type': 'response.output_text.done', **at, 'text': text, 'logprobs': []},
+            {'type': 'response.content_part.done', **at, 'part': part},
+        ]
+    usage = {'input_tokens': 26, 'input_tokens_details': {'cached_tokens': 20}, 'output_tokens': 4, 'output_tokens_details': {'reasoning_tokens': 0}, 'total_tokens': 30}
+    response = {'id': 'resp_1', 'object': 'response', 'created_at': 1790965829, 'model': body['model'], 'status': 'in_progress', 'output': [], 'usage': None}
+    events = [
+        {'type': 'response.created', 'response': response},
+        *streamed,
+        {'type': 'response.output_item.done', 'output_index': 0, 'item': item},
+        {'type': 'response.completed', 'response': {**response, 'status': 'completed', 'output': [item], 'usage': usage}},
+    ]
+    return ''.join(
+        f'event: {event["type"]}\ndata: {json.dumps({**event, "sequence_number": index})}\n\n' for index, event in enumerate(events)
+    ).encode()
+
+
 class StandIn:
-    """The Credential Service's models relay, answering each chat completion with `Echo: <text>`, after any gateway failures and dropped connections."""
+    """The Credential Service's models relay, answering each chat completion or response with `Echo: <text>`, after any gateway failures and dropped connections.
+
+    With `tool_call` set, a response first calls that tool, and echoes once its result is back.
+    """
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
         self.gateway_failures: list[int] = []
+        self.errors: list[tuple[int, dict[str, Any]]] = []
+        self.tool_call: str | None = None
         self.usage: dict[str, Any] = {'prompt_tokens': 26, 'completion_tokens': 4, 'total_tokens': 30}
         self.drops: list[str] = []
         stand_in = self
@@ -42,6 +89,10 @@ class StandIn:
                 if stand_in.gateway_failures:
                     self._send(stand_in.gateway_failures.pop(0), 'application/json', b'{"error":{"message":"gateway"}}')
                     return
+                if stand_in.errors:
+                    status, error = stand_in.errors.pop(0)
+                    self._send(status, 'application/json', json.dumps({'error': error}).encode())
+                    return
                 drop = stand_in.drops.pop(0) if stand_in.drops else None
                 if drop == 'before-response':
                     self._reset()
@@ -49,6 +100,9 @@ class StandIn:
                 if drop == 'closed-before-response':
                     self.connection.shutdown(socket.SHUT_RDWR)
                     self.close_connection = True
+                    return
+                if self.path.endswith('/responses'):
+                    self._send(200, 'text/event-stream', _responses_stream(body, stand_in.tool_call))
                     return
                 content = body['messages'][-1]['content']
                 text = 'Echo: ' + (content if isinstance(content, str) else ''.join(part['text'] for part in content))
@@ -344,6 +398,138 @@ def test_a_turn_fails_on_cache_markers_the_deployment_config_wrote_wrong(monkeyp
     path = deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'cacheMarkers': 'openai'})
     with pytest.raises(DeploymentConfigError, match=f"^Deployment Config {path}: models.cacheMarkers: 'claude' was expected$"):
         llm.build_model(model='echo', relay=lambda: _turn(stand_in))
+
+
+@pytest.fixture
+def responses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': 'responses'})
+
+
+@pytest.fixture
+def responses_cache_markers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': 'responses', 'cacheMarkers': 'claude'})
+
+
+@pytest.mark.usefixtures('responses')
+def test_a_turn_on_the_responses_wire_streams_from_the_responses_api_through_the_credential_service(stand_in: StandIn) -> None:
+    streamed = io.StringIO()
+
+    async def stream() -> None:
+        async for chunk in llm.build_model(model='echo', relay=lambda: _turn(stand_in)).astream('Hello, who are you?'):
+            streamed.write(chunk.text)
+
+    asyncio.run(stream())
+
+    assert streamed.getvalue() == 'Echo: Hello, who are you?'
+    [request] = stand_in.requests
+    assert request['path'] == '/models/responses'
+    assert (request['body']['model'], request['body']['stream']) == ('echo', True)
+    assert request['body']['input'] == [{'type': 'message', 'role': 'user', 'content': 'Hello, who are you?'}]
+    assert request['headers']['authorization'] == 'Bearer invocation-1'
+
+
+@pytest.mark.usefixtures('responses')
+def test_a_tool_call_and_its_result_go_over_the_responses_wire(stand_in: StandIn) -> None:
+    stand_in.tool_call = 'ls'
+    model = llm.build_model(model='echo', relay=lambda: _turn(stand_in))
+
+    def ls() -> str:
+        """List the files."""
+        return 'notes.md'
+
+    called = asyncio.run(model.bind_tools([ls]).ainvoke(CONVERSATION[:2]))
+    answered = asyncio.run(model.bind_tools([ls]).ainvoke([*CONVERSATION[:2], called, ToolMessage('notes.md', tool_call_id=called.tool_calls[0]['id'])]))
+
+    assert [(call['name'], call['args']) for call in called.tool_calls] == [('ls', {})]
+    assert answered.text == 'Echo: List the files.'
+    assert [request['body']['tools'] for request in stand_in.requests] == [[{
+        'type': 'function', 'name': 'ls', 'description': 'List the files.', 'parameters': {'properties': {}, 'type': 'object'},
+    }]] * 2
+    assert stand_in.requests[1]['body']['input'][-2:] == [
+        {'type': 'function_call', 'name': 'ls', 'arguments': '{}', 'call_id': 'call-1', 'id': 'fc_1'},
+        {'type': 'function_call_output', 'output': 'notes.md', 'call_id': 'call-1'},
+    ]
+
+
+@pytest.mark.usefixtures('responses_cache_markers')
+def test_cache_markers_land_on_the_system_prompt_and_the_latest_items_over_the_responses_wire(stand_in: StandIn) -> None:
+    assert _converse_text(stand_in, CONVERSATION) == 'Echo: Read it.'
+
+    [request] = stand_in.requests
+    assert request['body']['input'] == [
+        {'type': 'message', 'role': 'system', 'content': [{'type': 'input_text', 'text': 'You are BotCube.', 'cache_control': MARKER}]},
+        {'type': 'message', 'role': 'user', 'content': 'List the files.'},
+        {'type': 'function_call', 'name': 'ls', 'arguments': '{}', 'call_id': 'call-1'},
+        {'type': 'function_call_output', 'output': 'notes.md', 'call_id': 'call-1'},
+        {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'There is one file, notes.md.', 'annotations': [], 'cache_control': MARKER}]},
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Read it.', 'cache_control': MARKER}]},
+    ]
+
+
+@pytest.mark.usefixtures('responses_cache_markers')
+def test_cache_markers_mark_a_tool_result_but_not_a_call_over_the_responses_wire(stand_in: StandIn) -> None:
+    _converse_text(stand_in, CONVERSATION[:4])
+
+    [request] = stand_in.requests
+    assert request['body']['input'][-2:] == [
+        {'type': 'function_call', 'name': 'ls', 'arguments': '{}', 'call_id': 'call-1'},
+        {'type': 'function_call_output', 'output': [{'type': 'input_text', 'text': 'notes.md', 'cache_control': MARKER}], 'call_id': 'call-1'},
+    ]
+
+
+@pytest.mark.usefixtures('responses')
+def test_no_responses_request_carries_a_cache_marker_unless_the_operator_turns_them_on(stand_in: StandIn) -> None:
+    _converse_text(stand_in, CONVERSATION)
+
+    [request] = stand_in.requests
+    assert 'cache_control' not in json.dumps(request['body'])
+
+
+@pytest.mark.usefixtures('responses')
+def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports_over_the_responses_wire(stand_in: StandIn) -> None:
+    async def turn() -> dict[str, Any]:
+        timing = turn_timing.TurnTiming('run', 'session', 'echo', warmup=False, receipt=turn_timing.perf_counter())
+        with turn_timing.use(timing):
+            await llm.build_model(model='echo', relay=lambda: _turn(stand_in)).ainvoke(CONVERSATION)
+        return timing.record(turn_timing.perf_counter(), 'finished')
+
+    record = asyncio.run(turn())
+    assert (record['inputTokens'], record['cachedInputTokens']) == (26, 20)
+
+
+@pytest.mark.parametrize(('wire', 'path'), [('chat-completions', '/models/chat/completions'), ('responses', '/models/responses')])
+def test_a_turn_that_overflows_the_context_on_either_wire_compacts_and_answers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn, wire: str, path: str,
+) -> None:
+    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': wire})
+    stand_in.errors.append((400, {
+        'message': 'Your input exceeds the context window of this model.', 'type': 'invalid_request_error', 'code': 'context_length_exceeded',
+    }))
+    graph = build_agent(
+        model=llm.build_model(model='echo', relay=lambda: _turn(stand_in)),
+        backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False), skills=[], checkpointer=InMemorySaver(),
+    )
+    config = {'configurable': {'thread_id': 'overflow'}}
+    history = [message for index in range(6) for message in (
+        HumanMessage('Earlier copper question. ' * 600, id=f'q-{index}'), AIMessage('Earlier copper answer. ' * 600, id=f'a-{index}'),
+    )]
+
+    async def turn() -> Any:
+        await graph.aupdate_state(config, {'messages': history}, as_node='model')
+        with collecting_turn_feeds():
+            return await graph.ainvoke({'messages': [HumanMessage('Reply OK.')]}, config)
+
+    result = asyncio.run(turn())
+
+    assert result['messages'][-1].text == 'Echo: Reply OK.'
+    # The overflowing call, the emergency summary, then the call on the compacted history.
+    assert [request['path'] for request in stand_in.requests] == [path] * 3
+    event = asyncio.run(graph.aget_state(config)).values['_summarization_event']
+    assert (tmp_path / event['file_path'].lstrip('/')).is_file()
+
+
+def _converse_text(stand_in: StandIn, messages: list[Any]) -> str:
+    return asyncio.run(llm.build_model(model='echo', relay=lambda: _turn(stand_in)).ainvoke(messages)).text
 
 
 def test_a_turn_fails_on_a_models_kind_the_deployment_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:

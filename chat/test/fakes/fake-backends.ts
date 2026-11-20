@@ -1,4 +1,5 @@
 import type { ScheduledRunCard } from '../../src/session-api.js';
+import type { ModelsWire } from 'botcube-deployment-config/blocks';
 import { HttpFake, sendJson } from './http-fake.js';
 
 type SessionOperation = 'get' | 'purge' | 'post';
@@ -150,29 +151,89 @@ export class FakeBedrock extends HttpFake {
   }
 }
 
-/** The newest user message, which a fake answers. */
-function lastUserMessage(messages: ChatCompletionsRequest['messages']): ChatCompletionsRequest['messages'][number] | undefined {
-  return [...messages].reverse().find(({ role }) => role === 'user');
-}
+/** Text content as either wire carries it: a string, or parts each with their text. */
+type Content = string | null | undefined | { type: string; text?: string }[];
+
+const contentText = (content: Content) => (typeof content === 'string' ? content : (content ?? []).map(({ text }) => text ?? '').join(''));
 
 /** A chat completions request, as the Harness's agent model and the Chat Service's summary model send one. */
 interface ChatCompletionsRequest {
   model: string;
   stream?: boolean;
-  messages: { role: string; content: string | { type: string; text?: string }[] }[];
+  messages: { role: string; content: Content }[];
   tool_choice?: { type: 'function'; function: { name: string } };
 }
 
-const completionText = (content: ChatCompletionsRequest['messages'][number]['content']) =>
-  typeof content === 'string' ? content : content.map(({ text }) => text ?? '').join('');
+/** A Responses request, as the same models send one on the Responses wire. */
+interface ResponsesRequest {
+  model: string;
+  stream?: boolean;
+  input: { type?: string; role?: string; content?: Content; output?: string }[];
+  tool_choice?: string | { type: 'function'; name: string };
+}
+
+/** A request on either wire, as the fake answers it. */
+interface ModelCall {
+  wire: ModelsWire;
+  model: string;
+  stream: boolean;
+  /** The tool the request forces, as the summary model does. */
+  forcedTool: string | undefined;
+  /** The newest user message's text, which the fake echoes. */
+  asked: string | undefined;
+  /** The tool results the request carries back, in order. */
+  toolResults: string[];
+  /** Whether a tool result follows the newest user message: the agent called a tool and sent back its result. */
+  toolAnswered: boolean;
+}
+
+/** The wire each model route serves. */
+const WIRES: Readonly<Record<string, ModelsWire>> = { '/v1/chat/completions': 'chat-completions', '/v1/responses': 'responses' };
+
+function lastAskedIndex(items: ReadonlyArray<{ role?: string }>): number {
+  return items.map(({ role }) => role).lastIndexOf('user');
+}
+
+/** The request on `wire`, parsed once. */
+function modelCall(wire: ModelsWire, body: string): ModelCall {
+  if (wire === 'responses') {
+    const { model, stream, input, tool_choice: choice } = JSON.parse(body) as ResponsesRequest;
+    const lastAsked = lastAskedIndex(input);
+    const results = (items: ResponsesRequest['input']) => items.flatMap(({ type, output }) => (type === 'function_call_output' ? [output ?? ''] : []));
+    return {
+      wire, model, stream: stream === true,
+      forcedTool: typeof choice === 'object' ? choice.name : undefined,
+      asked: lastAsked < 0 ? undefined : contentText(input[lastAsked]?.content),
+      toolResults: results(input),
+      toolAnswered: results(input.slice(lastAsked + 1)).length > 0,
+    };
+  }
+  const { model, stream, messages, tool_choice: choice } = JSON.parse(body) as ChatCompletionsRequest;
+  const lastAsked = lastAskedIndex(messages);
+  const results = (items: ChatCompletionsRequest['messages']) => items.flatMap(({ role, content }) => (role === 'tool' ? [contentText(content)] : []));
+  return {
+    wire, model, stream: stream === true,
+    forcedTool: choice?.function.name,
+    asked: lastAsked < 0 ? undefined : contentText(messages[lastAsked]?.content),
+    toolResults: results(messages),
+    toolAnswered: results(messages.slice(lastAsked + 1)).length > 0,
+  };
+}
+
+/** What the model answers, under an id of its own as a gateway gives each answer: text, or a call to a tool with its arguments. */
+type Answer = { id: number } & ({ text: string } | { tool: string; callId: string; arguments: string });
 
 /**
- * An OpenAI-compatible endpoint (the Deployment Config's `openai-compatible` models), at `<url>/v1`: it answers a
- * forced `turn_summary` with `turnSummary`, and any other request as BotCube's echo model does, streamed when asked.
- * It accepts only `apiKey` and records every request, headers included.
+ * An OpenAI-compatible endpoint (the Deployment Config's `openai-compatible` models), at `<url>/v1`, on either wire:
+ * Chat Completions and Responses. It answers a forced `turn_summary` with `turnSummary`, and any other request as
+ * BotCube's echo model does, streamed when asked; with `agentToolCall` set, it first calls that tool, and echoes once the
+ * tool's result is back. It accepts only `apiKey` and records every request, headers included.
  */
 export class FakeOpenAICompatible extends HttpFake {
-  turnSummary: TurnSummaryAnswer = { title: 'Answered a question', summary: 'Replied to the user' };
+  /** `no-tool`: the summary model answers in text, without the forced tool. */
+  turnSummary: TurnSummaryAnswer | 'no-tool' = { title: 'Answered a question', summary: 'Replied to the user' };
+  /** The tool the agent's model calls before it answers a user message, and its arguments. */
+  agentToolCall: { name: string; arguments: Record<string, unknown> } | undefined;
   /** The statuses the next requests are answered with before any body, as a gateway in front of the models fails. */
   readonly gatewayFailures: number[] = [];
   /** How the next requests' connections drop: reset before any response byte, closed before it, or reset after the response started. */
@@ -201,7 +262,8 @@ export class FakeOpenAICompatible extends HttpFake {
         response.write('{"id":"chatcmpl-1","object":"chat.completion",', () => response.socket?.resetAndDestroy());
         return;
       }
-      if (request.method !== 'POST' || request.path !== '/v1/chat/completions') {
+      const wire = WIRES[request.path];
+      if (request.method !== 'POST' || wire === undefined) {
         sendJson(response, 404, { error: { message: `No route ${request.method} ${request.path}` } });
         return;
       }
@@ -209,51 +271,124 @@ export class FakeOpenAICompatible extends HttpFake {
         sendJson(response, 401, { error: { message: 'Incorrect API key provided' } });
         return;
       }
-      const body = JSON.parse(request.body) as ChatCompletionsRequest;
-      const tool = body.tool_choice?.function.name;
-      if (tool !== undefined) {
-        if (this.turnSummary === 'fail') {
-          sendJson(response, 500, { error: { message: `fake ${tool} model failure` } });
-          return;
-        }
-        const call = { id: `${tool}-1`, type: 'function', function: { name: tool, arguments: JSON.stringify(this.turnSummary) } };
-        sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [call] }, finish_reason: 'tool_calls' }] });
+      const call = modelCall(wire, request.body);
+      const answer = this.answer(call, this.requests.length);
+      if (answer === 'fail') {
+        sendJson(response, 500, { error: { message: `fake ${call.forcedTool} model failure` } });
         return;
       }
-      const chunk = (delta: unknown, finish: string | null) =>
-        `data: ${JSON.stringify({ id: 'chatcmpl-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-      const scripted = body.messages.at(-1)?.role === 'user' ? this.toolCalls.shift() : undefined;
-      if (scripted !== undefined) {
-        const call = { id: `${scripted.name}-call`, type: 'function', function: { name: scripted.name, arguments: JSON.stringify(scripted.arguments) } };
-        if (!body.stream) {
-          sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [call] }, finish_reason: 'tool_calls' }] });
+      if (wire === 'responses') {
+        if (!call.stream) {
+          sendJson(response, 200, responsesBody(call.model, answer));
           return;
         }
         response.writeHead(200, { 'content-type': 'text/event-stream' });
-        response.end(`${chunk({ role: 'assistant', content: null, tool_calls: [{ index: 0, ...call }] }, null)}${chunk({}, 'tool_calls')}data: [DONE]\n\n`);
+        response.end(responsesStream(call.model, answer));
         return;
       }
-      const asked = lastUserMessage(body.messages);
-      const content = `Echo: ${asked === undefined ? '' : completionText(asked.content)}`;
-      if (!body.stream) {
-        sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
+      if (!call.stream) {
+        sendJson(response, 200, { id: `chatcmpl-${answer.id}`, object: 'chat.completion', model: call.model, choices: [{ index: 0, message: chatMessage(answer), finish_reason: 'text' in answer ? 'stop' : 'tool_calls' }] });
         return;
       }
       response.writeHead(200, { 'content-type': 'text/event-stream' });
-      response.end(`${chunk({ role: 'assistant', content }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`);
+      response.end(chatStream(call.model, answer));
+    });
+  }
+
+  private answer({ forcedTool, asked, toolAnswered }: ModelCall, id: number): Answer | 'fail' {
+    if (forcedTool !== undefined) {
+      if (this.turnSummary === 'fail') return 'fail';
+      if (this.turnSummary === 'no-tool') return { id, text: 'No summary.' };
+      return { id, tool: forcedTool, callId: `${forcedTool}-${id}`, arguments: JSON.stringify(this.turnSummary) };
+    }
+    const scripted = toolAnswered ? undefined : this.toolCalls.shift();
+    if (scripted !== undefined) return { id, tool: scripted.name, callId: `${scripted.name}-call`, arguments: JSON.stringify(scripted.arguments) };
+    if (this.agentToolCall !== undefined && !toolAnswered) {
+      return { id, tool: this.agentToolCall.name, callId: `call-${id}`, arguments: JSON.stringify(this.agentToolCall.arguments) };
+    }
+    return { id, text: `Echo: ${asked ?? ''}` };
+  }
+
+  private calls(): ModelCall[] {
+    return this.requests.flatMap(({ path, body }) => {
+      const wire = WIRES[path];
+      return wire === undefined ? [] : [modelCall(wire, body)];
     });
   }
 
   /** The model each request named, in order. */
   models(): string[] {
-    return this.requests.map((request) => (JSON.parse(request.body) as ChatCompletionsRequest).model);
+    return this.calls().map(({ model }) => model);
+  }
+
+  /** The wire each model request came on, in order. */
+  wires(): ModelsWire[] {
+    return this.calls().map(({ wire }) => wire);
+  }
+
+  /** The tool results the agent's model requests carried back, in order. */
+  toolResults(): string[] {
+    return this.calls().flatMap(({ toolResults }) => toolResults);
   }
 
   /** The finished Turns sent for a summary, as the summary prompt carries them. */
   summarizedTurns(): { request: string; answer: string }[] {
-    return this.requests
-      .map((request) => JSON.parse(request.body) as ChatCompletionsRequest)
-      .filter(({ tool_choice }) => tool_choice?.function.name === 'turn_summary')
-      .map(({ messages }) => JSON.parse(completionText(lastUserMessage(messages)?.content ?? '{}')) as { request: string; answer: string });
+    return this.calls()
+      .filter(({ forcedTool }) => forcedTool === 'turn_summary')
+      .map(({ asked }) => JSON.parse(asked ?? '{}') as { request: string; answer: string });
   }
+}
+
+const chatToolCall = ({ callId, tool, arguments: args }: Extract<Answer, { tool: string }>) => ({ id: callId, type: 'function', function: { name: tool, arguments: args } });
+
+function chatMessage(answer: Answer) {
+  return 'text' in answer ? { role: 'assistant', content: answer.text } : { role: 'assistant', content: null, tool_calls: [chatToolCall(answer)] };
+}
+
+function chatStream(model: string, answer: Answer): string {
+  const chunk = (delta: unknown, finish: string | null) =>
+    `data: ${JSON.stringify({ id: `chatcmpl-${answer.id}`, object: 'chat.completion.chunk', model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+  const delta = 'text' in answer
+    ? { role: 'assistant', content: answer.text }
+    : { role: 'assistant', content: null, tool_calls: [{ index: 0, ...chatToolCall(answer) }] };
+  return `${chunk(delta, null)}${chunk({}, 'text' in answer ? 'stop' : 'tool_calls')}data: [DONE]\n\n`;
+}
+
+const RESPONSES_USAGE = { input_tokens: 26, input_tokens_details: { cached_tokens: 0 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 30 };
+
+/** The answer's one output item, finished. */
+function responsesItem(answer: Answer) {
+  if ('text' in answer) {
+    return { id: `msg_${answer.id}`, type: 'message', status: 'completed', role: 'assistant', content: [{ type: 'output_text', annotations: [], logprobs: [], text: answer.text }] };
+  }
+  return { id: `fc_${answer.id}`, type: 'function_call', status: 'completed', call_id: answer.callId, name: answer.tool, arguments: answer.arguments };
+}
+
+function responsesBody(model: string, answer: Answer, status = 'completed') {
+  return { id: `resp_${answer.id}`, object: 'response', created_at: 1_790_965_829, status, model, output: status === 'completed' ? [responsesItem(answer)] : [], usage: status === 'completed' ? RESPONSES_USAGE : null };
+}
+
+/** The answer as a Responses event stream: the response, its one output item streamed, then the completed response. */
+function responsesStream(model: string, answer: Answer): string {
+  const item = responsesItem(answer);
+  const events: Record<string, unknown>[] = [{ type: 'response.created', response: responsesBody(model, answer, 'in_progress') }];
+  if ('text' in answer) {
+    const part = { type: 'output_text', annotations: [], logprobs: [], text: '' };
+    const at = { item_id: item.id, output_index: 0, content_index: 0 };
+    events.push(
+      { type: 'response.output_item.added', output_index: 0, item: { ...item, status: 'in_progress', content: [] } },
+      { type: 'response.content_part.added', ...at, part },
+      { type: 'response.output_text.delta', ...at, delta: answer.text, logprobs: [] },
+      { type: 'response.output_text.done', ...at, text: answer.text, logprobs: [] },
+      { type: 'response.content_part.done', ...at, part: { ...part, text: answer.text } },
+    );
+  } else {
+    events.push(
+      { type: 'response.output_item.added', output_index: 0, item: { ...item, status: 'in_progress', arguments: '' } },
+      { type: 'response.function_call_arguments.delta', item_id: item.id, output_index: 0, delta: answer.arguments },
+      { type: 'response.function_call_arguments.done', item_id: item.id, output_index: 0, arguments: answer.arguments },
+    );
+  }
+  events.push({ type: 'response.output_item.done', output_index: 0, item }, { type: 'response.completed', response: responsesBody(model, answer) });
+  return events.map((event, index) => `event: ${String(event.type)}\ndata: ${JSON.stringify({ ...event, sequence_number: index })}\n\n`).join('');
 }

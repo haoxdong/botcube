@@ -18,7 +18,7 @@ function section(printed: string, heading: string): string[] {
 
 it.each(['public', 'enterprise'])('prints the %s example as supplied, created and runtime-created resources, IAM actions, egress hosts, images and commands', (name) => {
   const headings = printedFor(name).split('\n').filter((line) => line && !line.startsWith(' '));
-  expect(headings).toEqual(['Supplied resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
+  expect(headings).toEqual(['Supplied resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Models', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
 });
 
 it("names the enterprise example's OIDC issuer host among its egress hosts", () => {
@@ -197,6 +197,12 @@ describe("the models Endpoint's credential", () => {
     expect(JSON.stringify(needs.iam.harness)).not.toContain('secretsmanager');
     expect(needs.egressHosts).toContain('models.example.com');
     expect(needs.commands.filter((command) => command.startsWith('models.'))).toEqual([]);
+  });
+
+  it('prints the wire its models are called over: Chat Completions by default, or Responses', () => {
+    expect(section(formatFootprint(footprint(config)), 'Models')).toEqual(['  openai-compatible https://models.example.com/v1 wire chat-completions']);
+    expect(section(formatFootprint(footprint({ ...config, models: { ...models, wire: 'responses' } })), 'Models'))
+      .toEqual(['  openai-compatible https://models.example.com/v1 wire responses']);
   });
 
   it("is reached by the Chat Service for Turn summaries and the Credential Service for the agent's relayed calls, never the Harness", () => {

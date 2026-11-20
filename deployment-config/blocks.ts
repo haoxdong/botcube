@@ -106,6 +106,11 @@ export type Endpoint = z.output<typeof endpoint>;
 export const cacheMarkers = z.literal('claude')
   .describe("Set to `claude` behind a gateway in front of Claude, so the Harness marks the system prompt and the latest messages with `cache_control` and repeated input is billed at the cached rate. Unset, no request carries a marker.");
 
+/** The OpenAI API a models Endpoint is called over (ADR 0091): Chat Completions, or Responses for a Responses-only gateway. */
+export const modelsWire = z.enum(['chat-completions', 'responses'])
+  .describe('The OpenAI API every call to the endpoint uses: `chat-completions` (`/chat/completions`), or `responses` (`/responses`) for a gateway that serves only the Responses API.');
+export type ModelsWire = z.output<typeof modelsWire>;
+
 export const oidcIssuer = z.url().refine(httpsOrLoopback, 'An OIDC issuer is an https URL; only a stand-in on this machine may use http');
 
 /** An OIDC issuer's discovery URL, as AgentCore's JWT authorizer takes it. */

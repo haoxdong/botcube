@@ -6,7 +6,7 @@ import { modelsDeployment, modelsEndpointFromEnv } from './models.js';
 describe('the models section on an OpenAI-compatible Endpoint', () => {
   const credential = { kind: 'secret', secretArn: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/models-api-key' } as const;
   const deployed = modelsDeployment({
-    kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary',
+    kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary', wire: 'chat-completions',
   });
   const endpoint = JSON.stringify({ url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' } });
 
@@ -21,8 +21,28 @@ describe('the models section on an OpenAI-compatible Endpoint', () => {
   });
 });
 
+describe('the Responses wire on an OpenAI-compatible Endpoint', () => {
+  const deployed = modelsDeployment({
+    kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'summary', wire: 'responses',
+  });
+  const endpoint = JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, wire: 'responses' });
+
+  it('reaches the Chat Service, for Turn summaries, and the Credential Service with the Endpoint', () => {
+    expect(deployed?.chatService).toEqual({ BOTCUBE_MODELS_ENDPOINT: endpoint, BOTCUBE_TURN_SUMMARY_MODEL: 'summary' });
+    expect(deployed?.credentialService).toEqual({ BOTCUBE_MODELS_ENDPOINT: endpoint });
+  });
+
+  it('is read back from the Endpoint the deploy set, Chat Completions from an Endpoint an older deploy wrote without one, and stops startup on any other', () => {
+    expect(modelsEndpointFromEnv({ BOTCUBE_MODELS_ENDPOINT: endpoint })?.wire).toBe('responses');
+    expect(modelsEndpointFromEnv({ BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' } }) })?.wire)
+      .toBe('chat-completions');
+    expect(() => modelsEndpointFromEnv({ BOTCUBE_MODELS_ENDPOINT: JSON.stringify({ url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, wire: 'messages' }) }))
+      .toThrow('BOTCUBE_MODELS_ENDPOINT: wire: ');
+  });
+});
+
 describe('cache markers on an OpenAI-compatible Endpoint', () => {
-  const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'summary' } as const;
+  const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: '/run/key' }, turnSummaryModel: 'summary', wire: 'chat-completions' } as const;
 
   it('reach the Harness, which writes them, and stay out of the Endpoint the others read', () => {
     const deployed = modelsDeployment({ ...models, cacheMarkers: 'claude' });
@@ -67,7 +87,7 @@ describe("the Harness's models environment", () => {
     { kind: 'aws', audience: 'models.example.com' },
   ] as const)('carries no bearer and no Credential Source for a $kind credential', (credential) => {
     const deployed = modelsDeployment({
-      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary', cacheMarkers: 'claude',
+      kind: 'openai-compatible', url: 'https://models.example.com/v1', credential, headers: { 'x-tenant': 'botcube-example' }, turnSummaryModel: 'summary', wire: 'chat-completions', cacheMarkers: 'claude',
     });
 
     expect(deployed?.harness).toEqual({ BOTCUBE_MODELS_KIND: 'openai-compatible', BOTCUBE_MODELS_CACHE_MARKERS: 'claude' });

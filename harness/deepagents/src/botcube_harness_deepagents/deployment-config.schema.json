@@ -854,6 +854,12 @@
               "minLength": 1,
               "description": "The model on the endpoint that summarizes each finished Turn for the Activity."
             },
+            "wire": {
+              "default": "chat-completions",
+              "type": "string",
+              "enum": ["chat-completions", "responses"],
+              "description": "The OpenAI API every call to the endpoint uses: `chat-completions` (`/chat/completions`), or `responses` (`/responses`) for a gateway that serves only the Responses API."
+            },
             "cacheMarkers": {
               "type": "string",
               "const": "claude",

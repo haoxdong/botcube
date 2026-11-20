@@ -41,7 +41,7 @@ afterAll(async () => {
 
 /** The environment the deploy gives the Chat Service for a models Endpoint with TLS, at the stand-in's mTLS front. */
 function deployed(tls: EndpointTls): NodeJS.ProcessEnv {
-  return { ...modelsDeployment({ kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', tls })?.chatService };
+  return { ...modelsDeployment({ kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', wire: 'chat-completions', tls })?.chatService };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };

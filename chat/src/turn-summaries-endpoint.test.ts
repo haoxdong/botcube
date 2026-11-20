@@ -37,6 +37,7 @@ function deployed(models: Record<string, unknown> = {}): NodeJS.ProcessEnv {
     credential: { kind: 'file' as const, path: keyFile },
     headers: { 'x-tenant': 'botcube-example' },
     turnSummaryModel: 'example-summary',
+    wire: 'chat-completions' as const,
     ...models,
   };
   return { ...modelsDeployment(config)?.chatService };
@@ -52,6 +53,24 @@ describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
     expect(endpoint.summarizedTurns()).toEqual([turn]);
     expect(endpoint.models()).toEqual(['example-summary']);
     expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'x-tenant': 'botcube-example' });
+  });
+
+  it('ask the Responses API on the Responses wire, with the same forced tool, bearer and headers', async () => {
+    expect(await summarize(deployed({ wire: 'responses' }))).toEqual({ title: 'Answered a question', summary: 'Replied to the user' });
+
+    expect(endpoint.requests.map(({ method, path }) => `${method} ${path}`)).toEqual(['POST /v1/responses']);
+    expect(endpoint.summarizedTurns()).toEqual([turn]);
+    expect(endpoint.models()).toEqual(['example-summary']);
+    expect(endpoint.requests[0]?.headers).toMatchObject({ authorization: `Bearer ${API_KEY}`, 'x-tenant': 'botcube-example' });
+  });
+
+  it('fail on the Responses wire when the model answers without the summary tool', async () => {
+    endpoint.turnSummary = 'no-tool';
+    try {
+      await expect(summarize(deployed({ wire: 'responses' }))).rejects.toThrow('The summary model answered without a title and summary');
+    } finally {
+      endpoint.turnSummary = { title: 'Answered a question', summary: 'Replied to the user' };
+    }
   });
 
   it('keep working on an Endpoint whose cache markers only the Harness writes', async () => {

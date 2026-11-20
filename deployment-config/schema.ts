@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-deployment-config/credential-fields';
-import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-deployment-config/blocks';
+import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, modelsWire, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-deployment-config/blocks';
 import { supplied } from 'botcube-deployment-config/supplied';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
@@ -107,6 +107,7 @@ const models = z.discriminatedUnion('kind', [
     kind: z.literal('openai-compatible'),
     url: endpoint.shape.url.describe("The endpoint's OpenAI API base URL, such as https://models.example.com/v1."),
     turnSummaryModel: z.string().min(1).describe('The model on the endpoint that summarizes each finished Turn for the Activity.'),
+    wire: modelsWire.default('chat-completions'),
     cacheMarkers: cacheMarkers.optional(),
   }).describe("Every model on an OpenAI-compatible endpoint, by its key in the bot settings; Plan Usage models still run through the Credential Service."),
 ]);

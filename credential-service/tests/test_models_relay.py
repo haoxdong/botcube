@@ -189,6 +189,18 @@ def test_any_other_gateway_failure_is_an_error_the_harness_does_not_retry(
     assert response.json()['error']['type'] == 'models_endpoint'
 
 
+def test_a_turn_on_the_responses_wire_reaches_the_gateways_responses_api(gateway: FakeGateway, key: Path) -> None:
+    body = b'{"model":"echo","input":[{"role":"user","content":"Hello"}],"stream":true}'
+    endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'wire': 'responses'}
+    client = _client(gateway, {'BOTCUBE_MODELS_ENDPOINT': json.dumps(endpoint)})
+
+    assert client.post('/models/responses', content=body, headers=_turn()).status_code == 200
+
+    [call] = gateway.requests
+    assert (call.method, str(call.url), call.content) == ('POST', 'https://models.example.com/v1/responses', body)
+    assert call.headers['authorization'] == 'Bearer sk-mounted'
+
+
 def test_cache_markers_reach_the_gateway_as_the_harness_wrote_them(gateway: FakeGateway, key: Path) -> None:
     marked = json.dumps({'model': 'echo', 'stream': True, 'messages': [
         {'role': 'system', 'content': [{'type': 'text', 'text': 'You are BotCube.', 'cache_control': {'type': 'ephemeral'}}]},
@@ -291,7 +303,7 @@ def _every_endpoint_field_the_deployment_config_accepts(key: Path) -> dict[str, 
     }
     by_type = {'string': 'summary', 'object': {}, 'array': [], 'integer': 1, 'number': 1, 'boolean': True}
     return {
-        name: known.get(name, field.get('const', by_type.get(field.get('type'))))
+        name: known.get(name, field.get('const', field.get('enum', [by_type.get(field.get('type'))])[-1]))
         for name, field in endpoint['properties'].items()
     }
 

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 MODELS_PROVIDER = 'models'
 MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
 # The relay reads url, credential, headers and tls; the rest of the Deployment Config's models Endpoint is the Chat Service's and the Harness's.
-_ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'tls', 'kind', 'turnSummaryModel', 'cacheMarkers'})
+_ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'tls', 'kind', 'turnSummaryModel', 'wire', 'cacheMarkers'})
 _NOT_FORWARDED = frozenset({'authorization', 'host', 'content-length', 'connection', 'transfer-encoding', 'x-botcube-account-id', 'x-botcube-session-id'})
 _READ_TIMEOUT_SECONDS = 300
 _CONNECT_TIMEOUT_SECONDS = 30
