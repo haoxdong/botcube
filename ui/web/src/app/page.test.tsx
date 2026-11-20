@@ -5104,6 +5104,35 @@ describe('sidebar on a phone', () => {
     expect(screen.queryByLabelText('Close sidebar')).toBeNull();
   });
 
+  // The page stops scrolling under the open drawer; the chat card holds the spot the reader left, its bottom fitted to
+  // the browser's toolbar, and lets go of all of it once the drawer closes.
+  it('holds the chat where it was scrolled while the drawer is open', async () => {
+    const scrollY = vi.spyOn(window, 'scrollY', 'get').mockReturnValue(300);
+    const pageHeight = vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(2400);
+    const screenHeight = vi.spyOn(window.screen, 'height', 'get').mockReturnValue(1000);
+    try {
+      await renderPage();
+      const layout = present(document.querySelector<HTMLElement>('.app-layout'), 'the app layout');
+
+      await openDrawer();
+      expect(layout).toHaveAttribute('data-drawer-preview');
+      expect(layout.style.getPropertyValue('--drawer-scroll')).toBe('300px');
+      expect(layout.style.getPropertyValue('--drawer-page-height')).toBe('2400px');
+      expect(layout.style.getPropertyValue('--drawer-bottom')).toBe(`${1000 - 844 - 62}px`);
+      screenHeight.mockReturnValue(1100);
+      window.dispatchEvent(new Event('resize'));
+      expect(layout.style.getPropertyValue('--drawer-bottom')).toBe(`${1100 - 844 - 62}px`);
+
+      await userEvent.click(screen.getByLabelText('Close sidebar'));
+      expect(layout).not.toHaveAttribute('data-drawer-preview');
+      expect(layout.getAttribute('style') ?? '').not.toMatch(/--drawer-/);
+    } finally {
+      scrollY.mockRestore();
+      pageHeight.mockRestore();
+      screenHeight.mockRestore();
+    }
+  });
+
   // The drawer had a panel button in its title row, which the Muse/dots north star's Fig 21 does not; the chat strip's
   // Close sidebar button closes it, by keyboard too.
   it('closes from the chat strip alone, which a keyboard reaches', async () => {
