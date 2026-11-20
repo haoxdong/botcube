@@ -9,7 +9,7 @@ import type { ModelsDeployment, ModelsEnv } from './seams.js';
  * process reads the file. Unset, they all run on Bedrock.
  */
 export const MODELS_ENV = {
-  /** Set: every model but Plan Usage's runs on this OpenAI-compatible Endpoint, as JSON: its url, credential and headers. */
+  /** Set: every model but Plan Usage's runs on this OpenAI-compatible Endpoint, as JSON: its url, credential, headers and TLS. */
   endpoint: 'BOTCUBE_MODELS_ENDPOINT',
   /** The model each finished Turn is summarized on. */
   turnSummaryModel: 'BOTCUBE_TURN_SUMMARY_MODEL',
@@ -22,8 +22,8 @@ export const MODELS_ENV = {
 /** How this `models` section is deployed; undefined on Bedrock, the default. */
 export function modelsDeployment(models: DeploymentConfig['models']): ModelsDeployment | undefined {
   if (models.kind === 'bedrock') return undefined;
-  const { url, credential, headers, cacheMarkers: markers } = models;
-  const endpoint = { [MODELS_ENV.endpoint]: JSON.stringify({ url, credential, ...(headers ? { headers } : {}) }) };
+  const { url, credential, headers, tls, cacheMarkers: markers } = models;
+  const endpoint = { [MODELS_ENV.endpoint]: JSON.stringify({ url, credential, ...(headers ? { headers } : {}), ...(tls ? { tls } : {}) }) };
   return {
     chatService: { ...endpoint, [MODELS_ENV.turnSummaryModel]: models.turnSummaryModel },
     credentialService: endpoint,
@@ -32,8 +32,9 @@ export function modelsDeployment(models: DeploymentConfig['models']): ModelsDepl
   };
 }
 
-/** The deployed Endpoint takes a stand-in on this machine over http; the Deployment Config itself takes only https. */
-const deployedEndpoint = endpoint.extend({ url: z.url({ protocol: /^https?$/ }) });
+/** The deployed Endpoint takes a stand-in on this machine over http, but not with TLS; the Deployment Config itself takes only https. */
+const deployedEndpoint = endpoint.extend({ url: z.url({ protocol: /^https?$/ }) })
+  .refine(({ url, tls }) => tls === undefined || new URL(url).protocol === 'https:', { path: ['url'], message: 'an Endpoint with tls is an https URL' });
 
 /** The models Endpoint the deploy set, or undefined on Bedrock; throws naming the variable and the bad field. */
 export function modelsEndpointFromEnv(env: NodeJS.ProcessEnv): Endpoint | undefined {

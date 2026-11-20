@@ -18,7 +18,7 @@ function section(printed: string, heading: string): string[] {
 
 it.each(['public', 'enterprise'])('prints the %s example as supplied, created and runtime-created resources, IAM actions, egress hosts, images and commands', (name) => {
   const headings = printedFor(name).split('\n').filter((line) => line && !line.startsWith(' '));
-  expect(headings).toEqual(['Supplied resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Egress hosts', 'Images', 'Build images', 'Commands']);
+  expect(headings).toEqual(['Supplied resources', 'Created resources', 'Created at runtime', 'IAM actions', 'Egress hosts', 'TLS', 'Images', 'Build images', 'Commands']);
 });
 
 it("names the enterprise example's OIDC issuer host among its egress hosts", () => {
@@ -312,7 +312,36 @@ describe("the enterprise example's proxy Endpoint", () => {
 
   it('from a command lists the command each of them may run', () => {
     const needs = footprint(withCredential({ kind: 'command', command: ['/usr/local/bin/proxy-token', '--egress'], timeoutSeconds: 30 }));
-    expect(needs.commands).toEqual(['proxy.credential (chatService, harness): /usr/local/bin/proxy-token --egress']);
+    expect(needs.commands).toEqual(['proxy.credential (chatService, credentialService, harness): /usr/local/bin/proxy-token --egress']);
+  });
+});
+
+describe('Endpoint TLS', () => {
+  const { config } = loadDeployment(example('enterprise'));
+  if (config.models.kind !== 'openai-compatible' || config.proxy.kind !== 'forward') throw new Error('The enterprise example has a models Endpoint and a proxy');
+  const { models, proxy } = config;
+  const KEY = '/run/spiffe/svid-key.pem';
+  const files = { clientCertificate: { certificate: '/run/spiffe/svid.pem', key: KEY }, serverIdentity: 'spiffe://example.org/ns/egress/sa/proxy' };
+  const command = { clientCertificate: { command: ['/usr/local/bin/svid-broker', '--audience', 'models'] as [string, ...string[]], timeoutSeconds: 30 } };
+
+  it('prints none without a TLS block', () => {
+    expect(section(printedFor('enterprise'), 'TLS')).toEqual([]);
+  });
+
+  it("prints each Endpoint's expected identity and certificate files, by who connects to it", () => {
+    const printed = formatFootprint(footprint({ ...config, models: { ...models, tls: files }, proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files } }));
+
+    expect(section(printed, 'TLS')).toEqual([
+      '  models.tls (chatService, credentialService): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
+      '  proxy.tls (chatService, credentialService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
+    ]);
+  });
+
+  it('lists a client certificate command under Commands', () => {
+    const printed = formatFootprint(footprint({ ...config, allowCommandCredentials: true, models: { ...models, tls: command } }));
+
+    expect(section(printed, 'TLS')).toEqual(['  models.tls (chatService, credentialService): client certificate from a command']);
+    expect(section(printed, 'Commands')).toContain('  models.tls.clientCertificate (chatService, credentialService): /usr/local/bin/svid-broker --audience models');
   });
 });
 

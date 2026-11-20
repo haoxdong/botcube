@@ -177,6 +177,8 @@ export class FakeOpenAICompatible extends HttpFake {
   readonly gatewayFailures: number[] = [];
   /** How the next requests' connections drop: reset before any response byte, closed before it, or reset after the response started. */
   readonly drops: ('before-response' | 'closed-before-response' | 'mid-response')[] = [];
+  /** The tool calls the next requests ending in a user message are answered with, one each; a tool's result is then echoed as usual. */
+  readonly toolCalls: { name: string; arguments: Record<string, unknown> }[] = [];
 
   constructor(readonly apiKey: string) {
     super((request, response) => {
@@ -218,14 +220,25 @@ export class FakeOpenAICompatible extends HttpFake {
         sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [call] }, finish_reason: 'tool_calls' }] });
         return;
       }
+      const chunk = (delta: unknown, finish: string | null) =>
+        `data: ${JSON.stringify({ id: 'chatcmpl-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      const scripted = body.messages.at(-1)?.role === 'user' ? this.toolCalls.shift() : undefined;
+      if (scripted !== undefined) {
+        const call = { id: `${scripted.name}-call`, type: 'function', function: { name: scripted.name, arguments: JSON.stringify(scripted.arguments) } };
+        if (!body.stream) {
+          sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [call] }, finish_reason: 'tool_calls' }] });
+          return;
+        }
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        response.end(`${chunk({ role: 'assistant', content: null, tool_calls: [{ index: 0, ...call }] }, null)}${chunk({}, 'tool_calls')}data: [DONE]\n\n`);
+        return;
+      }
       const asked = lastUserMessage(body.messages);
       const content = `Echo: ${asked === undefined ? '' : completionText(asked.content)}`;
       if (!body.stream) {
         sendJson(response, 200, { id: 'chatcmpl-1', object: 'chat.completion', model: body.model, choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
         return;
       }
-      const chunk = (delta: unknown, finish: string | null) =>
-        `data: ${JSON.stringify({ id: 'chatcmpl-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end(`${chunk({ role: 'assistant', content }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`);
     });

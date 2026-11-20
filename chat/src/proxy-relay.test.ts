@@ -156,6 +156,6 @@ describe('the proxy relay at startup', () => {
 
   it('needs HTTPS_PROXY pointed at the relay beside a proxy credential or headers', () => {
     expect(() => startProxyRelayForConfig({ kind: 'forward', url: 'http://proxy.example.com:3128', headers: { 'x-tenant': 'a' } }, {}))
-      .toThrow("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers");
+      .toThrow("HTTPS_PROXY is unset beside the Deployment Config's proxy credential, headers or TLS");
   });
 });

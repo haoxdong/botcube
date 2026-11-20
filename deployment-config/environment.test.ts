@@ -10,6 +10,7 @@ const forward = (proxy: Partial<Extract<DeploymentConfig['proxy'], { kind: 'forw
 });
 const FILE = { kind: 'file', path: '/run/secrets/proxy-token' } as const;
 const COMMAND = { kind: 'command', command: ['/usr/local/bin/proxy-token'], timeoutSeconds: 30 } as const;
+const COMMAND_CERTIFICATE = { command: ['/usr/local/bin/svid-broker'], timeoutSeconds: 30 } as const;
 
 describe("the deploy's proxy environment", () => {
   it('sends every process straight to a proxy that takes no credential, and relays nothing', () => {
@@ -35,6 +36,14 @@ describe("the deploy's proxy environment", () => {
 
     expect(environment).toMatchObject({ HTTPS_PROXY: 'http://127.0.0.1:40123' });
     expect(proxyRelayFromEnv(environment)).toMatchObject({ listen: { host: '127.0.0.1', port: 40123 }, credential: FILE, headers: {} });
+  });
+
+  it('relays to a proxy with only TLS, whose client certificate the relay reads from the Deployment Config file', () => {
+    const tls = { clientCertificate: { certificate: '/run/spiffe/svid.pem', key: '/run/spiffe/svid-key.pem' }, serverIdentity: 'spiffe://example.org/proxy' };
+
+    expect(proxyEnvironment(forward({ url: 'https://proxy.example.com:3129', tls }))).toEqual({
+      HTTP_PROXY: 'http://127.0.0.1:3128', HTTPS_PROXY: 'http://127.0.0.1:3128', NO_PROXY, NODE_USE_ENV_PROXY: '1', BOTCUBE_PROXY_URL: 'https://proxy.example.com:3129',
+    });
   });
 
   it('gives nothing without a proxy', () => {
@@ -69,6 +78,16 @@ describe("the deploy's command credential opt-in", () => {
 
     expect(() => commandCredentialOptIn(config, {}))
       .toThrow('models.credential.clientSecret is a command credential, which runs only when the deploy environment sets BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1');
+  });
+
+  it.each([
+    ['models.tls.clientCertificate', { models: { ...withCommand.models, credential: FILE, tls: { clientCertificate: COMMAND_CERTIFICATE } } }],
+    ['proxy.tls.clientCertificate', { proxy: { kind: 'forward', url: 'https://proxy.example.com:3129', tls: { clientCertificate: COMMAND_CERTIFICATE } } }],
+  ])('fails a client certificate command at %s the operator did not opt in to', (field, sections) => {
+    const config = deploymentConfig.parse({ bot: './bot.json', allowCommandCredentials: true, ...sections });
+
+    expect(() => commandCredentialOptIn(config, {}))
+      .toThrow(`${field} is a command credential, which runs only when the deploy environment sets BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1`);
   });
 
   it('gives nothing when the config runs no command and the operator set nothing', () => {

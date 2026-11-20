@@ -780,6 +780,71 @@
                 "type": "string"
               }
             },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "clientCertificate": {
+                  "description": "The client certificate presented in each handshake; absent, none.",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "certificate": {
+                          "type": "string",
+                          "format": "starts_with",
+                          "pattern": "^\\/.*",
+                          "description": "A PEM certificate chain the platform mounts, such as a SPIFFE helper writes."
+                        },
+                        "key": {
+                          "type": "string",
+                          "format": "starts_with",
+                          "pattern": "^\\/.*",
+                          "description": "The certificate's PEM private key."
+                        }
+                      },
+                      "required": ["certificate", "key"],
+                      "additionalProperties": false,
+                      "description": "A mounted certificate and key, read again for each new connection as they rotate."
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          ],
+                          "items": {
+                            "type": "string"
+                          },
+                          "minItems": 1,
+                          "description": "The program and its arguments, run without a shell."
+                        },
+                        "timeoutSeconds": {
+                          "default": 30,
+                          "description": "How long the command may run before it is stopped.",
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["command"],
+                      "additionalProperties": false,
+                      "description": "A command printing a Kubernetes ExecCredential (status.clientCertificateData, status.clientKeyData, both PEM) on stdout, run again for each new connection; its stderr is discarded. Runs only under allowCommandCredentials."
+                    }
+                  ]
+                },
+                "serverIdentity": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "The URI or SPIFFE ID the server's certificate must carry as a URI SAN, checked in the handshake before any request is sent. Set, it replaces the hostname check; the chain is still verified."
+                }
+              },
+              "additionalProperties": false
+            },
             "kind": {
               "type": "string",
               "const": "openai-compatible"
@@ -1947,6 +2012,71 @@
               "additionalProperties": {
                 "type": "string"
               }
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "clientCertificate": {
+                  "description": "The client certificate presented in each handshake; absent, none.",
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "certificate": {
+                          "type": "string",
+                          "format": "starts_with",
+                          "pattern": "^\\/.*",
+                          "description": "A PEM certificate chain the platform mounts, such as a SPIFFE helper writes."
+                        },
+                        "key": {
+                          "type": "string",
+                          "format": "starts_with",
+                          "pattern": "^\\/.*",
+                          "description": "The certificate's PEM private key."
+                        }
+                      },
+                      "required": ["certificate", "key"],
+                      "additionalProperties": false,
+                      "description": "A mounted certificate and key, read again for each new connection as they rotate."
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          ],
+                          "items": {
+                            "type": "string"
+                          },
+                          "minItems": 1,
+                          "description": "The program and its arguments, run without a shell."
+                        },
+                        "timeoutSeconds": {
+                          "default": 30,
+                          "description": "How long the command may run before it is stopped.",
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["command"],
+                      "additionalProperties": false,
+                      "description": "A command printing a Kubernetes ExecCredential (status.clientCertificateData, status.clientKeyData, both PEM) on stdout, run again for each new connection; its stderr is discarded. Runs only under allowCommandCredentials."
+                    }
+                  ]
+                },
+                "serverIdentity": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "The URI or SPIFFE ID the server's certificate must carry as a URI SAN, checked in the handshake before any request is sent. Set, it replaces the hostname check; the chain is still verified."
+                }
+              },
+              "additionalProperties": false
             }
           },
           "required": ["kind", "url"],

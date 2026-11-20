@@ -8,7 +8,7 @@ import { SignJWT } from 'jose';
 import { loadDeployment } from '../../../deployment-config/load.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
-import { PUBLIC_ORIGIN, startLocalStack, type LocalStack } from './local-stack.js';
+import { MTLS_MODELS_HOST, PUBLIC_ORIGIN, startLocalStack, type LocalStack } from './local-stack.js';
 
 const stacks: LocalStack[] = [];
 afterAll(() => Promise.all(stacks.map((stack) => stack.stop())));
@@ -151,6 +151,24 @@ it("sends the enterprise example's traces to its authenticated collector through
   expect(new Set(proxy.requests.map(({ headers }) => [headers['proxy-authorization'], headers['x-egress-route']].join(' ')))).toEqual(
     new Set(['Bearer stand-in-proxy-token botcube-example']),
   );
+});
+
+it("presents the enterprise example's client certificates to its mTLS proxy, for a Turn's model call and its tool's request", async () => {
+  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), endpointTls: true });
+  stacks.push(stack);
+  const { proxy, front } = required(stack.mtls, "the enterprise example's mTLS stand-ins");
+  const toolHost = 'tool.example.test:443';
+  required(stack.openAICompatible, 'the models endpoint stand-in').toolCalls.push({
+    name: 'execute', arguments: { command: `python3 -c "import urllib.request; urllib.request.urlopen('https://${toolHost}/', timeout=5)" || true` },
+  });
+  const browser = stack.browser();
+  await browser.openAccountSession();
+  const turn = await browser.sendTurn(await browser.newSideChat(), { text: 'Reach the tool host' });
+  expect(sseFrames(await turn.text()).map(frameData).some(({ type }) => type === 'RUN_FINISHED')).toBe(true);
+
+  expect(proxy.hosts()).toEqual(expect.arrayContaining([`${MTLS_MODELS_HOST}:443`, toolHost]));
+  expect(new Set(proxy.clients())).toEqual(new Set(['client-b']));
+  expect(new Set(front.clients)).toEqual(new Set(['client-a']));
 });
 
 it('stops startup on a Deployment Config with an unknown adapter, naming the field', { timeout: 60_000 }, async () => {

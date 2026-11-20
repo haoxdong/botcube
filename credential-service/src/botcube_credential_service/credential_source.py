@@ -187,7 +187,7 @@ def _adapter(source: Source, env: Mapping[str, str], now: Callable[[], float]) -
         case CommandSource(command=command, timeout_seconds=timeout):
             if env.get(ALLOW_COMMAND_CREDENTIALS_ENV) != '1':
                 raise _Refused(f'command {command[0]}', f'a command credential runs only when {ALLOW_COMMAND_CREDENTIALS_ENV}=1')
-            return f'command {command[0]}', lambda: _exec_credential(_stdout_of(command, timeout))
+            return f'command {command[0]}', lambda: _exec_credential(stdout_of(command, timeout))
         case OAuthClientCredentialsSource():
             return _oauth_adapter(source, env, now)
         case AwsSource(audience=audience):
@@ -301,7 +301,7 @@ def _file_text(path: str) -> str:
     return value
 
 
-def _stdout_of(command: list[str], timeout: int) -> str:
+def stdout_of(command: list[str], timeout: int) -> str:
     """What the command prints on stdout; its stderr is discarded unread, since a helper may write a secret there."""
     try:
         finished = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=timeout, check=False)

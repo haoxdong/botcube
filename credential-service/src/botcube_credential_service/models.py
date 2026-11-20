@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import ssl
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+import urllib.request
+from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import httpcore
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -17,6 +21,7 @@ from .credential_source import (
     CredentialSourceError,
     credential_source,
 )
+from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 from .provider import UpstreamRefusal
 
 if TYPE_CHECKING:
@@ -28,8 +33,8 @@ if TYPE_CHECKING:
 
 MODELS_PROVIDER = 'models'
 MODELS_ENDPOINT_ENV = 'BOTCUBE_MODELS_ENDPOINT'
-# The relay reads url, credential and headers; the rest of the Deployment Config's models Endpoint is the Chat Service's and the Harness's.
-_ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'kind', 'turnSummaryModel', 'cacheMarkers'})
+# The relay reads url, credential, headers and tls; the rest of the Deployment Config's models Endpoint is the Chat Service's and the Harness's.
+_ENDPOINT_FIELDS = frozenset({'url', 'credential', 'headers', 'tls', 'kind', 'turnSummaryModel', 'cacheMarkers'})
 _NOT_FORWARDED = frozenset({'authorization', 'host', 'content-length', 'connection', 'transfer-encoding', 'x-botcube-account-id', 'x-botcube-session-id'})
 _READ_TIMEOUT_SECONDS = 300
 _CONNECT_TIMEOUT_SECONDS = 30
@@ -56,8 +61,11 @@ def models_provider_from_env(
         raise RuntimeError(f'{MODELS_ENDPOINT_ENV}: missing field {", ".join(missing)}')
     credential = credential_source('models', config['credential'], env=env, now=now)
     credential.get()
+    tls = endpoint_tls('models', config['tls'], env=env) if 'tls' in config else None
+    if tls is not None:
+        tls.context()
     return ModelsEndpointProvider(
-        config['url'].rstrip('/'), dict(config.get('headers') or {}), credential, audit=audit, transport=transport,
+        config['url'].rstrip('/'), dict(config.get('headers') or {}), credential, audit=audit, transport=transport, tls=tls,
     )
 
 
@@ -74,11 +82,14 @@ class ModelsEndpointProvider:
         *,
         audit: CredentialAuditRecorder,
         transport: httpx.AsyncBaseTransport | None = None,
+        tls: EndpointTls | None = None,
     ) -> None:
         self._url = url
         self._headers = headers
         self._credential = credential
         self._audit = audit
+        if tls is not None:
+            transport = _EndpointTransport(url, tls)
         self._client = httpx.AsyncClient(
             transport=transport, timeout=httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS),
         )
@@ -148,3 +159,155 @@ def _dropped_before_response(error: BaseException | None) -> bool:
     if isinstance(error, BaseExceptionGroup):
         return all(_dropped_before_response(each) for each in error.exceptions)
     return error is not None and _dropped_before_response(error.__cause__ or error.__context__)
+
+
+class _EndpointTransport(httpx.AsyncBaseTransport):
+    """
+    httpx's transport for an Endpoint with TLS: httpx reads one SSL context per client, so this owns the httpcore pool
+    and gives it a network backend that opens each Endpoint handshake with the certificate as read now. Trust roots
+    are the system's and SSL_CERT_FILE's; the proxy comes from the environment as httpx would take it.
+    """
+
+    def __init__(self, url: str, tls: EndpointTls) -> None:
+        origin = httpx.URL(url)
+        if origin.scheme != 'https':
+            raise EndpointTlsError(f'models TLS: the Endpoint {url} is not https')
+        endpoint_context = ssl.create_default_context()
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=endpoint_context,
+            proxy=_environment_proxy(origin),
+            network_backend=_TlsBackend(_anyio_backend(), tls, endpoint_context),
+        )
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        with _httpx_errors():
+            response = await self._pool.handle_async_request(httpcore.Request(
+                method=request.method,
+                url=httpcore.URL(scheme=request.url.raw_scheme, host=request.url.raw_host, port=request.url.port, target=request.url.raw_path),
+                headers=request.headers.raw,
+                content=request.stream,
+                extensions=request.extensions,
+            ))
+        return httpx.Response(status_code=response.status, headers=response.headers, stream=_ResponseStream(response), extensions=response.extensions)
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
+
+
+def _anyio_backend() -> httpcore.AsyncNetworkBackend:
+    backend = httpcore.AnyIOBackend()
+    if not isinstance(backend, httpcore.AsyncNetworkBackend):
+        raise RuntimeError('httpcore has no anyio backend')
+    return backend
+
+
+def _environment_proxy(origin: httpx.URL) -> httpcore.Proxy | None:
+    proxies = urllib.request.getproxies()
+    address = proxies.get('https') or proxies.get('all')
+    if not address or urllib.request.proxy_bypass(origin.host):
+        return None
+    proxy = httpx.Proxy(address)
+    return httpcore.Proxy(
+        url=httpcore.URL(scheme=proxy.url.raw_scheme, host=proxy.url.raw_host, port=proxy.url.port, target=proxy.url.raw_path),
+        auth=proxy.auth, headers=proxy.headers.raw, ssl_context=ssl.create_default_context(),
+    )
+
+
+class _ResponseStream(httpx.AsyncByteStream):
+    def __init__(self, response: httpcore.Response) -> None:
+        self._response = response
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        with _httpx_errors():
+            async for chunk in self._response.aiter_stream():
+                yield chunk
+
+    async def aclose(self) -> None:
+        await self._response.aclose()
+
+
+_HTTPX_ERRORS: tuple[tuple[type[Exception], type[httpx.TransportError]], ...] = (
+    (httpcore.ConnectTimeout, httpx.ConnectTimeout),
+    (httpcore.ReadTimeout, httpx.ReadTimeout),
+    (httpcore.WriteTimeout, httpx.WriteTimeout),
+    (httpcore.PoolTimeout, httpx.PoolTimeout),
+    (httpcore.TimeoutException, httpx.TimeoutException),
+    (httpcore.ConnectError, httpx.ConnectError),
+    (httpcore.ReadError, httpx.ReadError),
+    (httpcore.WriteError, httpx.WriteError),
+    (httpcore.NetworkError, httpx.NetworkError),
+    (httpcore.ProxyError, httpx.ProxyError),
+    (httpcore.UnsupportedProtocol, httpx.UnsupportedProtocol),
+    (httpcore.RemoteProtocolError, httpx.RemoteProtocolError),
+    (httpcore.LocalProtocolError, httpx.LocalProtocolError),
+    (httpcore.ProtocolError, httpx.ProtocolError),
+)
+
+
+@contextlib.contextmanager
+def _httpx_errors() -> Generator[None]:
+    """httpcore's errors as the httpx errors `relay` handles, each keeping its cause."""
+    try:
+        yield
+    except Exception as error:
+        mapped = next((target for source, target in _HTTPX_ERRORS if isinstance(error, source)), None)
+        if mapped is None:
+            raise
+        raise mapped(str(error)) from error
+
+
+class _TlsBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self, inner: httpcore.AsyncNetworkBackend, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
+        self._inner = inner
+        self._tls = tls
+        self._endpoint_context = endpoint_context
+
+    async def connect_tcp(
+        self, host: str, port: int, timeout: float | None = None, local_address: str | None = None, socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        stream = await self._inner.connect_tcp(host, port, timeout=timeout, local_address=local_address, socket_options=socket_options)
+        return _TlsStream(stream, self._tls, self._endpoint_context)
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: Any = None) -> httpcore.AsyncNetworkStream:
+        return await self._inner.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+class _TlsStream(httpcore.AsyncNetworkStream):
+    """A connection whose handshake with the Endpoint presents the certificate as read now and checks the identity, before any request byte."""
+
+    def __init__(self, inner: httpcore.AsyncNetworkStream, tls: EndpointTls, endpoint_context: ssl.SSLContext) -> None:
+        self._inner = inner
+        self._tls = tls
+        self._endpoint_context = endpoint_context
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return await self._inner.read(max_bytes, timeout)
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        await self._inner.write(buffer, timeout)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    def get_extra_info(self, info: str) -> Any:
+        return self._inner.get_extra_info(info)
+
+    async def start_tls(self, ssl_context: ssl.SSLContext, server_hostname: str | None = None, timeout: float | None = None) -> httpcore.AsyncNetworkStream:
+        if ssl_context is not self._endpoint_context:
+            return _TlsStream(await self._inner.start_tls(ssl_context, server_hostname, timeout), self._tls, self._endpoint_context)
+        try:
+            context = await anyio.to_thread.run_sync(self._tls.context)
+        except EndpointTlsError as error:
+            await self._inner.aclose()
+            raise httpcore.ConnectError(str(error)) from error
+        context.set_alpn_protocols(['http/1.1'])
+        stream = await self._inner.start_tls(context, server_hostname, timeout)
+        try:
+            self._tls.check(stream.get_extra_info('ssl_object'))
+        except EndpointTlsError as error:
+            await stream.aclose()
+            raise httpcore.ConnectError(str(error)) from error
+        return stream

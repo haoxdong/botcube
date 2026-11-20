@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { credentialFields, type DeploymentConfig } from './schema.js';
+import { commandFields, type DeploymentConfig } from './schema.js';
 import { ALLOW_COMMAND_CREDENTIALS_ENV, credentialSource, jsonFromEnv, type CredentialSource } from './blocks.js';
 
 /** Reached directly whatever the proxy: loopback (a task's sidecars) and the EC2 and ECS metadata endpoints (its credentials). */
@@ -23,14 +23,15 @@ type ForwardProxy = Extract<DeploymentConfig['proxy'], { kind: 'forward' }>;
  * The standard proxy variables every BotCube process gets from the Deployment Config's `proxy`, or none without one.
  * Python's HTTP clients read them as they are; Node's `fetch` and default agents read them under `NODE_USE_ENV_PROXY`.
  *
- * A proxy with a credential or headers is reached through a relay on `relayPort` in the process itself (`proxy-relay`
- * in botcube/chat and botcube/harness), which sets them on each request: every client reads HTTP(S)_PROXY once, so
- * only the relay can send a refreshed credential.
+ * A proxy with a credential, headers or TLS is reached through a relay on `relayPort` in the process itself
+ * (`proxy-relay` in botcube/chat, botcube/harness and botcube/credential-service), which sets them on each request and
+ * presents the client certificate on each connection: every client reads HTTP(S)_PROXY once, so only the relay can
+ * send a refreshed credential or a rotated certificate.
  */
 export function proxyEnvironment({ proxy }: Pick<DeploymentConfig, 'proxy'>, { relayPort = PROXY_RELAY_PORT }: { relayPort?: number } = {}): Record<string, string> {
   if (proxy.kind === 'none') return {};
   const noProxy = [...new Set([...ALWAYS_DIRECT, ...(proxy.noProxy ?? [])])].join(',');
-  const relayed = (proxy.credential !== undefined || proxy.headers !== undefined);
+  const relayed = proxy.credential !== undefined || proxy.headers !== undefined || proxy.tls !== undefined;
   const url = relayed ? `http://${RELAY_HOST}:${relayPort}` : proxy.url;
   return {
     HTTP_PROXY: url,
@@ -56,7 +57,7 @@ function relayEnvironment({ url, credential, headers }: ForwardProxy): Record<st
  */
 export function commandCredentialOptIn(config: DeploymentConfig, deployEnvironment: NodeJS.ProcessEnv): Record<string, string> {
   if (deployEnvironment[ALLOW_COMMAND_CREDENTIALS_ENV] === '1') return { [ALLOW_COMMAND_CREDENTIALS_ENV]: '1' };
-  const commands = credentialFields(config).filter(([, source]) => source.kind === 'command').map(([path]) => path.join('.'));
+  const commands = commandFields(config).map((path) => path.join('.'));
   if (commands.length) {
     throw new Error(commands.map((field) => `${field} is a command credential, which runs only when the deploy environment sets ${ALLOW_COMMAND_CREDENTIALS_ENV}=1`).join('\n'));
   }

@@ -9,6 +9,7 @@ from typing import ClassVar
 
 import pytest
 
+from botcube_harness_deepagents import endpoint_tls
 from botcube_harness_deepagents.credential_source import credential_source
 from botcube_harness_deepagents.proxy_relay import (
     start_proxy_relay,
@@ -134,3 +135,23 @@ def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -
 def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
     with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the Deployment Config'):
         start_proxy_relay_from_config({'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}, {})
+
+
+def test_refuses_a_malformed_proxy_tls_block_naming_it() -> None:
+    with pytest.raises(endpoint_tls.EndpointTlsError, match='^proxy TLS: '):
+        start_proxy_relay_from_config({'proxy': {'kind': 'forward', 'url': 'https://proxy.example.com:3129', 'tls': {}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'})
+
+
+def test_an_unreachable_proxy_drops_the_client_with_no_answer() -> None:
+    with socket.socket() as closed:
+        closed.bind(('127.0.0.1', 0))
+        port = closed.getsockname()[1]
+    relay = start_proxy_relay(upstream=f'http://127.0.0.1:{port}', listen=('127.0.0.1', 0), credential=None, headers={})
+
+    assert _exchange(relay, 'CONNECT models.example.com:443 HTTP/1.1\r\nHost: models.example.com:443\r\n\r\n') == b''
+
+
+def test_endpoint_tls_is_byte_identical_to_the_credential_services_which_tests_it() -> None:
+    twin = Path(__file__).resolve().parents[3] / 'credential-service/src/botcube_credential_service/endpoint_tls.py'
+
+    assert Path(endpoint_tls.__file__).read_bytes() == twin.read_bytes()

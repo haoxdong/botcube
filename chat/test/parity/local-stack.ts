@@ -10,6 +10,7 @@ import { proxyEnvironment } from '../../../deployment-config/environment.js';
 import { telemetryDeployment } from '../../../deployment-config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
 import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
+import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, type MtlsCertificates } from '../fakes/mtls.js';
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, createChatTable } from '../fakes/stack.js';
 import { freePort, startOnFreePort, startProcess, type RunningProcess } from '../fakes/process.js';
 import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
@@ -55,6 +56,8 @@ export interface LocalStack {
   readonly harnessUrl: string;
   /** The stand-ins for a Deployment Config's proxy and traces collector, when it names a proxy. */
   readonly egress: EgressStandIns | undefined;
+  /** With `endpointTls`, the mTLS proxy the Deployment Config's proxy is replaced by, and the mTLS front of the models Endpoint behind it. */
+  readonly mtls?: { readonly proxy: FakeMtlsProxy; readonly front: FakeMtlsFront };
   browser(): Browser;
   logs(): string;
   stop(): Promise<void>;
@@ -74,6 +77,11 @@ export async function startLocalStack(options: {
   scheduling?: boolean;
   /** The Deployment Config the stack deploys, its External Services replaced by their offline stand-ins; the public example's unless given. */
   deploymentConfig?: string;
+  /**
+   * Gives the Deployment Config's proxy and models Endpoint a `tls` block: the proxy becomes an mTLS stand-in at an
+   * https URL, and the models Endpoint, at `MTLS_MODELS_HOST`, is reached through it behind an mTLS front.
+   */
+  endpointTls?: boolean;
 } = {}): Promise<LocalStack> {
   const dynamodbEndpoint = motoEndpoint();
   // Startup stops on a bad Deployment Config before any process starts, naming the field, as the Chat Service's does.
@@ -106,10 +114,15 @@ export async function startLocalStack(options: {
   const models = deployment.config.models;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
   const harnessAuth = deployment.config.harnessAuth;
-  const egress = await egressStandIns(deployment.config, home);
+  const mtls = options.endpointTls ? await mtlsStandIns(required(openAICompatible, 'the models Endpoint stand-in an mTLS front carries to'), home) : undefined;
+  const egress = await egressStandIns(deployment.config, home, mtls);
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
-    await Promise.all([...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close()]);
+    await Promise.all([
+      ...processes.map((running) => running.stop()), bedrock.close(), openAICompatible?.close(), authorizer?.close(), egress?.proxy.close(), egress?.collector?.close(),
+      mtls?.proxy.close(), mtls?.front.close(),
+    ]);
+    mtls?.certificates.remove();
     await rm(home, { recursive: true, force: true });
   };
   try {
@@ -117,11 +130,8 @@ export async function startLocalStack(options: {
     const deploymentConfig = await standInDeploymentConfig(deploymentPath, deployment.config, home, egress?.offline);
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
     // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
-    // It stays in the environment: the stand-in is http on loopback, which models.url (https only) refuses.
-    const modelsEnv = openAICompatible && models.kind === 'openai-compatible'
-      ? modelsDeployment({ ...models, url: `${openAICompatible.url}/v1`, credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) } })
-      : undefined;
-    Object.assign(pythonEnv, egress?.environment, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
+    const modelsEnv = await modelsStandInEnvironment(models, openAICompatible, home, mtls);
+    Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -141,6 +151,7 @@ export async function startLocalStack(options: {
           BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
           ...egress?.credentialEnvironment,
           BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
+          ...mtls?.pythonTrust,
           ...modelsEnv.credentialService,
         },
         '/health',
@@ -188,6 +199,7 @@ export async function startLocalStack(options: {
           BOTCUBE_SCHEDULED_RUNS_QUEUE_URL: scheduledRuns.queueUrl,
         } : {}),
         ...egress?.chatEnvironment,
+        ...mtls?.chatTrust,
         ...modelsEnv?.chatService,
         ...credentialService,
         ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
@@ -204,7 +216,7 @@ export async function startLocalStack(options: {
       harnessProcess = await startProcess(required(harnessOptions, 'Harness start options'));
       processes.push(harnessProcess);
     };
-    return { url, bedrock, ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
+    return { url, bedrock, ...(openAICompatible ? { openAICompatible } : {}), harnessUrl, egress, ...(mtls ? { mtls } : {}), restartHarness, ...(scheduledRuns ? { scheduler: new SchedulerView(dynamodbEndpoint, scheduledRuns) } : {}), browser: () => new Browser(url), logs: () => chatService.output(), stop: stopAll };
   } catch (error) {
     await stopAll();
     throw error;
@@ -221,13 +233,36 @@ interface EgressStandIns {
   readonly credentialEnvironment: Record<string, string>;
 }
 
+/** The models Endpoint's host behind the mTLS stand-ins, reached only through the proxy, which routes it to the front. */
+export const MTLS_MODELS_HOST = 'models.example.test';
+
+interface MtlsStandIns {
+  readonly certificates: MtlsCertificates;
+  readonly proxy: FakeMtlsProxy;
+  readonly proxyUrl: URL;
+  readonly front: FakeMtlsFront;
+  /** The stand-in CA as each process's trust roots, as SSL_CERT_FILE and NODE_EXTRA_CA_CERTS set them when deployed. */
+  readonly pythonTrust: Record<string, string>;
+  readonly chatTrust: Record<string, string>;
+}
+
+/** An mTLS proxy routing `MTLS_MODELS_HOST` to an mTLS front over `models`, both carrying the stand-in server identity. */
+async function mtlsStandIns(models: FakeOpenAICompatible, home: string): Promise<MtlsStandIns> {
+  const certificates = mtlsCertificates();
+  const front = new FakeMtlsFront(certificates, Number(new URL(models.url).port));
+  const proxy = new FakeMtlsProxy(certificates, 'server', { [`${MTLS_MODELS_HOST}:443`]: await front.listen() });
+  const ca = join(home, 'stand-in-ca.pem');
+  await writeFile(ca, certificates.authority);
+  return { certificates, proxy, proxyUrl: await proxy.listen(), front, pythonTrust: { SSL_CERT_FILE: ca }, chatTrust: { NODE_EXTRA_CA_CERTS: ca } };
+}
+
 /**
  * The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
  * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the standard variables the deploy
  * sets beside the Deployment Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service, the Harness and the Credential Service
  * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
  */
-async function egressStandIns(config: DeploymentConfig | undefined, home: string): Promise<EgressStandIns | undefined> {
+async function egressStandIns(config: DeploymentConfig | undefined, home: string, mtls?: MtlsStandIns): Promise<EgressStandIns | undefined> {
   const proxy = config?.proxy;
   if (proxy === undefined || proxy.kind === 'none') return undefined;
   const otlp = config?.telemetry.kind === 'otlp' ? config.telemetry : undefined;
@@ -245,8 +280,9 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     telemetry: offlineTelemetry ?? required(config, 'Deployment Config').telemetry,
     proxy: {
       ...proxy,
-      url: standIn.url,
+      url: mtls ? mtls.proxyUrl.href : standIn.url,
       ...(proxy.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_PROXY_TOKEN, 'proxy-token') } as const } : {}),
+      ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientB, serverIdentity: SERVER_IDENTITY } } : {}),
     },
   };
   return {
@@ -304,4 +340,18 @@ async function standInDeploymentConfig(
 function turnCredentialsEnv(config: DeploymentConfig, sts: string): NodeJS.ProcessEnv {
   if (config.turnCredentials.kind !== 'assume-role') return {};
   return { AWS_ENDPOINT_URL_STS: sts, BOTCUBE_USER_MEMORY_ROLE_ARN: 'arn:aws:iam::123456789012:role/bot-cube-user-memory' };
+}
+
+/**
+ * What the deploy gives each process for the models Endpoint at its stand-in, behind the mTLS stand-ins when given. It
+ * stays in the environment: the stand-in is http on loopback, which models.url (https only) refuses.
+ */
+async function modelsStandInEnvironment(models: DeploymentConfig['models'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
+  if (openAICompatible === undefined || models.kind !== 'openai-compatible') return undefined;
+  return modelsDeployment({
+    ...models,
+    url: mtls ? `https://${MTLS_MODELS_HOST}/v1` : `${openAICompatible.url}/v1`,
+    credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) },
+    ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY } } : {}),
+  });
 }

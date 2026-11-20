@@ -201,7 +201,7 @@ async function secretString(secretArn: string, env: NodeJS.ProcessEnv): Promise<
  * What the command prints on stdout. Its stderr is discarded unread, since a helper may write a secret there (AWS's
  * `credential_process` warning), and neither its output nor its stderr reaches an error.
  */
-function stdoutOf([program, ...args]: readonly [string, ...string[]], timeoutSeconds: number): Promise<string> {
+export function stdoutOf([program, ...args]: readonly [string, ...string[]], timeoutSeconds: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(program, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];

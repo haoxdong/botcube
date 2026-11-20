@@ -18,6 +18,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .credential_source import CredentialSource, credential_source
+from .endpoint_tls import (
+    EndpointTls,
+    EndpointTlsError,
+    connect_proxy,
+    endpoint_tls,
+    refuse,
+)
 
 log = logging.getLogger(__name__)
 
@@ -28,22 +35,27 @@ _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
 
 
 def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay for the Deployment Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential or headers."""
+    """The relay for the Deployment Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
     proxy = config['proxy']
-    if proxy['kind'] == 'none' or ('credential' not in proxy and 'headers' not in proxy):
+    if proxy['kind'] == 'none' or not {'credential', 'headers', 'tls'} & proxy.keys():
         return None
     listen = urlsplit(env.get('HTTPS_PROXY') or '')
     if not listen.hostname or listen.port is None:
-        raise RuntimeError("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers; the deploy points it at the proxy relay")
+        raise RuntimeError("HTTPS_PROXY is unset beside the Deployment Config's proxy credential, headers or TLS; the deploy points it at the proxy relay")
     credential = credential_source('proxy', proxy['credential'], env=env) if 'credential' in proxy else None
-    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}))
+    tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
+    return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}), tls=tls)
 
 
-def start_proxy_relay(*, upstream: str, listen: tuple[str, int], credential: CredentialSource | None, headers: Mapping[str, str]) -> str:
+def start_proxy_relay(
+    *, upstream: str, listen: tuple[str, int], credential: CredentialSource | None, headers: Mapping[str, str], tls: EndpointTls | None = None,
+) -> str:
     """Serve `listen` as a forward proxy that sends each request on to `upstream`, authenticated; its proxy URL."""
     target = urlsplit(upstream)
     secure = target.scheme == 'https'
     address = (target.hostname or '', target.port or (443 if secure else 80))
+    if tls is not None:
+        tls.context()
 
     class Relay(socketserver.BaseRequestHandler):
         def handle(self) -> None:
@@ -51,18 +63,15 @@ def start_proxy_relay(*, upstream: str, listen: tuple[str, int], credential: Cre
             try:
                 head, rest = _read_head(client)
                 authorization = f'Bearer {credential.get().value}' if credential else None
+                context = (tls.context() if tls else ssl.create_default_context()) if secure else None
             except Exception as error:
-                log.error('Proxy relay could not open a request through %s: %s', upstream, error)
-                message = str(error).encode()
-                client.sendall(
-                    b'HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\nconnection: close\r\n'
-                    + f'content-length: {len(message)}\r\n\r\n'.encode() + message,
-                )
+                refuse(client, f'could not open a request through {upstream}', error)
                 return
             try:
-                proxy = socket.create_connection(address)
-                if secure:
-                    proxy = ssl.create_default_context().wrap_socket(proxy, server_hostname=address[0])
+                proxy = connect_proxy(address, context, tls)
+            except EndpointTlsError as error:
+                refuse(client, f'refused {upstream}', error)
+                return
             except OSError as error:
                 log.error('Proxy relay could not reach %s: %s', upstream, error)
                 return

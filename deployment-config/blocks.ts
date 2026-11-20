@@ -7,16 +7,21 @@ export const kmsKeyArn = z.string().regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}
 /** The seconds a command credential may run before it is stopped, as Google's executable sources default to. */
 export const COMMAND_TIMEOUT_SECONDS = 30;
 
+const absolutePath = z.string().startsWith('/', 'Expected an absolute path');
+const command = {
+  command: z.tuple([z.string().min(1)], z.string()).describe('The program and its arguments, run without a shell.'),
+  timeoutSeconds: z.number().int().positive().default(COMMAND_TIMEOUT_SECONDS).describe('How long the command may run before it is stopped.'),
+};
+
 const secretSources = [
   z.strictObject({ kind: z.literal('secret'), secretArn }).describe("A Secrets Manager secret's string, read with the process's own AWS credentials."),
   z.strictObject({
     kind: z.literal('file'),
-    path: z.string().startsWith('/', 'Expected an absolute path').describe('A file the platform mounts, such as a secret injector writes; read again as it rotates.'),
+    path: absolutePath.describe('A file the platform mounts, such as a secret injector writes; read again as it rotates.'),
   }).describe("A mounted file's contents, a trailing newline dropped."),
   z.strictObject({
     kind: z.literal('command'),
-    command: z.tuple([z.string().min(1)], z.string()).describe('The program and its arguments, run without a shell.'),
-    timeoutSeconds: z.number().int().positive().default(COMMAND_TIMEOUT_SECONDS).describe('How long the command may run before it is stopped.'),
+    ...command,
   }).describe(
     'A command printing a Kubernetes ExecCredential (status.token, status.expirationTimestamp) on stdout, run again before the token expires; its stderr is discarded. Runs only under allowCommandCredentials.',
   ),
@@ -70,11 +75,32 @@ export const headersBeside = (credentialHeader: string, sentOn: string) => z
 
 export const endpointHeaders = headersBeside('Authorization', 'every request');
 
-/** An outbound External Service (ADR 0091): its URL, the credential sent as its bearer token, and headers sent on every request. */
+/**
+ * An Endpoint's TLS (ADR 0091): the client certificate it presents, read again for each new connection, and the server
+ * identity it expects. Trust roots stay the system's, with NODE_EXTRA_CA_CERTS for the Node consumers and SSL_CERT_FILE for the Python ones.
+ */
+export const endpointTls = z.strictObject({
+  clientCertificate: z.union([
+    z.strictObject({
+      certificate: absolutePath.describe('A PEM certificate chain the platform mounts, such as a SPIFFE helper writes.'),
+      key: absolutePath.describe("The certificate's PEM private key."),
+    }).describe('A mounted certificate and key, read again for each new connection as they rotate.'),
+    z.strictObject(command).describe(
+      'A command printing a Kubernetes ExecCredential (status.clientCertificateData, status.clientKeyData, both PEM) on stdout, run again for each new connection; its stderr is discarded. Runs only under allowCommandCredentials.',
+    ),
+  ]).optional().describe('The client certificate presented in each handshake; absent, none.'),
+  serverIdentity: z.url().describe(
+    "The URI or SPIFFE ID the server's certificate must carry as a URI SAN, checked in the handshake before any request is sent. Set, it replaces the hostname check; the chain is still verified.",
+  ).optional(),
+}).refine((tls) => tls.clientCertificate !== undefined || tls.serverIdentity !== undefined, 'Expected a clientCertificate, a serverIdentity or both');
+export type EndpointTls = z.output<typeof endpointTls>;
+
+/** An outbound External Service (ADR 0091): its URL, the credential sent as its bearer token, headers sent on every request, and its TLS. */
 export const endpoint = z.strictObject({
   url: z.url({ protocol: /^https$/ }),
   credential: credentialSource.describe('Sent as `Authorization: Bearer <value>`.'),
   headers: endpointHeaders,
+  tls: endpointTls.optional(),
 });
 export type Endpoint = z.output<typeof endpoint>;
 export const cacheMarkers = z.literal('claude')

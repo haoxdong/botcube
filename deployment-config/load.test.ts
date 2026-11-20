@@ -376,6 +376,48 @@ describe('a Deployment Config', () => {
   });
 });
 
+describe('Endpoint TLS', () => {
+  const FILES = { certificate: '/run/spiffe/svid.pem', key: '/run/spiffe/svid-key.pem' };
+  const CERTIFICATE_COMMAND = { command: ['/usr/local/bin/svid-broker', '--audience', 'models'] };
+  const IDENTITY = 'spiffe://example.org/ns/egress/sa/proxy';
+  const PROXY = { kind: 'forward', url: 'https://proxy.example.com:3129' };
+
+  it.each([
+    ['a client certificate from a file pair', { clientCertificate: FILES }],
+    ['an expected server identity', { serverIdentity: IDENTITY }],
+    ['both', { clientCertificate: FILES, serverIdentity: 'https://models.example.com/gateway' }],
+  ])('gives the models Endpoint and the proxy %s', (_, tls) => {
+    const { config } = loadDeployment(configFile({ bot: './bot.json', models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls } }));
+    expect([config.models, config.proxy]).toEqual([{ ...ENTERPRISE_MODELS, tls }, { ...PROXY, tls }]);
+  });
+
+  it('runs an opted-in command for a client certificate, 30 s at most unless it says otherwise', () => {
+    const tls = { clientCertificate: CERTIFICATE_COMMAND };
+    const { config } = loadDeployment(configFile({ bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls } }));
+    const expected = { clientCertificate: { ...CERTIFICATE_COMMAND, timeoutSeconds: 30 } };
+    expect([config.models, config.proxy]).toMatchObject([{ tls: expected }, { tls: expected }]);
+  });
+
+  it.each([
+    ['a client certificate command without the opt-in', { models: { ...ENTERPRISE_MODELS, tls: { clientCertificate: CERTIFICATE_COMMAND } } },
+      'models.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
+    ["a proxy client certificate command without the opt-in", { proxy: { ...PROXY, tls: { clientCertificate: CERTIFICATE_COMMAND } } },
+      'proxy.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
+    ['a relative certificate path', { models: { ...ENTERPRISE_MODELS, tls: { clientCertificate: { ...FILES, key: 'svid-key.pem' } } } }, 'models.tls.clientCertificate'],
+    ['a certificate without its key', { models: { ...ENTERPRISE_MODELS, tls: { clientCertificate: { certificate: FILES.certificate } } } }, 'models.tls.clientCertificate'],
+    ['a server identity that is not a URI', { models: { ...ENTERPRISE_MODELS, tls: { serverIdentity: 'proxy.example.com' } } }, 'models.tls.serverIdentity: '],
+    ['an empty TLS block', { models: { ...ENTERPRISE_MODELS, tls: {} } }, 'models.tls: '],
+    ['an unknown TLS field, such as a CA bundle', { models: { ...ENTERPRISE_MODELS, tls: { serverIdentity: IDENTITY, trustBundle: '/run/bundle.pem' } } }, 'models.tls.trustBundle: Unrecognized key'],
+    ['TLS on a proxy reached over http', { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', tls: { serverIdentity: IDENTITY } } },
+      'proxy.tls: TLS needs the proxy at an https URL'],
+    ['TLS on the OTLP Endpoint, which does not apply it yet', { telemetry: { kind: 'otlp', url: 'https://collector.example.com/v1/traces', tls: { serverIdentity: IDENTITY } } },
+      'telemetry.tls: Unrecognized key'],
+  ])('stops on %s and names the field', (_, sections, field) => {
+    const path = configFile({ bot: './bot.json', ...sections });
+    expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: ${field}`);
+  });
+});
+
 describe('bot settings', () => {
   it.each([
     ['a missing Agent Identity name', { ...EXAMPLE_BOT, agentIdentity: { character: 'A template agent' } }, 'agentIdentity.name: '],

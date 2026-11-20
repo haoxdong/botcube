@@ -285,7 +285,10 @@ def test_startup_refuses_a_command_credential_the_deploy_did_not_opt_in_to() -> 
 
 def _every_endpoint_field_the_deployment_config_accepts(key: Path) -> dict[str, Any]:
     [endpoint] = [each for each in json.loads(SCHEMA.read_text())['properties']['models']['oneOf'] if 'credential' in each['properties']]
-    known = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'}}
+    known = {
+        'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'headers': {'x-tenant': 'botcube-example'},
+        'tls': {'serverIdentity': 'spiffe://example.org/models'},
+    }
     by_type = {'string': 'summary', 'object': {}, 'array': [], 'integer': 1, 'number': 1, 'boolean': True}
     return {
         name: known.get(name, field.get('const', by_type.get(field.get('type'))))

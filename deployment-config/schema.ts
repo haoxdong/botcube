@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { HarnessAuth, TokenAudiences } from './seams.js';
 import { outsideIssuer, withClientSecret, type CredentialField } from 'botcube-deployment-config/credential-fields';
-import { cacheMarkers, credentialSource, endpoint, endpointHeaders, headersBeside, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource } from 'botcube-deployment-config/blocks';
+import { cacheMarkers, credentialSource, endpoint, endpointHeaders, endpointTls, headersBeside, oidcDiscoveryUrl, oidcIssuer, trust, type CredentialSource, type EndpointTls } from 'botcube-deployment-config/blocks';
 import { supplied } from 'botcube-deployment-config/supplied';
 
 // The seam integrators depend on (ADR 0091): the bot settings and the Deployment Config.
@@ -199,7 +199,8 @@ const proxy = z.discriminatedUnion('kind', [
       .optional()
       .describe("A file, sent as `Proxy-Authorization: Bearer <value>` on each tunnel and request, read again as it rotates; absent, the proxy takes none."),
     headers: headersBeside('Proxy-Authorization', 'each tunnel and request the proxy carries'),
-  }).describe("The operator's forward proxy, an Endpoint the Chat Service, the Harness and the commands it runs reach the internet through."),
+    tls: endpointTls.optional(),
+  }).refine(({ url, tls }) => tls === undefined || url.startsWith('https:'), { path: ['tls'], message: 'TLS needs the proxy at an https URL' }).describe("The operator's forward proxy, an Endpoint the Chat Service, the Harness and the commands it runs reach the internet through."),
   kindOnly('none').describe('Outbound traffic goes direct.'),
 ]);
 
@@ -224,6 +225,22 @@ export const deploymentSections = z.strictObject({
 });
 
 
+/** Every Endpoint TLS block the Deployment Config names, by its path. */
+export function tlsFields({ models, proxy }: z.output<typeof deploymentSections>): [path: string[], tls: EndpointTls][] {
+  return [
+    ...(models.kind === 'openai-compatible' && models.tls ? [[['models', 'tls'], models.tls] satisfies [string[], EndpointTls]] : []),
+    ...(proxy.kind === 'forward' && proxy.tls ? [[['proxy', 'tls'], proxy.tls] satisfies [string[], EndpointTls]] : []),
+  ];
+}
+
+/** Every command the Deployment Config may run, by its path: a command credential or client certificate. */
+export function commandFields(config: z.output<typeof deploymentSections>): (string | number)[][] {
+  return [
+    ...credentialFields(config).filter(([, source]) => source.kind === 'command').map(([path]) => path),
+    ...tlsFields(config).filter(([, tls]) => tls.clientCertificate && 'command' in tls.clientCertificate).map(([path]) => [...path, 'clientCertificate']),
+  ];
+}
+
 /** Every Credential Source the Deployment Config names, by its path. */
 export function credentialFields({ identity, models, harnessAuth, telemetry, proxy }: z.output<typeof deploymentSections>): CredentialField[] {
   const fields: CredentialField[] = [
@@ -237,10 +254,11 @@ export function credentialFields({ identity, models, harnessAuth, telemetry, pro
 }
 
 export const deploymentConfig = deploymentSections.superRefine((config, context) => {
+  for (const path of config.allowCommandCredentials ? [] : commandFields(config)) {
+    const runs = path.at(-1) === 'clientCertificate' ? 'A command client certificate' : 'A command credential';
+    context.addIssue({ code: 'custom', path, message: `${runs} runs only when allowCommandCredentials is true` });
+  }
   for (const [path, source] of credentialFields(config)) {
-    if (source.kind === 'command' && !config.allowCommandCredentials) {
-      context.addIssue({ code: 'custom', path, message: 'A command credential runs only when allowCommandCredentials is true' });
-    }
     if (source.kind === 'botcube') {
       context.addIssue({ code: 'custom', path, message: 'A botcube token is the Harness bearer, which the Chat Service signs for harnessAuth; no configured credential takes one' });
     }

@@ -1,6 +1,6 @@
 import { outsideIssuer } from './credential-fields.js';
 import type { DeploymentConfig } from './schema.js';
-import type { CredentialSource } from './blocks.js';
+import type { CredentialSource, EndpointTls } from './blocks.js';
 import { PRINCIPALS, type Principal } from './principals.js';
 import { SUPPLIABLE, VPC_ACCESS } from './suppliable.js';
 
@@ -20,6 +20,8 @@ export interface Need {
   readonly supplied?: readonly SuppliedResource[];
   /** Each command credential, as `<field> (<principals>): <command>`. */
   readonly commands?: readonly string[];
+  /** As `Footprint.tls`. */
+  readonly tls?: readonly string[];
   /** Sidecar images pulled from the image registry, by their path in it. */
   readonly pulled?: readonly string[];
   /** As `Footprint.runtime`. */
@@ -50,6 +52,8 @@ export interface Footprint {
   readonly buildImages: string[];
   /** The commands the deployment's processes may run for a credential, which a reviewer approves one by one. */
   readonly commands: string[];
+  /** Each Endpoint's TLS, as `<field> (<principals>): <identity and certificate source>`; never key material. */
+  readonly tls: string[];
 }
 
 /** The images BotCube deploys; a bot's own image is built FROM the Harness image and stands in for it. */
@@ -165,10 +169,10 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
       },
       egressHosts: aws('bedrock-runtime'),
     },
-    'openai-compatible': ({ url, credential }) => {
+    'openai-compatible': ({ url, credential, tls }) => {
       const host = new URL(url).host;
       const readers = ['chatService', 'credentialService'] as const;
-      return [{ egressHosts: [host], egressFrom: { [host]: readers } }, credentialNeed('models.credential', credential, readers)];
+      return [{ egressHosts: [host], egressFrom: { [host]: readers } }, credentialNeed('models.credential', credential, readers), ...tlsNeed('models.tls', tls, readers)];
     },
   },
   harnessAuth: {
@@ -229,10 +233,28 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
   },
   proxy: {
     // Every service and browser reaches the internet through it; the Chat Service and the Harness relay to it with its credential.
-    forward: ({ url, credential }) => [{ egressHosts: [new URL(url).host] }, ...(credential ? [credentialNeed('proxy.credential', credential, ['chatService', 'harness'])] : [])],
+    forward: ({ url, credential, tls }) => [
+      { egressHosts: [new URL(url).host] },
+      ...(credential ? [credentialNeed('proxy.credential', credential, ['chatService', 'credentialService', 'harness'])] : []),
+      ...tlsNeed('proxy.tls', tls, ['chatService', 'credentialService', 'harness']),
+    ],
     none: {},
   },
 };
+
+/** What connecting with `tls` at `field` needs of its `readers`: its line, and a client certificate command they may run. */
+function tlsNeed(field: string, tls: EndpointTls | undefined, readers: readonly Principal[]): Need[] {
+  if (tls === undefined) return [];
+  const { clientCertificate, serverIdentity } = tls;
+  const certificate = clientCertificate === undefined ? undefined : 'command' in clientCertificate
+    ? 'client certificate from a command'
+    : `client certificate ${clientCertificate.certificate}, key ${clientCertificate.key}`;
+  const described = [...(serverIdentity ? [`server identity ${serverIdentity}`] : []), ...(certificate ? [certificate] : [])].join('; ');
+  return [{
+    tls: [`${field} (${readers.join(', ')}): ${described}`],
+    ...(clientCertificate && 'command' in clientCertificate ? { commands: [`${field}.clientCertificate (${readers.join(', ')}): ${clientCertificate.command.join(' ')}`] } : {}),
+  }];
+}
 
 /** What reading `credential` at `field` needs of each of its `readers`: a secret's grant, a command they may run, or a token endpoint they reach. */
 function credentialNeed(field: string, credential: CredentialSource, readers: readonly Principal[]): Need {
@@ -277,6 +299,7 @@ export function footprint(config: DeploymentConfig, { filesAccessPointMode = 'ru
     images: sorted([...Object.values(IMAGES), ...pulled(needs.flatMap(need => need.pulled ?? []))]),
     buildImages: sorted(pulled(PULLED.build)),
     commands: sorted(needs.flatMap(need => need.commands ?? [])),
+    tls: sorted(needs.flatMap(need => need.tls ?? [])),
   };
 }
 
@@ -289,7 +312,7 @@ function adapter(section: Section, config: { kind: string }): Need[] {
 const sorted = (values: readonly string[]) => [...new Set(values)].sort();
 
 /** The footprint as a security reviewer reads it. */
-export function formatFootprint({ supplied, created, runtime, iam, egressHosts, egressFrom, images, buildImages, commands }: Footprint): string {
+export function formatFootprint({ supplied, created, runtime, iam, egressHosts, egressFrom, tls, images, buildImages, commands }: Footprint): string {
   const roles = (Object.entries(iam) as [Principal, { actions: string[]; managedPolicies: string[] }][]).flatMap(([principal, grant]) => [
     `  ${principal} (${PRINCIPALS[principal]})`,
     ...grant.actions.map(action => `    ${action}`),
@@ -304,6 +327,7 @@ export function formatFootprint({ supplied, created, runtime, iam, egressHosts, 
     'Created at runtime', ...runtime.map(action => `  ${action}`),
     'IAM actions', ...roles,
     'Egress hosts', ...egressHosts.map(host => `  ${host}${egressFrom[host] ? ` (${egressFrom[host].join(', ')})` : ''}`),
+    'TLS', ...tls.map(line => `  ${line}`),
     'Images', ...images.map(image => `  ${image}`),
     'Build images', ...buildImages.map(image => `  ${image}`),
     'Commands', ...commands.map(command => `  ${command}`),

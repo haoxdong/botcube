@@ -2,10 +2,12 @@ import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import type { DeploymentConfig } from 'botcube-deployment-config';
 import { credentialSource, type CredentialSource } from './credential-source.js';
+import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
 
-// The proxy Endpoint's credential and headers (ADR 0091). Every HTTP client in a process, and every command it runs,
-// reads HTTP(S)_PROXY once, so the process points them at this loopback relay, which opens each request to the
-// operator's proxy with the credential's current value: a rotated or refreshed token reaches the next request.
+// The proxy Endpoint's credential, headers and TLS (ADR 0091). Every HTTP client in a process, and every command it
+// runs, reads HTTP(S)_PROXY once, so the process points them at this loopback relay, which opens each request to the
+// operator's proxy with the credential's current value and the client certificate as read now: a rotated or refreshed
+// token or certificate reaches the next request.
 // botcube/harness has its Python twin.
 
 /** The most a client's request head may take before the relay refuses it. */
@@ -27,23 +29,22 @@ export interface ProxyRelayOptions {
   /** Sent as `Proxy-Authorization: Bearer <value>`; absent, the proxy takes no credential. */
   credential?: CredentialSource | undefined;
   headers: Readonly<Record<string, string>>;
+  /** The client certificate presented to the proxy and the identity it must carry; absent, plain TLS to an https proxy. */
+  tls?: EndpointTls | undefined;
 }
 
 /** Serve `listen` as a forward proxy that sends each request on to `upstream`, authenticated. */
-export async function startProxyRelay({ upstream, listen, credential, headers }: ProxyRelayOptions): Promise<ProxyRelay> {
+export async function startProxyRelay({ upstream, listen, credential, headers, tls }: ProxyRelayOptions): Promise<ProxyRelay> {
   await credential?.get();
+  await tls?.connectOptions();
   const server = createServer((client) => {
     client.on('error', () => client.destroy());
     readHead(client)
       .then(async ({ head, rest }) => {
         const authorization = credential ? `Bearer ${(await credential.get()).value}` : undefined;
-        relay(client, upstream, rewrite(head, authorization, headers), rest);
+        relay(client, upstream, rewrite(head, authorization, headers), rest, await tls?.connectOptions());
       })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Proxy relay could not open a request through ${upstream.origin}: ${message}`);
-        client.end(`HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(message)}\r\nconnection: close\r\n\r\n${message}`);
-      });
+      .catch((error: unknown) => refuse(client, upstream, `could not open a request through ${upstream.origin}`, error));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -59,20 +60,21 @@ export async function startProxyRelay({ upstream, listen, credential, headers }:
 
 /**
  * The relay for the Deployment Config's `proxy`, listening where HTTPS_PROXY points (`proxyEnvironment` in
- * botcube/deployment-config) before any client connects; undefined unless the proxy takes a credential or headers.
- * A relay that cannot listen stops the process.
+ * botcube/deployment-config) before any client connects; undefined unless the proxy takes a credential, headers or
+ * TLS. A relay that cannot listen stops the process.
  */
 export function startProxyRelayForConfig(proxy: DeploymentConfig['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
-  if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined)) return undefined;
+  if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined)) return undefined;
   const listen = env.HTTPS_PROXY ? new URL(env.HTTPS_PROXY) : undefined;
   if (listen === undefined || !listen.hostname || !listen.port) {
-    throw new Error("HTTPS_PROXY is unset beside the Deployment Config's proxy credential or headers; the deploy points it at the proxy relay");
+    throw new Error("HTTPS_PROXY is unset beside the Deployment Config's proxy credential, headers or TLS; the deploy points it at the proxy relay");
   }
   return startProxyRelay({
     upstream: new URL(proxy.url),
     listen: { host: listen.hostname, port: Number(listen.port) },
     credential: proxy.credential && credentialSource('proxy', proxy.credential, { env }),
     headers: proxy.headers ?? {},
+    tls: proxy.tls && endpointTls('proxy', proxy.tls, { env }),
   });
 }
 
@@ -115,19 +117,33 @@ function rewrite(head: string, authorization: string | undefined, headers: Reado
   return [requestLine, ...kept, ...added, '', ''].join('\r\n');
 }
 
+/** Answer the client 502 with `error`'s message, which names no credential or key. */
+function refuse(client: Socket, upstream: URL, doing: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Proxy relay ${doing}: ${message}`);
+  client.end(`HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(message)}\r\nconnection: close\r\n\r\n${message}`);
+}
+
 /** Send `head` and `rest` to the operator's proxy, then carry bytes both ways until either side closes. */
-function relay(client: Socket, upstream: URL, head: string, rest: Buffer): void {
-  const port = Number(upstream.port) || (upstream.protocol === 'https:' ? 443 : 80);
-  const proxy = upstream.protocol === 'https:'
-    ? tlsConnect({ host: upstream.hostname, port, servername: upstream.hostname })
+function relay(client: Socket, upstream: URL, head: string, rest: Buffer, tls: TlsConnectOptions | undefined): void {
+  const secure = upstream.protocol === 'https:';
+  const port = Number(upstream.port) || (secure ? 443 : 80);
+  const proxy = secure
+    ? tlsConnect({ host: upstream.hostname, port, servername: upstream.hostname, ...tls })
     : tcpConnect(port, upstream.hostname);
   proxy.on('error', (error) => {
+    if (error instanceof EndpointTlsError) {
+      refuse(client, upstream, `refused ${upstream.origin}`, error);
+      return;
+    }
     console.error(`Proxy relay could not reach ${upstream.origin}: ${error.message}`);
     client.destroy();
   });
   client.on('close', () => proxy.destroy());
-  proxy.write(head);
-  if (rest.length) proxy.write(rest);
-  client.pipe(proxy).pipe(client);
-  client.resume();
+  proxy.once(secure ? 'secureConnect' : 'connect', () => {
+    proxy.write(head);
+    if (rest.length) proxy.write(rest);
+    client.pipe(proxy).pipe(client);
+    client.resume();
+  });
 }
