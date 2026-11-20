@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Literal
@@ -20,7 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from . import aws_clients
 
 REREAD_AFTER_SECONDS = 300
-REFRESH_BEFORE_EXPIRY_SECONDS = 60
+MANDATORY_REFRESH_WINDOW_SECONDS = 60
+ADVISORY_REFRESH_WINDOW_MAX_SECONDS = 900
+REFRESH_THREAD_NAME = 'credential-refresh'
 ALLOW_COMMAND_CREDENTIALS_ENV = 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS'
 # How long STS accepts a SigV4 signature.
 SIGV4_VALID_SECONDS = 900
@@ -72,6 +76,9 @@ Source = Annotated[
 _SOURCE: TypeAdapter[Source] = TypeAdapter(Source)
 
 
+log = logging.getLogger(__name__)
+
+
 class CredentialSourceError(RuntimeError):
     pass
 
@@ -90,25 +97,67 @@ class Credential:
     expires_at: float | None
 
 
+@dataclass(frozen=True)
+class _CachedCredential:
+    credential: Credential
+    advisory_at: float
+    mandatory_at: float
+
+
 class CredentialSource:
     def __init__(self, named: str, read: Callable[[], Credential], now: Callable[[], float]) -> None:
         self._named = named
         self._read = read
         self._now = now
-        self._cached: Credential | None = None
+        self._cached: _CachedCredential | None = None
+        self._refreshing: Future[Credential] | None = None
         self._lock = threading.Lock()
 
     def get(self) -> Credential:
         with self._lock:
-            if self._cached is None or not self._fresh(self._cached):
-                try:
-                    self._cached = self._read()
-                except Exception as error:
-                    raise CredentialSourceError(f'{self._named}: {error}') from error
-            return self._cached
+            now = self._now()
+            cached = self._cached
+            if cached is not None and now < cached.mandatory_at:
+                if now >= cached.advisory_at:
+                    self._refresh()
+                return cached.credential
+            refreshing = self._refresh()
+        return refreshing.result()
 
-    def _fresh(self, credential: Credential) -> bool:
-        return credential.expires_at is None or self._now() < credential.expires_at - REFRESH_BEFORE_EXPIRY_SECONDS
+    def _refresh(self) -> Future[Credential]:
+        if self._refreshing is None:
+            self._refreshing = Future()
+            self._refreshing.add_done_callback(_log_refresh_failure)
+            threading.Thread(target=self._mint, args=(self._refreshing,), name=REFRESH_THREAD_NAME, daemon=True).start()
+        return self._refreshing
+
+    def _mint(self, refreshing: Future[Credential]) -> None:
+        try:
+            credential = self._read()
+        except Exception as error:
+            failure = CredentialSourceError(f'{self._named}: {error}')
+            failure.__cause__ = error
+            with self._lock:
+                self._refreshing = None
+            refreshing.set_exception(failure)
+            return
+        with self._lock:
+            self._cached = _with_refresh_windows(credential, self._now())
+            self._refreshing = None
+        refreshing.set_result(credential)
+
+
+def _log_refresh_failure(refreshing: Future[Credential]) -> None:
+    if (failure := refreshing.exception()) is not None:
+        log.warning('Credential refresh failed: %s', failure)
+
+
+def _with_refresh_windows(credential: Credential, minted_at: float) -> _CachedCredential:
+    if credential.expires_at is None:
+        return _CachedCredential(credential, float('inf'), float('inf'))
+    expiry = credential.expires_at
+    advisory_window = min((expiry - minted_at) / 2, ADVISORY_REFRESH_WINDOW_MAX_SECONDS)
+    return _CachedCredential(credential, expiry - advisory_window, expiry - MANDATORY_REFRESH_WINDOW_SECONDS)
 
 
 def credential_source(

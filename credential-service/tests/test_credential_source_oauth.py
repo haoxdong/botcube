@@ -95,7 +95,7 @@ def test_asks_for_a_new_token_a_minute_before_the_last_one_expires(endpoint: Tok
     source = credential_source('models', oauth(endpoint.url, secret_file), now=lambda: clock[0])
 
     assert source.get().value == 'idp-token-1'
-    clock[0] = START + 480
+    clock[0] = START + 240
     assert source.get().value == 'idp-token-1'
     clock[0] = START + 541
     assert source.get().value == 'idp-token-2'

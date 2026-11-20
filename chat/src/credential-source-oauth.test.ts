@@ -73,7 +73,7 @@ describe('an OAuth client-credentials source', () => {
     const source = credentialSource('harnessAuth', oauthSource(endpoint.url), { now: () => now });
 
     expect((await source.get()).value).toBe('idp-token-1');
-    now = START + minutes(8);
+    now = START + minutes(4);
     expect((await source.get()).value).toBe('idp-token-1');
     now = START + minutes(9) + 1;
     expect((await source.get()).value).toBe('idp-token-2');

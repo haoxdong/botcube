@@ -54,7 +54,7 @@ def test_signs_again_a_minute_before_the_signature_expires(aws: None) -> None:
     source = credential_source('telemetry.credential', SOURCE, now=lambda: clock[0])
     first = source.get()
 
-    clock[0] = START + 839
+    clock[0] = START + 420
     assert source.get() is first
     clock[0] = START + 841
     assert source.get().expires_at == START + 841 + 900

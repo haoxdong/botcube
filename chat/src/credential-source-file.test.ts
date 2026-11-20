@@ -33,7 +33,7 @@ describe('a file credential source', () => {
     await source.get();
     writeFileSync(path, 'sk-rotated');
 
-    now = START + minutes(3);
+    now = START + minutes(2);
     expect((await source.get()).value).toBe('sk-first');
     now = START + minutes(4) + 1;
     expect(await source.get()).toEqual({ value: 'sk-rotated', expiresAt: new Date(now + minutes(5)) });

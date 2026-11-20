@@ -62,9 +62,9 @@ sys.stdout.write({_exec_credential({'expirationTimestamp': '2026-11-19T12:10:00Z
     source = credential_source('models', _source(command), env=OPTED_IN, now=lambda: clock[0])
 
     assert source.get().value == 'gw-token-1'
-    clock[0] += 480
+    clock[0] += 240
     assert source.get().value == 'gw-token-1'
-    clock[0] += 61
+    clock[0] += 301
     assert source.get().value == 'gw-token-2'
 
 

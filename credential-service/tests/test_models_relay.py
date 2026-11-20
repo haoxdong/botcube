@@ -263,7 +263,7 @@ def test_the_credential_command_runs_here_and_again_a_minute_before_its_token_ex
     client = _client(gateway, {**_endpoint(command), 'BOTCUBE_ALLOW_COMMAND_CREDENTIALS': '1'}, clock=clock)
 
     _completion(client)
-    clock.now = START + 539
+    clock.now = START + 240
     _completion(client)
     clock.now = START + 541
     _completion(client)

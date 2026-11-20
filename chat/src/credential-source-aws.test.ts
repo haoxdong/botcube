@@ -43,7 +43,7 @@ describe('an aws credential source', () => {
     const source = credentialSource('telemetry.credential', { kind: 'aws', audience: 'collector.example.com' }, { now: () => now, env: { AWS_REGION: 'us-east-1' } });
     const first = await source.get();
 
-    now = START + minutes(14) - 1;
+    now = START + minutes(7);
     expect(await source.get()).toBe(first);
     now = START + minutes(14) + 1;
     expect((await source.get()).expiresAt).toEqual(new Date(now + minutes(15)));

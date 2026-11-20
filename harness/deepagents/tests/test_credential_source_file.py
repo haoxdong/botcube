@@ -30,7 +30,7 @@ def test_reads_the_file_again_a_minute_before_its_value_expires(tmp_path: Path) 
     source.get()
     path.write_text('sk-rotated')
 
-    clock[0] = START + 180
+    clock[0] = START + 120
     assert source.get().value == 'sk-first'
     clock[0] = START + 241
     assert source.get().value == 'sk-rotated'

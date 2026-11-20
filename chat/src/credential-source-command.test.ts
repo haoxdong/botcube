@@ -53,7 +53,7 @@ describe('a command credential source', () => {
     const source = credentialSource('models', commandSource(command), { env: OPTED_IN, now: () => now });
 
     expect((await source.get()).value).toBe('gw-token-1');
-    now = START + minutes(8);
+    now = START + minutes(4);
     expect((await source.get()).value).toBe('gw-token-1');
     now = START + minutes(9) + 1;
     expect((await source.get()).value).toBe('gw-token-2');

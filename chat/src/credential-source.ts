@@ -18,7 +18,8 @@ export interface CredentialSource {
 }
 
 const REREAD_AFTER_MS = 5 * 60_000;
-const REFRESH_BEFORE_EXPIRY_MS = 60_000;
+const MANDATORY_REFRESH_WINDOW_MS = 60_000;
+const ADVISORY_REFRESH_WINDOW_MAX_MS = 15 * 60_000;
 /** How long STS accepts a SigV4 signature. */
 const SIGV4_VALID_MS = 15 * 60_000;
 /** The header an `aws` source signs its audience into, as Google's signs x-goog-cloud-target-resource. */
@@ -41,22 +42,39 @@ export function credentialSource(
   const adapted = adapter(source, now, options.env ?? process.env, options.botcube);
   const named = `${seam} credential (${adapted.about})`;
   if ('refused' in adapted) throw new CredentialSourceError(`${named}: ${adapted.refused}`);
-  const { read } = adapted;
-  let cached: Credential | undefined;
-  let reading: Promise<Credential> | undefined;
-  const fresh = (credential: Credential | undefined): credential is Credential =>
-    credential !== undefined && (credential.expiresAt === undefined || now() < credential.expiresAt.getTime() - REFRESH_BEFORE_EXPIRY_MS);
-  const refresh = async () => {
-    try {
-      cached = await read();
-      return cached;
-    } catch (error) {
-      throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    } finally {
-      reading = undefined;
-    }
+  return refreshingAhead(named, adapted.read, now);
+}
+
+function refreshingAhead(named: string, read: () => Promise<Credential>, now: () => number): CredentialSource {
+  let cached: { credential: Credential; advisoryAt: number; mandatoryAt: number } | undefined;
+  let refreshing: Promise<Credential> | undefined;
+  const refresh = () => {
+    if (refreshing) return refreshing;
+    refreshing = read()
+      .then((credential) => {
+        cached = { credential, ...refreshWindows(credential, now()) };
+        return credential;
+      }, (error: unknown) => {
+        throw new CredentialSourceError(`${named}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+      })
+      .finally(() => { refreshing = undefined; });
+    void refreshing.catch((error: unknown) => { console.warn(`Credential refresh failed: ${error instanceof Error ? error.message : String(error)}`); });
+    return refreshing;
   };
-  return { get: async () => (fresh(cached) ? cached : (reading ??= refresh())) };
+  return {
+    get: async () => {
+      const at = now();
+      if (cached === undefined || at >= cached.mandatoryAt) return refresh();
+      if (at >= cached.advisoryAt) void refresh();
+      return cached.credential;
+    },
+  };
+}
+
+function refreshWindows({ expiresAt }: Credential, mintedAt: number) {
+  if (expiresAt === undefined) return { advisoryAt: Infinity, mandatoryAt: Infinity };
+  const expiry = expiresAt.getTime();
+  return { advisoryAt: expiry - Math.min((expiry - mintedAt) / 2, ADVISORY_REFRESH_WINDOW_MAX_MS), mandatoryAt: expiry - MANDATORY_REFRESH_WINDOW_MS };
 }
 
 type Adapter = { readonly about: string; readonly read: () => Promise<Credential> } | { readonly about: string; readonly refused: string };
