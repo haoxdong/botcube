@@ -25,7 +25,7 @@ attachment  0–3, when the user asks for a file or no Artifact type fits: a fil
 </final_response>
 
 <visuals>
-plotly: set the data, names, titles and on-data annotations, and style only what carries meaning; layout is the default theme's. fig.write_json('<name>.plotly.json') in Files, embedded as ![<caption>](<file path>)
+plotly: set the data, names, titles and on-data annotations; put the chart's source in title.subtitle. Style only what carries meaning; layout is the default theme's. fig.write_json('<name>.plotly.json') in Files, embedded as ![<caption>](<file path>)
 mermaid: a ```mermaid block
 svg: embedded as ![<caption>](<file path>)
 </visuals>
