@@ -4,7 +4,7 @@ Install Docker Compose on the host.
 
 Run `./run.sh -d`, wait for the services, then run `./smoke.sh` and open
 `http://localhost:3001`. No cloud or model-provider credentials are used.
-See [Integrating BotCube](../../INTEGRATING.md) for the configuration reference.
+See [Integrating BotCube](../../INTEGRATING.md#configuration) for the BotCube Config and the allowed environment variables.
 
 The stack runs the public example: the Chat Service reads
 `examples/public/deployment-config.json`, and the `harness` service is the example bot's image
