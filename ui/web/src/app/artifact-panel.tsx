@@ -122,9 +122,10 @@ export function ArtifactLayout({ agent, children, header, accountId = "", reques
   return (
     <Panel.Provider value={panel}>
       <ArtifactSplit phone={phone} accountId={accountId} shown={phone ? null : shown} close={() => open(null)}><div className="artifact-chat-column">{header}{children}</div></ArtifactSplit>
-      {phone && kept && (
-        <Sheet open={shown !== null} onClose={() => open(null)} title={titleOf(kept)} container={null} className="artifact-sheet">
-          <ArtifactView key={pathOf(kept)} shown={kept} heading={<span className="sent-file-kind"><Kind shown={kept} /></span>} />
+      {/* Mounted closed before the first open, so Base UI plays its starting style instead of painting the Sheet in place. */}
+      {phone && (
+        <Sheet open={shown !== null} onClose={() => open(null)} title={kept && titleOf(kept)} container={null} className="artifact-sheet">
+          <SheetView shown={kept} />
         </Sheet>
       )}
     </Panel.Provider>
@@ -190,6 +191,12 @@ function ArtifactSplit({ shown, close, children, accountId, phone }: { phone: bo
       </ResizablePanel>
     </ResizablePanelGroup>
   );
+}
+
+/** The phone Sheet's body. Nothing is kept before the first open, while Base UI hasn't mounted the Sheet's popup. */
+function SheetView({ shown }: { shown: Shown | null }) {
+  if (shown === null) return null;
+  return <ArtifactView key={pathOf(shown)} shown={shown} heading={<span className="sent-file-kind"><Kind shown={shown} /></span>} />;
 }
 
 function ArtifactSide(props: ComponentProps<typeof motionElement.div>) {

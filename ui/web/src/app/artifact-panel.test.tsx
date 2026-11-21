@@ -129,6 +129,21 @@ it('opens the page full screen on a phone', async () => {
   expect(within(sheet).queryByRole('button', { name: 'Full screen' })).toBeNull();
 });
 
+it('slides the phone sheet in from its starting style on the first open too', async () => {
+  phone(true);
+  render(<Chat />);
+  const card = await screen.findByRole('button', { name: /Q3 revenue by month/ });
+  // The sheet's CSS slides it up from `[data-starting-style]`; a sheet that never had it paints in place.
+  let started = false;
+  const observer = new MutationObserver(() => { started ||= document.querySelector('.artifact-sheet[data-starting-style]') !== null; });
+  observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-starting-style'] });
+  await userEvent.click(card);
+  await screen.findByRole('dialog', { name: 'Q3 revenue by month' });
+  observer.disconnect();
+
+  expect(started).toBe(true);
+});
+
 it('prints the page as shown for Download as PDF', async () => {
   phone(false);
   render(<Chat />);
