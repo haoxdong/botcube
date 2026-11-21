@@ -278,14 +278,23 @@
   width: 100%;
 }
 
-/* A chart drawn at a set width and scaled to its frame (PlotlyChart's drawWidth): its frame clips the unscaled box. */
+/*
+ * A chart drawn at a set size and scaled to its frame's width (PlotlyChart's drawWidth): the frame takes the scaled
+ * height, so the text after it sits right under it, and clips the unscaled box. tan(atan2(a, b)) is a / b as a number.
+ */
 .plotly-chart-frame[data-scaled] {
+  container-type: inline-size;
   overflow: hidden;
+  height: auto;
+  aspect-ratio: var(--chart-width) / var(--chart-height);
 }
 
 .plotly-chart-frame[data-scaled] .plotly-chart {
   flex: none;
+  width: calc(var(--chart-width) * 1px);
+  height: calc(var(--chart-height) * 1px);
   transform-origin: 0 0;
+  transform: scale(tan(atan2(100cqw, calc(var(--chart-width) * 1px))));
 }
 
 /* A quiet box in the chart's place until plotly.js draws it (plotly marks the element js-plotly-plot). */
