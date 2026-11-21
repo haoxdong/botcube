@@ -8,7 +8,7 @@ import { EMAIL_ELEMENTS } from 'botcube-artifact-check/email-html';
 import PostalMime from 'postal-mime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EMAIL_EDITOR } from './artifact-email';
+import { EMAIL_EDITOR, EML } from './artifact-email';
 import { ArtifactLayout } from './artifact-panel';
 
 const DRAFT = {
@@ -48,7 +48,9 @@ beforeEach(() => {
   redefine(Text.prototype, 'getClientRects', rects);
   redefine(document, 'elementFromPoint', () => null);
 });
-afterEach(() => {
+afterEach(async () => {
+  // Each .eml a test started is made before its stubs go, so none saves into the next test's array.
+  await Promise.allSettled(making.splice(0));
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -114,9 +116,20 @@ async function typeInto(field: HTMLElement, text: string) {
   await userEvent.keyboard(text);
 }
 
+/** The .eml files the running test asked for, still being made. */
+const making: Promise<void>[] = [];
+/** How long a test waits for its .eml: CI took 1.2 s to make the first. */
+const SAVED = { timeout: 5000 };
+
 /** The file the panel hands the browser to save, as the browser would save it. */
 function downloads() {
   const saved: { name: string; blob: Blob }[] = [];
+  const run = EML.run;
+  vi.spyOn(EML, 'run').mockImplementation((target) => {
+    const made = Promise.resolve(run(target));
+    making.push(made);
+    return made;
+  });
   const blobs = new Map<string, Blob>();
   redefine(URL, 'createObjectURL', (blob: Blob) => {
     const url = `blob:test/${blobs.size}`;
@@ -241,7 +254,7 @@ describe('an Email in the panel', () => {
 
     await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
 
-    await waitFor(() => expect(saved).toHaveLength(1));
+    await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const file = only(saved);
     expect(file.name).toBe('Q3 numbers for review.eml');
     expect(file.blob.type).toBe('message/rfc822');
@@ -272,7 +285,7 @@ describe('an Email in the panel', () => {
     expect(within(panel).getByText('The .eml is version 1, without your unsaved edits')).toBeVisible();
     await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
 
-    await waitFor(() => expect(saved).toHaveLength(1));
+    await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const email = await PostalMime.parse(await only(saved).blob.arrayBuffer());
     expect(email.bcc).toBeUndefined();
     expect(email.subject).toBe('Q3 numbers for review');
@@ -291,7 +304,7 @@ describe('an Email in the panel', () => {
     expect(within(panel).getByText('The .eml is version 1, without your unsaved edits')).toBeVisible();
     await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
 
-    await waitFor(() => expect(saved).toHaveLength(1));
+    await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     expect((await PostalMime.parse(await only(saved).blob.arrayBuffer())).subject).toBe('Q3 numbers for review');
   });
 
@@ -320,7 +333,7 @@ describe('an Email in the panel', () => {
 
     await userEvent.click(within(panel).getByRole('button', { name: 'Download .eml' }));
 
-    await waitFor(() => expect(saved).toHaveLength(1));
+    await waitFor(() => expect(saved).toHaveLength(1), SAVED);
     const email = await PostalMime.parse(await only(saved).blob.arrayBuffer());
     expect(email.text).toBe('Hi Dana,\n\nThe Q3 review is attached.');
     expect(email.attachments).toEqual([]);
