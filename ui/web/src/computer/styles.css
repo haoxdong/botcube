@@ -242,9 +242,6 @@
 .agent-computer-terminal-bar span { overflow: hidden; text-overflow: ellipsis; }
 
 .agent-computer-terminal {
-  overflow: auto;
-  /* stylelint-disable-next-line declaration-property-value-allowed-list -- the terminal is drawn at its screen's scale */
-  padding: 0.63cqw 1.09cqw;
   background: var(--color-text);
   color: var(--color-line);
   color-scheme: dark;
@@ -256,6 +253,8 @@
   /* Lines wrap between words; only a word longer than the line breaks. */
   overflow-wrap: anywhere;
 }
+/* stylelint-disable-next-line declaration-property-value-allowed-list -- drawn at its screen's scale */
+.agent-computer-terminal-content { padding: 0.63cqw 1.09cqw; }
 .agent-computer-terminal-empty { color: var(--color-text-muted); }
 
 /* Thunar: a Places sidebar down the window's left edge, beside the open place's toolbar, icon view and status bar. */

@@ -182,10 +182,11 @@ describe('AgentComputer', () => {
     expect(html).toMatch(
       /<section class="agent-computer-app" aria-label="Terminal"><div class="agent-computer-terminal-bar"><svg[^>]*>.*?<\/svg><span>workspace — zsh<\/span><\/div>/,
     );
+    // The log is the stock Conversation: its own scroll box, then the lines.
+    expect(html).toMatch(/<div class="[^"]*agent-computer-terminal" role="log" aria-label="Terminal"><div style="[^"]*"><div class="[^"]*agent-computer-terminal-content[^"]*">/);
     expect(html).toContain(
-      '<div class="agent-computer-terminal" role="log" aria-label="Terminal">' +
-        '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % ls</div><div class="agent-computer-terminal-output">a.txt</div>' +
-        '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % cat a.txt</div><div class="agent-computer-terminal-output">hello</div></div></section>',
+      '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % ls</div><div class="agent-computer-terminal-output">a.txt</div>' +
+        '<div class="agent-computer-terminal-line">agent@a1b2c3d4e5f6 workspace % cat a.txt</div><div class="agent-computer-terminal-output">hello</div></div></div></div></section>',
     );
     // The dock switches apps: no window has a Close of its own.
     expect(buttons(html)).toEqual([...DOCK, 'Take over']);
@@ -295,7 +296,8 @@ describe("the Agent Computer's sheet", () => {
     expect(css).toMatch(/\n\.agent-computer-screen \{[^}]*container-type: inline-size;/);
     expect(css).toMatch(/\n\.agent-computer-terminal-bar \{[^}]*height: 2\.97cqw;[^}]*padding: 0 1\.25cqw;[^}]*font-size: 1\.02cqw;/);
     expect(css).toMatch(/\n\.agent-computer-terminal-bar svg \{[^}]*width: 1\.25cqw;[^}]*height: 1\.25cqw;/);
-    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*padding: 0\.63cqw 1\.09cqw;[^}]*background: var\(--color-text\);[^}]*font-family: var\(--font-code\);[^}]*font-size: 1\.41cqw;[^}]*line-height: var\(--leading-loose\);/);
+    expect(css).toMatch(/\n\.agent-computer-terminal-content \{ padding: 0\.63cqw 1\.09cqw; \}/);
+    expect(css).toMatch(/\n\.agent-computer-terminal \{[^}]*background: var\(--color-text\);[^}]*font-family: var\(--font-code\);[^}]*font-size: 1\.41cqw;[^}]*line-height: var\(--leading-loose\);/);
   });
 
   it("wraps the Terminal's lines between words, breaking only a word longer than the line", () => {

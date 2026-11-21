@@ -389,70 +389,8 @@ describe('the Agent Computer on a phone, on Take over (dots Fig 8)', () => {
 });
 
 describe("the Agent Computer's Terminal", () => {
-  // happy-dom lays nothing out: each command and each output is a 20px line, in a 100px window, and a scroll past the
-  // end stays there, where a browser stops at the end.
-  beforeEach(() => {
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
-      return this.childElementCount * 20;
-    });
-    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(100);
-  });
-  afterEach(() => vi.restoreAllMocks());
-
+  // Following the latest output is the stock Conversation's, proven with real layout in terminal-follow.stories.tsx.
   const commands = (count: number) => Array.from({ length: count }, (_, index) => ({ command: `echo ${index}`, output: `${index}` }));
-  const renderTerminal = (count: number) => renderComputer('agent', { app: 'Terminal', commands: commands(count) });
-  const terminal = () => {
-    const log = container.querySelector<HTMLElement>('.agent-computer-terminal');
-    if (log === null) throw new Error('no Terminal');
-    return log;
-  };
-  const scrollTo = (top: number) =>
-    act(() => {
-      terminal().scrollTop = top;
-      terminal().dispatchEvent(new Event('scroll'));
-    });
-
-  it('opens at the latest output', () => {
-    renderTerminal(10);
-
-    expect(terminal().scrollTop).toBe(400);
-  });
-
-  it('follows new output', () => {
-    renderTerminal(10);
-
-    renderTerminal(12);
-
-    expect(terminal().scrollTop).toBe(480);
-  });
-
-  it('stays where the user scrolled up to while new output arrives, and follows again once they scroll back down', () => {
-    renderTerminal(10);
-    scrollTo(40);
-
-    renderTerminal(12);
-
-    expect(terminal().scrollTop).toBe(40);
-
-    scrollTo(480 - 100);
-    renderTerminal(14);
-
-    expect(terminal().scrollTop).toBe(560);
-  });
-
-  it('follows from within a pixel of the end, not from two', () => {
-    renderTerminal(10);
-    scrollTo(400 - 100 - 1);
-
-    renderTerminal(12);
-
-    expect(terminal().scrollTop).toBe(480);
-
-    scrollTo(480 - 100 - 2);
-    renderTerminal(14);
-
-    expect(terminal().scrollTop).toBe(378);
-  });
 
   it('shows its failure in place of the log', () => {
     renderComputer('agent', { app: 'Terminal', commands: commands(10), terminalError: 'The commands could not load' });
