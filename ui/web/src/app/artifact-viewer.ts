@@ -70,12 +70,6 @@ export function saveFile(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(link.href), SAVE_URL_MS);
 }
 
-/** A one-file Source as the agent writes it: its text so far, `complete` once its file is written. */
-export type PreviewProps = { title: string; text: string | null; complete: boolean; frame: RefObject<HTMLIFrameElement | null> };
-
-/** The one-file Sources of a type the panel follows while the agent writes them, and how it previews one. */
-export type Writes = { matches: (path: string) => boolean; Preview: ComponentType<PreviewProps> };
-
 /**
  * A type's PDF (ADR 0087), which `prints` has the browser print: `stored` when it prints the stored version on
  * screen, else what the panel shows, unsaved edits included.
@@ -98,9 +92,4 @@ export type ArtifactType = {
   exports: readonly Export[];
   /** The file a stored version holds under its path (a one-file version is that file). */
   stored: string;
-  /**
-   * The one-file Sources the panel previews as the agent writes them; a deck's files preview as the deck, and any other
-   * write previews as a page.
-   */
-  writes: Writes | null;
 };

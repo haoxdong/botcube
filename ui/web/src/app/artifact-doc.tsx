@@ -8,16 +8,13 @@ import { Editor, EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { m as motionElement } from "motion/react";
 import { FileTextIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
-  pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type PreviewProps, type ViewerProps,
-  type Writes,
+  pdfOf, saveFile, storedVersion, type ArtifactVersion, type Export, type ExportTarget, type ViewerProps,
 } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
-
-const RENDER_MS = 250;
 
 const EXTENSIONS = [
   // StarterKit 3 underlines on Mod-U, and @tiptap/markdown writes an underline as <u>, HTML a Doc does not keep.
@@ -28,13 +25,6 @@ const EXTENSIONS = [
   Image.configure({ allowBase64: true }),
   Markdown,
 ];
-
-const NOT_FILES = new Set(["tmp", "botcube-harness-deepagents", "artifacts"]);
-
-const isDocSource = (path: string) => {
-  const parts = path.split("/").filter(Boolean);
-  return /\.md$/i.test(path) && !NOT_FILES.has(parts[0] ?? "") && !parts.some((part) => part.startsWith("."));
-};
 
 function useDoc(label: string, markdown: string, editable: boolean, onUpdate?: (markdown: string) => void) {
   return useEditor({
@@ -48,30 +38,13 @@ function useDoc(label: string, markdown: string, editable: boolean, onUpdate?: (
   });
 }
 
-export function DocFrame({ title, markdown, complete }: { title: string; markdown: string; complete: boolean }) {
+export function DocFrame({ title, markdown }: { title: string; markdown: string }) {
   const editor = useDoc(title, markdown, false);
-  const rendered = useRef(Number.NEGATIVE_INFINITY);
   useEffect(() => {
-    const render = () => {
-      rendered.current = Date.now();
-      editor.commands.setContent(markdown, { contentType: "markdown" });
-    };
-    const wait = complete ? 0 : rendered.current + RENDER_MS - Date.now();
-    if (wait <= 0) {
-      render();
-      return;
-    }
-    const timer = setTimeout(render, wait);
-    return () => clearTimeout(timer);
-  }, [editor, markdown, complete]);
+    editor.commands.setContent(markdown, { contentType: "markdown" });
+  }, [editor, markdown]);
   return <div className="artifact-doc-page"><EditorContent editor={editor} /></div>;
 }
-
-function DocPreview({ title, text, complete }: PreviewProps) {
-  return <DocFrame title={title} markdown={text ?? ""} complete={complete} />;
-}
-
-export const DOC_WRITES: Writes = { matches: isDocSource, Preview: DocPreview };
 
 function useMarkdown(version: ArtifactVersion, read: (path: string) => Promise<string>) {
   const [loaded, setLoaded] = useState<{ version: ArtifactVersion } & ({ markdown: string } | { error: string }) | null>(null);

@@ -10,7 +10,7 @@ import path from 'node:path';
 import { crc32, deflateSync, inflateRawSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DOC_WRITES, DocFrame } from './artifact-doc';
+import { DocFrame } from './artifact-doc';
 import { ArtifactLayout } from './artifact-panel';
 
 const PLAN = `# Q4 plan
@@ -347,20 +347,6 @@ describe('Download while the User edits an older version', () => {
   });
 });
 
-describe('a Markdown write', () => {
-  it.each([
-    ['/plans/q4.md', true],
-    ['notes/Q4.MD', true],
-    ['/tmp/scratch.md', false],
-    ['/botcube-harness-deepagents/skills/artifacts/SKILL.md', false],
-    ['/artifacts/plans/q4.md.versions/2.md', false],
-    ['/.drafts/q4.md', false],
-    ['/plans/q4.html', false],
-  ])('%s previews as a Doc: %s', (written, previews) => {
-    expect(DOC_WRITES.matches(written)).toBe(previews);
-  });
-});
-
 describe("the User's edit of a published Doc", () => {
   it('saves the edited heading and table cell as Markdown, the next version, saved by you', async () => {
     const { saves } = docInFiles();
@@ -459,7 +445,7 @@ describe('Doc Markdown fixtures', () => {
   const examples: string[] = JSON.parse(readFileSync(path.join(import.meta.dirname, '../../../../harness/deepagents/tests/fixtures/doc-examples.json'), 'utf8'));
 
   it.each(examples)('loads in the Doc viewer with no Markdown syntax left as text: %s', (example) => {
-    render(<DocFrame title="Example" markdown={example} complete />);
+    render(<DocFrame title="Example" markdown={example} />);
     const doc = screen.getByRole('textbox', { name: 'Example' });
 
     expect(doc.textContent).not.toMatch(/\||\]\(|\[ \]|\*\*|^#|^- /m);

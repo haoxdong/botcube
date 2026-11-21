@@ -3,12 +3,9 @@
 import { m as motionElement } from "motion/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
-import type { PreviewProps, ViewerProps, Writes } from "./artifact-viewer";
+import type { ViewerProps } from "./artifact-viewer";
 import { Presence, presenceMotion } from "./collapse";
 import { reason } from "./composer-files";
-
-/** A Source previews at most this often: four renders a second. */
-const PREVIEW_MS = 250;
 
 const SANDBOX_PAGE = "/artifact-sandbox/index.html";
 const SANDBOX = "allow-scripts allow-modals";
@@ -44,19 +41,14 @@ export function VersionFrame({ artifact, read, frame, shows }: ViewerProps) {
       <Presence>{failure !== null && (
         <motionElement.p {...presenceMotion} role="alert" className="artifact-refused">Couldn&apos;t open {artifact.title}: {failure}</motionElement.p>
       )}</Presence>
-      <SandboxFrame key={artifact.path} position={position} title={artifact.title} html={page !== null && "html" in page ? page.html : null} runs frame={frame} />
+      <SandboxFrame key={artifact.path} position={position} title={artifact.title} html={page !== null && "html" in page ? page.html : null} frame={frame} />
     </>
   );
 }
 
-/**
- * The sandbox page, sent `html` once it says it is ready. A published version `runs` with its scripts. A Source only
- * previews, without them (the sandbox draws it in a frame of its own that allows no scripts), at most four times a
- * second: only a Source that passed its publish runs.
- */
-function SandboxFrame({ title, html, runs, frame, position }: { title: string; html: string | null; runs: boolean; frame: RefObject<HTMLIFrameElement | null>; position?: RefObject<{ left: number; top: number }> }) {
+/** The sandbox page, sent the published version's `html`, which runs with its scripts, once it says it is ready. */
+function SandboxFrame({ title, html, frame, position }: { title: string; html: string | null; frame: RefObject<HTMLIFrameElement | null>; position?: RefObject<{ left: number; top: number }> }) {
   const [ready, setReady] = useState(false);
-  const rendered = useRef(Number.NEGATIVE_INFINITY);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.source === frame.current?.contentWindow && event.data?.type === "artifact-sandbox-ready") setReady(true);
@@ -66,25 +58,7 @@ function SandboxFrame({ title, html, runs, frame, position }: { title: string; h
   }, [frame]);
   useEffect(() => {
     if (!ready || html === null) return;
-    const render = () => {
-      rendered.current = Date.now();
-      frame.current?.contentWindow?.postMessage({ type: runs ? "artifact-page" : "artifact-preview", html, ...(position ? { position: position.current } : {}) }, "*");
-    };
-    const wait = runs ? 0 : rendered.current + PREVIEW_MS - Date.now();
-    if (wait <= 0) {
-      render();
-      return;
-    }
-    const timer = setTimeout(render, wait);
-    return () => clearTimeout(timer);
-  }, [ready, html, runs, frame, position]);
+    frame.current?.contentWindow?.postMessage({ type: "artifact-page", html, ...(position ? { position: position.current } : {}) }, "*");
+  }, [ready, html, frame, position]);
   return <iframe ref={frame} name={title} title={title} sandbox={SANDBOX} src={SANDBOX_PAGE} className="artifact-frame" />;
 }
-
-/** A page the agent is writing, previewed without its scripts. */
-function PagePreview({ title, text, frame }: PreviewProps) {
-  return <SandboxFrame title={title} html={text} runs={false} frame={frame} />;
-}
-
-/** Any HTML file the agent writes previews as a page; a deck's slides preview as their deck first. */
-export const PAGE_WRITES: Writes = { matches: (path) => /\.html?$/i.test(path), Preview: PagePreview };
