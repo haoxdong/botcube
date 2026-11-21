@@ -6,14 +6,14 @@ import { Construct } from 'constructs';
 export interface ChatStorageProps extends StackProps {
   chatTable?: ITable;
   tableName?: string;
-  /** A supplied chat table to import instead of creating one, with its grants: BotCube grants nothing on it. Parking reads its NEW_IMAGE stream. */
-  suppliedChatTable?: { tableName: string; streamArn: string };
-  /** A supplied Files file system, its shared `/accounts` access point and the pool Users lease theirs from: BotCube creates and grants none of them. */
-  suppliedFiles?: SuppliedFiles;
+  /** A existing chat table to import instead of creating one, with its grants: BotCube grants nothing on it. Parking reads its NEW_IMAGE stream. */
+  existingChatTable?: { tableName: string; streamArn: string };
+  /** A existing Files file system, its shared `/accounts` access point and the pool Users lease theirs from: BotCube creates and grants none of them. */
+  existingFiles?: ExistingFiles;
 }
 
-/** As the Deployment Config's `supplied.files` gives them. */
-export interface SuppliedFiles {
+/** As the BotCube Config's `existing.files` gives them. */
+export interface ExistingFiles {
   fileSystemId: string;
   accountsAccessPointId: string;
   accessPoints: readonly { accessPointId: string; rootDirectory: string }[];
@@ -22,19 +22,19 @@ export interface SuppliedFiles {
 /** Durable shared Chat Service storage: the chat table, and every account's Files (ADR 0077). */
 export class ChatStorageStack extends Stack {
   readonly chatTable: Table | ITable;
-  /** The operator supplied the chat table with its grants, so no BotCube policy names it. */
-  readonly chatTableSupplied: boolean;
+  /** The operator existing the chat table with its grants, so no BotCube policy names it. */
+  readonly chatTableExisting: boolean;
   /** The EFS file system that replaces S3 Files for every account's Files; each account is `/accounts/<hash>`. */
   readonly filesEfs: Pick<efs.CfnFileSystem, 'ref' | 'attrArn'>;
-  readonly suppliedFiles: SuppliedFiles | undefined;
+  readonly existingFiles: ExistingFiles | undefined;
 
   constructor(scope: Construct, id: string, props: ChatStorageProps) {
     super(scope, id, props);
     if (props.chatTable && props.tableName !== undefined) throw new Error('Choose chatTable and tableName separately: an imported table owns its name');
-    if (props.suppliedChatTable && (props.chatTable || props.tableName !== undefined)) throw new Error('A supplied chat table owns its name; omit chatTable and tableName');
-    const supplied = props.suppliedChatTable;
-    this.chatTableSupplied = supplied !== undefined;
-    this.chatTable = props.chatTable ?? (supplied ? Table.fromTableAttributes(this, 'ChatTable', { tableName: supplied.tableName, tableStreamArn: supplied.streamArn }) : undefined) ?? new Table(this, 'ChatTable', {
+    if (props.existingChatTable && (props.chatTable || props.tableName !== undefined)) throw new Error('A existing chat table owns its name; omit chatTable and tableName');
+    const existing = props.existingChatTable;
+    this.chatTableExisting = existing !== undefined;
+    this.chatTable = props.chatTable ?? (existing ? Table.fromTableAttributes(this, 'ChatTable', { tableName: existing.tableName, tableStreamArn: existing.streamArn }) : undefined) ?? new Table(this, 'ChatTable', {
       tableName: props.tableName ?? 'chat',
       partitionKey: { name: 'pk', type: AttributeType.STRING },
       sortKey: { name: 'sk', type: AttributeType.STRING },
@@ -47,12 +47,12 @@ export class ChatStorageStack extends Stack {
     });
     new CfnOutput(this, 'ChatTableName', { value: this.chatTable.tableName });
 
-    this.suppliedFiles = props.suppliedFiles;
-    if (props.suppliedFiles) {
-      const { fileSystemId } = props.suppliedFiles;
+    this.existingFiles = props.existingFiles;
+    if (props.existingFiles) {
+      const { fileSystemId } = props.existingFiles;
       this.filesEfs = { ref: fileSystemId, attrArn: this.formatArn({ service: 'elasticfilesystem', resource: 'file-system', resourceName: fileSystemId }) };
-      // CloudFormation refuses a template with no resource: everything here supplied, the stack holds a no-op one.
-      if (supplied) new CfnWaitConditionHandle(this, 'Supplied');
+      // CloudFormation refuses a template with no resource: everything here existing, the stack holds a no-op one.
+      if (existing) new CfnWaitConditionHandle(this, 'Existing');
       return;
     }
     // Files on EFS. Only IAM principals of this account mount it, over TLS, each through

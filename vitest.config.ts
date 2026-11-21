@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+const botSettingsModule = createRequire(import.meta.url)('./ui/web/src/config/bot-settings.cjs');
 import { fileURLToPath } from 'node:url';
 import { configDefaults, defineConfig } from 'vitest/config';
 import { TEST_AWS_ENV } from './chat/test/fakes/credentials.js';
@@ -26,7 +28,7 @@ const uiWeb = (name: string, include: string[], exclude: string[], groupOrder: n
       dcv: at(`${liveView}/dcvjs-esm/dcv.js`),
       'dcv-ui': at(`${liveView}/dcv-ui/dcv-ui.js`),
       '@bot-ui': at('ui/web/src/plugin/default.tsx'),
-      '@bot-settings': at('examples/bot/bot.json'),
+      '@bot-settings': botSettingsModule(at('examples/bot/bot.yaml')),
     },
   },
 });
@@ -44,6 +46,7 @@ export default defineConfig({
         test: {
           ...node,
           name: 'chat',
+          setupFiles: ['chat/test/bot-image.ts'],
           restoreMocks: true,
           include: ['chat/src/**/*.test.ts', 'chat/test/local-smoke.test.ts', 'infra/ecs/parking/**/*.test.ts', 'infra/ecs/files/**/*.test.ts'],
           globalSetup: ['chat/test/fakes/global-setup.ts'],
@@ -54,7 +57,7 @@ export default defineConfig({
         test: {
           ...node,
           name: 'node',
-          include: ['tests/**/*.test.ts', 'deployment-config/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts', 'infra/ecs/files-pool/**/*.test.ts'],
+          include: ['tests/**/*.test.ts', 'config/**/*.test.ts', 'infra/ecs/origin-provider/**/*.test.ts', 'infra/ecs/files-pool/**/*.test.ts'],
         },
       },
       { test: { ...node, name: 'integration-libreoffice', include: libreofficeTests, testTimeout: 30_000 } },

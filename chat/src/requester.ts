@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 
 /** The account that sent a request, as the Chat Service resolved it from the request. */
 export interface Requester {
-  /** The Account tier the Chat Service resolved, never supplied by the client. */
+  /** The Account tier the Chat Service resolved, never existing by the client. */
   readonly rateTier?: string;
   /** The account that owns the requester's Sessions: the one its Turns are filed under. */
   readonly owner: string;

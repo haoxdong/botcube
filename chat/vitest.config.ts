@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: { alias: { 'botcube-chat': fileURLToPath(new URL('./src/index.ts', import.meta.url)) } },
   test: {
     include: ['chat/src/**/*.test.ts'],
+    setupFiles: ['chat/test/bot-image.ts'],
     globalSetup: ['chat/test/fakes/global-setup.ts'],
     pool: 'forks',
     maxWorkers: 4,

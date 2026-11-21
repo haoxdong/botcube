@@ -32,7 +32,7 @@ it('serves the stock Chat Service over HTTP with persisted thread metadata and c
     AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
     BOTCUBE_CHAT_TABLE: table,
     BOTCUBE_LOCAL_SESSION_API_URL: sessions.url,
-    BOTCUBE_DEPLOYMENT_CONFIG: fileURLToPath(new URL('../../examples/public/deployment-config.json', import.meta.url)),
+    BOTCUBE_CONFIG: fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url)),
   };
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
   cleanup.push(async () => {

@@ -42,11 +42,11 @@ def test_the_harness_exports_to_the_otlp_endpoint_with_its_credential_as_the_bea
     url, received = collector
     token = tmp_path / 'telemetry-token'
     token.write_text('collector-token\n')
-    # The standard variables the deploy sets from the Deployment Config's telemetry section (deployment-config/telemetry.ts),
+    # The standard variables the deploy sets from the BotCube Config's telemetry section (config/telemetry.ts),
     # and the file itself, which holds the credential.
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', url)
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_TRACES_HEADERS', 'x-tenant=botcube-example')
-    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}})
+    deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': url, 'credential': {'kind': 'file', 'path': str(token)}}})
     monkeypatch.setenv('OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER', 'botcube')
 
     provider = TracerProvider()
@@ -60,9 +60,9 @@ def test_the_harness_exports_to_the_otlp_endpoint_with_its_credential_as_the_bea
 
 
 def test_the_harness_refuses_a_malformed_telemetry_credential_naming_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from botcube_harness_deepagents.deployment_config import DeploymentConfigError
+    from botcube_harness_deepagents.botcube_config import BotCubeConfigError
     from botcube_harness_deepagents.telemetry_credential import telemetry_session
 
-    path = deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file'}})
-    with pytest.raises(DeploymentConfigError, match=f'^Deployment Config {path}: telemetry.credential.path: '):
+    path = deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file'}}})
+    with pytest.raises(BotCubeConfigError, match=f'^BotCube Config {path}: integrations.telemetry.credential.path: '):
         telemetry_session()

@@ -32,7 +32,7 @@ body {
   --color-red: var(--red-11);
   --color-green: var(--green-9);
   /* The agent's own colours, Marq's from his avatar, for its illustrations only (the Soul and Memory cards, the
-     Computer's desktop); a cartridge `theme` may bring its own. */
+     Computer's desktop); a bot `theme` may bring its own. */
   --agent-body: #aec6e3;
   --agent-outline: #6f93bf;
   --agent-deep: #3f5f8a;

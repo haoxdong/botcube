@@ -1,12 +1,12 @@
 import { createPrivateKey, generateKeyPairSync, type JsonWebKey } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
-import type { ModelsWire } from '../../../deployment-config/blocks.js';
-import { loadDeployment } from '../../../deployment-config/load.js';
+import type { ModelsWire } from '../../../config/blocks.js';
+import { loadBotCube } from '../../../config/load.js';
 import { required } from '../required.js';
 import { frameData, sseFrames } from './browser.js';
 import { MTLS_MODELS_HOST, PUBLIC_ORIGIN, startLocalStack, type LocalStack } from './local-stack.js';
@@ -14,7 +14,7 @@ import { MTLS_MODELS_HOST, PUBLIC_ORIGIN, startLocalStack, type LocalStack } fro
 const stacks: LocalStack[] = [];
 afterAll(() => Promise.all(stacks.map((stack) => stack.stop())));
 
-const deploymentConfig = (example: string) => fileURLToPath(new URL(`../../../examples/${example}/deployment-config.json`, import.meta.url));
+const botcubeConfig = (example: string) => fileURLToPath(new URL(`../../../examples/${example}/botcube.yaml`, import.meta.url));
 
 const scratch: string[] = [];
 afterAll(() => Promise.all(scratch.map((dir) => rm(dir, { recursive: true, force: true }))));
@@ -23,10 +23,10 @@ afterAll(() => Promise.all(scratch.map((dir) => rm(dir, { recursive: true, force
 async function enterpriseOnTheResponsesWire(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'responses-wire-'));
   scratch.push(dir);
-  const example = deploymentConfig('enterprise');
-  const file = JSON.parse(await readFile(example, 'utf8')) as { bot: string; models: object };
-  const path = join(dir, 'deployment-config.json');
-  await writeFile(path, JSON.stringify({ ...file, bot: resolve(dirname(example), file.bot), models: { ...file.models, wire: 'responses' } }));
+  const example = botcubeConfig('enterprise');
+  const file = JSON.parse(await readFile(example, 'utf8')) as { integrations: { modelGateway: object } };
+  const path = join(dir, 'botcube.yaml');
+  await writeFile(path, JSON.stringify({ ...file, integrations: { ...file.integrations, modelGateway: { ...file.integrations.modelGateway, wire: 'responses' } } }));
   return path;
 }
 
@@ -38,7 +38,7 @@ const AGENT_TOOL_CALL = { name: 'ls', arguments: { path: '/' } };
  * OpenAI-compatible Endpoint the agent's model calls a tool first, and answers once the tool's result is back.
  */
 async function conversation(path: string) {
-  const stack = await startLocalStack({ deploymentConfig: path });
+  const stack = await startLocalStack({ botcubeConfig: path });
   stacks.push(stack);
   if (stack.openAICompatible) stack.openAICompatible.agentToolCall = AGENT_TOOL_CALL;
   const browser = stack.browser();
@@ -64,8 +64,8 @@ describe('the public and the enterprise example, on each wire of its OpenAI-comp
   let enterprise: Record<ModelsWire, Awaited<ReturnType<typeof conversation>>>;
   beforeAll(async () => {
     const [onPublic, onChatCompletions, onResponses] = await Promise.all([
-      conversation(deploymentConfig('public')),
-      conversation(deploymentConfig('enterprise')),
+      conversation(botcubeConfig('public')),
+      conversation(botcubeConfig('enterprise')),
       enterpriseOnTheResponsesWire().then(conversation),
     ]);
     pub = onPublic;
@@ -98,10 +98,10 @@ describe('the public and the enterprise example, on each wire of its OpenAI-comp
     const turn = enterprise[wire];
     const endpoint = required(turn.stack.openAICompatible, 'the models endpoint stand-in');
     expect(turn.stack.bedrock.requests).toEqual([]);
-    // The agent's model by its key in the bot settings, before and after its tool call, then the summary model the Deployment Config names.
+    // The agent's model by its key in the bot settings, before and after its tool call, then the summary model the BotCube Config names.
     expect(endpoint.models()).toEqual(['echo', 'echo', 'example-summary']);
     expect(endpoint.summarizedTurns()).toEqual(summarized);
-    // The Deployment Config's header reaches the endpoint on the Turn and on its summary.
+    // The BotCube Config's header reaches the endpoint on the Turn and on its summary.
     expect(endpoint.requests.map(({ headers }) => headers['x-tenant'])).toEqual(['botcube-example', 'botcube-example', 'botcube-example']);
   });
 });
@@ -111,7 +111,7 @@ const wallClock = (instant: Date, timeZone: string) => new Intl.DateTimeFormat('
 }).format(instant).replace(' ', 'T');
 
 it.each(['UTC', 'Asia/Kolkata'])('fires a scheduled task on time in %s in the enterprise example, from the table poller into the run queue', { timeout: 120_000 }, async (timezone) => {
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), scheduling: true });
+  const stack = await startLocalStack({ botcubeConfig: botcubeConfig('enterprise'), scheduling: true });
   stacks.push(stack);
   const browser = stack.browser();
   await browser.openAccountSession();
@@ -138,7 +138,7 @@ it.each(['UTC', 'Asia/Kolkata'])('fires a scheduled task on time in %s in the en
 
 it("refuses an enterprise Harness invocation without the Chat Service's bearer token", { timeout: 120_000 }, async () => {
   const key = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'test-key' };
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), chatEnv: { BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([key]) } });
+  const stack = await startLocalStack({ botcubeConfig: botcubeConfig('enterprise'), chatEnv: { BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([key]) } });
   stacks.push(stack);
   const signed = (audience: string, signingKey: JsonWebKey = key) => new SignJWT({})
     .setProtectedHeader({ alg: 'ES256', kid: 'test-key' }).setIssuer(PUBLIC_ORIGIN).setAudience(audience).setIssuedAt().setExpirationTime('5m')
@@ -161,22 +161,22 @@ it("refuses an enterprise Harness invocation without the Chat Service's bearer t
 it("stops the enterprise example on sign-in's old client secret field, naming it", { timeout: 60_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'old-identity-'));
   try {
-    const path = join(dir, 'deployment-config.json');
-    const { identity } = JSON.parse(await readFile(deploymentConfig('enterprise'), 'utf8')) as { identity: { issuer: string } };
+    const path = join(dir, 'botcube.yaml');
+    const { integrations: { signIn: identity } } = JSON.parse(await readFile(botcubeConfig('enterprise'), 'utf8')) as { integrations: { signIn: { issuer: string } } };
     const secretArn = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:botcube/oidc-client-secret';
-    await writeFile(path, JSON.stringify({ bot: './bot.json', identity: { kind: 'oidc', issuer: identity.issuer, clientId: 'botcube', clientSecret: { secretArn } } }));
-    await expect(startLocalStack({ chatEnv: { BOTCUBE_DEPLOYMENT_CONFIG: path } })).rejects.toThrow(`Deployment Config ${path}: identity.clientSecret: Unrecognized key`);
+    await writeFile(path, JSON.stringify({ integrations: { signIn: { kind: 'oidc', issuer: identity.issuer, clientId: 'botcube', clientSecret: { secretArn } } } }));
+    await expect(startLocalStack({ chatEnv: { BOTCUBE_CONFIG: path } })).rejects.toThrow(`BotCube Config ${path}: integrations.signIn.clientSecret: Unrecognized key`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
 it("sends the enterprise example's traces to its authenticated collector through its authenticating proxy", { timeout: 120_000 }, async () => {
-  const path = deploymentConfig('enterprise');
-  const { telemetry } = loadDeployment(path).config;
+  const path = botcubeConfig('enterprise');
+  const { integrations: { telemetry } } = loadBotCube(path).config;
   if (telemetry.kind !== 'otlp') throw new Error('The enterprise example exports to its own collector');
   const collectorHost = new URL(telemetry.url).host;
-  const stack = await startLocalStack({ deploymentConfig: path, chatEnv: { OTEL_BSP_SCHEDULE_DELAY: '100' } });
+  const stack = await startLocalStack({ botcubeConfig: path, chatEnv: { OTEL_BSP_SCHEDULE_DELAY: '100' } });
   stacks.push(stack);
   const { proxy, collector } = required(stack.egress, "the enterprise example's proxy");
   const browser = stack.browser();
@@ -195,7 +195,7 @@ it("sends the enterprise example's traces to its authenticated collector through
 });
 
 it("presents the enterprise example's client certificates to its mTLS proxy, for a Turn's model call and its tool's request", async () => {
-  const stack = await startLocalStack({ deploymentConfig: deploymentConfig('enterprise'), endpointTls: true });
+  const stack = await startLocalStack({ botcubeConfig: botcubeConfig('enterprise'), endpointTls: true });
   stacks.push(stack);
   const { proxy, front } = required(stack.mtls, "the enterprise example's mTLS stand-ins");
   const toolHost = 'tool.example.test:443';
@@ -212,13 +212,13 @@ it("presents the enterprise example's client certificates to its mTLS proxy, for
   expect(new Set(front.clients)).toEqual(new Set(['client-a']));
 });
 
-it('stops startup on a Deployment Config with an unknown adapter, naming the field', { timeout: 60_000 }, async () => {
+it('stops startup on a BotCube Config with an unknown adapter, naming the field', { timeout: 60_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'bad-deployment-'));
   try {
-    const path = join(dir, 'deployment-config.json');
-    await writeFile(path, JSON.stringify({ bot: './bot.json', models: { kind: 'vertex' } }));
-    await expect(startLocalStack({ chatEnv: { BOTCUBE_DEPLOYMENT_CONFIG: path } })).rejects.toThrow(
-      `Deployment Config ${path}: models.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'`,
+    const path = join(dir, 'botcube.yaml');
+    await writeFile(path, JSON.stringify({ integrations: { modelGateway: { kind: 'vertex' } } }));
+    await expect(startLocalStack({ chatEnv: { BOTCUBE_CONFIG: path } })).rejects.toThrow(
+      `BotCube Config ${path}: integrations.modelGateway.kind: Invalid discriminator value. Expected 'bedrock' | 'openai-compatible'`,
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

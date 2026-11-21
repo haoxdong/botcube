@@ -45,8 +45,8 @@ def models_provider_from_config(
     transport: httpx.AsyncBaseTransport | None = None,
     now: Callable[[], float] = time.time,
 ) -> ModelsEndpointProvider | None:
-    """The relay to the Deployment Config's OpenAI-compatible `models` Endpoint, or None on Bedrock."""
-    models = config['models']
+    """The relay to the BotCube Config's OpenAI-compatible `models` Endpoint, or None on Bedrock."""
+    models = config['integrations']['modelGateway']
     if models['kind'] != 'openai-compatible':
         return None
     credential = credential_source('models', models['credential'], env=env, now=now)
@@ -91,7 +91,7 @@ class ModelsEndpointProvider:
         return
 
     async def ingest(self, invocation: CredentialServiceInvocation, payload: Mapping[str, Any]) -> Mapping[str, str]:
-        raise HTTPException(status_code=404, detail='The models Endpoint takes its credential from the Deployment Config, not a Sign-in')
+        raise HTTPException(status_code=404, detail='The models Endpoint takes its credential from the BotCube Config, not a Sign-in')
 
     async def revoke(self, account_id: str) -> None:
         return

@@ -13,8 +13,8 @@ from langchain_core.outputs import ChatGenerationChunk
 from opentelemetry import baggage, propagate
 
 from . import aws_clients, turn_timing
+from .botcube_config import botcube_config_from_env
 from .definition import ModelRelay
-from .deployment_config import deployment_config_from_env
 
 DEFAULT_MODEL = 'us.anthropic.claude-sonnet-4-6'
 AVAILABLE_MODELS: dict[str, str] = {
@@ -141,16 +141,16 @@ def build_model(
 
 
 def models_on_endpoint() -> bool:
-    """Whether the Deployment Config puts the agent's models on an OpenAI-compatible endpoint, relayed by the Credential Service."""
-    return deployment_config_from_env()['models']['kind'] == OPENAI_COMPATIBLE
+    """Whether the BotCube Config puts the agent's models on an OpenAI-compatible endpoint, relayed by the Credential Service."""
+    return botcube_config_from_env()['integrations']['modelGateway']['kind'] == OPENAI_COMPATIBLE
 
 
 def responses_wire() -> bool:
-    return deployment_config_from_env()['models'].get('wire') == RESPONSES
+    return botcube_config_from_env()['integrations']['modelGateway'].get('wire') == RESPONSES
 
 
 def cache_markers_on() -> bool:
-    return deployment_config_from_env()['models'].get('cacheMarkers') == CLAUDE_CACHE_MARKERS
+    return botcube_config_from_env()['integrations']['modelGateway'].get('cacheMarkers') == CLAUDE_CACHE_MARKERS
 
 
 def _endpoint_client() -> Any:

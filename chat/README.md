@@ -7,8 +7,8 @@ the index of each user's Sessions. It stores no Session content: the Agent
 Service's record is the only copy (ADR 0067), and the Chat Service replays and
 purges a Session through the Harness's session API.
 
-`serveChatService()` builds BotCube's own Chat from the Deployment Config that
-`BOTCUBE_DEPLOYMENT_CONFIG` names and its bot settings ([`src/stock.ts`](src/stock.ts),
+`serveChatService()` builds BotCube's own Chat from the BotCube Config that
+`BOTCUBE_CONFIG` names and `/bot/bot.yaml` ([`src/stock.ts`](src/stock.ts),
 ADR 0091): sign-in and account routes, the account that owns a request's Sessions,
 the user ID they are filed under, the Turn payload, and the Agent Computer. It holds
 no bot-specific code.

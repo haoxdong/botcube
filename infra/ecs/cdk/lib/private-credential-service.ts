@@ -70,20 +70,20 @@ export interface PrivateCredentialServiceProps {
   image: CredentialServiceImage;
   /** The Vault: one Durable Credential per (accountId, provider) (ADR 0078 decision 3). */
   tableName: string;
-  /** A supplied vault table, with its grants, to use instead of creating `tableName`: the task is granted nothing on it. */
-  suppliedVaultTableName?: string;
-  /** A supplied key, with its grants, to encrypt the vault with instead of creating one: the task is granted nothing on it. */
-  suppliedVaultKeyArn?: string;
-  /** The alias ARN of a supplied RSA ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
-  suppliedSheetKeyAlias?: string;
-  /** A supplied key, with its grants, encrypting the audit-copy Lambda's environment instead of the AWS managed key. */
-  suppliedFunctionsKeyArn?: string;
+  /** A existing vault table, with its grants, to use instead of creating `tableName`: the task is granted nothing on it. */
+  existingVaultTableName?: string;
+  /** A existing key, with its grants, to encrypt the vault with instead of creating one: the task is granted nothing on it. */
+  existingVaultKeyArn?: string;
+  /** The alias ARN of a existing RSA ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
+  existingSheetKeyAlias?: string;
+  /** A existing key, with its grants, encrypting the audit-copy Lambda's environment instead of the AWS managed key. */
+  existingFunctionsKeyArn?: string;
   /**
-   * A supplied Credential Service Endpoint: callers get its URL, the tasks register into its target group and admit its
+   * A existing Credential Service Endpoint: callers get its URL, the tasks register into its target group and admit its
    * load balancer's security group, in place of the private DNS namespace and Cloud Map service, which are not created.
    */
-  suppliedEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
-  /** Whether the service's image mounts the Sign-in Sheet routes; only then is a sheet key created when none is supplied. */
+  existingEndpoint?: { url: string; targetGroupArn: string; securityGroupId: string };
+  /** Whether the service's image mounts the Sign-in Sheet routes; only then is a sheet key created when none is existing. */
   sheetRoutes?: boolean;
   namespaceName: string;
   alertsTopicName: string;
@@ -113,7 +113,7 @@ export class PrivateCredentialService extends Construct {
   readonly service: ecs.FargateService;
   readonly url: string;
   readonly invocationSecret: secretsmanager.Secret | secretsmanager.ISecret;
-  /** The private DNS namespace the Harness resolves its callees in; absent behind a supplied Endpoint. */
+  /** The private DNS namespace the Harness resolves its callees in; absent behind a existing Endpoint. */
   readonly namespace: discovery.PrivateDnsNamespace | undefined;
 
   constructor(scope: Construct, id: string, props: PrivateCredentialServiceProps) {
@@ -134,7 +134,7 @@ export class PrivateCredentialService extends Construct {
     const key = vaultKey(this, props, task);
     const sheetKeyAlias = signInSheetKeyAlias(this, props, task);
     const vault = (id: string, tableName: string, sortKey?: string) => {
-      if (props.suppliedVaultTableName) return dynamodb.Table.fromTableName(this, id, props.suppliedVaultTableName);
+      if (props.existingVaultTableName) return dynamodb.Table.fromTableName(this, id, props.existingVaultTableName);
       const table = new dynamodb.Table(this, id, {
         tableName,
         partitionKey: { name: 'accountId', type: dynamodb.AttributeType.STRING },
@@ -157,7 +157,7 @@ export class PrivateCredentialService extends Construct {
     };
     const table = vault('ProviderVault', props.tableName, 'provider');
     // UpdateItem takes a rotating credential's refresh lease (ADR 0078 decision 4).
-    if (!props.suppliedVaultTableName) table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem');
+    if (!props.existingVaultTableName) table.grant(task.taskRole, 'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:ConditionCheckItem');
     // Sign-in Sheet entry and session seeding: find a browser Session's automation stream and drive it.
     task.addToTaskRolePolicy(new iam.PolicyStatement({
       actions: ['bedrock-agentcore:GetBrowserSession', 'bedrock-agentcore:ConnectBrowserAutomationStream'],
@@ -171,7 +171,7 @@ export class PrivateCredentialService extends Construct {
     const logGroup = new logs.LogGroup(this, 'ServiceLogs', {
       logGroupName: props.logGroupName ?? `/${props.cluster.clusterName}/credential-service-logs`, retention: props.logRetention ?? logs.RetentionDays.ONE_MONTH,
     });
-    const audit = copyAuditEvents(this, logGroup, props.auditLogGroupName ?? `/${props.cluster.clusterName}/credential-service`, props.image, props.suppliedFunctionsKeyArn);
+    const audit = copyAuditEvents(this, logGroup, props.auditLogGroupName ?? `/${props.cluster.clusterName}/credential-service`, props.image, props.existingFunctionsKeyArn);
     this.container = task.addContainer('credential-service', {
       image: props.image.service, portMappings: [{ containerPort: props.port }],
       environment: {
@@ -191,7 +191,7 @@ export class PrivateCredentialService extends Construct {
         interval: Duration.seconds(props.healthIntervalSeconds ?? 10), timeout: Duration.seconds(props.healthTimeoutSeconds ?? 5), retries: props.healthRetries ?? 9, startPeriod: Duration.seconds(props.healthStartPeriodSeconds ?? 5),
       },
     });
-    const endpoint = props.suppliedEndpoint;
+    const endpoint = props.existingEndpoint;
     const namespace = this.namespace = endpoint ? undefined : new discovery.PrivateDnsNamespace(this, 'Namespace', {
       name: props.namespaceName, vpc: props.cluster.vpc,
     });
@@ -210,7 +210,7 @@ export class PrivateCredentialService extends Construct {
     service.node.addDependency(audit.subscription);
     if (endpoint) {
       const balancer = ec2.SecurityGroup.fromSecurityGroupId(this, 'EndpointBalancer', endpoint.securityGroupId, { mutable: false });
-      network.connections.allowFrom(balancer, ec2.Port.tcp(props.port), "The supplied Endpoint's load balancer");
+      network.connections.allowFrom(balancer, ec2.Port.tcp(props.port), "The existing Endpoint's load balancer");
       service.attachToApplicationTargetGroup(elbv2.ApplicationTargetGroup.fromTargetGroupAttributes(this, 'EndpointTargets', { targetGroupArn: endpoint.targetGroupArn }));
     }
     this.url = endpoint?.url ?? `http://${props.dnsName ?? 'credentials'}.${props.namespaceName}:${props.port}${props.rpcPath}`;
@@ -271,10 +271,10 @@ function denyDecryptToOthers(key: kms.Key, task: ecs.TaskDefinition) {
   }));
 }
 
-/** The vault's key: the one passed in, a supplied one by ARN, or a new one only the task may decrypt with. */
+/** The vault's key: the one passed in, a existing one by ARN, or a new one only the task may decrypt with. */
 function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey {
-  if (props.kmsKey && props.suppliedVaultKeyArn) throw new Error('Choose kmsKey or suppliedVaultKeyArn, not both');
-  if (props.suppliedVaultKeyArn) return kms.Key.fromKeyArn(scope, 'VaultKey', props.suppliedVaultKeyArn);
+  if (props.kmsKey && props.existingVaultKeyArn) throw new Error('Choose kmsKey or existingVaultKeyArn, not both');
+  if (props.existingVaultKeyArn) return kms.Key.fromKeyArn(scope, 'VaultKey', props.existingVaultKeyArn);
   const importedKey = props.kmsKey;
   // An imported key's policy is its owner's: the task role is granted the key, and the key's own deny is theirs to keep.
   if (importedKey) {
@@ -288,7 +288,7 @@ function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: 
 }
 
 function signInSheetKeyAlias(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): string | undefined {
-  if (props.suppliedSheetKeyAlias) return props.suppliedSheetKeyAlias;
+  if (props.existingSheetKeyAlias) return props.existingSheetKeyAlias;
   if (!props.sheetRoutes) return undefined;
   const sheetKey = new kms.Key(scope, 'SheetKey', {
     keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,

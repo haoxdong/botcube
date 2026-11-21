@@ -3,7 +3,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { AWSXRayIdGenerator } from '@opentelemetry/id-generator-aws-xray';
 import { AWSXRayPropagator } from '@opentelemetry/propagator-aws-xray';
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import { Agent, type RequestOptions } from 'node:https';
 import type { Duplex } from 'node:stream';
 import { credentialSource, type CredentialSource } from './credential-source.js';
@@ -20,9 +20,9 @@ export function registerTracingTurn(): (() => void) | undefined {
   return () => { pending.delete(done); finish?.(); };
 }
 
-/** Export traces as the deploy's OTEL_* variables say, with the Deployment Config's telemetry credential and TLS. */
+/** Export traces as the deploy's OTEL_* variables say, with the BotCube Config's telemetry credential and TLS. */
 export function startChatTracing(
-  telemetry: DeploymentConfig['telemetry'],
+  telemetry: BotCubeConfig['integrations']['telemetry'],
   env: NodeJS.ProcessEnv = process.env,
 ): { shutdown(): Promise<void>; credential: CredentialSource | undefined } | undefined {
   if (env.OTEL_TRACES_EXPORTER !== 'otlp') return undefined;
@@ -31,7 +31,7 @@ export function startChatTracing(
   const transport = otlp?.tls && tlsTransport(endpointTls('telemetry', otlp.tls, { env }), env);
   const sdk = new NodeSDK({
     serviceName: 'botcube-chat',
-    // The exporter makes its own agent, which reads no proxy variables unless handed them (Deployment Config `proxy`).
+    // The exporter makes its own agent, which reads no proxy variables unless handed them (BotCube Config `proxy`).
     traceExporter: new OTLPTraceExporter({
       httpAgentOptions: transport?.agent ?? { proxyEnv: env },
       ...(source || transport ? {

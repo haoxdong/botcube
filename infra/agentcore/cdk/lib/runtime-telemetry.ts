@@ -1,7 +1,7 @@
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import type { Construct } from 'constructs';
-import type { RuntimeTelemetry } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { RuntimeTelemetry } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /**
  * A runtime's telemetry: under `xray` it may send traces to X-Ray, under `otlp` read its Endpoint's credential secret,

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { ConnectionOptions, PeerCertificate } from 'node:tls';
-import { ALLOW_COMMAND_CREDENTIALS_ENV, type EndpointTls as EndpointTlsConfig } from 'botcube-deployment-config/blocks';
+import { ALLOW_COMMAND_CREDENTIALS_ENV, type EndpointTls as EndpointTlsConfig } from 'botcube-config/blocks';
 import { z } from 'zod';
 import { stdoutOf } from './credential-source.js';
 

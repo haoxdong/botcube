@@ -1,7 +1,7 @@
 import { App, Stack } from 'aws-cdk-lib';
 
-/** Use 1: the Deployment Config file's locator. */
-const LOCATOR = ['BOTCUBE_DEPLOYMENT_CONFIG'];
+/** Use 1: the BotCube Config file's locator. */
+const LOCATOR = ['BOTCUBE_CONFIG'];
 
 /** Use 2: a secret's value. Every ECS `Secrets` entry is this use too. */
 const SECRETS = [
@@ -37,14 +37,14 @@ const STANDARD = [
 ];
 const STANDARD_PREFIXES = ['AWS_', 'OTEL_'];
 
-/** The operator's consent to command credentials, kept out of the editable Deployment Config on purpose. */
+/** The operator's consent to command credentials, kept out of the editable BotCube Config on purpose. */
 const OPERATOR_CONSENT = ['BOTCUBE_ALLOW_COMMAND_CREDENTIALS'];
 
 export const ALLOWED: ReadonlySet<string> = new Set([...LOCATOR, ...SECRETS, ...CREATED_RESOURCES, ...STANDARD, ...OPERATOR_CONSENT]);
 
 export const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDARD_PREFIXES.some(prefix => name.startsWith(prefix));
 
-/** Names set today outside the four uses, each until a Deployment Config field replaces it. It only shrinks. */
+/** Names set today outside the four uses, each until a BotCube Config field replaces it. It only shrinks. */
 export const PENDING: readonly string[] = [
   'BOTCUBE_DEPLOY_REPOSITORY_ROOT',
   'BOTCUBE_DEPLOY_ROOT',
@@ -93,7 +93,7 @@ export function environmentViolations(
   const set = new Set(environments.flatMap(({ names }) => names));
   const outside = environments.flatMap(({ process, names }) => names
     .filter(name => !isAllowed(name) && !pending.includes(name) && !exempt.includes(name))
-    .map(name => `${process} sets ${name}, outside the four uses: read it from the Deployment Config`));
+    .map(name => `${process} sets ${name}, outside the four uses: read it from the BotCube Config`));
   const stale = pending.filter(name => !set.has(name))
     .map(name => `PENDING lists ${name}, which nothing sets any more: delete it`);
   return [...outside, ...stale];

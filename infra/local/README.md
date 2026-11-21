@@ -7,7 +7,7 @@ Run `./run.sh -d`, wait for the services, then run `./smoke.sh` and open
 See [Integrating BotCube](../../INTEGRATING.md#configuration) for the BotCube Config and the allowed environment variables.
 
 The stack runs the public example: the Chat Service reads
-`examples/public/deployment-config.json`, and the `harness` service is the example bot's image
+`examples/public/botcube.yaml`, and the `harness` service is the example bot's image
 (`examples/bot/Dockerfile`): BotCube's Harness image, the one `session-api` runs, plus the bot's
 settings and skills. The UI builds with its default UI plugin.
 

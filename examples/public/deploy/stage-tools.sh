@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tool hook: stage the example bot (examples/bot) and the examples' Deployment Configs for the Harness build context
+# Tool hook: stage the example bot (examples/bot) and the examples' BotCube Configs for the Harness build context
 # (ADR 0091). AgentCore's CodeBuild builds one context with no named build contexts, so this copies the bot's files to
 # .tool-dist/bot/ and writes .tool-dist/Dockerfile: the Harness Dockerfile, then examples/bot/Dockerfile with its COPYs
 # read from there, then the configs' COPYs below, each staged from botcube/ at its .tool-dist/ path.
@@ -12,14 +12,14 @@ bot="$cube_root/examples/bot"
 context="$cube_root/harness/deepagents"
 destination="$context/.tool-dist"
 configs=$(cat <<'COPIES'
-COPY .tool-dist/examples/enterprise/deployment-config.json /opt/botcube/examples/enterprise/deployment-config.json
-COPY .tool-dist/examples/public/deployment-config.json /opt/botcube/examples/public/deployment-config.json
+COPY .tool-dist/examples/enterprise/botcube.yaml /opt/botcube/examples/enterprise/botcube.yaml
+COPY .tool-dist/examples/public/botcube.yaml /opt/botcube/examples/public/botcube.yaml
 COPIES
 )
 
 rm -rf "$destination"
 mkdir -p "$destination/bot"
-cp -R "$bot/bot.json" "$bot/skills" "$destination/bot/"
+cp -R "$bot/bot.yaml" "$bot/skills" "$destination/bot/"
 while read -r _ source _; do
   mkdir -p "$(dirname "$context/$source")"
   cp "$cube_root/${source#.tool-dist/}" "$context/$source"
@@ -30,4 +30,4 @@ done <<< "$configs"
   echo "$configs"
 } > "$destination/Dockerfile"
 
-echo "Staged the example bot and the examples' Deployment Configs in $destination"
+echo "Staged the example bot and the examples' BotCube Configs in $destination"

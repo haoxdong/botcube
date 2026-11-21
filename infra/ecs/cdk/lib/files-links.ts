@@ -9,7 +9,7 @@ import { Secret as ContainerSecret } from 'aws-cdk-lib/aws-ecs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { Secret, type ISecret } from 'aws-cdk-lib/aws-secretsmanager';
-import type { ChatStorageStack, SuppliedFiles } from './chat-storage-stack.js';
+import type { ChatStorageStack, ExistingFiles } from './chat-storage-stack.js';
 import { optionalPhysicalName } from './physical-name.js';
 import type { PreviewChatService } from './preview-chat-service.js';
 import type { PreviewOriginStack } from './preview-origin-stack.js';
@@ -23,10 +23,10 @@ export const CHAT_FILES_MOUNT = '/mnt/files-efs';
  */
 export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatService, storage: ChatStorageStack, browsers: { subnets: Array<{ id: string }> }, cubeRoot: string, clients: ec2.ISecurityGroup[] = [],
   mountRoleName?: string) {
-  const supplied = storage.suppliedFiles;
-  const { targets, accounts } = supplied ? suppliedFilesNetwork(origin, supplied) : createdFilesNetwork(origin, chat, storage, browsers, clients);
+  const existing = storage.existingFiles;
+  const { targets, accounts } = existing ? existingFilesNetwork(origin, existing) : createdFilesNetwork(origin, chat, storage, browsers, clients);
   const grantMount = (grant: (statement: iam.PolicyStatement) => unknown, accessPointArn: string, operator: 'StringEquals' | 'ArnLike' = 'StringEquals') => {
-    if (!supplied) grant(new iam.PolicyStatement({
+    if (!existing) grant(new iam.PolicyStatement({
       actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
       resources: [storage.filesEfs.attrArn],
       conditions: { [operator]: { 'elasticfilesystem:AccessPointArn': accessPointArn } },
@@ -45,8 +45,8 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
   grantMount(statement => chat.task.addToTaskRolePolicy(statement), accounts.attrArn);
   const mode: unknown = origin.node.tryGetContext('filesAccessPointMode') ?? 'runtime';
   if (mode !== 'runtime' && mode !== 'pool') throw new Error('filesAccessPointMode must be runtime or pool');
-  if (supplied) {
-    addPoolAlarm(origin, chat, supplied.accessPoints.length, 'Add access points to supplied.files.accessPoints.');
+  if (existing) {
+    addPoolAlarm(origin, chat, existing.accessPoints.length, 'Add access points to existing.files.accessPoints.');
   } else if (mode === 'pool') {
     addFilesPool(origin, chat, storage, cubeRoot);
   } else {
@@ -67,7 +67,7 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
   });
   grantMount(statement => mount.addToPrincipalPolicy(statement), origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }), 'ArnLike');
   mount.grantAssumeRole(chat.task.taskRole);
-  if (!supplied) {
+  if (!existing) {
     const target = targets[0];
     if (!target) throw new Error('Files EFS requires a mount target');
     chat.container.addEnvironment('BOTCUBE_FILES_MOUNT_TARGET_IP', target.attrIpAddress);
@@ -127,7 +127,7 @@ function createdFilesNetwork(origin: PreviewOriginStack, chat: PreviewChatServic
   return { targets, accounts: { id: accounts.ref, attrArn: accounts.attrArn, created: accounts } };
 }
 
-function suppliedFilesNetwork(origin: PreviewOriginStack, { accountsAccessPointId }: SuppliedFiles): FilesNetwork {
+function existingFilesNetwork(origin: PreviewOriginStack, { accountsAccessPointId }: ExistingFiles): FilesNetwork {
   const attrArn = origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: accountsAccessPointId });
   return { targets: [], accounts: { id: accountsAccessPointId, attrArn } };
 }

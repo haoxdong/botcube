@@ -6,9 +6,9 @@ WORKDIR /workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches/ patches/
 COPY chat/ chat/
-COPY deployment-config/ deployment-config/
-COPY examples/bot/bot.json examples/bot/bot.json
-COPY examples/public/deployment-config.json examples/public/deployment-config.json
+COPY config/ config/
+COPY examples/bot/bot.yaml /bot/bot.yaml
+COPY examples/public/botcube.yaml examples/public/botcube.yaml
 COPY harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
 COPY harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
 RUN --mount=type=secret,id=build_ca \
@@ -28,10 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium \
 WORKDIR /opt/chat-service
 COPY --from=build /workspace/dist/ dist/
 COPY --from=build /workspace/examples/ examples/
+COPY --from=build /bot/ /bot/
 
 ENV BOTCUBE_LOCAL_HARNESS_URL=http://harness:8080
 ENV BOTCUBE_LOCAL_SESSION_API_URL=http://session-api:8081
-ENV BOTCUBE_DEPLOYMENT_CONFIG=/opt/chat-service/examples/public/deployment-config.json
+ENV BOTCUBE_CONFIG=/opt/chat-service/examples/public/botcube.yaml
 ENV PORT=8123
 EXPOSE 8123
 CMD ["node", "dist/main.js"]

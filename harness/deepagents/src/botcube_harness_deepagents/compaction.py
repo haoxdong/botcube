@@ -113,8 +113,7 @@ class BackgroundCompaction(SummarizationMiddleware):
             except ContextOverflowError:
                 if emergency:
                     raise
-        else:
-            raise ContextOverflowError('Native emergency compaction could not reduce the request')
+        raise ContextOverflowError('Native emergency compaction could not reduce the request')
 
     async def awrap_model_call(
         self, request: ModelRequest[Any],
@@ -134,8 +133,7 @@ class BackgroundCompaction(SummarizationMiddleware):
             except ContextOverflowError:
                 if emergency:
                     raise
-        else:
-            raise ContextOverflowError('Native emergency compaction could not reduce the request')
+        raise ContextOverflowError('Native emergency compaction could not reduce the request')
 
     def _answered(
         self, request: ModelRequest[Any], response: ModelResponse[Any], update: dict[str, Any] | None,

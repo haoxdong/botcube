@@ -152,7 +152,7 @@ def test_personal_memory_paginator_needs_no_directory_scan_after_snapshot_prime(
     like = AgentCoreMemoryStore(
         memory_id='snapshot', region_name='us-east-1', aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
     ).client
-    credentials = agentcore._TurnCredentials(
+    credentials = agentcore._AwsAccess(
         {'filingActorId': ['snapshot'], 'sessionId': ['snapshot']},
         (Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)), -1,
     )
@@ -173,7 +173,7 @@ def test_sts_and_scoped_memory_use_bounded_standard_retries() -> None:
     like = AgentCoreMemoryStore(
         memory_id='snapshot', region_name='us-east-1', aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
     ).client
-    credentials = agentcore._TurnCredentials(
+    credentials = agentcore._AwsAccess(
         {'filingActorId': ['snapshot'], 'sessionId': ['snapshot']},
         (Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)), -1,
     )

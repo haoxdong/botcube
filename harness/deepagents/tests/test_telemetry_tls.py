@@ -82,9 +82,9 @@ def certs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def deploy_collector(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, port: int, tls: dict[str, object]) -> None:
-    """A Deployment Config whose OTLP Endpoint has TLS, and the variables the deploy sets beside it (deployment-config's `telemetry.ts`)."""
+    """A BotCube Config whose OTLP Endpoint has TLS, and the variables the deploy sets beside it (config's `telemetry.ts`)."""
     url = f'https://127.0.0.1:{port}/v1/traces'
-    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': url, 'tls': tls})
+    deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': url, 'tls': tls}})
     monkeypatch.setenv('OTEL_TRACES_EXPORTER', 'otlp')
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT', url)
     monkeypatch.setenv('OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER', 'botcube')

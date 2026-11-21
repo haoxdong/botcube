@@ -1,6 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, randomUUID, type JsonWebKey, type KeyObject } from 'node:crypto';
 import { Hono } from 'hono';
-import { CHAT_SERVICE_SUBJECT, RESERVED_AUDIENCES, TOKEN_AUDIENCES, reservedAudienceError } from 'botcube-deployment-config';
+import { CHAT_SERVICE_SUBJECT, RESERVED_AUDIENCES, TOKEN_AUDIENCES, reservedAudienceError } from 'botcube-config';
 import { SignJWT, type JWTPayload } from 'jose';
 import { z } from 'zod';
 
@@ -103,12 +103,12 @@ export interface TurnGrant {
   secrets: string[];
 }
 
-/** How a Turn gets its User's Memory credentials: the Deployment Config's `turnCredentials` adapter. */
-export interface TurnCredentialSource {
+/** How a Turn gets its User's Memory credentials: the BotCube Config's `awsAccess` adapter. */
+export interface TurnIdentitySource {
   grant(turn: TurnIdentityClaims): Promise<TurnGrant>;
 }
 
-export class TurnIdentity implements TurnCredentialSource {
+export class TurnIdentity implements TurnIdentitySource {
   private readonly issuer: string;
   private readonly signing: { kid: string; key: KeyObject };
   private readonly published: JsonWebKey[];
@@ -187,7 +187,7 @@ export class TurnIdentity implements TurnCredentialSource {
  * Hand the Harness this Turn's identity, never one the client sent, and answer its secrets for redaction.
  * A Chat Service without a Turn credentials source forwards none.
  */
-export async function forwardTurnIdentity(source: TurnCredentialSource | null, forwardedProps: Record<string, unknown>, turn: TurnIdentityClaims): Promise<string[]> {
+export async function forwardTurnIdentity(source: TurnIdentitySource | null, forwardedProps: Record<string, unknown>, turn: TurnIdentityClaims): Promise<string[]> {
   delete forwardedProps.turnIdentity;
   if (source === null) return [];
   const { forwarded, secrets } = await source.grant(turn);

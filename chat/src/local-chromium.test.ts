@@ -4,7 +4,7 @@ import { localAgentComputer } from './local-agent-computer.js';
 
 const proxied = (noProxy: string) => ({ NODE_USE_ENV_PROXY: '1', HTTPS_PROXY: 'http://proxy.example:3128', NO_PROXY: noProxy });
 
-it('starts Chromium direct without the Deployment Config proxy', () => {
+it('starts Chromium direct without the BotCube Config proxy', () => {
   expect(chromiumProxyArgs({})).toEqual([]);
   expect(chromiumProxyArgs({ HTTPS_PROXY: 'http://proxy.example:3128' })).toEqual([]);
 });
@@ -46,7 +46,7 @@ it('goes direct everywhere when NO_PROXY is *', () => {
 
 it.each(['http://user:secret@proxy.example:3128', 'http://user@proxy.example:3128'])('refuses a proxy URL with credentials, which Chromium would drop: %s', (url) => {
   const env = { NODE_USE_ENV_PROXY: '1', HTTPS_PROXY: url, NO_PROXY: 'localhost' };
-  const refusal = /Chromium can't authenticate to a proxy: remove the credentials from the Deployment Config's proxy URL/;
+  const refusal = /Chromium can't authenticate to a proxy: remove the credentials from the BotCube Config's proxy URL/;
   expect(() => chromiumProxyArgs(env)).toThrow(refusal);
   expect(() => localAgentComputer({ history: { owns: async () => true, ownsMainChat: async () => false }, requester: async () => ({ owner: 'acct_1' }), env })).toThrow(refusal);
 });

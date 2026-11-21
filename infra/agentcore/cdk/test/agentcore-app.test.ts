@@ -240,7 +240,7 @@ test('under assume-role, refuses a deploy identity that names no Chat Service ta
   delete config.identity.aws.iam.chatServiceTaskRole;
 
   expect(() => addAgentCoreStacks(new App(), config, COMMIT, {}, 'assume-role')).toThrow(
-    'Deploy identity aws.iam.chatServiceTaskRole: required with turnCredentials assume-role'
+    'Deploy identity aws.iam.chatServiceTaskRole: required with awsAccess assume-role'
   );
 });
 

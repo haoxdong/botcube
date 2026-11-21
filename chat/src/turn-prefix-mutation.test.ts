@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sseFrameData, turnCredentialGuard, turnCredentials } from './turn-stream.js';
+import { sseFrameData, turnCredentialGuard, credentialValues } from './turn-stream.js';
 
 const text = (delta: string, messageId = 'answer') => ({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta });
 const start = (messageId = 'answer') => ({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
@@ -10,10 +10,10 @@ describe('Turn credential prefix boundaries', () => {
     expect(sseFrameData(['data:answer has spaces', 'data:  indented', 'event: custom'])).toBe('answer has spaces\n indented');
   });
 
-  it('collects only supplied, nonempty credentials and URL query values', () => {
-    expect(turnCredentials({}, ['missing'])).toEqual([]);
-    expect(turnCredentials({ files: [], cdp: 'ordinary text' }, ['cdp'])).toEqual(['ordinary text']);
-    expect(turnCredentials({ files: { accessKeyId: 'key', secretAccessKey: '', sessionToken: null }, cdp: 'ws://computer/cdp?token=&other=value' }, ['cdp'])).toEqual(['key', 'ws://computer/cdp?token=&other=value', 'value']);
+  it('collects only existing, nonempty credentials and URL query values', () => {
+    expect(credentialValues({}, ['missing'])).toEqual([]);
+    expect(credentialValues({ files: [], cdp: 'ordinary text' }, ['cdp'])).toEqual(['ordinary text']);
+    expect(credentialValues({ files: { accessKeyId: 'key', secretAccessKey: '', sessionToken: null }, cdp: 'ws://computer/cdp?token=&other=value' }, ['cdp'])).toEqual(['key', 'ws://computer/cdp?token=&other=value', 'value']);
   });
 
   it.each([
@@ -101,7 +101,7 @@ describe('Turn credential prefix boundaries', () => {
 });
 
 it('rejects a usable credential URL when the Turn also holds non-URL credentials', () => {
-  const credentials = turnCredentials({ cdp: 'ws://computer/cdp?token=a%20b', files: { accessKeyId: 'turn-key' } }, ['cdp']);
+  const credentials = credentialValues({ cdp: 'ws://computer/cdp?token=a%20b', files: { accessKeyId: 'turn-key' } }, ['cdp']);
   const guard = turnCredentialGuard(credentials);
   expect(guard.leaks('', [{ type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: 'open ws://computer/cdp?token=a+b' }])).toBe(true);
 });

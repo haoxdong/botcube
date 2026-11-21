@@ -162,7 +162,7 @@ test('refuses an issuer that is not an https origin', () => {
 
 describe('under the assume-role Turn credentials adapter', () => {
   const assumed = synthesize({
-    turnCredentials: 'assume-role',
+    awsAccess: 'assume-role',
     roleName: 'bot-cube-user-memory',
     chatServiceTaskRole: 'bot-cube-chat-service',
   });

@@ -248,7 +248,7 @@ def test_an_openai_compatible_turn_with_no_model_fails_instead_of_sending_the_be
     from botcube_harness_deepagents import llm
     from deployment_fixture import ENDPOINT_MODELS, deploy
 
-    deploy(monkeypatch, tmp_path, models=ENDPOINT_MODELS)
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': ENDPOINT_MODELS})
     monkeypatch.setitem(sys.modules, 'langchain_openai', _fake_module('langchain_openai', ChatOpenAI=kwargs_recorder))
     monkeypatch.setenv('BOTCUBE_MODEL', 'echo')
 

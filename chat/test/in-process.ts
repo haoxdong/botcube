@@ -19,7 +19,7 @@ import { RUNTIME_ARN, createChatTable } from './fakes/stack.js';
 import { motoAws, motoEndpoint } from './fakes/moto.js';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { StockOverrides } from '../src/stock.js';
-import { TEST_ACCOUNT_KEY, TestAccounts, testDeploymentConfig } from './stock-bot.js';
+import { TEST_ACCOUNT_KEY, TestAccounts, testBotCubeConfig } from './stock-bot.js';
 
 /** The account every request signs in as, unless the x-test-owner header names another. */
 const OWNER = 'acct_account-1';
@@ -29,7 +29,7 @@ export interface InProcessOptions {
   /** Another Chat Service instance uses this already-created table. */
   existingTable?: string;
   invokeSessionApi?: SessionApi;
-  /** Hooks replaced on BotCube's own Chat, which serves the test bot's Deployment Config as production does. */
+  /** Hooks replaced on BotCube's own Chat, which serves the test bot's BotCube Config as production does. */
   overrides?: StockOverrides;
   /** Overrides of the Chat Service config, which points AgentCore and the session API at the fakes. */
   config?: Partial<ChatServiceConfig>;
@@ -100,7 +100,7 @@ export async function startInProcess(options: InProcessOptions = {}): Promise<In
   const accounts = new TestAccounts(table, DynamoDBDocumentClient.from(client));
   const { app: service, chat, history } = createChatService(
     {
-      env: { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table },
+      env: { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: table },
       accountStore: accounts,
       // The Agent Computer is an External Service: these tests start no browser.
       agentComputer: (local) => ({ ...local, warmSession: async () => undefined, turnStarting: () => undefined }),

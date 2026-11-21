@@ -1,4 +1,4 @@
-import type { Endpoint as EndpointConfig } from 'botcube-deployment-config/blocks';
+import type { Endpoint as EndpointConfig } from 'botcube-config/blocks';
 import { Agent, buildConnector, EnvHttpProxyAgent, Pool, type Dispatcher } from 'undici';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { dispatcherFetch } from './dispatcher-fetch.js';

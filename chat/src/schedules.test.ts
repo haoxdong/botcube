@@ -3,14 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { CreateQueueCommand, DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { loadDeployment } from 'botcube-deployment-config/load';
+import { loadBotCube } from 'botcube-config/load';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChatTable } from '../test/fakes/stack.js';
 import { createScheduledRuns, SchedulerView, type ScheduledRuns } from '../test/fakes/scheduler.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { chatScheduling, type ChatScheduling } from './schedules.js';
 
-const example = (name: string) => loadDeployment(fileURLToPath(new URL(`../../examples/${name}/deployment-config.json`, import.meta.url))).config;
+const example = (name: string) => loadBotCube(fileURLToPath(new URL(`../../examples/${name}/botcube.yaml`, import.meta.url))).config;
 
 let table: string;
 let queueUrl: string;

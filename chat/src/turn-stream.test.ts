@@ -1,6 +1,6 @@
 import { ActivityDeltaEventSchema, RunStartedEventSchema, ToolCallArgsEventSchema } from '@ag-ui/core/schemas';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { persistedTurnError, relayTurn, stopTurn, turnCredentialGuard, turnCredentials } from './turn-stream.js';
+import { persistedTurnError, relayTurn, stopTurn, turnCredentialGuard, credentialValues } from './turn-stream.js';
 import { recordTurnSummary } from './turn-summaries.js';
 import { TurnTiming } from './turn-timing.js';
 import type { Upstream } from './upstream.js';
@@ -175,7 +175,7 @@ describe('complete SSE fields and credential URLs', () => {
     { type: 'TEXT_MESSAGE_CONTENT', messageId: 'm1', delta: 'open ws://chat.test:8123/agent-computer/cdp?token=%70rivate-cdp-token' },
     { type: 'TOOL_CALL_ARGS', toolCallId: 't1', delta: '{"command":"open ws://chat.test:8123/agent-computer/cdp?token=%70rivate-cdp-token"}' },
   ])('withholds a usable percent-encoded CDP URL in $type', async (event) => {
-    const credentials = turnCredentials({ agentComputerCdpUrl: 'ws://chat.test:8123/agent-computer/cdp?token=private-cdp-token' }, ['agentComputerCdpUrl']);
+    const credentials = credentialValues({ agentComputerCdpUrl: 'ws://chat.test:8123/agent-computer/cdp?token=private-cdp-token' }, ['agentComputerCdpUrl']);
     const response = await relayTurn(fakeUpstream(() => sse(streamOf([`data: ${JSON.stringify(event)}\n\n`]))).upstream, { ...turn, credentials });
     const body = await response.text();
     expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
@@ -188,7 +188,7 @@ describe('complete SSE fields and credential URLs', () => {
     ['TEXT_MESSAGE_CONTENT', 'open ', '%7', '0rivate-cdp-token'],
   ])('withholds a percent-encoded CDP URL split across %s deltas', async (type, before, first, last) => {
     const url = 'ws://chat.test:8123/agent-computer/cdp?token=';
-    const credentials = turnCredentials({ agentComputerCdpUrl: `${url}private-cdp-token` }, ['agentComputerCdpUrl']);
+    const credentials = credentialValues({ agentComputerCdpUrl: `${url}private-cdp-token` }, ['agentComputerCdpUrl']);
     const identity = type === 'TOOL_CALL_ARGS' ? { toolCallId: 't1' } : { messageId: 'm1' };
     const response = await relayTurn(fakeUpstream(() => sse(streamOf([
       `data: ${JSON.stringify({ type, ...identity, delta: before + url + first })}\n\n`,
@@ -200,7 +200,7 @@ describe('complete SSE fields and credential URLs', () => {
   });
 
   it('withholds an embedded encoded CDP URL in a plain-text HTTP refusal', async () => {
-    const credentials = turnCredentials({ agentComputerCdpUrl: 'ws://chat.test:8123/agent-computer/cdp?token=private-cdp-token' }, ['agentComputerCdpUrl']);
+    const credentials = credentialValues({ agentComputerCdpUrl: 'ws://chat.test:8123/agent-computer/cdp?token=private-cdp-token' }, ['agentComputerCdpUrl']);
     const response = await relayTurn(fakeUpstream(() => new Response('failed to open ws://chat.test:8123/agent-computer/cdp?token=%70rivate-cdp-token', { status: 503 })).upstream, { ...turn, credentials });
     expect((await response.json()).details).toBe("The error body carried the Turn's credentials, so it was withheld");
     expect(consoleWarn.mock.calls.flat().join('\n')).not.toContain('%70rivate-cdp-token');
@@ -218,7 +218,7 @@ describe('multipart message text', () => {
     const parts = ['ws://computer.test/cdp?token=private-', 'token'];
     expect(new URL(parts.join('\n')).searchParams.get('token')).toBe('private-token');
     const event = { type: 'MESSAGES_SNAPSHOT', messages: [{ id: 'u', role: 'user', content: parts.map((text) => ({ type: 'text', text })) }] };
-    const credentials = turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=private-token' }, ['cdpUrl']);
+    const credentials = credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=private-token' }, ['cdpUrl']);
     const response = await relayTurn(fakeUpstream(() => sse(streamOf([`data: ${JSON.stringify(event)}\n\n`]))).upstream, { ...turn, credentials });
     expect(await response.text()).toContain('TURN_CREDENTIALS_IN_STREAM');
   });
@@ -359,7 +359,7 @@ describe('client message-buffer seed events', () => {
     ['activity refuses replacement when replace is false', [{ type: 'ACTIVITY_SNAPSHOT', messageId: 'x', activityType: 'test', content: {} }, { type: 'ACTIVITY_DELTA', messageId: 'x', activityType: 'test', patch: [{ op: 'replace', path: '', value: 'private-' }] }, { type: 'ACTIVITY_SNAPSHOT', messageId: 'x', activityType: 'test', content: {}, replace: false }, start, finish]],
     ['activity preserved across message snapshot', [{ type: 'ACTIVITY_SNAPSHOT', messageId: 'x', activityType: 'test', content: {} }, { type: 'ACTIVITY_DELTA', messageId: 'x', activityType: 'test', patch: [{ op: 'replace', path: '', value: 'private-' }] }, { type: 'MESSAGES_SNAPSHOT', messages: [] }, start, finish]],
   ])('withholds a prefix seeded by %s', async (_, events) => {
-    const credentials = turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=private-token' }, ['cdpUrl']);
+    const credentials = credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=private-token' }, ['cdpUrl']);
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(events.map((event) => `data: ${JSON.stringify(event)}\n\n`)))).upstream, { ...turn, credentials });
     expect(await response.text()).toContain('TURN_CREDENTIALS_IN_STREAM');
   });
@@ -385,7 +385,7 @@ describe('credential prefixes across client ID reuse', () => {
       { type: `${kind}_END`, ...identity }, { type: `${kind}_START`, ...identity },
       { type: content, ...identity, delta: last }, { type: `${kind}_END`, ...identity },
     ];
-    const credentials = turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
+    const credentials = credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(events.map((event) => `data: ${JSON.stringify(event)}\n\n`)))).upstream, { ...turn, credentials });
     const body = await response.text();
     expect(body).toContain('TURN_CREDENTIALS_IN_STREAM');
@@ -445,7 +445,7 @@ describe('credential deltas in client-normalized chunk events', () => {
     [type, 'cdp.signed.', 'token'], [type, 'cdp%2', 'Esigned.token'],
   ]))('withholds %s with inherited IDs: %s', async (type, first, last) => {
     const identity = type === 'TOOL_CALL_CHUNK' ? { toolCallId: 't1', toolCallName: 'execute' } : { messageId: 'm1' };
-    const credentials = turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
+    const credentials = credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
     const events = [{ type, ...identity, delta: first }, { type: 'RAW', event: {} }, { type, delta: last }];
     const response = await relayTurn(fakeUpstream(() => sse(streamOf(events.map((event) => `data: ${JSON.stringify(event)}\n\n`)))).upstream, { ...turn, credentials });
     const body = await response.text();
@@ -470,7 +470,7 @@ describe('credential deltas in client-normalized chunk events', () => {
 describe('reasoning message credential deltas', () => {
   it.each([
     [['private-token'], 'private-', 'token'],
-    [turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']), 'cdp%2', 'Esigned.token'],
+    [credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']), 'cdp%2', 'Esigned.token'],
   ])('withholds a credential split across reasoning deltas: %j', async (credentials, first, last) => {
     const events = [
       { type: 'REASONING_MESSAGE_START', messageId: 'm1' },
@@ -499,7 +499,7 @@ describe('reasoning message credential deltas', () => {
 });
 
 describe('encoded standalone CDP query tokens', () => {
-  const credentials = turnCredentials({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
+  const credentials = credentialValues({ cdpUrl: 'ws://computer.test/cdp?token=cdp.signed.token' }, ['cdpUrl']);
   it.each([
     ['TEXT_MESSAGE_CONTENT', { messageId: 'm1' }, ['cdp%2Esigned.token']],
     ['TOOL_CALL_ARGS', { toolCallId: 't1' }, ['{"token":"cdp%2Esigned.token"}']],

@@ -1,7 +1,7 @@
 interface Subnet {
   id: string;
   availabilityZone: string;
-  /** A supplied file system's mount target in the subnet takes NFS from the Files links function at this range. */
+  /** A existing file system's mount target in the subnet takes NFS from the Files links function at this range. */
   cidrBlock?: string;
 }
 
@@ -10,7 +10,7 @@ export interface DeployIdentity {
   aws: {
     /**
      * `chatServiceTaskRole` names the Chat Service's task role, which the `assume-role` adapter's Memory role trusts. With
-     * `supplied.files`, it and the other roles that mount Files take these names, which the operator's grants name.
+     * `existing.files`, it and the other roles that mount Files take these names, which the operator's grants name.
      */
     iam: {
       runtimeRole: string;

@@ -1,16 +1,16 @@
-// Test seam 2 (ADR 0091): each example's infrastructure grants exactly what `botcube footprint` prints for its Deployment Config.
+// Test seam 2 (ADR 0091): each example's infrastructure grants exactly what `botcube footprint` prints for its BotCube Config.
 import { ok as assert } from 'node:assert';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import { footprint, IMAGES } from '../../../../deployment-config/footprint.js';
-import type { Principal } from '../../../../deployment-config/principals.js';
-import { loadDeployment } from '../../../../deployment-config/load.js';
+import { footprint, IMAGES } from '../../../../config/footprint.js';
+import type { Principal } from '../../../../config/principals.js';
+import { loadBotCube } from '../../../../config/load.js';
 import { CREDENTIAL_IMAGE_EXAMPLES_ROOT, EXAMPLES_ROOT, IMAGE_EXAMPLES_ROOT } from '../example/app.js';
 import { deployIdentity } from '../lib/deploy-root.js';
-import { deploymentConfigPath, synthesizeExample } from './example-fixture.js';
+import { botcubeConfigPath, synthesizeExample } from './example-fixture.js';
 import { parkingTemplate } from './resolve-parking.js';
 
 const EXAMPLES = ['public', 'enterprise'];
@@ -24,7 +24,7 @@ const RUNTIME_AUTHORIZERS: Record<string, unknown[]> = {
 };
 const AGENTCORE_STACK = 'AgentCore-bot-cube-template';
 /**
- * The hosts beyond AWS each example's processes are configured to reach, read from the Deployment Config by hand: the
+ * The hosts beyond AWS each example's processes are configured to reach, read from the BotCube Config by hand: the
  * enterprise example's OIDC issuer, model endpoint, OTLP collector and proxy.
  */
 const CONFIGURED_EGRESS: Record<string, string[]> = {
@@ -143,14 +143,14 @@ function principalGrants(resources: Resources, principals: Map<string, Principal
 
 const OWN_HOSTS = new Set([EXAMPLE_IDENTITY.domains.chatService, EXAMPLE_IDENTITY.domains.chatServicePreview,
   ...EXAMPLES.flatMap(example => {
-    const { web, supplied } = loadDeployment(deploymentConfigPath(example)).config;
-    return [...(web?.corsOrigins ?? []), ...(supplied?.credentialService ? [supplied.credentialService.url] : [])];
+    const { web, existing } = loadBotCube(botcubeConfigPath(example)).config;
+    return [...(web?.corsOrigins ?? []), ...(existing?.credentialService ? [existing.credentialService.url] : [])];
   })].map(origin => new URL(origin).host));
 const isOwn = ({ host, hostname }: URL) =>
   OWN_HOSTS.has(host) || ['localhost', '127.0.0.1', '[::1]', 'task-address'].includes(hostname) || hostname.endsWith(`.${EXAMPLE_IDENTITY.aws.ecs.privateNamespace}`);
 
 /**
- * The hosts the containers' and Runtimes' environment names, and the Deployment Config file it points each process
+ * The hosts the containers' and Runtimes' environment names, and the BotCube Config file it points each process
  * at, other than the deployment's own origins, loopback and its private namespace: where its processes are configured
  * to reach beyond the AWS APIs their roles name.
  */
@@ -159,15 +159,15 @@ function configuredHosts(resources: Resources): string[] {
     const variables: [string, unknown][] = Type === 'AWS::ECS::TaskDefinition'
       ? (Properties.ContainerDefinitions ?? []).flatMap(container => (container.Environment ?? []).map(({ Name, Value }) => [Name, Value] as [string, unknown]))
       : Type === 'AWS::BedrockAgentCore::Runtime' ? Object.entries(Properties.EnvironmentVariables ?? {}) : [];
-    const values = variables.map(([name, value]) => (name === 'BOTCUBE_DEPLOYMENT_CONFIG' ? servedDeploymentConfig(value) : value));
+    const values = variables.map(([name, value]) => (name === 'BOTCUBE_CONFIG' ? servedBotCubeConfig(value) : value));
     return values.filter((value): value is string => typeof value === 'string')
       .flatMap(value => value.match(/\b(?:https?|wss?):\/\/[^\s"',;]+/g) ?? [])
       .filter(url => URL.canParse(url)).map(url => new URL(url)).filter(url => !isOwn(url)).map(url => url.host);
   });
 }
 
-/** The text of the Deployment Config at `imagePath` in the chat or Credential Service image, which ships it from botcube/examples/. */
-function servedDeploymentConfig(imagePath: unknown): string {
+/** The text of the BotCube Config at `imagePath` in the chat or Credential Service image, which ships it from botcube/examples/. */
+function servedBotCubeConfig(imagePath: unknown): string {
   const root = [IMAGE_EXAMPLES_ROOT, CREDENTIAL_IMAGE_EXAMPLES_ROOT].find(prefix => typeof imagePath === 'string' && imagePath.startsWith(`${prefix}/`));
   assert(typeof imagePath === 'string' && root !== undefined, `${JSON.stringify(imagePath)} is under ${IMAGE_EXAMPLES_ROOT} or ${CREDENTIAL_IMAGE_EXAMPLES_ROOT}`);
   return fs.readFileSync(path.join(EXAMPLES_ROOT, path.posix.relative(root, imagePath)), 'utf8');
@@ -194,7 +194,7 @@ function managedPolicyName(arn: ManagedPolicyArn): string {
 }
 
 const apps = new Map<string, Promise<App>>();
-/** Each example synthesized once, from its Deployment Config through the examples' deploy entry. */
+/** Each example synthesized once, from its BotCube Config through the examples' deploy entry. */
 function appOf(example: string): Promise<App> {
   const app = apps.get(example) ?? synthesizeExample(example);
   apps.set(example, app);
@@ -202,7 +202,7 @@ function appOf(example: string): Promise<App> {
 }
 
 describe.each(EXAMPLES)('the %s example', example => {
-  const needs = footprint(loadDeployment(deploymentConfigPath(example)).config);
+  const needs = footprint(loadBotCube(botcubeConfigPath(example)).config);
   let synthesized: ReturnType<typeof granted>;
   let pooled: ReturnType<typeof granted>;
   beforeAll(async () => {
@@ -215,7 +215,7 @@ describe.each(EXAMPLES)('the %s example', example => {
   });
 
   test('grants each BotCube role exactly the IAM actions its footprint prints with Files access points from the deploy-time pool', () => {
-    expect(pooled.iam).toEqual(footprint(loadDeployment(deploymentConfigPath(example)).config, { filesAccessPointMode: 'pool' }).iam);
+    expect(pooled.iam).toEqual(footprint(loadBotCube(botcubeConfigPath(example)).config, { filesAccessPointMode: 'pool' }).iam);
   });
 
   test('holds no AWS managed policy on any Lambda role: each function writes its own log group by an inline grant it deploys after', async () => {
@@ -275,7 +275,7 @@ test("the enterprise example's Chat Service assumes the AgentCore stack's Memory
   });
 }, 120_000);
 
-test("the enterprise example's Chat Service, Credential Service and Runtime read its models Endpoint from the Deployment Config, not the environment", async () => {
+test("the enterprise example's Chat Service, Credential Service and Runtime read its models Endpoint from the BotCube Config, not the environment", async () => {
   const app = await appOf('enterprise');
   const origin = parkingTemplate(app.node.findChild('PreviewOrigin') as Stack, 'live');
   const environments = Object.entries(origin.findResources('AWS::ECS::TaskDefinition'))
@@ -284,6 +284,6 @@ test("the enterprise example's Chat Service, Credential Service and Runtime read
   const runtimeVariables = Object.keys((runtime.Properties as Properties).EnvironmentVariables ?? {});
   const models = (name: string) => name.startsWith('BOTCUBE_MODELS_') || name === 'BOTCUBE_TURN_SUMMARY_MODEL';
 
-  expect(environments.filter(([, names]) => names.includes('BOTCUBE_DEPLOYMENT_CONFIG')).map(([task]) => task)).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
+  expect(environments.filter(([, names]) => names.includes('BOTCUBE_CONFIG')).map(([task]) => task)).toEqual(['ChatServiceTask', 'CredentialServiceTask']);
   expect([...environments.flatMap(([, names]) => names), ...runtimeVariables].filter(models)).toEqual([]);
 });

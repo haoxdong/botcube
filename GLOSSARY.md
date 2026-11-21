@@ -10,11 +10,11 @@ _Avoid_: AgentCradle (former name), agentstack, the stack, console, framework, C
 
 **Bot Image**:
 The container image a bot's author builds on a Harness image, holding the bot's Skills, files and its settings file, `bot.yaml`. It is the bot: every deployment of it runs the same image.
-_Avoid_: Cartridge (retired), bot package, custom image, bot.json (former settings file)
+_Avoid_: Cartridge (retired), bot package, custom image
 
 **BotCube Config**:
 `botcube.yaml`, the one file an operator writes for one deployment: which Bot Image runs, the integrations it uses, the existing resources it is given and its network.
-_Avoid_: Deployment Config (former name), config (bare), environment, env file, manifest, integrator (say operator)
+_Avoid_: config (bare), environment, env file, manifest, integrator (say operator)
 
 **Harness**:
 A complete agent implementation on one third-party harness library, such as deepagents with LangGraph, together with everything coupled to that library, such as memory backends and LLM provider factories. It is swapped whole, never in place, and lives in `botcube/harness/<library>/`.

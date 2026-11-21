@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from 'jose';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import type { ChatHarnessAuth } from './harness-auth.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
 import { harnessBearer } from './harness-auth.js';
@@ -14,8 +14,8 @@ import { HttpFake, sendJson } from '../test/fakes/http-fake.js';
 
 const ISSUER = 'https://chat.example.com';
 
-it("shares the Deployment Config's harnessAuth with the CDK as the schema reads it", () => {
-  expectTypeOf<ChatHarnessAuth>().toEqualTypeOf<DeploymentConfig['harnessAuth']>();
+it("shares the BotCube Config's harnessAuth with the CDK as the schema reads it", () => {
+  expectTypeOf<ChatHarnessAuth>().toEqualTypeOf<BotCubeConfig['integrations']['harnessAuth']>();
 });
 const key: JsonWebKey = { ...generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ format: 'jwk' }), kid: 'key-1' };
 

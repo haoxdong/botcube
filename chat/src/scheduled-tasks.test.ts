@@ -13,7 +13,7 @@ import { schedulerConfigFromEnv } from './scheduler.js';
 import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { DynamoDBAgentDocuments } from './agent-documents.js';
 import { createChatService } from './server.js';
-import { testDeploymentConfig } from '../test/stock-bot.js';
+import { testBotCubeConfig } from '../test/stock-bot.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { eventually } from '../test/eventually.js';
 
@@ -1067,7 +1067,7 @@ describe('ScheduledTasks', () => {
     let stop: () => void = () => undefined;
     const { app, history } = createChatService(
       {
-        env: { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: table },
+        env: { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: table },
         overrides: {
           corsOrigins: [],
           agentDocuments: { agentIdentity: { name: 'Test', character: '', vibe: '', avatar: '' }, soul: '' },

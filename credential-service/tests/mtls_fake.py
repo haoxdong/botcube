@@ -28,7 +28,7 @@ class Certificates:
         return self.dir / 'ca.pem'
 
     def files(self, name: str) -> dict[str, str]:
-        """A certificate's PEM chain and key, as a Deployment Config's file pair names them."""
+        """A certificate's PEM chain and key, as a BotCube Config's file pair names them."""
         return {'certificate': str(self.dir / f'{name}.pem'), 'key': str(self.dir / f'{name}.key')}
 
     def exec_credential(self, name: str) -> str:

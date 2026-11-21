@@ -1,7 +1,7 @@
 """The proxy Endpoint's credential and headers (ADR 0091) for the Credential Service, the twin of the Harness's `proxy_relay`.
 
 The OpenAI relay and the sign-in socket read HTTP(S)_PROXY, so the deploy points them at this loopback relay
-(`proxyEnvironment` in botcube/deployment-config), which opens each request to the proxy the Deployment Config names
+(`proxyEnvironment` in botcube/config), which opens each request to the proxy the BotCube Config names
 with the credential file's current value: a rotated token reaches the next request.
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ _REPLACED = {'proxy-authorization', 'proxy-connection', 'connection'}
 
 
 def _file_credential(source: Mapping[str, str]) -> Callable[[], str]:
-    """A proxy credential, always a file (`proxy.credential` in botcube/deployment-config)."""
+    """A proxy credential, always a file (`proxy.credential` in botcube/config)."""
     if source['kind'] != 'file':
         raise RuntimeError(f"proxy.credential: the proxy credential is a file, not {source['kind']}")
     path = Path(source['path'])
@@ -51,13 +51,13 @@ def _file_credential(source: Mapping[str, str]) -> Callable[[], str]:
 
 
 def start_proxy_relay_from_config(config: Mapping[str, Any], env: Mapping[str, str] = os.environ) -> str | None:
-    """The relay for the Deployment Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
-    proxy = config['proxy']
+    """The relay for the BotCube Config's proxy, listening where HTTPS_PROXY points; None unless it has a credential, headers or TLS."""
+    proxy = config['network']['proxy']
     if proxy['kind'] == 'none' or not {'credential', 'headers', 'tls'} & proxy.keys():
         return None
     listen = urlsplit(env.get('HTTPS_PROXY') or '')
     if not listen.hostname or listen.port is None:
-        raise RuntimeError("HTTPS_PROXY is unset beside the Deployment Config's proxy credential, headers or TLS; the deploy points it at the proxy relay")
+        raise RuntimeError("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS; the deploy points it at the proxy relay")
     credential = _file_credential(proxy['credential']) if 'credential' in proxy else None
     tls = endpoint_tls('proxy', proxy['tls'], env=env) if 'tls' in proxy else None
     return start_proxy_relay(upstream=proxy['url'], listen=(listen.hostname, listen.port), credential=credential, headers=proxy.get('headers', {}), tls=tls)

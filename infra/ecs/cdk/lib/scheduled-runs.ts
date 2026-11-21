@@ -10,7 +10,7 @@ import { optionalPhysicalName } from './physical-name.js';
 export interface ScheduledRunsProps {
   clusterName: string;
   scheduledRunsQueue?: sqs.IQueue;
-  /** The Deployment Config's `schedules` adapter: EventBridge Scheduler (the default), the Chat Service polling its table, or none. */
+  /** The BotCube Config's `schedules` adapter: EventBridge Scheduler (the default), the Chat Service polling its table, or none. */
   schedules?: 'eventbridge-scheduler' | 'table-poller' | 'none';
   scheduledRunsQueueName?: string;
   scheduledRunsFailedQueueName?: string;

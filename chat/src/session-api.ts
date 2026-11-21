@@ -64,7 +64,7 @@ const SESSION_API_CALLS_AT_ONCE = 5;
 /**
  * The session API's connections, with no headers or body timeout: a call's own timeout is its only deadline.
  * Undici's defaults, 300 s each, would cut short a purge the function runs for up to 900 s.
- * Under the Deployment Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
+ * Under the BotCube Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
  */
 function sessionApiDispatcher(): Dispatcher {
   const options = { headersTimeout: 0, bodyTimeout: 0 };

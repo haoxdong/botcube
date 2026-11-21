@@ -34,7 +34,7 @@ plugin supplies two extension points:
 The shell itself ships the rest: the effort levels the harness takes, reply file
 links and composer uploads through the Chat Service's Files routes, the Agent
 Computer and its live browser panel, the Sign-ins tab, and the Soul and Memory
-card colours. The bot settings (`bot.json`) set the four agent colours, the
+card colours. The bot settings (`bot.yaml`) set the four agent colours, the
 Memory gate, and whether the Agent Computer and its live browser panel show.
 
 The UI imports the selected plugin only through `@bot-ui`.
@@ -73,8 +73,8 @@ path.
 
 ## Harness and memory contract
 
-A bot is the settings file its Deployment Config names (ADR 0091); the Harness
-refuses to start without `BOTCUBE_DEPLOYMENT_CONFIG`. BotCube builds the bot's framework-neutral Harness
+A Bot Image carries `/bot/bot.yaml` (ADR 0091). `BOTCUBE_CONFIG` locates
+the deployment's `botcube.yaml`. BotCube builds the bot's framework-neutral Harness
 definition from it: skills, agent identity and copy, invocation identity
 handling, a shell environment, root preparation, and the per-request session
 variable. A Harness adapts those values to its own framework; a bot runs no
@@ -96,7 +96,7 @@ of the same three slots.
 ## Chat Service
 
 The Chat Service is configured, not extended: `serveChatService()` builds BotCube's
-own Chat from the Deployment Config and bot settings ([`chat/src/stock.ts`](chat/src/stock.ts)).
+own Chat from the BotCube Config and bot settings ([`chat/src/stock.ts`](chat/src/stock.ts)).
 It keeps Session Metadata private and contains no product code or harness-library code.
 
 ## Tools and deployment

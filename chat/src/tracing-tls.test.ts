@@ -3,8 +3,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { context, propagation, trace } from '@opentelemetry/api';
-import type { EndpointTls } from 'botcube-deployment-config/blocks';
-import { telemetryDeployment } from 'botcube-deployment-config/telemetry';
+import type { EndpointTls } from 'botcube-config/blocks';
+import { telemetryEnvironment } from 'botcube-config/telemetry';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FakeMtlsFront, FakeMtlsProxy, IMPOSTOR_IDENTITY, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
 import { endpointTls } from './endpoint-tls.js';
@@ -48,11 +48,11 @@ afterAll(async () => {
   certificates.remove();
 });
 
-/** Start the Chat Service's tracing for a Deployment Config whose OTLP Endpoint on `port` has TLS, exporting each span as it ends. */
+/** Start the Chat Service's tracing for a BotCube Config whose OTLP Endpoint on `port` has TLS, exporting each span as it ends. */
 function startTracing(port: number, tls: EndpointTls, proxyEnv: Record<string, string> = {}): void {
   const telemetry = { kind: 'otlp', url: `https://127.0.0.1:${port}/v1/traces`, tls } as const;
   const env = {
-    ...telemetryDeployment(telemetry).chatService, ...proxyEnv,
+    ...telemetryEnvironment(telemetry).chatService, ...proxyEnv,
     OTEL_BSP_SCHEDULE_DELAY: '1', OTEL_RESOURCE_ATTRIBUTES: '', OTEL_NODE_RESOURCE_DETECTORS: 'none',
   };
   for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);

@@ -6,7 +6,7 @@ import { CfnBrowserCustom } from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
 import type { DeployIdentity } from './production-identity.js';
-import { suppliedFilesRoleNames } from './files-role-names.js';
+import { existingFilesRoleNames } from './files-role-names.js';
 import { createProductionParking } from './production-parking-stack.js';
 import { ContainerImage, Secret, type ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
 import { grantModelsEndpoint } from './models-endpoint.js';
@@ -26,7 +26,7 @@ import { CREDENTIAL_SERVICE_ENV, PrivateCredentialService } from './private-cred
 import { ownedEgress, type PrivateEgressStack } from './private-egress-stack.js';
 import { nameTaskRoles } from './task-role-names.js';
 import { WebLatencyStack } from './web-latency-stack.js';
-import type { ModelsDeployment } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { ModelsDeployment } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 const projectDir = (dir: string): string => (fs.existsSync(path.join(dir, 'cdk.json')) ? dir : projectDir(path.dirname(dir)));
 const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
@@ -63,7 +63,7 @@ export interface ProductionOptions {
   serving?: (serving: Serving) => void;
   originConfig?: Pick<import('./preview-origin-stack.js').PreviewOriginProps,
     'providerTimeoutSeconds' | 'providerLogRetention' | 'connectionLogExpirationDays' | 'clientKeepAliveSeconds' |
-    'securityGroupName' | 'connectionLogsBucketName' | 'suppliedConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
+    'securityGroupName' | 'connectionLogsBucketName' | 'existingConnectionLogsBucketName' | 'trustStoreName' | 'loadBalancerName' | 'providerNames'> & {
       agentNetworkSecurityGroupName?: string;
       agentComputerSecurityGroupName?: string;
       agentComputerBrowserRoleName?: string;
@@ -79,14 +79,14 @@ export interface ProductionOptions {
   kmsKey?: kms.IKey;
   permissionsBoundary?: iam.IManagedPolicy;
   chat?: Partial<Omit<import('./preview-chat-service.js').PreviewChatServiceProps, 'chatTable' | 'image' | 'vpc' | 'subnets' | 'executionRole' | 'permissionsBoundary' | 'browserId'>> & {
-    /** The chat image's Deployment Config path (BOTCUBE_DEPLOYMENT_CONFIG); absent, Chat Service defaults. */
-    deploymentConfig?: string;
+    /** The chat image's BotCube Config path (BOTCUBE_CONFIG); absent, Chat Service defaults. */
+    botcubeConfig?: string;
   };
   credentials?: Partial<Omit<import('./private-credential-service.js').PrivateCredentialServiceProps, 'cluster' | 'chatNetwork' | 'agentNetwork' | 'image' | 'kmsKey' | 'executionRole' | 'permissionsBoundary' | 'subnets'>>;
-  /** The Deployment Config's non-Bedrock `models`, as botcube/deployment-config's `modelsDeployment` gives them. */
+  /** The BotCube Config's non-Bedrock `models`, as botcube/config's `modelGatewayResources` gives them. */
   models?: ModelsDeployment;
-  /** The Deployment Config's `turnCredentials.kind`; absent is the default, `web-identity`. */
-  turnCredentials?: 'web-identity' | 'assume-role';
+  /** The BotCube Config's `awsAccess.kind`; absent is the default, `web-identity`. */
+  awsAccess?: 'web-identity' | 'assume-role';
   /** The secrets the Chat Service's credential sources read. */
   chatSecretArns?: readonly string[];
   repositoryRoot: string;
@@ -98,8 +98,8 @@ export interface ProductionOptions {
   corsOrigins: string[];
   /** The registry, mirroring ECR Public's paths, every image comes from. */
   imageRegistry?: string;
-  /** The Deployment Config names `supplied.network`, which brings its own egress in place of the identity's `privateEgress`. */
-  suppliedNetwork?: boolean;
+  /** The BotCube Config names `existing.network`, which brings its own egress in place of the identity's `privateEgress`. */
+  existingNetwork?: boolean;
   /** The serving stack; absent keeps storage and egress synthesizable without live prerequisites. */
   origin?: {
     input: OriginInput;
@@ -126,7 +126,7 @@ function addSmokePolicy(origin: PreviewOriginStack, identity: DeployIdentity, st
   new iam.ManagedPolicy(origin, 'OriginSmokePolicy', {
     roles: [iam.Role.fromRoleName(origin, 'OriginSmokeDeployRole', identity.aws.ecs.deployRoleName)],
     statements: [
-      ...(storage.chatTableSupplied ? [] : [
+      ...(storage.chatTableExisting ? [] : [
         new iam.PolicyStatement({
           actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem'],
           resources: [storage.chatTable.tableArn],
@@ -162,7 +162,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const { identity } = options;
   const env = { account: identity.aws.account, region: identity.aws.region };
   const storage = createChatStorage(app, options);
-  const egress = ownedEgress(app, identity, options.suppliedNetwork ?? false, options.permissionsBoundary);
+  const egress = ownedEgress(app, identity, options.existingNetwork ?? false, options.permissionsBoundary);
   const health = new ApiHealthStack(app, 'ApiHealth', {
     env, stackName: identity.aws.ecs.apiHealth.stackName, alarmName: identity.aws.ecs.apiHealth.alarmName,
     hostname: new URL(identity.domains.chatService).hostname, alertsTopicName: identity.aws.ecs.alertsTopicName,
@@ -182,8 +182,8 @@ export function defineProduction(app: App, options: ProductionOptions) {
   }
   if (!options.origin) return;
   const { input, images, commit } = options.origin;
-  const filesRoles = suppliedFilesRoleNames(storage, identity.aws.iam);
-  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableSupplied, identity, options.imageRegistry);
+  const filesRoles = existingFilesRoleNames(storage, identity.aws.iam);
+  const parking = createProductionParking(app, cubeRoot, storage.chatTable as ITable, storage.chatTableExisting, identity, options.imageRegistry);
   if (options.permissionsBoundary) iam.PermissionsBoundary.of(parking).apply(options.permissionsBoundary);
   const origin = createServingOrigin(app, options, input, health, egress, parking.wakeUrl);
   const chat = new PreviewChatService(origin, 'ChatService', {
@@ -201,11 +201,11 @@ export function defineProduction(app: App, options: ProductionOptions) {
     // aws-cdk-lib's Table declares `T | undefined` getters where ITable declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
     chatTable: storage.chatTable as ITable,
-    chatTableSupplied: storage.chatTableSupplied,
+    chatTableExisting: storage.chatTableExisting,
     image: images.chat,
-    ...withoutDeploymentConfig(options.chat),
+    ...withoutBotCubeConfig(options.chat),
   });
-  addDeploymentConfig(chat.container, options.chat?.deploymentConfig);
+  addBotCubeConfig(chat.container, options.chat?.botcubeConfig);
   addSmokePolicy(origin, identity, storage, options.chat?.runtimeArn ?? input.runtimeArn);
   const agentNetwork = new ec2.SecurityGroup(origin, 'AgentNetwork', { vpc: chat.cluster.vpc, ...optionalPhysicalName('securityGroupName', options.originConfig?.agentNetworkSecurityGroupName) });
   new ssm.StringParameter(origin, 'AgentSecurityGroupParameter', {
@@ -219,7 +219,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   chat.container.addEnvironment('BOTCUBE_PUBLIC_ORIGIN', publicOrigin);
   const turnIdentityKeys = SecretsManagerSecret.fromSecretNameV2(origin, 'TurnIdentityKeys', identity.aws.ecs.chatService.turnIdentityKeysSecretName);
   chat.container.addSecret('BOTCUBE_TURN_IDENTITY_KEYS', Secret.fromSecretsManager(turnIdentityKeys));
-  if (options.turnCredentials === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
+  if (options.awsAccess === 'assume-role') assumeUserMemoryRole(origin, chat, identity.aws.iam);
   nameTaskRoles(chat.task, filesRoles?.chatServiceTaskRole, undefined, undefined);
   grantSecrets(chat, options.chatSecretArns);
   const agentComputer = addAgentComputerBrowser(origin, chat, storage, browserConfiguration(options, chat.cluster.vpc), {
@@ -245,7 +245,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
     hostname: credentialConfig.publicHostname, rpcPath: credentialConfig.rpcPath, port: identity.aws.credentialService.port,
     paths: publicPaths(credentialConfig),
     chatTableKeyPrefixes: credentialConfig.chatTableKeyPrefixes ?? [], rawHostname,
-    chatTable: storage.chatTable as ITable, chatTableSupplied: storage.chatTableSupplied,
+    chatTable: storage.chatTable as ITable, chatTableExisting: storage.chatTableExisting,
   });
   // A tag changes a task definition in place, so a draining task keeps its own revision's commit.
   for (const task of [chat.task, credentials.task]) {
@@ -285,7 +285,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   addTurnSummaryModel(origin, chat, options);
 }
 
-/** Where Turn summaries run: the Deployment Config's OpenAI-compatible Endpoint, or Bedrock. */
+/** Where Turn summaries run: the BotCube Config's OpenAI-compatible Endpoint, or Bedrock. */
 function addTurnSummaryModel(origin: PreviewOriginStack, chat: PreviewChatService, options: ProductionOptions) {
   if (grantModelsEndpoint(chat, options.models)) return;
   // The Turn summary model runs on a US cross-region inference profile, which routes to US Regions.
@@ -361,7 +361,7 @@ function addAgentComputerBrowser(
     ...optionalPhysicalName('roleName', names?.agentComputerBrowserRoleName),
     assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', { conditions: { StringEquals: { 'aws:SourceAccount': origin.account } } }),
   });
-  if (!storage.suppliedFiles) role.addToPrincipalPolicy(new iam.PolicyStatement({
+  if (!storage.existingFiles) role.addToPrincipalPolicy(new iam.PolicyStatement({
     actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
     resources: [storage.filesEfs.attrArn],
     conditions: { ArnLike: { 'elasticfilesystem:AccessPointArn': origin.formatArn({ service: 'elasticfilesystem', resource: 'access-point', resourceName: '*' }) } },
@@ -390,7 +390,7 @@ function addAgentComputerBrowser(
  * each Turn. Its task role takes the name that role trusts.
  */
 function assumeUserMemoryRole(origin: PreviewOriginStack, chat: PreviewChatService, { userMemoryRole, chatServiceTaskRole }: DeployIdentity['aws']['iam']) {
-  if (!chatServiceTaskRole) throw new Error('Deploy identity aws.iam.chatServiceTaskRole: required with turnCredentials assume-role');
+  if (!chatServiceTaskRole) throw new Error('Deploy identity aws.iam.chatServiceTaskRole: required with awsAccess assume-role');
   nameTaskRoles(chat.task, chatServiceTaskRole, undefined, undefined);
   const roleArn = origin.formatArn({ service: 'iam', region: '', resource: 'role', resourceName: userMemoryRole });
   chat.task.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ['sts:AssumeRole'], resources: [roleArn] }));
@@ -416,12 +416,12 @@ function createChatStorage(app: App, options: ProductionOptions): ChatStorageSta
   return new ChatStorageStack(app, 'ChatStorage', { env, ...options.storage, ...(options.chatTableName ? { tableName: options.chatTableName } : {}) });
 }
 
-/** The Chat Service's props, without the Deployment Config path that addDeploymentConfig sets. */
-function withoutDeploymentConfig({ deploymentConfig: _path, ...chat }: NonNullable<ProductionOptions['chat']> = {}) {
+/** The Chat Service's props, without the BotCube Config path that addBotCubeConfig sets. */
+function withoutBotCubeConfig({ botcubeConfig: _path, ...chat }: NonNullable<ProductionOptions['chat']> = {}) {
   return chat;
 }
 
-/** Point the Chat Service at the Deployment Config its image ships; absent, it keeps its defaults. */
-function addDeploymentConfig(container: ContainerDefinition, deploymentConfig: string | undefined) {
-  if (deploymentConfig) container.addEnvironment('BOTCUBE_DEPLOYMENT_CONFIG', deploymentConfig);
+/** Point the Chat Service at the BotCube Config its image ships; absent, it keeps its defaults. */
+function addBotCubeConfig(container: ContainerDefinition, botcubeConfig: string | undefined) {
+  if (botcubeConfig) container.addEnvironment('BOTCUBE_CONFIG', botcubeConfig);
 }

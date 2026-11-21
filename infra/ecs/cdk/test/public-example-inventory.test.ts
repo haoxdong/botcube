@@ -1,4 +1,4 @@
-// The public example is the default path: nothing supplied. Its resources, by stack, logical ID and type, are pinned, so
+// The public example is the default path: nothing existing. Its resources, by stack, logical ID and type, are pinned, so
 // a change that drops, renames or adds a production resource on that path shows up here as a reviewed snapshot diff
 // instead of a silent CloudFormation replacement. Asset hashes and property values stay out.
 import { Stack } from 'aws-cdk-lib';

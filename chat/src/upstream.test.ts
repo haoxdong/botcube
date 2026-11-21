@@ -145,7 +145,7 @@ describe('the AgentCore upstream', () => {
     ]);
   });
 
-  it("reaches the Runtime through the Deployment Config's proxy, unless the Runtime's host is exempted", async () => {
+  it("reaches the Runtime through the BotCube Config's proxy, unless the Runtime's host is exempted", async () => {
     const proxy = await recordingServer((response) => response.end('ok'));
     vi.stubEnv('NODE_USE_ENV_PROXY', '1');
     // Both spellings: undici prefers the lowercase one, which a sandbox may already set.

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import { errors } from 'undici';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
@@ -29,8 +29,8 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The Deployment Config's OpenAI-compatible `models` section, at the stand-in. */
-function deployed(models: Partial<Extract<DeploymentConfig['models'], { kind: 'openai-compatible' }>> = {}): DeploymentConfig['models'] {
+/** The BotCube Config's OpenAI-compatible `models` section, at the stand-in. */
+function deployed(models: Partial<Extract<BotCubeConfig['integrations']['modelGateway'], { kind: 'openai-compatible' }>> = {}): BotCubeConfig['integrations']['modelGateway'] {
   return {
     kind: 'openai-compatible',
     url: `${endpoint.url}/v1`,
@@ -43,7 +43,7 @@ function deployed(models: Partial<Extract<DeploymentConfig['models'], { kind: 'o
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
-const summarize = (models: DeploymentConfig['models']) => turnSummarizer(turnSummaryModel(models, {}, 'us-east-1'))(turn);
+const summarize = (models: BotCubeConfig['integrations']['modelGateway']) => turnSummarizer(turnSummaryModel(models, {}, 'us-east-1'))(turn);
 
 describe('Turn summaries on an OpenAI-compatible models Endpoint', () => {
   it("send the Endpoint's credential as the bearer token, and its headers", async () => {

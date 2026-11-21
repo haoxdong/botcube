@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { DeploymentConfig } from 'botcube-deployment-config';
-import type { ModelsWire } from 'botcube-deployment-config/blocks';
+import type { BotCubeConfig } from 'botcube-config';
+import type { ModelsWire } from 'botcube-config/blocks';
 import { z } from 'zod';
 import { awsFetch } from './aws.js';
 import { endpoint, type Endpoint } from './endpoint.js';
@@ -21,7 +21,7 @@ export interface BedrockSummaryModel {
   url: string;
 }
 
-/** The summary model on an OpenAI-compatible Endpoint (the Deployment Config's `models` section, ADR 0091). */
+/** The summary model on an OpenAI-compatible Endpoint (the BotCube Config's `models` section, ADR 0091). */
 export interface OpenAICompatibleSummaryModel {
   kind: 'openai-compatible';
   endpoint: Endpoint;
@@ -42,10 +42,10 @@ You are given, as JSON, the user's request and the agent's last answer.
 Answer with the ${SUMMARY_TOOL} tool: a title of two to five words naming the task, and a one-line summary, in the past tense, of what the agent did or found.`;
 
 /**
- * The summary model the Deployment Config's `models` section names: the `turnSummaryModel` on its OpenAI-compatible
+ * The summary model the BotCube Config's `models` section names: the `turnSummaryModel` on its OpenAI-compatible
  * Endpoint, else Bedrock's in this region.
  */
-export function turnSummaryModel(models: DeploymentConfig['models'], env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
+export function turnSummaryModel(models: BotCubeConfig['integrations']['modelGateway'], env: NodeJS.ProcessEnv, region: string): TurnSummaryModel {
   if (models.kind === 'openai-compatible') {
     return { kind: 'openai-compatible', endpoint: endpoint('models', models, env), model: models.turnSummaryModel, wire: models.wire };
   }

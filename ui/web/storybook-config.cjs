@@ -1,3 +1,4 @@
+const botSettingsModule = require('botcube-ui-web/bot-settings-module');
 const path = require('node:path');
 const { dcvAliases } = require('botcube-ui-web/dcv-assets');
 
@@ -12,7 +13,7 @@ module.exports = ({ appRoot }) => ({
   previewAnnotations: [path.join(__dirname, 'storybook/preview.ts')],
   aliases: {
     '@bot-ui': path.join(__dirname, 'src/plugin/default.tsx'),
-    '@bot-settings': path.join(__dirname, '../../examples/bot/bot.json'),
+    '@bot-settings': botSettingsModule(path.join(__dirname, '../../examples/bot/bot.yaml')),
     'botcube-ui-web/storybook-page': path.join(appRoot, 'src/app/page.tsx'),
     ...dcvAliases,
   },

@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { CHAT_SERVICE_ORIGIN } from '../.storybook/chat-origin';
-import bot from '../../../examples/bot/bot.json';
+import { BOT_SETTINGS as bot } from '../src/bot-settings';
 
 export const unhandledChatRequests: string[] = [];
 
@@ -83,7 +83,7 @@ export const awakeComputer = {
 
 const NO_LIVE_VIEW = { ...AWAKE, liveView: 'none' };
 
-/** An awake computer under the Deployment Config's `liveView: none`: its state and wake, and no live view to fetch. */
+/** An awake computer under the BotCube Config's `liveView: none`: its state and wake, and no live view to fetch. */
 export const noLiveViewComputer = {
   '/agent-computer': reply('/agent-computer', NO_LIVE_VIEW),
   wake: http.post(`${CHAT_SERVICE_ORIGIN}/agent-computer/wake`, () => HttpResponse.json(NO_LIVE_VIEW)),

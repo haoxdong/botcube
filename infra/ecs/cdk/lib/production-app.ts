@@ -1,3 +1,4 @@
+import { readConfig } from 'botcube-config/read';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -17,21 +18,20 @@ export const BOT_ECS_APP = 'ecs/cdk';
  * Service in `chat/` beside `deploy/` builds that, on the BotCube Config beside them; any other deploy root runs the
  * stock Chat Service, on the public example's BotCube Config its image ships.
  */
-export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; config: string; deploymentConfig?: string } {
+export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; config: string; botcubeConfig?: string } {
   const own = path.join(deployRoot, '../chat/Dockerfile');
-  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own), config: path.join(deployRoot, '../deployment-config.json') };
+  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own), config: path.join(deployRoot, '../botcube.yaml') };
   const botcube = path.resolve(projectDir(__dirname), '../../..');
   return {
     file: path.relative(repositoryRoot, path.join(botcube, 'chat/Dockerfile')),
-    config: path.join(botcube, 'examples/public/deployment-config.json'),
-    deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json',
+    config: path.join(botcube, 'examples/public/botcube.yaml'),
+    botcubeConfig: '/opt/chat-service/examples/public/botcube.yaml',
   };
 }
 
-/** The browser origins, besides its own, the BotCube Config at `configPath` names in `web.corsOrigins`; none without them. */
+/** The browser origins, besides its own, the BotCube Config at `configPath` names in `network.corsOrigins`; none without them. */
 export function webOrigins(configPath: string): string[] {
-  const config: { web?: { corsOrigins: string[] } } = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  return config.web?.corsOrigins ?? [];
+  return readConfig(configPath).network?.corsOrigins ?? [];
 }
 
 /** The preview origin's Credential Service image: the deploy root's own, or else the stock one from `credential-service/`. */
@@ -58,7 +58,7 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
   if (app.node.tryGetContext('previewOrigin')) {
     const inputPath = process.env.PREVIEW_ORIGIN_INPUT;
     if (!inputPath) throw new Error('PREVIEW_ORIGIN_INPUT is required');
-    if (chatImage.deploymentConfig) chat = { deploymentConfig: chatImage.deploymentConfig };
+    if (chatImage.botcubeConfig) chat = { botcubeConfig: chatImage.botcubeConfig };
     origin = {
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
       images: {

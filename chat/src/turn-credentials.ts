@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
-import { turnScope, type TurnCredentialSource, type TurnGrant, type TurnIdentityClaims, type TurnScope } from './turn-identity.js';
+import { turnScope, type TurnIdentitySource, type TurnGrant, type TurnIdentityClaims, type TurnScope } from './turn-identity.js';
 
 /** STS refuses an inline session policy longer than this many characters. */
 export const SESSION_POLICY_LIMIT = 2048;
@@ -38,7 +38,7 @@ export function memorySessionPolicy(scope: TurnScope): string {
 }
 
 /** The `assume-role` Turn credentials adapter: the Chat Service assumes the Memory role for each Turn, scoped by a session policy. */
-export function assumeRoleTurnCredentials(roleArn: string, sts = new STSClient({})): TurnCredentialSource {
+export function assumeRoleAwsAccess(roleArn: string, sts = new STSClient({})): TurnIdentitySource {
   return {
     async grant(turn: TurnIdentityClaims): Promise<TurnGrant> {
       const scope = turnScope(turn);

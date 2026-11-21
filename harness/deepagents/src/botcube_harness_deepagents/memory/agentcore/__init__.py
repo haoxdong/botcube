@@ -115,7 +115,7 @@ def build_store(memory_id: str, *, region_name: str) -> AgentCoreMemoryStore:
     return AgentCoreMemoryStore(memory_id=memory_id, region_name=region_name)
 
 
-class _TurnCredentials(Credentials):
+class _AwsAccess(Credentials):
     """The newest Turn's credentials, which the signer reads for each request, for one Session sandbox."""
 
     def __init__(self, tags: dict[str, list[str]], issued: tuple[Credentials, datetime], turn: int) -> None:
@@ -169,7 +169,7 @@ class _TurnCredentials(Credentials):
 class _TurnCredentialProvider(CredentialProvider):
     METHOD = 'turn-identity'
 
-    def __init__(self, credentials: _TurnCredentials) -> None:
+    def __init__(self, credentials: _AwsAccess) -> None:
         super().__init__()
         self._credentials = credentials
 
@@ -177,7 +177,7 @@ class _TurnCredentialProvider(CredentialProvider):
         return self._credentials
 
 
-def _memory_client(credentials: _TurnCredentials, like: Any) -> Any:
+def _memory_client(credentials: _AwsAccess, like: Any) -> Any:
     """A client configured as `like` that signs with whatever credentials the Turns last gave it."""
     session = botocore.session.Session()
     session.register_component('data_loader', _LOADER)
@@ -199,7 +199,7 @@ def prime_spare(memory_id: str, region_name: str) -> None:
     """Before the V2 snapshot: the Memory store and its signing client, unbound until the first Turn binds them."""
     global _SPARE
     issued = Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(minutes=1)
-    signing = _TurnCredentials({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
+    signing = _AwsAccess({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
     signing.sandbox = None
     store = AgentCoreMemoryStore(
         memory_id=memory_id, region_name=region_name, aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
@@ -211,7 +211,7 @@ def prime_spare(memory_id: str, region_name: str) -> None:
 def prime_memory_client(region_name: str) -> None:
     """Prime Memory writes, event reads and personal-Memory pagination before snapshot, without network."""
     issued = Credentials('snapshot', 'snapshot', 'snapshot'), datetime.now(UTC) + timedelta(hours=1)
-    signing = _TurnCredentials({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
+    signing = _AwsAccess({'filingActorId': ['snapshot'], 'sessionId': ['snapshot']}, issued, -1)
     # The store's client as `build_store` configures it, but given credentials so that none are fetched.
     like = AgentCoreMemoryStore(
         memory_id='snapshot', region_name=region_name, aws_access_key_id='snapshot', aws_secret_access_key='snapshot',
@@ -231,8 +231,8 @@ def prime_memory_client(region_name: str) -> None:
 
 
 _MEMORY_LOCK = threading.Lock()
-_MEMORY: tuple[_TurnCredentials, AgentCoreMemoryStore] | None = None
-_SPARE: tuple[AgentCoreMemoryStore, _TurnCredentials] | None = None
+_MEMORY: tuple[_AwsAccess, AgentCoreMemoryStore] | None = None
+_SPARE: tuple[AgentCoreMemoryStore, _AwsAccess] | None = None
 _TURNS = itertools.count()
 
 
@@ -267,7 +267,7 @@ def turn_memory(
                 _MEMORY = signing, store
             elif _MEMORY is None:
                 store = build_store(memory_id, region_name=region_name)
-                signing = _TurnCredentials(tags, issued, turn)
+                signing = _AwsAccess(tags, issued, turn)
                 # The store's own client keeps its configuration but not its credentials, which are the runtime's.
                 store.client = _memory_client(signing, store.client)
                 _MEMORY = signing, store

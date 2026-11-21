@@ -18,7 +18,7 @@ BOTCUBE_DEPLOY_ROOT="$PWD/examples/public/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD"
 ```
 
 Replace the example event names with the moments your UI emits. The example
-has no latency budget file, so the moments must be supplied explicitly. This
+has no latency budget file, so the moments must be existing explicitly. This
 synthesizes storage, egress, health, and latency monitoring without the serving
 origin. Synthesis does not deploy resources. Every synth needs
 `-c parked=true|false`; deploys read it from the application's stored park state.

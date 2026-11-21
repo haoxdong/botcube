@@ -4,7 +4,7 @@ import type * as bedrockagentcore from 'aws-cdk-lib/aws-bedrockagentcore';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
-import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../deployment-config/seams.js' with {
+import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../config/seams.js' with {
   'resolution-mode': 'import',
 };
 
@@ -17,7 +17,7 @@ const XRAY_ACTION = /^xray:(PutTraceSegments|PutTelemetryRecords)$/i;
 
 /**
  * The Runtime role keeps no Memory access: a Turn reaches Memory only with its tagged credentials (ADR 0067 §8).
- * Nor does it keep Bedrock's models when the Deployment Config puts them elsewhere, or X-Ray, which `@aws/agentcore-cdk`
+ * Nor does it keep Bedrock's models when the BotCube Config puts them elsewhere, or X-Ray, which `@aws/agentcore-cdk`
  * always grants, when its telemetry is `none`.
  */
 function restrictRuntimePolicy(
@@ -77,7 +77,7 @@ type AgentCoreRuntime =
       : never
     : never;
 /**
- * The Deployment Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
+ * The BotCube Config's wiring on one Runtime: where its models run, who may invoke it, and the secret its proxy
  * credential is read from. Absent, `harnessAuth` is
  * SigV4; a JWT bearer is checked against its issuer's OIDC discovery, the Chat Service's at `chatServiceIssuer` under
  * `botcube`, whatever the Turn credentials adapter.
@@ -99,10 +99,10 @@ export function applyDeploymentSeams(
 }
 
 /**
- * Encrypt each image repository with a supplied key, which carries its own grants. `@aws/agentcore-cdk` always creates
+ * Encrypt each image repository with a existing key, which carries its own grants. `@aws/agentcore-cdk` always creates
  * the repository's own key and grants it in the Runtime role's (already resolved) policy, so the key and its grants go.
  */
-export function useSuppliedImageKey(stack: Stack, keyArn: string): void {
+export function useExistingImageKey(stack: Stack, keyArn: string): void {
   const repositories = stack.node
     .findAll()
     .filter((child): child is ecr.CfnRepository => child instanceof ecr.CfnRepository);

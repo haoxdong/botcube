@@ -1,4 +1,4 @@
-import { TOKEN_AUDIENCES } from 'botcube-deployment-config';
+import { TOKEN_AUDIENCES } from 'botcube-config';
 import { Hono, type Context } from 'hono';
 import { turnEnds, type TurnIdentity } from './turn-identity.js';
 

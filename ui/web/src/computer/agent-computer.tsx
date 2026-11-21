@@ -14,7 +14,7 @@ import { Terminal, type ShellCommand } from './terminal';
 
 /**
  * The chat's Agent Computer: its browser and who drives it while awake, and its last screenshot either way. An awake
- * local Agent Computer says its screen comes as `screenshots`, frame by frame; one under the Deployment Config's
+ * local Agent Computer says its screen comes as `screenshots`, frame by frame; one under the BotCube Config's
  * `liveView: none` says `none`, and shows no live view; without either, it is a DCV live view.
  */
 export type AgentComputerState =

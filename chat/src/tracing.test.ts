@@ -6,7 +6,7 @@ import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { telemetryDeployment } from 'botcube-deployment-config/telemetry';
+import { telemetryEnvironment } from 'botcube-config/telemetry';
 import { expect, it } from 'vitest';
 
 /** Node strips the sources' types but keeps their `.js` import specifiers, which name the `.ts` file beside them. */
@@ -70,7 +70,7 @@ it('exports real OTLP HTTP protobuf with the fixed Chat service name on shutdown
   }
 });
 
-it("exports to the Deployment Config's OTLP Endpoint with its credential as the bearer and its headers", async () => {
+it("exports to the BotCube Config's OTLP Endpoint with its credential as the bearer and its headers", async () => {
   const dir = mkdtempSync(join(tmpdir(), 'telemetry-token-'));
   const path = join(dir, 'telemetry-token');
   writeFileSync(path, 'collector-token\n');
@@ -85,7 +85,7 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
   await new Promise<void>((resolve) => collector.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(collector.address() as AddressInfo).port}/v1/traces`;
   const telemetry = { kind: 'otlp', url, credential: { kind: 'file', path }, headers: { 'x-tenant': 'botcube-example' } } as const;
-  const deployed = telemetryDeployment(telemetry);
+  const deployed = telemetryEnvironment(telemetry);
   const child = spawn(process.execPath, ['--input-type=module', '-e', `${TS_IMPORTS}
     const { startChatTracing } = await import('./src/tracing.ts');
     const sdk = startChatTracing(${JSON.stringify(telemetry)});
@@ -114,5 +114,5 @@ it("exports to the Deployment Config's OTLP Endpoint with its credential as the 
 });
 
 it('exports nothing under none telemetry', () => {
-  expect(telemetryDeployment({ kind: 'none' }).chatService).toEqual({});
+  expect(telemetryEnvironment({ kind: 'none' }).chatService).toEqual({});
 });

@@ -15,6 +15,7 @@ dependencies = [
   "uvicorn>=0.54.0",
   "awslambdaric>=4.2.3",
   "jsonschema>=4.26.0",
+  "ruamel-yaml>=0.18,<0.19",
 ]
 
 [project.scripts]

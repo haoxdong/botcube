@@ -1,4 +1,4 @@
-// Test seam 1 (ADR 0091) for the identity seam: the enterprise example, started from its Deployment Config, signs its
+// Test seam 1 (ADR 0091) for the identity seam: the enterprise example, started from its BotCube Config, signs its
 // Users in through a stand-in OIDC provider, and a product's own service, in its own process, verifies BotCube's
 // signed user token against BotCube's JWKS.
 import { generateKeyPairSync } from 'node:crypto';
@@ -13,8 +13,7 @@ import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
 import { frameData, sseFrames, type Browser } from './browser.js';
 import { startLocalStack, type LocalStack } from './local-stack.js';
 
-const ENTERPRISE = fileURLToPath(new URL('../../../examples/enterprise/deployment-config.json', import.meta.url));
-const EXAMPLE_BOT = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
+const ENTERPRISE = fileURLToPath(new URL('../../../examples/enterprise/botcube.yaml', import.meta.url));
 const PRODUCT_SERVICE = fileURLToPath(new URL('../fakes/product-service.ts', import.meta.url));
 const PUBLIC_ORIGIN = 'https://chat.example';
 const UI = 'http://localhost:3001/';
@@ -34,11 +33,11 @@ beforeAll(async () => {
   issuer = await new StandInOidcIssuer().listen();
   stops.push(() => issuer.close());
   // The enterprise example as it ships, pointed at the stand-in provider in place of its own.
-  const config = JSON.parse(await readFile(ENTERPRISE, 'utf8')) as { identity: Record<string, unknown> };
-  const path = join(dir, 'deployment-config.json');
-  await writeFile(path, JSON.stringify({ ...config, bot: EXAMPLE_BOT, identity: { ...config.identity, issuer: issuer.url } }));
+  const config = JSON.parse(await readFile(ENTERPRISE, 'utf8')) as { integrations: { signIn: Record<string, unknown> } };
+  const path = join(dir, 'botcube.yaml');
+  await writeFile(path, JSON.stringify({ ...config, integrations: { ...config.integrations, signIn: { ...config.integrations.signIn, issuer: issuer.url } } }));
   stack = await startLocalStack({ chatEnv: {
-    BOTCUBE_DEPLOYMENT_CONFIG: path,
+    BOTCUBE_CONFIG: path,
     BOTCUBE_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
     BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([botcubeKey]),
   } });

@@ -116,7 +116,7 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
     url, heads = upstream
     missing = tmp_path / 'proxy-token'
     relay = start_proxy_relay_from_config(
-        {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(missing)}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
+        {'network': {'proxy': {'kind': 'forward', 'url': url, 'credential': {'kind': 'file', 'path': str(missing)}}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'},
     )
     assert relay is not None
 
@@ -129,17 +129,17 @@ def test_relay_answers_502_naming_the_credential_and_opens_nothing_when_it_fails
 
 @pytest.mark.parametrize('proxy', [{'kind': 'none'}, {'kind': 'forward', 'url': 'http://proxy.example.com:3128'}])
 def test_no_relay_without_a_proxy_credential_or_headers(proxy: dict[str, str]) -> None:
-    assert start_proxy_relay_from_config({'proxy': proxy}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
+    assert start_proxy_relay_from_config({'network': {'proxy': proxy}}, {'HTTPS_PROXY': 'http://proxy.example.com:3128'}) is None
 
 
 def test_a_relayed_proxy_needs_https_proxy_pointed_at_the_relay() -> None:
-    with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the Deployment Config'):
-        start_proxy_relay_from_config({'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}, {})
+    with pytest.raises(RuntimeError, match='^HTTPS_PROXY is unset beside the BotCube Config'):
+        start_proxy_relay_from_config({'network': {'proxy': {'kind': 'forward', 'url': 'http://proxy.example.com:3128', 'headers': {'x-tenant': 'a'}}}}, {})
 
 
 def test_refuses_a_malformed_proxy_tls_block_naming_it() -> None:
     with pytest.raises(endpoint_tls.EndpointTlsError, match='^proxy TLS: '):
-        start_proxy_relay_from_config({'proxy': {'kind': 'forward', 'url': 'https://proxy.example.com:3129', 'tls': {}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'})
+        start_proxy_relay_from_config({'network': {'proxy': {'kind': 'forward', 'url': 'https://proxy.example.com:3129', 'tls': {}}}}, {'HTTPS_PROXY': 'http://127.0.0.1:0'})
 
 
 def test_an_unreachable_proxy_drops_the_client_with_no_answer() -> None:

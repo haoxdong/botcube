@@ -1,9 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, expect, it } from 'vitest';
 import { required } from '../required.js';
@@ -11,12 +11,12 @@ import { startLocalStack, type LocalStack } from './local-stack.js';
 import { startOnFreePort, type RunningProcess } from '../fakes/process.js';
 
 const execute = promisify(execFile);
+const cube = (path: string) => fileURLToPath(new URL(`../../../${path}`, import.meta.url));
 
 /** The public example's BotCube Config, its web origins this test's UI port. */
 async function webOriginsConfig(): Promise<string> {
-  const path = join(await mkdtemp(join(tmpdir(), 'local-smoke-deployment-')), 'deployment-config.json');
-  const bot = fileURLToPath(new URL('../../../examples/bot/bot.json', import.meta.url));
-  await writeFile(path, JSON.stringify({ bot, web: { corsOrigins: ['http://localhost:4001', 'http://127.0.0.1:4001'] } }));
+  const path = join(await mkdtemp(join(tmpdir(), 'local-smoke-deployment-')), 'botcube.yaml');
+  await writeFile(path, JSON.stringify({ network: { corsOrigins: ['http://localhost:4001', 'http://127.0.0.1:4001'] } }));
   return path;
 }
 let stack: LocalStack | undefined;
@@ -49,10 +49,10 @@ afterAll(async () => {
 
 it('runs the documented smoke entrypoint with a retained account through a real Harness restart and fails loudly on restart failure', { timeout: 180_000 }, async () => {
   home = await mkdtemp(join(tmpdir(), 'local-smoke-'));
-  await mkdir(resolve('.tmp'), { recursive: true });
-  app = await mkdtemp(resolve('.tmp/local-smoke-ui-'));
-  await cp(resolve('ui/web'), app, { recursive: true, filter: (source) => !['node_modules', '.next', '.next-bot', '.next-standalone'].includes(basename(source)) });
-  await symlink(resolve('ui/web/node_modules'), join(app, 'node_modules'), 'dir');
+  await mkdir(cube('.tmp'), { recursive: true });
+  app = await mkdtemp(cube('.tmp/local-smoke-ui-'));
+  await cp(cube('ui/web'), app, { recursive: true, filter: (source) => !['node_modules', '.next', '.next-bot', '.next-standalone'].includes(basename(source)) });
+  await symlink(cube('ui/web/node_modules'), join(app, 'node_modules'), 'dir');
   await rename(join(app, 'next.config.ts'), join(app, 'next.smoke-base.ts'));
   await writeFile(join(app, 'next.config.ts'), `import configure from './next.smoke-base.ts';
 export default async function smokeConfig(phase: string) {
@@ -64,10 +64,10 @@ export default async function smokeConfig(phase: string) {
   // Unset, the app builds with its default UI plugin.
   const { BOTCUBE_UI_PACKAGE: _package, BOTCUBE_UI_BUILD_CONFIG: _buildConfig, ...uiEnv } = process.env;
   const starts = await Promise.allSettled([
-    webOriginsConfig().then((deploymentConfig) => startLocalStack({ deploymentConfig })).then((started) => (stack = started)),
+    webOriginsConfig().then((botcubeConfig) => startLocalStack({ botcubeConfig })).then((started) => (stack = started)),
     startOnFreePort((port) => ({
-      command: `cd ${app} && node ${resolve('ui/web/node_modules/next/dist/bin/next')} dev --port ${port}`,
-      env: { ...uiEnv, NODE_OPTIONS: '', BOTCUBE_REPOSITORY_ROOT: resolve('.') },
+      command: `cd ${app} && node ${cube('ui/web/node_modules/next/dist/bin/next')} dev --port ${port}`,
+      env: { ...uiEnv, NODE_OPTIONS: '', BOTCUBE_REPOSITORY_ROOT: cube('.') },
       url: `http://127.0.0.1:${port}${dcvSdk}`,
       listening: `localhost:${port}`,
       readyTimeoutMs: 120_000,
@@ -90,7 +90,7 @@ if(args.at(-1)!=='harness'){console.error('Unsupported restart actor');process.e
 fetch(process.env.SMOKE_RESTART_URL,{method:'POST',body:JSON.stringify(args)}).then(async response=>{console.log(await response.text());process.exit(response.ok?0:1);}).catch(error=>{console.error(error);process.exit(1);});
 `, { mode: 0o755 });
   const env = { ...process.env, BOTCUBE_LOCAL_UI_PORT: '4001', BOTCUBE_LOCAL_UI_URL: 'http://localhost:3001', PATH: `${home}:${process.env.PATH ?? ''}`, SMOKE_CHAT_URL: stack.url, SMOKE_UI_URL: new URL(ui.url).origin, SMOKE_RESTART_URL: `http://127.0.0.1:${address.port}/` };
-  const script = resolve('infra/local/smoke.sh');
+  const script = cube('infra/local/smoke.sh');
   const [result, page] = await Promise.all([
     execute('bash', [script], { env }).catch((error: { message: string; stdout?: string; stderr?: string }) => {
       throw new Error(`${error.message}\nstdout:\n${error.stdout ?? ''}\nstderr:\n${error.stderr ?? ''}`, { cause: error });
@@ -100,7 +100,7 @@ fetch(process.env.SMOKE_RESTART_URL,{method:'POST',body:JSON.stringify(args)}).t
   expect(result.stdout).toContain('Local Session smoke passed');
   expect(page).toContain('<title>BotCube</title>');
   expect((await fetch(new URL(dcvSdk, ui.url))).status).toBe(200);
-  expect(restartRequests).toEqual([['compose', '-f', resolve('infra/local/compose.yml'), 'restart', 'harness']]);
+  expect(restartRequests).toEqual([['compose', '-f', cube('infra/local/compose.yml'), 'restart', 'harness']]);
   const visitor = stack.browser();
   expect((await visitor.get('/account/session')).status).toBe(200);
   expect((await (await visitor.get('/threads')).json()).threads).toEqual([]);

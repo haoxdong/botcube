@@ -7,14 +7,14 @@ import type { UserMemoryRole } from './user-memory-role';
 
 /**
  * Add one AgentCore stack per deployment target of a loaded bot deploy config, deployed from `commit`, with the
- * Deployment Config's `turnCredentials.kind`.
+ * BotCube Config's `awsAccess.kind`.
  */
 export function addAgentCoreStacks(
   app: App,
   { deployRoot, identity, spec, targets }: DeployConfig,
   commit: string,
   overrides: Omit<Partial<AgentCoreStackProps>, 'spec' | 'physicalIdentity' | 'env'> = {},
-  turnCredentials: 'web-identity' | 'assume-role' = 'web-identity'
+  awsAccess: 'web-identity' | 'assume-role' = 'web-identity'
 ): void {
   const physicalIdentity: AgentCorePhysicalIdentity = {
     runtime: identity.aws.agentCore.runtime,
@@ -39,7 +39,7 @@ export function addAgentCoreStacks(
   const { agentCore } = identity.aws;
   // The Chat Service serves OIDC discovery on the hostname its ALB answers, as BOTCUBE_PUBLIC_ORIGIN.
   const chatServiceIssuer = `https://${new URL(identity.domains.chatService).hostname}`;
-  const userMemoryRole = memoryRoleFor(identity, turnCredentials, chatServiceIssuer);
+  const userMemoryRole = memoryRoleFor(identity, awsAccess, chatServiceIssuer);
   for (const target of targets) {
     const stack = new AgentCoreStack(
       app,
@@ -76,13 +76,13 @@ export function addAgentCoreStacks(
 
 function memoryRoleFor(
   identity: DeployIdentity,
-  turnCredentials: 'web-identity' | 'assume-role',
+  awsAccess: 'web-identity' | 'assume-role',
   issuer: string
 ): UserMemoryRole {
   const { userMemoryRole: roleName, chatServiceTaskRole } = identity.aws.iam;
-  if (turnCredentials === 'web-identity') return { issuer, roleName };
+  if (awsAccess === 'web-identity') return { issuer, roleName };
   if (!chatServiceTaskRole) {
-    throw new Error('Deploy identity aws.iam.chatServiceTaskRole: required with turnCredentials assume-role');
+    throw new Error('Deploy identity aws.iam.chatServiceTaskRole: required with awsAccess assume-role');
   }
-  return { turnCredentials, roleName, chatServiceTaskRole };
+  return { awsAccess, roleName, chatServiceTaskRole };
 }

@@ -173,7 +173,7 @@ export function stepOf(timeline: ReturnType<typeof timelineOf>, kind: TimedStep[
   return step && { id: step.id, time: seconds(timeline?.each.get(step.id) ?? 0) };
 }
 
-/** The Worklog's time from its Turn allocation, else the supplied message span. */
+/** The Worklog's time from its Turn allocation, else the provided message span. */
 export function totalOf(timeline: ReturnType<typeof timelineOf>, time: number | undefined): string | undefined {
   if (timeline) return seconds(timeline.total);
   return time === undefined ? undefined : seconds(Math.round(time / 1000));

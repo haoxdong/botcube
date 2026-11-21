@@ -471,7 +471,7 @@ def test_new_sessions_share_account_cache_affinity_without_changing_their_reques
                 headers={
                     **_bound_turn('openai', 'gpt-6.1-sol', session_id=session),
                     'content-type': 'application/json',
-                    'session-id': 'caller-supplied-affinity',
+                    'session-id': 'caller-provided-affinity',
                 },
             )
             assert response.status_code == 200
@@ -479,7 +479,7 @@ def test_new_sessions_share_account_cache_affinity_without_changing_their_reques
 
     first, second = openai.api_calls()
     assert first.headers['session-id'] == second.headers['session-id']
-    assert first.headers['session-id'] != 'caller-supplied-affinity'
+    assert first.headers['session-id'] != 'caller-provided-affinity'
     assert [first.content, second.content] == bodies
 
 

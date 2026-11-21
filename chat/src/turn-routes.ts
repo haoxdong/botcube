@@ -13,11 +13,11 @@ import { SessionOpeningError, SessionProviderError, SessionUnissuedError, type S
 import { assertIdleContinuable, sessionAccessError } from './sessions.js';
 import { SessionReadOnlyError } from './session-identity.js';
 import { forwardSnapshotEpoch, type sessionLifecycle } from './session-lifecycle.js';
-import { forwardTurnIdentity, type TurnCredentialSource } from './turn-identity.js';
+import { forwardTurnIdentity, type TurnIdentitySource } from './turn-identity.js';
 import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import { TurnTiming } from './turn-timing.js';
 import type { TurnQuota } from './turn-quota.js';
-import { turnErrorDetails, turnCredentials, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
+import { turnErrorDetails, credentialValues, relayTurn, stopTurn, type HeldIds } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
 import { readTurnEvents } from './turn-events.js';
 import { steeringRoutes } from './steering-routes.js';
@@ -76,7 +76,7 @@ interface TurnRoutesOptions {
   turns: {
     summarizeTurn: TurnSummarizer;
     turnQuota: TurnQuota | null;
-    turnCredentials: TurnCredentialSource | null;
+    awsAccess: TurnIdentitySource | null;
     userTokens: UserTokenSigner | null;
   };
 }
@@ -84,14 +84,14 @@ interface TurnRoutesOptions {
 export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoutesOptions) {
   const { sessionMetadata, agentDocuments } = stores;
   const { upstream, warmupTimeoutMs } = harness;
-  const { summarizeTurn, turnQuota, turnCredentials: credentialSource, userTokens } = turns;
+  const { summarizeTurn, turnQuota, awsAccess: credentialSource, userTokens } = turns;
   const warming = warmingSessions();
 
   const turnPayload = async (input: RunAgentInput, requester: Requester, model: AgentModel, captureCredentials?: (credentials: readonly string[]) => void, documents: Promise<AgentDocumentSet> = agentDocuments.get(requester.owner, bot.agentDocuments)) => {
     const forwardedProps = { ...(input.forwardedProps as Record<string, unknown>) };
     for (const prop of [...BOTCUBE_CREDENTIAL_PROPS, ...bot.credentialProps, ...(bot.identityProps ?? [])]) delete forwardedProps[prop];
     const preparing = bot.invocationPayload({ ...input, forwardedProps }, requester, model).then((payload) => {
-      captureCredentials?.(turnCredentials(payload.forwardedProps, bot.credentialProps));
+      captureCredentials?.(credentialValues(payload.forwardedProps, bot.credentialProps));
       return payload;
     });
     const [payload, loadedDocuments] = await admissionResults([preparing, documents]);
@@ -156,7 +156,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
       }
       timing.mark('admitted');
       const end = (failure: TurnFailure | undefined) => sessionMetadata.turnEnded(requester.owner, input.threadId, running, failure);
-      let credentials = turnCredentials(input.forwardedProps ?? {}, bot.credentialProps);
+      let credentials = credentialValues(input.forwardedProps ?? {}, bot.credentialProps);
       try {
         const payload = await turnPayload(input, requester, model, (issued) => { credentials = [...credentials, ...issued]; }, documents.then(([result]) => {
           if (result.status === 'rejected') throw result.reason;
@@ -339,7 +339,7 @@ export function turnRoutes(app: Hono, { bot, stores, harness, turns }: TurnRoute
           await response.body?.cancel();
           return c.json({ error: 'AgentCore warmup failed', details: `HTTP ${response.status}` }, 502);
         }
-        const credentials = turnCredentials(input.forwardedProps as Record<string, unknown>, bot.credentialProps);
+        const credentials = credentialValues(input.forwardedProps as Record<string, unknown>, bot.credentialProps);
         const text = await response.text();
         mark('answer');
         const failure = await runError(text, credentials);

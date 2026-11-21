@@ -20,8 +20,8 @@ import { isIP } from 'node:net';
 export interface PreviewOriginProps extends StackProps {
   securityGroupName?: string;
   connectionLogsBucketName?: string;
-  /** A supplied bucket for the connection logs instead of creating one; its own policy lets the load balancer write. */
-  suppliedConnectionLogsBucketName?: string;
+  /** A existing bucket for the connection logs instead of creating one; its own policy lets the load balancer write. */
+  existingConnectionLogsBucketName?: string;
   trustStoreName?: string;
   loadBalancerName?: string;
   /** Names for our handlers; CDK Provider framework helpers keep generated names. */
@@ -101,8 +101,8 @@ export class PreviewOriginStack extends Stack {
     }
     // aws-cdk-lib's Bucket declares `T | undefined` getters where IBucket declares `prop?: T`,
     // which exactOptionalPropertyTypes rejects; the construct is its interface.
-    if (props.suppliedConnectionLogsBucketName && props.connectionLogsBucketName !== undefined) throw new Error('A supplied connection logs bucket owns its name; omit connectionLogsBucketName');
-    const connectionLogs = props.suppliedConnectionLogsBucketName ? s3.Bucket.fromBucketName(this, 'ConnectionLogs', props.suppliedConnectionLogsBucketName) : new s3.Bucket(this, 'ConnectionLogs', {
+    if (props.existingConnectionLogsBucketName && props.connectionLogsBucketName !== undefined) throw new Error('A existing connection logs bucket owns its name; omit connectionLogsBucketName');
+    const connectionLogs = props.existingConnectionLogsBucketName ? s3.Bucket.fromBucketName(this, 'ConnectionLogs', props.existingConnectionLogsBucketName) : new s3.Bucket(this, 'ConnectionLogs', {
       ...optionalPhysicalName('bucketName', props.connectionLogsBucketName),
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED, enforceSSL: true,

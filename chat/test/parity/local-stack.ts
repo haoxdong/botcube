@@ -1,12 +1,12 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { required } from '../required.js';
 import { Browser } from './browser.js';
-import { loadDeployment } from '../../../deployment-config/load.js';
-import { proxyEnvironment } from '../../../deployment-config/environment.js';
-import { telemetryDeployment } from '../../../deployment-config/telemetry.js';
+import { loadBotCube } from '../../../config/load.js';
+import { proxyEnvironment } from '../../../config/environment.js';
+import { telemetryEnvironment } from '../../../config/telemetry.js';
 import { FakeBedrock, FakeOpenAICompatible } from '../fakes/fake-backends.js';
 import { FakeForwardProxy, FakeOtlpCollector } from '../fakes/egress.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, type MtlsCertificates } from '../fakes/mtls.js';
@@ -15,7 +15,7 @@ import { freePort, startOnFreePort, startProcess, type RunningProcess } from '..
 import { createScheduledRuns, SchedulerView } from '../fakes/scheduler.js';
 import { motoEndpoint } from '../fakes/moto.js';
 import { FakeJwtAuthorizer } from '../fakes/jwt-authorizer.js';
-import type { DeploymentConfig } from '../../../deployment-config/schema.js';
+import type { BotCubeConfig } from '../../../config/schema.js';
 
 /** The Chat Service's public origin, the issuer of its tokens; the Harness's authorizer reaches it at its local address. */
 export const PUBLIC_ORIGIN = 'https://chat.example.test';
@@ -33,27 +33,28 @@ export const CREDENTIAL_SERVICE_BIN = fileURLToPath(new URL('../../../credential
 export const FIXTURES = fileURLToPath(new URL('fixtures', import.meta.url));
 
 const HARNESS_COMMAND =
-  `${HARNESS_BIN}/python -c "from botcube_harness_deepagents import llm, serving; ` +
+  `${HARNESS_BIN}/python -c "from botcube_harness_deepagents import llm, serving, bot_settings; from pathlib import Path; import os; ` +
+  `read_settings = bot_settings.load_bot_settings; bot_settings.load_bot_settings = lambda path: read_settings(Path(os.environ['BOTCUBE_TEST_IMAGE_SETTINGS'])); ` +
   `llm.AVAILABLE_MODELS.update(dict.fromkeys(llm.AVAILABLE_MODELS, 'echo')); serving.main()"`;
 
 /** The stock Chat Service, as its image runs it. */
-const CHAT_SERVICE_COMMAND = `node ${fileURLToPath(new URL('../../dist/main.js', import.meta.url))}`;
+const CHAT_SERVICE_COMMAND = `node --import ${fileURLToPath(new URL('../image-process.mjs', import.meta.url))} ${fileURLToPath(new URL('../../dist/main.js', import.meta.url))}`;
 
-/** The Deployment Config the stack deploys unless given one: the public example's. */
-const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../../examples/public/deployment-config.json', import.meta.url));
+/** The BotCube Config the stack deploys unless given one: the public example's. */
+const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../../examples/public/botcube.yaml', import.meta.url));
 
 export interface LocalStack {
   readonly url: string;
   /** The Bedrock Converse endpoint each finished Turn is summarized at. */
   readonly bedrock: FakeBedrock;
-  /** The stand-in for a Deployment Config's OpenAI-compatible models endpoint, when it names one. */
+  /** The stand-in for a BotCube Config's OpenAI-compatible models endpoint, when it names one. */
   readonly openAICompatible?: FakeOpenAICompatible;
   readonly scheduler?: SchedulerView;
   /** The Harness as the Chat Service reaches it: behind the Runtime's JWT authorizer when the Harness auth is a bearer. */
   readonly harnessUrl: string;
-  /** The stand-ins for a Deployment Config's proxy and traces collector, when it names a proxy. */
+  /** The stand-ins for a BotCube Config's proxy and traces collector, when it names a proxy. */
   readonly egress: EgressStandIns | undefined;
-  /** With `endpointTls`, the mTLS proxy the Deployment Config's proxy is replaced by, and the mTLS front of the models Endpoint behind it. */
+  /** With `endpointTls`, the mTLS proxy the BotCube Config's proxy is replaced by, and the mTLS front of the models Endpoint behind it. */
   readonly mtls?: { readonly proxy: FakeMtlsProxy; readonly front: FakeMtlsFront };
   browser(): Browser;
   logs(): string;
@@ -72,25 +73,26 @@ export async function startLocalStack(options: {
   harnessEnv?: NodeJS.ProcessEnv;
   chatEnv?: NodeJS.ProcessEnv;
   scheduling?: boolean;
-  /** The Deployment Config the stack deploys, its External Services replaced by their offline stand-ins; the public example's unless given. */
-  deploymentConfig?: string;
+  /** The BotCube Config the stack deploys, its External Services replaced by their offline stand-ins; the public example's unless given. */
+  botcubeConfig?: string;
   /**
-   * Gives the Deployment Config's proxy and models Endpoint a `tls` block: the proxy becomes an mTLS stand-in at an
+   * Gives the BotCube Config's proxy and models Endpoint a `tls` block: the proxy becomes an mTLS stand-in at an
    * https URL, and the models Endpoint, at `MTLS_MODELS_HOST`, is reached through it behind an mTLS front.
    */
   endpointTls?: boolean;
 } = {}): Promise<LocalStack> {
   const dynamodbEndpoint = motoEndpoint();
-  // Startup stops on a bad Deployment Config before any process starts, naming the field, as the Chat Service's does.
-  const deploymentPath = options.deploymentConfig ?? options.chatEnv?.BOTCUBE_DEPLOYMENT_CONFIG ?? PUBLIC_EXAMPLE;
-  const deployment = loadDeployment(deploymentPath);
+  // Startup stops on a bad BotCube Config before any process starts, naming the field, as the Chat Service's does.
+  const deploymentPath = options.botcubeConfig ?? options.chatEnv?.BOTCUBE_CONFIG ?? PUBLIC_EXAMPLE;
+  const botcube = loadBotCube(deploymentPath);
   const home = await mkdtemp('/tmp/bc-');
   const table = `chat-${Math.random().toString(36).slice(2)}`;
   await createChatTable(dynamodbEndpoint, table);
   // The table poller needs its run queue to start, as the CDK always gives it one (`scheduled-runs.ts` in botcube/infra/ecs/cdk).
-  const scheduledRuns = options.scheduling || deployment.config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
+  const scheduledRuns = options.scheduling || botcube.config.schedules.kind === 'table-poller' ? await createScheduledRuns(dynamodbEndpoint) : undefined;
   const pythonEnv = {
     PATH: process.env.PATH,
+    BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
     HOME: home,
     AGENTCORE_MEMORY_ID: '',
     LANGSMITH_TRACING: 'false',
@@ -105,11 +107,11 @@ export async function startLocalStack(options: {
   };
   const processes: RunningProcess[] = [];
   const bedrock = await new FakeBedrock().listen();
-  const models = deployment.config.models;
+  const models = botcube.config.integrations.modelGateway;
   const openAICompatible = models.kind === 'openai-compatible' ? await new FakeOpenAICompatible(`sk-${table}`).listen() : undefined;
-  const harnessAuth = deployment.config.harnessAuth;
+  const harnessAuth = botcube.config.integrations.harnessAuth;
   const mtls = options.endpointTls ? await mtlsStandIns(required(openAICompatible, 'the models Endpoint stand-in an mTLS front carries to'), home) : undefined;
-  const egress = await egressStandIns(deployment.config, home, mtls);
+  const egress = await egressStandIns(botcube.config, home, mtls);
   let authorizer: FakeJwtAuthorizer | undefined;
   const stopAll = async () => {
     await Promise.all([
@@ -120,13 +122,13 @@ export async function startLocalStack(options: {
     await rm(home, { recursive: true, force: true });
   };
   try {
-    // Every process reads the one Deployment Config, its External Services replaced by their offline stand-ins.
+    // Every process reads the one BotCube Config, its External Services replaced by their offline stand-ins.
     // The models Endpoint's stand-in, its API key in a file as a secret injector mounts it, for the Chat Service's Turn
-    // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the Deployment Config's own.
+    // Summary and the Credential Service the Harness relays through; the Endpoint's headers are the BotCube Config's own.
     const modelsStandIn = await standInModels(models, openAICompatible, home, mtls);
-    const deploymentConfig = await standInDeploymentConfig(deploymentPath, deployment.config, home, { ...egress?.offline, ...modelsStandIn });
-    // The Harness serves the bot settings the Deployment Config's `bot` names, as the example bot's image does.
-    Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig }, options.harnessEnv);
+    const botcubeConfig = await standInBotCubeConfig(deploymentPath, botcube.config, home, { ...egress?.offline, ...modelsStandIn });
+    // The Harness serves the bot settings the BotCube Config's `bot` names, as the example bot's image does.
+    Object.assign(pythonEnv, egress?.environment, mtls?.pythonTrust, { BOTCUBE_CONFIG: botcubeConfig }, options.harnessEnv);
     const start = async (command: string, env: NodeJS.ProcessEnv, path: string, listeningPrefix: string) => {
       const running = await startOnFreePort((port) => ({
         command,
@@ -145,7 +147,7 @@ export async function startLocalStack(options: {
           HOME: home,
           BOTCUBE_CREDENTIAL_INVOCATION_SECRET: MODELS_INVOCATION_SECRET,
           ...egress?.credentialEnvironment,
-          BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
+          BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
           ...mtls?.pythonTrust,
         },
         '/health',
@@ -195,9 +197,9 @@ export async function startLocalStack(options: {
         ...egress?.chatEnvironment,
         ...mtls?.chatTrust,
         ...credentialService,
-        ...turnCredentialsEnv(deployment.config, dynamodbEndpoint),
+        ...awsAccessEnv(botcube.config, dynamodbEndpoint),
         ...options.chatEnv,
-        BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig,
+        BOTCUBE_CONFIG: botcubeConfig, BOTCUBE_TEST_IMAGE_SETTINGS: fileURLToPath(new URL('../../../examples/bot/bot.yaml', import.meta.url)),
       },
       '/',
       'Chat Service listening on :',
@@ -219,8 +221,8 @@ export async function startLocalStack(options: {
 interface EgressStandIns {
   readonly proxy: FakeForwardProxy;
   readonly collector: FakeOtlpCollector | undefined;
-  /** The sections the Deployment Config stand-in takes in place of the deployed proxy and telemetry. */
-  readonly offline: Pick<DeploymentConfig, 'proxy' | 'telemetry'>;
+  /** The sections the BotCube Config stand-in takes in place of the deployed proxy and telemetry. */
+  readonly offline: { proxy: BotCubeConfig['network']['proxy']; telemetry: BotCubeConfig['integrations']['telemetry'] };
   readonly environment: Record<string, string>;
   readonly chatEnvironment: Record<string, string>;
   readonly credentialEnvironment: Record<string, string>;
@@ -250,15 +252,15 @@ async function mtlsStandIns(models: FakeOpenAICompatible, home: string): Promise
 }
 
 /**
- * The Deployment Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
+ * The BotCube Config's proxy offline, carrying its collector's host to a stand-in collector that takes only the
  * telemetry Endpoint's stand-in token, held in a file as a secret injector mounts it; and the standard variables the deploy
- * sets beside the Deployment Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service, the Harness and the Credential Service
+ * sets beside the BotCube Config. A proxy with a credential takes only its stand-in token, from a file, which the Chat Service, the Harness and the Credential Service
  * each send through their own relay, on a port of their own here as each has its own loopback when deployed.
  */
-async function egressStandIns(config: DeploymentConfig | undefined, home: string, mtls?: MtlsStandIns): Promise<EgressStandIns | undefined> {
-  const proxy = config?.proxy;
+async function egressStandIns(config: BotCubeConfig | undefined, home: string, mtls?: MtlsStandIns): Promise<EgressStandIns | undefined> {
+  const proxy = config?.network.proxy;
   if (proxy === undefined || proxy.kind === 'none') return undefined;
-  const otlp = config?.telemetry.kind === 'otlp' ? config.telemetry : undefined;
+  const otlp = config?.integrations.telemetry.kind === 'otlp' ? config.integrations.telemetry : undefined;
   const collector = otlp && await new FakeOtlpCollector(otlp.credential ? `Bearer ${STAND_IN_TELEMETRY_TOKEN}` : undefined).listen();
   const standIn = await new FakeForwardProxy(
     otlp && collector ? { [new URL(otlp.url).host]: collector.url } : {},
@@ -268,9 +270,9 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     ...otlp,
     ...(otlp.credential ? { credential: { kind: 'file', path: await keyFile(home, STAND_IN_TELEMETRY_TOKEN, 'telemetry-token') } as const } : {}),
   };
-  const telemetry = offlineTelemetry && telemetryDeployment(offlineTelemetry);
+  const telemetry = offlineTelemetry && telemetryEnvironment(offlineTelemetry);
   const offline = {
-    telemetry: offlineTelemetry ?? required(config, 'Deployment Config').telemetry,
+    telemetry: offlineTelemetry ?? required(config, 'BotCube Config').integrations.telemetry,
     proxy: {
       ...proxy,
       url: mtls ? mtls.proxyUrl.href : standIn.url,
@@ -282,9 +284,9 @@ async function egressStandIns(config: DeploymentConfig | undefined, home: string
     proxy: standIn,
     collector,
     offline,
-    environment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.harness },
-    chatEnvironment: { ...proxyEnvironment(offline, { relayPort: await freePort() }), ...telemetry?.chatService },
-    credentialEnvironment: proxyEnvironment(offline, { relayPort: await freePort() }),
+    environment: { ...proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.harness },
+    chatEnvironment: { ...proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }), ...telemetry?.chatService },
+    credentialEnvironment: proxyEnvironment({ network: { proxy: offline.proxy } }, { relayPort: await freePort() }),
   };
 }
 
@@ -299,39 +301,39 @@ async function keyFile(home: string, value: string, name = 'models-api-key'): Pr
   return path;
 }
 
-/** The OIDC client secret the stand-in provider takes, in place of the one the Deployment Config's source names. */
+/** The OIDC client secret the stand-in provider takes, in place of the one the BotCube Config's source names. */
 const STAND_IN_CLIENT_SECRET = 'stand-in-client-secret';
 
 /**
- * The Deployment Config every process reads: the one at `path`, with its proxy and telemetry offline and its sign-in
+ * The BotCube Config every process reads: the one at `path`, with its proxy and telemetry offline and its sign-in
  * client secret a file in `home` as a secret injector mounts it, so no Secrets Manager is needed offline; unchanged
  * when none of those apply.
  */
-async function standInDeploymentConfig(
+async function standInBotCubeConfig(
   path: string,
-  config: DeploymentConfig,
+  config: BotCubeConfig,
   home: string,
-  offline: Partial<Pick<DeploymentConfig, 'proxy' | 'telemetry' | 'models'>>,
+  offline: { proxy?: BotCubeConfig['network']['proxy']; telemetry?: BotCubeConfig['integrations']['telemetry']; models?: BotCubeConfig['integrations']['modelGateway'] },
 ): Promise<string> {
-  if (config.identity.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
+  if (config.integrations.signIn.kind !== 'oidc' && Object.keys(offline).length === 0) return path;
   const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
   const clientSecret = { kind: 'file', path: await keyFile(home, STAND_IN_CLIENT_SECRET, 'oidc-client-secret') } as const;
-  const identity = config.identity.kind === 'oidc'
-    ? { identity: { ...config.identity, clients: config.identity.clients.map(({ clientId }) => ({ clientId, clientSecret })) } }
+  const identity = config.integrations.signIn.kind === 'oidc'
+    ? { signIn: { ...config.integrations.signIn, clients: config.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret })) } }
     : {};
-  const standIn = join(home, 'deployment-config.json');
-  await writeFile(standIn, JSON.stringify({ ...file, bot: resolve(dirname(path), config.bot), ...identity, ...offline }));
+  const standIn = join(home, 'botcube.yaml');
+  await writeFile(standIn, JSON.stringify({ ...file, integrations: { ...config.integrations, ...identity, ...(offline.telemetry ? { telemetry: offline.telemetry } : {}), ...(offline.models ? { modelGateway: offline.models } : {}) }, network: { ...config.network, ...(offline.proxy ? { proxy: offline.proxy } : {}) } }));
   return standIn;
 }
 
-/** What the CDK hands the Chat Service for the Deployment Config's Turn credentials adapter, with moto as STS. */
-function turnCredentialsEnv(config: DeploymentConfig, sts: string): NodeJS.ProcessEnv {
-  if (config.turnCredentials.kind !== 'assume-role') return {};
+/** What the CDK hands the Chat Service for the BotCube Config's Turn credentials adapter, with moto as STS. */
+function awsAccessEnv(config: BotCubeConfig, sts: string): NodeJS.ProcessEnv {
+  if (config.integrations.awsAccess.kind !== 'assume-role') return {};
   return { AWS_ENDPOINT_URL_STS: sts, BOTCUBE_USER_MEMORY_ROLE_ARN: 'arn:aws:iam::123456789012:role/bot-cube-user-memory' };
 }
 
-/** The Deployment Config's models Endpoint at its stand-in, behind the mTLS stand-ins when given. */
-async function standInModels(models: DeploymentConfig['models'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
+/** The BotCube Config's models Endpoint at its stand-in, behind the mTLS stand-ins when given. */
+async function standInModels(models: BotCubeConfig['integrations']['modelGateway'], openAICompatible: FakeOpenAICompatible | undefined, home: string, mtls: MtlsStandIns | undefined) {
   if (openAICompatible === undefined || models.kind !== 'openai-compatible') return undefined;
   return {
     models: {
@@ -339,6 +341,6 @@ async function standInModels(models: DeploymentConfig['models'], openAICompatibl
       url: mtls ? `https://${MTLS_MODELS_HOST}/v1` : `${openAICompatible.url}/v1`,
       credential: { kind: 'file', path: await keyFile(home, openAICompatible.apiKey) },
       ...(mtls ? { tls: { clientCertificate: mtls.certificates.files.clientA, serverIdentity: SERVER_IDENTITY } } : {}),
-    } satisfies DeploymentConfig['models'],
+    } satisfies BotCubeConfig['integrations']['modelGateway'],
   };
 }

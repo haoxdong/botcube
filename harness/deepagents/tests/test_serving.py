@@ -2660,18 +2660,21 @@ def test_a_service_takes_one_bot(service: _Service) -> None:
 
 @pytest.fixture
 def start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Callable[[], list[tuple[Any, dict[str, Any]]]]]:
-    """Start the service with main() serving the settings-only bot a Deployment Config names, recording how uvicorn would serve it."""
+    """Start the service with main() serving the settings-only bot a BotCube Config names, recording how uvicorn would serve it."""
     served: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, **options: served.append((app, options)))
     monkeypatch.setattr(serving, '_prime_snapshot', lambda: None)
     monkeypatch.setattr(serving, '_bot', None)
-    bot = tmp_path / 'bot.json'
+    bot = tmp_path / 'bot.yaml'
     bot.write_text(json.dumps({
         'agentIdentity': {'name': 'test-agent', 'character': 'A test bot'},
         'accountKey': 'test',
         'models': [{'key': 'echo', 'label': 'Echo', 'provider': 'openai'}],
     }))
     deploy(monkeypatch, tmp_path)
+    from botcube_harness_deepagents import bot_settings
+    original = bot_settings.load_bot_settings
+    monkeypatch.setattr(bot_settings, 'load_bot_settings', lambda path: original(bot))
     monkeypatch.delenv('PORT', raising=False)
     # main() configures process logging; restore it afterwards.
     cache_logger = logging.getLogger('botcube_harness_deepagents.prompt_cache')
@@ -2703,7 +2706,7 @@ def test_the_service_serves_on_the_configured_port(start: Callable[[], list[tupl
     assert start() == [(serving.app, {'host': '0.0.0.0', 'port': 9123})]
 
 
-def test_the_service_serves_the_bot_its_deployment_config_names(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
+def test_the_service_serves_the_bot_its_botcube_config_names(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
     start()
 
     assert serving._require_bot().agent_name == 'test-agent'
@@ -2712,7 +2715,7 @@ def test_the_service_serves_the_bot_its_deployment_config_names(start: Callable[
 def test_a_configured_service_starts_with_its_bot(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
     serving.configure_harness_definition(_definition([]))
     configured = serving._require_bot()
-    monkeypatch.delenv('BOTCUBE_DEPLOYMENT_CONFIG')
+    monkeypatch.delenv('BOTCUBE_CONFIG')
 
     start()
 

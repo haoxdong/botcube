@@ -17,8 +17,8 @@ export interface ProductionParkingProps extends StackProps {
   /** The registry the transition's bundling image comes from, a mirror of Amazon ECR Public's paths; absent, ECR Public. */
   imageRegistry?: string | undefined;
   chatTable: ITable;
-  /** The operator supplied the chat table with its grants: the functions are granted nothing on it or its stream. */
-  chatTableSupplied: boolean;
+  /** The operator existing the chat table with its grants: the functions are granted nothing on it or its stream. */
+  chatTableExisting: boolean;
   parkStateParameter: string;
   hostname: string;
   parking: { slotBucket: string; originSlotKey: string };
@@ -45,7 +45,7 @@ export class ProductionParkingStack extends Stack {
       environment: { BOTCUBE_CHAT_TABLE: chatTable.tableName, HEALTH_URL: `https://${props.hostname}/health`, ...environment },
       logGroup: new logs.LogGroup(this, `${handler}Logs`, { logGroupName: `/aws/lambda/${name}`, retention: logs.RetentionDays.ONE_MONTH }),
     });
-    const grantItems = (fn: lambda.Function, actions: string[]) => props.chatTableSupplied || fn.addToRolePolicy(new iam.PolicyStatement({
+    const grantItems = (fn: lambda.Function, actions: string[]) => props.chatTableExisting || fn.addToRolePolicy(new iam.PolicyStatement({
       actions, resources: [chatTable.tableArn], conditions: { 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': [PARTITION] } },
     }));
 
@@ -79,8 +79,8 @@ export class ProductionParkingStack extends Stack {
         dynamodb: { Keys: { pk: { S: lambda.FilterRule.isEqual(PARTITION) }, sk: { S: lambda.FilterRule.beginsWith('DISPATCH#') } } },
       })],
     };
-    // DynamoEventSource grants the stream read; a supplied table's stream carries that grant itself.
-    if (props.chatTableSupplied) dispatcher.addEventSourceMapping('SuppliedChatTableDispatches', { ...dispatches, eventSourceArn: chatTable.tableStreamArn });
+    // DynamoEventSource grants the stream read; a existing table's stream carries that grant itself.
+    if (props.chatTableExisting) dispatcher.addEventSourceMapping('ExistingChatTableDispatches', { ...dispatches, eventSourceArn: chatTable.tableStreamArn });
     else dispatcher.addEventSource(new DynamoEventSource(chatTable, dispatches));
     new events.Rule(this, 'IdleCheck', {
       enabled: props.autoPark,
@@ -94,11 +94,11 @@ export class ProductionParkingStack extends Stack {
   }
 }
 
-export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, chatTableSupplied: boolean, identity: DeployIdentity, imageRegistry?: string): ProductionParkingStack {
+export function createProductionParking(scope: Construct, cubeRoot: string, chatTable: ITable, chatTableExisting: boolean, identity: DeployIdentity, imageRegistry?: string): ProductionParkingStack {
   const { functionName, autoPark, slotBucket, originSlotKey } = identity.aws.ecs.parking;
   return new ProductionParkingStack(scope, 'ProductionParking', {
     env: { account: identity.aws.account, region: identity.aws.region },
     parkingPath: join(cubeRoot, 'infra/ecs/parking'), hostname: new URL(identity.domains.chatService).hostname,
-    chatTable, chatTableSupplied, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, imageRegistry,
+    chatTable, chatTableExisting, parkStateParameter: identity.ssm.parkState, parking: { slotBucket, originSlotKey }, functionName, autoPark, identity, imageRegistry,
   });
 }

@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { loadDeployment } from 'botcube-deployment-config/load';
+import { loadBotCube } from 'botcube-config/load';
 import { accountCookies } from './account-cookies.js';
 import { accountDeletions, serviceHealthy } from './account-deletions.js';
 import type { AccountHistory } from './account-history.js';
@@ -59,7 +59,7 @@ async function credentialServiceResponse(url: string, secret: string, accountId:
 type ComputerStates = Parameters<typeof computerFilesRoutes>[0]['computers'];
 
 /**
- * Under the Deployment Config's `liveView: none`, no client gets the screen: the live-view URL and its frames answer 404.
+ * Under the BotCube Config's `liveView: none`, no client gets the screen: the live-view URL and its frames answer 404.
  * Mounted ahead of the computer's routes, and of the Chat Service's own AgentCore live-view URL, so it covers both.
  */
 function refusingLiveView(): Hono {
@@ -70,7 +70,7 @@ function refusingLiveView(): Hono {
   return routes;
 }
 
-/** Under the Deployment Config's `liveView: none`, an awake computer tells the Computer tab to start no live view. */
+/** Under the BotCube Config's `liveView: none`, an awake computer tells the Computer tab to start no live view. */
 function withoutLiveView(computers: ComputerStates): ComputerStates {
   const marked = (state: AgentComputerState): AgentComputerState => (state.state === 'awake' ? { ...state, liveView: 'none' } : state);
   return {
@@ -80,20 +80,20 @@ function withoutLiveView(computers: ComputerStates): ComputerStates {
 }
 
 function deployment(env: NodeJS.ProcessEnv) {
-  const path = env.BOTCUBE_DEPLOYMENT_CONFIG;
-  if (!path) throw new Error('BOTCUBE_DEPLOYMENT_CONFIG is not set: the stock Chat Service serves the Deployment Config it names');
-  return loadDeployment(path);
+  const path = env.BOTCUBE_CONFIG;
+  if (!path) throw new Error('BOTCUBE_CONFIG is not set: the stock Chat Service serves the BotCube Config it names');
+  return loadBotCube(path);
 }
 
-/** The accounts of the bot its Deployment Config names, in BOTCUBE_CHAT_TABLE. */
+/** The accounts of the bot its BotCube Config names, in BOTCUBE_CHAT_TABLE. */
 export function stockAccountStore(env: NodeJS.ProcessEnv, documents?: Pick<DynamoDBDocumentClient, 'send'>) {
   const { bot } = deployment(env);
   return new AccountStore(chatTable(env), { key: bot.accountKey, product: bot.agentIdentity.name }, documents);
 }
 
-/** BotCube's own Chat, composed from the Deployment Config and its bot settings: what the Chat Service's routes and scheduled runs call. */
+/** BotCube's own Chat, composed from the BotCube Config and its bot settings: what the Chat Service's routes and scheduled runs call. */
 export interface StockChat extends TurnRouteSource, ScheduledRunSource {
-  /** The origins allowed when the BotCube Config names no `web.corsOrigins`; the local UI's (LOCAL_UI_ORIGINS) unless given. */
+  /** The origins allowed when the BotCube Config names no `network.corsOrigins`; the local UI's (LOCAL_UI_ORIGINS) unless given. */
   readonly corsOrigins?: readonly string[];
   /** The bot's own routes (auth and account), mounted at the root. */
   readonly routes: Hono;
@@ -126,7 +126,7 @@ export interface StockOptions {
   filesRoot?: string | undefined;
 }
 
-/** BotCube's own Chat Service, composed from the Deployment Config and the bot settings it names (ADR 0091). */
+/** BotCube's own Chat Service, composed from the BotCube Config and the settings its Bot Image carries (ADR 0091). */
 export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions = {}): (history: AccountHistory) => StockChat {
   const { config, bot } = deployment(env);
   if (bot.userTokenInShell === true && env.BOTCUBE_TURN_IDENTITY_KEYS === undefined) {
@@ -135,8 +135,8 @@ export function stockChatService(env: NodeJS.ProcessEnv, options: StockOptions =
   const accountStore = options.accountStore ?? stockAccountStore(env);
   const store = () => accountStore;
   const cookies = accountCookies(bot.accountKey);
-  const identity = config.identity.kind === 'oidc' ? oidcIdentity(config.identity, env, { store, cookies, returnOrigins: config.web?.corsOrigins ?? LOCAL_UI_ORIGINS }) : null;
-  const files = accountFilesFromEnv(env, store, config.supplied?.files, options.filesRoot);
+  const identity = config.integrations.signIn.kind === 'oidc' ? oidcIdentity(config.integrations.signIn, env, { store, cookies, returnOrigins: config.network.corsOrigins ?? LOCAL_UI_ORIGINS }) : null;
+  const files = accountFilesFromEnv(env, store, config.existing?.files, options.filesRoot);
   const started = agentComputerStartedFromConfig(config.productService?.agentComputerStartedPath, env, async (accountId) => (await accountStore.loadAccount(accountId))?.status !== 'registered');
   const credentialServiceUrl = env.BOTCUBE_CREDENTIAL_SERVICE_URL;
   // A product service that holds the invocation secret checks the Chat's sessions by Token Introspection.

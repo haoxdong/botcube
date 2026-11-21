@@ -7,11 +7,10 @@ WORKDIR /workspace/botcube
 COPY ${BOTCUBE_ROOT}/package.json ${BOTCUBE_ROOT}/pnpm-lock.yaml ${BOTCUBE_ROOT}/pnpm-workspace.yaml ./
 COPY ${BOTCUBE_ROOT}/patches/ patches/
 COPY ${BOTCUBE_ROOT}/chat/ chat/
-COPY ${BOTCUBE_ROOT}/deployment-config/ deployment-config/
-COPY ${BOTCUBE_ROOT}/examples/bot/bot.json examples/bot/bot.json
-# Each example's Deployment Config, beside the bot settings it names, for BOTCUBE_DEPLOYMENT_CONFIG (example/app.ts).
-COPY ${BOTCUBE_ROOT}/examples/enterprise/deployment-config.json examples/enterprise/deployment-config.json
-COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json examples/public/deployment-config.json
+COPY ${BOTCUBE_ROOT}/config/ config/
+COPY ${BOTCUBE_ROOT}/examples/bot/bot.yaml /bot/bot.yaml
+COPY ${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml examples/enterprise/botcube.yaml
+COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/package.json harness/deepagents/artifact-check/
 COPY ${BOTCUBE_ROOT}/harness/deepagents/artifact-check/src/ harness/deepagents/artifact-check/src/
 RUN --mount=type=secret,id=build_ca \
@@ -29,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium \
 WORKDIR /opt/chat-service
 COPY --from=build /workspace/botcube/chat/dist/ dist/
 COPY --from=build /workspace/botcube/examples/ examples/
+COPY --from=build /bot/ /bot/
 ENV PORT=8123
 EXPOSE 8123
 CMD ["node", "dist/main.js"]

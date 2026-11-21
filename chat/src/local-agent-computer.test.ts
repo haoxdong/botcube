@@ -16,7 +16,7 @@ import { localAgentComputer } from './local-agent-computer.js';
 import { startLocalChromium, type LocalChromium } from './local-chromium.js';
 import { AgentCdp } from '../test/agent-cdp.js';
 import { testChromiumPath } from '../test/chromium.js';
-import { proxyEnvironment } from '../../deployment-config/environment.js';
+import { proxyEnvironment } from '../../config/environment.js';
 
 const fixture = (name: string) => fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url));
 
@@ -210,8 +210,8 @@ it("with zero env, runs the Chromium on PATH on a blank page and answers on this
   expect(startupDiagnostics.spawned).toEqual([[executable, expect.not.arrayContaining([expect.stringMatching(/^--(no-)?proxy/)])]]);
 });
 
-it("under the Deployment Config's proxy, starts Chromium through it, bypassing NO_PROXY", async () => {
-  const proxy = proxyEnvironment({ proxy: { kind: 'forward', url: 'http://proxy.example:3128', noProxy: ['.internal.test'] } });
+it("under the BotCube Config's proxy, starts Chromium through it, bypassing NO_PROXY", async () => {
+  const proxy = proxyEnvironment({ network: { proxy: { kind: 'forward', url: 'http://proxy.example:3128', noProxy: ['.internal.test'] } } });
   computer = localAgentComputer({ history: owning(), requester, env: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), ...proxy } });
   await computer.warmSession({ owner: OWNER }, 'proxied-session');
   expect(await computer.state(OWNER, 'proxied-session')).toMatchObject({ state: 'awake' });

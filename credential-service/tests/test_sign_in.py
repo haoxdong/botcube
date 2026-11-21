@@ -62,13 +62,13 @@ def test_an_alias_naming_a_key_that_is_not_rsa_for_encryption_stops_startup_nami
         KmsSheetKey(ALIAS, kms)
 
     assert str(refused.value) == (
-        f'supplied.kmsKeys.sheet: {ALIAS} names {key}, a {key_spec} key for {key_usage}; '
+        f'existing.kmsKeys.sheet: {ALIAS} names {key}, a {key_spec} key for {key_usage}; '
         'the Sign-in Sheet needs an RSA key for ENCRYPT_DECRYPT'
     )
 
 
 def test_an_alias_that_names_no_key_stops_startup_naming_the_field() -> None:
-    with pytest.raises(SheetKeyMisconfigured, match=f'^supplied.kmsKeys.sheet: {ALIAS} could not be described: NotFoundException'):
+    with pytest.raises(SheetKeyMisconfigured, match=f'^existing.kmsKeys.sheet: {ALIAS} could not be described: NotFoundException'):
         KmsSheetKey(ALIAS, KmsStandIn())
 
 

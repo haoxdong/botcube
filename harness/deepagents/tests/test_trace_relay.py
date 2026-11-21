@@ -141,7 +141,7 @@ def test_relay_sends_the_telemetry_credential_as_the_bearer_in_place_of_sigv4(
 ) -> None:
     token = tmp_path / 'telemetry-token'
     token.write_text('collector-token\n')
-    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}})
+    deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}}})
     relay = start_trace_relay().removesuffix('/v1/traces')
     request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
 
@@ -167,7 +167,7 @@ def test_relay_sends_the_telemetry_credential_without_aws_credentials(
     monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
     token = tmp_path / 'telemetry-token'
     token.write_text('collector-token\n')
-    deploy(monkeypatch, tmp_path, telemetry={'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}})
+    deploy(monkeypatch, tmp_path, integrations={'telemetry': {'kind': 'otlp', 'url': 'http://collector.example.com:4318/v1/traces', 'credential': {'kind': 'file', 'path': str(token)}}})
     relay = start_trace_relay().removesuffix('/v1/traces')
     request = urllib.request.Request(f'{relay}/any', data=b'spans', method='PUT', headers={'Content-Type': 'application/x-protobuf'})
 

@@ -1,7 +1,7 @@
 import { copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DeploymentConfig } from 'botcube-deployment-config';
-import type { EndpointTls } from 'botcube-deployment-config/blocks';
+import type { BotCubeConfig } from 'botcube-config';
+import type { EndpointTls } from 'botcube-config/blocks';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeOpenAICompatible } from '../test/fakes/fake-backends.js';
 import { FakeMtlsFront, FakeMtlsProxy, mtlsCertificates, SERVER_IDENTITY, trustCa } from '../test/fakes/mtls.js';
@@ -39,13 +39,13 @@ afterAll(async () => {
   certificates.remove();
 });
 
-/** The Deployment Config's `models` section for an Endpoint with TLS, at the stand-in's mTLS front. */
-function deployed(tls: EndpointTls): DeploymentConfig['models'] {
+/** The BotCube Config's `models` section for an Endpoint with TLS, at the stand-in's mTLS front. */
+function deployed(tls: EndpointTls): BotCubeConfig['integrations']['modelGateway'] {
   return { kind: 'openai-compatible', url, credential: { kind: 'file', path: keyFile }, turnSummaryModel: 'example-summary', wire: 'chat-completions', tls };
 }
 
 const turn = { request: 'Hello, who are you?', answer: 'Echo: Hello, who are you?' };
-const summarize = (models: DeploymentConfig['models'], env: NodeJS.ProcessEnv = {}) => turnSummarizer(turnSummaryModel(models, env, 'us-east-1'))(turn);
+const summarize = (models: BotCubeConfig['integrations']['modelGateway'], env: NodeJS.ProcessEnv = {}) => turnSummarizer(turnSummaryModel(models, env, 'us-east-1'))(turn);
 const SUMMARY = { title: 'Answered a question', summary: 'Replied to the user' };
 
 afterEach(() => {

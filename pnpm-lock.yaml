@@ -289,9 +289,9 @@ importers:
       botcube-artifact-check:
         specifier: workspace:*
         version: link:../harness/deepagents/artifact-check
-      botcube-deployment-config:
+      botcube-config:
         specifier: workspace:*
-        version: link:../deployment-config
+        version: link:../config
       croner:
         specifier: ^10.0.1
         version: 10.0.1
@@ -345,11 +345,21 @@ importers:
         specifier: 9.3.0
         version: 9.3.0
 
-  deployment-config:
+  config:
     dependencies:
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+    devDependencies:
+      prettier:
+        specifier: ^3.9.10
+        version: 3.9.10
 
   harness/deepagents/artifact-check:
     dependencies:
@@ -411,6 +421,9 @@ importers:
       aws-cdk-lib:
         specifier: ^2.275.0
         version: 2.275.0(constructs@10.8.1)
+      botcube-config:
+        specifier: workspace:*
+        version: link:../../../config
       constructs:
         specifier: ^10.8.1
         version: 10.8.1
@@ -532,9 +545,9 @@ importers:
       botcube-artifact-check:
         specifier: workspace:*
         version: link:../../harness/deepagents/artifact-check
-      botcube-deployment-config:
+      botcube-config:
         specifier: workspace:*
-        version: link:../../deployment-config
+        version: link:../../config
       buffer:
         specifier: 6.0.3
         version: 6.0.3

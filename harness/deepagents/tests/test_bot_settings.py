@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -31,7 +30,7 @@ def _bot(root: Path, **settings: Any) -> Path:
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text(SKILL)
     (root / 'INSTRUCTIONS.md').write_text(INSTRUCTIONS)
-    path = root / 'bot.json'
+    path = root / 'bot.yaml'
     path.write_text(json.dumps({
         'agentIdentity': {'name': 'Cubey', 'character': 'A test bot'},
         'accountKey': 'cubey',
@@ -43,10 +42,17 @@ def _bot(root: Path, **settings: Any) -> Path:
 
 
 def _deployed(monkeypatch: pytest.MonkeyPatch, root: Path, bot: Path) -> Path:
-    """A Deployment Config in its own directory, naming the bot settings relative to itself as the examples' do."""
+    """A BotCube Config in its own directory, naming the bot settings relative to itself as the examples' do."""
     directory = root / 'deployment'
     directory.mkdir()
-    return deploy(monkeypatch, directory, bot=os.path.relpath(bot, directory))
+    original = load_bot_settings
+
+    def image_settings(path: Path) -> Any:
+        assert path == Path('/bot/bot.yaml')
+        return original(bot)
+
+    monkeypatch.setattr('botcube_harness_deepagents.bot_settings.load_bot_settings', image_settings)
+    return deploy(monkeypatch, directory)
 
 
 @pytest.fixture
@@ -217,16 +223,25 @@ def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: 
         start()
 
 
-def test_a_harness_without_a_deployment_config_stops_startup(start: Start, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv('BOTCUBE_DEPLOYMENT_CONFIG', raising=False)
+def test_the_harness_reads_the_bot_image_without_a_config_locator(monkeypatch: pytest.MonkeyPatch) -> None:
+    from botcube_harness_deepagents import bot_settings
 
-    with pytest.raises(BotSettingsError, match=r'^BOTCUBE_DEPLOYMENT_CONFIG is unset'):
-        start()
+    monkeypatch.delenv('BOTCUBE_CONFIG', raising=False)
+    seen: list[Path] = []
+
+    def missing_image(path: Path) -> Any:
+        seen.append(path)
+        raise BotSettingsError('missing image')
+
+    monkeypatch.setattr(bot_settings, 'load_bot_settings', missing_image)
+    with pytest.raises(BotSettingsError, match='missing image'):
+        bot_settings.bot_from_env()
+    assert seen == [Path('/bot/bot.yaml')]
 
 
 def test_the_example_bot_is_servable() -> None:
     example = Path(__file__).resolve().parents[3] / 'examples' / 'bot'
 
-    bot = load_bot_settings(example / 'bot.json')
+    bot = load_bot_settings(example / 'bot.yaml')
 
     assert (bot.agent_name, bot.models[0], bot.skills) == ('BotCube', 'echo', (example / 'skills' / 'computer',))

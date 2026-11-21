@@ -1,5 +1,5 @@
 // The preview origin's Chat Service and Credential Service images: a deploy root with its own builds that one; any
-// other runs the stock image (the Chat Service on a Deployment Config its image ships).
+// other runs the stock image (the Chat Service on a BotCube Config its image ships).
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -20,19 +20,19 @@ test('a deploy root with its own chat Dockerfile builds it on the BotCube Config
   fs.mkdirSync(path.join(root, 'product/chat'));
   fs.writeFileSync(path.join(root, 'product/chat/Dockerfile'), 'FROM scratch\n');
   expect(productionChatImage(root, path.join(root, 'product/deploy'))).toEqual({
-    file: 'product/chat/Dockerfile', config: path.join(root, 'product/deployment-config.json'),
+    file: 'product/chat/Dockerfile', config: path.join(root, 'product/botcube.yaml'),
   });
 });
 
-test('the public example, with no chat of its own, builds the stock Chat Service on its Deployment Config', () => {
+test('the public example, with no chat of its own, builds the stock Chat Service on its BotCube Config', () => {
   const image = productionChatImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
   expect(image).toEqual({
-    file: 'chat/Dockerfile', config: path.join(botcubeRoot, 'examples/public/deployment-config.json'),
-    deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json',
+    file: 'chat/Dockerfile', config: path.join(botcubeRoot, 'examples/public/botcube.yaml'),
+    botcubeConfig: '/opt/chat-service/examples/public/botcube.yaml',
   });
   expect(repositoryImageProps(botcubeRoot, image.file).file).toBe('chat/Dockerfile');
   expect(fs.readFileSync(path.join(botcubeRoot, image.file), 'utf8'))
-    .toContain('COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json examples/public/deployment-config.json');
+    .toContain('COPY ${BOTCUBE_ROOT}/examples/public/botcube.yaml examples/public/botcube.yaml');
 });
 
 test('a deploy root with its own Credential Service Dockerfile builds it', () => {
@@ -46,5 +46,5 @@ test('a deploy root with its own Credential Service Dockerfile builds it', () =>
 test('the public example, with no Credential Service of its own, builds the stock one from the package and the example BotCube Configs it copies', () => {
   const file = productionCredentialImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
   expect(file).toBe('credential-service/Dockerfile');
-  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '!examples/enterprise/deployment-config.json', '!examples/public/deployment-config.json', '**/*.test.ts']);
+  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '!examples/enterprise/botcube.yaml', '!examples/public/botcube.yaml', '**/*.test.ts']);
 });

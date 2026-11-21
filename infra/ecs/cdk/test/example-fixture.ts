@@ -1,20 +1,20 @@
 import * as path from 'node:path';
 import { App } from 'aws-cdk-lib';
 import { ContainerImage } from 'aws-cdk-lib/aws-ecs';
-import { IMAGES } from '../../../../deployment-config/footprint.js';
+import { IMAGES } from '../../../../config/footprint.js';
 import { defineExample } from '../example/app.js';
 import type { DeployIdentity } from '../lib/production-identity.js';
 import { registryCredentialImage } from './credential-image.js';
 import { caPath, repositoryRoot } from './origin-fixture.js';
 
-export const deploymentConfigPath = (example: string) => path.resolve(__dirname, `../../../../examples/${example}/deployment-config.json`);
+export const botcubeConfigPath = (example: string) => path.resolve(__dirname, `../../../../examples/${example}/botcube.yaml`);
 
 /** An example's whole deployment, both CDK apps, synthesizable offline: registry images and fixture origin inputs. */
 export async function synthesizeExample(example: string, identity?: (identity: DeployIdentity) => DeployIdentity, context?: Record<string, string>): Promise<App> {
-  return synthesizeExampleAt(deploymentConfigPath(example), identity, context);
+  return synthesizeExampleAt(botcubeConfigPath(example), identity, context);
 }
 
-/** The deployment the Deployment Config at `configPath` describes, synthesized as an example's is, under the CDK `context` given. */
+/** The deployment the BotCube Config at `configPath` describes, synthesized as an example's is, under the CDK `context` given. */
 export async function synthesizeExampleAt(configPath: string, adjust: (identity: DeployIdentity) => DeployIdentity = same => same, context: Record<string, string> = {}): Promise<App> {
   const app = new App({ context });
   await defineExample(app, configPath, {

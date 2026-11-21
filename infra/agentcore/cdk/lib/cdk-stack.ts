@@ -14,8 +14,8 @@ import { applyRuntimePlatform, type RuntimePlatformVersion } from './runtime-pla
 import { scaleSessionApi } from './session-api-scaling';
 import { Construct } from 'constructs';
 import { configureRuntimeTelemetry } from './runtime-telemetry';
-import { applyDeploymentSeams, useSuppliedImageKey } from './runtime-seams';
-import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../deployment-config/seams.js' with {
+import { applyDeploymentSeams, useExistingImageKey } from './runtime-seams';
+import type { HarnessAuth, ModelsDeployment, RuntimeTelemetry } from '../../../../config/seams.js' with {
   'resolution-mode': 'import',
 };
 import { addUserMemoryRole, type UserMemoryRole } from './user-memory-role';
@@ -102,13 +102,13 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   /** Name for the fallback group created when securityGroups are omitted. */
   runtimeSecurityGroupName?: string;
   kmsKey?: kms.IKey;
-  /** A supplied Memory key, by ARN; no role is granted it. */
-  suppliedMemoryKeyArn?: string;
-  /** A supplied image repository key, by ARN; no role is granted it. */
-  suppliedImageKeyArn?: string;
+  /** A existing Memory key, by ARN; no role is granted it. */
+  existingMemoryKeyArn?: string;
+  /** A existing image repository key, by ARN; no role is granted it. */
+  existingImageKeyArn?: string;
   /** The registry, mirroring ECR Public's paths, images are built FROM. */
   imageRegistry?: string;
-  /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (Deployment Config plain parameters). */
+  /** Variables every runtime gets, such as the proxy and the OTLP traces endpoint (BotCube Config plain parameters). */
   runtimeEnvironment?: Record<string, string>;
   permissionsBoundary?: iam.IManagedPolicy;
   runtimeMaxLifetimeSeconds?: number;
@@ -137,11 +137,11 @@ export interface AgentCoreStackProps extends Omit<StackProps, 'permissionsBounda
   userMemoryRole?: UserMemoryRole;
   /** The Chat Service's public origin, which serves the OIDC discovery for the tokens it signs with its Turn identity keys. */
   chatServiceIssuer?: string;
-  /** How the Chat Service authenticates to the Runtime, the Deployment Config's `harnessAuth`; absent, SigV4. */
+  /** How the Chat Service authenticates to the Runtime, the BotCube Config's `harnessAuth`; absent, SigV4. */
   harnessAuth?: HarnessAuth;
-  /** The Deployment Config's `models` section off Bedrock, as `modelsDeployment` in botcube/deployment-config gives it; absent, Bedrock. */
+  /** The BotCube Config's `models` section off Bedrock, as `modelGatewayResources` in botcube/config gives it; absent, Bedrock. */
   models?: ModelsDeployment | undefined;
-  /** The Deployment Config's `telemetry`; absent, X-Ray. */
+  /** The BotCube Config's `telemetry`; absent, X-Ray. */
   telemetry?: RuntimeTelemetry | undefined;
 }
 
@@ -160,7 +160,7 @@ const registryArgs = ({ imageRegistry }: AgentCoreStackProps): { REGISTRY?: stri
   imageRegistry ? { REGISTRY: imageRegistry } : {};
 
 const memoryKeyArn = (props: AgentCoreStackProps): string | undefined =>
-  props.kmsKey?.keyArn ?? props.suppliedMemoryKeyArn;
+  props.kmsKey?.keyArn ?? props.existingMemoryKeyArn;
 
 function configuredSpec(props: AgentCoreStackProps): AgentCoreProjectSpec {
   const { executionRole } = props;
@@ -195,7 +195,7 @@ export class AgentCoreStack extends Stack {
 
     if (props.permissionsBoundary) iam.PermissionsBoundary.of(this).apply(props.permissionsBoundary);
     if (props.vpc && props.runtimeNetwork) throw new Error('Choose vpc or runtimeNetwork, not both');
-    if (props.kmsKey && props.suppliedMemoryKeyArn) throw new Error('Choose kmsKey or suppliedMemoryKeyArn, not both');
+    if (props.kmsKey && props.existingMemoryKeyArn) throw new Error('Choose kmsKey or existingMemoryKeyArn, not both');
     if (!props.vpc && (props.subnets || props.securityGroups))
       throw new Error('subnets and securityGroups require vpc');
     const { physicalIdentity, privateNatBrowser } = props;
@@ -214,7 +214,7 @@ export class AgentCoreStack extends Stack {
 
     this.configureMemories(props);
     this.configureRuntimes(props);
-    if (props.suppliedImageKeyArn) useSuppliedImageKey(this, props.suppliedImageKeyArn);
+    if (props.existingImageKeyArn) useExistingImageKey(this, props.existingImageKeyArn);
 
     // The Runtime role has no browser access: the agent reaches its Session's Agent
     // Computer only through the Chat Service's CDP filter (ADR 0075 decision 5).

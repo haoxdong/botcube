@@ -1,6 +1,6 @@
 # Integrate BotCube with your application
 
-BotCube gives you a web UI, a Chat Service, and a Harness. Your bot is configuration, not code (ADR 0091): its settings and skills in an image built on BotCube's Harness image, a Deployment Config, and a deploy root. Start from the public example, [`examples/bot/`](examples/bot/) and [`examples/public/`](examples/public/), then replace its inputs with your own. The example runs without external provider or AWS credentials.
+BotCube gives you a web UI, a Chat Service, and a Harness. Your bot is configuration, not code (ADR 0091): its settings and skills in an image built on BotCube's Harness image, a BotCube Config, and a deploy root. Start from the public example, [`examples/bot/`](examples/bot/) and [`examples/public/`](examples/public/), then replace its inputs with your own. The example runs without external provider or AWS credentials.
 
 ## Run the example in a clean clone
 
@@ -48,7 +48,7 @@ docker build -f chat/Dockerfile --build-arg BOTCUBE_ROOT=. -t chat .
 docker build -f credential-service/Dockerfile --build-arg BOTCUBE_ROOT=. -t credential .
 ```
 
-The Chat Service image is stock and ships the Deployment Configs under `examples/`; set `BOTCUBE_DEPLOYMENT_CONFIG` to the one it runs, such as `/opt/chat-service/examples/public/deployment-config.json`. The stock Credential Service serves OpenAI and any models Endpoint, with no site provider. It reads its Vault from `BOTCUBE_VAULT_TABLE` and `BOTCUBE_VAULT_KMS_KEY_ID` and its invocation secret from `BOTCUBE_CREDENTIAL_INVOCATION_SECRET`.
+The Chat Service image is stock and ships the BotCube Configs under `examples/`; set `BOTCUBE_CONFIG` to the one it runs, such as `/opt/chat-service/examples/public/botcube.yaml`. The stock Credential Service serves OpenAI and any models Endpoint, with no site provider. It reads its Vault from `BOTCUBE_VAULT_TABLE` and `BOTCUBE_VAULT_KMS_KEY_ID` and its invocation secret from `BOTCUBE_CREDENTIAL_INVOCATION_SECRET`.
 
 Export the static UI with the URL of your deployed Chat Service:
 
@@ -81,9 +81,9 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 
 ## Supply your bot
 
-- **Bot settings and skills.** Copy [`examples/bot/`](examples/bot/). [`bot.json`](examples/bot/bot.json) follows [the bot settings schema](deployment-config/bot-settings.schema.json): agent identity, account key, models, skills, Memory, and Agent Computer. Each skill is a directory holding a `SKILL.md`.
-- **Bot image.** The bot's [`Dockerfile`](examples/bot/Dockerfile) builds `FROM harness`, and copies the settings and skills to where the Deployment Config names them. Install your bot's CLIs there, on the `PATH`. The bot runs no code in BotCube's processes.
-- **Deployment Config.** [`examples/public/deployment-config.json`](examples/public/deployment-config.json) names the bot settings and picks each External Service's adapter; see [the schema](deployment-config/deployment-config.schema.json). [`examples/enterprise/`](examples/enterprise/) shows supplied resources.
+- **Bot settings and skills.** Copy [`examples/bot/`](examples/bot/). [`bot.yaml`](examples/bot/bot.yaml) follows [the bot settings schema](config/bot.schema.json): agent identity, account key, models, skills, Memory, and Agent Computer. Each skill is a directory holding a `SKILL.md`.
+- **Bot image.** The bot's [`Dockerfile`](examples/bot/Dockerfile) builds `FROM harness`, and copies the settings to `/bot/bot.yaml` and the skills beside them. Install your bot's CLIs there, on the `PATH`. The bot runs no code in BotCube's processes.
+- **BotCube Config.** [`examples/public/botcube.yaml`](examples/public/botcube.yaml) groups External Services under `integrations`, resources under `existing`, and proxy and CORS under `network`; see [the schema](config/botcube.schema.json). [`examples/enterprise/`](examples/enterprise/) shows existing resources.
 - **Deploy root.** Copy [`examples/public/deploy/`](examples/public/deploy/). [`identity.json`](examples/public/deploy/identity.json) owns account, region, resource names, domains, networking, and the tool-staging hook. [`agentcore/agentcore.json`](examples/public/deploy/agentcore/agentcore.json) and [`agentcore/aws-targets.json`](examples/public/deploy/agentcore/aws-targets.json) supply runtime, memory, and synthesis inputs. AgentCore's CodeBuild has no named build contexts, so [`stage-tools.sh`](examples/public/deploy/stage-tools.sh) writes one Dockerfile, the Harness's then the bot's, to `harness/deepagents/.tool-dist/`; point it at your bot.
 - **Services.** The [stock Chat Service](chat/src/stock.ts) and stock Credential Service need no code. The stock Chat Service's `openai-compatible` `models` take `wire`: `chat-completions` (default), or `responses` for a Responses-only gateway; Turn summaries and the Harness use it, and `botcube footprint` prints it. A deploy root may ship its own `credential-service/Dockerfile`, for a site provider, or a `chat/Dockerfile` beside it; the ECS app builds those instead. [The local stand-ins](infra/local/stand-ins/) show a fake site provider.
 - **UI.** [The default UI plugin](ui/web/src/plugin/default.tsx) supplies neutral copy, auth, and theme through the [typed UI contract](ui/web/src/plugin/types.ts). Bind your own plugin package with `BOTCUBE_UI_PACKAGE` at build time.
@@ -92,7 +92,7 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 
 1. Copy `examples/bot/` and `examples/public/` into your application. Keep the echo model until the three pieces work together.
 2. Set your account, region, names, and domains in `deploy/identity.json`, and the same account and region in `deploy/agentcore/aws-targets.json`.
-3. Set the runtime and memory inputs in `deploy/agentcore/agentcore.json`. Configure your bot's models and the Deployment Config's model seam before enabling a real model.
+3. Set the runtime and memory inputs in `deploy/agentcore/agentcore.json`. Configure your bot's models and the BotCube Config's model seam before enabling a real model.
 4. Build the generic AgentCore CDK package and load your deploy root with `BOTCUBE_DEPLOY_ROOT`. An AWS target that disagrees with `identity.json` fails before synthesis.
 5. Compose the CDK stacks in your application. Pass existing resources through the [CDK props](#cdk-props). Imported resources remain your application's responsibility, including trust policies, network routing, and access grants.
 6. Synthesize with your overrides, inspect the templates, and compare with your deployed stack before your organization's deployment process runs. See [AgentCore CDK commands](infra/agentcore/cdk/README.md) and [ECS CDK commands](infra/ecs/cdk/README.md).
@@ -108,7 +108,7 @@ corepack pnpm --dir infra/agentcore/cdk cdk synth
 
 The example uses the placeholder account `000000000000`. Set your account in both identity and target files before deployment. Synthesis runs the deploy root's tool-staging hook and may build Docker assets. It does not deploy resources.
 
-[`infra/ecs/cdk/example/app.ts`](infra/ecs/cdk/example/app.ts) defines both CDK apps from a Deployment Config with `defineExample`. The Chat Service image must ship that config and the bot settings it names, so copy them in `chat/Dockerfile`.
+[`infra/ecs/cdk/example/app.ts`](infra/ecs/cdk/example/app.ts) defines both CDK apps from a BotCube Config with `defineExample`. The Chat Service image ships that config and `/bot/bot.yaml`. Copy them in `chat/Dockerfile`.
 
 For an existing-resource composition, use a custom CDK entry point instead of the default `bin/cdk.ts`. Import resources into a stack with the same account and region as your target, then pass them to `addAgentCoreStacks`.
 
@@ -201,7 +201,7 @@ origin defaults to 3600 seconds. Omit `loadBalancerIdleSeconds` from `chatProps`
 when supplying `ingress`, or synthesis fails. Ensure the ALB security group can
 send traffic to the Chat Service's `network` security group on the configured
 Chat port, which defaults to 8123. BotCube adds its task ingress and reserved
-listener rules without changing the supplied security group's outbound rules.
+listener rules without changing the existing security group's outbound rules.
 Use distinct resource names, hostnames, and priorities for separate services.
 
 You own ALB-wide alarms for shared ingress. BotCube retains the Chat Service's
@@ -216,18 +216,20 @@ A deployment is configured by one file, its BotCube Config, and by environment v
 
 ### The BotCube Config
 
-The BotCube Config is a JSON file that validates against [`deployment-config.schema.json`](deployment-config/deployment-config.schema.json), which is generated from [`deployment-config/schema.ts`](deployment-config/schema.ts). Unknown keys fail. It names the bot settings (`bot`, resolved from the file's own directory, against [the bot settings schema](deployment-config/bot-settings.schema.json)) and picks how BotCube signs users in, reaches models, authenticates to the Harness, issues Turn credentials, runs schedules, sends telemetry and reaches the network. A section you leave out takes its default. Existing resources you give in the file are used instead of created ones.
+The BotCube Config is `botcube.yaml`, YAML 1.2 against [`botcube.schema.json`](config/botcube.schema.json), emitted from [`config/schema.ts`](config/schema.ts). Unknown keys stop loading and name the key's path. `integrations` holds sign-in, the model gateway, Harness authentication, AWS access, telemetry and the image registry. `existing` names resources BotCube uses instead of creating them. `network` holds the proxy and CORS origins. A section you leave out takes its default.
 
-Every BotCube process reads the same file from inside its image. `BOTCUBE_DEPLOYMENT_CONFIG` holds the file's path in that image. The stock Chat Service and the Harness refuse to start without it. The CDK apps set it on each Chat Service, Credential Service and Harness process. The Chat and Credential Service Dockerfiles copy the file, and the deploy root's tool-staging hook copies it into the Harness runtime image; synthesis fails when an image does not ship the file it is given. `botcube footprint` prints what a BotCube Config needs from your account and network.
+The Bot Image carries its own settings at `/bot/bot.yaml`, against [`bot.schema.json`](config/bot.schema.json). The BotCube Config contains no bot-settings path. The settings and image roll back together.
+
+`BOTCUBE_CONFIG` locates `botcube.yaml` inside each image. The CDK apps set it on the Chat Service, Credential Service and Harness. The Dockerfiles and tool-staging hook copy the config into those images; synthesis stops when an image does not ship the config it is given. `botcube footprint` prints the resources, grants, images and egress a BotCube Config needs. Legacy filenames and keys stop loading and name their replacement.
 
 ### Environment variables
 
 [`environment-rule.ts`](infra/ecs/cdk/lib/environment-rule.ts) lists every name a deployed process may set, grouped by use, and a CDK test fails on any other name in any ECS task, Lambda or Harness runtime. The four uses are:
 
-1. **Locator.** `BOTCUBE_DEPLOYMENT_CONFIG`.
+1. **Locator.** `BOTCUBE_CONFIG`.
 2. **Secrets.** A secret's value, such as `BOTCUBE_CREDENTIAL_INVOCATION_SECRET`. Every ECS `Secrets` entry counts.
 3. **Names of created resources.** Names, ARNs, URLs and hostnames of resources the deployment creates, such as `BOTCUBE_CHAT_TABLE` or `AGENTCORE_RUNTIME_ARN`. An existing resource you name in the BotCube Config is read from the file instead.
-4. **Standard names.** Names a standard SDK, tool or platform reads: any `AWS_*` or `OTEL_*` name, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `PORT`, and the others the rule lists. The deploy sets the proxy names from the BotCube Config's `proxy`.
+4. **Standard names.** Names a standard SDK, tool or platform reads: any `AWS_*` or `OTEL_*` name, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `PORT`, and the others the rule lists. The deploy sets the proxy names from the BotCube Config's `network.proxy`.
 
 One more name is allowed: `BOTCUBE_ALLOW_COMMAND_CREDENTIALS=1`, the operator's consent to command credentials. Whoever can edit the BotCube Config chooses a command credential's command, so the consent stays out of the file. Set it where the deploy runs; synthesis fails on a command credential without it, and the deploy passes it to every process.
 
@@ -235,8 +237,8 @@ The rule's `PENDING` list holds the names not yet moved into the BotCube Config.
 
 ### Examples
 
-- [`examples/public/deployment-config.json`](examples/public/deployment-config.json) keeps the defaults: BotCube creates its resources, signs users in with BotCube accounts, reaches models on Bedrock, fires schedules with EventBridge Scheduler and sends traces to X-Ray.
-- [`examples/enterprise/deployment-config.json`](examples/enterprise/deployment-config.json) replaces each default: OIDC sign-in, OpenAI-compatible models, JWT bearer to the Harness, `AssumeRole` Turn credentials, a schedules table poller, an image mirror, existing resources, OTLP telemetry and a forward proxy.
+- [`examples/public/botcube.yaml`](examples/public/botcube.yaml) keeps the defaults: BotCube creates its resources, signs users in with BotCube accounts, reaches models on Bedrock, fires schedules with EventBridge Scheduler and sends traces to X-Ray.
+- [`examples/enterprise/botcube.yaml`](examples/enterprise/botcube.yaml) replaces each default: OIDC sign-in, OpenAI-compatible models, JWT bearer to the Harness, `AssumeRole` Turn credentials, a schedules table poller, an image mirror, existing resources, OTLP telemetry and a forward proxy.
 
 ## CDK props
 
@@ -246,9 +248,9 @@ CDK props are documented by their interfaces, with defaults in the constructors:
 
 ### Agent Computer
 
-With no AgentCore browser, the Chat Service runs BotCube's [local Agent Computer](chat/src/local-agent-computer.ts): it authorizes the owning Account and Session and runs a [local Chromium](chat/src/local-chromium.ts) with a private profile per Session, opened on `about:blank` unless given a start page, through the Deployment Config's `proxy` when it names one, with its `noProxy` hosts as Chromium's bypass list. Each Turn gets a signed CDP URL for its Account and Session, valid for an hour; the agent's connection wakes the Session's computer. The Harness exposes the URL as `AGENT_BROWSER_CDP`, with one `AGENT_BROWSER_SESSION` per Session, to its permitted browser commands. With no configuration it runs the `/usr/bin/chromium` the Chat image installs, and a Chromium missing there fails the computer's start with HTTP 503.
+With no AgentCore browser, the Chat Service runs BotCube's [local Agent Computer](chat/src/local-agent-computer.ts): it authorizes the owning Account and Session and runs a [local Chromium](chat/src/local-chromium.ts) with a private profile per Session, opened on `about:blank` unless given a start page, through the BotCube Config's `network.proxy` when it names one, with its `noProxy` hosts as Chromium's bypass list. Each Turn gets a signed CDP URL for its Account and Session, valid for an hour; the agent's connection wakes the Session's computer. The Harness exposes the URL as `AGENT_BROWSER_CDP`, with one `AGENT_BROWSER_SESSION` per Session, to its permitted browser commands. With no configuration it runs the `/usr/bin/chromium` the Chat image installs, and a Chromium missing there fails the computer's start with HTTP 503.
 
-The same [CDP channel](chat/src/agent-computer-cdp.ts) as an AgentCore Agent Computer's filters credential-export commands and cookie data from network events. Retirement closes CDP channels and deletes the private profile. Under the Deployment Config's `liveView: none` the UI requests no live view and says it is off. The local computer has no Take-over; AWS browser acceptance remains a separate check.
+The same [CDP channel](chat/src/agent-computer-cdp.ts) as an AgentCore Agent Computer's filters credential-export commands and cookie data from network events. Retirement closes CDP channels and deletes the private profile. Under the BotCube Config's `liveView: none` the UI requests no live view and says it is off. The local computer has no Take-over; AWS browser acceptance remains a separate check.
 
 ### Sign-in and scheduled runs
 

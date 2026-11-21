@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from './http-error.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
 import type { StockOverrides } from './stock.js';
-import { testDeploymentConfig } from '../test/stock-bot.js';
+import { testBotCubeConfig } from '../test/stock-bot.js';
 import type { AgentDocuments } from './agent-documents.js';
 import type { SessionMetadata } from './session-metadata.js';
 
-const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: 'live-view-test' };
+const env = { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: 'live-view-test' };
 
 const overrides: StockOverrides = {
   corsOrigins: [],

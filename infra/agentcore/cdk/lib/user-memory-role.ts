@@ -1,7 +1,7 @@
 import type { AgentCoreApplication } from '@aws/agentcore-cdk';
 import { CfnOutput, Duration, type Stack } from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import type { TokenAudiences } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { TokenAudiences } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /** The audience of the Chat Service's per-Turn JWT. */
 const TURN_IDENTITY_AUDIENCE: TokenAudiences['turnIdentity'] = 'sts.amazonaws.com';
@@ -13,7 +13,7 @@ const TURN_IDENTITY_AUDIENCE: TokenAudiences['turnIdentity'] = 'sts.amazonaws.co
  * role, named `chatServiceTaskRole`, and holds no tags.
  */
 export type UserMemoryRole = { roleName: string } & (
-  { issuer: string } | { turnCredentials: 'assume-role'; chatServiceTaskRole: string }
+  { issuer: string } | { awsAccess: 'assume-role'; chatServiceTaskRole: string }
 );
 
 /** The Memory role each Turn's credentials come from (ADR 0067 §8), by the Turn credentials adapter. */

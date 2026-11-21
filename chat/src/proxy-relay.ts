@@ -1,6 +1,6 @@
 import { connect as tcpConnect, createServer, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import { credentialSource, type CredentialSource } from './credential-source.js';
 import { endpointTls, EndpointTlsError, type EndpointTls, type TlsConnectOptions } from './endpoint-tls.js';
 
@@ -59,15 +59,15 @@ export async function startProxyRelay({ upstream, listen, credential, headers, t
 }
 
 /**
- * The relay for the Deployment Config's `proxy`, listening where HTTPS_PROXY points (`proxyEnvironment` in
- * botcube/deployment-config) before any client connects; undefined unless the proxy takes a credential, headers or
+ * The relay for the BotCube Config's `proxy`, listening where HTTPS_PROXY points (`proxyEnvironment` in
+ * botcube/config) before any client connects; undefined unless the proxy takes a credential, headers or
  * TLS. A relay that cannot listen stops the process.
  */
-export function startProxyRelayForConfig(proxy: DeploymentConfig['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
+export function startProxyRelayForConfig(proxy: BotCubeConfig['network']['proxy'], env: NodeJS.ProcessEnv = process.env): Promise<ProxyRelay> | undefined {
   if (proxy.kind === 'none' || (proxy.credential === undefined && proxy.headers === undefined && proxy.tls === undefined)) return undefined;
   const listen = env.HTTPS_PROXY ? new URL(env.HTTPS_PROXY) : undefined;
   if (listen === undefined || !listen.hostname || !listen.port) {
-    throw new Error("HTTPS_PROXY is unset beside the Deployment Config's proxy credential, headers or TLS; the deploy points it at the proxy relay");
+    throw new Error("HTTPS_PROXY is unset beside the BotCube Config's proxy credential, headers or TLS; the deploy points it at the proxy relay");
   }
   return startProxyRelay({
     upstream: new URL(proxy.url),

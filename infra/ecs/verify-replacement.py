@@ -40,7 +40,7 @@ def utc():
 def configuration(service: ServiceTypeDef, revision: str) -> DeploymentConfigurationOutputTypeDef:
     require(service.get('taskDefinition') == revision, 'Service revision changed or rolled back')
     config = required(service.get('deploymentConfiguration'), 'ECS service deploymentConfiguration')
-    breaker = required(config.get('deploymentCircuitBreaker'), 'deployment configuration deploymentCircuitBreaker')
+    breaker = required(config.get('deploymentCircuitBreaker'), 'BotCube configuration deploymentCircuitBreaker')
     require(service.get('desiredCount') == 1 and config.get('minimumHealthyPercent') == 100
             and config.get('maximumPercent') == 200
             and breaker['enable'] is True

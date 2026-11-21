@@ -15,7 +15,7 @@ import {
   RUNTIME_IDLE_TIMEOUT_SECONDS,
 } from '../lib/cdk-stack';
 import { readCdkContext } from '../lib/cdk-context';
-import type { HarnessAuth } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { HarnessAuth } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /** The template's one runtime and one memory. */
 function onlyOf<T>(entries: T[]): T {

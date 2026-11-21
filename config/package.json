@@ -1,0 +1,37 @@
+{
+  "name": "botcube-config",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "botcube": "./cli.ts"
+  },
+  "exports": {
+    ".": "./schema.ts",
+    "./blocks": "./blocks.ts",
+    "./existing": "./existing.ts",
+    "./credential-fields": "./credential-fields.ts",
+    "./load": "./load.ts",
+    "./parse": "./parse.ts",
+    "./footprint": "./footprint.ts",
+    "./models": "./models.ts",
+    "./seams": "./seams.d.ts",
+    "./environment": "./environment.ts",
+    "./telemetry": "./telemetry.ts",
+    "./read": {
+      "types": "./read.d.cts",
+      "default": "./read.cjs"
+    }
+  },
+  "scripts": {
+    "emit": "node emit.ts",
+    "footprint": "node cli.ts footprint"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}

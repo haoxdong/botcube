@@ -188,9 +188,9 @@ test('audit events are copied into the group the service used to log to, which k
   expect(copyLogs.Properties.RetentionInDays).toBe(30);
 });
 
-test("a supplied functions key encrypts the audit copy's environment, and nothing is granted on it", () => {
+test("a existing functions key encrypts the audit copy's environment, and nothing is granted on it", () => {
   const keyArn = 'arn:aws:kms:us-east-1:123456789012:key/55555555-eeee-4eee-8eee-555555555555';
-  const template = synth(false, undefined, { suppliedFunctionsKeyArn: keyArn });
+  const template = synth(false, undefined, { existingFunctionsKeyArn: keyArn });
   expect(only(template, 'AWS::Lambda::Function').Properties.KmsKeyArn).toBe(keyArn);
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain(keyArn);
 });
@@ -364,10 +364,10 @@ test('a Credential Service that mounts no Sign-in Sheet routes gets no sheet key
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('kms:GetPublicKey');
 });
 
-test('a supplied sheet key reaches the service by its alias, with no key or alias created and no grant, whether or not it mounts sheet routes', () => {
-  const alias = 'arn:aws:kms:us-east-1:123456789012:alias/supplied-sheet';
+test('a existing sheet key reaches the service by its alias, with no key or alias created and no grant, whether or not it mounts sheet routes', () => {
+  const alias = 'arn:aws:kms:us-east-1:123456789012:alias/existing-sheet';
   for (const sheetRoutes of [false, true]) {
-    const template = synth(false, undefined, { sheetRoutes, suppliedSheetKeyAlias: alias });
+    const template = synth(false, undefined, { sheetRoutes, existingSheetKeyAlias: alias });
     template.resourceCountIs('AWS::KMS::Key', 1);
     template.resourceCountIs('AWS::KMS::Alias', 0);
     expect(only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions[0].Environment).toContainEqual({ Name: 'BOTCUBE_SHEET_KMS_ALIAS', Value: alias });
@@ -402,9 +402,9 @@ test('Sign-in Sheets use a retained RSA key behind an alias, decryptable only by
   }]);
 });
 
-test('a supplied Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {
+test('a existing Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {
   const targetGroupArn = 'arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/corp-credentials/0123456789abcdef';
-  const template = synth(false, undefined, { suppliedEndpoint: { url: 'http://credentials.example.com', targetGroupArn, securityGroupId: 'sg-0loadbalancer1' } });
+  const template = synth(false, undefined, { existingEndpoint: { url: 'http://credentials.example.com', targetGroupArn, securityGroupId: 'sg-0loadbalancer1' } });
   template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', { SourceSecurityGroupId: 'sg-0loadbalancer1', IpProtocol: 'tcp', FromPort: 8081, ToPort: 8081 });
   template.resourceCountIs('AWS::ServiceDiscovery::PrivateDnsNamespace', 0);
   template.resourceCountIs('AWS::ServiceDiscovery::Service', 0);

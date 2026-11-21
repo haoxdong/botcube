@@ -26,13 +26,14 @@ dependencies = [
   "uvicorn[standard]>=0.54.0",
   "langgraph-checkpoint-aws==1.2.6",
   "zstandard>=0.25.0",
+  "ruamel-yaml>=0.18,<0.19",
 ]
 
 [project.scripts]
 botcube-harness-deepagents = "botcube_harness_deepagents.serving:main"
 botcube-session-api = "botcube_harness_deepagents.session_api:main"
 
-# The telemetry Endpoint's credential (Deployment Config `telemetry`), as OpenTelemetry Python loads one.
+# The telemetry Endpoint's credential (BotCube Config `telemetry`), as OpenTelemetry Python loads one.
 [project.entry-points.opentelemetry_otlp_credential_provider]
 botcube = "botcube_harness_deepagents.telemetry_credential:telemetry_session"
 

@@ -33,12 +33,12 @@ def test_the_stock_service_is_unhealthy_while_its_vault_is_unconfigured() -> Non
     assert response.json()['detail']['component'] == 'vault'
 
 
-def test_the_stock_image_runs_the_stock_service_from_the_package_and_the_example_deployment_configs() -> None:
+def test_the_stock_image_runs_the_stock_service_from_the_package_and_the_example_botcube_configs() -> None:
     dockerfile = STOCK_DOCKERFILE.read_text()
     copies = [line.split()[1] for line in dockerfile.splitlines() if line.startswith('COPY ') and '--from=' not in line]
     assert copies == [
         '${BOTCUBE_ROOT}/credential-service/',
-        '${BOTCUBE_ROOT}/examples/enterprise/deployment-config.json',
-        '${BOTCUBE_ROOT}/examples/public/deployment-config.json',
+        '${BOTCUBE_ROOT}/examples/enterprise/botcube.yaml',
+        '${BOTCUBE_ROOT}/examples/public/botcube.yaml',
     ]
     assert dockerfile.rstrip().endswith('CMD ["python", "-m", "botcube_credential_service.stock"]')

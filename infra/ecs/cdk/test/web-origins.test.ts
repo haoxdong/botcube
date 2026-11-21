@@ -1,3 +1,4 @@
+import { webOrigins } from '../lib/production-app.js';
 // The UI origins every stack grants come from the BotCube Config the Chat Service serves, not the deploy identity.
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -37,8 +38,8 @@ function webLatencyDomains(): unknown {
 test("a bot with its own chat grants the web origins its BotCube Config names, over https", () => {
   fs.mkdirSync(path.join(root, 'product/chat'));
   fs.writeFileSync(path.join(root, 'product/chat/Dockerfile'), 'FROM scratch\n');
-  fs.writeFileSync(path.join(root, 'product/deployment-config.json'), JSON.stringify({
-    bot: './bot.json', web: { corsOrigins: ['https://ui.example.com', 'https://dev.ui.example.com', 'http://localhost:3001'] },
+  fs.writeFileSync(path.join(root, 'product/botcube.yaml'), JSON.stringify({
+    network: { corsOrigins: ['https://ui.example.com', 'https://dev.ui.example.com', 'http://localhost:3001'] },
   }));
   expect(webLatencyDomains()).toEqual([['ui.example.com', 'dev.ui.example.com']]);
 });
@@ -46,6 +47,16 @@ test("a bot with its own chat grants the web origins its BotCube Config names, o
 test('a BotCube Config without web origins grants none', () => {
   fs.mkdirSync(path.join(root, 'product/chat'));
   fs.writeFileSync(path.join(root, 'product/chat/Dockerfile'), 'FROM scratch\n');
-  fs.writeFileSync(path.join(root, 'product/deployment-config.json'), JSON.stringify({ bot: './bot.json' }));
+  fs.writeFileSync(path.join(root, 'product/botcube.yaml'), JSON.stringify({}));
   expect(webLatencyDomains()).toEqual([[]]);
+});
+
+
+test.each([
+  ['web: { corsOrigins: [https://old.example.com] }', 'web: renamed to network.corsOrigins'],
+  ['network: { typo: true }', 'network.typo:'],
+])('the CDK rejects invalid config %s', (text, message) => {
+  const config = path.join(root, 'product/botcube.yaml');
+  fs.writeFileSync(config, text);
+  expect(() => webOrigins(config)).toThrow(message);
 });

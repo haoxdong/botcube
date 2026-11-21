@@ -19,12 +19,12 @@ export function credentialServiceImage(directory: string, props: ecs.AssetImageP
 }
 
 /** Copies the service's audit events into a group kept a year, with a Lambda run from the Credential Service image. */
-export function copyAuditEvents(scope: Construct, source: logs.LogGroup, auditLogGroupName: string, image: CredentialServiceImage, suppliedFunctionsKeyArn?: string) {
+export function copyAuditEvents(scope: Construct, source: logs.LogGroup, auditLogGroupName: string, image: CredentialServiceImage, existingFunctionsKeyArn?: string) {
   // The construct id 'Logs' fixes the CloudFormation logical id, so the deployed group is updated in place, not replaced.
   const logGroup = new logs.LogGroup(scope, 'Logs', { logGroupName: auditLogGroupName, retention: logs.RetentionDays.ONE_YEAR });
   const copy = new lambda.DockerImageFunction(scope, 'AuditCopy', {
     code: image.auditCopy, architecture: lambda.Architecture.X86_64,
-    ...(suppliedFunctionsKeyArn ? { environmentEncryption: kms.Key.fromKeyArn(scope, 'FunctionsKey', suppliedFunctionsKeyArn) } : {}),
+    ...(existingFunctionsKeyArn ? { environmentEncryption: kms.Key.fromKeyArn(scope, 'FunctionsKey', existingFunctionsKeyArn) } : {}),
     timeout: Duration.seconds(30), memorySize: 128,
     environment: { AUDIT_LOG_GROUP: logGroup.logGroupName },
     logGroup: new logs.LogGroup(scope, 'AuditCopyLogs', { retention: logs.RetentionDays.ONE_MONTH }),

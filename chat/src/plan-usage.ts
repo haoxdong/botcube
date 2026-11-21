@@ -16,7 +16,7 @@ export interface PlanUsageDeps {
   answerRefusal<T>(call: () => Promise<T>): Promise<T>;
   /** Its invocation token is the secret the operator signs with, read through their AWS access. */
   binding: CredentialServiceBinding;
-  /** Trusted deployment configuration, never an account chosen by an operator token. */
+  /** Trusted BotCube configuration, never an account chosen by an operator token. */
   ownerAccountId: string | undefined;
   accountNotFoundMessage: string;
 }

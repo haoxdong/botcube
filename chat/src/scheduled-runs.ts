@@ -1,6 +1,6 @@
 import type { ScheduledExecution } from './scheduled-execution.js';
 import { readScheduledRun, type ScheduledRunOutput } from './scheduled-run-output.js';
-import { forwardTurnIdentity, type TurnCredentialSource } from './turn-identity.js';
+import { forwardTurnIdentity, type TurnIdentitySource } from './turn-identity.js';
 import { forwardUserToken, type UserTokenSigner } from './user-token.js';
 import type { RunAgentInput } from '@ag-ui/client';
 import { DescribeTasksCommand, ECSClient } from '@aws-sdk/client-ecs';
@@ -13,7 +13,7 @@ import { accountDefaultModel, accountModelList, namedModel } from './models.js';
 import { fired, type ScheduledRunMessage, type ScheduledTask, type ScheduledTaskRun, type ScheduledTasks } from './scheduled-tasks.js';
 import type { ScheduledRunCard } from './session-api.js';
 import { SessionBusyError, SessionDeletedError, type SessionMetadata } from './session-metadata.js';
-import { turnCredentials } from './turn-stream.js';
+import { credentialValues } from './turn-stream.js';
 import { recordTurnSummary, turnActivity, type TurnSummarizer } from './turn-summaries.js';
 import { forwardSnapshotEpoch } from './session-lifecycle.js';
 import { assertReservedMainIdentity, postScheduledResult, type ScheduledDeliveryDeps } from './scheduled-run-delivery.js';
@@ -36,7 +36,7 @@ export interface ScheduledRunSource<R extends Requester = Requester> extends Tur
 
 export interface ScheduledRunDeps extends ScheduledDeliveryDeps {
   /** Null: the Chat Service has no keys and forwards no Turn identity. */
-  turnIdentity: TurnCredentialSource | null;
+  turnIdentity: TurnIdentitySource | null;
   /** The Turn identity keys that sign the owner's user token; absent, none is forwarded. */
   userTokens?: UserTokenSigner | null | undefined;
   bot: ScheduledRunSource;
@@ -261,7 +261,7 @@ async function runInSideChat(
     output = await readScheduledRun(
       response,
       deps.upstream.label,
-      turnCredentials(payload.forwardedProps, bot.credentialProps),
+      credentialValues(payload.forwardedProps, bot.credentialProps),
       initialMessages,
     );
   } catch (error) {

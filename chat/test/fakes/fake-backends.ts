@@ -1,5 +1,5 @@
 import type { ScheduledRunCard } from '../../src/session-api.js';
-import type { ModelsWire } from 'botcube-deployment-config/blocks';
+import type { ModelsWire } from 'botcube-config/blocks';
 import { HttpFake, sendJson } from './http-fake.js';
 
 type SessionOperation = 'get' | 'purge' | 'post';
@@ -224,7 +224,7 @@ function modelCall(wire: ModelsWire, body: string): ModelCall {
 type Answer = { id: number } & ({ text: string } | { tool: string; callId: string; arguments: string });
 
 /**
- * An OpenAI-compatible endpoint (the Deployment Config's `openai-compatible` models), at `<url>/v1`, on either wire:
+ * An OpenAI-compatible endpoint (the BotCube Config's `openai-compatible` models), at `<url>/v1`, on either wire:
  * Chat Completions and Responses. It answers a forced `turn_summary` with `turnSummary`, and any other request as
  * BotCube's echo model does, streamed when asked; with `agentToolCall` set, it first calls that tool, and echoes once the
  * tool's result is back. It accepts only `apiKey` and records every request, headers included.

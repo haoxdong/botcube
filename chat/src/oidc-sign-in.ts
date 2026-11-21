@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import * as client from 'openid-client';
 import { clearCookie, type AccountCookies } from './account-cookies.js';
 import type { AccountStore } from './account-store.js';
@@ -33,7 +33,7 @@ const PENDING_SECONDS = 600;
 const DELETION_REAUTH_SECONDS = 300;
 
 export function oidcIdentity(
-  identity: Extract<DeploymentConfig['identity'], { kind: 'oidc' }>,
+  identity: Extract<BotCubeConfig['integrations']['signIn'], { kind: 'oidc' }>,
   env: NodeJS.ProcessEnv,
   { store, cookies, returnOrigins }: Pick<OidcSignInOptions, 'store' | 'cookies' | 'returnOrigins'>,
 ) {

@@ -26,7 +26,8 @@
     "./computer/files-service": "./src/computer/files-service.ts",
     "./computer/files-app": "./src/computer/files-app.tsx",
     "./computer/failure-detail": "./src/computer/failure-detail.ts",
-    "./dcv-assets": "./src/config/dcv-assets.mjs"
+    "./dcv-assets": "./src/config/dcv-assets.mjs",
+    "./bot-settings-module": "./src/config/bot-settings.cjs"
   },
   "scripts": {
     "dev": "next dev --port 3001",
@@ -69,7 +70,7 @@
     "aws-rum-web": "^3.2.1",
     "bedrock-agentcore": "^0.4.5",
     "botcube-artifact-check": "workspace:*",
-    "botcube-deployment-config": "workspace:*",
+    "botcube-config": "workspace:*",
     "buffer": "6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

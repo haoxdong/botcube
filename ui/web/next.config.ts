@@ -1,3 +1,4 @@
+import botSettingsModule from './src/config/bot-settings.cjs';
 import type { NextConfig } from 'next';
 import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js';
 import { realpathSync } from 'node:fs';
@@ -60,7 +61,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     });
 
   const botUi = uiBuildConfig.botUiEntry ?? botUiPackage;
-  const botSettings = uiBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.json');
+  const botSettings = botSettingsModule(uiBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.yaml'));
 
   const config: AppConfig = {
     output: 'export',

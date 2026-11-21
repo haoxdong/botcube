@@ -1,6 +1,6 @@
 import settings from '@bot-settings';
-import type { BotSettings } from 'botcube-deployment-config';
-import { parseBotSettings } from 'botcube-deployment-config/parse';
+import type { BotSettings } from 'botcube-config';
+import { parseBotSettings } from 'botcube-config/parse';
 import type { CSSProperties } from 'react';
 
 /**

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -68,15 +68,19 @@ it("builds the page with the example bot's settings when its build config names 
 
   const config = await createConfig('phase-production-build');
 
-  expect(config.turbopack?.resolveAlias?.['@bot-settings']).toBe('../../examples/bot/bot.json');
-  expect(webpackAliases(config)).toMatchObject({ '@bot-settings': fileURLToPath(new URL('../../../../examples/bot/bot.json', import.meta.url)) });
+  const generated = webpackAliases(config)['@bot-settings'];
+  expect(JSON.parse(readFileSync(generated, 'utf8'))).toMatchObject({ agentIdentity: { name: 'BotCube' }, accountKey: 'template' });
+  expect(config.turbopack?.resolveAlias?.['@bot-settings']).toBe(path.relative(fileURLToPath(new URL('../..', import.meta.url)), generated));
 });
 
 it('builds the page with the bot settings its build config names', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bot-build-config-'));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-  writeFileSync(path.join(dir, 'build-config.cjs'), "module.exports = () => ({ botSettings: '/bots/quill/bot.json' });");
+  const settings = path.join(dir, 'bot.yaml');
+  writeFileSync(settings, 'agentIdentity: { name: Quill, character: A drafting agent }\naccountKey: quill\nmodels: [{ key: echo, label: Echo, provider: echo }]\n');
+  writeFileSync(path.join(dir, 'build-config.cjs'), `module.exports = () => ({ botSettings: ${JSON.stringify(settings)} });`);
   vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', path.join(dir, 'build-config.cjs'));
 
-  expect(webpackAliases(await createConfig('phase-production-build'))).toMatchObject({ '@bot-settings': '/bots/quill/bot.json' });
+  const generated = webpackAliases(await createConfig('phase-production-build'))['@bot-settings'];
+  expect(JSON.parse(readFileSync(generated, 'utf8'))).toMatchObject({ agentIdentity: { name: 'Quill' }, accountKey: 'quill' });
 });

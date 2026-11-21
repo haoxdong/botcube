@@ -14,7 +14,7 @@ import { Construct } from 'constructs';
 import { nameTaskRoles } from './task-role-names.js';
 import { addScheduledRuns, type ScheduledRunsProps } from './scheduled-runs.js';
 import { PreviewOriginStack } from './preview-origin-stack.js';
-import type { HarnessAuth } from '../../../../deployment-config/seams.js' with { 'resolution-mode': 'import' };
+import type { HarnessAuth } from '../../../../config/seams.js' with { 'resolution-mode': 'import' };
 
 /** Adopters reserve these listener priorities and own all shared ALB attributes. */
 export interface ChatServiceIngress {
@@ -31,11 +31,11 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** The proxy variables every container gets: the Chat Service and its collector, and a product's own tasks. */
   proxyEnvironment?: Record<string, string>;
   /**
-   * The Deployment Config's `telemetry` adapter; absent, X-Ray through a collector sidecar. `otlp` exports straight to
+   * The BotCube Config's `telemetry` adapter; absent, X-Ray through a collector sidecar. `otlp` exports straight to
    * its Endpoint with `environment`, granted `secretArns`; `none` creates no collector, grant or exporter.
    */
   telemetry?: { kind: 'xray' } | { kind: 'otlp' | 'none'; environment: Readonly<Record<string, string>>; secretArns: readonly string[] };
-  /** The Deployment Config's Agent Computer `liveView` adapter; `none` grants no live view stream. */
+  /** The BotCube Config's Agent Computer `liveView` adapter; `none` grants no live view stream. */
   liveView?: 'agentcore-browser' | 'none';
   metricFilterNames?: Partial<Record<'sessionPurgeFailures' | 'turnSummaryFailures' | 'agentComputerStopSleepFailures' | 'filesMountFailures' | 'accountDeletionFailures' | 'errors', string>>;
   taskFamily?: string;
@@ -84,8 +84,8 @@ export interface PreviewChatServiceProps extends ScheduledRunsProps {
   /** The session API alias the AgentCore stack keeps initialized. */
   sessionApiAlias: string;
   chatTable: dynamodb.ITable;
-  /** The operator supplied the chat table with its grants: the task role is granted nothing on it. */
-  chatTableSupplied?: boolean;
+  /** The operator existing the chat table with its grants: the task role is granted nothing on it. */
+  chatTableExisting?: boolean;
   /** The registry the sidecars are pulled from, a mirror of Amazon ECR Public's paths; absent, ECR Public. */
   imageRegistry?: string;
   image: ecs.ContainerImage;
@@ -145,7 +145,7 @@ export class PreviewChatService extends Construct {
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.X86_64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
     nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
-    if (!props.chatTableSupplied) props.chatTable.grantReadWriteData(task.taskRole);
+    if (!props.chatTableExisting) props.chatTable.grantReadWriteData(task.taskRole);
     const harnessAuth: HarnessAuth = props.harnessAuth ?? { kind: 'sigv4' };
     grantRuntimeInvocation(task, props.runtimeArn, harnessAuth);
     // The Chat Service reaches Memory only through the session API; a Turn reaches it with its own tagged credentials.

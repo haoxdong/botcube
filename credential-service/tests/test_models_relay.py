@@ -14,8 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from botcube_credential_service.audit import CredentialAuditRecorder
+from botcube_credential_service.botcube_config import botcube_config_from_env
 from botcube_credential_service.credential_source import CredentialSourceError
-from botcube_credential_service.deployment_config import deployment_config_from_env
 from botcube_credential_service.invocation import sign_credential_service_invocation
 from botcube_credential_service.models import models_provider_from_config
 from botcube_credential_service.server import CredentialServiceSettings, create_app
@@ -70,7 +70,7 @@ def gateway() -> FakeGateway:
 
 
 def _deployed(endpoint: Mapping[str, Any]) -> dict[str, Any]:
-    return {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}
+    return {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}
 
 
 def _endpoint(credential: Mapping[str, Any]) -> dict[str, Any]:
@@ -298,11 +298,11 @@ def test_startup_refuses_a_command_credential_the_deploy_did_not_opt_in_to() -> 
         models_provider_from_config(CredentialAuditRecorder(), _endpoint(command), {})
 
 
-def test_the_relay_reaches_the_endpoint_the_deployment_config_file_names(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
-    path = tmp_path / 'deployment-config.json'
-    path.write_text(json.dumps({'bot': './bot.json', **_endpoint({'kind': 'file', 'path': str(key)})}))
+def test_the_relay_reaches_the_endpoint_the_botcube_config_file_names(gateway: FakeGateway, key: Path, tmp_path: Path) -> None:
+    path = tmp_path / 'botcube.yaml'
+    path.write_text(json.dumps({**_endpoint({'kind': 'file', 'path': str(key)})}))
 
-    response = _completion(_client(gateway, deployment_config_from_env({'BOTCUBE_DEPLOYMENT_CONFIG': str(path)})))
+    response = _completion(_client(gateway, botcube_config_from_env({'BOTCUBE_CONFIG': str(path)})))
 
     assert response.status_code == 200
     [call] = gateway.requests
@@ -310,4 +310,4 @@ def test_the_relay_reaches_the_endpoint_the_deployment_config_file_names(gateway
 
 
 def test_a_deployment_on_bedrock_has_no_models_relay() -> None:
-    assert models_provider_from_config(CredentialAuditRecorder(), deployment_config_from_env({}), {}) is None
+    assert models_provider_from_config(CredentialAuditRecorder(), botcube_config_from_env({}), {}) is None

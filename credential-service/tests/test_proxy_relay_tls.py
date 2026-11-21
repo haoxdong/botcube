@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from botcube_credential_service.deployment_config import load_deployment_config
+from botcube_credential_service.botcube_config import load_botcube_config
 from botcube_credential_service.endpoint_tls import EndpointTlsError, endpoint_tls
 from botcube_credential_service.proxy_relay import (
     start_proxy_relay,
@@ -97,12 +97,12 @@ def test_relay_still_verifies_the_chain_of_a_proxy_carrying_the_expected_identit
         assert proxy.connections == []
 
 
-def test_relay_reads_its_tls_from_the_deployment_config_file(certs: Certificates, tmp_path: Path) -> None:
+def test_relay_reads_its_tls_from_the_botcube_config_file(certs: Certificates, tmp_path: Path) -> None:
     with mtls_proxy(certs) as proxy:
         tls = {'clientCertificate': certs.files('client_a'), 'serverIdentity': SERVER_IDENTITY}
-        path = tmp_path / 'deployment-config.json'
-        path.write_text(json.dumps({'bot': './bot.json', 'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}))
-        relay = start_proxy_relay_from_config(load_deployment_config(path), {'HTTPS_PROXY': 'http://127.0.0.1:0'})
+        path = tmp_path / 'botcube.yaml'
+        path.write_text(json.dumps({'network': {'proxy': {'kind': 'forward', 'url': proxy.url, 'tls': tls}}}))
+        relay = start_proxy_relay_from_config(load_botcube_config(path), {'HTTPS_PROXY': 'http://127.0.0.1:0'})
 
         assert relay is not None
         tunnel(relay)

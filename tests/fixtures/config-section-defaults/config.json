@@ -1,0 +1,19 @@
+{
+  "allowCommandCredentials": true,
+  "integrations": {
+    "telemetry": {
+      "kind": "otlp",
+      "url": "http://collector:4318/v1/traces",
+      "credential": {
+        "kind": "command",
+        "command": ["/usr/local/bin/telemetry-token"]
+      }
+    }
+  },
+  "network": {
+    "proxy": {
+      "kind": "forward",
+      "url": "http://proxy.example.com:3128"
+    }
+  }
+}

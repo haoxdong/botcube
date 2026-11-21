@@ -1,7 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { SchedulerClient } from '@aws-sdk/client-scheduler';
 import { SQSClient } from '@aws-sdk/client-sqs';
-import type { DeploymentConfig } from 'botcube-deployment-config';
+import type { BotCubeConfig } from 'botcube-config';
 import { sqsRunQueue, type RunQueue } from './scheduled-runs.js';
 import { ScheduledTasks } from './scheduled-tasks.js';
 import { schedulerConfigFromEnv } from './scheduler.js';
@@ -14,9 +14,9 @@ export interface ChatScheduling {
   poll?: TableSchedules;
 }
 
-/** Scheduled tasks on the Deployment Config's `schedules` adapter; null under `none`, or while an EventBridge Scheduler deployment has no run queue. */
+/** Scheduled tasks on the BotCube Config's `schedules` adapter; null under `none`, or while an EventBridge Scheduler deployment has no run queue. */
 export function chatScheduling(
-  schedules: DeploymentConfig['schedules'],
+  schedules: BotCubeConfig['schedules'],
   env: NodeJS.ProcessEnv,
   table: string,
   clients: { dynamodb?: DynamoDBClient; sqs?: SQSClient; scheduler?: SchedulerClient } = {},

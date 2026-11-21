@@ -1,6 +1,6 @@
-import { outsideIssuer } from 'botcube-deployment-config/credential-fields';
-import type { CredentialSource } from 'botcube-deployment-config/blocks';
-import type { HarnessAuth } from 'botcube-deployment-config/seams';
+import { outsideIssuer } from 'botcube-config/credential-fields';
+import type { CredentialSource } from 'botcube-config/blocks';
+import type { HarnessAuth } from 'botcube-config/seams';
 import { credentialSource } from './credential-source.js';
 import type { TurnIdentity } from './turn-identity.js';
 

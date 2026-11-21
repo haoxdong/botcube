@@ -1,8 +1,8 @@
 """The telemetry Endpoint's credential and TLS on the Harness's OTLP exporter.
 
 OpenTelemetry Python loads this as the `botcube` `opentelemetry_otlp_credential_provider` entry point when
-OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER names it, as botcube/deployment-config's `telemetry.ts` sets it
-beside the Deployment Config's `otlp` Endpoint; the Credential Source and the TLS are read from the file.
+OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER names it, as botcube/config's `telemetry.ts` sets it
+beside the BotCube Config's `otlp` Endpoint; the Credential Source and the TLS are read from the file.
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 
+from .botcube_config import botcube_config_from_env
 from .credential_source import CredentialSource, credential_source
-from .deployment_config import deployment_config_from_env
 from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 
 
@@ -81,7 +81,7 @@ def telemetry_session() -> requests.Session:
     source = telemetry_credential()
     tls = telemetry_tls()
     if source is None and tls is None:
-        raise RuntimeError('The Deployment Config names no telemetry.credential or telemetry.tls; the deploy sets the botcube OTLP credential provider only beside one')
+        raise RuntimeError('The BotCube Config names no telemetry.credential or telemetry.tls; the deploy sets the botcube OTLP credential provider only beside one')
     session = requests.Session()
     if source is not None:
         session.auth = _Bearer(source)
@@ -91,12 +91,12 @@ def telemetry_session() -> requests.Session:
 
 
 def telemetry_credential() -> CredentialSource | None:
-    """The Deployment Config's `otlp` Endpoint credential, or None."""
-    telemetry = deployment_config_from_env()['telemetry']
+    """The BotCube Config's `otlp` Endpoint credential, or None."""
+    telemetry = botcube_config_from_env()['integrations']['telemetry']
     return credential_source('telemetry.credential', telemetry['credential']) if 'credential' in telemetry else None
 
 
 def telemetry_tls() -> EndpointTls | None:
-    """The Deployment Config's `otlp` Endpoint TLS, or None."""
-    telemetry = deployment_config_from_env()['telemetry']
+    """The BotCube Config's `otlp` Endpoint TLS, or None."""
+    telemetry = botcube_config_from_env()['integrations']['telemetry']
     return endpoint_tls('telemetry', telemetry['tls']) if 'tls' in telemetry else None

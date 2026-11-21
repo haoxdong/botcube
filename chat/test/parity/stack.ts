@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +12,7 @@ import { motoEndpoint } from '../fakes/moto.js';
 import { BIND_ADDRESS, startOnFreePort } from '../fakes/process.js';
 import { Browser } from './browser.js';
 import { FakeEfs } from './fake-efs.js';
-import { testDeploymentConfig } from '../stock-bot.js';
+import { testBotCubeConfig } from '../stock-bot.js';
 
 export { AWS_ACCESS_KEY_ID, createChatTable, RUNTIME_ARN };
 
@@ -55,12 +56,14 @@ export async function startStack(options: StackOptions = {}) {
   }
   const address = unreachable.address();
   const agentcoreUrl = address && typeof address !== 'string' ? `http://127.0.0.1:${address.port}` : agentcore.url;
+  const imageConfig = testBotCubeConfig(PARITY_BOT, options.corsOrigins === undefined ? {} : { network: { corsOrigins: options.corsOrigins } });
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH, HOME: home,
     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     AWS_REGION: 'us-east-1', AWS_DEFAULT_REGION: 'us-east-1', AWS_EC2_METADATA_DISABLED: 'true',
     AWS_ENDPOINT_URL_DYNAMODB: endpoint, BOTCUBE_CHAT_TABLE: name,
-    BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(PARITY_BOT, options.corsOrigins === undefined ? {} : { web: { corsOrigins: options.corsOrigins } }),
+    BOTCUBE_CONFIG: imageConfig,
+    BOTCUBE_TEST_IMAGE_SETTINGS: join(imageConfig, '..', 'bot.yaml'),
     BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
     AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url,
     AWS_ENDPOINT_URL_STS: endpoint,
@@ -81,7 +84,7 @@ export async function startStack(options: StackOptions = {}) {
     await rm(home, { recursive: true, force: true });
   };
   const startService = () => startOnFreePort((port) => ({
-    command: `${inject('parityServiceCommand')} ${JSON.stringify(files.root)}`, env: { ...env, PORT: String(port) },
+    command: `${inject('parityServiceCommand').replace('node ', `node --import ${fileURLToPath(new URL('../image-process.mjs', import.meta.url))} `)} ${JSON.stringify(files.root)}`, env: { ...env, PORT: String(port) },
     url: `http://127.0.0.1:${port}/`, listening: `Chat Service listening on :${port}`,
   }));
   const service = await startService().catch(async (error: unknown) => {

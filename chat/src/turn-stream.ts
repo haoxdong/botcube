@@ -37,7 +37,7 @@ export function sseFrameData(lines: readonly string[]): string | null {
   return data.length === 0 ? null : data.join('\n');
 }
 
-export function turnCredentials(forwardedProps: Record<string, unknown>, credentialProps: readonly string[]): string[] {
+export function credentialValues(forwardedProps: Record<string, unknown>, credentialProps: readonly string[]): string[] {
   const keys = (binding: unknown) => {
     if (!isRecord(binding)) return [];
     const { accessKeyId, secretAccessKey, sessionToken } = binding;
@@ -97,8 +97,8 @@ function credentialPrefix(text: string, credentials: readonly string[]) {
   }
   length = Math.max(length, encodedQueryPrefix(text, credentialQueryTokens(credentials)).length);
   const limit = Math.max(0, ...credentials.map((credential) => credential.length)) * 3;
-  const url = matchingCredentialUrls(text, credentials, (supplied, expected) => {
-    const prefix = supplied.replace(/%(?:[0-9a-f])?$/i, '');
+  const url = matchingCredentialUrls(text, credentials, (existing, expected) => {
+    const prefix = existing.replace(/%(?:[0-9a-f])?$/i, '');
     return prefix.length < expected.length && expected.startsWith(prefix);
   }).find((value) => text.endsWith(value) && value.length <= limit) ?? '';
   return text.slice(text.length - Math.max(url.length, length));
@@ -107,7 +107,7 @@ function credentialPrefix(text: string, credentials: readonly string[]) {
 function matchingCredentialUrls(
   text: string,
   credentials: readonly string[],
-  acceptsToken: (supplied: string, expected: string) => boolean,
+  acceptsToken: (existing: string, expected: string) => boolean,
 ) {
   return text.match(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi)?.filter((value) => {
     if (!URL.canParse(value)) return false;
@@ -116,16 +116,16 @@ function matchingCredentialUrls(
       if (!URL.canParse(credential)) return false;
       const expected = new URL(credential);
       const token = expected.searchParams.get('token');
-      const supplied = candidate.searchParams.get('token');
+      const existing = candidate.searchParams.get('token');
       return token !== null && token !== '' && candidate.origin === expected.origin &&
-        candidate.pathname === expected.pathname && supplied !== null && acceptsToken(supplied, token);
+        candidate.pathname === expected.pathname && existing !== null && acceptsToken(existing, token);
     });
   }) ?? [];
 }
 
 function decodedLeaks(value: unknown, credentials: readonly string[]): boolean {
   if (typeof value === 'string') return credentials.some((credential) => value.includes(credential)) ||
-    matchingCredentialUrls(value, credentials, (supplied, expected) => supplied === expected).length !== 0 ||
+    matchingCredentialUrls(value, credentials, (existing, expected) => existing === expected).length !== 0 ||
     encodedQueryTokens(value).some((candidate) => credentialQueryTokens(credentials).some((token) => queryToken(candidate).includes(token)));
   if (value !== null && typeof value === 'object') {
     return Object.entries(value).some(([key, part]) => decodedLeaks(key, credentials) || decodedLeaks(part, credentials));

@@ -16,14 +16,14 @@ import { DynamoDBSessionMetadata } from './session-metadata.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 import { motoAws, motoEndpoint } from '../test/fakes/moto.js';
 import { credentialSource } from './credential-source.js';
-import { testDeploymentConfig } from '../test/stock-bot.js';
+import { testBotCubeConfig } from '../test/stock-bot.js';
 
 vi.mock('./dispatcher-fetch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./dispatcher-fetch.js')>();
   return { dispatcherFetch: vi.fn(actual.dispatcherFetch) };
 });
 
-const DEPLOYMENT_CONFIG = testDeploymentConfig();
+const CONFIG = testBotCubeConfig();
 
 const overrides: StockOverrides = {
   corsOrigins: ['https://bot.example.com'],
@@ -92,7 +92,7 @@ async function allocatedTable(sessionId: string): Promise<string> {
 async function serve(env: NodeJS.ProcessEnv): Promise<string> {
   vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
-  const server: ServerType = serveChatService({ BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, { overrides });
+  const server: ServerType = serveChatService({ BOTCUBE_CONFIG: CONFIG, AWS_ENDPOINT_URL_BEDROCK_RUNTIME: bedrock.url, ...env }, { overrides });
   closers.push(async () => {
     await new Promise((resolve) => server.close(resolve));
   });
@@ -130,7 +130,7 @@ describe('the Chat Service served from the environment', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
     const server = serveChatService({
-      PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, BOTCUBE_CHAT_TABLE: await newTable(),
+      PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await newTable(),
       BOTCUBE_SCHEDULE_GROUP: 'test-group',
       BOTCUBE_SCHEDULER_ROLE_ARN: 'arn:aws:iam::123456789012:role/scheduler',
       BOTCUBE_SCHEDULED_RUNS_QUEUE_ARN: 'arn:aws:sqs:us-east-1:123456789012:runs',
@@ -159,7 +159,7 @@ describe('the Chat Service served from the environment', () => {
       const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
       vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', motoEndpoint());
       vi.spyOn(console, 'log').mockImplementation(() => undefined);
-      const server = serveChatService({ PORT: '0', BOTCUBE_DEPLOYMENT_CONFIG: DEPLOYMENT_CONFIG, BOTCUBE_CHAT_TABLE: await newTable(), ...env }, { overrides: botOverrides });
+      const server = serveChatService({ PORT: '0', BOTCUBE_CONFIG: CONFIG, BOTCUBE_CHAT_TABLE: await newTable(), ...env }, { overrides: botOverrides });
       closers.push(async () => {
         if (server.listening) await new Promise((resolve) => server.close(resolve));
       });
@@ -170,7 +170,7 @@ describe('the Chat Service served from the environment', () => {
 
     it("the models Endpoint's", async () => {
       const models = { kind: 'openai-compatible', url: 'https://models.example.com/v1', credential: { kind: 'file', path: absent }, turnSummaryModel: 'example-summary' };
-      const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(undefined, { models }) };
+      const env = { BOTCUBE_CONFIG: testBotCubeConfig(undefined, { integrations: { modelGateway: models } }) };
       expect(await exitsWith(overrides, env)).toContain(`models credential (file ${absent}): ENOENT`);
     });
 
@@ -324,11 +324,11 @@ describe('the Chat Service served from the environment', () => {
     expect(consoleWarn).not.toHaveBeenCalled();
   });
 
-  it("allows the BotCube Config's web.corsOrigins in place of the bot defaults", async () => {
+  it("allows the BotCube Config's network.corsOrigins in place of the bot defaults", async () => {
     const url = await serve({
       PORT: '0',
       BOTCUBE_CHAT_TABLE: await newTable(),
-      BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(undefined, { web: { corsOrigins: ['https://a.example.com', 'https://b.example.com'] } }),
+      BOTCUBE_CONFIG: testBotCubeConfig(undefined, { network: { corsOrigins: ['https://a.example.com', 'https://b.example.com'] } }),
     });
     const allowed = async (origin: string) =>
       (await fetch(`${url}/ping`, { headers: { origin } })).headers.get('access-control-allow-origin');
@@ -339,7 +339,7 @@ describe('the Chat Service served from the environment', () => {
     expect(await allowed('')).toBeNull();
   });
 
-  it('allows the bot default origins without web.corsOrigins', async () => {
+  it('allows the bot default origins without network.corsOrigins', async () => {
     const url = await serve({ PORT: '0', BOTCUBE_CHAT_TABLE: await newTable() });
 
     const response = await fetch(`${url}/ping`, { headers: { origin: 'https://bot.example.com' } });

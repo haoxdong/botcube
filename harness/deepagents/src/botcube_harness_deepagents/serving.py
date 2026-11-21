@@ -84,9 +84,9 @@ from .agent_documents import (
 )
 from .artifact import SKILLS_SOURCE, artifact_tool
 from .bot_settings import bot_from_env
+from .botcube_config import botcube_config_from_env
 from .conversation import conversation, reasoning_chunk
 from .definition import HarnessDefinition, InvocationAuth, ModelRelay
-from .deployment_config import deployment_config_from_env
 from .files import (
     FilesBindingError,
     excluded_paths,
@@ -1434,7 +1434,7 @@ def main() -> None:
     import uvicorn
 
     # Listening before any client connects: every client, and every command the agent runs, sends through it.
-    start_proxy_relay_from_config(deployment_config_from_env())
+    start_proxy_relay_from_config(botcube_config_from_env())
     importlib.import_module('openai.resources.responses')
     restore_prime.prime_if_enabled(AWS_REGION)
     if AGENTCORE_MEMORY_ID:

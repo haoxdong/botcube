@@ -1,3 +1,4 @@
+import { stageBotImage } from './bot-image.js';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import { filingUserId } from '../src/filing-user-id.js';
 /** The test bot's account key: its cookies are `test_account_id` and `test_session`. */
 export const TEST_ACCOUNT_KEY = 'test';
 
-/** The test bot's settings, as a bot's own `bot.json` names them. */
+/** The test bot's settings, as a bot's own `bot.yaml` names them. */
 const TEST_BOT = {
   agentIdentity: { name: 'Test Bot', character: 'A test agent', avatar: '' },
   accountKey: TEST_ACCOUNT_KEY,
@@ -20,12 +21,13 @@ const TEST_BOT = {
   ],
 };
 
-/** A Deployment Config naming the test bot's settings (or `bot`), in a fresh directory. */
-export function testDeploymentConfig(bot: Record<string, unknown> = TEST_BOT, sections: Record<string, unknown> = {}): string {
+/** A BotCube Config naming the test bot's settings (or `bot`), in a fresh directory. */
+export function testBotCubeConfig(bot: Record<string, unknown> = TEST_BOT, sections: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'chat-test-deployment-'));
-  writeFileSync(join(dir, 'bot.json'), JSON.stringify(bot));
-  writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json', ...sections }));
-  return join(dir, 'deployment-config.json');
+  stageBotImage(bot);
+  writeFileSync(join(dir, 'bot.yaml'), JSON.stringify(bot));
+  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({ ...sections }));
+  return join(dir, 'botcube.yaml');
 }
 
 /** The user ID the test bot files an account's Sessions under. */

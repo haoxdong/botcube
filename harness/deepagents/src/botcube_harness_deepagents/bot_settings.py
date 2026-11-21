@@ -1,12 +1,11 @@
 """The bot settings a bot's image carries: what the Harness serves in place of bot code (ADR 0091).
 
-They follow `bot-settings.schema.json`, emitted from BotCube's seam file `botcube/deployment-config/schema.ts`.
+They follow `bot.schema.json`, emitted from BotCube's seam file `botcube/config/schema.ts`.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -16,19 +15,20 @@ from typing import Any
 from urllib.parse import quote
 
 from jsonschema import Draft202012Validator, ValidationError
+from ruamel.yaml.error import YAMLError
 
+from .botcube_config import botcube_config_from_env, yaml_document
 from .definition import (
     HarnessDefinition,
     InvocationAuth,
     environment_cache_key,
     openai_model_relay,
 )
-from .deployment_config import DEPLOYMENT_CONFIG_ENV, deployment_config_from_env
 from .memory.agentcore import turn_actor
 
 # The shell variable OpenTelemetry SDKs read resource attributes from, so a CLI's spans name the Turn's User and traffic.
 _RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES'
-_SCHEMA = json.loads(Path(__file__).with_name('bot-settings.schema.json').read_text(encoding='utf8'))
+_SCHEMA = json.loads(Path(__file__).with_name('bot.schema.json').read_text(encoding='utf8'))
 # Where the agent finds the bot's skills, one directory each.
 SKILLS = '/skills/'
 USER_TOKEN_ENV = 'BOTCUBE_USER_TOKEN'
@@ -53,9 +53,11 @@ class BotSettings:
 def load_bot_settings(path: Path) -> BotSettings:
     """The bot settings at this path, or a `BotSettingsError` naming the first bad field."""
     source = f'Bot settings {path}'
+    if path.name == 'bot.json':
+        raise BotSettingsError(f'{source}: bot.json: renamed to /bot/bot.yaml')
     try:
-        settings = json.loads(path.read_text(encoding='utf8'))
-    except (OSError, ValueError) as error:
+        settings = yaml_document(path.read_text(encoding='utf8'))
+    except (OSError, YAMLError, ValueError) as error:
         raise BotSettingsError(f'{source}: (root): {error}') from error
     errors = sorted(Draft202012Validator(_SCHEMA).iter_errors(settings), key=lambda error: list(error.absolute_path))
     if errors:
@@ -82,14 +84,9 @@ def load_bot_settings(path: Path) -> BotSettings:
 
 
 def bot_from_env() -> tuple[HarnessDefinition, str]:
-    """The definition and default model, its first, of the bot the Deployment Config names.
-
-    Its `bot` is relative to the file. The Harness serves the bot with BotCube's own definition and runs no bot code.
-    """
-    config = os.getenv(DEPLOYMENT_CONFIG_ENV)
-    if not config:
-        raise BotSettingsError(f'{DEPLOYMENT_CONFIG_ENV} is unset: the Harness serves the bot its Deployment Config names')
-    bot = load_bot_settings((Path(config).parent / deployment_config_from_env()['bot']).resolve())
+    """The Harness definition and default model from /bot/bot.yaml in the Bot Image."""
+    botcube_config_from_env()
+    bot = load_bot_settings(Path('/bot/bot.yaml'))
     return bot_definition(bot), bot.models[0]
 
 

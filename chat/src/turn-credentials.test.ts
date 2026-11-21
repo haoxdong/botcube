@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY } from '../test/fakes/credentials.js';
 import { motoEndpoint } from '../test/fakes/moto.js';
 import { startInProcess, type InProcessStack } from '../test/in-process.js';
-import { assumeRoleTurnCredentials, memorySessionPolicy, SESSION_POLICY_LIMIT } from './turn-credentials.js';
+import { assumeRoleAwsAccess, memorySessionPolicy, SESSION_POLICY_LIMIT } from './turn-credentials.js';
 import { filed } from '../test/stock-bot.js';
 
 const ROLE_ARN = 'arn:aws:iam::123456789012:role/bot-cube-user-memory';
@@ -15,7 +15,7 @@ beforeAll(async () => {
   vi.stubEnv('AWS_REGION', 'us-east-1');
   vi.stubEnv('AWS_ACCESS_KEY_ID', AWS_ACCESS_KEY_ID);
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', AWS_SECRET_ACCESS_KEY);
-  stack = await startInProcess({ config: { turnCredentials: { kind: 'assume-role', roleArn: ROLE_ARN } } });
+  stack = await startInProcess({ config: { awsAccess: { kind: 'assume-role', roleArn: ROLE_ARN } } });
 });
 afterAll(async () => {
   await stack.stop();
@@ -84,7 +84,7 @@ describe('the assume-role STS client', () => {
     vi.stubEnv('AWS_CONFIG_FILE', '/nonexistent/aws-config');
     const turn = { actorId: filed('a'), filingActorId: filed('a'), sessionId: randomUUID(), startedAt: new Date().toISOString() };
 
-    await expect(assumeRoleTurnCredentials(ROLE_ARN).grant(turn)).rejects.toThrow('Region is missing');
+    await expect(assumeRoleAwsAccess(ROLE_ARN).grant(turn)).rejects.toThrow('Region is missing');
   });
 });
 

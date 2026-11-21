@@ -73,13 +73,11 @@ services:
       BOTCUBE_VAULT_TABLE: credential-vault
       BOTCUBE_LOCAL_VAULT_KEY_FILE: /var/lib/local-vault/key
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: local-invocation-secret
-      BOTCUBE_DEPLOYMENT_CONFIG: &deployment-config /opt/botcube/examples/public/deployment-config.json
+      BOTCUBE_CONFIG: &config /opt/botcube/examples/public/botcube.yaml
       FAKE_SITE_URL: http://fake-site:8124
     volumes:
       - credential-key:/var/lib/local-vault
-      # The Deployment Config every process reads (ADR 0091), where the example bot image puts its `bot`, ../bot/bot.json;
-      # the Chat Service's image carries its own copy.
-      - &deployment-config-file ../../examples/public/deployment-config.json:/opt/botcube/examples/public/deployment-config.json:ro
+      - &config-file ../../examples/public/botcube.yaml:/opt/botcube/examples/public/botcube.yaml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8125/health')"]
       interval: 2s
@@ -96,10 +94,10 @@ services:
       NO_PROXY: ${NO_PROXY:-},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       no_proxy: ${no_proxy:-${NO_PROXY:-}},dynamodb,harness,session-api,chat-service,localhost,127.0.0.1
       BOTCUBE_CHECKPOINT_PATH: ${BOTCUBE_CHECKPOINT_PATH:-/var/lib/botcube-harness/checkpoints.sqlite3}
-      BOTCUBE_DEPLOYMENT_CONFIG: *deployment-config
+      BOTCUBE_CONFIG: *config
     volumes:
       - harness-state:/var/lib/botcube-harness
-      - *deployment-config-file
+      - *config-file
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ping')"]
       interval: 2s

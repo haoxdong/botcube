@@ -32,7 +32,7 @@ function compose(moments?: unknown): App {
   return app;
 }
 
-test('the unfiltered standalone export synthesizes explicitly supplied latency moments without a budget file', () => {
+test('the unfiltered standalone export synthesizes explicitly existing latency moments without a budget file', () => {
   expect(fs.existsSync(path.join(root, 'examples/public/latency-budgets.json'))).toBe(false);
   const app = compose(JSON.stringify(['first-response', 'tool-result']));
   app.synth();

@@ -18,8 +18,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from botcube_harness_deepagents import llm, turn_timing
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.botcube_config import BotCubeConfigError
 from botcube_harness_deepagents.definition import ModelRelay, openai_model_relay
-from botcube_harness_deepagents.deployment_config import DeploymentConfigError
 from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from deployment_fixture import ENDPOINT_MODELS, deploy
 
@@ -147,7 +147,7 @@ def stand_in() -> Iterator[StandIn]:
 
 @pytest.fixture
 def deployed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    deploy(monkeypatch, tmp_path, models=ENDPOINT_MODELS)
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': ENDPOINT_MODELS})
 
 
 def _turn(stand_in: StandIn, token: str = 'invocation-1') -> ModelRelay:
@@ -336,7 +336,7 @@ MARKER = {'type': 'ephemeral'}
 
 @pytest.fixture
 def cache_markers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'cacheMarkers': 'claude'})
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': {**ENDPOINT_MODELS, 'cacheMarkers': 'claude'}})
 
 
 def _converse(stand_in: StandIn, messages: list[Any]) -> str:
@@ -394,20 +394,20 @@ def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports(stand_in: 
     assert (record['inputTokens'], record['cachedInputTokens']) == (26, 20)
 
 
-def test_a_turn_fails_on_cache_markers_the_deployment_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
-    path = deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'cacheMarkers': 'openai'})
-    with pytest.raises(DeploymentConfigError, match=f"^Deployment Config {path}: models.cacheMarkers: 'claude' was expected$"):
+def test_a_turn_fails_on_cache_markers_the_botcube_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
+    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': {**ENDPOINT_MODELS, 'cacheMarkers': 'openai'}})
+    with pytest.raises(BotCubeConfigError, match=f"^BotCube Config {path}: integrations.modelGateway.cacheMarkers: 'claude' was expected$"):
         llm.build_model(model='echo', relay=lambda: _turn(stand_in))
 
 
 @pytest.fixture
 def responses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': 'responses'})
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': {**ENDPOINT_MODELS, 'wire': 'responses'}})
 
 
 @pytest.fixture
 def responses_cache_markers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': 'responses', 'cacheMarkers': 'claude'})
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': {**ENDPOINT_MODELS, 'wire': 'responses', 'cacheMarkers': 'claude'}})
 
 
 @pytest.mark.usefixtures('responses')
@@ -501,7 +501,7 @@ def test_the_turn_reports_the_cached_input_tokens_the_gateway_reports_over_the_r
 def test_a_turn_that_overflows_the_context_on_either_wire_compacts_and_answers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn, wire: str, path: str,
 ) -> None:
-    deploy(monkeypatch, tmp_path, models={**ENDPOINT_MODELS, 'wire': wire})
+    deploy(monkeypatch, tmp_path, integrations={'modelGateway': {**ENDPOINT_MODELS, 'wire': wire}})
     stand_in.errors.append((400, {
         'message': 'Your input exceeds the context window of this model.', 'type': 'invalid_request_error', 'code': 'context_length_exceeded',
     }))
@@ -532,7 +532,7 @@ def _converse_text(stand_in: StandIn, messages: list[Any]) -> str:
     return asyncio.run(llm.build_model(model='echo', relay=lambda: _turn(stand_in)).ainvoke(messages)).text
 
 
-def test_a_turn_fails_on_a_models_kind_the_deployment_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
-    path = deploy(monkeypatch, tmp_path, models={'kind': 'anthropic'})
-    with pytest.raises(DeploymentConfigError, match=f'^Deployment Config {path}: models: '):
+def test_a_turn_fails_on_a_models_kind_the_botcube_config_wrote_wrong(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stand_in: StandIn) -> None:
+    path = deploy(monkeypatch, tmp_path, integrations={'modelGateway': {'kind': 'anthropic'}})
+    with pytest.raises(BotCubeConfigError, match=f'^BotCube Config {path}: integrations.modelGateway: '):
         llm.build_model(model='echo', relay=lambda: _turn(stand_in))

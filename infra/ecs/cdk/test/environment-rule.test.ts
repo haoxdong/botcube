@@ -49,8 +49,8 @@ test('a name outside the four uses fails, naming the ECS container, the Lambda a
   runtime.environmentVariables = { ...(runtime.environmentVariables as Record<string, string>), BOTCUBE_SEEDED: '1' };
 
   expect(environmentViolations(processEnvironments(app, 'public'), { pending: PENDING }).filter(violation => !violation.startsWith('PENDING'))).toEqual([
-    'public/ProductionParking/TransitionD7BFF7BD/Lambda sets BOTCUBE_SEEDED, outside the four uses: read it from the Deployment Config',
-    'public/PreviewOrigin/ChatServiceTask5BA326C5/chat-service sets BOTCUBE_SEEDED, outside the four uses: read it from the Deployment Config',
-    'public/AgentCore-bot-cube-template/ApplicationAgentBotCubeRuntimeB058A2A5/Runtime sets BOTCUBE_SEEDED, outside the four uses: read it from the Deployment Config',
+    'public/ProductionParking/TransitionD7BFF7BD/Lambda sets BOTCUBE_SEEDED, outside the four uses: read it from the BotCube Config',
+    'public/PreviewOrigin/ChatServiceTask5BA326C5/chat-service sets BOTCUBE_SEEDED, outside the four uses: read it from the BotCube Config',
+    'public/AgentCore-bot-cube-template/ApplicationAgentBotCubeRuntimeB058A2A5/Runtime sets BOTCUBE_SEEDED, outside the four uses: read it from the BotCube Config',
   ]);
 });

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from .audit import CredentialAuditRecorder
-from .deployment_config import deployment_config_from_env
+from .botcube_config import botcube_config_from_env
 from .models import models_provider_from_config
 from .openai import OpenAIProvider
 from .provider import CredentialProvider
@@ -25,5 +25,5 @@ def credential_service_app(
 ) -> FastAPI:
     """The site provider, OpenAI and the deploy's models Endpoint under one audit recorder, so an account's decrypts
     count toward one rate limit whichever provider made them; the site provider must audit into the same `audit`."""
-    models = models_provider_from_config(audit, deployment_config_from_env())
+    models = models_provider_from_config(audit, botcube_config_from_env())
     return create_app(settings, [site, OpenAIProvider(openai_vault, audit=audit), *([models] if models else [])])

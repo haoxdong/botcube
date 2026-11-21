@@ -35,7 +35,7 @@ export type AgentComputerRecords = Pick<AccountResources, 'assertBrowserAllowed'
 
 /**
  * The Session's last screenshot comes with either state: it stands in until the live view shows the browser. An awake
- * computer says `liveView: 'screenshots'` when its screen comes frame by frame, and `'none'` under the Deployment Config's
+ * computer says `liveView: 'screenshots'` when its screen comes frame by frame, and `'none'` under the BotCube Config's
  * `liveView: none`, where the User is shown no live view.
  */
 export type AgentComputerState =

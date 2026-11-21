@@ -43,14 +43,14 @@ export class PrivateEgressStack extends Stack {
   }
 }
 
-/** The deploy's NAT, which its identity names exactly when the Deployment Config supplies no network. */
-const EGRESS_FIELDS = 'supplied.network, aws.ecs.privateEgress';
-const EGRESS_BOTH = 'A supplied network brings its own egress, so the deploy identity names no NAT for BotCube to create and park in it';
-const EGRESS_NEITHER = 'Without a supplied network, the deploy identity names the NAT BotCube creates for the private subnets';
+/** The deploy's NAT, which its identity names exactly when the BotCube Config supplies no network. */
+const EGRESS_FIELDS = 'existing.network, aws.ecs.privateEgress';
+const EGRESS_BOTH = 'A existing network brings its own egress, so the deploy identity names no NAT for BotCube to create and park in it';
+const EGRESS_NEITHER = 'Without a existing network, the deploy identity names the NAT BotCube creates for the private subnets';
 
-export function ownedEgress(app: App, identity: DeployIdentity, suppliedNetwork: boolean, boundary?: iam.IManagedPolicy): PrivateEgressStack | undefined {
+export function ownedEgress(app: App, identity: DeployIdentity, existingNetwork: boolean, boundary?: iam.IManagedPolicy): PrivateEgressStack | undefined {
   const egress = identity.aws.ecs.privateEgress;
-  if (suppliedNetwork === Boolean(egress)) {
+  if (existingNetwork === Boolean(egress)) {
     throw new Error(`${EGRESS_FIELDS}: ${egress ? EGRESS_BOTH : EGRESS_NEITHER}`);
   }
   if (!egress) return undefined;

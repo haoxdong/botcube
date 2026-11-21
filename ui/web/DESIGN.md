@@ -105,7 +105,7 @@ size is its desktop size in `:root` and iOS's text style in the 640px query; nam
 
 Each part copies its reference and states only where it differs. The chat parts follow the ChatGPT and Claude apps;
 the rest follow iOS on a phone and macOS on a desktop. All but the File page and Close are React components in
-`src/components/ui/` over one CSS rule each, which a cartridge imports from `botcube-ui-web/ui`; behaviour is pinned
+`src/components/ui/` over one CSS rule each, which a bot imports from `botcube-ui-web/ui`; behaviour is pinned
 by `src/app/globals.test.tsx` and the Storybook play tests.
 
 - **Bubbles:** up to 90% of the column, `xl`, hugging the widest line (`src/app/bubble-width.ts`); one line is an exact

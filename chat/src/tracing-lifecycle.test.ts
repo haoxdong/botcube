@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskStopSleep } from './task-stop.js';
 import { serveChatService } from './server.js';
 import type { StockOverrides } from './stock.js';
-import { testDeploymentConfig } from '../test/stock-bot.js';
+import { testBotCubeConfig } from '../test/stock-bot.js';
 import { reportUnsavedTurnSummaries } from './turn-summaries.js';
 
 const lifecycle = vi.hoisted(() => ({ shutdown: vi.fn<() => Promise<void>>(), stop: undefined as (() => TaskStopSleep) | undefined }));
@@ -33,7 +33,7 @@ it.each([false, true])('waits for the single tracing shutdown before task-stop s
   let reject: ((error: Error) => void) | undefined;
   const flushed = new Promise<void>((ok, fail) => { resolve = ok; reject = fail; });
   lifecycle.shutdown.mockReset().mockReturnValue(flushed);
-  const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: 'trace-test', BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig() }, { overrides });
+  const server = serveChatService({ PORT: '0', BOTCUBE_CHAT_TABLE: 'trace-test', BOTCUBE_CONFIG: testBotCubeConfig() }, { overrides });
   await once(server, 'listening');
   const closed = once(server, 'close');
   const stop = defined(lifecycle.stop, 'task-stop callback')();

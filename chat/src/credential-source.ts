@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { ALLOW_COMMAND_CREDENTIALS_ENV, type CredentialSource as CredentialSourceConfig } from 'botcube-deployment-config/blocks';
+import { ALLOW_COMMAND_CREDENTIALS_ENV, type CredentialSource as CredentialSourceConfig } from 'botcube-config/blocks';
 import { decodeJwt } from 'jose';
 import * as oidc from 'openid-client';
 import { z } from 'zod';

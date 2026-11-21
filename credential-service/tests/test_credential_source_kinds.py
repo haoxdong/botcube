@@ -10,16 +10,16 @@ from botcube_credential_service.credential_source import (
     credential_source,
 )
 
-SCHEMA = Path(__file__).resolve().parents[2] / 'deployment-config' / 'deployment-config.schema.json'
+SCHEMA = Path(__file__).resolve().parents[2] / 'config' / 'botcube.schema.json'
 
 
 def _models_credential_kinds() -> list[str]:
-    [endpoint] = [each for each in json.loads(SCHEMA.read_text())['properties']['models']['oneOf'] if 'credential' in each['properties']]
+    [endpoint] = [each for each in json.loads(SCHEMA.read_text())['properties']['integrations']['properties']['modelGateway']['oneOf'] if 'credential' in each['properties']]
     return [each['properties']['kind']['const'] for each in endpoint['properties']['credential']['oneOf']]
 
 
 @pytest.mark.parametrize('kind', _models_credential_kinds())
-def test_every_credential_kind_the_deployment_config_accepts_is_one_the_relay_knows(kind: str) -> None:
+def test_every_credential_kind_the_botcube_config_accepts_is_one_the_relay_knows(kind: str) -> None:
     with pytest.raises(CredentialSourceError) as refused:
         credential_source('models', {'kind': kind})
 

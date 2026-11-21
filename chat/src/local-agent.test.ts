@@ -11,7 +11,7 @@ import type { AgentDocuments } from './agent-documents.js';
 import type { AccountHistory } from './account-history.js';
 import { createChatService, type ChatServiceConfig } from './server.js';
 import type { StockOverrides } from './stock.js';
-import { testDeploymentConfig } from '../test/stock-bot.js';
+import { testBotCubeConfig } from '../test/stock-bot.js';
 import type { SessionApi } from './session-api.js';
 import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetadata } from './session-metadata.js';
 import { buildDirectAgent } from '../../ui/web/src/app/conversations.js';
@@ -68,7 +68,7 @@ async function localHarness(answer: (response: ServerResponse) => void) {
   return { url: await listening(server), received, closed };
 }
 
-const env = { BOTCUBE_DEPLOYMENT_CONFIG: testDeploymentConfig(), BOTCUBE_CHAT_TABLE: 'local-agent-test' };
+const env = { BOTCUBE_CONFIG: testBotCubeConfig(), BOTCUBE_CHAT_TABLE: 'local-agent-test' };
 
 const bot: StockOverrides = {
   corsOrigins: [],

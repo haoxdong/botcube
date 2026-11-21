@@ -65,7 +65,7 @@ class SheetKeyMisconfigured(ValueError):
 
 
 SHEET_KEY_ALIAS_ENV = 'BOTCUBE_SHEET_KMS_ALIAS'
-_SHEET_KEY_FIELD = 'supplied.kmsKeys.sheet'
+_SHEET_KEY_FIELD = 'existing.kmsKeys.sheet'
 _UNAVAILABLE = 'Sign-in Sheet encryption key is unavailable'
 
 

@@ -61,11 +61,11 @@ function bypassRules(entry: string): string[] {
 export function refuseProxyCredentials({ NODE_USE_ENV_PROXY, HTTPS_PROXY }: NodeJS.ProcessEnv): void {
   if (NODE_USE_ENV_PROXY !== '1' || !HTTPS_PROXY) return;
   const { username, password } = new URL(HTTPS_PROXY);
-  if (username || password) throw new Error("Chromium can't authenticate to a proxy: remove the credentials from the Deployment Config's proxy URL");
+  if (username || password) throw new Error("Chromium can't authenticate to a proxy: remove the credentials from the BotCube Config's proxy URL");
 }
 
 /**
- * Chromium's proxy flags under the Deployment Config's proxy (NODE_USE_ENV_PROXY, as `proxyEnvironment` sets it):
+ * Chromium's proxy flags under the BotCube Config's proxy (NODE_USE_ENV_PROXY, as `proxyEnvironment` sets it):
  * HTTPS_PROXY as its proxy server and NO_PROXY as its bypass list. None without it, so Chromium keeps its defaults.
  */
 export function chromiumProxyArgs(env: NodeJS.ProcessEnv): string[] {
@@ -94,7 +94,7 @@ async function command(endpoint: string, method: string, params: object = {}, se
 }
 
 /**
- * Start headless Chromium on `startPage`, under `env`'s Deployment Config proxy if any; answers once its DevTools
+ * Start headless Chromium on `startPage`, under `env`'s BotCube Config proxy if any; answers once its DevTools
  * endpoint has a page.
  */
 export async function startLocalChromium(

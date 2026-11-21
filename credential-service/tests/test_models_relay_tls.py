@@ -88,7 +88,7 @@ def key(tmp_path: Path) -> Path:
 @contextlib.contextmanager
 def _credential_service(port: int, key: Path, tls: dict[str, Any]) -> Generator[TestClient]:
     endpoint = {'url': f'https://127.0.0.1:{port}/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': tls}
-    provider = models_provider_from_config(CredentialAuditRecorder(), {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}, {})
+    provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
     assert provider is not None
     settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
     with TestClient(create_app(settings, [provider])) as client:
@@ -175,20 +175,20 @@ def test_startup_fails_naming_the_models_seam_and_the_file_when_the_certificate_
     }
 
     with pytest.raises(EndpointTlsError, match=r'^models client certificate \(file .*svid\.pem, file .*svid-key\.pem\)'):
-        models_provider_from_config(CredentialAuditRecorder(), {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
 
 
 def test_startup_fails_when_the_endpoint_url_cannot_carry_tls(key: Path) -> None:
     endpoint = {'url': 'http://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {'serverIdentity': SERVER_IDENTITY}}
 
     with pytest.raises(EndpointTlsError, match=r'^models TLS: the Endpoint http://models\.example\.com/v1 is not https'):
-        models_provider_from_config(CredentialAuditRecorder(), {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
 
 
 def test_an_impostor_is_refused_however_the_endpoint_host_is_spelt(certs: Certificates, gateway: int, key: Path) -> None:
     with mtls_front(certs, gateway, 'impostor') as front:
         endpoint = {'url': f'https://LocalHost:{front.port}/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {'serverIdentity': SERVER_IDENTITY}}
-        provider = models_provider_from_config(CredentialAuditRecorder(), {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}, {})
+        provider = models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})
         assert provider is not None
         settings = CredentialServiceSettings(name='test-credential-service', invocation_secret=lambda: SECRET)
         with TestClient(create_app(settings, [provider])) as client:
@@ -212,4 +212,4 @@ def test_an_empty_tls_block_is_refused_at_startup_not_read_as_no_tls(key: Path) 
     endpoint = {'url': 'https://models.example.com/v1', 'credential': {'kind': 'file', 'path': str(key)}, 'tls': {}}
 
     with pytest.raises(EndpointTlsError, match=r'^models TLS: '):
-        models_provider_from_config(CredentialAuditRecorder(), {'models': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}, {})
+        models_provider_from_config(CredentialAuditRecorder(), {'integrations': {'modelGateway': {'kind': 'openai-compatible', 'turnSummaryModel': 'summary', **endpoint}}}, {})

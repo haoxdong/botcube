@@ -1,3 +1,4 @@
+import { stageBotImage } from '../test/bot-image.js';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
@@ -38,68 +39,58 @@ vi.mock('./local-chromium.js', async (original) => {
 
 const history: AccountHistory = { delete: async () => undefined, transfer: async () => undefined, ownsMainChat: async () => false, owns: async () => true };
 
-const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../examples/public/deployment-config.json', import.meta.url));
-const EXAMPLE_BOT = fileURLToPath(new URL('../../examples/bot/bot.json', import.meta.url));
+const PUBLIC_EXAMPLE = fileURLToPath(new URL('../../examples/public/botcube.yaml', import.meta.url));
+
 
 /** The public example's BotCube Config, with these sections too. */
 function publicExample(sections: Record<string, unknown>) {
-  const path = join(mkdtempSync(join(tmpdir(), 'stock-deployment-')), 'deployment-config.json');
-  writeFileSync(path, JSON.stringify({ bot: EXAMPLE_BOT, ...sections }));
+  const path = join(mkdtempSync(join(tmpdir(), 'stock-deployment-')), 'botcube.yaml');
+  writeFileSync(path, JSON.stringify({ ...sections }));
   return path;
 }
 
-function deploymentConfig(bot: unknown) {
+function botcubeConfig(bot: unknown) {
   const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
-  writeFileSync(join(dir, 'bot.json'), JSON.stringify(bot));
-  writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json' }));
-  return join(dir, 'deployment-config.json');
+  stageBotImage(bot);
+  writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({  }));
+  return join(dir, 'botcube.yaml');
 }
 
 const turn = (forwardedProps: Record<string, unknown>) =>
   ({ threadId: 'session-1', runId: 'run-1', state: {}, messages: [], tools: [], context: [], forwardedProps }) as RunAgentInput;
 
 describe('the stock Chat Service', () => {
-  it('stops before serving without a Deployment Config', () => {
-    expect(() => stockChatService({})).toThrow('BOTCUBE_DEPLOYMENT_CONFIG is not set');
+  it('stops before serving without a BotCube Config', () => {
+    expect(() => stockChatService({})).toThrow('BOTCUBE_CONFIG is not set');
   });
 
-  it('takes its Agent Identity, Soul and models from the bot settings its Deployment Config names', () => {
-    const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
-      agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' },
-      accountKey: 'quill',
-      soul: 'Write plainly.',
-      models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }],
-    }) })(history);
+  it('takes its Agent Identity, Soul and models from the bot settings its BotCube Config names', () => {
+    const service = stockChatService({ BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' }, accountKey: 'quill', soul: 'Write plainly.', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }] }) })(history);
 
     expect(service.agentDocuments).toEqual({ agentIdentity: { name: 'Quill', character: 'A drafting agent', vibe: 'Direct, precise, and calm', avatar: '🪶' }, soul: 'Write plainly.' });
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }, { key: 'echo-2', label: 'Echo 2', description: 'Also echoes', provider: 'echo' }]);
   });
 
   it.each([[undefined, true], [false, false]])('takes its Memory gate from the bot settings (memory %j)', (memory, kept) => {
-    const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
-      agentIdentity: { name: 'Quill', character: 'A drafting agent' },
-      accountKey: 'quill',
-      models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-      ...(memory === undefined ? {} : { memory }),
-    }) })(history);
+    const service = stockChatService({ BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', ...(memory === undefined ? {} : { memory }), models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }) })(history);
 
     expect(service.memory).toBe(kept);
   });
 
   it('stops before serving when its bot settings are wrong, naming the field', () => {
-    const path = deploymentConfig({ agentIdentity: { name: 'Quill' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
-    expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow(`Bot settings ${join(path, '..', 'bot.json')}: agentIdentity.character: `);
+    const path = botcubeConfig({ agentIdentity: { name: 'Quill' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
+    expect(() => stockChatService({ BOTCUBE_CONFIG: path })).toThrow(`Bot settings /bot/bot.yaml: agentIdentity.character: `);
   });
 
   it('stops before serving a bot that wants the user token in its shell when there are no Turn identity keys to sign it', () => {
-    const path = deploymentConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }], userTokenInShell: true });
+    const path = botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent' }, accountKey: 'quill', userTokenInShell: true, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] });
 
-    expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path })).toThrow('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
-    expect(() => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: path, BOTCUBE_TURN_IDENTITY_KEYS: '[]' })).not.toThrow();
+    expect(() => stockChatService({ BOTCUBE_CONFIG: path })).toThrow('userTokenInShell: the user token is signed with the Turn identity keys; set BOTCUBE_TURN_IDENTITY_KEYS and BOTCUBE_PUBLIC_ORIGIN');
+    expect(() => stockChatService({ BOTCUBE_CONFIG: path, BOTCUBE_TURN_IDENTITY_KEYS: '[]' })).not.toThrow();
   });
 
   it('offers only the bot settings\' models, with no account models', async () => {
-    const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE })(history);
+    const service = stockChatService({ BOTCUBE_CONFIG: PUBLIC_EXAMPLE })(history);
 
     expect(service.models).toEqual([{ key: 'echo', label: 'Echo', provider: 'echo' }]);
     expect(await service.accountModels({ owner: 'owner' })).toEqual([]);
@@ -107,9 +98,7 @@ describe('the stock Chat Service', () => {
   });
 
   it("keeps signed in the sessions an earlier Chat minted under the bot's account key", async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
-      agentIdentity: { name: 'Acme', character: 'A test bot' }, accountKey: 'acme', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-    }) };
+    const env = { BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Acme', character: 'A test bot' }, accountKey: 'acme', models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }) };
     const documents = memoryDocuments();
     const accountId = 'acct_earlier_chat_000000000';
     await documents.send(new PutCommand({
@@ -126,7 +115,7 @@ describe('the stock Chat Service', () => {
   });
 
   it("files each request under the browser's account and forwards the Turn with its Agent Computer", async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE };
+    const env = { BOTCUBE_CONFIG: PUBLIC_EXAMPLE };
     const service = stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history);
     const route = new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, 500))
@@ -147,8 +136,8 @@ describe('the stock Chat Service', () => {
     });
   });
 
-  it("replaces a client-supplied CDP endpoint with its own Agent Computer's", async () => {
-    const service = stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://chat-service:8123/agent-computer/cdp' })(history);
+  it("replaces a client-existing CDP endpoint with its own Agent Computer's", async () => {
+    const service = stockChatService({ BOTCUBE_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_AGENT_COMPUTER_CDP_URL: 'ws://chat-service:8123/agent-computer/cdp' })(history);
     const input = turn({ model: 'echo', agentComputerCdpUrl: 'ws://untrusted.invalid' });
     expect(await service.invocationPayload(input, { owner: 'owner' }, service.models[0])).toEqual({
       ...input,
@@ -160,7 +149,7 @@ describe('the stock Chat Service', () => {
     const product = await new HttpFake((_, response) => sendJson(response, 200, {})).listen();
     const { privateKey } = await generateKeyPair('ES256', { extractable: true });
     const env = {
-      BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ productService: { agentComputerStartedPath: '/agent-computer/started' } }),
+      BOTCUBE_CONFIG: publicExample({ productService: { agentComputerStartedPath: '/agent-computer/started' } }),
       BOTCUBE_CHROMIUM_PATH: testChromiumPath(),
       BOTCUBE_CREDENTIAL_SERVICE_URL: product.url,
       BOTCUBE_TURN_IDENTITY_KEYS: JSON.stringify([{ ...(await exportJWK(privateKey)), kid: 'k1' }]),
@@ -181,7 +170,7 @@ describe('the stock Chat Service', () => {
   });
 
   it('serves Files from EFS, refusing them until EFS is configured', async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE };
+    const env = { BOTCUBE_CONFIG: PUBLIC_EXAMPLE };
     const service = stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history);
     const route = new Hono().onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 503 : 500)).route('/', service.routes);
     const cookie = (await route.request('/account/session')).headers.get('set-cookie')?.split(';')[0] ?? '';
@@ -217,12 +206,7 @@ describe("the stock Chat Service's filing ID", () => {
       BOTCUBE_CHAT_TABLE: table,
       BOTCUBE_LOCAL_SESSION_API_URL: sessionApi.url,
       BOTCUBE_LOCAL_HARNESS_URL: harness.url,
-      BOTCUBE_DEPLOYMENT_CONFIG: deploymentConfig({
-        agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' },
-        accountKey: 'quill',
-        models: [{ key: 'echo', label: 'Echo', provider: 'echo' }],
-        memory: true,
-      }),
+      BOTCUBE_CONFIG: botcubeConfig({ agentIdentity: { name: 'Quill', character: 'A drafting agent', avatar: '🪶' }, accountKey: 'quill', memory: true, models: [{ key: 'echo', label: 'Echo', provider: 'echo' }] }),
     };
     const service = stockChatService(env);
     const server = serveChatService(env);
@@ -276,7 +260,7 @@ describe("the stock Chat Service's Agent Computer", () => {
       return Response.json({ streams: { automationStream: { streamEndpoint: 'wss://stream.test/awake', streamStatus: 'ENABLED' } } });
     });
     const env = {
-      BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       PATH: '',
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
       AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'agent-computer-browser',
@@ -303,11 +287,11 @@ describe("the stock Chat Service's Agent Computer", () => {
     vi.stubEnv('AWS_SESSION_TOKEN', '');
     vi.stubGlobal('fetch', async () => Response.json({ streams: { automationStream: { streamEndpoint: 'wss://stream.test/awake', streamStatus: 'ENABLED' } } }));
     const dir = mkdtempSync(join(tmpdir(), 'stock-deployment-'));
-    const bot = JSON.parse(readFileSync(new URL('../../examples/bot/bot.json', import.meta.url), 'utf8')) as { agentComputer?: object };
-    writeFileSync(join(dir, 'bot.json'), JSON.stringify({ ...bot, agentComputer: { ...bot.agentComputer, liveBrowser: false } }));
-    writeFileSync(join(dir, 'deployment-config.json'), JSON.stringify({ bot: './bot.json', liveView: { kind: 'none' } }));
+    const bot = JSON.parse(readFileSync(new URL('../../examples/bot/bot.yaml', import.meta.url), 'utf8')) as { agentComputer?: object };
+    stageBotImage({ ...bot, agentComputer: { ...bot.agentComputer, liveBrowser: false } });
+    writeFileSync(join(dir, 'botcube.yaml'), JSON.stringify({ liveView: { kind: 'none' } }));
     const env = {
-      BOTCUBE_DEPLOYMENT_CONFIG: join(dir, 'deployment-config.json'),
+      BOTCUBE_CONFIG: join(dir, 'botcube.yaml'),
       AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'http://agentcore.test',
       AGENTCORE_AGENT_COMPUTER_BROWSER_ID: 'agent-computer-browser',
       BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET: 'policy-bucket',
@@ -379,7 +363,7 @@ describe("the stock Chat Service's Plan Usage", () => {
     const env = {
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
-      BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }),
+      BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }),
     };
     const documents = memoryDocuments();
     const accountStore = stockAccountStore(env, documents);
@@ -426,17 +410,17 @@ describe("the stock Chat Service's Plan Usage", () => {
 
   it('offers no plan without a configured owner, or before the owner signs in to OpenAI', async () => {
     const { accountStore } = await planUsage();
-    const bound = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET };
+    const bound = { BOTCUBE_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET };
     expect(await stockChatService(bound, { accountStore })(history).accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([]);
 
     await accountStore.removeOpenAISignIn(PLAN_OWNER);
-    const signedOut = stockChatService({ ...bound, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
+    const signedOut = stockChatService({ ...bound, BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
     expect(await signedOut.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([]);
   });
 
   it('lets only the plan owner send candidate prompts', () => {
-    const service = (owner?: string) => stockChatService({ BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
-      ...(owner === undefined ? {} : { BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) }) })(history);
+    const service = (owner?: string) => stockChatService({ BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
+      ...(owner === undefined ? {} : { BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) }) })(history);
 
     expect(service(PLAN_OWNER).tunesPrompts?.({ owner: PLAN_OWNER })).toBe(true);
     expect(service(PLAN_OWNER).tunesPrompts?.({ owner: 'acct_someone_else' })).toBe(false);
@@ -447,7 +431,7 @@ describe("the stock Chat Service's Plan Usage", () => {
     const { service, accountStore } = await planUsage();
     expect(await service.accountModels({ owner: PLAN_OWNER }, { refresh: true })).toEqual([model]);
     const refused = stockChatService({ BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url,
-      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'wrong-secret', BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
+      BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'wrong-secret', BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }) }, { accountStore })(history);
 
     await expect(refused.accountModels({ owner: PLAN_OWNER }, { refresh: true }))
       .rejects.toMatchObject({ status: 503, detail: 'Credential Service plan catalog failed with HTTP 401' });
@@ -460,7 +444,7 @@ describe("the stock Chat Service's Plan Usage", () => {
     await account(other, 'registered');
     const routes = (env: Record<string, string>) => new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 403 : 500))
-      .route('/', stockChatService({ BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }), ...env }, { accountStore })(history).routes);
+      .route('/', stockChatService({ BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: PLAN_OWNER } }), ...env }, { accountStore })(history).routes);
     const signIn = (route: Hono, accountId: string) => route.request('/account/plan-usage/openai', {
       method: 'POST',
       headers: { authorization: `Bearer ${signCredentialServiceInvocation(SECRET, accountId, 'operator', { scope: 'credential_capture' })}` },
@@ -484,11 +468,11 @@ describe("the stock Chat Service's Plan Usage", () => {
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const base = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
-      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
     };
     const { account: { accountId: owner } } = await stockAccountStore(base).anonymousAccount(undefined);
-    const env = { ...base, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) };
+    const env = { ...base, BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: owner } }) };
     const server = serveChatService(env);
     try {
       await once(server, 'listening');
@@ -564,7 +548,7 @@ describe("the stock Chat Service's account deletion", () => {
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
-      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
       ...efsFiles(),
     };
@@ -615,7 +599,7 @@ describe("the stock Chat Service's account deletion", () => {
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AGENTCORE_RUNTIME_ARN: RUNTIME_ARN, BOTCUBE_CHAT_TABLE: table,
-      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }),
+      BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET, BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }),
     };
     const documents = DynamoDBDocumentClient.from(new DynamoDBClient(motoAws()));
     const accountId = 'acct_stock_connector';
@@ -658,7 +642,7 @@ describe("the stock Chat Service's account deletion", () => {
   });
 
   it('refuses every Test User Connector copy while the Credential Service is unbound', async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }) };
+    const env = { BOTCUBE_CONFIG: publicExample({ planUsage: { ownerAccountId: 'acct_owner' } }) };
     const route = new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 401 : 500))
       .route('/', stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history).routes);
@@ -671,7 +655,7 @@ describe("the stock Chat Service's account deletion", () => {
   async function guestService(table: string, endpoint: string) {
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
-      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE,
       BOTCUBE_CREDENTIAL_SERVICE_URL: credentialService.url, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET,
     };
     const server = serveChatService(env);
@@ -703,7 +687,7 @@ describe("the stock Chat Service's account deletion", () => {
     const table = `stock-files-${Math.random().toString(36).slice(2)}`;
     await createChatTable(endpoint, table);
     vi.stubEnv('AWS_ENDPOINT_URL_DYNAMODB', endpoint);
-    const env = { PORT: '0', AWS_REGION: 'us-east-1', BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, ...efsFiles() };
+    const env = { PORT: '0', AWS_REGION: 'us-east-1', BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: PUBLIC_EXAMPLE, ...efsFiles() };
     const filesRoot = mkdtempSync(join(tmpdir(), 'stock-files-'));
     const retired = join(filesRoot, basename(directoryOf('acct_stock_files_retired')));
     mkdirSync(retired);
@@ -722,7 +706,7 @@ describe("the stock Chat Service's account deletion", () => {
   });
 
   it('refuses a scheduled run for a missing account, or one whose deletion is pending', async () => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE };
+    const env = { BOTCUBE_CONFIG: PUBLIC_EXAMPLE };
     const documents = memoryDocuments();
     const service = stockChatService(env, { accountStore: stockAccountStore(env, documents) })(history);
     const route = new Hono().route('/', service.routes);
@@ -786,8 +770,8 @@ describe("the stock Chat Service's account deletion", () => {
 });
 
 describe('a signed-in User deleting their own account', () => {
-  const ENTERPRISE = fileURLToPath(new URL('../../examples/enterprise/deployment-config.json', import.meta.url));
-  const EXAMPLE_BOT = fileURLToPath(new URL('../../examples/bot/bot.json', import.meta.url));
+  const ENTERPRISE = fileURLToPath(new URL('../../examples/enterprise/botcube.yaml', import.meta.url));
+
   const UI = 'http://localhost:3001/';
   const INTROSPECTION_SECRET = 'stand-in-invocation-secret';
   const CLIENT_SECRET = 'stand-in-client-secret';
@@ -797,24 +781,24 @@ describe('a signed-in User deleting their own account', () => {
   let config: string;
   beforeAll(async () => {
     issuer = await new StandInOidcIssuer().listen();
-    const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { identity: { clients: { clientId: string }[] } };
+    const enterprise = JSON.parse(readFileSync(ENTERPRISE, 'utf8')) as { integrations: { signIn: { clients: { clientId: string }[] } } };
     const dir = mkdtempSync(join(tmpdir(), 'stock-oidc-'));
-    config = join(dir, 'deployment-config.json');
+    config = join(dir, 'botcube.yaml');
     // The client secret as a secret injector mounts it, in place of the example's Secrets Manager secret.
     writeFileSync(join(dir, 'client-secret'), `${CLIENT_SECRET}\n`);
     writeFileSync(join(dir, 'mobile-client-secret'), `${SECOND_CLIENT.secret}\n`);
     const clients = [
-      ...enterprise.identity.clients.map(({ clientId }) => ({ clientId, clientSecret: { kind: 'file', path: join(dir, 'client-secret') } })),
+      ...enterprise.integrations.signIn.clients.map(({ clientId }) => ({ clientId, clientSecret: { kind: 'file', path: join(dir, 'client-secret') } })),
       { clientId: SECOND_CLIENT.clientId, clientSecret: { kind: 'file', path: join(dir, 'mobile-client-secret') } },
     ];
-    writeFileSync(config, JSON.stringify({ bot: EXAMPLE_BOT, identity: { ...enterprise.identity, issuer: issuer.url, clients } }));
+    writeFileSync(config, JSON.stringify({ integrations: { signIn: { ...enterprise.integrations.signIn, issuer: issuer.url, clients } } }));
   });
   afterAll(async () => { await issuer.close(); });
 
   async function oidcService(table: string, endpoint: string) {
     const env = {
       PORT: '0', AWS_REGION: 'us-east-1', AWS_ENDPOINT_URL_DYNAMODB: endpoint, AGENTCORE_RUNTIME_ARN: RUNTIME_ARN,
-      BOTCUBE_CHAT_TABLE: table, BOTCUBE_DEPLOYMENT_CONFIG: config,
+      BOTCUBE_CHAT_TABLE: table, BOTCUBE_CONFIG: config,
       BOTCUBE_CREDENTIAL_INVOCATION_SECRET: INTROSPECTION_SECRET,
     };
     const server = serveChatService(env);
@@ -895,7 +879,7 @@ describe('a signed-in User deleting their own account', () => {
     });
   });
 
-  it('refuses a sign-in naming a client the Deployment Config does not list', async () => {
+  it('refuses a sign-in naming a client the BotCube Config does not list', async () => {
     await withService(async (service) => {
       const login = await service.browser().get(`/auth/oidc/login?client=unlisted&return_to=${encodeURIComponent(UI)}`);
       expect([login.status, await login.json()]).toEqual([400, { detail: 'client is not a sign-in client of this bot' }]);
@@ -986,7 +970,7 @@ describe("the stock Chat Service's /account/session Linked Accounts", () => {
   afterAll(async () => { await credentialService.close(); });
 
   const routes = (credentialServiceUrl: string | null = credentialService.url) => {
-    const env = { BOTCUBE_DEPLOYMENT_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl ?? undefined, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET };
+    const env = { BOTCUBE_CONFIG: PUBLIC_EXAMPLE, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl ?? undefined, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: SECRET };
     return new Hono()
       .onError((error, c) => c.json({ detail: error instanceof HttpError ? error.detail : error.message }, error instanceof HttpError ? error.status as 503 : 500))
       .route('/', stockChatService(env, { accountStore: stockAccountStore(env, memoryDocuments()) })(history).routes);

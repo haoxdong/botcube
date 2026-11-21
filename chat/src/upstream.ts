@@ -16,7 +16,7 @@ interface UpstreamOptions {
   bearer?: HarnessBearer | undefined;
 }
 
-// Under the Deployment Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
+// Under the BotCube Config's proxy (NODE_USE_ENV_PROXY), through HTTP(S)_PROXY except NO_PROXY's hosts.
 const turnDispatcher = ({ connectTimeoutMs = CONNECT_TIMEOUT_MS }: UpstreamOptions): Dispatcher =>
   process.env.NODE_USE_ENV_PROXY === '1'
     ? new EnvHttpProxyAgent({ connect: { timeout: connectTimeoutMs } })

@@ -10,7 +10,7 @@ import { LINK_PATH, UPLOAD_CHUNK_BYTES } from './files-link.js';
 import type { AgentComputerState } from './agent-computer.js';
 import { jsonPayload } from './payload.js';
 
-/** The reusable UI routes; account authentication and sandbox ownership are supplied by the bot. */
+/** The reusable UI routes; account authentication and sandbox ownership are existing by the bot. */
 export function computerFilesRoutes({ requester, history, computers, files }: {
   requester(c: Context): Promise<Requester>;
   history: Pick<AccountHistory, 'owns'>;

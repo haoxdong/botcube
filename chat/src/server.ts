@@ -2,7 +2,7 @@ import { TurnQuota, TurnQuotaExceeded } from './turn-quota.js';
 import { startChatTracing } from './tracing.js';
 import { startProxyRelayForConfig } from './proxy-relay.js';
 import { chatTable } from './config.js';
-import { assumeRoleTurnCredentials } from './turn-credentials.js';
+import { assumeRoleAwsAccess } from './turn-credentials.js';
 import { TurnIdentity, turnIdentityConfigFromEnv, turnIdentityRoutes, type TurnIdentityConfig } from './turn-identity.js';
 import { serve, type ServerType, type WebSocketServerLike } from '@hono/node-server';
 import { WebSocketServer } from 'ws';
@@ -23,7 +23,7 @@ import { DynamoDBSessionMetadata, SessionDispatchPendingError, type SessionMetad
 import type { ScheduledTasks } from './scheduled-tasks.js';
 import { chatScheduling } from './schedules.js';
 import type { TableSchedules } from './table-schedules.js';
-import { deploymentAdapters, type DeploymentAdapters, type TurnCredentialsAdapter } from './deployment-adapters.js';
+import { configAdapters, type ConfigAdapters, type AwsAccessAdapter } from './config-adapters.js';
 import { ssmParkHistory, type ParkHistory } from './park-history.js';
 import { isUserRequest, ProductionActivity } from './production-activity.js';
 import { ecsTaskDraining, pollScheduledRuns, runScheduledTask, type RunQueue } from './scheduled-runs.js';
@@ -40,8 +40,8 @@ const LIVE_VIEW_URL_EXPIRES_SECONDS = 300;
 export interface ChatServiceConfig {
   /** Unset: no per-Turn user identity, no signed user token, and no OIDC discovery. */
   turnIdentity?: TurnIdentityConfig;
-  /** The Deployment Config's `turnCredentials` adapter; unset is `web-identity`, the Turn identity's own token. */
-  turnCredentials?: TurnCredentialsAdapter;
+  /** The BotCube Config's `awsAccess` adapter; unset is `web-identity`, the Turn identity's own token. */
+  awsAccess?: AwsAccessAdapter;
   /** Unset: Turns get 503 and warmup is skipped. */
   agentCore: AgentCoreRuntime | null;
   /** How Turns authenticate to the Harness; unset is SigV4. */
@@ -62,7 +62,7 @@ export interface ChatServiceConfig {
   turnSummaryModel: TurnSummaryModel;
 }
 
-function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): ChatServiceConfig {
+function configFromEnv(env: NodeJS.ProcessEnv, adapters: ConfigAdapters): ChatServiceConfig {
   const { region, endpoint } = agentCoreEndpointFromEnv(env);
   const localSessionApiUrl = env.BOTCUBE_LOCAL_SESSION_API_URL?.replace(/\/+$/, '');
   const turnIdentity = turnIdentityConfigFromEnv(env);
@@ -82,7 +82,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): Ch
     warmupTimeoutMs: 60_000,
     turnSummaryModel: turnSummaryModel(adapters.models, env, region),
     ...(turnIdentity ? { turnIdentity } : {}),
-    turnCredentials: adapters.turnCredentials,
+    awsAccess: adapters.awsAccess,
   };
 }
 
@@ -90,7 +90,7 @@ function configFromEnv(env: NodeJS.ProcessEnv, adapters: DeploymentAdapters): Ch
 const pathSegment = (value: string) =>
   encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
-/** The environment the stock Chat reads its Deployment Config and External Services from, and the options it is built with. */
+/** The environment the stock Chat reads its BotCube Config and External Services from, and the options it is built with. */
 export type ChatDeployment = { env: NodeJS.ProcessEnv } & StockOptions;
 
 export interface ChatService {
@@ -166,11 +166,11 @@ export function createChatService(
   const initialRecovery = recoverPurges();
   void initialRecovery.then(() => sweepEvery(120_000, draining, recoverPurges));
   const summarizeTurn = turnSummarizer(config.turnSummaryModel);
-  const turnCredentials = config.turnCredentials?.kind === 'assume-role' ? assumeRoleTurnCredentials(config.turnCredentials.roleArn) : turnIdentity;
+  const awsAccess = config.awsAccess?.kind === 'assume-role' ? assumeRoleAwsAccess(config.awsAccess.roleArn) : turnIdentity;
   const app = new Hono();
   let scheduledRunsUnavailable = false;
   if (scheduled !== null) {
-    const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: turnCredentials, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
+    const deps = { bot, sessionMetadata, agentDocuments, invokeSessionApi, scheduledTasks: scheduled.tasks, upstream, stopScheduledRuntime: config.localHarnessUrl ? undefined : runtime?.stop, summarizeTurn, turnIdentity: awsAccess, userTokens: turnIdentity, parkHistory: scheduled.parkHistory };
     const unavailable = () => { scheduledRunsUnavailable = true; };
     const stopRuns = pollScheduledRuns(scheduled.queue, (message) => runScheduledTask(deps, message), scheduled.draining, unavailable, async () => {
       for (const { owner, taskId, error } of await scheduled.tasks.retireExpired()) {
@@ -209,7 +209,7 @@ export function createChatService(
     bot,
     stores: { sessionMetadata, agentDocuments },
     harness: { upstream, warmupTimeoutMs: config.warmupTimeoutMs },
-    turns: { summarizeTurn, turnQuota, turnCredentials, userTokens: turnIdentity },
+    turns: { summarizeTurn, turnQuota, awsAccess, userTokens: turnIdentity },
   });
 
   const checkReadiness = async () => {
@@ -286,9 +286,9 @@ function parkHistoryFromEnv(env: NodeJS.ProcessEnv, productName: string | undefi
   return ssmParkHistory(parameter, productName);
 }
 
-/** Serve the Chat Service, configured from the environment and the Deployment Config it names, on $PORT. */
+/** Serve the Chat Service, configured from the environment and the BotCube Config it names, on $PORT. */
 export function serveChatService(env: NodeJS.ProcessEnv = process.env, options: StockOptions = {}): ServerType {
-  const adapters = deploymentAdapters(env);
+  const adapters = configAdapters(env);
   // Listening first: every client, and the collector sidecar beside this container, sends through it.
   const proxyRelay = startProxyRelayForConfig(adapters.proxy, env);
   proxyRelay?.catch((error: unknown) => {
