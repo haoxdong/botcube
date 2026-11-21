@@ -1,3 +1,5 @@
+import { createElement } from "react";
+
 /**
  * The plotly.js a chart draws with: plotly's own prebuilt bundle of every trace type, so a markets agent's
  * candlestick, OHLC or waterfall draws as its line charts do. The bundler copies the file as an asset and never parses
@@ -8,26 +10,11 @@
 const plotlyUrl = () => new URL('plotly.js-dist-min/plotly.min.js', import.meta.url).toString();
 
 /**
- * Asks the browser, once the page is idle, to fetch plotly.js at low priority, so the first chart a reply shows
- * draws without waiting ~2 s for 1.4 MB. One prefetch link per page; it runs none of plotly's code.
+ * A prefetch hint for plotly.js, so the first chart a reply shows draws without waiting ~2 s for 1.4 MB. React hoists
+ * it into the head, and the browser fetches a prefetch at its lowest priority once the page has loaded. It runs none
+ * of plotly's code.
  */
-export function prefetchPlotly(): () => void {
-  const start = () => {
-    if (document.head.querySelector('link[data-plotly-prefetch]') !== null) return;
-    const link = document.createElement('link');
-    link.rel = 'prefetch';
-    link.as = 'script';
-    link.href = plotlyUrl();
-    link.dataset.plotlyPrefetch = '';
-    document.head.append(link);
-  };
-  if ('requestIdleCallback' in window) {
-    const idle = window.requestIdleCallback(start, { timeout: 10_000 });
-    return () => window.cancelIdleCallback(idle);
-  }
-  const timer = setTimeout(start, 3_000);
-  return () => clearTimeout(timer);
-}
+export const PlotlyPrefetch = () => createElement("link", { rel: "prefetch", as: "script", href: plotlyUrl() });
 
 export default function loadPlotly(): Promise<unknown> {
   const page = window as Window & { Plotly?: unknown };

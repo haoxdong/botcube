@@ -38,7 +38,7 @@ import { Composer } from "./composer";
 import { ThoughtStep, ToolStep, worklogKey, worklogRows } from "./worklog";
 import { showsProposalCard } from "./worklog-tools";
 import { fitBubbles } from "./bubble-width";
-import { prefetchPlotly } from "../components/plotly-bundle";
+import { PlotlyPrefetch } from "../components/plotly-bundle";
 import { shows, useSteering, type PendingMessage, type Withdrawal } from "./steering";
 import { WaitingMessages } from "./waiting-steering";
 import { MessageEntranceRow, MessageEntranceHistory, type MessageEntrances } from "./message-entrance";
@@ -685,10 +685,10 @@ export default function ChatSurface({ children, chatId, stopRef, entrances, ...p
   entrances: MessageEntrances;
 }) {
   const steeringDrop = useRef<(() => void) | null>(null);
-  // A reply's first chart draws from plotly.js the browser fetched while the chat sat idle.
-  useEffect(() => prefetchPlotly(), []);
   return (
     <CopilotKit {...props}>
+      {/* A reply's first chart draws from plotly.js the browser fetched while the chat sat idle. */}
+      <PlotlyPrefetch />
       <SteeringDrop.Provider value={steeringDrop}>
         <ComputerStop chatId={chatId} stopRef={stopRef} />
         <MessageEntranceHistory.Provider value={entrances}>{children(ChatThread)}</MessageEntranceHistory.Provider>
