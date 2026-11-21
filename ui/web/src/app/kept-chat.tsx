@@ -6,6 +6,7 @@ import { Presence, presenceMotion } from "./collapse";
 import { useLayoutEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from "react";
 import { contentToText, type Message } from "@ag-ui/client";
 import { Plus } from "lucide-react";
+import { InputGroupButton } from "@/components/ui/input-group";
 import { Composer } from "./composer";
 import { SentFileCards, sentFilesOf } from "./composer-files";
 import { ThoughtStep, worklogRows } from "./worklog";
@@ -196,7 +197,7 @@ export function KeptChat({ messages, running = false, disclaimer, composerAccess
               running={false}
               canSend={false}
               hasFiles={false}
-              addMenu={<button type="button" className="composer-add" data-testid="copilot-add-menu-button" aria-label="Add photos & files"><Plus size={20} aria-hidden /></button>}
+              addMenu={<InputGroupButton size="icon-sm" className="composer-add" data-testid="copilot-add-menu-button" aria-label="Add photos & files"><Plus aria-hidden /></InputGroupButton>}
               disclaimer={disclaimer}
               replica
             />

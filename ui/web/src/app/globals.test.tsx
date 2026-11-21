@@ -308,13 +308,17 @@ it('shows the send button grey at rest and while the empty composer has focus, a
       throw new Error('The test composer is missing an expected element');
     }
 
-    expect(getComputedStyle(send).backgroundColor).toBe('#e8e8e8');
+    // Disabled: a grey circle and a muted arrow at full strength, over stock's `disabled:opacity-50`.
+    const off = { fill: '#f0f0f0', arrow: '#646464', opacity: '1' };
+    const look = () => { const { backgroundColor, color, opacity } = getComputedStyle(send); return { fill: backgroundColor, arrow: color, opacity }; };
+    expect(look()).toEqual(off);
     textarea.focus();
-    expect(getComputedStyle(send).backgroundColor).toBe('#e8e8e8');
+    expect(look()).toEqual(off);
     pill.focus();
-    expect(getComputedStyle(send).backgroundColor).toBe('#e8e8e8');
+    expect(look()).toEqual(off);
+    // Enabled, it is stock's default Button, black from `--primary`: no app rule colours it.
     send.removeAttribute('disabled');
-    expect(getComputedStyle(send).backgroundColor).toBe('#202020');
+    expect(getComputedStyle(send).backgroundColor).not.toBe(off.fill);
   } finally {
     host.remove();
   }
@@ -328,37 +332,28 @@ it("lifts the composer on a clear border in the resting shadow, on a desktop and
     const host = composer('compact');
     const box = host.querySelector('.composer-box');
     if (box === null) throw new Error('no input group');
-    box.insertAdjacentHTML('afterbegin', '<span class="pseudo-before"></span><span class="pseudo-after"></span>');
-    const { backgroundColor, borderTopColor, boxShadow } = getComputedStyle(box);
-    const resting = styleOf(box, ':scope > .pseudo-before');
-    const lifted = styleOf(box, ':scope > .pseudo-after');
-    const appearance = {
-      fill: backgroundColor,
-      border: borderTopColor,
-      parentShadow: boxShadow,
-      resting: { shadow: resting.boxShadow, opacity: resting.opacity },
-      lifted: { shadow: lifted.boxShadow, opacity: lifted.opacity },
-    };
+    const style = getComputedStyle(box);
+    const appearance = { fill: style.backgroundColor, input: style.getPropertyValue('--input').trim(), shadow: style.boxShadow, opacity: style.opacity };
     host.remove();
     return appearance;
   };
 
   try {
+    // Stock InputGroup's `border-input` reads `--input`, clear at rest; its focus ring's variables lead the shadow.
     const resting = {
       fill: '#fff',
-      border: 'transparent',
-      parentShadow: 'none',
-      resting: { shadow: '0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)', opacity: '1' },
-      lifted: { shadow: '0 4px 20px rgba(0, 0, 0, 0.15)', opacity: '0' },
+      input: 'transparent',
+      shadow: '0 0, 0 0, 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)',
+      opacity: '1',
     };
     expect(lift(1024)).toEqual(resting);
     expect(lift(440)).toEqual(resting);
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
-  // Focus only crossfades the resting shadow to the floating one: no other composer rule keys on it.
-  expect(sheet).toMatch(/\.chat-composer > \.composer-box:focus-within::before \{\s*opacity: 0;\s*\}\s*\.chat-composer > \.composer-box:focus-within::after \{\s*opacity: 1;\s*\}/);
-  expect(sheet).not.toMatch(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus-within(?!::(before|after))/);
+  // Focus is stock InputGroup's ring: no composer rule keys on focus or draws a shadow layer of its own.
+  expect(sheet).not.toMatch(/\.(chat-composer|composer-[a-z]+)[^{,]*:focus(-within|-visible)?\b/);
+  expect(sheet).not.toMatch(/\.composer-box::(before|after)/);
 });
 
 it("gives the composer's placeholder the muted text, and every scrollbar, CopilotKit's too, the line grey's thumb", () => {
@@ -393,10 +388,10 @@ const composerLayouts = {
   'phone-expanded': { wrap: 'wrap', radius: '20px', align: 'flex-end', padding: ['0px', 'calc(16px - 1px)', '0px', 'calc(16px - 1px)'], columnGap: '0', text: ['-2', '1 0 100%'], textPadding: ['0px', '0px', '0px', '0px'], textMarginTop: '8px', textHeight: '36px', picker: true, target: '44px' },
   // ChatGPT's desktop composer: 36px controls in a 52px pill, inside 7px of padding and the 1px border, the picker in
   // the row.
-  compact: { wrap: 'nowrap', radius: '9999px', align: 'center', padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', text: ['0', '1 1 0px'], textPadding: ['8px', '0px', '8px', '0px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
+  compact: { wrap: 'nowrap', radius: '9999px', align: 'center', padding: ['4px', '10px', '4px', '8px'], columnGap: '12px', text: ['0', '1 1 0px'], textPadding: ['8px', '0px', '8px', '0px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
   // Two lines on a desktop, ChatGPT's pattern: the text across the top, its left edge on the +'s glyph, over the 36px
   // row of controls, in xl corners.
-  expanded: { wrap: 'wrap', radius: '20px', align: 'center', padding: ['7px', '10px', '7px', '8px'], columnGap: '12px', text: ['-2', '1 0 100%'], textPadding: ['8px', '8px', '8px', '8px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
+  expanded: { wrap: 'wrap', radius: '20px', align: 'center', padding: ['4px', '10px', '4px', '8px'], columnGap: '12px', text: ['-2', '1 0 100%'], textPadding: ['8px', '8px', '8px', '8px'], textMarginTop: '0px', textHeight: '36px', picker: true, target: '36px' },
 } as const;
 
 it.each(composerCases)("keeps the composer's text in a pill between its + and its controls on one line, the picker in the row only on a desktop, and over a row of them once it takes two lines ($width px, $draft draft)", ({ width, textSize, pickerSize, text, layoutName }) => {
@@ -421,9 +416,11 @@ it.each(composerCases)("keeps the composer's text in a pill between its + and it
     expect(textStyle.fontSize).toBe(textSize);
     // The text sits on the page's line at every width.
     expect(textStyle.lineHeight).toBe('1.3');
-    expect(styleOf(host, '.composer-add').width).toBe(expected.target);
-    expect(styleOf(host, '.composer-send').width).toBe(expected.target);
-    expect(styleOf(host, '.composer-send').height).toBe(expected.target);
+    // The + and Send keep stock's 32px; a phone centres each in a 44px footprint.
+    for (const control of ['.composer-add', '.composer-send']) {
+      expect(styleOf(host, control).width).toBe('');
+      expect(styleOf(host, control).marginTop || '0px').toBe(width < 768 ? '6px' : '0px');
+    }
     if (expected.picker) {
       expect(styleOf(host, '.chat-model-picker').display).not.toBe('none');
       expect(styleOf(host, '.mep-pill').fontSize).toBe(pickerSize);
@@ -452,15 +449,15 @@ it.each([440, 767])("rests a phone's one-line composer on one row with no picker
       const result = {
         ...placement(host),
         picker: styleOf(host, '.chat-model-picker').display,
-        // The +'s 20px glyph on the text's left edge, Send's 32px circle 7px inside the border.
+        // The +'s 16px glyph on the text's left edge, Send's 32px circle 7px inside the border.
         edges: [styleOf(host, '.composer-start').marginLeft, styleOf(host, '.composer-end').marginRight],
       };
       host.remove();
       return result;
     };
 
-    expect(read('compact')).toEqual({ wrap: 'nowrap', add: '-1', text: ['0', '1 1 0px'], controls: '1', picker: 'none', edges: ['calc(-1 * 12px)', 'calc(-1 * 16px + 2px)'] });
-    expect(read('expanded')).toEqual({ wrap: 'wrap', add: '-1', text: ['-2', '1 0 100%'], controls: '1', picker: expect.not.stringMatching(/^none$/), edges: ['calc(-1 * 12px)', 'calc(-1 * 16px + 2px)'] });
+    expect(read('compact')).toEqual({ wrap: 'nowrap', add: '-1', text: ['0', '1 1 0px'], controls: '1', picker: 'none', edges: ['calc(-1 * 12px - 2px)', 'calc(-1 * 16px + 2px)'] });
+    expect(read('expanded')).toEqual({ wrap: 'wrap', add: '-1', text: ['-2', '1 0 100%'], controls: '1', picker: expect.not.stringMatching(/^none$/), edges: ['calc(-1 * 12px - 2px)', 'calc(-1 * 16px + 2px)'] });
   } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
@@ -477,7 +474,6 @@ it("puts a desktop's + under two lines of text, at the left of the controls' row
       expect(placement(host)).toEqual(cells);
       // The row's ends: the + at its left, the controls at its right.
       expect(styleOf(host, '.composer-box').justifyContent).toBe('space-between');
-      expect(styleOf(host, '.composer-add').width).toBe('36px');
       host.remove();
     }
   } finally {
@@ -1742,7 +1738,6 @@ it("shows the kept view's reply image without waiting to fade it in", () => {
 // a desktop's press shows the fill. A press fills them everywhere; on touch the fill also holds while the
 // control's menu is open, as under a resting mouse, and a mouse with its pointer away keeps them clear.
 it.each([
-  ['the +', '<button type="button" class="composer-add" data-testid="copilot-add-menu-button">+</button>', '.composer-add'],
   ['the model picker', '<div class="chat-model-picker"><button class="mep-pill">Model</button></div>', '.mep-pill'],
 ])('fills %s on press and, on touch, while its menu is open', (_name, html, selector) => {
   // happy-dom matches no :hover or :active, so a copy of the sheet marking those states with classes stands in for it.
@@ -1789,20 +1784,25 @@ it.each([[440, true], [767, true], [768, false], [1440, false]] as const)('keeps
     // Two lines, so a phone shows its picker too.
     host.innerHTML = `${composerMarkup('expanded', 'What moved US rates?\nAnd why?')}<div class="chat-disclaimer">AI can make mistakes.</div>`;
     document.body.append(host);
-    const add = styleOf(host, '.composer-add');
-    const send = styleOf(host, '.composer-send');
+    // The + and Send: stock's 32px inside a 6px margin, with a clear 44px hit area round each.
+    const target = (selector: string) => {
+      host.querySelector(selector)?.insertAdjacentHTML('beforeend', '<span class="pseudo-after"></span>');
+      const control = styleOf(host, selector);
+      const hit = styleOf(host, `${selector} > .pseudo-after`);
+      return [control.marginTop || '0px', control.marginLeft || '0px', hit.position, hit.getPropertyValue('inset')];
+    };
     const pill = styleOf(host, '.mep-pill');
     const read = {
       disclaimer: styleOf(host, '.chat-disclaimer').display,
-      add: [add.borderTopWidth, add.borderLeftWidth, add.backgroundClip],
-      send: [send.borderTopWidth, send.borderLeftWidth, send.backgroundClip],
+      add: target('.composer-add'),
+      send: target('.composer-send'),
       pill: [pill.borderTopWidth, pill.borderBottomWidth],
     };
     host.remove();
-    const notPhone = [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^padding-box$/)];
+    const onPhone = ['6px', '6px', 'absolute', '-7px'];
     expect(read).toEqual(phone
-      ? { disclaimer: 'none', add: ['6px', '6px', 'padding-box'], send: ['6px', '6px', 'padding-box'], pill: ['6px', '6px'] }
-      : { disclaimer: 'block', add: notPhone, send: notPhone, pill: [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/)] });
+      ? { disclaimer: 'none', add: onPhone, send: onPhone, pill: ['6px', '6px'] }
+      : { disclaimer: 'block', add: ['0px', '0px', expect.not.stringMatching(/^absolute$/), expect.anything()], send: ['0px', '0px', expect.not.stringMatching(/^absolute$/), expect.anything()], pill: [expect.not.stringMatching(/^6px$/), expect.not.stringMatching(/^6px$/)] });
     // happy-dom lets the pill's later `background` shorthand reset its clip; the sheet keeps it, over the press's fill.
     expect(sheet).toMatch(/@media \(max-width: 767px\) \{[^@]*\.chat-model-picker \.mep-pill \{\s*border-top: 6px solid transparent;\s*border-bottom: 6px solid transparent;\s*background-clip: padding-box !important;/);
   } finally {

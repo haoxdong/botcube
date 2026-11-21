@@ -11,7 +11,6 @@
 
 .chat-composer > .composer-box {
   position: relative;
-  z-index: 0;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -19,52 +18,23 @@
   column-gap: var(--space-12);
   row-gap: 0;
   height: auto;
-  /* stylelint-disable-next-line declaration-property-value-allowed-list -- 7px rows and Send 11px in from the edge (10px plus the 1px border): ChatGPT's 52px row */
-  padding: 7px 10px 7px var(--space-8);
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- 4px rows round the 36px text: a 46px row, Send 11px in from the edge (10px plus the 1px border) */
+  padding: 4px 10px 4px var(--space-8);
   overflow: visible;
   background-color: var(--color-white);
-  border: 1px solid transparent;
+  /* Clear at rest; stock InputGroup's focus turns it to its ring colour. */
+  --input: transparent;
   border-radius: var(--radius-pill);
-  box-shadow: none;
-  outline: none;
+  /* The resting shadow, under stock InputGroup's focus ring (Tailwind's ring variables). */
+  /* stylelint-disable-next-line declaration-property-value-allowed-list -- composes stock's ring with the resting shadow, so focus keeps both */
+  box-shadow: var(--tw-ring-offset-shadow, 0 0), var(--tw-ring-shadow, 0 0), var(--shadow-rest);
+  /* Over stock InputGroup's `has-disabled:opacity-50`: a disabled Send fades only itself. */
   opacity: 1;
 }
 
 .chat-composer[data-layout="expanded"] > .composer-box {
   flex-wrap: wrap;
   border-radius: var(--radius-xl);
-}
-
-/* Focus changes only the shadow: the resting one crossfades to the floating one. */
-.chat-composer > .composer-box::before,
-.chat-composer > .composer-box::after {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  z-index: -1;
-  background: inherit;
-  border: inherit;
-  border-radius: inherit;
-  pointer-events: none;
-  transition: opacity var(--motion-move) var(--ease);
-}
-
-.chat-composer > .composer-box::before {
-  box-shadow: var(--shadow-rest);
-  opacity: 1;
-}
-
-.chat-composer > .composer-box::after {
-  box-shadow: var(--shadow-float);
-  opacity: 0;
-}
-
-.chat-composer > .composer-box:focus-within::before {
-  opacity: 0;
-}
-
-.chat-composer > .composer-box:focus-within::after {
-  opacity: 1;
 }
 
 .composer-start,
@@ -75,13 +45,17 @@
   padding: 0;
   margin: 0;
   gap: var(--space-8);
-  color: inherit;
   font: inherit;
   cursor: default;
 }
 
+/* The + takes stock InputGroupAddon's muted grey; the picker keeps the text's colour. */
 .composer-start {
   order: -1;
+}
+
+.composer-end {
+  color: inherit;
 }
 
 .composer-start:empty {
@@ -93,8 +67,8 @@
   min-width: 0;
 }
 
-/* The draft, 12px right of the +. It grows with its text (`field-sizing`) up to five lines, then scrolls with no bar,
-   as ChatGPT's does: a classic, always-visible one (Windows, Linux, a Mac with a mouse) sat inside the white box. */
+/* The draft, 12px right of the +. It grows with its text (`field-sizing`) up to five lines, then scrolls with no bar:
+   a classic, always-visible one (Windows, Linux, a Mac with a mouse) sat inside the white box. */
 .composer-text {
   order: 0;
   flex: 1 1 0;
@@ -113,11 +87,6 @@
 /* Over CopilotKit's `[data-copilotkit] * { scrollbar-width: thin }`. */
 .chat-composer .composer-text {
   scrollbar-width: none;
-}
-
-/* Safari before 18.2 ignores `scrollbar-width`. */
-.composer-text::-webkit-scrollbar {
-  display: none;
 }
 
 .composer-text::placeholder {
@@ -140,99 +109,21 @@
   }
 }
 
-/* A plain 20px + in a 36px target, with a round hover, like the phone sidebar's plus. */
-.composer-add {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: background-color var(--motion-quick) var(--ease);
-}
-
-@media (hover: hover) {
-  .composer-add:hover {
-    background: var(--color-fill);
-  }
-}
-
-/* A press shows the hover's fill on touch too: a finger has no hover. On touch the fill holds while the +'s menu is
-   open, as it does under a desktop's pointer resting on it; Base UI marks the open trigger. */
-.composer-add:active {
-  background: var(--color-fill);
-}
-
-@media (hover: none) {
-  .composer-add[data-popup-open] {
-    background: var(--color-fill);
-  }
-}
-
-/* ── Send / stop button: grey while disabled, dark once it can send or stop ── */
-.composer-send {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-pill);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background-color: var(--color-line);
-  background-clip: border-box;
-  color: var(--color-white);
-  box-shadow: none;
-  translate: none;
-  cursor: pointer;
-  transition: background var(--motion-quick) var(--ease);
-}
-
-.composer-send:disabled {
-  opacity: 1;
-}
-
-/* Keyed on the button, not focus in the input: the picker or an empty textarea has focus with nothing to send. */
-.composer-send:not(:disabled) {
-  background-color: var(--color-text);
-}
-
-/* Send's arrow and Stop's square crossfade in place (Swap). */
+/* Send is stock InputGroupButton's default, black from `--primary`. Disabled, it is a grey circle with a muted arrow
+   at full strength, over stock's `disabled:opacity-50`. Its arrow and Stop's square crossfade in place (Swap). */
 .composer-send {
   position: relative;
 }
 
-.composer-send > span {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.composer-send:disabled {
+  background-color: var(--color-fill);
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
-.composer-send svg {
-  width: 18px;
-  height: 18px;
-}
-
-.composer-send svg.lucide-square {
-  width: 12px;
-  height: 12px;
-  fill: var(--color-white);
-  stroke: var(--color-white);
-}
-
-.composer-start button:focus-visible,
-.composer-end button:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
-}
-
-/* A phone: 44px targets, text 16px inside the box's outer edge (15px here plus its 1px border), no picker in the pill. */
+/* A phone: 44px targets, text 16px inside the box's outer edge (15px here plus its 1px border), no picker in the pill.
+   The + and Send keep stock's 32px, centred in a 44px footprint by a 6px margin; a clear 6px ring round each takes the
+   taps there. */
 @media (max-width: 767px) {
   .chat-composer > .composer-box {
     align-items: flex-end;
@@ -240,9 +131,10 @@
     padding: 0 calc(var(--space-16) - 1px);
   }
 
-  /* The + under the text at the left, its 20px glyph lined up with the text's left edge (its 44px target centres it). */
+  /* The + under the text at the left, its 16px glyph lined up with the text's left edge (its 44px footprint centres
+     it, 14px in). */
   .composer-start {
-    margin-left: calc(-1 * var(--space-12));
+    margin-left: calc(-1 * var(--space-12) - 2px);
   }
 
   /* Send's 44px target reaches 2px from the box's right edge, so its 32px circle sits 7px inside the border. */
@@ -270,14 +162,17 @@
     display: none;
   }
 
-  /* A phone's Send is a 32px circle drawn inside its 44px target by a clear 6px border; the +'s and the picker's
-     pressed fill are drawn the same way, 32px tall, so they sit inside the composer's rounded edge with room around. */
   .composer-add,
   .composer-send {
-    width: 44px;
-    height: 44px;
-    border: 6px solid transparent;
-    background-clip: padding-box;
+    position: relative;
+    margin: 6px;
+  }
+
+  .composer-add::after,
+  .composer-send::after {
+    content: "";
+    position: absolute;
+    inset: -7px;
   }
 
   .chat-model-picker .mep-pill {
@@ -287,8 +182,8 @@
   }
 }
 
-/* A desktop's composer is ChatGPT's one 52px row: 36px controls inside the box's 7px padding and 1px border, the + 9px
-   and Send 11px inside its outer edges. */
+/* A desktop's composer is one 46px row: the 36px text inside the box's 4px padding and 1px border, stock's 32px +
+   and Send centred on it. */
 @media (min-width: 768px) {
   /* Over shell.css's 44px phone target. */
   .chat-composer .composer-end .mep-pill {

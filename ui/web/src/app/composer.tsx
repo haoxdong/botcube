@@ -122,7 +122,7 @@ export function Composer({
             <InputGroupAddon align="inline-end" className="composer-end">
               {picker}
               <InputGroupButton
-                className="composer-send"
+                className="composer-send rounded-full"
                 size="icon-sm"
                 variant="default"
                 data-testid="copilot-send-button"
@@ -130,7 +130,7 @@ export function Composer({
                 disabled={running ? !stoppable : !canSend}
                 {...(running ? { type: "button" as const, onClick: () => onStop?.() } : { type: "submit" as const })}
               >
-                <Swap as="span" state={running ? "stop" : "send"}>{running ? <Square aria-hidden /> : <ArrowUp aria-hidden />}</Swap>
+                <Swap as="span" state={running ? "stop" : "send"}>{running ? <Square className="size-3 fill-current" aria-hidden /> : <ArrowUp aria-hidden />}</Swap>
               </InputGroupButton>
             </InputGroupAddon>
           </InputGroup>

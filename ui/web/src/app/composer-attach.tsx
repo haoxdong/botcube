@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type DragEvent, type RefObject } from "rea
 import { Menu } from "@base-ui/react/menu";
 import { FilePlusCorner, Paperclip, Plus } from "lucide-react";
 import { zoomOf } from "@/lib/utils";
+import { InputGroupButton } from "@/components/ui/input-group";
 import type { ComposerFiles } from "./composer-files";
 import { Fade } from "./collapse";
 
@@ -24,8 +25,8 @@ export function AddMenu({ picker }: { picker: RefObject<HTMLInputElement | null>
   };
   return (
     <Menu.Root>
-      <Menu.Trigger ref={trigger} data-testid="copilot-add-menu-button" className="composer-add" aria-label="Add photos & files">
-        <Plus size={20} aria-hidden />
+      <Menu.Trigger ref={trigger} render={<InputGroupButton size="icon-sm" />} data-testid="copilot-add-menu-button" className="composer-add" aria-label="Add photos & files">
+        <Plus aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner className="add-menu-positioner" anchor={() => trigger.current?.closest(".chat-composer") ?? null} side="top" align="start" sideOffset={() => 8 * zoomOf(trigger.current)}>
