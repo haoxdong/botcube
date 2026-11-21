@@ -1,6 +1,6 @@
 "use client";
 
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 import { pickerModels } from "./picker-models";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAgentModels, type AgentModel } from "./conversations";

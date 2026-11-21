@@ -2,7 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, type ComponentType } from "react";
 import type { AbstractAgent, CustomEvent } from "@ag-ui/client";
-import type { ComputerViewProps, SignInsControl } from "../cartridge/index.js";
+import type { ComputerViewProps, SignInsControl } from "../plugin/index.js";
 
 type CurrentComputer = { conversation: ComputerViewProps["conversation"]; agent: AbstractAgent };
 type Entry = { conversation: CurrentComputer["conversation"]; instance: object; connected: boolean };

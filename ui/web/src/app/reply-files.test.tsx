@@ -6,7 +6,7 @@ import { REPLY_MARKDOWN } from './reply-markdown';
 import { ReplyTurnRunning } from './reply-turn';
 import { ReplyImage } from './reply-image';
 import MarkdownRenderer from './markdown-renderer';
-import { invalidateAttachmentAccount } from '../cartridge/file-account';
+import { invalidateAttachmentAccount } from '../plugin/file-account';
 
 afterEach(() => vi.unstubAllGlobals());
 

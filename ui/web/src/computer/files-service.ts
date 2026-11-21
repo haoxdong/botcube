@@ -1,6 +1,6 @@
 import { failureDetail } from './failure-detail';
 import { HttpStatusError, uploadTo, type UploadOptions } from './files-upload';
-import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount } from '../cartridge/file-account';
+import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK, invalidateAttachmentAccount } from '../plugin/file-account';
 export type { UploadOptions } from './files-upload';
 
 /** A file in the account's Files, by its path inside them. */

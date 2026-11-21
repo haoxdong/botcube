@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveRepositoryRoot } from './src/config/repository-root.js';
 
-type CartridgeBuildConfig = {
-  cartridgeUiEntry?: string;
+type UiBuildConfig = {
+  botUiEntry?: string;
   transpilePackages?: string[];
   turbopackAliases?: Record<string, string>;
   webpackAliases?: Record<string, string>;
@@ -21,8 +21,8 @@ const repoRoot = resolveRepositoryRoot(
   appRoot,
   process.env.BOTCUBE_REPOSITORY_ROOT,
 );
-const cartridgeUiPackage = process.env.CARTRIDGE_UI_PACKAGE
-  ?? 'botcube-ui-web/cartridge-default';
+const botUiPackage = process.env.BOTCUBE_UI_PACKAGE
+  ?? 'botcube-ui-web/plugin-default';
 
 // Turbopack only resolves files under its root; pnpm's global virtual store
 // keeps packages outside the repository, so widen the root to cover both.
@@ -51,41 +51,41 @@ type AppWebpack = (
 type AppConfig = Omit<NextConfig, 'webpack'> & { webpack: AppWebpack };
 
 export default async function createConfig(phase: string): Promise<AppConfig> {
-  const cartridgeBuildConfig: CartridgeBuildConfig = process.env.CARTRIDGE_UI_BUILD_CONFIG
-    ? await import(path.resolve(repoRoot, process.env.CARTRIDGE_UI_BUILD_CONFIG))
-      .then((module) => (module.default ?? module)({ appRoot, repoRoot }) as CartridgeBuildConfig)
+  const uiBuildConfig: UiBuildConfig = process.env.BOTCUBE_UI_BUILD_CONFIG
+    ? await import(path.resolve(repoRoot, process.env.BOTCUBE_UI_BUILD_CONFIG))
+      .then((module) => (module.default ?? module)({ appRoot, repoRoot }) as UiBuildConfig)
     : await import('./src/config/dcv-assets.mjs').then(({ dcvAliases, materializeDcvAssets }) => {
       materializeDcvAssets(appRoot);
       return { turbopackAliases: dcvAliases, webpackAliases: dcvAliases };
     });
 
-  const cartridgeUi = cartridgeBuildConfig.cartridgeUiEntry ?? cartridgeUiPackage;
-  const botSettings = cartridgeBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.json');
+  const botUi = uiBuildConfig.botUiEntry ?? botUiPackage;
+  const botSettings = uiBuildConfig.botSettings ?? path.join(appRoot, '../../examples/bot/bot.json');
 
   const config: AppConfig = {
     output: 'export',
     typescript: { ignoreBuildErrors: process.env.COLLECTIVE_PRIVATE_CI === 'true' },
     distDir: phase === PHASE_DEVELOPMENT_SERVER
       ? '.next'
-      : process.env.CARTRIDGE_UI_PACKAGE ? '.next-cartridge' : '.next-standalone',
+      : process.env.BOTCUBE_UI_PACKAGE ? '.next-bot' : '.next-standalone',
     devIndicators: {
       position: 'top-right',
     },
-    transpilePackages: cartridgeBuildConfig.transpilePackages ?? [],
+    transpilePackages: uiBuildConfig.transpilePackages ?? [],
     // Empty turbopack config marks turbopack (the dev bundler) as intentional —
     // Next 16.3 hard-errors on a `webpack` config with no `turbopack` config.
     // The webpack config below is used only by `next build --webpack`.
     turbopack: {
       root: turbopackRoot,
       resolveAlias: {
-        'botcube-ui-web/cartridge': './src/cartridge/index.ts',
-        'botcube-ui-web/cartridge-default': './src/cartridge/default.tsx',
+        'botcube-ui-web/plugin': './src/plugin/index.ts',
+        'botcube-ui-web/plugin-default': './src/plugin/default.tsx',
         'botcube-ui-web/load-state': './src/app/load-state.tsx',
         ...Object.fromEntries(
-          Object.entries(cartridgeBuildConfig.turbopackAliases ?? {})
+          Object.entries(uiBuildConfig.turbopackAliases ?? {})
             .map(([name, target]) => [name, turbopackTarget(target)]),
         ),
-        '@cartridge-ui': turbopackTarget(cartridgeUi),
+        '@bot-ui': turbopackTarget(botUi),
         '@bot-settings': turbopackTarget(botSettings),
       },
     },
@@ -110,11 +110,11 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
       webpackConfig.resolve ??= {};
       webpackConfig.resolve.alias = {
         ...(webpackConfig.resolve.alias ?? {}),
-        'botcube-ui-web/cartridge': path.join(appRoot, 'src/cartridge/index.ts'),
-        'botcube-ui-web/cartridge-default': path.join(appRoot, 'src/cartridge/default.tsx'),
+        'botcube-ui-web/plugin': path.join(appRoot, 'src/plugin/index.ts'),
+        'botcube-ui-web/plugin-default': path.join(appRoot, 'src/plugin/default.tsx'),
         'botcube-ui-web/load-state': path.join(appRoot, 'src/app/load-state.tsx'),
-        ...(cartridgeBuildConfig.webpackAliases ?? {}),
-        '@cartridge-ui': cartridgeUi,
+        ...(uiBuildConfig.webpackAliases ?? {}),
+        '@bot-ui': botUi,
         '@bot-settings': botSettings,
       };
       webpackConfig.resolve.extensionAlias = {

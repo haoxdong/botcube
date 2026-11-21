@@ -5,7 +5,7 @@ import { ModelSelector } from "./model-selector";
 import { useModelSelection } from "./model-selection";
 import { modelChoices } from "./scheduled-task-draft";
 
-vi.mock("@cartridge-ui", () => ({ webUiPlugin: { config: { pickerModelFamilies: ["sol", "astra", "opus", "deepseek"] } } }));
+vi.mock("@bot-ui", () => ({ webUiPlugin: { config: { pickerModelFamilies: ["sol", "astra", "opus", "deepseek"] } } }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 const models = [
   { key: "openai-plan:gpt-6-luna", label: "GPT-6-Luna", provider: "openai" },

@@ -3,7 +3,7 @@
 import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion, Collapse, Swap } from "./collapse";
 
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 import { ChevronDown } from "lucide-react";
 import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Button } from "../components/pill-button";

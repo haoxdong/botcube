@@ -1,7 +1,7 @@
 # BotCube
 
 BotCube is the generic agent application foundation. Its web UI lives in
-`ui/web/` and runs either with neutral defaults or with a Cartridge UI plugin.
+`ui/web/` and runs either with neutral defaults or with a bot's UI plugin.
 
 This repository is a one-way publish mirror and forkable template. Development
 happens in its private source monorepo; use this repository as the starting
@@ -22,9 +22,9 @@ local Harness; otherwise the Chat Service signs AgentCore invocations with SigV4
 The Chat Service keeps only Session Metadata; it replays and purges Sessions through the
 Harness's session API, so it never imports a framework.
 
-## Web UI Cartridge contract
+## Web UI plugin contract
 
-The typed contract is exported from `ui/web/src/cartridge/index.ts`. A web UI
+The typed contract is exported from `ui/web/src/plugin/index.ts`. A web UI
 plugin supplies two extension points:
 
 - `config`: agent ID, Chat Service URL, browser storage key, and user-facing copy
@@ -37,19 +37,19 @@ Computer and its live browser panel, the Sign-ins tab, and the Soul and Memory
 card colours. The bot settings (`bot.json`) set the four agent colours, the
 Memory gate, and whether the Agent Computer and its live browser panel show.
 
-The template imports the selected plugin only through `@cartridge-ui`.
-`ui/web/src/cartridge/default.tsx` is the neutral standalone implementation.
-Set `CARTRIDGE_UI_PACKAGE` to a plugin package at build time to bind a
-Cartridge. A cartridge that needs bundler configuration may also provide a
-repository-relative module through `CARTRIDGE_UI_BUILD_CONFIG`. Plugins may
-import this typed contract, but not template internals.
+The UI imports the selected plugin only through `@bot-ui`.
+`ui/web/src/plugin/default.tsx` is the neutral standalone implementation.
+Set `BOTCUBE_UI_PACKAGE` to a plugin package at build time to bind a
+bot's plugin. A plugin that needs bundler configuration may also provide a
+repository-relative module through `BOTCUBE_UI_BUILD_CONFIG`. Plugins may
+import this typed contract, but not UI internals.
 
 Storybook verification requires a repository-relative CommonJS module named by
-`CARTRIDGE_STORYBOOK_BUILD_CONFIG`, and fails to start without it. It receives `{ appRoot, repoRoot }` and
+`BOTCUBE_STORYBOOK_BUILD_CONFIG`, and fails to start without it. It receives `{ appRoot, repoRoot }` and
 returns optional `stories` (globs relative to the Cube `.storybook` directory),
 `previewAnnotations` (absolute module paths), `staticDirs` (Storybook entries),
-and `aliases` (bundler replacements). Keep product stories and fixtures in the
-Cartridge. The `botcube-ui-web/storybook-page` export exposes the complete page
+and `aliases` (bundler replacements). Keep product stories and fixtures with the
+bot. The `botcube-ui-web/storybook-page` export exposes the complete page
 for verification; runtime plugins still bind only to the typed contract.
 
 The build-config module must have a callable default/CommonJS export with this
@@ -57,7 +57,7 @@ shape:
 
 ```ts
 ({ appRoot, repoRoot }: { appRoot: string; repoRoot: string }) => ({
-  cartridgeUiEntry?: string;
+  botUiEntry?: string;
   transpilePackages?: string[];
   turbopackAliases?: Record<string, string>;
   webpackAliases?: Record<string, string>;
@@ -65,10 +65,10 @@ shape:
 ```
 
 All returned fields are optional; paths should be absolute or resolvable from
-the repository root. `cartridgeUiEntry` is the plugin's resolved entry file,
-which `@cartridge-ui` then points at, because the template does not declare the
+the repository root. `botUiEntry` is the plugin's resolved entry file,
+which `@bot-ui` then points at, because the UI does not declare the
 plugin package as a dependency. A build-config hook may materialize generated public
-assets under `appRoot`; the Cartridge must not assume the template's repository
+assets under `appRoot`; the plugin must not assume the UI's repository
 path.
 
 ## Harness and memory contract

@@ -14,8 +14,8 @@ it('installs the dev UI from the patched frozen workspace with the default UI pl
   expect(production).toContain(`npm install --global ${packageManager}`);
   expect(dockerfile).toContain('pnpm install --frozen-lockfile --ignore-scripts');
   expect(dockerfile).not.toContain('ln -s');
-  expect(dockerfile).toContain('ENV CARTRIDGE_UI_PACKAGE=botcube-ui-web/cartridge-default');
-  expect(dockerfile).not.toContain('CARTRIDGE_UI_BUILD_CONFIG');
+  expect(dockerfile).toContain('ENV BOTCUBE_UI_PACKAGE=botcube-ui-web/plugin-default');
+  expect(dockerfile).not.toContain('BOTCUBE_UI_BUILD_CONFIG');
   expect(dockerfile).toContain('CMD ["pnpm", "--filter", "botcube-ui-web", "dev", "--hostname", "0.0.0.0"]');
   const ignored = readFileSync(join(botcube, '.dockerignore'), 'utf8').split('\n').filter(Boolean);
   for (const path of ['package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', 'patches/bedrock-agentcore@0.4.5.patch']) {

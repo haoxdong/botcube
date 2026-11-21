@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 
-import { chatServiceUrl } from '../cartridge/chat-service-url';
+import { chatServiceUrl } from '../plugin/chat-service-url';
 import { liveViewUrl } from './screenshots';
 import { Swap } from '../app/collapse';
 import { Screen } from './screen';

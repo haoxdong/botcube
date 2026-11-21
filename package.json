@@ -10,12 +10,12 @@
     "test:chat": "vitest run --config vitest.chat.config.ts",
     "test:chat:unit": "vitest run --config chat/vitest.config.ts",
     "build": "sh -c 'pnpm --filter botcube-ui-web build && pnpm --filter botcube-chat build'",
-    "build:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
-    "test:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
-    "screenshots:storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
+    "build:storybook": "env BOTCUBE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web build:storybook",
+    "test:storybook": "env BOTCUBE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web test:storybook",
+    "screenshots:storybook": "env BOTCUBE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web screenshots:storybook",
     "pretest:chat": "sh -c 'uv sync --directory harness/deepagents --frozen --quiet && uv sync --directory credential-service --frozen --quiet && pnpm --filter botcube-chat build'",
     "pretest:chat:unit": "sh -c 'uv sync --directory harness/deepagents --frozen --quiet'",
-    "storybook": "env CARTRIDGE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
+    "storybook": "env BOTCUBE_STORYBOOK_BUILD_CONFIG=ui/web/storybook-config.cjs pnpm --filter botcube-ui-web storybook"
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.1161.0",

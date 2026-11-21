@@ -6,8 +6,8 @@ import { Presence, presenceMotion, Swap } from "./collapse";
 import { Check, ChevronLeft, Clock, Fingerprint, Heart, IdCard, MessageSquare, Monitor, Pencil, ShieldCheck, X, Zap, type LucideIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useId, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 
-import type { AgentProfileTab } from "../cartridge/index.js";
-import type { SignInsControl } from "../cartridge/types";
+import type { AgentProfileTab } from "../plugin/index.js";
+import type { SignInsControl } from "../plugin/types";
 import { SignInsTab } from "./sign-ins";
 import { Button } from "../components/pill-button";
 import { Field, FieldLabel } from "../components/ui/field";

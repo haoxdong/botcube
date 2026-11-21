@@ -36,8 +36,8 @@
     ".next/dev/types/**/*.ts",
     ".next-standalone/types/**/*.ts",
     ".next-standalone/dev/types/**/*.ts",
-    ".next-cartridge/types/**/*.ts",
-    ".next-cartridge/dev/types/**/*.ts"
+    ".next-bot/types/**/*.ts",
+    ".next-bot/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

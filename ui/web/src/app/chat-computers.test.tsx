@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { useEffect } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import type { ComputerViewProps } from '../cartridge/index.js';
+import type { ComputerViewProps } from '../plugin/index.js';
 import { ChatComputers } from './chat-computers';
 
 const mounted: string[] = [];

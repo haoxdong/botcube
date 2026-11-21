@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SignIn } from '../cartridge/types';
+import type { SignIn } from '../plugin/types';
 import { loadSignIns, SignInsList, SignInsTab } from './sign-ins';
 
 const site = (status: SignIn['status'], username: string | null): SignIn => ({

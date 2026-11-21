@@ -4,7 +4,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { AnimatePresence, domMax, LazyMotion, MotionConfig, m as motionElement, useIsPresent, type HTMLMotionProps, type Transition } from "motion/react";
 import { cloneElement, useId, useRef, useState, type ComponentProps } from "react";
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 
 import { presenceMotion, useInstant } from "./collapse";
 import { EFFORT_LEVELS, type ModelList } from "./model-selection";

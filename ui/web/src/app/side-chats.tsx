@@ -12,7 +12,7 @@ import { isUnread, type ConversationEntry } from "./conversations";
 import { withStorage } from "./main-chat-copy";
 import { SideChatNameField } from "./side-chat-name-field";
 import { UnreadDot } from "./unread-dot";
-import type { AuthUiState } from "../cartridge/index.js";
+import type { AuthUiState } from "../plugin/index.js";
 import type { useSessionNavigation } from "./session-navigation";
 
 const NATIVE_SIDE_CHAT_BODY = process.env.NEXT_PUBLIC_NATIVE_SIDE_CHAT_BODY === "1";

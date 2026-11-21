@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 it('keeps an alias into the app relative to the app', async () => {
-  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+  vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
 
   const config = await createConfig('phase-development-server');
 
@@ -22,7 +22,7 @@ it('keeps an alias into the app relative to the app', async () => {
 });
 
 it('uses isolated production compilers with a custom webpack config', async () => {
-  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+  vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
 
   const config = await createConfig('phase-production-build');
 
@@ -38,7 +38,7 @@ const { webpack: nextWebpack } = createRequire(import.meta.url)('next/dist/compi
 
 /** The errors of a browser bundle of `source`, built with the app's webpack config as `next build` builds the client. */
 async function browserBundleErrors(source: string): Promise<string[]> {
-  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+  vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
   const config = await createConfig('phase-production-build');
   const dir = mkdtempSync(path.join(tmpdir(), 'browser-bundle-'));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
@@ -64,7 +64,7 @@ const webpackAliases = (config: Awaited<ReturnType<typeof createConfig>>) =>
   config.webpack({ resolve: {} }, { isServer: false, webpack: nextWebpack }).resolve?.alias;
 
 it("builds the page with the example bot's settings when its build config names none", async () => {
-  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
+  vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', fileURLToPath(new URL('../../tests/in-app-build-config.mjs', import.meta.url)));
 
   const config = await createConfig('phase-production-build');
 
@@ -76,7 +76,7 @@ it('builds the page with the bot settings its build config names', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'bot-build-config-'));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(path.join(dir, 'build-config.cjs'), "module.exports = () => ({ botSettings: '/bots/quill/bot.json' });");
-  vi.stubEnv('CARTRIDGE_UI_BUILD_CONFIG', path.join(dir, 'build-config.cjs'));
+  vi.stubEnv('BOTCUBE_UI_BUILD_CONFIG', path.join(dir, 'build-config.cjs'));
 
   expect(webpackAliases(await createConfig('phase-production-build'))).toMatchObject({ '@bot-settings': '/bots/quill/bot.json' });
 });

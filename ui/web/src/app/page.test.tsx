@@ -1,5 +1,5 @@
 import { initializeAccountSession } from '../account-session';
-import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
+import { FILE_ACCOUNT_LOCK } from '../plugin/file-account';
 import type { HttpAgent, Message } from '@ag-ui/client';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -9,7 +9,7 @@ import type { ButtonHTMLAttributes, ComponentType, HTMLAttributes, ReactElement,
 import { Component, Fragment, createElement, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { afterAll, afterEach, assert, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { AuthUiState, AuxiliaryPanelHostProps, ComputerViewProps, WebUiPlugin } from '../cartridge/index.js';
+import type { AuthUiState, AuxiliaryPanelHostProps, ComputerViewProps, WebUiPlugin } from '../plugin/index.js';
 import { ChatServiceError, type ConversationEntry, type SavedTurnFailure } from './conversations';
 
 vi.mock('motion/react', async (importOriginal) => {
@@ -245,7 +245,7 @@ const cartridge = vi.hoisted(() => ({
   computerRequestError: undefined as ComputerViewProps['onRequestError'],
 }));
 
-vi.mock('@cartridge-ui', () => {
+vi.mock('@bot-ui', () => {
   const webUiPlugin: WebUiPlugin = {
     config: {
       agentId: 'research-agent',

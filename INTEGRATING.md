@@ -58,7 +58,7 @@ docker build -f ui/web/Dockerfile --target artifact \
   --output type=local,dest=ui-artifact .
 ```
 
-The export writes the UI files to `ui-artifact/`. Omit `--target` and `--output` and add an image tag to build its static server image, which listens on port 3001. Set `CARTRIDGE_UI_PACKAGE` and, when needed, `CARTRIDGE_UI_BUILD_CONFIG` through build arguments to bind your UI plugin.
+The export writes the UI files to `ui-artifact/`. Omit `--target` and `--output` and add an image tag to build its static server image, which listens on port 3001. Set `BOTCUBE_UI_PACKAGE` and, when needed, `BOTCUBE_UI_BUILD_CONFIG` through build arguments to bind your UI plugin.
 
 Exercise the production images against the neutral local infrastructure:
 
@@ -86,7 +86,7 @@ The sandbox uses local plain HTTP. Memory IDs and runtime ARNs may be supported 
 - **Deployment Config.** [`examples/public/deployment-config.json`](examples/public/deployment-config.json) names the bot settings and picks each External Service's adapter; see [the schema](deployment-config/deployment-config.schema.json). [`examples/enterprise/`](examples/enterprise/) shows supplied resources.
 - **Deploy root.** Copy [`examples/public/deploy/`](examples/public/deploy/). [`identity.json`](examples/public/deploy/identity.json) owns account, region, resource names, domains, networking, and the tool-staging hook. [`agentcore/agentcore.json`](examples/public/deploy/agentcore/agentcore.json) and [`agentcore/aws-targets.json`](examples/public/deploy/agentcore/aws-targets.json) supply runtime, memory, and synthesis inputs. AgentCore's CodeBuild has no named build contexts, so [`stage-tools.sh`](examples/public/deploy/stage-tools.sh) writes one Dockerfile, the Harness's then the bot's, to `harness/deepagents/.tool-dist/`; point it at your bot.
 - **Services.** The [stock Chat Service](chat/src/stock.ts) and stock Credential Service need no code. The stock Chat Service's `openai-compatible` `models` take `wire`: `chat-completions` (default), or `responses` for a Responses-only gateway; Turn summaries and the Harness use it, and `botcube footprint` prints it. A deploy root may ship its own `credential-service/Dockerfile`, for a site provider, or a `chat/Dockerfile` beside it; the ECS app builds those instead. [The local stand-ins](infra/local/stand-ins/) show a fake site provider.
-- **UI.** [The default UI plugin](ui/web/src/cartridge/default.tsx) supplies neutral copy, auth, and theme through the [typed UI contract](ui/web/src/cartridge/types.ts). Bind your own plugin package with `CARTRIDGE_UI_PACKAGE` at build time.
+- **UI.** [The default UI plugin](ui/web/src/plugin/default.tsx) supplies neutral copy, auth, and theme through the [typed UI contract](ui/web/src/plugin/types.ts). Bind your own plugin package with `BOTCUBE_UI_PACKAGE` at build time.
 
 ## Run it in your AWS account
 

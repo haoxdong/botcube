@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
-vi.mock('@cartridge-ui', () => ({ webUiPlugin: { config: { agentName: 'Quill' } } }));
+vi.mock('@bot-ui', () => ({ webUiPlugin: { config: { agentName: 'Quill' } } }));
 
 const settings = vi.hoisted(() => ({
   agentIdentity: { name: 'Quill', character: 'A drafting agent' },

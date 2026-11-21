@@ -25,7 +25,7 @@ const uiWeb = (name: string, include: string[], exclude: string[], groupOrder: n
       '@/': at('ui/web/src/'),
       dcv: at(`${liveView}/dcvjs-esm/dcv.js`),
       'dcv-ui': at(`${liveView}/dcv-ui/dcv-ui.js`),
-      '@cartridge-ui': at('ui/web/src/cartridge/default.tsx'),
+      '@bot-ui': at('ui/web/src/plugin/default.tsx'),
       '@bot-settings': at('examples/bot/bot.json'),
     },
   },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useContext, useEffect, useRef, useState, type MouseEvent } from 'react';
-import { attachmentAccountEpoch } from '../cartridge/file-account';
+import { attachmentAccountEpoch } from '../plugin/file-account';
 import { agentFiles } from './agent-files';
 import { reason } from './composer-files';
 import { ReplyTurnRunning } from './reply-turn';

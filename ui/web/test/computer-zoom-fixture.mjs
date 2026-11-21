@@ -85,7 +85,7 @@ export function BrowserLiveView({onConnectionEstablished,onDisconnect}){
     format: 'esm',
     jsx: 'automatic',
     external: ['/sdk.js'],
-    alias: { '@cartridge-ui': resolve(root, 'botcube/ui/web/src/cartridge/default.tsx') },
+    alias: { '@bot-ui': resolve(root, 'botcube/ui/web/src/plugin/default.tsx') },
     nodePaths: [resolve(root, 'botcube/ui/web/node_modules')],
     plugins: [
       {

@@ -3,7 +3,7 @@
 import { contentHasMedia, contentToText, type Message } from '@ag-ui/client';
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from 'react';
 
-import type { ComputerViewProps } from 'botcube-ui-web/cartridge';
+import type { ComputerViewProps } from 'botcube-ui-web/plugin';
 import { measureMoment } from 'botcube-ui-web/latency';
 import { UNANSWERED_CALL } from 'botcube-ui-web/interrupted-call';
 import { Loaded, useLoad } from 'botcube-ui-web/load-state';

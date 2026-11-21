@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest';
 
 import { act, renderHook } from '@testing-library/react';
 
-import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
+import { FILE_ACCOUNT_LOCK } from '../plugin/file-account';
 
 vi.stubEnv('NEXT_PUBLIC_CHAT_SERVICE_URL', 'http://chat.test');
 afterAll(() => {

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 
 vi.mock('next/font/local', () => ({ default: () => ({ variable: 'geist-sans-variable' }) }));
-vi.mock('@cartridge-ui', () => ({ webUiPlugin: { config: { title: 'Research Bot' } } }));
+vi.mock('@bot-ui', () => ({ webUiPlugin: { config: { title: 'Research Bot' } } }));
 
 const { metadata } = await import('./layout');
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import type { AuthUiState, AuthUser } from "../cartridge/index.js";
+import type { AuthUiState, AuthUser } from "../plugin/index.js";
 import { Button } from "../components/pill-button";
 import { Field, FieldLabel } from "../components/ui/field";
 import { PictureField } from "./picture-field";

@@ -6,7 +6,7 @@ import { Collapse, Fade, Swap } from './collapse';
 import { LoadingSkeleton } from './load-state';
 import { Button } from '../components/pill-button';
 import { Badge } from '../components/ui/badge';
-import type { SignIn, SignInsControl } from '../cartridge/types';
+import type { SignIn, SignInsControl } from '../plugin/types';
 
 export async function loadSignIns({ chatServiceUrl, fetchImpl = fetch }: { chatServiceUrl: string; fetchImpl?: typeof fetch }): Promise<SignIn[]> {
   const response = await fetchImpl(`${chatServiceUrl}/account/sign-ins`, { credentials: 'include', cache: 'no-store' });

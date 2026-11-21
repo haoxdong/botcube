@@ -1,4 +1,4 @@
-import { webUiPlugin } from '@cartridge-ui';
+import { webUiPlugin } from '@bot-ui';
 import { BOT_SETTINGS } from '../../bot-settings';
 import BrowserView from '../../computer/browser-view';
 import { LiveBrowserWindow } from '../../computer/live-browser-window';

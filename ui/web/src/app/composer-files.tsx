@@ -6,7 +6,7 @@ import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./
 import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
 import { RotateCw, X } from "lucide-react";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
-import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../cartridge/file-account";
+import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
 
 interface AttachmentStore {
   upload: (file: File, options: { onProgress: (fraction: number) => void; signal: AbortSignal }) => Promise<string>;

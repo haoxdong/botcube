@@ -1,4 +1,4 @@
-declare module '@cartridge-ui' {
+declare module '@bot-ui' {
   export const webUiPlugin: import('./types.js').WebUiPlugin;
 }
 

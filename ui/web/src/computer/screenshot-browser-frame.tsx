@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserLiveFrameProps } from './browser-live-frame';
 import { fetchBrowserLiveViewSignedUrl } from './browser-live-view-url';
-import { chatServiceUrl } from '../cartridge/chat-service-url';
+import { chatServiceUrl } from '../plugin/chat-service-url';
 import { Screen } from './screen';
 
 const CHAT_SERVICE_URL = chatServiceUrl();

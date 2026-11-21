@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { AuthProviderProps, AuthUiState } from '../cartridge';
+import type { AuthProviderProps, AuthUiState } from '../plugin';
 import type { StoredMainChatCopy } from './main-chat-copy';
 
 const state = vi.hoisted(() => {
@@ -9,7 +9,7 @@ const state = vi.hoisted(() => {
   return { auth, gate: Promise.resolve(), release: () => {} };
 });
 
-vi.mock('@cartridge-ui', () => ({ webUiPlugin: {
+vi.mock('@bot-ui', () => ({ webUiPlugin: {
   config: { title: 'Test', agentName: 'Agent', disclaimer: 'Check important information.', agentId: 'agent' },
   AuthProvider: ({ children }: AuthProviderProps) => children(state.auth),
 } }));

@@ -28,9 +28,9 @@ import { ScheduledTaskProposalCard, type ScheduledTaskProposal } from "./schedul
 import { OpenScheduledRun, type ReachedScheduledRun } from "./scheduled-run-card";
 import { ReplyTurnRunning } from "./reply-turn";
 import { watchOpening } from "./chat-opening";
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 import { AssistantMessage, USER_MESSAGE } from "./reading-message";
-import { chatServiceUrl } from "../cartridge/chat-service-url";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { Button } from "@/components/pill-button";
 import { ComposerFileChips, ComposerFilePicker, attachPastedImages, messageWithFiles, useComposerFiles, type ComposerFiles } from "./composer-files";
 import { AddMenu, FileDropOverlay, useFileDrop } from "./composer-attach";

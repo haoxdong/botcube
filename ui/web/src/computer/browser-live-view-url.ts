@@ -1,4 +1,4 @@
-import { chatServiceUrl as defaultChatServiceUrl } from '../cartridge/chat-service-url';
+import { chatServiceUrl as defaultChatServiceUrl } from '../plugin/chat-service-url';
 
 export function buildBrowserLiveViewUrl(
   sessionId: string,

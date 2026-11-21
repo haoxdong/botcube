@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Swap } from "./collapse";
 import { AGENT_THEME } from "../bot-settings";
-import type { AuthUiState } from "../cartridge/index.js";
+import type { AuthUiState } from "../plugin/index.js";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";

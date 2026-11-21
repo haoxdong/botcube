@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { AuthUiState } from "../cartridge/index.js";
+import type { AuthUiState } from "../plugin/index.js";
 import type { Published } from "./artifact-published";
 
 export type ArtifactRequest = { accountId: string; artifact: Published; handled: () => void };

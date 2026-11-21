@@ -1,5 +1,5 @@
 
-import { chatServiceUrl } from "../cartridge/chat-service-url";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { listFiles, type FileEntry } from "../computer/files-service";
 import { readFile } from "./artifact-files";
 import { Published } from "./artifact-published";

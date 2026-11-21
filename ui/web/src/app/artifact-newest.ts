@@ -3,7 +3,7 @@
 import { readRecord, type VersionRecord } from "botcube-artifact-check/record";
 import { useEffect, useRef, useState } from "react";
 
-import { chatServiceUrl } from "../cartridge/chat-service-url";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { listFiles } from "../computer/files-service";
 import { reason } from "./composer-files";
 

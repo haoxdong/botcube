@@ -7,7 +7,7 @@ pnpm --filter botcube-ui-web build
 ```
 
 The standalone static export is written to `.next-standalone/`. A cartridge
-build uses `.next-cartridge/`, keeping the two build graphs isolated. Set
+build uses `.next-bot/`, keeping the two build graphs isolated. Set
 `NEXT_PUBLIC_CHAT_SERVICE_URL` to the
 public Chat Service origin:
 

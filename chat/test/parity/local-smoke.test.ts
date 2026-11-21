@@ -51,7 +51,7 @@ it('runs the documented smoke entrypoint with a retained account through a real 
   home = await mkdtemp(join(tmpdir(), 'local-smoke-'));
   await mkdir(resolve('.tmp'), { recursive: true });
   app = await mkdtemp(resolve('.tmp/local-smoke-ui-'));
-  await cp(resolve('ui/web'), app, { recursive: true, filter: (source) => !['node_modules', '.next', '.next-cartridge', '.next-standalone'].includes(basename(source)) });
+  await cp(resolve('ui/web'), app, { recursive: true, filter: (source) => !['node_modules', '.next', '.next-bot', '.next-standalone'].includes(basename(source)) });
   await symlink(resolve('ui/web/node_modules'), join(app, 'node_modules'), 'dir');
   await rename(join(app, 'next.config.ts'), join(app, 'next.smoke-base.ts'));
   await writeFile(join(app, 'next.config.ts'), `import configure from './next.smoke-base.ts';
@@ -62,7 +62,7 @@ export default async function smokeConfig(phase: string) {
 `);
   const dcvSdk = '/nice-dcv-web-client-sdk/dcvjs-esm/dcv.js';
   // Unset, the app builds with its default UI plugin.
-  const { CARTRIDGE_UI_PACKAGE: _package, CARTRIDGE_UI_BUILD_CONFIG: _buildConfig, ...uiEnv } = process.env;
+  const { BOTCUBE_UI_PACKAGE: _package, BOTCUBE_UI_BUILD_CONFIG: _buildConfig, ...uiEnv } = process.env;
   const starts = await Promise.allSettled([
     webOriginsConfig().then((deploymentConfig) => startLocalStack({ deploymentConfig })).then((started) => (stack = started)),
     startOnFreePort((port) => ({

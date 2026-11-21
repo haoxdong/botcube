@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import type { AuthUiState } from "../cartridge/index.js";
-import { chatServiceUrl } from "../cartridge/chat-service-url";
+import type { AuthUiState } from "../plugin/index.js";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { ChatServiceError } from "./conversations";
 import type { useSessionNavigation } from "./session-navigation";
 import type { ModelList } from "./model-selection";

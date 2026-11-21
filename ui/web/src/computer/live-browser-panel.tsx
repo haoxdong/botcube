@@ -2,8 +2,8 @@
 
 import { ExternalLink, X } from 'lucide-react';
 import React, { useState } from 'react';
-import type { AuxiliaryPanelHostProps } from '../cartridge/index.js';
-import { chatServiceUrl } from '../cartridge/chat-service-url';
+import type { AuxiliaryPanelHostProps } from '../plugin/index.js';
+import { chatServiceUrl } from '../plugin/chat-service-url';
 
 import { popOut, screenUrl } from './screenshots';
 import { useLiveViewEvents } from './live-view-events';

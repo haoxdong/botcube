@@ -32,12 +32,12 @@ import { useModelSelection } from "./model-selection";
 import { useAgentRunning } from "./agent-running";
 import { ChatLoadState, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 import { AGENT_THEME, BOT_SETTINGS } from "../bot-settings";
 import { AgentComputerView } from "../computer/agent-computer-view";
 import { LiveBrowserPanel } from "../computer/live-browser-panel";
-import type { AuthUiState } from "../cartridge/index.js";
-import { chatServiceUrl } from "../cartridge/chat-service-url";
+import type { AuthUiState } from "../plugin/index.js";
+import { chatServiceUrl } from "../plugin/chat-service-url";
 import { SidebarRow } from "./sidebar-row";
 
 import { ChatComputers } from "./chat-computers";

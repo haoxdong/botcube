@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./cartridge": "./src/cartridge/index.ts",
-    "./cartridge-default": "./src/cartridge/default.tsx",
-    "./chat-service-url": "./src/cartridge/chat-service-url.ts",
+    "./plugin": "./src/plugin/index.ts",
+    "./plugin-default": "./src/plugin/default.tsx",
+    "./chat-service-url": "./src/plugin/chat-service-url.ts",
     "./interrupted-call": "./src/app/interrupted-call.ts",
     "./worklog-clock": "./src/app/worklog-clock.ts",
     "./latency": "./src/app/latency.ts",

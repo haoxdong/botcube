@@ -3,7 +3,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@te
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { FILE_ACCOUNT_LOCK } from '../cartridge/file-account';
+import { FILE_ACCOUNT_LOCK } from '../plugin/file-account';
 
 import { ComposerFileChips, SentFileCards, attachPastedImages, messageWithFiles, sentFilesOf, useComposerFiles, type ComposerFile } from './composer-files';
 

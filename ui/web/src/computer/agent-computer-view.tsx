@@ -1,8 +1,8 @@
 "use client";
 
 import { lazy, Suspense } from 'react';
-import type { ComputerViewProps } from '../cartridge/index.js';
-import { chatServiceUrl } from '../cartridge/chat-service-url';
+import type { ComputerViewProps } from '../plugin/index.js';
+import { chatServiceUrl } from '../plugin/chat-service-url';
 import { LoadingSkeleton } from '../app/load-state';
 
 const ComputerView = lazy(() => import('./computer-view').then(({ ComputerView }) => ({ default: ComputerView })));

@@ -2,7 +2,7 @@ import { resolveRepositoryRoot } from '../src/config/repository-root.js';
 import type { StorybookConfig } from '@storybook/nextjs-vite';
 import { CHAT_SERVICE_ORIGIN } from './chat-origin';
 import path from 'node:path';
-import { loadCartridgeConfig } from './cartridge-config.cjs';
+import { loadBotConfig } from './bot-config.cjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -16,7 +16,7 @@ const virtualStore = path.resolve(
   'node_modules',
   modules.virtualStoreDir
 );
-const cartridge = loadCartridgeConfig({ appRoot: app, repoRoot: repo });
+const bot = loadBotConfig({ appRoot: app, repoRoot: repo });
 
 const visual = process.env.STORYBOOK_VISUAL_COMPARE === '1';
 
@@ -24,10 +24,10 @@ const config: StorybookConfig = {
   framework: visual ? path.dirname(fileURLToPath(import.meta.resolve('@storybook/nextjs-vite/package.json'))) : '@storybook/nextjs-vite',
   stories: visual
     ? (process.env.STORYBOOK_VISUAL_FILES?.split(',') ?? Object.keys(JSON.parse(readFileSync(path.join(repo, 'botcube/ui/web/visual/internal/coverage.json'), 'utf8')))).map(file => path.relative(path.join(app, '.storybook'), path.join(repo, file)))
-    : cartridge.stories,
-  previewAnnotations: cartridge.previewAnnotations,
+    : bot.stories,
+  previewAnnotations: bot.previewAnnotations,
   addons: ['@storybook/addon-a11y', '@storybook/addon-vitest'].map(name => visual ? path.dirname(fileURLToPath(import.meta.resolve(`${name}/package.json`))) : name),
-  staticDirs: ['public', ...(cartridge.staticDirs ?? [])],
+  staticDirs: ['public', ...(bot.staticDirs ?? [])],
   // The app's viewport (src/app/layout.tsx): viewport-fit=cover, so an iPhone draws the phone chat under its status bar.
   previewHead: (head) =>
     `${head}<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />`,
@@ -44,7 +44,7 @@ const config: StorybookConfig = {
             }))),
         ...Object.entries({
           '@': path.join(app, 'src'),
-          ...cartridge.aliases,
+          ...bot.aliases,
         }).map(([find, replacement]) => ({ find, replacement })),
       ],
     };
@@ -76,7 +76,7 @@ const config: StorybookConfig = {
         allow: [...(config.server?.fs?.allow ?? []), repo, virtualStore],
       },
     };
-    // Optimized in one pass so both entries share CopilotKit's context; found separately, the cartridge's headless
+    // Optimized in one pass so both entries share CopilotKit's context; found separately, the bot plugin's headless
     // import got its own copy and threw "useCopilotKit must be used within CopilotKitProvider".
     config.optimizeDeps = {
       ...config.optimizeDeps,

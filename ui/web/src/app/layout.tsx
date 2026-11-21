@@ -11,7 +11,7 @@ import "../computer/live-browser.css";
 import "../computer/files-menu.css";
 import localFont from "next/font/local";
 import { cn } from "@/lib/utils";
-import { webUiPlugin } from "@cartridge-ui";
+import { webUiPlugin } from "@bot-ui";
 
 const geist = localFont({
   src: './fonts/Geist.woff2',

@@ -1,5 +1,5 @@
-import { chatServiceUrl } from "../cartridge/chat-service-url";
-import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK } from "../cartridge/file-account";
+import { chatServiceUrl } from "../plugin/chat-service-url";
+import { attachmentAccountEpoch, FILE_ACCOUNT_LOCK } from "../plugin/file-account";
 import { deleteFile, fileDownloadUrl, saveArtifact, uploadFile, type ArtifactSave, type UploadOptions } from "../computer/files-service";
 
 const CHAT_SERVICE_URL = chatServiceUrl();
