@@ -24,6 +24,8 @@ export interface DeployIdentity {
     cloudFormation: { stackFamily: string };
     agentCore: {
       runtime: string;
+      /** Names of the Runtime's alarms, error-line filter and its metric namespace (ApiHealth). */
+      runtimeMonitoring?: { alarmPrefix: string; filterName: string; metricNamespace: string };
       runtimeNetworkParameter: string;
       sessionApiFunction: string;
       sessionApiAlias: string;
@@ -70,7 +72,7 @@ export interface DeployIdentity {
     };
   };
   domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[] };
-  ssm: { parkState: string };
+  ssm: { parkState: string; runtimeArn?: string };
   /** The repository's immutable GitHub OIDC subject prefix (`gh api repos/<repo>/actions/oidc/customization/sub`). */
   github: { oidcSubjectPrefix: string };
 }

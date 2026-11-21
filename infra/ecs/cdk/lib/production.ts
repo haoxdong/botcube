@@ -151,6 +151,12 @@ function addSmokePolicy(origin: PreviewOriginStack, identity: DeployIdentity, st
   });
 }
 
+function runtimeMonitoring({ aws: { agentCore }, ssm }: DeployIdentity) {
+  if (!agentCore.runtimeMonitoring) return {};
+  if (!ssm.runtimeArn) throw new Error('agentCore.runtimeMonitoring needs ssm.runtimeArn, the parameter holding the Runtime ARN');
+  return { runtime: { name: agentCore.runtime, arnParameter: ssm.runtimeArn, ...agentCore.runtimeMonitoring } };
+}
+
 /** Every stack of the ECS CDK app (ADR 0065). */
 export function defineProduction(app: App, options: ProductionOptions) {
   const { identity } = options;
@@ -160,6 +166,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   const health = new ApiHealthStack(app, 'ApiHealth', {
     env, stackName: identity.aws.ecs.apiHealth.stackName, alarmName: identity.aws.ecs.apiHealth.alarmName,
     hostname: new URL(identity.domains.chatService).hostname, alertsTopicName: identity.aws.ecs.alertsTopicName,
+    ...runtimeMonitoring(identity),
     ...options.apiHealth,
   });
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
