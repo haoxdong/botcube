@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
-import importlib.metadata
 import json
 import logging
 import logging.config
@@ -252,16 +251,6 @@ def configure_harness_definition(definition: HarnessDefinition, default_model: s
             default_model=default_model,
         )
     )
-
-
-def configure_installed_cartridge() -> None:
-    entries = list(importlib.metadata.entry_points(group='botcube.cartridge'))
-    if len(entries) != 1:
-        raise RuntimeError(
-            'Exactly one installed botcube.cartridge entry point is required; '
-            f'found {len(entries)}'
-        )
-    configure_harness_definition(entries[0].load())
 
 
 def _require_bot() -> HarnessBot:
@@ -1453,10 +1442,7 @@ def main() -> None:
     models_on_endpoint()
     cache_markers_on()
     if _bot is None:
-        if bot := bot_from_env():
-            configure_harness_definition(*bot)
-        else:
-            configure_installed_cartridge()
+        configure_harness_definition(*bot_from_env())
     # Prompt cache lines go out bare, one JSON object per line.
     logging.config.dictConfig({
         'version': 1,

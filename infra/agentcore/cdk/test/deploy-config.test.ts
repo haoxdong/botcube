@@ -86,14 +86,14 @@ test.each([
   const root = deployRoot({ identity: edit });
 
   await expect(loadDeployConfig(root, '/')).rejects.toThrow(
-    new Error(`Invalid Cartridge deploy identity at ${path.join(root, 'identity.json')}`)
+    new Error(`Invalid deploy identity at ${path.join(root, 'identity.json')}`)
   );
 });
 
 test('rejects an identity.json without an aws section', async () => {
   const root = deployRoot({ identity: identity => Reflect.deleteProperty(identity, 'aws') });
 
-  await expect(loadDeployConfig(root, '/')).rejects.toThrow('Invalid Cartridge deploy identity');
+  await expect(loadDeployConfig(root, '/')).rejects.toThrow('Invalid deploy identity');
 });
 
 test('rejects a deploy root with no AWS targets', async () => {

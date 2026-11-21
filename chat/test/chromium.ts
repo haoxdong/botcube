@@ -1,6 +1,6 @@
 import { findChromium } from '../src/local-chromium.js';
 
-/** The Chromium a test launches: TEMPLATE_TEST_CHROMIUM_PATH (CI's), or the one the Chat Service would find. */
+/** The Chromium a test launches: the one the Chat Service would find (CI sets BOTCUBE_CHROMIUM_PATH). */
 export function testChromiumPath(): string {
-  return process.env.TEMPLATE_TEST_CHROMIUM_PATH || findChromium(process.env);
+  return findChromium(process.env);
 }

@@ -1,5 +1,4 @@
 # Build context: botcube/harness/deepagents/
-# The active Cartridge stages its tool bundle before this generic image builds.
 ARG REGISTRY=public.ecr.aws
 FROM ${REGISTRY}/docker/library/rust:1.88-slim-bookworm AS efs-utils
 RUN --mount=type=secret,id=build_ca,mode=0444 \
@@ -100,16 +99,3 @@ EXPOSE 8080
 # AgentCore runtime — serves /invocations via a hand-written FastAPI app (ADR 0029)
 # with AG-UI SSE streaming; main() runs uvicorn on :8080.
 CMD ["/opt/harness/.venv/bin/opentelemetry-instrument", "/opt/harness/.venv/bin/botcube-harness-deepagents"]
-
-# A bot that is still a Cartridge (for now): its staged tools and Python Cartridge wheel.
-FROM harness AS cartridge
-
-WORKDIR /opt/tools
-COPY .tool-dist/ ./
-RUN --mount=type=secret,id=build_ca \
-    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
-    if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; \
-    else test -f pnpm-lock.yaml && test -d node_modules; fi && \
-    node -e 'const fs = require("node:fs"); const path = require("node:path"); for (const [name, target] of Object.entries(require("./package.json").bin)) fs.symlinkSync(path.resolve(target), path.join("/usr/local/bin", name));'
-RUN uv pip install --python /opt/harness/.venv/bin/python --no-deps /opt/tools/cartridge/*.whl
-WORKDIR /opt/harness

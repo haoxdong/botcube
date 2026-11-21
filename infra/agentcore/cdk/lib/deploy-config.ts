@@ -17,12 +17,12 @@ function projectDir(dir: string): string {
 }
 const INFRA = path.resolve(projectDir(__dirname), '../..');
 
-/** What every Cartridge's agentcore.json holds unless it says otherwise. */
+/** What every deploy root's agentcore.json holds unless it says otherwise. */
 const PROJECT_DEFAULTS = { version: 1, managedBy: 'CDK', tags: { 'agentcore:created-by': 'agentcore-cli' } };
 const RUNTIME_DEFAULTS = {
   build: 'Container',
   entrypoint: 'src/botcube_harness_deepagents/serving.py',
-  // Every Cartridge runs BotCube's Harness, beside this infra.
+  // Every deploy runs BotCube's Harness, beside this infra.
   codeLocation: path.resolve(INFRA, '../harness/deepagents'),
   runtimeVersion: 'PYTHON_3_13',
   networkMode: 'PUBLIC',
@@ -56,12 +56,12 @@ const MEMORY_DEFAULTS = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** `cartridge` over `defaults`: objects merge key by key, and any other value the Cartridge sets replaces the default. */
-function overDefaults(defaults: unknown, cartridge: unknown): unknown {
-  if (cartridge === undefined) return defaults;
-  if (!isRecord(defaults) || !isRecord(cartridge)) return cartridge;
-  const keys = new Set([...Object.keys(defaults), ...Object.keys(cartridge)]);
-  return Object.fromEntries([...keys].map(key => [key, overDefaults(defaults[key], cartridge[key])]));
+/** `own` over `defaults`: objects merge key by key, and any other value the deploy root sets replaces the default. */
+function overDefaults(defaults: unknown, own: unknown): unknown {
+  if (own === undefined) return defaults;
+  if (!isRecord(defaults) || !isRecord(own)) return own;
+  const keys = new Set([...Object.keys(defaults), ...Object.keys(own)]);
+  return Object.fromEntries([...keys].map(key => [key, overDefaults(defaults[key], own[key])]));
 }
 
 function readJson(file: string): unknown {
@@ -126,7 +126,7 @@ export interface DeployConfig {
   targets: AwsDeploymentTarget[];
 }
 
-/** The Cartridge's identity.json over BotCube's identity-defaults.json. */
+/** The deploy root's identity.json over BotCube's identity-defaults.json. */
 export function readDeployIdentity(deployRoot: string): DeployIdentity {
   const identityPath = path.join(deployRoot, 'identity.json');
   const identity = overDefaults(readJson(path.join(INFRA, 'identity-defaults.json')), readJson(identityPath)) as {
@@ -134,29 +134,29 @@ export function readDeployIdentity(deployRoot: string): DeployIdentity {
   };
   // identity.json is operator input: check the fields it must carry before trusting its shape.
   if (!identity.aws?.account || !identity.aws.region) {
-    throw new Error(`Invalid Cartridge deploy identity at ${identityPath}`);
+    throw new Error(`Invalid deploy identity at ${identityPath}`);
   }
   return identity as DeployIdentity;
 }
 
-/** The Cartridge's agentcore.json over the project, runtime and memory defaults every Cartridge shares. */
+/** The deploy root's agentcore.json over the project, runtime and memory defaults every deploy shares. */
 export function readProjectSpec(deployRoot: string): AgentCoreProjectSpec {
   const specPath = path.join(deployRoot, 'agentcore', 'agentcore.json');
-  const cartridge = readJson(specPath);
-  if (!isRecord(cartridge)) throw new Error(`Invalid AgentCore config at ${specPath}: not a JSON object`);
+  const own = readJson(specPath);
+  if (!isRecord(own)) throw new Error(`Invalid AgentCore config at ${specPath}: not a JSON object`);
   const each = (entries: unknown, defaults: object) =>
     Array.isArray(entries) ? entries.map(entry => overDefaults(defaults, entry)) : entries;
   const parsed = AgentCoreProjectSpecSchema.safeParse({
-    ...(overDefaults(PROJECT_DEFAULTS, cartridge) as object),
-    runtimes: each(cartridge.runtimes, RUNTIME_DEFAULTS),
-    memories: each(cartridge.memories, MEMORY_DEFAULTS),
+    ...(overDefaults(PROJECT_DEFAULTS, own) as object),
+    runtimes: each(own.runtimes, RUNTIME_DEFAULTS),
+    memories: each(own.memories, MEMORY_DEFAULTS),
   });
   if (!parsed.success) throw new Error(`Invalid AgentCore config at ${specPath}: ${parsed.error.message}`);
   return parsed.data;
 }
 
 /**
- * Load the active Cartridge deploy directory and fail loud before synthesis when
+ * Load the active deploy directory and fail loud before synthesis when
  * its AgentCore config does not match identity.json.
  */
 export async function loadDeployConfig(configuredRoot: string | undefined, cwd: string): Promise<DeployConfig> {

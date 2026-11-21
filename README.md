@@ -71,14 +71,14 @@ plugin package as a dependency. A build-config hook may materialize generated pu
 assets under `appRoot`; the Cartridge must not assume the template's repository
 path.
 
-## Harness and memory Cartridge contract
+## Harness and memory contract
 
-A Cartridge exposes a framework-neutral Harness definition through the
-`botcube.cartridge` Python entry-point group. It supplies skills, agent
-identity and copy, invocation identity handling, a shell environment, root
-preparation, and the per-request session variable. A Harness
-adapts those values to its own framework; Cartridge code never imports an agent
-framework.
+A bot is the settings file its Deployment Config names (ADR 0091); the Harness
+refuses to start without `BOTCUBE_DEPLOYMENT_CONFIG`. BotCube builds the bot's framework-neutral Harness
+definition from it: skills, agent identity and copy, invocation identity
+handling, a shell environment, root preparation, and the per-request session
+variable. A Harness adapts those values to its own framework; a bot runs no
+code of its own.
 
 Every Harness memory backend provides three plain factory slots:
 

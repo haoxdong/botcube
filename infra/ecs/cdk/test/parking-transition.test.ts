@@ -30,7 +30,7 @@ test('bundles the transition when cdk.out sits inside ecs/cdk, as in the deploy 
     const asset = fs.readdirSync(outdir).find(name => fs.existsSync(path.join(outdir, name, 'ecs')));
     if (!asset) throw new Error(`No transition asset in ${outdir}`);
     const bundled = (relative: string) => fs.existsSync(path.join(outdir, asset, relative));
-    expect([bundled('ecs/parking_transition.py'), bundled('ecs/verify/live.py'), bundled('cartridge/identity.json'), bundled('identity-defaults.json')]).toEqual([true, true, true, true]);
+    expect([bundled('ecs/parking_transition.py'), bundled('ecs/verify/live.py'), bundled('deploy/identity.json'), bundled('identity-defaults.json')]).toEqual([true, true, true, true]);
     expect([bundled('ecs/cdk'), bundled('ecs/parking'), bundled('ecs/verify/__pycache__')]).toEqual([false, false, false]);
     // The Lambda imports this botocore, not the runtime's older built-in one that dropped platformVersion.
     const locked = fs.readFileSync(path.resolve(__dirname, '../../../transition-requirements.txt'), 'utf8').match(/^botocore==(\S+)/m)?.[1];

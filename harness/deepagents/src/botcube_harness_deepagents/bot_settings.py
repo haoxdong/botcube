@@ -81,14 +81,14 @@ def load_bot_settings(path: Path) -> BotSettings:
     )
 
 
-def bot_from_env() -> tuple[HarnessDefinition, str] | None:
-    """The definition and default model, its first, of the bot the Deployment Config names, if the process has one.
+def bot_from_env() -> tuple[HarnessDefinition, str]:
+    """The definition and default model, its first, of the bot the Deployment Config names.
 
-    Its `bot` is relative to the file. The Harness then serves the bot with BotCube's own definition and runs no bot code.
+    Its `bot` is relative to the file. The Harness serves the bot with BotCube's own definition and runs no bot code.
     """
     config = os.getenv(DEPLOYMENT_CONFIG_ENV)
     if not config:
-        return None
+        raise BotSettingsError(f'{DEPLOYMENT_CONFIG_ENV} is unset: the Harness serves the bot its Deployment Config names')
     bot = load_bot_settings((Path(config).parent / deployment_config_from_env()['bot']).resolve())
     return bot_definition(bot), bot.models[0]
 

@@ -43,13 +43,13 @@ export function parkingTransition(stack: Stack, infraRoot: string, identity: Dep
     functionName: `${ecs.parking.functionName}-transition`,
     runtime: lambda.Runtime.PYTHON_3_12, handler: 'parking_transition.handler',
     timeout: Duration.minutes(15), memorySize: 512,
-    environment: { PYTHONPATH: '/var/task/ecs', BOTCUBE_DEPLOY_ROOT: '/var/task/cartridge', BOTCUBE_DEPLOY_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
+    environment: { PYTHONPATH: '/var/task/ecs', BOTCUBE_DEPLOY_ROOT: '/var/task/deploy', BOTCUBE_DEPLOY_REPOSITORY_ROOT: '/var/task', RUNNER_TEMP: '/tmp', BACKSTOP_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-backstop` }), MONITORING_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-monitoring` }), TRANSITION_STATE_MACHINE: stack.formatArn({ service: 'states', resource: `stateMachine:${ecs.parking.functionName}-transition` }) },
     code: lambda.Code.fromAsset(infraRoot, { assetHashType: AssetHashType.OUTPUT, bundling: {
       image: imageRegistry ? DockerImage.fromRegistry(`${imageRegistry}/sam/build-${lambda.Runtime.PYTHON_3_12.name}`) : lambda.Runtime.PYTHON_3_12.bundlingImage,
       local: { tryBundle(outputDir) {
         fs.cpSync(lockedSdk(infraRoot), outputDir, { recursive: true });
-        fs.mkdirSync(path.join(outputDir, 'cartridge'), { recursive: true });
-        fs.writeFileSync(path.join(outputDir, 'cartridge/identity.json'), JSON.stringify(identity));
+        fs.mkdirSync(path.join(outputDir, 'deploy'), { recursive: true });
+        fs.writeFileSync(path.join(outputDir, 'deploy/identity.json'), JSON.stringify(identity));
         fs.copyFileSync(path.join(infraRoot, 'identity-defaults.json'), path.join(outputDir, 'identity-defaults.json'));
         // Copy entry by entry: cdk.out sits under ecs/cdk, and copying ecs/ whole into it is a copy into itself.
         const skip = (source: string) => ['cdk', 'parking', '__pycache__'].includes(path.basename(source));

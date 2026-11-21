@@ -217,6 +217,13 @@ def test_bad_bot_settings_stop_startup_naming_the_field(start: Start, tmp_path: 
         start()
 
 
+def test_a_harness_without_a_deployment_config_stops_startup(start: Start, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv('BOTCUBE_DEPLOYMENT_CONFIG', raising=False)
+
+    with pytest.raises(BotSettingsError, match=r'^BOTCUBE_DEPLOYMENT_CONFIG is unset'):
+        start()
+
+
 def test_the_example_bot_is_servable() -> None:
     example = Path(__file__).resolve().parents[3] / 'examples' / 'bot'
 

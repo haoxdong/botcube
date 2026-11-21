@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
-import importlib.metadata
 import json
 import logging
 import os
 import re
-import sys
 import threading
 import time
 import tomllib
@@ -23,9 +20,8 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from importlib.metadata import EntryPoint, EntryPoints
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any, NoReturn, TypedDict
 
 import boto3
@@ -76,6 +72,7 @@ from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
 from checkpoint_fake import ReadCountingSaver, legacy_session
+from deployment_fixture import deploy
 from mounted_files import MountedFiles, binding
 from prompt_cache_fake import DelegatingBedrockClient, fake_bedrock_model
 from relay_fake import (
@@ -2656,25 +2653,25 @@ def test_on_agentcore_an_anonymous_actor_gets_no_memory_block_tool_or_memory_rea
 # -- Configuration and startup ---------------------------------------------------
 
 
-def test_a_service_takes_one_cartridge(service: _Service) -> None:
+def test_a_service_takes_one_bot(service: _Service) -> None:
     with pytest.raises(RuntimeError, match=r'^Harness bot is already configured$'):
         serving.configure_harness_definition(_definition([]))
 
 
-CARTRIDGE_MODULE = 'serving_test_cartridge'
-
-
 @pytest.fixture
-def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[Any, dict[str, Any]]]]]:
-    """Start the service with main(), recording how uvicorn would serve it."""
+def start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Callable[[], list[tuple[Any, dict[str, Any]]]]]:
+    """Start the service with main() serving the settings-only bot a Deployment Config names, recording how uvicorn would serve it."""
     served: list[tuple[Any, dict[str, Any]]] = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, **options: served.append((app, options)))
     monkeypatch.setattr(serving, '_prime_snapshot', lambda: None)
     monkeypatch.setattr(serving, '_bot', None)
-    module = ModuleType(CARTRIDGE_MODULE)
-    vars(module)['CARTRIDGE'] = _definition([])
-    monkeypatch.setitem(sys.modules, CARTRIDGE_MODULE, module)
-    _install(monkeypatch, f'{CARTRIDGE_MODULE}:CARTRIDGE')
+    bot = tmp_path / 'bot.json'
+    bot.write_text(json.dumps({
+        'agentIdentity': {'name': 'test-agent', 'character': 'A test bot'},
+        'accountKey': 'test',
+        'models': [{'key': 'echo', 'label': 'Echo', 'provider': 'openai'}],
+    }))
+    deploy(monkeypatch, tmp_path)
     monkeypatch.delenv('PORT', raising=False)
     # main() configures process logging; restore it afterwards.
     cache_logger = logging.getLogger('botcube_harness_deepagents.prompt_cache')
@@ -2696,16 +2693,6 @@ def start(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], list[tuple[A
         logger.setLevel(level)
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, *values: str) -> None:
-    """Install one botcube.cartridge entry point per value, beside another group's."""
-    installed = [
-        EntryPoint(name=f'cartridge-{index}', value=value, group='botcube.cartridge')
-        for index, value in enumerate(values)
-    ]
-    installed.append(EntryPoint(name='other', value=f'{CARTRIDGE_MODULE}:CARTRIDGE', group='other.plugins'))
-    monkeypatch.setattr(importlib.metadata, 'entry_points', lambda **selection: EntryPoints(installed).select(**selection))
-
-
 def test_the_service_serves_on_every_interface_at_port_8080(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
     assert start() == [(serving.app, {'host': '0.0.0.0', 'port': 8080})]
 
@@ -2716,27 +2703,16 @@ def test_the_service_serves_on_the_configured_port(start: Callable[[], list[tupl
     assert start() == [(serving.app, {'host': '0.0.0.0', 'port': 9123})]
 
 
-def test_the_service_serves_the_installed_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
+def test_the_service_serves_the_bot_its_deployment_config_names(start: Callable[[], list[tuple[Any, dict[str, Any]]]]) -> None:
     start()
 
     assert serving._require_bot().agent_name == 'test-agent'
 
 
-@pytest.mark.parametrize('installed', [0, 2])
-def test_the_service_needs_exactly_one_installed_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch, installed: int) -> None:
-    _install(monkeypatch, *[f'{CARTRIDGE_MODULE}:CARTRIDGE'] * installed)
-
-    with pytest.raises(
-        RuntimeError,
-        match=rf'^Exactly one installed botcube\.cartridge entry point is required; found {installed}$',
-    ):
-        start()
-
-
-def test_a_configured_service_starts_with_its_cartridge(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_configured_service_starts_with_its_bot(start: Callable[[], list[tuple[Any, dict[str, Any]]]], monkeypatch: pytest.MonkeyPatch) -> None:
     serving.configure_harness_definition(_definition([]))
     configured = serving._require_bot()
-    _install(monkeypatch)
+    monkeypatch.delenv('BOTCUBE_DEPLOYMENT_CONFIG')
 
     start()
 
