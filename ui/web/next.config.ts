@@ -93,6 +93,9 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     agentRules: false,
     experimental: {
       turbopackFileSystemCacheForBuild: process.env.COLLECTIVE_PRIVATE_CI !== 'true',
+      // Private CI only checks that the export builds; minifying it cost about 30 CPU-s of each build.
+      // Deploys and the nightly cold-open export set no COLLECTIVE_PRIVATE_CI, so they stay minified.
+      turbopackMinify: process.env.COLLECTIVE_PRIVATE_CI !== 'true',
       // Next 16.3+ turns on turbopack's dev filesystem cache AND in-memory cache
       // eviction (`turbopackMemoryEviction: 'full'`) by default — that's the real
       // dev-memory lever: it evicts inactive-route cache and bounds long-session
