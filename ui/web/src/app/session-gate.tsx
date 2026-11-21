@@ -34,7 +34,7 @@ export function SessionGate({
         <aside className="sidebar sidebar-collapsed" inert>
           <div className="sidebar-top">
             <div className="sidebar-brand">
-              <Button variant="ghost" className="sidebar-logo-btn" aria-label="Toggle sidebar">{menuIcon}</Button>
+              <Button variant="outline" size="icon-lg" className="sidebar-logo-btn rounded-full" aria-label="Toggle sidebar">{menuIcon}</Button>
               <span className="sidebar-brand-text">{title}</span>
             </div>
           </div>

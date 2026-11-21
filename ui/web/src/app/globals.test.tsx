@@ -1146,8 +1146,9 @@ it('shows only the round menu chip while the desktop sidebar is shut, and docks 
       expect(styleOf(shut.container, selector).display).toBe('none');
     }
     expect(styleOf(shut.container, '.sidebar-icon-menu').display).not.toBe('none');
+    // The toggle is the stock outline icon-lg Button, rounded: the app's sheet sizes it only on phones.
     const chip = styleOf(shut.container, '.sidebar-logo-btn');
-    expect({ width: chip.width, height: chip.height, radius: chip.borderRadius }).toEqual({ width: '44px', height: '44px', radius: '9999px' });
+    expect({ width: chip.width, height: chip.height, radius: chip.borderRadius }).toEqual({ width: '', height: '', radius: '' });
   } finally {
     shut.unmount();
   }
@@ -1224,11 +1225,16 @@ it('floats translucent phone controls over the scrolling chat with the pill over
     <div className="app-layout">
       <aside className="sidebar sidebar-collapsed"><div className="sidebar-top"><div className="sidebar-brand"><button className="sidebar-logo-btn" /></div></div></aside>
       <main className="app-shell"><header className="chat-header"><button className="chat-header-agent"><span className="avatar avatar-agent" style={{ width: 72, height: 72 }}><svg width="72" height="72" /></span><span className="chat-header-name">Marq</span></button></header><div className="app-chat" /></main>
+      <span className="sidebar-strip-close-menu" />
     </div>,
   );
   try {
-    expect(styleOf(container, '.sidebar-logo-btn').backgroundColor).toBe('rgba(255, 255, 255, 0.8)');
-    expect(styleOf(container, '.sidebar-logo-btn').boxShadow).toBe('none');
+    // The stock outline toggle keeps its own fill and edge; a phone gives it, and its copy on the card, a finger's 44px.
+    for (const selector of ['.sidebar-logo-btn', '.sidebar-strip-close-menu']) {
+      const chip = styleOf(container, selector);
+      expect({ width: chip.width, height: chip.height, background: chip.backgroundColor, frost: chip.backdropFilter })
+        .toEqual({ width: '44px', height: '44px', background: '', frost: '' });
+    }
     expect(styleOf(container, '.app-chat').paddingTop || '0px').toBe('0px');
   } finally {
     unmount();
@@ -1534,9 +1540,8 @@ it("rounds the sidebar's buttons and rows, and centres a Side Chat's actions ico
     </aside>,
   );
   try {
-    for (const selector of ['.sidebar-logo-btn', '.header-btn']) {
-      expect(styleOf(container, selector).borderRadius).toBe('9999px');
-    }
+    // The menu toggle is the stock Button, rounded by its own rounded-full.
+    expect(styleOf(container, '.header-btn').borderRadius).toBe('9999px');
     for (const selector of ['.user-menu-trigger', '.sidebar-item-name', '.sidebar-item-more']) {
       expect(styleOf(container, selector).borderRadius).toBe('9999px');
     }

@@ -39,7 +39,7 @@ import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
 import { SidebarRow } from "./sidebar-row";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
@@ -228,8 +228,9 @@ export default function App({
         <div className="sidebar-top">
           <div className="sidebar-brand">
             <Button
-              variant="ghost"
-              className="sidebar-logo-btn"
+              variant="outline"
+              size="icon-lg"
+              className="sidebar-logo-btn rounded-full"
               onClick={toggleSidebar}
               aria-label="Toggle sidebar"
               aria-expanded={sidebarExpanded}
@@ -293,7 +294,7 @@ export default function App({
       </aside>
       <Presence>{swipe.visible && (
         <motionElement.button {...presenceMotion} className="sidebar-strip-close" onClick={swipe.close} aria-label="Close sidebar">
-          <span className="sidebar-strip-close-menu">{menuIcon}</span>
+          <span className={`${buttonVariants({ variant: "outline", size: "icon-lg" })} sidebar-strip-close-menu rounded-full`}>{menuIcon}</span>
         </motionElement.button>
       )}</Presence>
 

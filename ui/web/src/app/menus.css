@@ -241,9 +241,6 @@
     position: absolute;
     top: calc(var(--app-safe-top) + 2px);
     left: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     opacity: 0.5;
   }
 }

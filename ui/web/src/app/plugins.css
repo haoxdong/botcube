@@ -197,10 +197,11 @@
     min-height: 44px;
   }
 
-  .sidebar-logo-btn svg,
-  .sidebar-strip-close-menu svg {
-    width: calc(var(--spacing) * 6);
-    height: calc(var(--spacing) * 6);
+  /* The stock outline toggle, and its copy on the chat card, take a finger's 44px */
+  .sidebar-logo-btn,
+  .sidebar-strip-close-menu {
+    width: 44px;
+    height: 44px;
   }
 
   /* The badge keeps its drawn 32px circle and white ring inside a clear 6px border, so it doesn't swamp the avatar */

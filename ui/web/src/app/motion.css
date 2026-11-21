@@ -57,8 +57,7 @@
 
 /* Phones: the card's frosted pills rest their blur while it slides, which software rendering redoes every frame. */
 @media (max-width: 640px) {
-  .app-layout[data-sidebar-swiping] .chat-header-name,
-  .app-layout[data-sidebar-swiping] .sidebar-strip-close-menu {
+  .app-layout[data-sidebar-swiping] .chat-header-name {
     backdrop-filter: none;
   }
 }

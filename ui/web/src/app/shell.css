@@ -265,29 +265,6 @@
   padding-left: var(--space-20);
 }
 
-.sidebar-logo-btn {
-  appearance: none;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--color-text);
-  padding: 0;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-pill);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background var(--motion-quick) var(--ease);
-}
-
-@media (hover: hover) {
-    .sidebar-logo-btn:hover {
-      background: var(--color-fill);
-    }
-}
-
 .sidebar-brand-text {
   font-size: var(--font-title);
   font-weight: var(--weight-semibold);
@@ -303,7 +280,6 @@
   padding: 0;
 }
 
-.sidebar-logo-btn svg,
 .sidebar-new-chat svg {
   width: 20px;
   height: 20px;
@@ -315,20 +291,6 @@
 
 .sidebar-expanded .sidebar-logo-btn {
   display: none;
-}
-
-/* The menu button is a round translucent chip (Muse/dots north star Fig 21), a finger's 44px */
-.sidebar-collapsed .sidebar-logo-btn,
-.sidebar-strip-close-menu {
-  flex: none;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-pill);
-  color: var(--color-text);
-  background: var(--frost);
-  backdrop-filter: blur(4px);
-  box-shadow: none;
 }
 
 /* ── Sidebar nav ── */
@@ -364,8 +326,7 @@
   justify-content: flex-start;
 }
 
-/* The sidebar toggle and the header's agent on the stock ghost Button keep their text, spacing, press and focus. */
-.sidebar-logo-btn[data-slot="button"],
+/* The header's agent on the stock ghost Button keeps its text, spacing, press and focus. */
 .chat-header-agent[data-slot="button"] {
   gap: 0;
   box-shadow: none;
@@ -374,10 +335,6 @@
   line-height: inherit;
   white-space: normal;
   translate: none;
-}
-
-.sidebar-logo-btn[data-slot="button"]:focus-visible {
-  outline-style: auto;
 }
 
 .sidebar-nav-icon {
