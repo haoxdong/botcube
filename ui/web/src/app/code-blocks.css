@@ -221,11 +221,8 @@
 :is(.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"], .step-section-text) code > span > span {
   color: var(--sdm-c);
   transition: color var(--motion-quick) var(--ease);
-  animation: codeTokenIn var(--motion-quick) var(--ease);
-}
 
-@keyframes codeTokenIn {
-  from {
+  @starting-style {
     color: var(--color-text);
   }
 }
