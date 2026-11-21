@@ -317,7 +317,7 @@
   box-shadow: var(--shadow-rest);
   color: var(--color-text);
   border-radius: var(--radius-xl);
-  padding: calc(var(--radius-xl) - 0.5lh) var(--space-16);
+  padding: var(--space-16);
   margin-block: var(--space-4);
 }
 
@@ -335,14 +335,14 @@
   margin: var(--space-20) 0 var(--space-8) !important;
 }
 
-/* Headings on the type scale, over Streamdown's text-3xl to text-lg: a title, or a body line for h4, in semibold. */
+/* Headings in two steps, over Streamdown's: h1 and h2 a title, h3 and h4 a body line, semibold. */
 .chat-message.is-assistant > .chat-bubble :is(h1, h2, h3, h4) {
   font-size: var(--font-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-loose);
 }
 
-.chat-message.is-assistant > .chat-bubble h4 {
+.chat-message.is-assistant > .chat-bubble :is(h3, h4) {
   font-size: var(--font-body);
 }
 
@@ -481,6 +481,7 @@
 .conversation-thread .chat-message.is-assistant > .chat-bubble:has(> .chat-markdown:not(:empty)) {
   background-color: var(--color-white);
   box-shadow: var(--shadow-rest);
+  padding: var(--space-16) !important;
   margin-block: var(--space-4);
 }
 

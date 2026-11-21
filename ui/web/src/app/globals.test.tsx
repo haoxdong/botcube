@@ -83,8 +83,8 @@ it("shows an assistant message's prose in a white bubble in the resting shadow, 
     expect(bubble.color).toBe('#202020');
     expect(bubble.boxShadow).toBe('0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.08)');
     expect(bubble.borderRadius).toBe('20px');
-    // One line is twice the corner tall, an exact pill (Muse).
-    expect(bubble.padding).toBe('calc(20px - 0.5lh) 16px');
+    // 16px on every side.
+    expect(bubble.padding).toBe('16px');
     expect(bubble.maxWidth).toBe('90%');
     expect(styleOf(reply.prose, 'p').marginTop).toBe('0px');
     expect(styleOf(reply.prose, 'p').marginBottom).toBe('0px');
@@ -188,7 +188,7 @@ it("shows the user's own messages in Marq's light blue bubble with dark text", (
 
   const bubble = styleOf(message, 'div');
   expect([bubble.backgroundColor, bubble.color]).toEqual(['#d6e4f3', '#202020']);
-  // The same pill as Marq's, so one line of either is 40px tall, and the same 90% cap.
+  // An exact pill, so one line is 40px tall, and Marq's 90% cap.
   expect(bubble.padding).toBe('calc(20px - 0.5lh) 16px');
   expect(bubble.maxWidth).toBe('90%');
   message.remove();
