@@ -55,6 +55,14 @@
   }
 }
 
+/* Phones: the card's frosted pills rest their blur while it slides, which software rendering redoes every frame. */
+@media (max-width: 640px) {
+  .app-layout[data-sidebar-swiping] .chat-header-name,
+  .app-layout[data-sidebar-swiping] .sidebar-strip-close-menu {
+    backdrop-filter: none;
+  }
+}
+
 /* The dock's apps fade in over the Agent Computer's window. */
 .agent-computer-app,
 .agent-computer-cover {

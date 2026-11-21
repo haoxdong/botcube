@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { render } from '@testing-library/react';
+import { cloneElement } from 'react';
 import type { Window as HappyDomWindow } from 'happy-dom';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Streamdown } from 'streamdown';
@@ -1591,6 +1592,24 @@ it('keeps the phone as it was: no desktop card, frame, header or sidebar value r
     }
   } finally {
     happyDOM.settings.navigator.maxTouchPoints = 0;
+    happyDOM.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+it("rests the phone's frosted pill's blur only while the drawer slides", () => {
+  happyDOM.setViewport({ width: 440, height: 956 });
+  const blur = (swiping: boolean) => {
+    const app = desktopApp('sidebar-expanded');
+    const { container, unmount } = render(swiping ? cloneElement(app, { 'data-sidebar-swiping': '' }) : app);
+    try {
+      return styleOf(container, '.chat-header-name').backdropFilter;
+    } finally {
+      unmount();
+    }
+  };
+  try {
+    expect({ resting: blur(false), sliding: blur(true) }).toEqual({ resting: 'blur(4px)', sliding: 'none' });
+  } finally {
     happyDOM.setViewport({ width: 1024, height: 768 });
   }
 });
