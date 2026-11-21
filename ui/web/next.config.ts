@@ -69,9 +69,7 @@ export default async function createConfig(phase: string): Promise<AppConfig> {
     distDir: phase === PHASE_DEVELOPMENT_SERVER
       ? '.next'
       : process.env.BOTCUBE_UI_PACKAGE ? '.next-bot' : '.next-standalone',
-    devIndicators: {
-      position: 'top-right',
-    },
+    devIndicators: false,
     transpilePackages: uiBuildConfig.transpilePackages ?? [],
     // Empty turbopack config marks turbopack (the dev bundler) as intentional —
     // Next 16.3 hard-errors on a `webpack` config with no `turbopack` config.

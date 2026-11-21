@@ -90,6 +90,30 @@
   gap: var(--space-12);
   padding: var(--space-8) var(--space-8) var(--space-8) var(--space-16);
   border-bottom: 1px solid var(--color-line);
+  /* The actions' width: 36px buttons, three controls and one or two Exports. */
+  --artifact-actions: calc(4 * 36px);
+}
+
+.artifact-panel-head:has(> .artifact-panel-actions > .header-btn:nth-of-type(5)) {
+  --artifact-actions: calc(5 * 36px);
+}
+
+/* The title centres in the head, as in the Sheet's `.sheet-head`: a spacer before it mirrors the actions on the right,
+   which also clears the collapsed sidebar's menu chip when the panel is on the left. The spacer shrinks while the panel
+   glides open narrower than both, so the actions stay inside it. */
+.artifact-panel-head:has(> .sent-file-text)::before {
+  flex: 0 1 calc(var(--artifact-actions) + var(--space-4) - var(--space-12));
+  content: "";
+}
+
+.artifact-panel-head > .sent-file-text {
+  flex: 1;
+  align-items: stretch;
+  text-align: center;
+}
+
+.artifact-panel-head > .sent-file-text > * {
+  flex-shrink: 0;
 }
 
 .artifact-panel-actions {
