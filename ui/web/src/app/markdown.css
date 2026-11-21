@@ -1,5 +1,6 @@
 /* ── Markdown prose ── */
-.copilotKitAssistantMessage [class*="cpk:prose"] pre {
+.copilotKitAssistantMessage [class*="cpk:prose"] pre,
+.chat-message.is-assistant > .chat-bubble pre {
   background: var(--color-fill);
   border-radius: var(--radius-sm);
   padding: var(--space-4) var(--space-8);
@@ -10,48 +11,57 @@
   margin: var(--space-4) 0;
 }
 
-.copilotKitAssistantMessage code {
+.copilotKitAssistantMessage code,
+.chat-message.is-assistant code {
   font-family: var(--font-code);
   font-size: var(--font-small);
   color: var(--color-text);
 }
 
-.copilotKitAssistantMessage p {
+.copilotKitAssistantMessage p,
+.chat-message.is-assistant p {
   margin: 0 0 var(--space-16) !important;
 }
 
 /* Hanging indent with markers in the text colour, as Muse does (Muse/dots north star Fig 11); streamdown sets `list-inside`. */
 .copilotKitAssistantMessage ol,
-.copilotKitAssistantMessage ul {
+.chat-message.is-assistant ol,
+.copilotKitAssistantMessage ul,
+.chat-message.is-assistant ul {
   margin: 0 0 var(--space-12) !important;
   padding-left: var(--space-20) !important;
   list-style-position: outside !important;
 }
 
-.copilotKitAssistantMessage li::marker {
+.copilotKitAssistantMessage li::marker,
+.chat-message.is-assistant li::marker {
   color: var(--color-text);
 }
 
-.copilotKitAssistantMessage li {
+.copilotKitAssistantMessage li,
+.chat-message.is-assistant li {
   margin-top: 0 !important;
   margin-bottom: var(--space-12) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
 
-.copilotKitAssistantMessage li:last-child {
+.copilotKitAssistantMessage li:last-child,
+.chat-message.is-assistant li:last-child {
   margin-bottom: 0 !important;
 }
 
 /* links */
-.copilotKitAssistantMessage a {
+.copilotKitAssistantMessage a,
+.chat-message.is-assistant a {
   color: var(--color-blue);
   text-decoration: underline;
 }
 
 /* Citations `[[1]](url)`: ReplyFileLink marks them data-citation and wraps their brackets, which the pill drops. A blue
    tint on the bubble; the label role, and as wide as its line is tall at the least, so one digit is a circle. */
-.copilotKitAssistantMessage a[data-citation] {
+.copilotKitAssistantMessage a[data-citation],
+.chat-message.is-assistant a[data-citation] {
   display: inline-block;
   min-width: calc(var(--font-label) * var(--leading));
   margin-left: 2px;
@@ -68,17 +78,20 @@
 }
 
 @media (hover: hover) {
-    .copilotKitAssistantMessage a[data-citation]:hover {
+    .copilotKitAssistantMessage a[data-citation]:hover,
+    .chat-message.is-assistant a[data-citation]:hover {
       background: var(--color-line);
     }
 }
 
-.copilotKitAssistantMessage [data-citation-bracket] {
+.copilotKitAssistantMessage [data-citation-bracket],
+.chat-message.is-assistant [data-citation-bracket] {
   display: none;
 }
 
 /* Inline code: a quiet white pill at 0.9 of the text beside it (see --font-code), never bold (Typography sets 600). */
-.copilotKitAssistantMessage :not(pre) > code {
+.copilotKitAssistantMessage :not(pre) > code,
+.chat-message.is-assistant :not(pre) > code {
   font-size: var(--font-code-size);
   padding: 1px var(--space-4);
   border: 1px solid var(--color-line);
@@ -101,7 +114,9 @@
 
 /* The chip marks the code, so drop the backticks Tailwind Typography quotes it with. */
 .copilotKitAssistantMessage :not(pre) > code::before,
-.copilotKitAssistantMessage :not(pre) > code::after {
+.chat-message.is-assistant :not(pre) > code::before,
+.copilotKitAssistantMessage :not(pre) > code::after,
+.chat-message.is-assistant :not(pre) > code::after {
   content: none;
 }
 
@@ -120,13 +135,15 @@
   min-height: calc(var(--font-small) * var(--leading-loose) + 2 * var(--space-4));
 }
 
-.copilotKitUserMessage + .worklog {
+.copilotKitUserMessage + .worklog,
+.chat-message.is-user + .worklog {
   margin-top: var(--space-12);
 }
 
 /* With the body's 12px bottom margin, the answer starts 20px under the last step; under a closed header, 8px. An answer
    with Artifact cards is the same: CopilotKit wraps one it renders through children in a `display: contents` row. */
 .worklog + .copilotKitAssistantMessage,
+.worklog + .chat-message.is-assistant,
 .worklog + [data-copilotkit] > .copilotKitAssistantMessage {
   margin-top: var(--space-8);
 }
@@ -220,12 +237,14 @@
 /* A note's words start where step icons do, a role up from the steps and in full text colour over them. Its inline
    code keeps the note's colour, and line-height 1 keeps the code font from stretching the line. */
 .worklog-body .copilotKitAssistantMessage,
-.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"] {
+.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"],
+.worklog-body .chat-message.is-assistant > .chat-bubble {
   font-size: var(--font-body) !important;
   line-height: var(--leading-loose) !important;
 }
 
-.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"] code {
+.worklog-body .copilotKitAssistantMessage [class*="cpk:prose"] code,
+.worklog-body .chat-message.is-assistant > .chat-bubble code {
   padding: 0;
   border: 0;
   background: none;

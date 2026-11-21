@@ -1,37 +1,43 @@
 import { CopilotChatAssistantMessage, type CopilotChatAssistantMessageProps } from "@copilotkit/react-core/v2";
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { useMessageEntrance } from "./message-entrance";
+import { Message, MessageContent } from "@/components/ui/message";
 import { useContext, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 
 import { ArtifactCard } from "./artifact-panel";
 import { AnswerCards, AnswerTurn, type Published } from "./artifact-published";
 
-import MarkdownRenderer from "./markdown-renderer";
+import MarkdownRenderer, { StockMarkdownRenderer } from "./markdown-renderer";
 import { ReplyFileSlot } from "./reply-file-card";
 
+const MotionMessage = m.create(Message);
 const MotionAssistantMessage = m.create(function AssistantMessageRoot({ sdkProps, style, ref }: { sdkProps: CopilotChatAssistantMessageProps } & Pick<ComponentPropsWithRef<"div">, "style" | "ref">) {
   const rootProps = { ...sdkProps, style: { ...sdkProps.style, ...style }, ref };
   return <CopilotChatAssistantMessage {...rootProps} />;
 });
 
-function PlainMessage(props: CopilotChatAssistantMessageProps) {
+/** A reply that calls tools: stock Message has no tool-call view, so CopilotKit's renders its Worklog steps. */
+function ToolMessage(props: CopilotChatAssistantMessageProps) {
   const entrance = useMessageEntrance(props.message.id, { hasContent: hasWords(props.message) });
   return <LazyMotion features={domAnimation} strict><AnimatePresence><MotionAssistantMessage sdkProps={{ ...props, markdownRenderer: MARKDOWN }} {...entrance} /></AnimatePresence></LazyMotion>;
 }
 
+function PlainMessage(props: CopilotChatAssistantMessageProps & { "data-bubble-ends"?: string | undefined }) {
+  const entrance = useMessageEntrance(props.message.id, { hasContent: hasWords(props.message) });
+  return <LazyMotion features={domAnimation} strict><AnimatePresence><MotionMessage from="assistant" className="chat-message" data-message-id={props.message.id} data-bubble-ends={props["data-bubble-ends"]} {...entrance}>
+    <MessageContent className="chat-bubble"><StockMarkdownRenderer content={typeof props.message.content === "string" ? props.message.content : ""} /></MessageContent>
+  </MotionMessage></AnimatePresence></LazyMotion>;
+}
+
 const MARKDOWN = ({ content }: { content: string }) => <MarkdownRenderer content={content} />;
 const hasWords = ({ content }: CopilotChatAssistantMessageProps["message"]) => typeof content === "string" && content.trim() !== "";
-
-/** Marq's row ends at a bubble with words in it when no tool row follows the words: chat.css joins the next reply to it. */
-const endsAtBubble = (message: CopilotChatAssistantMessageProps["message"]) =>
-  hasWords(message) && !message.toolCalls?.length;
 
 /** One bubble: the answer's words, then the cards of the Artifacts its Turn published, then its Files. */
 export function ArtifactMessage(props: CopilotChatAssistantMessageProps) {
   const cards = useContext(AnswerCards);
   const turn = useContext(AnswerTurn);
   if (turn.id === "" && cards.length === 0 && !props.message.toolCalls?.some(({ function: call }) => call.name === "Artifact")) {
-    return <PlainMessage {...props} data-bubble-ends={endsAtBubble(props.message) ? "" : undefined} />;
+    return props.message.toolCalls?.length ? <ToolMessage {...props} /> : <PlainMessage {...props} data-bubble-ends={hasWords(props.message) ? "" : undefined} />;
   }
   return <ArtifactRoot {...props} />;
 }

@@ -2,9 +2,11 @@
 
 import { CopilotChatUserMessage, type CopilotChatAssistantMessageProps, type CopilotChatUserMessageProps } from "@copilotkit/react-core/v2";
 import { AnimatePresence, domAnimation, LazyMotion, m as motionElement } from "motion/react";
-import type { ComponentPropsWithRef } from "react";
+import { Message, MessageContent } from "@/components/ui/message";
+import { agentFiles } from "./agent-files";
+import { SentFileCards, sentFilesOf } from "./composer-files";
+import { Presence, presenceMotion } from "./collapse";
 import { useMessageEntrance } from "./message-entrance";
-import { SentMessage } from "./sent-message";
 import { ArtifactMessage } from "./artifact-message";
 import MarkdownRenderer from "./markdown-renderer";
 import { ScheduledRunCard, scheduledRunOf } from "./scheduled-run-card";
@@ -16,15 +18,18 @@ export function AssistantMessage(props: CopilotChatAssistantMessageProps) {
 }
 
 
-const MotionUserMessage = motionElement.create(function UserMessageRoot({ sdkProps, style, ref }: { sdkProps: CopilotChatUserMessageProps } & Pick<ComponentPropsWithRef<"div">, "style" | "ref">) {
-  const rootProps = { ...sdkProps, style: { ...sdkProps.style, ...style }, ref };
-  return <CopilotChatUserMessage {...rootProps} />;
-});
+const MotionMessage = motionElement.create(Message);
+const MotionContent = motionElement.create(MessageContent);
+const textOf = (content: CopilotChatUserMessageProps["message"]["content"]) =>
+  typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("");
 
 function UserMessage(props: CopilotChatUserMessageProps) {
   const entrance = useMessageEntrance(props.message.id);
-  const sdkProps = { ...props, messageRenderer: SentMessage };
-  return <LazyMotion features={domAnimation} strict><AnimatePresence><MotionUserMessage sdkProps={sdkProps} {...entrance} /></AnimatePresence></LazyMotion>;
+  const { text, paths } = sentFilesOf(textOf(props.message.content));
+  return <LazyMotion features={domAnimation} strict><AnimatePresence><MotionMessage from="user" className="chat-message" data-message-id={props.message.id} {...entrance}>
+    <SentFileCards paths={paths} fileUrl={agentFiles.url} />
+    <Presence>{text && <MotionContent {...presenceMotion} className="chat-bubble whitespace-pre-wrap">{text}</MotionContent>}</Presence>
+  </MotionMessage></AnimatePresence></LazyMotion>;
 }
 
 export const USER_MESSAGE = Object.assign(UserMessage, CopilotChatUserMessage);

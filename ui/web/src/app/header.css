@@ -119,7 +119,8 @@
     background: var(--color-fill);
   }
 
-  .chat-page-jump {
+  /* The page scrolls on a phone, so the button is fixed to stay on screen. */
+  .chat-scroll-button {
     position: fixed;
     margin-bottom: max(6px, var(--keyboard-inset, 0px));
   }

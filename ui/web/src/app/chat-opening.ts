@@ -34,14 +34,14 @@ function hasComposerRoom(wrapper: Element | null): boolean {
  * it has loaded or failed.
  */
 function hasRenderedReplies(wrapper: Element | null): boolean {
-  if (wrapper?.querySelector('.copilotKitAssistantMessage :is([class~="animate-spin"], [class~="cpk:animate-spin"], [data-reply-file-loading])')) return false;
+  if (wrapper?.querySelector(':is(.copilotKitAssistantMessage, .chat-message.is-assistant) :is([class~="animate-spin"], [class~="cpk:animate-spin"], [data-reply-file-loading])')) return false;
   if ([...(wrapper?.querySelectorAll<HTMLImageElement>('.reply-image > img:not([data-loaded])') ?? [])].some((image) => !image.complete)) return false;
   return [...(wrapper?.querySelectorAll('[data-streamdown="mermaid-block"]') ?? [])].every((block) =>
     (block.querySelector('[data-streamdown="mermaid"]')?.getBoundingClientRect().height ?? 0) > 0);
 }
 
 /** The bottom of the latest message in `wrapper`, on screen. */
-const latestBottom = (wrapper: Element | null) => [...(wrapper?.querySelectorAll(".copilotKitMessage") ?? [])].at(-1)?.getBoundingClientRect().bottom;
+const latestBottom = (wrapper: Element | null) => [...(wrapper?.querySelectorAll(".copilotKitMessage, .chat-message") ?? [])].at(-1)?.getBoundingClientRect().bottom;
 
 // use-stick-to-bottom exposes position, not whether app reply renderers and composer padding are ready to reveal history.
 export function watchOpening(wrapper: () => Element | null, onOpened: () => void): () => void {
@@ -62,7 +62,7 @@ export function watchOpening(wrapper: () => Element | null, onOpened: () => void
     checked = true;
     const late = rendered === undefined ? now - started >= RENDERING_OPENING_MS : now - rendered >= OPENING_MS;
     if ((atEnd && still && !loadingEarlier && repliesReady && hasComposerRoom(shown)) || late) {
-      shown?.querySelectorAll(".copilotKitMessage").forEach((message) => message.setAttribute("data-opened", ""));
+      shown?.querySelectorAll(".copilotKitMessage, .chat-message").forEach((message) => message.setAttribute("data-opened", ""));
       onOpened();
     }
     else frame = requestAnimationFrame(checkOpened);

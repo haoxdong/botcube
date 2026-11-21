@@ -25,7 +25,7 @@ it('marks a reply that ends at a bubble with words, and not one a tool row follo
       </CopilotChatConfigurationProvider>
     </CopilotKitProvider>,
   );
-  const ends = [...container.querySelectorAll('.copilotKitAssistantMessage')].map((row) => [row.getAttribute('data-message-id'), row.hasAttribute('data-bubble-ends')]);
+  const ends = [...container.querySelectorAll('.copilotKitAssistantMessage, .chat-message.is-assistant')].map((row) => [row.getAttribute('data-message-id'), row.hasAttribute('data-bubble-ends')]);
 
   expect(ends).toEqual([['words', true], ['text-then-tool', false], ['tool-only', false], ['text-after-tool', true], ['blank', false]]);
 });

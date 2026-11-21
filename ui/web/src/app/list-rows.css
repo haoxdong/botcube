@@ -301,7 +301,8 @@ textarea.settings-text {
 }
 
 /* The assistant message gives its paragraphs prose margins; the card spaces its lines by its gap. */
-.copilotKitAssistantMessage .scheduled-proposal p {
+.copilotKitAssistantMessage .scheduled-proposal p,
+.chat-message.is-assistant .scheduled-proposal p {
   margin: 0 !important;
 }
 

@@ -830,7 +830,7 @@ it("answers a mouse over the agent's capsule and rings it on keyboard focus", ()
 });
 
 it('lays inline steering out as a normal user message', () => {
-  expect(sheet).toMatch(/:is\(\.copilotKitAssistantMessage, \.worklog\) ~ \.copilotKitUserMessage \{\s*margin-top: var\(--space-32\);/);
+  expect(sheet).toMatch(/:is\(\.copilotKitAssistantMessage, \.worklog\) ~ \.copilotKitUserMessage,[^{]*\.chat-message\.is-assistant ~ \.chat-message\.is-user \{\s*margin-top: var\(--space-32\);/);
   expect(sheet).toMatch(/\.copilotKitUserMessage > div:first-of-type \{[^}]*padding: calc\(var\(--radius-xl\) - 0\.5lh\) var\(--space-16\) !important;[^}]*line-height: var\(--leading\);/);
   expect(sheet).not.toContain('.chat-queued-');
 });

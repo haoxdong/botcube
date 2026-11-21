@@ -161,7 +161,7 @@ export function bubbleFlow(bubble: HTMLElement): Flow | string {
 const widestLine = ({ items, options }: Paragraph, width: number) => measureRichInlineStats(prepareRichInline(items, options), width).maxLineWidth;
 
 /** A row's bubble: the user's, or Marq's prose. A Worklog's notes are no row's, and wear none. */
-const ROW_BUBBLES = ':scope.copilotKitUserMessage > div:first-of-type, :scope.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty)';
+const ROW_BUBBLES = ':scope.copilotKitUserMessage > div:first-of-type, :scope.copilotKitAssistantMessage > [class*="cpk:prose"] > div:not(:empty), :scope.chat-message > .chat-bubble';
 
 /**
  * A bubble holding code, a diagram or a table keeps its CSS width, fit to its content up to its cap (globals.css); one

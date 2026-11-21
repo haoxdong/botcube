@@ -1488,7 +1488,7 @@ describe('Main Chat kept in this browser', () => {
     await act(async () => {
       present(held[0], 'the Main Chat load')(answer(200, { id: 'main-1', provider: 'openai', messages: [...earlier, restored] }));
     });
-    const row = () => document.querySelector<HTMLElement>('[data-message-row="reconciled-question"] .copilotKitMessage');
+    const row = () => document.querySelector<HTMLElement>('[data-message-row="reconciled-question"] .chat-message');
     await waitFor(() => expect(row()?.style.opacity).toBe('1'));
     expect(row()?.style.transform).toBe('none');
   });
@@ -2440,7 +2440,7 @@ describe('Main Chat', () => {
     it('shows initial and paged history at rest, while a fresh row starts its entrance', async () => {
       document.documentElement.style.setProperty('--motion-move', '1s');
       onTestFinished(() => { document.documentElement.style.removeProperty('--motion-move'); });
-      const row = (id: string) => document.querySelector<HTMLElement>(`[data-message-row="${id}"] .copilotKitMessage`);
+      const row = (id: string) => document.querySelector<HTMLElement>(`[data-message-row="${id}"] :is(.copilotKitMessage, .chat-message)`);
       await renderPage();
       await waitFor(() => expect(row('m86')?.style.opacity).toBe('1'));
       expect(row('m86')?.style.transform).toBe('none');
@@ -9459,9 +9459,9 @@ describe('attaching files', () => {
       { id: 'submitted', role: 'user', content: 'Summarise these\n\nAttached files:\n- /report.csv\n- /notes (1).md' },
     ]);
     expect(chips()).toEqual([]);
-    const sent = present(document.querySelector('.copilotKitUserMessage'), 'the sent message');
+    const sent = present(document.querySelector('.chat-message.is-user'), 'the sent message');
     expect([...sent.querySelectorAll('.sent-file')].map((card) => card.textContent)).toEqual(['csvreport.csvCSV', 'mdnotes (1).mdMD']);
-    expect(sent.querySelector('[class*="cpk:prose"]')).toHaveTextContent(/^Summarise these$/);
+    expect(sent.querySelector('.chat-bubble')).toHaveTextContent(/^Summarise these$/);
   });
 
   it("shows a reloaded message's files as cards, and the bubble only what the user typed", async () => {
@@ -9469,9 +9469,9 @@ describe('attaching files', () => {
     service.mainChat = { id: 'main-1', messages: [{ id: 'u1', role: 'user', content: 'check this\n\nAttached files:\n- /AI_Trends_2026.pdf' }] };
     await renderPage();
 
-    const sent = present(document.querySelector<HTMLElement>('.copilotKitUserMessage'), 'the reloaded message');
+    const sent = present(document.querySelector<HTMLElement>('.chat-message.is-user'), 'the reloaded message');
     expect(within(sent).getByRole('list', { name: 'Attached files' })).toHaveTextContent(/^pdfAI_Trends_2026\.pdfPDF$/);
-    expect(sent.querySelector('[class*="cpk:prose"]')).toHaveTextContent(/^check this$/);
+    expect(sent.querySelector('.chat-bubble')).toHaveTextContent(/^check this$/);
     expect(sent).not.toHaveTextContent('Attached files:');
   });
 

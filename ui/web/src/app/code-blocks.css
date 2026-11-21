@@ -4,7 +4,8 @@
    `mermaid-block`, whose header and diagram box carry no name and so are its first and last child), and puts the
    buttons in their own floating wrapper between header and body; the grid places that wrapper at the header's right. Its `pointer-events-none` compiles but the buttons'
    `pointer-events-auto` does not, so the wrapper takes pointer events back. */
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]),
+.chat-message.is-assistant > .chat-bubble :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -15,7 +16,8 @@
   background: none;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-header"], [data-streamdown="mermaid-block"] > div:first-child) {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-header"], [data-streamdown="mermaid-block"] > div:first-child),
+.chat-message.is-assistant > .chat-bubble :is([data-streamdown="code-block-header"], [data-streamdown="mermaid-block"] > div:first-child) {
   display: flex;
   align-items: center;
   min-height: 32px;
@@ -26,12 +28,14 @@
   color: var(--color-text-muted);
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) > div:has(> :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"])) {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) > div:has(> :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"])),
+.chat-message.is-assistant > .chat-bubble :is([data-streamdown="code-block"], [data-streamdown="mermaid-block"]) > div:has(> :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"])) {
   position: static;
   pointer-events: auto;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]),
+.chat-message.is-assistant > .chat-bubble :is([data-streamdown="code-block-actions"], [data-streamdown="mermaid-block-actions"]) {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -41,7 +45,8 @@
   backdrop-filter: none;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-body"], [data-streamdown="mermaid-block"] > div:last-child) {
+.copilotKitAssistantMessage [class*="cpk:prose"] :is([data-streamdown="code-block-body"], [data-streamdown="mermaid-block"] > div:last-child),
+.chat-message.is-assistant > .chat-bubble :is([data-streamdown="code-block-body"], [data-streamdown="mermaid-block"] > div:last-child) {
   grid-column: 1 / -1;
   overflow: auto;
   padding: var(--space-12);
@@ -52,7 +57,8 @@
 
 /* Streamdown's loading boxes stand taller than a small diagram: the box stays empty until the diagram or its error is in,
    so a diagram only grows as it draws, from the box a still-open fence shows. */
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child:not(:has([aria-label="Mermaid chart"] > svg, .bg-red-50)) > * {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid-block"] > div:last-child:not(:has([aria-label="Mermaid chart"] > svg, .bg-red-50)) > *,
+.chat-message.is-assistant > .chat-bubble [data-streamdown="mermaid-block"] > div:last-child:not(:has([aria-label="Mermaid chart"] > svg, .bg-red-50)) > * {
   display: none;
 }
 
@@ -60,16 +66,19 @@
    last button), which renders outside the message, so a scroll over the diagram scrolls the chat. streamdown's pan-zoom
    frame is `flex-col`, uncompiled here, so it is set as a column; its content box shrinks to the frame, which takes the
    fitted height, and centres the scaled diagram in it. */
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div,
+.chat-message.is-assistant > .chat-bubble [data-streamdown="mermaid"] > div {
   flex-direction: column;
   pointer-events: none;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:first-child:not(:last-child) {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:first-child:not(:last-child),
+.chat-message.is-assistant > .chat-bubble [data-streamdown="mermaid"] > div > div:first-child:not(:last-child) {
   display: none;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:last-child {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="mermaid"] > div > div:last-child,
+.chat-message.is-assistant > .chat-bubble [data-streamdown="mermaid"] > div > div:last-child {
   min-height: 0;
   align-items: center;
 }
@@ -204,11 +213,13 @@
 }
 
 /* Streamdown's 200px offscreen estimate shrinks when short code enters view. */
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"] {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block"],
+.chat-message.is-assistant > .chat-bubble [data-streamdown="code-block"] {
   content-visibility: visible !important;
 }
 
-.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"] pre {
+.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"] pre,
+.chat-message.is-assistant > .chat-bubble [data-streamdown="code-block-body"] pre {
   margin: 0;
   padding: 0;
   border-radius: 0;
@@ -218,7 +229,8 @@
 
 /* Shiki's github-light colours, which streamdown sets as `--sdm-c` on each token for a Tailwind class not compiled
    here. They arrive after the code first paints, so each token fades into its colour. */
-:is(.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"], .step-section-text) code > span > span {
+:is(.copilotKitAssistantMessage [class*="cpk:prose"] [data-streamdown="code-block-body"], .step-section-text) code > span > span,
+:is(.chat-message.is-assistant > .chat-bubble [data-streamdown="code-block-body"], .step-section-text) code > span > span {
   color: var(--sdm-c);
   transition: color var(--motion-quick) var(--ease);
 

@@ -3,7 +3,7 @@
 import { cloneElement, isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
 import { CopilotChatView } from "@copilotkit/react-core/v2";
 import type { StickToBottomContext } from "use-stick-to-bottom";
-import { Conversation, ConversationContent } from "@/components/ui/conversation";
+import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ui/conversation";
 import { useScrollUpClosesKeyboard } from "./phone-keyboard-dismiss";
 import { useIsPhone } from "./phone-query";
 
@@ -233,20 +233,6 @@ function ReadLine({ stick, opensAt, room, onLanded }: { stick: StickToBottomCont
   return null;
 }
 
-function JumpButton({ stick, bottom, hidden }: { stick: StickToBottomContext; bottom: number; hidden: boolean }) {
-  const shown = !stick.isAtBottom && !hidden;
-  // The library's instant scroll waits for a frame, which WebKit paints first.
-  const jump = () => {
-    stick.state.scrollTop = stick.state.calculatedTargetScrollTop;
-    void stick.scrollToBottom("instant");
-  };
-  return (
-    <div className="chat-page-jump" data-shown={shown ? "" : undefined} inert={!shown} style={{ bottom }}>
-      <CopilotChatView.ScrollToBottomButton onClick={jump} />
-    </div>
-  );
-}
-
 export function ConversationThread({ children, page, opensAt, room, overlay, className = "chat-scroll-view", contextRef }: {
   children: ReactNode;
   page: boolean;
@@ -282,10 +268,20 @@ function wholePixelEnd(children: ReactNode) {
   return cloneElement(children, { style: { ...children.props.style, paddingBottom: `${Math.round(Number.parseFloat(pad))}px` } });
 }
 
-export function ThreadScrollView({ children, inputContainerHeight = 0, isResizing = false, opensAt }: ComponentProps<typeof CopilotChatView.ScrollView> & { opensAt: string | null }) {
+export function ThreadScrollView({ children, inputContainerHeight = 0, opensAt }: ComponentProps<typeof CopilotChatView.ScrollView> & { opensAt: string | null }) {
   const phone = useIsPhone();
   return (
-    <ConversationThread page opensAt={opensAt} room={inputContainerHeight} overlay={(stick) => <JumpButton stick={stick} bottom={inputContainerHeight + (phone ? 32 : 16)} hidden={isResizing} />}>
+    <ConversationThread page opensAt={opensAt} room={inputContainerHeight} overlay={(stick) => (
+      // Placed above the composer; the library's instant scroll waits for a frame, which WebKit paints first.
+      <ConversationScrollButton
+        className="chat-scroll-button"
+        style={{ bottom: inputContainerHeight + (phone ? 32 : 16) }}
+        onClick={() => {
+          stick.state.scrollTop = stick.state.calculatedTargetScrollTop;
+          void stick.scrollToBottom("instant");
+        }}
+      />
+    )}>
       {phone && <ScrollUpClosesKeyboard />}
       <div className="cpk:overflow-y-auto cpk:overflow-x-hidden" style={{ flex: "1 1 0%", minHeight: 0 }}>
         <div className="cpk:px-4 cpk:@3xl:px-0 cpk:[div[data-sidebar-chat]_&]:px-8 cpk:[div[data-popup-chat]_&]:px-6">{wholePixelEnd(children)}</div>

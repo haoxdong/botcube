@@ -105,7 +105,8 @@
  * stack of them lines up (the bubble's, if narrower), and a finger's target. It takes the place of the line's
  * paragraph, so it keeps a paragraph's spacing.
  */
-.copilotKitAssistantMessage a.reply-file {
+.copilotKitAssistantMessage a.reply-file,
+.chat-message.is-assistant a.reply-file {
   width: 280px;
   min-height: 44px;
   margin: 0 0 var(--space-16);
@@ -186,7 +187,8 @@
 }
 
 /* A PDF's card has its first page across the top and the icon and name in a row under it. */
-.copilotKitAssistantMessage a.reply-file[data-preview] {
+.copilotKitAssistantMessage a.reply-file[data-preview],
+.chat-message.is-assistant a.reply-file[data-preview] {
   flex-wrap: wrap;
   row-gap: var(--space-8);
   overflow: hidden;

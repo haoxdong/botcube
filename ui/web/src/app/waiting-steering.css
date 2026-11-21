@@ -6,11 +6,13 @@
   border-bottom-right-radius: var(--radius-xl) !important;
 }
 
-.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage > .cpk\:prose:first-child {
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage > .cpk\:prose:first-child,
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .chat-message.is-user > .chat-bubble:first-child {
   border-top-right-radius: var(--radius-xl) !important;
 }
 
-.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage.copilotKitMessage {
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .copilotKitUserMessage.copilotKitMessage,
+.copilotKitMessages > .copilotKitUserMessage.waiting-message:has(.waiting-message-actions) + .chat-message.is-user {
   margin-top: var(--space-24);
 }
 
