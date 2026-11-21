@@ -39,6 +39,7 @@ import { LiveBrowserPanel } from "../computer/live-browser-panel";
 import type { AuthUiState } from "../plugin/index.js";
 import { chatServiceUrl } from "../plugin/chat-service-url";
 import { SidebarRow } from "./sidebar-row";
+import { Button } from "@/components/ui/button";
 
 import { ChatComputers } from "./chat-computers";
 import { SideChats } from "./side-chats";
@@ -226,7 +227,8 @@ export default function App({
       <aside ref={drawerRef} className={`sidebar ${swipe.visible ? "sidebar-expanded" : "sidebar-collapsed"}`} inert={profileSwipe.open}>
         <div className="sidebar-top">
           <div className="sidebar-brand">
-            <button
+            <Button
+              variant="ghost"
               className="sidebar-logo-btn"
               onClick={toggleSidebar}
               aria-label="Toggle sidebar"
@@ -235,7 +237,7 @@ export default function App({
             >
               {menuIcon}
               <UnreadDot unread={isPhone && (mainChatUnread || sideChats.some(isUnread))} drawer />
-            </button>
+            </Button>
             <span className="sidebar-brand-text">{UI_CONFIG.title}</span>
           </div>
 

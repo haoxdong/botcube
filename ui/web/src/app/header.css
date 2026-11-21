@@ -276,6 +276,22 @@
   cursor: default;
 }
 
+/* Undo the stock h-8, radius, ring and disabled fade. */
+.chat-header-agent[data-slot="button"] {
+  height: auto;
+  flex-shrink: 1;
+  justify-content: normal;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 1;
+}
+
+/* Under the app's sizes, over the stock size-4. */
+:where(.chat-header-agent[data-slot="button"]) .avatar svg {
+  width: auto;
+  height: auto;
+}
+
 /* Pressed, the avatar and its name sink a little and the capsule darkens, as a button does. */
 .chat-header-agent:active:not(:disabled) {
   transform: scale(0.95);

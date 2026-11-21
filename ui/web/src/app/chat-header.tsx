@@ -3,6 +3,7 @@
 import { m as motionElement } from "motion/react";
 import { useEffect, useState, type RefObject } from "react";
 
+import { Button } from "@/components/ui/button";
 import { Avatar } from "./avatar";
 import { Presence, presenceMotion } from "./collapse";
 
@@ -46,10 +47,10 @@ export function ChatHeader({ opener, working, ready, chatId, open, picture, emoj
 }) {
   return (
     <header className="chat-header">
-      <button ref={opener} className="chat-header-agent" data-working={working || undefined} disabled={!ready || chatId === null} onClick={open} aria-label="Agent profile" title="Agent profile">
+      <Button ref={opener} variant="ghost" className="chat-header-agent" data-working={working || undefined} disabled={!ready || chatId === null} onClick={open} aria-label="Agent profile" title="Agent profile">
         <Avatar picture={picture ?? undefined} emoji={emoji} name={name} agent working={working} size={72} />
         <HeaderName name={name} working={working} />
-      </button>
+      </Button>
     </header>
   );
 }

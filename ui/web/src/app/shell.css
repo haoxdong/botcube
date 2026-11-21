@@ -364,6 +364,22 @@
   justify-content: flex-start;
 }
 
+/* The sidebar toggle and the header's agent on the stock ghost Button keep their text, spacing, press and focus. */
+.sidebar-logo-btn[data-slot="button"],
+.chat-header-agent[data-slot="button"] {
+  gap: 0;
+  box-shadow: none;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  white-space: normal;
+  translate: none;
+}
+
+.sidebar-logo-btn[data-slot="button"]:focus-visible {
+  outline-style: auto;
+}
+
 .sidebar-nav-icon {
   flex-shrink: 0;
   width: 20px;

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Swap } from "./collapse";
 import { AGENT_THEME } from "../bot-settings";
 import type { AuthUiState } from "../plugin/index.js";
+import { Button } from "@/components/ui/button";
 import { Avatar } from "./avatar";
 import { LoadFailed, LoadingSkeleton } from "./load-state";
 import { menuIcon } from "./menu-icon";
@@ -33,17 +34,17 @@ export function SessionGate({
         <aside className="sidebar sidebar-collapsed" inert>
           <div className="sidebar-top">
             <div className="sidebar-brand">
-              <button type="button" className="sidebar-logo-btn" aria-label="Toggle sidebar">{menuIcon}</button>
+              <Button variant="ghost" className="sidebar-logo-btn" aria-label="Toggle sidebar">{menuIcon}</Button>
               <span className="sidebar-brand-text">{title}</span>
             </div>
           </div>
         </aside>
         <main className="app-shell">
           <header className="chat-header" inert>
-            <button type="button" className="chat-header-agent" disabled aria-label="Agent profile">
+            <Button variant="ghost" className="chat-header-agent" disabled aria-label="Agent profile">
               <Avatar name={agentName} agent size={72} />
               <span className="chat-header-name"><span className="chat-header-label">{agentName}</span></span>
-            </button>
+            </Button>
           </header>
           {children ?? <LoadingSkeleton label="Main Chat" />}
         </main>
