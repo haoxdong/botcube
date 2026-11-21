@@ -183,7 +183,8 @@ def test_local_checkpointer_keeps_each_users_session_record_apart(tmp_path: Path
         latest = await checkpointer.aget_tuple(_user_config('user-1'))
         assert latest is not None
         assert (latest.config, latest.parent_config) == (second, first)
-        assert latest.pending_writes == [('task-a', 'messages', 'from a'), ('task-b', 'messages', 'from b')]
+        # Ordered by LangGraph's writes_sort_key (task_path, task_id, idx), the order a super-step applies them.
+        assert latest.pending_writes == [('task-b', 'messages', 'from b'), ('task-a', 'messages', 'from a')]
         assert await checkpointer.aget_tuple(_user_config('user-2')) is None
 
         async def listed(**kwargs: Any) -> list[tuple[RunnableConfig, RunnableConfig | None]]:
