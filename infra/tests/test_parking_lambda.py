@@ -835,6 +835,18 @@ def test_monitoring_success_returns_evidence_without_writing_state(monkeypatch, 
         'bot-cube-preview-origin': {'ClusterName': 'original-cluster'}}
 
 
+def test_monitoring_on_a_fresh_lambda_writes_its_outputs_under_tmp(monkeypatch):
+    """The Lambda's environment has no RUNNER_TEMP: a monitoring invocation defaults it, for itself and verify-alarms."""
+    module = load()
+    monkeypatch.setenv('RUNNER_TEMP', 'restored-after-the-test')
+    monkeypatch.delenv('RUNNER_TEMP')
+    calls = []
+    monkeypatch.setattr(module, 'invoke_script', lambda name, arguments: calls.append((arguments, os.environ.get('RUNNER_TEMP'))))
+    module.handler({'op': 'monitor', 'wakeStartedAt': 123.5, 'outputs': {'bot-cube-preview-origin': {}}},
+                   None, cloudformation=object(), ssm=object())
+    assert calls == [(['/tmp/monitoring-outputs.json'], '/tmp')]
+
+
 @pytest.mark.parametrize('succeeds', [True, False])
 def test_real_alarm_verifier_handoff_is_cold_before_live_and_bounded_after(monkeypatch, tmp_path, succeeds):
     import time

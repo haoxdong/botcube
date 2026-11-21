@@ -25,10 +25,15 @@ const CREATED_RESOURCES = [
 
 /** Use 4: a name a standard SDK, tool or platform reads. */
 const STANDARD = [
-  'AGENT_BROWSER_SCREENSHOT_DIR', 'AGENT_OBSERVABILITY_ENABLED', 'ECS_CONTAINER_METADATA_URI_V4', 'GITHUB_SHA', 'GOMEMLIMIT',
-  'HTTPS_PROXY', 'HTTP_PROXY', 'LANGCHAIN_TRACING_V2', 'LANGSMITH_TRACING', 'MPLCONFIGDIR', 'NODE_USE_ENV_PROXY', 'NO_PROXY',
-  'PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'PORT', 'PYTHONPATH', 'RUNNER_TEMP', 'SSL_CERT_DIR', 'SSL_CERT_FILE',
-  'TRACELOOP_TRACE_CONTENT', 'UV_COMPILE_BYTECODE', 'UV_PYTHON', 'UV_PYTHON_INSTALL_DIR', 'XDG_CONFIG_HOME',
+  'AGENT_BROWSER_SCREENSHOT_DIR', 'ECS_CONTAINER_METADATA_URI_V4', 'GOMEMLIMIT', 'HTTPS_PROXY', 'HTTP_PROXY', 'MPLCONFIGDIR',
+  'NODE_USE_ENV_PROXY', 'NO_PROXY', 'PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'PORT', 'PYTHONPATH', 'SSL_CERT_DIR', 'SSL_CERT_FILE',
+  'UV_COMPILE_BYTECODE', 'UV_PYTHON', 'UV_PYTHON_INSTALL_DIR', 'XDG_CONFIG_HOME',
+  // The AWS Distro for OpenTelemetry (aws-opentelemetry-distro) reads this.
+  'AGENT_OBSERVABILITY_ENABLED',
+  // Traceloop's OpenLLMetry LangChain instrumentation (opentelemetry-instrumentation-langchain) reads this.
+  'TRACELOOP_TRACE_CONTENT',
+  // The LangSmith SDK (langsmith) reads these two.
+  'LANGSMITH_TRACING', 'LANGCHAIN_TRACING_V2',
 ];
 const STANDARD_PREFIXES = ['AWS_', 'OTEL_'];
 
@@ -43,6 +48,8 @@ export const isAllowed = (name: string): boolean => ALLOWED.has(name) || STANDAR
 export const PENDING: readonly string[] = [
   'BOTCUBE_DEPLOY_REPOSITORY_ROOT',
   'BOTCUBE_DEPLOY_ROOT',
+  // identity.json's credentialService.rpcPath, deployment data only a product's own service gateway reads; it leaves with that gateway.
+  'BOTCUBE_RAW_SERVICE_RPC_PATH',
 ];
 
 /** The variable names one process is deployed with: an ECS container, a Lambda or a Harness Runtime. */

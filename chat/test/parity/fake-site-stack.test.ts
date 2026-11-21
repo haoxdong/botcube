@@ -39,7 +39,7 @@ it('tears down scheduled Browsers after success, failed site access and recovery
     scheduling: true,
     harnessCommand: `${HARNESS_BIN}/python ${join(FIXTURES, 'fake-site-model.py')}`,
     chatServiceCommand: inject('fakeSiteServiceCommand'),
-    chatEnv: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), BOTCUBE_CHROMIUM_DIAGNOSTICS: '1', FAKE_SITE_URL: siteUrl, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-secret' },
+    chatEnv: { BOTCUBE_CHROMIUM_PATH: testChromiumPath(), FAKE_SITE_URL: siteUrl, BOTCUBE_CREDENTIAL_SERVICE_URL: credentialServiceUrl, BOTCUBE_CREDENTIAL_INVOCATION_SECRET: 'local-secret' },
     // The fake site's CLI, on the agent's PATH; it reads the binding the fake site's Harness definition hands it.
     harnessEnv: { PATH: `${join(FIXTURES, 'bin')}:${process.env.PATH ?? ''}` },
   });

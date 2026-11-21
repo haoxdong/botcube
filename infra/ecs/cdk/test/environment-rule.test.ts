@@ -5,6 +5,7 @@ import { ContainerDefinition } from 'aws-cdk-lib/aws-ecs';
 import { Function as LambdaFunction } from 'aws-cdk-lib/aws-lambda';
 import type { IConstruct } from 'constructs';
 import { environmentViolations, PENDING, processEnvironments, type ProcessEnvironment } from '../lib/environment-rule.js';
+import type { DeployIdentity } from '../lib/production-identity.js';
 import { synthesizeExample } from './example-fixture.js';
 
 function only<T extends IConstruct>(app: App, matches: (construct: IConstruct) => construct is T): T {
@@ -17,11 +18,27 @@ function only<T extends IConstruct>(app: App, matches: (construct: IConstruct) =
 const examples: ProcessEnvironment[][] = [];
 beforeAll(async () => { examples.push(processEnvironments(await synthesizeExample('public'), 'public')); });
 beforeAll(async () => { examples.push(processEnvironments(await synthesizeExample('enterprise'), 'enterprise')); });
+/** The public example with a raw service origin, so the product's service gets the `rawHostname` neither example sets. */
+const rawService = (identity: DeployIdentity): DeployIdentity => ({
+  ...identity,
+  domains: { ...identity.domains, rawServiceOrigins: ['https://raw.example.com'] },
+  aws: { ...identity.aws, ecs: { ...identity.aws.ecs, credentialService: {
+    ...identity.aws.ecs.credentialService, publicHostname: 'service.example.com', publicPaths: ['/me/sign-ins'],
+  } } },
+});
+beforeAll(async () => { examples.push(processEnvironments(await synthesizeExample('public', rawService), 'raw-service')); });
 
-test('the public and enterprise examples set only allowed or pending names, and every pending name is still set', () => {
+test('the public and enterprise examples, and public with a raw service origin, set only allowed or pending names, and every pending name is still set', () => {
   const environments = examples.flat();
-  expect(environments.filter(({ process }) => process.endsWith('/Runtime'))).toHaveLength(2);
+  expect(environments.filter(({ process }) => process.endsWith('/Runtime'))).toHaveLength(3);
   expect(environmentViolations(environments, { pending: PENDING })).toEqual([]);
+});
+
+test("a raw service origin gives the product's service its host and RPC path, each allowed or pending", () => {
+  const raw = examples.flat().filter(({ process }) => process.startsWith('raw-service/'));
+  const service = raw.find(({ process }) => process.endsWith('/credential-service'));
+  expect(service?.names).toEqual(expect.arrayContaining(['BOTCUBE_RAW_SERVICE_HOST', 'BOTCUBE_RAW_SERVICE_RPC_PATH']));
+  expect(environmentViolations(raw, { pending: PENDING }).filter(violation => !violation.startsWith('PENDING'))).toEqual([]);
 });
 
 test('a name outside the four uses fails, naming the ECS container, the Lambda and the Runtime that set it', async () => {

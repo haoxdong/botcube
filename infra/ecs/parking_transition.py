@@ -78,6 +78,8 @@ def handler(event, context, **ports):
 
 def operate(event, context, *, cloudformation=None, ssm=None, verify=None, capacity=None, refresh=None, spares=None, executions=None, probe=None, leases=None):
     import boto3
+    # The Lambda sets no RUNNER_TEMP; ops write evidence there.
+    os.environ.setdefault('RUNNER_TEMP', '/tmp')
     if event.get('op') == 'monitor':
         return establish_monitoring(event)
     cloudformation = cloudformation or boto3.client('cloudformation')
@@ -353,7 +355,6 @@ def perform(step, target, cloudformation, ssm, verify, capacity, refresh, spares
 
 def verify_production(target, cloudformation, step, state: TransitionState):
     import boto3
-    os.environ.setdefault('RUNNER_TEMP', '/tmp')
     secret = boto3.client('secretsmanager').get_secret_value(SecretId=IDENTITY['aws']['ecs']['originTokenSecretName'])
     os.environ['CLOUDFLARE_ORIGIN_API_TOKEN'] = secret['SecretString']
     outputs = stack_outputs(cloudformation)

@@ -28,7 +28,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import jwt
 
-from .config import OpenAISettings, positive_seconds
+from .config import OpenAISettings
 from .invocation import sign_credential_service_invocation
 from .server import CREDENTIAL_CAPTURE_SCOPE, CREDENTIAL_REVOCATION_SCOPE
 
@@ -51,7 +51,7 @@ def main(
 ) -> int:
     args = _parser().parse_args(argv)
     OpenAISettings()
-    timeout = httpx.Timeout(positive_seconds('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', 30))
+    timeout = httpx.Timeout(30)
     secret = _invocation_secret(args.secret_id, args.region)
     with http or httpx.Client(timeout=timeout) as client:
         session_id = f'operator_{uuid.uuid4().hex}'

@@ -43,8 +43,8 @@ test('a deploy root with its own Credential Service Dockerfile builds it', () =>
   expect(productionCredentialImage(root, path.join(root, 'product/deploy'))).toBe('product/deploy/credential-service/Dockerfile');
 });
 
-test('the public example, with no Credential Service of its own, builds the stock one from the package alone', () => {
+test('the public example, with no Credential Service of its own, builds the stock one from the package and the example BotCube Configs it copies', () => {
   const file = productionCredentialImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
   expect(file).toBe('credential-service/Dockerfile');
-  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '**/*.test.ts']);
+  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '!examples/enterprise/deployment-config.json', '!examples/public/deployment-config.json', '**/*.test.ts']);
 });

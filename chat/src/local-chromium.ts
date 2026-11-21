@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { isIP } from 'node:net';
-import { availableParallelism, cpus, freemem, loadavg, tmpdir, totalmem } from 'node:os';
+import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { HttpError } from './http-error.js';
 import { Cdp } from './cdp.js';
@@ -93,37 +93,9 @@ async function command(endpoint: string, method: string, params: object = {}, se
   try { return await cdp.send(method, { params, ...(sessionId ? { sessionId } : {}) }); } finally { cdp.close(); }
 }
 
-function observeStartup(child: ChildProcess, executable: string, args: string[], started: number) {
-  let stderr = '';
-  let stderrBytes = 0;
-  let devToolsMs: number | null = null;
-  const record = (event: string, detail: object = {}) => {
-    const cpuTimes = cpus().reduce((total, cpu) => {
-      for (const key of ['user', 'nice', 'sys', 'idle', 'irq'] as const) total[key] += cpu.times[key];
-      return total;
-    }, { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 });
-    console.error('Chromium startup diagnostic', JSON.stringify({
-      event, pid: child.pid ?? null, elapsedMs: performance.now() - started, devToolsMs,
-      host: { availableCpus: availableParallelism(), cpuTimes, loadavg: loadavg(), freeMemory: freemem(), totalMemory: totalmem() },
-      ...detail,
-    }));
-  };
-  record('launch', { executable, args });
-  child.stderr?.on('data', (chunk: Buffer) => {
-    stderrBytes += chunk.length;
-    stderr = (stderr + chunk.toString()).slice(-16_384);
-    if (devToolsMs === null && /DevTools listening on ws:\/\//.test(stderr)) {
-      devToolsMs = performance.now() - started;
-      record('devtools');
-    }
-  });
-  child.once('close', (code, signal) => record('close', { code, signal, stderr, stderrBytes, stderrTruncated: stderrBytes > Buffer.byteLength(stderr) }));
-  return record;
-}
-
 /**
- * Start headless Chromium on `startPage`, under `env`'s Deployment Config proxy if any, logging its startup under
- * BOTCUBE_CHROMIUM_DIAGNOSTICS=1; answers once its DevTools endpoint has a page.
+ * Start headless Chromium on `startPage`, under `env`'s Deployment Config proxy if any; answers once its DevTools
+ * endpoint has a page.
  */
 export async function startLocalChromium(
   chromiumPath: string,
@@ -131,7 +103,6 @@ export async function startLocalChromium(
   signal: AbortSignal,
   env: NodeJS.ProcessEnv = {}
 ): Promise<LocalChromium> {
-  const diagnostics = env.BOTCUBE_CHROMIUM_DIAGNOSTICS === '1';
   const profile = await mkdtemp(join(tmpdir(), 'agent-computer-'));
   if (signal.aborted) {
     await rm(profile, { recursive: true, force: true });
@@ -154,13 +125,11 @@ export async function startLocalChromium(
     ...chromiumProxyArgs(env),
     startPage,
   ];
-  const started = performance.now();
   const child = spawn(
     chromiumPath,
     args,
     { stdio: ['ignore', 'ignore', 'pipe'] }
   );
-  const record = diagnostics ? observeStartup(child, chromiumPath, args, started) : undefined;
   const exited = new Promise<void>((resolve) =>
     child.once('close', () => resolve())
   );
@@ -170,10 +139,8 @@ export async function startLocalChromium(
   let stopped: Promise<void> | undefined;
   const stop = () =>
     (stopped ??= (async () => {
-      record?.('stop-requested', { signal: 'SIGTERM' });
       child.kill('SIGTERM');
       const timer = setTimeout(() => {
-        record?.('stop-requested', { signal: 'SIGKILL' });
         child.kill('SIGKILL');
       }, 2000);
       try {
@@ -290,7 +257,6 @@ export async function startLocalChromium(
       stop,
     };
   } catch (error) {
-    record?.('startup-failed', { error: error instanceof Error ? error.message : String(error) });
     await stop();
     throw error;
   }

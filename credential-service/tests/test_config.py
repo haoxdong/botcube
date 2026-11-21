@@ -1,21 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-from botcube_credential_service.config import positive_seconds
-
-
-@pytest.mark.parametrize('value', ['0', '-1', 'nan', 'inf', 'invalid'])
-def test_timeouts_reject_invalid_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
-    monkeypatch.setenv('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', value)
-    with pytest.raises(ValueError):
-        positive_seconds('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', 30)
-
-
-def test_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', '12.5')
-    assert positive_seconds('BOTCUBE_OPENAI_SIGN_IN_TIMEOUT_SECONDS', 30) == 12.5
-
 
 def test_openai_refresh_and_relay_reach_openai() -> None:
     import asyncio
