@@ -47,7 +47,7 @@ function tempDir(): string {
   return dir;
 }
 
-/** A repository whose Cartridge deploy root is bot/deploy and whose runtime copies staged tools. */
+/** A repository whose bot deploy root is bot/deploy and whose runtime copies staged tools. */
 function repository(): string {
   const repo = tempDir();
   const deployRoot = path.join(repo, 'bot/deploy');

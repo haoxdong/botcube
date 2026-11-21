@@ -47,7 +47,7 @@ function requiresToolStaging(spec: AgentCoreDockerPrerequisiteSpec, projectRoot:
 export function toolStagingRoot(deployRoot: string, hook: string): string {
   for (let root = path.resolve(deployRoot); ; root = path.dirname(root)) {
     if (fs.existsSync(path.resolve(root, hook))) return root;
-    if (path.dirname(root) === root) throw new Error(`Cartridge tool-staging hook is missing: ${hook}`);
+    if (path.dirname(root) === root) throw new Error(`bot tool-staging hook is missing: ${hook}`);
   }
 }
 
@@ -63,11 +63,11 @@ export function stageAgentCoreDockerPrerequisites(
   }
 
   if (!toolStagingHook) {
-    throw new Error('AgentCore Dockerfile requires .tool-dist, but the Cartridge has no tool-staging hook');
+    throw new Error('AgentCore Dockerfile requires .tool-dist, but the bot has no tool-staging hook');
   }
   const hookPath = path.resolve(buildRoot, toolStagingHook);
   if (!fs.existsSync(hookPath)) {
-    throw new Error(`Cartridge tool-staging hook is missing: ${hookPath}`);
+    throw new Error(`bot tool-staging hook is missing: ${hookPath}`);
   }
 
   run(hookPath, [], { cwd: buildRoot, stdio: 'inherit' });

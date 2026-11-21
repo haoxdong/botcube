@@ -12,10 +12,10 @@ describe('the Harness image', () => {
       'utf8',
     );
 
-    const [base, cartridge] = dockerfile.split('FROM base AS harness');
+    const [base, bot] = dockerfile.split('FROM base AS harness');
     expect(base).toContain('node install.mjs /opt/browser');
     expect(base).toContain('cp "/opt/browser/$BIN" /usr/local/bin/agent-browser');
-    expect(cartridge).not.toContain('/usr/local/bin/agent-browser');
+    expect(bot).not.toContain('/usr/local/bin/agent-browser');
     expect(dockerfile).not.toContain('if [ -f "/opt/tools/$BIN" ]');
   });
 });

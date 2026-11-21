@@ -17,7 +17,7 @@ import { Construct } from 'constructs';
 import { copyAuditEvents, type CredentialServiceImage } from './credential-audit-copy.js';
 import { nameTaskRoles } from './task-role-names.js';
 
-/** The environment names every Cartridge's Credential Service, and the Chat Service that calls it, read. */
+/** The environment names every bot's Credential Service, and the Chat Service that calls it, read. */
 export const CREDENTIAL_SERVICE_ENV = {
   url: 'BOTCUBE_CREDENTIAL_SERVICE_URL',
   invocationToken: 'BOTCUBE_CREDENTIAL_INVOCATION_SECRET',
@@ -28,7 +28,7 @@ export const CREDENTIAL_SERVICE_ENV = {
 } as const;
 
 export interface PrivateCredentialServiceProps {
-  /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
+  /** Additional bot configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
   invocationSecret?: secretsmanager.ISecret;
   errorMetricFilterName?: string;

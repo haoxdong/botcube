@@ -55,7 +55,7 @@ export interface PreviewOriginProps extends StackProps {
   tokenSecretName: string;
   clientSecretName: string;
   caPath: string;
-  /** The Cartridge's origin-provider Lambda source directory. */
+  /** The bot's origin-provider Lambda source directory. */
   originProviderPath: string;
   originOwnership?: string;
   parkedWorkerName?: string;

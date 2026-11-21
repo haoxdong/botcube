@@ -26,7 +26,7 @@ export interface ChatServiceIngress {
 }
 
 export interface PreviewChatServiceProps extends ScheduledRunsProps {
-  /** Additional Cartridge configuration; framework-owned environment keys take precedence. */
+  /** Additional bot configuration; framework-owned environment keys take precedence. */
   environment?: Record<string, string>;
   /** The proxy variables every container gets: the Chat Service and its collector, and a product's own tasks. */
   proxyEnvironment?: Record<string, string>;

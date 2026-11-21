@@ -236,8 +236,8 @@ vi.mock('@copilotkit/react-core/v2', async () => {
   };
 });
 
-// The cartridge: every slot filled with values unlike the default cartridge's.
-const cartridge = vi.hoisted(() => ({
+// The bot: every slot filled with values unlike the default bot's.
+const bot = vi.hoisted(() => ({
   auth: undefined as unknown as AuthUiState,
   authChatServiceUrl: undefined as string | undefined,
   panels: [] as AuxiliaryPanelHostProps[],
@@ -259,8 +259,8 @@ vi.mock('@bot-ui', () => {
       accountLabel: 'Research Account',
     },
     AuthProvider: ({ chatServiceUrl, children }) => {
-      cartridge.authChatServiceUrl = chatServiceUrl;
-      return <>{children(cartridge.auth)}</>;
+      bot.authChatServiceUrl = chatServiceUrl;
+      return <>{children(bot.auth)}</>;
     },
   };
   return { webUiPlugin };
@@ -281,8 +281,8 @@ vi.mock('@bot-settings', () => ({
 vi.mock('../computer/computer-view', () => ({
   ComputerView: ({ agentId, agentName, conversation, onConnectionChange, onRequestError }: ComputerViewProps) => {
     useEffect(() => {
-      cartridge.computerMounts += 1;
-      cartridge.computerRequestError = onRequestError;
+      bot.computerMounts += 1;
+      bot.computerRequestError = onRequestError;
       onConnectionChange?.(true);
     }, []);
     return (
@@ -294,7 +294,7 @@ vi.mock('../computer/computer-view', () => ({
 }));
 vi.mock('../computer/live-browser-panel', () => ({
   LiveBrowserPanel: (props: AuxiliaryPanelHostProps) => {
-    cartridge.panels.push(props);
+    bot.panels.push(props);
     return <p>panel for {props.conversation.id}</p>;
   },
 }));
@@ -524,7 +524,7 @@ function threadScroller() {
 }
 
 async function renderPage(state: AuthUiState = auth()) {
-  cartridge.auth = state;
+  bot.auth = state;
   const view = render(<Page />);
   await settle();
   return view;
@@ -574,8 +574,8 @@ beforeEach(() => {
   copilot.rows = false;
   copilot.slots = false;
   copilot.rowMounts = 0;
-  cartridge.panels = [];
-  cartridge.computerMounts = 0;
+  bot.panels = [];
+  bot.computerMounts = 0;
   service.mainChat = { id: 'main-1', messages: [] };
   service.sideChats = [];
   service.completedRuns.clear();
@@ -617,11 +617,11 @@ function refuseStorage(methods: Partial<Pick<Storage, 'getItem' | 'setItem' | 'r
   }));
 }
 
-describe('cartridge wiring', () => {
-  it('runs the chat on the cartridge agent id against the cartridge Chat Service', async () => {
+describe('bot wiring', () => {
+  it('runs the chat on the bot agent id against the bot Chat Service', async () => {
     await renderPage();
 
-    expect(cartridge.authChatServiceUrl).toBe('http://chat.test');
+    expect(bot.authChatServiceUrl).toBe('http://chat.test');
     expect(copilot.chat).toMatchObject({
       agentId: 'research-agent',
       threadId: 'main-1',
@@ -653,7 +653,7 @@ describe('cartridge wiring', () => {
     await renderPage(auth({ overlay: <p>account overlay</p> }));
 
     expect(screen.getByText('panel for main-1')).toBeInTheDocument();
-    expect(cartridge.panels.at(-1)).toEqual({ agentId: 'research-agent', conversation: { id: 'main-1', service: 'chat-service' } });
+    expect(bot.panels.at(-1)).toEqual({ agentId: 'research-agent', conversation: { id: 'main-1', service: 'chat-service' } });
     expect(screen.getByText('account overlay')).toBeInTheDocument();
   });
 
@@ -665,7 +665,7 @@ describe('cartridge wiring', () => {
       .toEqual(['#f5d0a9', '#d9915a', '#9a5a2b', '#4a2810']);
   });
 
-  it("puts the cartridge's composer accessory with the composer, above its text box", async () => {
+  it("puts the bot's composer accessory with the composer, above its text box", async () => {
     await renderPage(auth({ composerAccessory: <button type="button">🔒 Sign in</button> }));
 
     const accessory = screen.getByRole('button', { name: '🔒 Sign in' });
@@ -693,7 +693,7 @@ describe('cartridge wiring', () => {
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(screen.getByRole('button', { name: 'New side chat' }));
     const before = warmups().length;
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     expect(warmups().slice(before).map(([, init]) => JSON.parse(String(init.body)))).not.toContainEqual(expect.objectContaining({ threadId: 'new-1', newChat: true }));
@@ -726,7 +726,7 @@ describe('account session gate', () => {
   it('opens the Main Chat once the session is ready', async () => {
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
 
-    cartridge.auth = auth();
+    bot.auth = auth();
     view.rerender(<Page />);
     await settle();
 
@@ -1627,7 +1627,7 @@ describe('Main Chat kept in this browser', () => {
     expect(screen.getByTestId('copilot-message-list')).toBeInTheDocument();
     const previous = agent();
 
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
 
@@ -1674,7 +1674,7 @@ describe('Main Chat kept in this browser', () => {
 
     const reply: Message = { id: 'm3', role: 'assistant', content: 'A scheduled post' };
     service.mainChat = { id: 'main-1', provider: 'openai', messages: [...earlier, reply] };
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -1689,7 +1689,7 @@ describe('Main Chat kept in this browser', () => {
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
     expect(agent().messages).toEqual(earlier);
 
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -1704,7 +1704,7 @@ describe('Main Chat kept in this browser', () => {
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
     expect(agent().messages).toEqual(earlier);
 
-    cartridge.auth = auth({ sessionStatus });
+    bot.auth = auth({ sessionStatus });
     view.rerender(<Page />);
     await settle();
 
@@ -1762,7 +1762,7 @@ describe('Main Chat kept in this browser', () => {
     expect(kept()).not.toBeNull();
     refuseStorage({ removeItem: () => { throw refused; } });
 
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
 
@@ -2107,7 +2107,7 @@ describe('the kept Main Chat over the chat as it opens', () => {
     expect(keptChat()).not.toBeNull();
     refuseStorage({ removeItem: () => { throw new DOMException('The operation is insecure.', 'SecurityError'); } });
 
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
 
@@ -2167,7 +2167,7 @@ describe('the history moments', () => {
     expect(measured()).toEqual({ returning: 1, firstVisit: 0 });
 
     service.mainChat = { id: 'main-1', messages: [...earlier, { id: 'm3', role: 'assistant', content: 'A scheduled post' }] };
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -2180,7 +2180,7 @@ describe('the history moments', () => {
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
     expect(measured()).toEqual({ returning: 0, firstVisit: 0 });
 
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -2188,9 +2188,9 @@ describe('the history moments', () => {
     expect(measured()).toEqual({ returning: 0, firstVisit: 1 });
 
     // The account session parks and comes back, the copy now kept: the page has not opened again.
-    cartridge.auth = auth({ sessionStatus: 'parked' });
+    bot.auth = auth({ sessionStatus: 'parked' });
     view.rerender(<Page />);
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -2223,11 +2223,11 @@ describe('the history moments', () => {
     service.mainChat = { id: 'main-1', messages: earlier };
     const view = await renderPage(auth({ sessionStatus: 'loading' }));
 
-    cartridge.auth = auth({ sessionStatus });
+    bot.auth = auth({ sessionStatus });
     view.rerender(<Page />);
     await settle();
     expect(document.querySelector('.account-session-gate')).not.toBeNull();
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
 
@@ -3325,7 +3325,7 @@ describe('warming a chat as the user composes', () => {
     await type();
     expect(pending).toHaveLength(1);
 
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     await act(async () => { for (const finish of pending) finish(answer(502)); });
@@ -4935,7 +4935,7 @@ describe('sidebar', () => {
     expect(copilot.chat?.threadId).toBe('main-1');
   });
 
-  it('names the account menu after the cartridge account when there is no user', async () => {
+  it('names the account menu after the bot account when there is no user', async () => {
     await renderPage(auth({ status: 'unauthed' }));
     await openSidebar();
 
@@ -5039,13 +5039,13 @@ describe('Side chats disclosure', () => {
     await userEvent.click(sidebar().getByRole('button', { name: 'Main Chat' }));
     await userEvent.click(disclosure());
 
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     expect(disclosure()).toHaveAttribute('aria-expanded', 'true');
     expect(sidebar().getByRole('button', { name: 'First' })).toBeVisible();
 
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     view.rerender(<Page />);
     await settle();
     expect(disclosure()).toHaveAttribute('aria-expanded', 'false');
@@ -5234,7 +5234,7 @@ describe('account menu', () => {
     expect(trigger()).not.toHaveClass('menu-open');
   });
 
-  it('shows a signed-in user without details as the cartridge account and its initial', async () => {
+  it('shows a signed-in user without details as the bot account and its initial', async () => {
     await renderPage();
     expect(trigger()).toHaveTextContent(/^R$/);
 
@@ -5391,7 +5391,7 @@ describe('account menu', () => {
     expect(state.login).toHaveBeenCalledOnce();
   });
 
-  it('shows the photo of a user without a name, as the cartridge account', async () => {
+  it('shows the photo of a user without a name, as the bot account', async () => {
     await renderPage(auth({ user: { photo: PICTURE } }));
     expect(pictureIn(trigger())).toBe(PICTURE);
 
@@ -5529,7 +5529,7 @@ describe('agent profile', () => {
         await import('./chat-app');
         await import('./artifact-panel');
         const { default: FreshPage } = await import('./page');
-        cartridge.auth = auth();
+        bot.auth = auth();
         render(<FreshPage />);
         await settle();
         avatar().focus();
@@ -5606,7 +5606,7 @@ describe('agent profile', () => {
       await import('./chat-app');
       await import('./artifact-panel');
       const { default: LoadingPage } = await import('./page');
-      cartridge.auth = auth();
+      bot.auth = auth();
       render(<LoadingPage />);
       await settle();
       const loading = () => screen.queryByRole('status', { name: 'Loading chat controls' });
@@ -6911,7 +6911,7 @@ describe('agent profile', () => {
     await userEvent.click(within(openProfile()).getByRole('tab', { name: 'Computer' }));
     await within(openProfile()).findByText(/computer for main-1$/);
 
-    act(() => cartridge.computerRequestError?.(new Error('Re-link the site to continue')));
+    act(() => bot.computerRequestError?.(new Error('Re-link the site to continue')));
 
     expect(signIn).toHaveBeenCalledTimes(sheets);
   });
@@ -6930,10 +6930,10 @@ describe('agent profile', () => {
 
     expect(within(openProfile()).getByRole('tab', { selected: true })).toHaveAccessibleName('Computer');
     expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Ada Bot: research-agent computer for main-1$/);
-    expect(cartridge.computerMounts).toBe(1);
+    expect(bot.computerMounts).toBe(1);
   });
 
-  it("shows the cartridge's agent name in the header and the failure in the profile when the agent cannot load", async () => {
+  it("shows the bot's agent name in the header and the failure in the profile when the agent cannot load", async () => {
     service.failing.set('GET /agent', 503);
     await renderPage();
     expect(avatar()).toHaveTextContent(/^Ada$/);
@@ -6980,7 +6980,7 @@ describe('agent profile', () => {
     expect(identityArticle()).toBeNull();
     expect(within(openProfile()).getByRole('tab', { selected: true })).toHaveAccessibleName('Computer');
     expect(within(openProfile()).getByRole('tabpanel')).toHaveTextContent(/^Ada Bot: research-agent computer for main-1$/);
-    expect(cartridge.computerMounts).toBe(1);
+    expect(bot.computerMounts).toBe(1);
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0);
   });
 
@@ -7563,7 +7563,7 @@ describe('agent profile', () => {
     const pictureOwners: (string | undefined)[] = [];
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === 'http://chat.test/agent/identity' && init?.method === 'PUT') return pendingIdentity;
-      if (url === 'http://chat.test/agent/picture' && init?.method === 'PUT') pictureOwners.push(cartridge.auth.accountId);
+      if (url === 'http://chat.test/agent/picture' && init?.method === 'PUT') pictureOwners.push(bot.auth.accountId);
       return chatService(url, init);
     });
     const view = await renderPage(auth({ accountId: 'acct-first' }));
@@ -7575,7 +7575,7 @@ describe('agent profile', () => {
     expect(pictureOwners).toEqual([]);
 
     service.agentPicture = PICTURE;
-    cartridge.auth = auth({ accountId });
+    bot.auth = auth({ accountId });
     view.rerender(<Page />);
     await settle();
     finishIdentity(answer(200, { status: 'saved' }));
@@ -7653,7 +7653,7 @@ describe('agent profile', () => {
       await editFile(panel, 'Soul');
       await userEvent.click(panel.getByRole('button', { name: 'Save Soul' }));
     }
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     expect(profiles).toHaveLength(1);
@@ -7689,7 +7689,7 @@ describe('agent profile', () => {
       return ordinaryFetch(url, init);
     });
     service.agentPicture = picture;
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     if (!profile()) await userEvent.click(avatar());
@@ -8056,7 +8056,7 @@ describe('model and effort picker', () => {
   describe('once a sign-in moves the page to another account', () => {
     const plan = { key: 'plan', label: 'Plan', provider: 'openai' };
     async function switchAccount(view: Awaited<ReturnType<typeof renderPage>>, accountId: string) {
-      cartridge.auth = auth({ accountId });
+      bot.auth = auth({ accountId });
       view.rerender(<Page />);
       await settle();
     }
@@ -8213,7 +8213,7 @@ describe('model and effort picker', () => {
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'What is 2+2? One word.' } });
       currentAccount = 'acct-linked';
       service.models = [plan];
-      cartridge.auth = state(currentAccount);
+      bot.auth = state(currentAccount);
 
       view.rerender(<Page />);
       await settle();
@@ -8307,7 +8307,7 @@ describe('the model and effort the user last picked', () => {
       await settle();
       await userEvent.click(pill());
       await userEvent.click(within(present(document.querySelector<HTMLElement>('.mep-dropdown'), 'the dropdown')).getByText('Fast'));
-      cartridge.auth = auth({ accountId: 'acct-second' });
+      bot.auth = auth({ accountId: 'acct-second' });
       view.rerender(<Page />);
       await settle();
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -8315,7 +8315,7 @@ describe('the model and effort the user last picked', () => {
         return chatService(url, init);
       });
 
-      cartridge.auth = auth({ accountId: 'acct-first' });
+      bot.auth = auth({ accountId: 'acct-first' });
       view.rerender(<Page />);
       await settle();
 
@@ -8377,7 +8377,7 @@ describe('the model and effort the user last picked', () => {
     const view = await renderPage(auth({ accountId: 'acct-anonymous' }));
 
     service.models = [{ key: 'plan', label: 'Plan', provider: 'openai' }, ...service.models];
-    cartridge.auth = auth({ accountId: 'acct-linked' });
+    bot.auth = auth({ accountId: 'acct-linked' });
     view.rerender(<Page />);
     await settle();
 
@@ -8393,7 +8393,7 @@ describe('the model and effort the user last picked', () => {
     const view = await renderPage(auth({ accountId: from }));
     if (picks) await pick('Fast', 'High');
     service.models = [{ key: 'plan', label: 'Plan', provider: 'openai' }, ...service.models];
-    cartridge.auth = auth({ accountId: to });
+    bot.auth = auth({ accountId: to });
     view.rerender(<Page />);
     await settle();
     expect(kit().properties).toEqual({ ...expected, sandbox: true });
@@ -8446,7 +8446,7 @@ describe('a sign-in that moves the page to another account', () => {
 
     service.sideChats = [sideChat('linked-chat', 'Copper outlook')];
     service.agentIdentity = { ...service.agentIdentity, name: 'Hao Bot' };
-    cartridge.auth = auth({ accountId: 'acct-linked' });
+    bot.auth = auth({ accountId: 'acct-linked' });
     view.rerender(<Page />);
     await settle();
 
@@ -8473,7 +8473,7 @@ describe('account reload responses', () => {
     service.models = [{ key: 'plan', label: 'Plan', provider: 'openai' }];
     service.sideChats = [sideChat('linked-chat', 'Copper outlook')];
     service.agentIdentity = { ...service.agentIdentity, name: 'Hao Bot' };
-    cartridge.auth = auth({ accountId: 'acct-linked' });
+    bot.auth = auth({ accountId: 'acct-linked' });
     view.rerender(<Page />);
     await settle();
     reject(cause);
@@ -8503,7 +8503,7 @@ describe('account reload responses', () => {
     service.models = [{ key: 'plan', label: 'Plan', provider: 'openai' }, ...oldModels];
     service.sideChats = [sideChat('linked-chat', 'Copper outlook')];
     service.agentIdentity = { ...service.agentIdentity, name: 'Hao Bot' };
-    cartridge.auth = auth({ accountId: 'acct-linked' });
+    bot.auth = auth({ accountId: 'acct-linked' });
     view.rerender(<Page />);
     await settle();
     expect(recents()).toEqual(['Copper outlook']);
@@ -9127,7 +9127,7 @@ describe('an Agent Profile draft across account changes', () => {
     const view = await renderPage(auth({ accountId: 'acct-first' }));
     await editSoul();
     service.soul = 'Second account instructions';
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     const oldSave = screen.queryByRole('button', { name: 'Save Soul' });
@@ -9148,7 +9148,7 @@ describe('an Agent Profile draft across account changes', () => {
   it('keeps a draft when auth refreshes within the same account', async () => {
     const view = await renderPage(auth({ accountId: 'acct-first' }));
     await editSoul();
-    cartridge.auth = auth({ accountId: 'acct-first', user: { name: 'Renamed user' } });
+    bot.auth = auth({ accountId: 'acct-first', user: { name: 'Renamed user' } });
     view.rerender(<Page />);
     await settle();
     expect(screen.getByRole('textbox', { name: 'Soul' })).toHaveValue('Private instructions from the first account');
@@ -9314,7 +9314,7 @@ it('propagates a failed latency reporter to the page error boundary', async () =
   rum.config.mockReturnValueOnce({ appMonitorId: 'test', identityPoolId: 'test', region: 'us-east-1' });
   rum.start.mockRejectedValueOnce(error);
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  cartridge.auth = auth();
+  bot.auth = auth();
   render(<Boundary><Page /></Boundary>);
   expect(await screen.findByText(error.message)).toBeDefined();
   expect(screen.queryByRole('textbox')).toBeNull();
@@ -9339,7 +9339,7 @@ it('shows a kept markdown reply formatted, not as raw markdown, while the chat s
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === 'http://chat.test/main-chat' ? new Promise<Response>(() => {}) : chatService(url, init),
     );
-    cartridge.auth = auth({ accountId: 'acct-first' });
+    bot.auth = auth({ accountId: 'acct-first' });
     render(<LoadingPage />);
     await settle();
     const loading = await screen.findByRole('status', { name: 'Loading chat controls' });
@@ -9537,7 +9537,7 @@ describe('attaching files', () => {
     const current = agent();
     copilot.running = true;
     current.isRunning = true;
-    cartridge.auth = auth({ accountId: 'acct-linked' });
+    bot.auth = auth({ accountId: 'acct-linked' });
     view.rerender(<Page />);
     await settle();
 
@@ -9677,7 +9677,7 @@ describe('agent opening Turn', () => {
     fetchMock.mockImplementation((url, init) => url === 'http://chat.test/agent/models'
       ? new Promise<Response>((resolve) => { release = resolve; }) : chatService(url, init));
     service.mainChat = { id: 'main-second', messages: [] };
-    cartridge.auth = auth({ accountId: 'acct-second' });
+    bot.auth = auth({ accountId: 'acct-second' });
     view.rerender(<Page />);
     await settle();
     expect(copilot.openingTurn).toHaveBeenCalledTimes(1);

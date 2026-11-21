@@ -18,7 +18,7 @@ export interface ApiHealthStackProps extends StackProps {
   hostname: string;
   alarmName: string;
   alertsTopicName: string;
-  /** The Cartridge's AgentCore Runtime, the SSM parameter holding its current ARN, and its monitoring names. */
+  /** The bot's AgentCore Runtime, the SSM parameter holding its current ARN, and its monitoring names. */
   runtime?: RuntimeMonitoring;
 }
 
@@ -33,7 +33,7 @@ interface RuntimeMonitoring {
 }
 
 // The four Runtime alarms and their filter were built by hand and are imported, never created; Retain keeps them if a
-// deploy from an older template drops them. Always on: a parked Runtime emits nothing, so they stay quiet.
+// deploy from an older template drops them. Continuously enabled: a parked Runtime emits nothing, so they stay quiet.
 const RUNTIME_ALARMS = [
   { id: 'RuntimeLogErrors', suffix: 'log-errors', namespace: undefined, metricName: 'RuntimeLogErrors', period: 300, threshold: 3, notifyOnOk: false,
     alarmDescription: '3+ ERROR/Exception/Traceback lines in runtime logs within 5 min (near-realtime)' },

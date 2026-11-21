@@ -2,7 +2,7 @@
 
 Set physical names on the interface that creates the resource, or supply an
 existing CDK interface. Omitted settings retain the defaults. Stack names use
-`StackProps.stackName` and the Cartridge deployment identity.
+`StackProps.stackName` and the bot deployment identity.
 
 Names must satisfy the corresponding AWS resource's constraints. Inspect the
 CloudFormation diff before changing names on an existing deployment; a name

@@ -342,8 +342,8 @@ test('stages the session API source without the Sandbox tools virtualenv', () =>
   }
 });
 
-test('uploads the locked Cartridge dependencies and their portable links to CodeBuild', () => {
-  const fixture = mkdtempSync(resolve(tmpdir(), 'cartridge-context-'));
+test('uploads the locked bot dependencies and their portable links to CodeBuild', () => {
+  const fixture = mkdtempSync(resolve(tmpdir(), 'bot-context-'));
   const source = resolve(fixture, 'source');
   const packagePath = '.tool-dist/node_modules/.pnpm/locked-tool@1.2.3/node_modules/locked-tool/package.json';
   // A bot's own image stages its CLI below .tool-dist/ too.

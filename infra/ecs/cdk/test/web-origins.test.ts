@@ -34,7 +34,7 @@ function webLatencyDomains(): unknown {
   return Object.values(monitors).map(({ Properties }) => Properties.DomainList);
 }
 
-test("a Cartridge with its own chat grants the web origins its BotCube Config names, over https", () => {
+test("a bot with its own chat grants the web origins its BotCube Config names, over https", () => {
   fs.mkdirSync(path.join(root, 'product/chat'));
   fs.writeFileSync(path.join(root, 'product/chat/Dockerfile'), 'FROM scratch\n');
   fs.writeFileSync(path.join(root, 'product/deployment-config.json'), JSON.stringify({

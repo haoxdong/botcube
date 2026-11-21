@@ -380,4 +380,4 @@ fi
 printf 'Park state %s: %s\n' "$PARK_STATE" "$(aws ssm get-parameter --name "$PARK_STATE" --query Parameter.Value --output text)"
 
 printf 'Bootstrapped %s\n' "arn:aws:iam::$AWS_ACCOUNT_ID:role/$ROLE_NAME"
-printf 'Set the deployment role ARN in the Cartridge GitHub environment.\n'
+printf 'Set the deployment role ARN in the bot GitHub environment.\n'

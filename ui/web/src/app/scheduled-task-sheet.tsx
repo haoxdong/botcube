@@ -387,7 +387,7 @@ export function ScheduledTaskSheet({
   /** Showing the Edit form, which the sheet's title names Edit task. */
   editing: boolean;
   onEditing: (editing: boolean) => void;
-  /** The account's models, the default first; null until they load; only the Cartridge's, or null, when the catalog failed. */
+  /** The account's models, the default first; null until they load; only the bot's, or null, when the catalog failed. */
   models: AgentModel[] | null;
   /** The account's catalog failed (`notices` say why): the task stays editable on the model it names. */
   modelsFailed: boolean;

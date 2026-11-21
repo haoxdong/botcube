@@ -6,7 +6,7 @@ import type { DeployConfig, DeployIdentity } from './deploy-config';
 import type { UserMemoryRole } from './user-memory-role';
 
 /**
- * Add one AgentCore stack per deployment target of a loaded Cartridge deploy config, deployed from `commit`, with the
+ * Add one AgentCore stack per deployment target of a loaded bot deploy config, deployed from `commit`, with the
  * Deployment Config's `turnCredentials.kind`.
  */
 export function addAgentCoreStacks(

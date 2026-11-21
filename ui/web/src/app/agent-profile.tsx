@@ -672,7 +672,7 @@ export function AgentProfile({
   chatServiceUrl: string;
   profile: AgentProfileData | null;
   error: string | null;
-  /** The Computer tab's content, the Cartridge's Agent Computer for the open chat, told whether the tab is showing. */
+  /** The Computer tab's content, the bot's Agent Computer for the open chat, told whether the tab is showing. */
   computer?: ((shown: boolean) => ReactNode) | undefined;
   onClose: () => void;
   /** Bumped when the agent edits its files, so the header and Personalization tab reload them. */

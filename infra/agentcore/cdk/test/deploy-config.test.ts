@@ -206,7 +206,7 @@ test("the template names only its project, runtime and memory: BotCube's default
   ]);
 });
 
-test("a Cartridge's own value replaces BotCube's default", async () => {
+test("a bot's own value replaces BotCube's default", async () => {
   const root = deployRoot({
     identity: identity => (identity.aws.agentCore.sessionApiAlias = 'blue'),
     spec: spec => {

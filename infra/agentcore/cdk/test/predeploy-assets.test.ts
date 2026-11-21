@@ -28,7 +28,7 @@ function makeProject(dockerfileText?: string): { projectRoot: string; hook: stri
   return { projectRoot, hook };
 }
 
-test('runs the Cartridge hook before packaging a Docker context that copies tool assets', () => {
+test('runs the bot hook before packaging a Docker context that copies tool assets', () => {
   const { projectRoot, hook } = makeProject('FROM scratch\nCOPY .tool-dist/ ./\n');
   const repositoryRoot = path.resolve(projectRoot, '../..');
   const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
@@ -165,7 +165,7 @@ test('fails loudly when a container runtime has no codeLocation', () => {
   ).toThrow(new Error('AgentCore Container runtime is missing codeLocation; cannot inspect Dockerfile prerequisites'));
 });
 
-test('fails loudly when staged tools are required but the Cartridge has no hook', () => {
+test('fails loudly when staged tools are required but the bot has no hook', () => {
   const { projectRoot } = makeProject('FROM scratch\nCOPY .tool-dist/ ./\n');
   expect(() =>
     stageAgentCoreDockerPrerequisites(
@@ -174,5 +174,5 @@ test('fails loudly when staged tools are required but the Cartridge has no hook'
       undefined,
       projectRoot
     )
-  ).toThrow(new Error('AgentCore Dockerfile requires .tool-dist, but the Cartridge has no tool-staging hook'));
+  ).toThrow(new Error('AgentCore Dockerfile requires .tool-dist, but the bot has no tool-staging hook'));
 });

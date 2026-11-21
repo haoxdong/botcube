@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The ECS CDK app cdk.json runs: the active Cartridge's own ECS app when its deploy directory has one, else BotCube's.
-// A Cartridge's own app wraps this one (lib/production-app.ts) to add its resources beside BotCube's (ADR 0091).
+// The ECS CDK app cdk.json runs: the active bot's own ECS app when its deploy directory has one, else BotCube's.
+// A bot's own app wraps this one (lib/production-app.ts) to add its resources beside BotCube's (ADR 0091).
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';

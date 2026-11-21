@@ -12,7 +12,7 @@ describe("picker models", () => {
     expect(catalog.map(({ key }) => key)).toEqual(keys);
   });
 
-  it("keeps other cartridges' models and allows missing families", () => {
+  it("keeps other bots' models and allows missing families", () => {
     const echo = [model("echo")];
     expect(pickerModels(echo, undefined)).toEqual(echo);
     expect(pickerModels(echo, families)).toEqual([]);

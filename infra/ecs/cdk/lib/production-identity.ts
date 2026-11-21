@@ -5,7 +5,7 @@ interface Subnet {
   cidrBlock?: string;
 }
 
-/** The fields of the Cartridge's deploy identity the ECS app reads. */
+/** The fields of the bot's deploy identity the ECS app reads. */
 export interface DeployIdentity {
   aws: {
     /**

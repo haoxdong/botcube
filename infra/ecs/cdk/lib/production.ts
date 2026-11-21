@@ -34,13 +34,13 @@ const cubeRoot = path.resolve(projectDir(__dirname), '../../..');
 /** The cheap foundation model that summarizes each finished Turn for the Activity: `MODEL_ID` in botcube/chat's `turn-summaries.ts`. */
 const TURN_SUMMARY_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
 
-/** The environment names every Cartridge's Chat Service reads its deploy inputs under. */
+/** The environment names every bot's Chat Service reads its deploy inputs under. */
 export const CHAT_SERVICE_ENV = {
   agentComputerPolicyBucket: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_BUCKET',
   agentComputerPolicyKey: 'BOTCUBE_AGENT_COMPUTER_POLICY_S3_KEY',
 } as const;
 
-/** Non-secret deploy inputs written by the Cartridge's `deploy/ecs/prepare-origin.py`. */
+/** Non-secret deploy inputs written by the bot's `deploy/ecs/prepare-origin.py`. */
 interface OriginInput {
   cloudflareCidrs: string[];
   clientVersion: string;
@@ -109,12 +109,12 @@ export interface ProductionOptions {
   } | undefined;
 }
 
-/** The latency moments BotCube budgets, plus any the Cartridge's own `latency-budgets.json` adds. */
+/** The latency moments BotCube budgets, plus any the bot's own `latency-budgets.json` adds. */
 function latencyMoments(deployRoot: string): string[] {
-  const cartridgeBudgets = path.join(deployRoot, '..', 'latency-budgets.json');
+  const botBudgets = path.join(deployRoot, '..', 'latency-budgets.json');
   return Object.keys({
     ...JSON.parse(fs.readFileSync(path.join(cubeRoot, 'latency-budgets.json'), 'utf8')).moments,
-    ...(fs.existsSync(cartridgeBudgets) ? JSON.parse(fs.readFileSync(cartridgeBudgets, 'utf8')).moments : {}),
+    ...(fs.existsSync(botBudgets) ? JSON.parse(fs.readFileSync(botBudgets, 'utf8')).moments : {}),
   });
 }
 

@@ -6,7 +6,7 @@ This package is a runnable white-label chat app. Build it with:
 pnpm --filter botcube-ui-web build
 ```
 
-The standalone static export is written to `.next-standalone/`. A cartridge
+The standalone static export is written to `.next-standalone/`. A bot
 build uses `.next-bot/`, keeping the two build graphs isolated. Set
 `NEXT_PUBLIC_CHAT_SERVICE_URL` to the
 public Chat Service origin:
@@ -15,5 +15,5 @@ public Chat Service origin:
 NEXT_PUBLIC_CHAT_SERVICE_URL=https://api.example.com
 ```
 
-Without a cartridge alias, neutral defaults connect to a local Chat Service at
+Without a bot alias, neutral defaults connect to a local Chat Service at
 `http://localhost:8123`.

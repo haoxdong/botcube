@@ -960,8 +960,8 @@ it("sets Personalization's file cards side by side, as Muse's (Fig 16)", () => {
   expect(styleOf(container, '.agent-file-cards').gridTemplateColumns).toBe('1fr 1fr');
 });
 
-// The template ships Marq's Soul and Memory colours, so a Cartridge brings none.
-it("paints the Soul card periwinkle and the Memory card a deeper navy unless a cartridge's theme brings its own", () => {
+// The template ships Marq's Soul and Memory colours, so a bot brings none.
+it("paints the Soul card periwinkle and the Memory card a deeper navy unless a bot's theme brings its own", () => {
   // happy-dom leaves var() unresolved, so this reads the sheet.
   expect(sheet).toMatch(/:root \{[^}]*--agent-body: #aec6e3;\s*--agent-outline: #6f93bf;\s*--agent-deep: #3f5f8a;\s*--agent-deepest: #1c2b45;/);
   for (const [file, from, to] of [['soul', 'outline', 'deep'], ['memory', 'deep', 'deepest']]) {

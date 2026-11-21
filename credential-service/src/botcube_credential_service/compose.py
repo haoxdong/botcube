@@ -1,4 +1,4 @@
-"""A Cartridge's Credential Service: its site provider beside the OpenAI plan provider and any models Endpoint, served by uvicorn."""
+"""A bot's Credential Service: its site provider beside the OpenAI plan provider and any models Endpoint, served by uvicorn."""
 
 from __future__ import annotations
 

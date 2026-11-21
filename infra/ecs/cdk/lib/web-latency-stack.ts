@@ -27,7 +27,7 @@ const WEB_LATENCY_NAMESPACE = 'WebLatency';
 /**
  * The CloudWatch RUM app monitor the web reports its latency moments to: each `latency` event (botcube/ui/web
  * `latency.ts`) from a browser no automation drives becomes a `Latency` metric, in milliseconds, with the moment as its
- * dimension, named as in the Cartridge's latency-budgets.json. It also collects the page's uncaught errors and failed
+ * dimension, named as in the bot's latency-budgets.json. It also collects the page's uncaught errors and failed
  * requests (ADR 0085 decision 1). Pages report as guests of a Cognito identity pool that may only put RUM events.
  */
 export class WebLatencyStack extends Stack {

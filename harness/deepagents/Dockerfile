@@ -15,7 +15,7 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
 FROM ${REGISTRY}/docker/library/python:3.13-slim AS base
 COPY --from=efs-utils /efs-utils/build/amazon-efs-utils*.deb /tmp/
 
-# Node.js for a Cartridge CLI + AWS CLI for agent-browser credential resolution
+# Node.js for a bot CLI + AWS CLI for agent-browser credential resolution
 RUN --mount=type=secret,id=build_ca,mode=0444 \
     if [ -f /run/secrets/build_ca ]; then \
       export CURL_CA_BUNDLE=/run/secrets/build_ca NODE_EXTRA_CA_CERTS=/run/secrets/build_ca APT_CONFIG=/tmp/botcube-build-apt.conf; \

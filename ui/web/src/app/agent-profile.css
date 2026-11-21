@@ -267,7 +267,7 @@
 
 /* Each file's tint, after Muse's file cards (Fig 16), on its card in the Personalization tab and its page's header
    tile: deep under the white type on the left, lifting to `from` at the bottom right with a `glow` in the top right
-   corner. The colours are the agent's, a cartridge `theme` hook (DESIGN.md); Identity wears Soul's. */
+   corner. The colours are the agent's, a bot `theme` hook (DESIGN.md); Identity wears Soul's. */
 .agent-file-tint-identity,
 .agent-file-tint-soul {
   --file-from: var(--agent-outline);

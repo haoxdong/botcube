@@ -5,7 +5,7 @@ container wire contract. It owns agent composition, AG-UI serving, model
 factories, prompt-cache observability, and the in-memory and AgentCore memory
 backends.
 
-Applications must configure an `HarnessBot` before serving. The Cartridge
+Applications must configure an `HarnessBot` before serving. The bot
 supplies the tool backend, skill sources, identity behavior, invocation
 environment, session binding, and bot-facing name and prompt. `build_agent`
 likewise requires explicit `backend` and `skills` arguments; there are no
@@ -21,11 +21,11 @@ uv run pytest
 
 Both memory implementations expose the three documented factory slots:
 checkpointer, store, and memory tools (the `memory` tool and the middleware that
-loads Memory once per Session). A Cartridge can use
+loads Memory once per Session). A bot can use
 the Harness with fake tools and an empty skill list in deterministic tests.
 
 The serving shell implements `POST /invocations` and `GET /ping` on port 8080
-per ADR 0029. Run it through a composed Cartridge entrypoint; the generic
+per ADR 0029. Run it through a composed bot entrypoint; the generic
 package intentionally has no standalone bot server command.
 
 ## Run preinstalled file tools locally
@@ -40,7 +40,7 @@ harness/deepagents/tools/.venv/bin/python harness/deepagents/tools/smoke.py /tmp
 ```
 
 The Harness keeps its own Python environment. Its subprocesses select the tools
-environment through PATH. Cartridge export tests supply this PATH explicitly.
+environment through PATH. Bot export tests supply this PATH explicitly.
 
 ## Shell execution limits
 
@@ -57,4 +57,4 @@ microVM boundary.
 
 ## Model configuration
 
-A Turn runs on the model it names, else the first in its bot settings, which the Deployment Config's `bot` names; a call naming neither runs `DEFAULT_MODEL` in `llm.py`. Bedrock Converse model factories and prompt caching are owned there; agent composition owns caching middleware. Product Cartridges supply the conversation binding and tool environment, including the CLI ref namespace.
+A Turn runs on the model it names, else the first in its bot settings, which the Deployment Config's `bot` names; a call naming neither runs `DEFAULT_MODEL` in `llm.py`. Bedrock Converse model factories and prompt caching are owned there; agent composition owns caching middleware. Product bots supply the conversation binding and tool environment, including the CLI ref namespace.

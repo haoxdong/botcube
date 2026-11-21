@@ -5,6 +5,6 @@ vi.mock('@bot-ui', () => ({ webUiPlugin: { config: { title: 'Research Bot' } } }
 
 const { metadata } = await import('./layout');
 
-it('titles the page after the cartridge', () => {
+it('titles the page after the bot', () => {
   expect(metadata).toEqual({ title: 'Research Bot' });
 });

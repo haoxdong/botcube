@@ -9,11 +9,11 @@ import { credentialServiceImage } from './credential-audit-copy.js';
 import { grantLambdasInline } from './lambda-inline-grants.js';
 import { repositoryImageProps } from './repository-image.js';
 
-/** Where a Cartridge keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
-export const CARTRIDGE_ECS_APP = 'ecs/cdk';
+/** Where a bot keeps an ECS CDK app of its own, which wraps this one to add its own resources (ADR 0091). */
+export const BOT_ECS_APP = 'ecs/cdk';
 
 /**
- * The preview origin's Chat Service image and the BotCube Config it serves (`config`). A Cartridge holding its own Chat
+ * The preview origin's Chat Service image and the BotCube Config it serves (`config`). A bot holding its own Chat
  * Service in `chat/` beside `deploy/` builds that, on the BotCube Config beside them; any other deploy root runs the
  * stock Chat Service, on the public example's BotCube Config its image ships.
  */
@@ -46,7 +46,7 @@ function checkoutCommit(root: string): string {
   return git('rev-parse', 'HEAD') + (git('status', '--porcelain', '--untracked-files=no') ? '-dirty' : '');
 }
 
-/** The production stacks of the active Cartridge, from its deploy identity and this app's context and inputs. */
+/** The production stacks of the active bot, from its deploy identity and this app's context and inputs. */
 export function productionApp(product: Pick<ProductionOptions, 'serving' | 'credentials'> = {}): App {
   const app = new App();
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');

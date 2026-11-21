@@ -329,7 +329,7 @@
   min-height: 36px;
 }
 
-/* The cartridge's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.chat-composer`. */
+/* The bot's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.chat-composer`. */
 .composer-accessory {
   display: flex;
   width: calc(min(720px, 100%) - 3rem);

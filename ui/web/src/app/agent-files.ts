@@ -4,7 +4,7 @@ import { deleteFile, fileDownloadUrl, saveArtifact, uploadFile, type ArtifactSav
 
 const CHAT_SERVICE_URL = chatServiceUrl();
 
-/** The agent's files, on the Files routes every Cartridge's Chat Service mounts (`botcube-chat/computer-files-routes`). */
+/** The agent's files, on the Files routes every bot's Chat Service mounts (`botcube-chat/computer-files-routes`). */
 export const agentFiles = {
   /** A short-lived URL for one of the agent's files, by the path a reply names it with: `/chart.svg`, percent-encoded. */
   url: (path: string) => fileDownloadUrl(decodeURIComponent(path.slice(1)), { chatServiceUrl: CHAT_SERVICE_URL }),

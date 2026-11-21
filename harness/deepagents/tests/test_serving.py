@@ -561,7 +561,7 @@ def test_the_sandbox_shell_carries_the_logical_session_id(service: _Service) -> 
 
 @pytest.mark.parametrize(
     ('service', 'variable'),
-    [('CARTRIDGE_OWNER_SESSION_ID', 'CARTRIDGE_OWNER_SESSION_ID'),
+    [('BOT_OWNER_SESSION_ID', 'BOT_OWNER_SESSION_ID'),
      ('BOTCUBE_EXAMPLE_SESSION_ID', 'BOTCUBE_EXAMPLE_SESSION_ID')],
     indirect=['service'],
 )

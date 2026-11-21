@@ -287,7 +287,7 @@ test('runtime IAM denies every Memory operation and retains only audited harmles
   });
 });
 
-test('synthesizes the Cartridge-owned physical resource identities', () => {
+test('synthesizes the bot-owned physical resource identities', () => {
   const spec = readProjectSpec(DEPLOY_ROOT);
   const app = new cdk.App();
   const stack = new AgentCoreStack(app, 'PhysicalIdentityStack', {
@@ -578,7 +578,7 @@ test("the runtime role reaches no account's Files: no S3 or S3 Files action (ADR
   expect(statements.flatMap(actions).filter(action => action.startsWith('s3:'))).toEqual([]);
 });
 
-test('refuses a spec whose resources cannot take the one Cartridge-owned name', () => {
+test('refuses a spec whose resources cannot take the one bot-owned name', () => {
   const spec = readProjectSpec(DEPLOY_ROOT);
   spec.runtimes.push({ ...onlyOf(spec.runtimes), name: 'second_runtime' });
 

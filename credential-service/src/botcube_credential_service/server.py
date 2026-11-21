@@ -30,7 +30,7 @@ SESSION_HEADER = 'X-BotCube-Session-Id'
 
 @dataclass(frozen=True)
 class CredentialServiceSettings:
-    """What the Cartridge composing the Credential Service names."""
+    """What the bot composing the Credential Service names."""
 
     # The service name /health answers.
     name: str

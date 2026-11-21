@@ -1,4 +1,4 @@
-"""The active Cartridge's deploy identity: its `identity.json` over BotCube's `identity-defaults.json`."""
+"""The active bot's deploy identity: its `identity.json` over BotCube's `identity-defaults.json`."""
 
 import json
 import os
@@ -11,11 +11,11 @@ T = TypeVar('T')
 _DEFAULTS = Path(__file__).resolve().parents[1] / 'identity-defaults.json'
 
 
-def _over(defaults: Any, cartridge: Any) -> Any:
-    """`cartridge` over `defaults`: objects merge key by key; any other value the Cartridge sets replaces the default."""
-    if not isinstance(defaults, dict) or not isinstance(cartridge, dict):
-        return cartridge
-    return {**defaults, **{key: _over(defaults.get(key), value) for key, value in cartridge.items()}}
+def _over(defaults: Any, bot: Any) -> Any:
+    """`bot` over `defaults`: objects merge key by key; any other value the bot sets replaces the default."""
+    if not isinstance(defaults, dict) or not isinstance(bot, dict):
+        return bot
+    return {**defaults, **{key: _over(defaults.get(key), value) for key, value in bot.items()}}
 
 
 def deploy_root() -> Path:

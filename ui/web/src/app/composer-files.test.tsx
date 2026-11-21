@@ -60,7 +60,7 @@ describe('SentFileCards', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows a sent image as its thumbnail from the cartridge's file URL, and any other file as its card", async () => {
+  it("shows a sent image as its thumbnail from the bot's file URL, and any other file as its card", async () => {
     const fileUrl = vi.fn(async (path: string) => `https://files.test${path}`);
     render(<SentFileCards paths={['/Pasted image 2026-10-13.png', '/notes.pdf', '/logo.svg']} fileUrl={fileUrl} />);
 
