@@ -9,19 +9,18 @@ corepack pnpm --dir infra/ecs/cdk build
 corepack pnpm --dir infra/ecs/cdk test --runInBand
 ```
 
-Synthesize the template's foundation stacks from that same directory:
+Synthesize the public example's foundation stacks from that same directory:
 
 ```sh
-BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
+BOTCUBE_DEPLOY_ROOT="$PWD/examples/public/deploy" BOTCUBE_REPOSITORY_ROOT="$PWD" \
   corepack pnpm --dir infra/ecs/cdk cdk synth -c parked=true \
   -c 'webLatencyMoments=["first-response","tool-result"]'
 ```
 
-Replace the example event names with the moments your UI emits. The template
+Replace the example event names with the moments your UI emits. The example
 has no latency budget file, so the moments must be supplied explicitly. This
 synthesizes storage, egress, health, and latency monitoring without the serving
-origin. See [template identity](../../../templates/always-on/IDENTITY.md) for serving-origin
-inputs. Synthesis does not deploy resources. Every synth needs
+origin. Synthesis does not deploy resources. Every synth needs
 `-c parked=true|false`; deploys read it from the application's stored park state.
 
 The `chat` table uses on-demand billing, point-in-time recovery, deletion

@@ -1,5 +1,5 @@
-# Exercise deployable images with the local neutral infrastructure. The Credential Service and fake site stay
-# the local stand-ins (credential-service.Dockerfile): BotCube builds no deployable Credential Service image of its own.
+# Exercise deployable images with the local neutral infrastructure. The Credential Service and fake site stay the
+# local stand-ins (credential-service.Dockerfile): the stock Credential Service serves no fake site.
 services:
   chat-table-init:
     image: botcube-production-harness

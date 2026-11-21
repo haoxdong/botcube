@@ -21,7 +21,6 @@ jobs:
           - suite: credential-service
           - suite: harness/deepagents
           - suite: harness/deepagents/tools
-          - suite: templates/always-on
           - suite: infra
     # The hosted runner's Chrome, which the Agent Computer tests launch, as private CI's Integration jobs name it.
     env:

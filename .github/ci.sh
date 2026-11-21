@@ -4,16 +4,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 suite=${CI_SUITE:-all}
-python_packages=(credential-service harness/deepagents harness/deepagents/tools templates/always-on infra)
+python_packages=(credential-service harness/deepagents harness/deepagents/tools infra)
 case "$suite" in
-  all|node|cdk|credential-service|harness/deepagents|harness/deepagents/tools|templates/always-on|infra) ;;
+  all|node|cdk|credential-service|harness/deepagents|harness/deepagents/tools|infra) ;;
   *) echo "Unknown CI_SUITE: $suite" >&2; exit 2 ;;
 esac
 
 pnpm install --frozen-lockfile
 
 if [[ "$suite" == all || "$suite" == node ]]; then
-  uv sync --frozen --quiet --directory templates/always-on
+  # The Chat Service tests run moto on the Harness interpreter and the fake site on the Credential Service one.
+  uv sync --frozen --quiet --directory harness/deepagents
+  uv sync --frozen --quiet --directory credential-service
   pnpm run pretest:chat
   pnpm exec vitest run --maxWorkers=4
 fi

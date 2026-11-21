@@ -46,7 +46,7 @@ describe('tokens', () => {
 
 });
 
-it.each([...APP_SHEETS, 'ui/web/src/computer/styles.css', 'ui/web/src/computer/files-menu.css', 'ui/web/src/computer/live-browser.css', 'templates/always-on/ui/web/src/styles.css'])('%s keeps to the tokens', (file) => {
+it.each([...APP_SHEETS, 'ui/web/src/computer/styles.css', 'ui/web/src/computer/files-menu.css', 'ui/web/src/computer/live-browser.css'])('%s keeps to the tokens', (file) => {
   expect(offences(rulesOf(read(file), { tokens: file === GLOBALS }), tokens)).toEqual({
     rawColours: [],
     namedColours: [],
@@ -119,8 +119,8 @@ it('guards every stylesheet against sticky hover', () => {
 
 // The maintainer, 2026-11-03: users with Reduce Motion on didn't get the full experience. BotCube moves the same for
 // everyone, and a Reduce Motion path has come back more than once.
-it.each(['ui/web/src', ...readdirSync(path.join(cube, 'templates')).map((name) => `templates/${name}/ui/web/src`)])('%s never reads Reduce Motion', (root) => {
-  expect(reduceMotionPathsIn(path.join(cube, root))).toEqual([]);
+it('ui/web/src never reads Reduce Motion', () => {
+  expect(reduceMotionPathsIn(path.join(cube, 'ui/web/src'))).toEqual([]);
 });
 
 it('finds Reduce Motion in sources but not in tests', () => {

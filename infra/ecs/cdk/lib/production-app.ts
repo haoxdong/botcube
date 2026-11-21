@@ -25,6 +25,12 @@ export function productionChatImage(repositoryRoot: string, deployRoot: string):
   };
 }
 
+/** The preview origin's Credential Service image: the deploy root's own, or else the stock one from `credential-service/`. */
+export function productionCredentialImage(repositoryRoot: string, deployRoot: string): string {
+  const own = path.join(deployRoot, 'credential-service/Dockerfile');
+  return path.relative(repositoryRoot, fs.existsSync(own) ? own : path.resolve(projectDir(__dirname), '../../../credential-service/Dockerfile'));
+}
+
 /** HEAD, marked `-dirty` when tracked files differ from it, so a deploy never claims a commit it did not ship. */
 function checkoutCommit(root: string): string {
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
@@ -37,7 +43,6 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = activeDeployRoot();
   const identity = deployIdentity(deployRoot);
-  const cartridgeFile = (file: string) => path.relative(repositoryRoot, path.join(deployRoot, file));
   let origin;
   let chat;
   if (app.node.tryGetContext('previewOrigin')) {
@@ -49,7 +54,7 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
       images: {
         chat: ContainerImage.fromAsset(repositoryRoot, repositoryImageProps(repositoryRoot, chatImage.file)),
-        credential: credentialServiceImage(repositoryRoot, repositoryImageProps(repositoryRoot, cartridgeFile('credential-service/Dockerfile'))),
+        credential: credentialServiceImage(repositoryRoot, repositoryImageProps(repositoryRoot, productionCredentialImage(repositoryRoot, deployRoot))),
       },
       commit: checkoutCommit(repositoryRoot),
     };

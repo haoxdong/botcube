@@ -35,7 +35,7 @@ const CHAT_IMAGE: ExampleImage = {
   name: 'chat', dockerfile: path.resolve(__dirname, '../../../../chat/Dockerfile'), sources: '${BOTCUBE_ROOT}/examples/', root: IMAGE_EXAMPLES_ROOT,
 };
 const CREDENTIAL_IMAGE: ExampleImage = {
-  name: 'Credential Service', dockerfile: path.resolve(__dirname, '../../../../templates/always-on/deploy/credential-service/Dockerfile'),
+  name: 'Credential Service', dockerfile: path.resolve(__dirname, '../../../../credential-service/Dockerfile'),
   sources: '${BOTCUBE_ROOT}/examples/', root: CREDENTIAL_IMAGE_EXAMPLES_ROOT,
 };
 /** The Runtime image, whose COPYs public/deploy/stage-tools.sh writes into the Harness build context's .tool-dist/Dockerfile. */

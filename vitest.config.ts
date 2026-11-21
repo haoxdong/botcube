@@ -58,7 +58,7 @@ export default defineConfig({
         },
       },
       { test: { ...node, name: 'integration-libreoffice', include: libreofficeTests, testTimeout: 30_000 } },
-      uiWeb('ui-web', ['ui/web/src/**/*.test.{ts,tsx}', 'ui/web/.storybook/*.test.ts', 'templates/always-on/ui/web/src/**/*.test.tsx'], [...uiWebMarkdown, ...libreofficeTests], 0),
+      uiWeb('ui-web', ['ui/web/src/**/*.test.{ts,tsx}', 'ui/web/.storybook/*.test.ts'], [...uiWebMarkdown, ...libreofficeTests], 0),
       uiWeb('ui-web-markdown', uiWebMarkdown, [], 2),
     ],
   },

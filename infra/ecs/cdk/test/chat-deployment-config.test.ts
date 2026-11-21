@@ -10,7 +10,7 @@ import { synthesizeExample, synthesizeExampleAt } from './example-fixture.js';
 interface Container { Name: string; Environment?: { Name: string; Value: unknown }[] }
 
 const DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../chat/Dockerfile'), 'utf8').split('\n');
-const CREDENTIAL_DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../templates/always-on/deploy/credential-service/Dockerfile'), 'utf8').split('\n');
+const CREDENTIAL_DOCKERFILE = fs.readFileSync(path.resolve(__dirname, '../../../../credential-service/Dockerfile'), 'utf8').split('\n');
 
 function containerEnvironment(app: App, name: string): Record<string, unknown> {
   const origin = app.node.findChild('PreviewOrigin') as Stack;

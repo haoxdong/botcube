@@ -4,7 +4,7 @@ This CDK project is managed by the AgentCore CLI. It deploys your agent infrastr
 
 ## Structure
 
-- `bin/cdk.ts` — Entry point. Reads project configuration from the active Cartridge deploy directory and creates a stack per deployment target.
+- `bin/cdk.ts` — Entry point. Reads project configuration from the active deploy root (`BOTCUBE_DEPLOY_ROOT`) and creates a stack per deployment target.
 - `lib/cdk-stack.ts` — Defines `AgentCoreStack`, which wraps the `AgentCoreApplication` L3 construct.
 - `test/cdk.test.ts` — Unit tests for stack synthesis.
 
@@ -18,16 +18,16 @@ This CDK project is managed by the AgentCore CLI. It deploys your agent infrastr
 
 ## Usage
 
-From the public repository root, select your Cartridge deploy directory and build the CDK package:
+From the public repository root, select your deploy root and build the CDK package:
 
 ```bash
-export BOTCUBE_DEPLOY_ROOT="$PWD/templates/always-on/deploy"
+export BOTCUBE_DEPLOY_ROOT="$PWD/examples/public/deploy"
 corepack pnpm --dir infra/agentcore/cdk run build
 corepack pnpm --dir infra/agentcore/cdk exec cdk synth
 corepack pnpm --dir infra/agentcore/cdk exec cdk diff
 ```
 
-Replace the template's placeholder AWS settings and stage your Cartridge's production image inputs before deployment. Follow [the integration guide](../../../INTEGRATING.md) for composition and build inputs.
+Replace the example's placeholder AWS settings before deployment; synthesis runs the deploy root's tool-staging hook. Follow [the integration guide](../../../INTEGRATING.md) for composition and build inputs.
 
 Always synthesize and inspect the diff before deploying. Do not proceed if it replaces or deletes the configured runtime or memory.
 After deployment, send a real prompt and verify both the response and its structured CloudWatch event.

@@ -1,9 +1,9 @@
-// The preview origin's Chat Service image: a deploy root beside its own `chat/` builds that one; any other runs the
-// stock Chat Service, which needs a Deployment Config its image ships.
+// The preview origin's Chat Service and Credential Service images: a deploy root with its own builds that one; any
+// other runs the stock image (the Chat Service on a Deployment Config its image ships).
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { productionChatImage } from '../lib/production-app.js';
+import { productionChatImage, productionCredentialImage } from '../lib/production-app.js';
 import { repositoryImageProps } from '../lib/repository-image.js';
 
 const botcubeRoot = path.resolve(__dirname, '../../../..');
@@ -28,4 +28,18 @@ test('the public example, with no chat of its own, builds the stock Chat Service
   expect(repositoryImageProps(botcubeRoot, image.file).file).toBe('chat/Dockerfile');
   expect(fs.readFileSync(path.join(botcubeRoot, image.file), 'utf8'))
     .toContain('COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json examples/public/deployment-config.json');
+});
+
+test('a deploy root with its own Credential Service Dockerfile builds it', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'own-credential-'));
+  roots.push(root);
+  fs.mkdirSync(path.join(root, 'product/deploy/credential-service'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'product/deploy/credential-service/Dockerfile'), 'FROM scratch\n');
+  expect(productionCredentialImage(root, path.join(root, 'product/deploy'))).toBe('product/deploy/credential-service/Dockerfile');
+});
+
+test('the public example, with no Credential Service of its own, builds the stock one from the package alone', () => {
+  const file = productionCredentialImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
+  expect(file).toBe('credential-service/Dockerfile');
+  expect(repositoryImageProps(botcubeRoot, file).exclude).toEqual(['*', '!credential-service/Dockerfile', '!credential-service', '**/*.test.ts']);
 });

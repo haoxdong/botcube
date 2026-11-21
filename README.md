@@ -99,21 +99,22 @@ The Chat Service is configured, not extended: `serveChatService()` builds BotCub
 own Chat from the Deployment Config and bot settings ([`chat/src/stock.ts`](chat/src/stock.ts)).
 It keeps Session Metadata private and contains no product code or harness-library code.
 
-## Tools and deployment Cartridge contract
+## Tools and deployment
 
-Container tool installation is owned by the Cartridge's `deploy/stage-tools.sh`
-hook. Deployment names and provider values live under the Cartridge's `deploy/`
-directory and are injected into BotCube; no product default is allowed in
-the cube.
+A bot's CLIs install in its image (`examples/bot/Dockerfile`). Deployment names
+and provider values live in the deploy root (`examples/public/deploy/`), whose
+`stage-tools.sh` hook stages the bot's image for AgentCore, and are injected
+into BotCube; no product default is allowed in the cube.
 
-## Run the template
+## Run the example
 
-`templates/always-on/` is both the hello-world Cartridge and the cube test fixture. Run
-`infra/local/run.sh -d`, then `infra/local/smoke.sh`, and open
-`http://localhost:3001`. The template uses a credential-free echo model, an
-echo-only tool backend, a placeholder auth router and UI brand, SQLite
-checkpoints, and the Chat Service's Session Metadata. The automated local contract replaces the
-Harness process between turns and verifies resumption.
+`examples/bot/` and `examples/public/` are both the hello-world bot and the cube
+test fixture. Run `infra/local/run.sh -d`, then `infra/local/smoke.sh`, and open
+`http://localhost:3001`. The example uses a credential-free echo model, local
+stand-ins for the Credential Service and a site, the default UI plugin, SQLite
+checkpoints, and the Chat Service's Session Metadata. The automated local
+contract replaces the Harness process between turns and verifies resumption.
+[Integrating BotCube](INTEGRATING.md) starts your own bot from it.
 
 ## Owner Plan Usage sign-in
 

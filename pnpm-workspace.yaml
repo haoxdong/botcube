@@ -5,7 +5,6 @@ packages:
   - infra/agentcore/cdk
   - infra/ecs/cdk
   - ui/*
-  - templates/always-on/ui/*
 
 linkWorkspacePackages: true
 

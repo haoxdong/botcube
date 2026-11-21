@@ -443,43 +443,6 @@ importers:
         specifier: npm:@typescript/typescript6@^6.0.2
         version: '@typescript/typescript6@6.0.2'
 
-  templates/always-on/ui/web:
-    dependencies:
-      '@ag-ui/client':
-        specifier: 1.0.2
-        version: 1.0.2
-      '@copilotkit/react-core':
-        specifier: ^1.77.0
-        version: 1.83.0(patch_hash=01d4ce1f68fd89de75cd2e701aba590a4b993824d818eeac783a913c72aa4a01)(@cfworker/json-schema@4.1.1)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react-is@18.3.1)(react@19.3.1)(redux@5.0.1)(supports-color@7.2.0)(zod@4.6.7)
-      botcube-ui-web:
-        specifier: '*'
-        version: link:../../../../ui/web
-      lucide-react:
-        specifier: ^0.577.0
-        version: 0.577.0(react@19.3.1)
-      next:
-        specifier: 16.4.5
-        version: 16.4.5(@babel/core@7.29.7(supports-color@7.2.0))(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      react:
-        specifier: ^19
-        version: 19.3.1
-      react-dom:
-        specifier: ^19
-        version: 19.3.1(react@19.3.1)
-    devDependencies:
-      '@types/react':
-        specifier: ^19
-        version: 19.3.0
-      '@types/react-dom':
-        specifier: ^19
-        version: 19.3.0(@types/react@19.3.0)
-      happy-dom:
-        specifier: ^21.0.4
-        version: 21.0.4
-      supports-color:
-        specifier: ^7.2.0
-        version: 7.2.0
-
   ui/web:
     dependencies:
       '@ag-ui/client':

@@ -247,7 +247,7 @@ test('builds every image FROM the mirror registry', () => {
 });
 
 /** The Dockerfiles of the images BotCube builds, relative to botcube/, and the local stack's. */
-const DOCKERFILES = ['chat/Dockerfile', 'templates/always-on/deploy/credential-service/Dockerfile', 'harness/deepagents/Dockerfile',
+const DOCKERFILES = ['chat/Dockerfile', 'credential-service/Dockerfile', 'harness/deepagents/Dockerfile',
   'harness/deepagents/session-api.Dockerfile', 'examples/bot/Dockerfile', 'ui/web/Dockerfile'];
 const LOCAL_DOCKERFILES = ['infra/local/chat.Dockerfile', 'infra/local/ui.Dockerfile', 'infra/local/harness.Dockerfile', 'infra/local/credential-service.Dockerfile'];
 const readDockerfile = (file: string) => fs.readFileSync(path.resolve(__dirname, '../../../..', file), 'utf8');

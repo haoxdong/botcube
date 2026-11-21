@@ -41,9 +41,9 @@ test('a neutral Dockerfile asset follows only its own shipped sources', () => {
 
 test.each(['botcube', '.'])('Cartridge image includes BotCube sources from %s repository layout', (cubeRoot) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cartridge-image-'));
-  const source = path.join(root, cubeRoot, 'templates/always-on');
+  const source = path.join(root, cubeRoot, 'credential-service');
   fs.mkdirSync(source, { recursive: true });
-  fs.writeFileSync(path.join(root, 'Dockerfile'), 'FROM scratch\nARG BOTCUBE_ROOT=botcube\nCOPY ${BOTCUBE_ROOT}/templates/always-on/ /app/\n');
+  fs.writeFileSync(path.join(root, 'Dockerfile'), 'FROM scratch\nARG BOTCUBE_ROOT=botcube\nCOPY ${BOTCUBE_ROOT}/credential-service/ /app/\n');
   fs.writeFileSync(path.join(source, 'app.txt'), 'first');
   const before = assetHash(root, 'Dockerfile');
   fs.writeFileSync(path.join(source, 'app.txt'), 'second');
