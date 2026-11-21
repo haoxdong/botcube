@@ -236,7 +236,11 @@ const ADAPTERS: { readonly [S in Section]: { readonly [K in DeploymentConfig[S][
     },
     // Both services export straight to the Endpoint with the credential they read.
     // AgentCore's Runtime construct grants the Harness X-Ray unless telemetry is none.
-    otlp: ({ url, credential }) => [{ egressHosts: [new URL(url).host], iam: { harness: { actions: XRAY } } }, ...(credential ? [credentialNeed('telemetry.credential', credential, ['chatService', 'harness'])] : [])],
+    otlp: ({ url, credential, tls }) => [
+      { egressHosts: [new URL(url).host], iam: { harness: { actions: XRAY } } },
+      ...(credential ? [credentialNeed('telemetry.credential', credential, ['chatService', 'harness'])] : []),
+      ...tlsNeed('telemetry.tls', tls, ['chatService', 'harness']),
+    ],
     none: {},
   },
   proxy: {

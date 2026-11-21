@@ -190,7 +190,9 @@ const telemetry = z.discriminatedUnion('kind', [
     url: httpUrl.describe('The OTLP/HTTP traces endpoint the services export to, such as http://collector:4318/v1/traces.'),
     credential: credentialSource.optional().describe('Sent as `Authorization: Bearer <value>`; absent, exports are unauthenticated.'),
     headers: endpointHeaders,
-  }).describe("The operator's own OTLP collector, an Endpoint both services export to directly."),
+    tls: endpointTls.optional(),
+  }).refine(({ url, tls }) => tls === undefined || url.startsWith('https:'), { path: ['tls'], message: 'TLS needs the OTLP Endpoint at an https URL' })
+    .describe("The operator's own OTLP collector, an Endpoint both services export to directly."),
   kindOnly('none').describe('No traces leave the services, and no collector or X-Ray grant is created.'),
 ]);
 
@@ -250,10 +252,11 @@ export const deploymentSections = z.strictObject({
 
 
 /** Every Endpoint TLS block the Deployment Config names, by its path. */
-export function tlsFields({ models, proxy }: z.output<typeof deploymentSections>): [path: string[], tls: EndpointTls][] {
+export function tlsFields({ models, proxy, telemetry }: z.output<typeof deploymentSections>): [path: string[], tls: EndpointTls][] {
   return [
     ...(models.kind === 'openai-compatible' && models.tls ? [[['models', 'tls'], models.tls] satisfies [string[], EndpointTls]] : []),
     ...(proxy.kind === 'forward' && proxy.tls ? [[['proxy', 'tls'], proxy.tls] satisfies [string[], EndpointTls]] : []),
+    ...(telemetry.kind === 'otlp' && telemetry.tls ? [[['telemetry', 'tls'], telemetry.tls] satisfies [string[], EndpointTls]] : []),
   ];
 }
 

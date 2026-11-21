@@ -12,6 +12,7 @@ from threading import Lock, Thread
 from urllib.parse import urlsplit
 from weakref import WeakValueDictionary
 
+import requests
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.httpsession import URLLib3Session
@@ -21,7 +22,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
 )
 from opentelemetry.proto.trace.v1.trace_pb2 import Status
 
-from .telemetry_credential import telemetry_credential
+from .telemetry_credential import telemetry_credential, telemetry_session, telemetry_tls
 
 log = logging.getLogger(__name__)
 
@@ -79,18 +80,6 @@ class _RelayServer(ThreadingHTTPServer):
         log.exception('Trace relay could not count failed CLI calls in, or forward, an export from %s', client_address)
 
 
-def _telemetry_bearer() -> Callable[[AWSRequest], None] | None:
-    """The telemetry Endpoint's credential as the bearer, when the deploy set one; otherwise exports are SigV4-signed."""
-    source = telemetry_credential()
-    if source is None:
-        return None
-
-    def authorize(request: AWSRequest) -> None:
-        request.headers['Authorization'] = f'Bearer {source.get().value}'
-
-    return authorize
-
-
 @cache
 def harness_trace_relay() -> str | None:
     """The relay's traces endpoint, started once and only when this process exports its own traces over OTLP."""
@@ -99,13 +88,16 @@ def harness_trace_relay() -> str | None:
     return start_trace_relay()
 
 
-def _upstream() -> tuple[str, Callable[[AWSRequest], None]]:
+_Send = Callable[[AWSRequest], tuple[int, bytes]]
+
+
+def _upstream() -> tuple[str, _Send]:
+    """Where exports go and how: to the telemetry Endpoint with its credential and TLS when the deploy set either, otherwise SigV4-signed."""
     endpoint = os.environ.get('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
-    bearer = _telemetry_bearer()
-    if bearer is not None:
+    if telemetry_credential() is not None or telemetry_tls() is not None:
         if not endpoint:
             raise RuntimeError('The trace relay sends the telemetry credential only to OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, which is unset')
-        return endpoint, bearer
+        return endpoint, _endpoint_send(telemetry_session())
     session = Session()
     # botocore alone reads only AWS_DEFAULT_REGION; ADOT resolves AWS_REGION first.
     region = os.environ.get('AWS_REGION') or session.get_config_variable('region')
@@ -113,7 +105,28 @@ def _upstream() -> tuple[str, Callable[[AWSRequest], None]]:
     if not region or credentials is None:
         raise RuntimeError('The trace relay needs an AWS region and AWS credentials to sign trace exports')
     # ADOT sets this to the region's X-Ray endpoint when agent observability is on.
-    return endpoint or f'https://xray.{region}.amazonaws.com/v1/traces', SigV4Auth(credentials, 'xray', region).add_auth
+    return endpoint or f'https://xray.{region}.amazonaws.com/v1/traces', _signed_send(SigV4Auth(credentials, 'xray', region))
+
+
+def _endpoint_send(session: requests.Session) -> _Send:
+    def send(request: AWSRequest) -> tuple[int, bytes]:
+        response = session.request(
+            request.method or 'POST', request.url or '', data=request.body, headers=dict(request.headers.items()), allow_redirects=False,
+        )
+        return response.status_code, response.content
+
+    return send
+
+
+def _signed_send(auth: SigV4Auth) -> _Send:
+    upstream = URLLib3Session()
+
+    def send(request: AWSRequest) -> tuple[int, bytes]:
+        auth.add_auth(request)
+        response = upstream.send(request.prepare())
+        return response.status_code, response.content
+
+    return send
 
 
 def start_trace_relay() -> str:
@@ -122,8 +135,7 @@ def start_trace_relay() -> str:
     The runtime's X-Ray endpoint rejects unsigned exports, and a shell command's Node exporter cannot sign. With the
     telemetry Endpoint's credential set, the relay sends it as the bearer and needs no AWS identity.
     """
-    endpoint, authorize = _upstream()
-    upstream = URLLib3Session()
+    endpoint, send = _upstream()
 
     origin = endpoint.removesuffix(urlsplit(endpoint).path)
 
@@ -149,10 +161,9 @@ def start_trace_relay() -> str:
             # A trace export failure is the Harness's error, not the command's: answering first keeps it out of the
             # command's exit status and off the agent's tool result.
             self._respond_accepted()
-            authorize(request)
-            response = upstream.send(request.prepare())
-            if response.status_code >= 300:
-                log.error('Trace relay export to %s failed: %s %s', endpoint, response.status_code, response.content[:500])
+            status, content = send(request)
+            if status >= 300:
+                log.error('Trace relay export to %s failed: %s %s', endpoint, status, content[:500])
 
         def _body(self) -> bytes:
             # http.server leaves chunked bodies undecoded, and the Node exporter sends chunked.

@@ -1,16 +1,23 @@
-"""The telemetry Endpoint's credential on the Harness's OTLP exporter.
+"""The telemetry Endpoint's credential and TLS on the Harness's OTLP exporter.
 
 OpenTelemetry Python loads this as the `botcube` `opentelemetry_otlp_credential_provider` entry point when
 OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER names it, as botcube/deployment-config's `telemetry.ts` sets it
-beside the Deployment Config's `otlp` Endpoint; the Credential Source is read from the file.
+beside the Deployment Config's `otlp` Endpoint; the Credential Source and the TLS are read from the file.
 """
 from __future__ import annotations
 
+import socket
+import ssl
+import threading
+from typing import Any
+
 import requests
+from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 
 from .credential_source import CredentialSource, credential_source
 from .deployment_config import deployment_config_from_env
+from .endpoint_tls import EndpointTls, EndpointTlsError, endpoint_tls
 
 
 class _Bearer(AuthBase):
@@ -24,13 +31,62 @@ class _Bearer(AuthBase):
         return r
 
 
+class _TlsAdapter(HTTPAdapter):
+    """Opens each https connection, direct or through a proxy's tunnel, with the Endpoint's TLS in place of requests' own."""
+
+    def __init__(self, tls: EndpointTls) -> None:
+        self._context = _per_connection_context(tls)
+        super().__init__()
+
+    def build_connection_pool_key_attributes(
+        self, request: requests.PreparedRequest, verify: bool | str, cert: str | tuple[str, str] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        host, pool = super().build_connection_pool_key_attributes(request, verify, cert)
+        return host, {**pool, 'ssl_context': self._context, 'assert_hostname': False}
+
+
+def _per_connection_context(tls: EndpointTls) -> ssl.SSLContext:
+    """A context that presents the client certificate as read for each new connection, and refuses a server without the
+    expected identity before anything is sent; with no identity expected, it checks the hostname itself."""
+    lock = threading.Lock()
+
+    class PerConnection(ssl.SSLContext):
+        def wrap_socket(
+            self, sock: socket.socket, server_side: bool = False, do_handshake_on_connect: bool = True,
+            suppress_ragged_eofs: bool = True, server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
+        ) -> ssl.SSLSocket:
+            with lock:
+                # urllib3 turns the hostname check off on this shared context (assert_hostname=False); put it back, and
+                # `tls.context` takes it off again only when an identity is expected, which `tls.check` then verifies.
+                self.verify_mode = ssl.CERT_REQUIRED
+                self.check_hostname = True
+                tls.context(lambda: self)
+                secured = super().wrap_socket(sock, server_side, do_handshake_on_connect, suppress_ragged_eofs, server_hostname, session)
+            tls.check(secured)
+            return secured
+
+        def wrap_bio(
+            self, incoming: ssl.MemoryBIO, outgoing: ssl.MemoryBIO, server_side: bool = False,
+            server_hostname: str | bytes | None = None, session: ssl.SSLSession | None = None,
+        ) -> ssl.SSLObject:
+            raise EndpointTlsError('telemetry TLS: the Endpoint is reached through an https proxy, which the Harness tunnels only over http')
+
+    context = PerConnection(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs()
+    return context
+
+
 def telemetry_session() -> requests.Session:
-    """A session that authenticates each export with the telemetry credential the deploy set."""
+    """A session that authenticates each export with the telemetry credential and connects with the TLS the deploy set."""
     source = telemetry_credential()
-    if source is None:
-        raise RuntimeError('The Deployment Config names no telemetry.credential; the deploy sets the botcube OTLP credential provider only beside one')
+    tls = telemetry_tls()
+    if source is None and tls is None:
+        raise RuntimeError('The Deployment Config names no telemetry.credential or telemetry.tls; the deploy sets the botcube OTLP credential provider only beside one')
     session = requests.Session()
-    session.auth = _Bearer(source)
+    if source is not None:
+        session.auth = _Bearer(source)
+    if tls is not None:
+        session.mount('https://', _TlsAdapter(tls))
     return session
 
 
@@ -38,3 +94,9 @@ def telemetry_credential() -> CredentialSource | None:
     """The Deployment Config's `otlp` Endpoint credential, or None."""
     telemetry = deployment_config_from_env()['telemetry']
     return credential_source('telemetry.credential', telemetry['credential']) if 'credential' in telemetry else None
+
+
+def telemetry_tls() -> EndpointTls | None:
+    """The Deployment Config's `otlp` Endpoint TLS, or None."""
+    telemetry = deployment_config_from_env()['telemetry']
+    return endpoint_tls('telemetry', telemetry['tls']) if 'tls' in telemetry else None

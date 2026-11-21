@@ -22,7 +22,7 @@ export function telemetryDeployment(telemetry: DeploymentConfig['telemetry']): T
   if (telemetry.kind === 'none') {
     return { chatService: {}, harness: { OTEL_SDK_DISABLED: 'true', OTEL_TRACES_EXPORTER: 'none', AGENT_OBSERVABILITY_ENABLED: 'false' }, secretArns: [] };
   }
-  const { url, credential, headers } = telemetry;
+  const { url, credential, headers, tls } = telemetry;
   const shared = {
     OTEL_TRACES_EXPORTER: 'otlp',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: url,
@@ -30,7 +30,7 @@ export function telemetryDeployment(telemetry: DeploymentConfig['telemetry']): T
   };
   return {
     chatService: shared,
-    harness: { ...shared, ...(credential ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
+    harness: { ...shared, ...(credential || tls ? { OTEL_PYTHON_EXPORTER_OTLP_HTTP_TRACES_CREDENTIAL_PROVIDER: HARNESS_CREDENTIAL_PROVIDER } : {}) },
     secretArns: credential ? secretArns(credential) : [],
   };
 }

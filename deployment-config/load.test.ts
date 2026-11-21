@@ -424,21 +424,24 @@ describe('Endpoint TLS', () => {
   const CERTIFICATE_COMMAND = { command: ['/usr/local/bin/svid-broker', '--audience', 'models'] };
   const IDENTITY = 'spiffe://example.org/ns/egress/sa/proxy';
   const PROXY = { kind: 'forward', url: 'https://proxy.example.com:3129' };
+  const COLLECTOR = { kind: 'otlp', url: 'https://collector.example.com/v1/traces' };
 
   it.each([
     ['a client certificate from a file pair', { clientCertificate: FILES }],
     ['an expected server identity', { serverIdentity: IDENTITY }],
     ['both', { clientCertificate: FILES, serverIdentity: 'https://models.example.com/gateway' }],
-  ])('gives the models Endpoint and the proxy %s', (_, tls) => {
-    const { config } = loadDeployment(configFile({ bot: './bot.json', models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls } }));
-    expect([config.models, config.proxy]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }]);
+  ])('gives the models Endpoint, the proxy and the OTLP Endpoint %s', (_, tls) => {
+    const { config } = loadDeployment(configFile({ bot: './bot.json', models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls }, telemetry: { ...COLLECTOR, tls } }));
+    expect([config.models, config.proxy, config.telemetry]).toEqual([{ ...ENTERPRISE_MODELS, wire: 'chat-completions', tls }, { ...PROXY, tls }, { ...COLLECTOR, tls }]);
   });
 
   it('runs an opted-in command for a client certificate, 30 s at most unless it says otherwise', () => {
     const tls = { clientCertificate: CERTIFICATE_COMMAND };
-    const { config } = loadDeployment(configFile({ bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls } }));
+    const { config } = loadDeployment(configFile({
+      bot: './bot.json', allowCommandCredentials: true, models: { ...ENTERPRISE_MODELS, tls }, proxy: { ...PROXY, tls }, telemetry: { ...COLLECTOR, tls },
+    }));
     const expected = { clientCertificate: { ...CERTIFICATE_COMMAND, timeoutSeconds: 30 } };
-    expect([config.models, config.proxy]).toMatchObject([{ tls: expected }, { tls: expected }]);
+    expect([config.models, config.proxy, config.telemetry]).toMatchObject([{ tls: expected }, { tls: expected }, { tls: expected }]);
   });
 
   it.each([
@@ -453,8 +456,10 @@ describe('Endpoint TLS', () => {
     ['an unknown TLS field, such as a CA bundle', { models: { ...ENTERPRISE_MODELS, tls: { serverIdentity: IDENTITY, trustBundle: '/run/bundle.pem' } } }, 'models.tls.trustBundle: Unrecognized key'],
     ['TLS on a proxy reached over http', { proxy: { kind: 'forward', url: 'http://proxy.example.com:3128', tls: { serverIdentity: IDENTITY } } },
       'proxy.tls: TLS needs the proxy at an https URL'],
-    ['TLS on the OTLP Endpoint, which does not apply it yet', { telemetry: { kind: 'otlp', url: 'https://collector.example.com/v1/traces', tls: { serverIdentity: IDENTITY } } },
-      'telemetry.tls: Unrecognized key'],
+    ['an OTLP client certificate command without the opt-in', { telemetry: { ...COLLECTOR, tls: { clientCertificate: CERTIFICATE_COMMAND } } },
+      'telemetry.tls.clientCertificate: A command client certificate runs only when allowCommandCredentials is true'],
+    ['TLS on an OTLP Endpoint reached over http', { telemetry: { ...COLLECTOR, url: 'http://collector.example.com:4318/v1/traces', tls: { serverIdentity: IDENTITY } } },
+      'telemetry.tls: TLS needs the OTLP Endpoint at an https URL'],
   ])('stops on %s and names the field', (_, sections, field) => {
     const path = configFile({ bot: './bot.json', ...sections });
     expect(() => loadDeployment(path)).toThrow(`Deployment Config ${path}: ${field}`);

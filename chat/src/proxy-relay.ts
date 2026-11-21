@@ -140,6 +140,7 @@ function relay(client: Socket, upstream: URL, head: string, rest: Buffer, tls: T
     client.destroy();
   });
   client.on('close', () => proxy.destroy());
+  proxy.on('close', () => client.end().resume());
   proxy.once(secure ? 'secureConnect' : 'connect', () => {
     proxy.write(head);
     if (rest.length) proxy.write(rest);

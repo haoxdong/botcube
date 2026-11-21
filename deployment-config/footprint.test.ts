@@ -343,11 +343,17 @@ describe('Endpoint TLS', () => {
   });
 
   it("prints each Endpoint's expected identity and certificate files, by who connects to it", () => {
-    const printed = formatFootprint(footprint({ ...config, models: { ...models, tls: files }, proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files } }));
+    const printed = formatFootprint(footprint({
+      ...config,
+      models: { ...models, tls: files },
+      proxy: { ...proxy, url: 'https://proxy.example.com:3129', tls: files },
+      telemetry: { kind: 'otlp', url: 'https://otel-collector.example.com/v1/traces', tls: files },
+    }));
 
     expect(section(printed, 'TLS')).toEqual([
       '  models.tls (chatService, credentialService): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
       '  proxy.tls (chatService, credentialService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
+      '  telemetry.tls (chatService, harness): server identity spiffe://example.org/ns/egress/sa/proxy; client certificate /run/spiffe/svid.pem, key /run/spiffe/svid-key.pem',
     ]);
   });
 
