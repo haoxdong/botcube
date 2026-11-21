@@ -5,6 +5,7 @@ import { Presence, presenceMotion, CollapseList, FadeItem, useInstant } from "./
 
 import { useEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type RefObject } from "react";
 import { RotateCw, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { fileExtension, FileTypeIcon, isImageName } from "../components/file-type-icon";
 import { attachmentAccountEpoch, subscribeAttachmentAccount } from "../plugin/file-account";
 
@@ -389,7 +390,7 @@ export function ComposerFileChips({ files, onRetry, onRemove }: { files: Compose
 /** The file picker the composer's + opens, hidden. */
 export function ComposerFilePicker({ picker, add }: { picker: RefObject<HTMLInputElement | null>; add: ComposerFiles["add"] }) {
   return (
-    <input
+    <Input
       ref={picker}
       type="file"
       multiple

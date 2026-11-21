@@ -4,6 +4,7 @@ import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "./collapse";
 
 import { Button } from "../components/pill-button";
+import { Input } from "@/components/ui/input";
 import { Avatar, resizedPicture } from "./avatar";
 
 const MotionButton = motionElement.create(Button);
@@ -46,7 +47,7 @@ export function PictureField({
       <Avatar picture={picture} emoji={emoji} name={name} agent={agent} size={size} />
       <label className="button picture-upload">
         Upload {noun}
-        <input type="file" accept="image/*" onChange={(event) => void choose(event.target.files?.[0])} />
+        <Input type="file" accept="image/*" onChange={(event) => void choose(event.target.files?.[0])} />
       </label>
       <Presence>{picture && (
         <MotionButton {...presenceMotion} type="button" onClick={() => onChange(null)}>
