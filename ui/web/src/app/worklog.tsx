@@ -2,7 +2,7 @@
 
 
 import { m as motionElement } from "motion/react";
-import { useRenderToolCall } from "@copilotkit/react-core/v2";
+import { useRenderToolCall } from "@copilotkit/react-core/v2/headless";
 import { partialJSONParse } from "@copilotkit/shared";
 import { Fade, Presence, presenceMotion } from "./collapse";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceDescription, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
