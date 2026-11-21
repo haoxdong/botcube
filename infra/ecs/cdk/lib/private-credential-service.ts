@@ -1,6 +1,6 @@
 import { parkState } from './park-state.js';
 import { optionalPhysicalName } from './physical-name.js';
-import { CfnOutput, CfnResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { CfnOutput, CfnResource, Duration, Names, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -23,7 +23,7 @@ export const CREDENTIAL_SERVICE_ENV = {
   invocationToken: 'BOTCUBE_CREDENTIAL_INVOCATION_SECRET',
   port: 'PORT',
   keyId: 'BOTCUBE_VAULT_KMS_KEY_ID',
-  sheetKeyId: 'BOTCUBE_SHEET_KMS_KEY_ID',
+  sheetKeyAlias: 'BOTCUBE_SHEET_KMS_ALIAS',
   vaultTable: 'BOTCUBE_VAULT_TABLE',
 } as const;
 
@@ -74,8 +74,8 @@ export interface PrivateCredentialServiceProps {
   suppliedVaultTableName?: string;
   /** A supplied key, with its grants, to encrypt the vault with instead of creating one: the task is granted nothing on it. */
   suppliedVaultKeyArn?: string;
-  /** A supplied RSA_2048 ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
-  suppliedSheetKeyArn?: string;
+  /** The alias ARN of a supplied RSA ENCRYPT_DECRYPT key, with its grants, for the Sign-in Sheet instead of creating one. */
+  suppliedSheetKeyAlias?: string;
   /** A supplied key, with its grants, encrypting the audit-copy Lambda's environment instead of the AWS managed key. */
   suppliedFunctionsKeyArn?: string;
   /**
@@ -132,7 +132,7 @@ export class PrivateCredentialService extends Construct {
     });
     nameTaskRoles(task, props.taskRoleName, props.executionRoleName, props.executionRole);
     const key = vaultKey(this, props, task);
-    const sheetKey = signInSheetKey(this, props, task);
+    const sheetKeyAlias = signInSheetKeyAlias(this, props, task);
     const vault = (id: string, tableName: string, sortKey?: string) => {
       if (props.suppliedVaultTableName) return dynamodb.Table.fromTableName(this, id, props.suppliedVaultTableName);
       const table = new dynamodb.Table(this, id, {
@@ -178,7 +178,7 @@ export class PrivateCredentialService extends Construct {
         ...props.environment,
         AWS_REGION: stack.region, [CREDENTIAL_SERVICE_ENV.port]: String(props.port),
         [CREDENTIAL_SERVICE_ENV.keyId]: key.keyArn, [CREDENTIAL_SERVICE_ENV.vaultTable]: table.tableName,
-        ...(sheetKey ? { [CREDENTIAL_SERVICE_ENV.sheetKeyId]: sheetKey.keyArn } : {}),
+        ...(sheetKeyAlias ? { [CREDENTIAL_SERVICE_ENV.sheetKeyAlias]: sheetKeyAlias } : {}),
         AGENTCORE_BROWSER_ID: props.authBrowserId,
         AGENTCORE_AGENT_COMPUTER_BROWSER_ID: props.agentComputerBrowserId,
       },
@@ -287,15 +287,20 @@ function vaultKey(scope: Construct, props: PrivateCredentialServiceProps, task: 
   return key;
 }
 
-/** The Sign-in Sheet's RSA key: a supplied one by ARN, else a new one only the task may decrypt with, for a service that mounts sheet routes. */
-function signInSheetKey(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): kms.IKey | undefined {
-  if (props.suppliedSheetKeyArn) return kms.Key.fromKeyArn(scope, 'SheetKey', props.suppliedSheetKeyArn);
+function signInSheetKeyAlias(scope: Construct, props: PrivateCredentialServiceProps, task: ecs.TaskDefinition): string | undefined {
+  if (props.suppliedSheetKeyAlias) return props.suppliedSheetKeyAlias;
   if (!props.sheetRoutes) return undefined;
   const sheetKey = new kms.Key(scope, 'SheetKey', {
     keySpec: kms.KeySpec.RSA_2048, keyUsage: kms.KeyUsage.ENCRYPT_DECRYPT,
     removalPolicy: RemovalPolicy.RETAIN,
   });
   denyDecryptToOthers(sheetKey, task);
-  sheetKey.grant(task.taskRole, 'kms:GetPublicKey', 'kms:Decrypt');
-  return sheetKey;
+  const alias = new kms.Alias(scope, 'SheetKeyAlias', { aliasName: `alias/${Names.uniqueResourceName(sheetKey, { maxLength: 200 })}`, targetKey: sheetKey });
+  const stack = Stack.of(scope);
+  task.addToTaskRolePolicy(new iam.PolicyStatement({
+    actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GetPublicKey'],
+    resources: [stack.formatArn({ service: 'kms', resource: 'key', resourceName: '*' })],
+    conditions: { 'ForAnyValue:StringEquals': { 'kms:ResourceAliases': alias.aliasName } },
+  }));
+  return stack.formatArn({ service: 'kms', resource: alias.aliasName });
 }

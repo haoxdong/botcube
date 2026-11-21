@@ -58,9 +58,9 @@ test('creates no network, KMS key, table or bucket', () => {
 
 /** Each supplied resource as the enterprise example's file names it. */
 const SUPPLIED = [
-  'corp-botcube-chat', 'corp-botcube-vault', 'corp-botcube-connection-logs',
+  'corp-botcube-chat', 'corp-botcube-vault', 'corp-botcube-connection-logs', 'corp-botcube-sign-in-sheet',
   'fs-0fea7e5f11e5', 'fsap-0acc0047', 'fsap-0a1', 'fsap-0a2',
-  ...['11111111-aaaa-4aaa-8aaa-111111111111', '22222222-bbbb-4bbb-8bbb-222222222222', '33333333-cccc-4ccc-8ccc-333333333333', '44444444-dddd-4ddd-8ddd-444444444444',
+  ...['11111111-aaaa-4aaa-8aaa-111111111111', '33333333-cccc-4ccc-8ccc-333333333333', '44444444-dddd-4ddd-8ddd-444444444444',
     '55555555-eeee-4eee-8eee-555555555555', '66666666-ffff-4fff-8fff-666666666666'],
 ];
 const POLICY_TYPES = ['AWS::IAM::Role', 'AWS::IAM::Policy', 'AWS::IAM::ManagedPolicy', 'AWS::KMS::Key', 'AWS::S3::BucketPolicy', 'AWS::DynamoDB::ResourcePolicy'];
@@ -201,7 +201,7 @@ test('uses the supplied tables and their stream', () => {
 test('encrypts with the supplied KMS keys', () => {
   expect(environment('credential-service')).toMatchObject({
     BOTCUBE_VAULT_KMS_KEY_ID: 'arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111',
-    BOTCUBE_SHEET_KMS_KEY_ID: 'arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222',
+    BOTCUBE_SHEET_KMS_ALIAS: 'arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet',
   });
   expect(ofType('AWS::BedrockAgentCore::Memory').map(({ Properties }) => Properties.EncryptionKeyArn))
     .toEqual(['arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333']);

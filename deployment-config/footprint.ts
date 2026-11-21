@@ -35,7 +35,7 @@ export interface SuppliedResource {
   readonly field: string;
   /** Its ARN, ID or name, as the Deployment Config gives it. */
   readonly name: string;
-  readonly grants: readonly { readonly to: string; readonly actions: readonly string[] }[];
+  readonly grants: readonly { readonly to: string; readonly actions: readonly string[]; readonly on?: string }[];
 }
 
 export interface Footprint {
@@ -128,7 +128,9 @@ function suppliedResources({ supplied = {}, identity }: DeploymentConfig): { nee
     field: `supplied.${key}`,
     name,
     grants: [
-      ...(resource.grant ?? []).map(({ to, role, actions }) => ({ to: role ? `${PRINCIPALS[to]} (role ${role})` : PRINCIPALS[to], actions })),
+      ...(resource.grant ?? []).map(({ to, role, actions, on }) => ({
+        to: role ? `${PRINCIPALS[to]} (role ${role})` : PRINCIPALS[to], actions, ...(on ? { on: on(name) } : {}),
+      })),
       ...Object.entries(resource.others ?? {}).map(([to, actions]) => ({ to, actions })),
     ],
   }]));
@@ -296,7 +298,7 @@ export function footprint(config: DeploymentConfig, { filesAccessPointMode = 'ru
   }
   const pulled = (paths: readonly string[]) => paths.map(image => `${config.imageRegistry}/${image}`);
   return {
-    supplied: needs.flatMap(need => need.supplied ?? []).map(resource => ({ ...resource, grants: resource.grants.map(({ to, actions }) => ({ to, actions: sorted(actions) })) })),
+    supplied: needs.flatMap(need => need.supplied ?? []).map(resource => ({ ...resource, grants: resource.grants.map(grant => ({ ...grant, actions: sorted(grant.actions) })) })),
     created: resources.created,
     runtime: needs.flatMap(need => need.runtime ?? []),
     iam,
@@ -328,7 +330,7 @@ export function formatFootprint({ supplied, created, runtime, iam, models, egres
   return [
     'Supplied resources', ...supplied.flatMap(({ field, name, grants }) => [
       `  ${field} ${name}`,
-      ...grants.map(({ to, actions }) => `    grant ${to}: ${actions.join(' ')}`),
+      ...grants.map(({ to, actions, on }) => `    grant ${to}: ${actions.join(' ')}${on ? ` on ${on}` : ''}`),
     ]),
     'Created resources', ...created.map(resource => `  ${resource}`),
     'Created at runtime', ...runtime.map(action => `  ${action}`),

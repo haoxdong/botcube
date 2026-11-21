@@ -32,11 +32,9 @@ const suppliedFiles = z
   );
 
 const subnet = z.strictObject({ subnetId: z.string().regex(/^subnet-[0-9a-z]+$/), availabilityZone: z.string().min(1) });
-const sheetKey = z.strictObject({
-  keyArn: kmsKeyArn,
-  keySpec: z.enum(['RSA_2048', 'RSA_3072', 'RSA_4096'], { error: 'The Sign-in Sheet key must be an RSA key (RSA_2048, RSA_3072 or RSA_4096)' })
-    .describe("The key's KeySpec, which its ARN cannot show."),
-});
+const kmsAliasArn = z
+  .string()
+  .regex(/^arn:aws[a-z-]*:kms:[a-z0-9-]+:\d{12}:alias\/.+$/, 'Expected a KMS alias ARN, such as arn:aws:kms:us-east-1:123456789012:alias/sign-in-sheet, so the key rotates by moving the alias');
 const tableName = z.string().regex(/^[a-zA-Z0-9_.-]{3,255}$/);
 const bucketName = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
 const STREAM_ARN = /^arn:aws[a-z-]*:dynamodb:[a-z0-9-]+:\d{12}:table\/([a-zA-Z0-9_.-]+)\/stream\/.+$/;
@@ -58,7 +56,13 @@ export const supplied = z
     kmsKeys: z
       .strictObject({
         vault: kmsKeyArn.optional().describe("Encrypts the Credential Service's vault."),
-        sheet: sheetKey.optional().describe('Decrypts what the Sign-in Sheet encrypts: an RSA ENCRYPT_DECRYPT key. Only a Credential Service that mounts the Sign-in Sheet routes uses it.'),
+        sheet: kmsAliasArn
+          .optional()
+          .describe(
+            'Decrypts what the Sign-in Sheet encrypts: the alias of an RSA ENCRYPT_DECRYPT key, which the Credential Service checks at startup. '
+            + 'Rotate it by creating a new RSA key and moving the alias: no redeploy, and a sheet open across the move is re-opened. '
+            + 'Only a Credential Service that mounts the Sign-in Sheet routes uses it.',
+          ),
         memory: kmsKeyArn.optional().describe("Encrypts the agent's AgentCore Memory."),
         images: kmsKeyArn.optional().describe("Encrypts the bot's image repository."),
         functions: kmsKeyArn.optional().describe("Encrypts the Credential Service's audit-copy Lambda's environment in place of the AWS managed key."),

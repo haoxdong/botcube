@@ -86,7 +86,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
       environment: { ...environment, ...commandOptIn, BOTCUBE_DEPLOYMENT_CONFIG: credentialDeploymentConfig },
       ...(tables?.vault ? { suppliedVaultTableName: tables.vault.tableName } : {}),
       ...(kmsKeys?.vault ? { suppliedVaultKeyArn: kmsKeys.vault } : {}),
-      ...(kmsKeys?.sheet ? { suppliedSheetKeyArn: kmsKeys.sheet.keyArn } : {}),
+      ...(kmsKeys?.sheet ? { suppliedSheetKeyAlias: kmsKeys.sheet } : {}),
       ...(kmsKeys?.functions ? { suppliedFunctionsKeyArn: kmsKeys.functions } : {}),
       ...(credentialService ? { suppliedEndpoint: credentialService } : {}),
     },

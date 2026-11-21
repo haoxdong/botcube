@@ -358,21 +358,24 @@ test('adopter invocation secret is reused and retains ownership of its name', ()
 test('a Credential Service that mounts no Sign-in Sheet routes gets no sheet key, no sheet key variable and no grant on one', () => {
   const template = synth();
   template.resourceCountIs('AWS::KMS::Key', 1);
+  template.resourceCountIs('AWS::KMS::Alias', 0);
   const task = only(template, 'AWS::ECS::TaskDefinition').Properties;
-  expect(JSON.stringify(task.ContainerDefinitions[0].Environment)).not.toContain('BOTCUBE_SHEET_KMS_KEY_ID');
+  expect(JSON.stringify(task.ContainerDefinitions[0].Environment)).not.toContain('BOTCUBE_SHEET_KMS_ALIAS');
   expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('kms:GetPublicKey');
 });
 
-test('a supplied sheet key reaches the service by ARN, with no key created, whether or not it mounts sheet routes', () => {
-  const arn = 'arn:aws:kms:us-east-1:123456789012:key/supplied-sheet';
+test('a supplied sheet key reaches the service by its alias, with no key or alias created and no grant, whether or not it mounts sheet routes', () => {
+  const alias = 'arn:aws:kms:us-east-1:123456789012:alias/supplied-sheet';
   for (const sheetRoutes of [false, true]) {
-    const template = synth(false, undefined, { sheetRoutes, suppliedSheetKeyArn: arn });
+    const template = synth(false, undefined, { sheetRoutes, suppliedSheetKeyAlias: alias });
     template.resourceCountIs('AWS::KMS::Key', 1);
-    expect(only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions[0].Environment).toContainEqual({ Name: 'BOTCUBE_SHEET_KMS_KEY_ID', Value: arn });
+    template.resourceCountIs('AWS::KMS::Alias', 0);
+    expect(only(template, 'AWS::ECS::TaskDefinition').Properties.ContainerDefinitions[0].Environment).toContainEqual({ Name: 'BOTCUBE_SHEET_KMS_ALIAS', Value: alias });
+    expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain('kms:GetPublicKey');
   }
 });
 
-test('Sign-in Sheets use a retained RSA key shared by replacement tasks and decryptable only by Credential Service', () => {
+test('Sign-in Sheets use a retained RSA key behind an alias, decryptable only by Credential Service, granted on whichever key carries the alias', () => {
   const template = synth(false, undefined, { sheetRoutes: true });
   const entries = Object.entries(template.findResources('AWS::KMS::Key', { Properties: { KeySpec: 'RSA_2048' } }));
   expect(entries).toHaveLength(1);
@@ -384,12 +387,19 @@ test('Sign-in Sheets use a retained RSA key shared by replacement tasks and decr
   expect(key.Properties.KeyPolicy.Statement).toContainEqual(expect.objectContaining({
     Effect: 'Deny', Action: 'kms:Decrypt', Condition: { ArnNotEquals: { 'aws:PrincipalArn': task.TaskRoleArn } },
   }));
-  expect(task.ContainerDefinitions[0].Environment).toContainEqual({ Name: 'BOTCUBE_SHEET_KMS_KEY_ID', Value: { 'Fn::GetAtt': [id, 'Arn'] } });
+  const alias = only(template, 'AWS::KMS::Alias').Properties;
+  expect(alias.TargetKeyId).toEqual({ 'Fn::GetAtt': [id, 'Arn'] });
+  const variable = task.ContainerDefinitions[0].Environment.find((entry: { Name: string }) => entry.Name === 'BOTCUBE_SHEET_KMS_ALIAS');
+  expect(JSON.stringify(variable.Value)).toContain(`:alias/${alias.AliasName.replace(/^alias\//, '')}`);
   const policies = Object.values(template.findResources('AWS::IAM::Policy'));
   const taskPolicies = policies.filter(policy => JSON.stringify(policy.Properties.Roles).includes(task.TaskRoleArn['Fn::GetAtt'][0]));
-  expect(taskPolicies.flatMap(policy => policy.Properties.PolicyDocument.Statement)).toContainEqual({
-    Effect: 'Allow', Action: ['kms:GetPublicKey', 'kms:Decrypt'], Resource: { 'Fn::GetAtt': [id, 'Arn'] },
-  });
+  const sheetGrants = taskPolicies.flatMap(policy => policy.Properties.PolicyDocument.Statement)
+    .filter((statement: { Action: unknown }) => JSON.stringify(statement.Action).includes('kms:GetPublicKey'));
+  expect(sheetGrants).toEqual([{
+    Effect: 'Allow', Action: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GetPublicKey'],
+    Resource: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':kms:us-east-1:123456789012:key/*']] },
+    Condition: { 'ForAnyValue:StringEquals': { 'kms:ResourceAliases': alias.AliasName } },
+  }]);
 });
 
 test('a supplied Endpoint takes the place of Cloud Map: the service registers into its target group, admits its load balancer and callers get its URL', () => {

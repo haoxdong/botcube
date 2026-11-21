@@ -60,10 +60,7 @@
     },
     "kmsKeys": {
       "vault": "arn:aws:kms:us-east-1:000000000000:key/11111111-aaaa-4aaa-8aaa-111111111111",
-      "sheet": {
-        "keyArn": "arn:aws:kms:us-east-1:000000000000:key/22222222-bbbb-4bbb-8bbb-222222222222",
-        "keySpec": "RSA_2048"
-      },
+      "sheet": "arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet",
       "memory": "arn:aws:kms:us-east-1:000000000000:key/33333333-cccc-4ccc-8ccc-333333333333",
       "images": "arn:aws:kms:us-east-1:000000000000:key/44444444-dddd-4ddd-8ddd-444444444444",
       "functions": "arn:aws:kms:us-east-1:000000000000:key/55555555-eeee-4eee-8eee-555555555555"

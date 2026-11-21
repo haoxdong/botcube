@@ -57,7 +57,7 @@ class OfflineCdpPage:
 
 
 def seal(key: SheetKey, username: str, password: str) -> str:
-    public = serialization.load_der_public_key(base64.b64decode(key.public_key()))
+    public = serialization.load_der_public_key(base64.b64decode(key.public_key().public_key))
     assert isinstance(public, rsa.RSAPublicKey)
     return base64.b64encode(public.encrypt(
         json.dumps({'username': username, 'password': password}).encode(),
@@ -71,7 +71,7 @@ def test_fake_site_policy_types_sealed_input_only_on_its_trusted_site(change_ori
         origin = f'http://127.0.0.1:{site.server_port}'
         page = OfflineCdpPage(origin, change_origin=change_origin)
         key = SheetKey()
-        username, password = key.open(seal(key, 'local-user', 'local-password'))
+        username, password = key.open(seal(key, 'local-user', 'local-password'), key.public_key().key_id)
         entry = type_credentials(
             page, ((USERNAME, username), (PASSWORD, password)),
             origins=frozenset({origin}), origin_error='The fake site sign-in origin changed',

@@ -116,6 +116,7 @@ describe('the examples', () => {
       securityGroupId: 'sg-fixturecredentials',
     });
     expect(config.supplied?.files?.accessPoints).toHaveLength(2);
+    expect(config.supplied?.kmsKeys?.sheet).toBe('arn:aws:kms:us-east-1:000000000000:alias/corp-botcube-sign-in-sheet');
     expect(config.imageRegistry).toBe('mirror.example.com/ecr-public');
     expect(config.telemetry).toEqual({
       kind: 'otlp',
@@ -260,11 +261,11 @@ describe('a Deployment Config', () => {
       'supplied.files.accessPoints.0.accessPointId: Access point fsap-0a is already supplied.files.accountsAccessPointId'],
     ['a KMS key that is not an ARN', { bot: './bot.json', supplied: { kmsKeys: { vault: 'alias/vault' } } }, 'supplied.kmsKeys.vault: '],
     [
-      'a sheet key that is not RSA',
-      { bot: './bot.json', supplied: { kmsKeys: { sheet: { keyArn: 'arn:aws:kms:us-east-1:000000000000:key/sheet', keySpec: 'SYMMETRIC_DEFAULT' } } } },
-      'supplied.kmsKeys.sheet.keySpec: The Sign-in Sheet key must be an RSA key (RSA_2048, RSA_3072 or RSA_4096)',
+      'a sheet key named by its key ARN, not an alias',
+      { bot: './bot.json', supplied: { kmsKeys: { sheet: 'arn:aws:kms:us-east-1:000000000000:key/sheet' } } },
+      'supplied.kmsKeys.sheet: Expected a KMS alias ARN, such as arn:aws:kms:us-east-1:123456789012:alias/sign-in-sheet, so the key rotates by moving the alias',
     ],
-    ['a sheet key named by its ARN alone', { bot: './bot.json', supplied: { kmsKeys: { sheet: 'arn:aws:kms:us-east-1:000000000000:key/sheet' } } }, 'supplied.kmsKeys.sheet: '],
+    ['a sheet key with its KeySpec', { bot: './bot.json', supplied: { kmsKeys: { sheet: { keyArn: 'arn:aws:kms:us-east-1:000000000000:key/sheet', keySpec: 'RSA_2048' } } } }, 'supplied.kmsKeys.sheet: '],
     [
       "another table's stream",
       { bot: './bot.json', supplied: { tables: { chat: { tableName: 'chat', streamArn: 'arn:aws:dynamodb:us-east-1:000000000000:table/other/stream/2026' } } } },

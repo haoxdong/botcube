@@ -7,20 +7,18 @@ import itertools
 import json
 import logging
 import os
+import secrets
 import ssl
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Literal, Protocol
 
 from botocore.exceptions import BotoCoreError, ClientError
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import APIRouter, HTTPException, Request
-
-if TYPE_CHECKING:
-    from types_boto3_kms import KMSClient
 
 from .server import CREDENTIAL_CAPTURE_SCOPE, InvocationGuard
 
@@ -47,8 +45,36 @@ class SignInPageChanged(SheetEntryRefused):
     code = 'sign_in_page_changed'
 
 
+class SheetKeyRotated(Exception):
+    """The sheet sealed to a key its alias no longer names, or names no key: nothing it sealed is used, and it is opened again."""
+
+    code = 'sheet_key_rotated'
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The Sign-in Sheet's encryption key changed while this sheet was open. Close it and open the Sign-in Sheet again to sign in.",
+        )
+
+
 class SheetKeyUnavailable(Exception):
     """The shared encryption key cannot be used; credentials must not be entered."""
+
+
+class SheetKeyMisconfigured(ValueError):
+    """The deployment names a key the Sign-in Sheet cannot use; the Credential Service stops at startup."""
+
+
+SHEET_KEY_ALIAS_ENV = 'BOTCUBE_SHEET_KMS_ALIAS'
+_SHEET_KEY_FIELD = 'supplied.kmsKeys.sheet'
+_UNAVAILABLE = 'Sign-in Sheet encryption key is unavailable'
+
+
+@dataclass(frozen=True)
+class SheetPublicKey:
+    """The key the sheet seals to: its id, which the sheet sends back with the ciphertext, and base64 DER SubjectPublicKeyInfo."""
+
+    key_id: str
+    public_key: str
 
 
 class SheetKey:
@@ -56,22 +82,25 @@ class SheetKey:
 
     def __init__(self) -> None:
         self._private_key = rsa.generate_private_key(public_exponent=65537, key_size=_KEY_BITS)
+        self._key_id = f'process-{secrets.token_hex(8)}'
 
-    def public_key(self) -> str:
-        """The public key as base64 DER SubjectPublicKeyInfo, which WebCrypto imports as `spki`."""
+    def public_key(self) -> SheetPublicKey:
+        """The public key, which WebCrypto imports as `spki`."""
         der = self._private_key.public_key().public_bytes(
             serialization.Encoding.DER,
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        return base64.b64encode(der).decode()
+        return SheetPublicKey(self._key_id, base64.b64encode(der).decode())
 
-    def _decrypt(self, ciphertext: bytes) -> bytes:
+    def _decrypt(self, ciphertext: bytes, key_id: str) -> bytes:
+        if key_id and key_id != self._key_id:
+            raise SheetKeyRotated
         return self._private_key.decrypt(ciphertext, _OAEP)
 
-    def open(self, sealed: str) -> tuple[str, str]:
-        """The username and password sealed to this key; anything else is refused."""
+    def open(self, sealed: str, key_id: str) -> tuple[str, str]:
+        """The username and password sealed to `key_id` while it is still this sheet key, or to the current key when no id is sent."""
         try:
-            plaintext = self._decrypt(base64.b64decode(sealed, validate=True))
+            plaintext = self._decrypt(base64.b64decode(sealed, validate=True), key_id)
             credentials = json.loads(plaintext)
         except (binascii.Error, ValueError):
             raise NotEncryptedToCredentialService('Credentials are not encrypted to the Credential Service') from None
@@ -82,38 +111,73 @@ class SheetKey:
         return username, password
 
 
-class KmsSheetKey(SheetKey):
-    """A shared RSA-OAEP-256 key whose private material never leaves KMS."""
+class SheetKms(Protocol):
+    def describe_key(self, *, KeyId: str) -> Mapping[str, Any]: ...
 
-    def __init__(self, key_id: str) -> None:
+    def get_public_key(self, *, KeyId: str) -> Mapping[str, Any]: ...
+
+    def decrypt(self, *, KeyId: str, CiphertextBlob: bytes, EncryptionAlgorithm: Literal['RSAES_OAEP_SHA_256']) -> Mapping[str, Any]: ...
+
+
+class KmsSheetKey(SheetKey):
+    def __init__(self, alias: str, client: SheetKms | None = None) -> None:
         import boto3
 
-        self._key_id = key_id
+        self._alias = alias
+        self._client: SheetKms = client or boto3.client('kms', region_name=os.getenv('AWS_REGION'))
         try:
-            self._client: KMSClient = boto3.client(
-                'kms', region_name=os.getenv('AWS_REGION'),
-            )
-        except BotoCoreError:
-            raise SheetKeyUnavailable('Sign-in Sheet encryption key is unavailable') from None
-
-    def public_key(self) -> str:
-        try:
-            der = self._client.get_public_key(KeyId=self._key_id)['PublicKey']
-        except (ClientError, BotoCoreError):
-            raise SheetKeyUnavailable('Sign-in Sheet encryption key is unavailable') from None
-        return base64.b64encode(der).decode()
-
-    def _decrypt(self, ciphertext: bytes) -> bytes:
-        try:
-            return self._client.decrypt(
-                KeyId=self._key_id, CiphertextBlob=ciphertext, EncryptionAlgorithm='RSAES_OAEP_SHA_256',
-            )['Plaintext']
+            metadata = self._client.describe_key(KeyId=alias)['KeyMetadata']
         except ClientError as exc:
-            if exc.response.get('Error', {}).get('Code') in {'InvalidCiphertextException', 'IncorrectKeyException'}:
-                raise NotEncryptedToCredentialService('Credentials are not encrypted to the Credential Service') from None
-            raise SheetKeyUnavailable('Sign-in Sheet encryption key is unavailable') from None
+            raise SheetKeyMisconfigured(f'{_SHEET_KEY_FIELD}: {alias} could not be described: {_error_code(exc)}') from None
+        key_spec, key_usage = metadata.get('KeySpec', ''), metadata.get('KeyUsage', '')
+        if not key_spec.startswith('RSA_') or key_usage != 'ENCRYPT_DECRYPT':
+            raise SheetKeyMisconfigured(
+                f'{_SHEET_KEY_FIELD}: {alias} names {metadata.get("Arn")}, a {key_spec} key for {key_usage}; '
+                'the Sign-in Sheet needs an RSA key for ENCRYPT_DECRYPT',
+            )
+
+    def public_key(self) -> SheetPublicKey:
+        try:
+            published = self._client.get_public_key(KeyId=self._alias)
+        except (ClientError, BotoCoreError):
+            raise SheetKeyUnavailable(_UNAVAILABLE) from None
+        return SheetPublicKey(published['KeyId'], base64.b64encode(published['PublicKey']).decode())
+
+    def _decrypt(self, ciphertext: bytes, key_id: str) -> bytes:
+        try:
+            decrypted = self._client.decrypt(KeyId=self._alias, CiphertextBlob=ciphertext, EncryptionAlgorithm='RSAES_OAEP_SHA_256')
+        except ClientError as exc:
+            if _error_code(exc) not in {'InvalidCiphertextException', 'IncorrectKeyException'}:
+                raise SheetKeyUnavailable(_UNAVAILABLE) from None
+            if key_id and self._current_key_id() != key_id:
+                raise SheetKeyRotated from None
+            raise NotEncryptedToCredentialService('Credentials are not encrypted to the Credential Service') from None
         except BotoCoreError:
-            raise SheetKeyUnavailable('Sign-in Sheet encryption key is unavailable') from None
+            raise SheetKeyUnavailable(_UNAVAILABLE) from None
+        if key_id and decrypted['KeyId'] != key_id:
+            raise SheetKeyRotated
+        return decrypted['Plaintext']
+
+    def _current_key_id(self) -> str:
+        try:
+            return self._client.describe_key(KeyId=self._alias)['KeyMetadata']['Arn']
+        except (ClientError, BotoCoreError):
+            raise SheetKeyUnavailable(_UNAVAILABLE) from None
+
+
+def _error_code(exc: ClientError) -> str:
+    return exc.response.get('Error', {}).get('Code', '')
+
+
+def sheet_key_from_env() -> KmsSheetKey | None:
+    alias = os.getenv(SHEET_KEY_ALIAS_ENV, '').strip()
+    return KmsSheetKey(alias) if alias else None
+
+
+def sheet_key_id(payload: Mapping[str, object]) -> str:
+    """The key id the sheet sealed to; a sheet from before key ids sends none, and is opened with the current key."""
+    key_id = payload.get('keyId')
+    return key_id if isinstance(key_id, str) else ''
 
 
 class CdpPage(Protocol):
@@ -287,14 +351,16 @@ def sheet_routes(
 ) -> APIRouter:
     """A site's Sign-in Sheet: the key it seals credentials to, and the call that types them into the site's login page.
 
-    The site names how its page is reached and how its fields are filled; only Credential Service can open what is sealed.
+    The site names how its page is reached and how its fields are filled; only Credential Service can open what is sealed,
+    and only with the key the sheet was given, while its alias still names it.
     """
     router = APIRouter()
 
     @router.get('/auth/sheet/public-key')
     def sign_in_sheet_public_key() -> dict[str, str]:
         try:
-            return {'algorithm': 'RSA-OAEP-256', 'publicKey': key().public_key()}
+            published = key().public_key()
+            return {'algorithm': 'RSA-OAEP-256', 'keyId': published.key_id, 'publicKey': published.public_key}
         except SheetKeyUnavailable as exc:
             raise HTTPException(status_code=502, detail={'code': 'sheet_key_unavailable', 'message': str(exc)}) from None
 
@@ -303,13 +369,14 @@ def sheet_routes(
         guard.verify_request(request, CREDENTIAL_CAPTURE_SCOPE)
         browser_session_id = required_text(payload, 'browserSessionId')
         sealed = required_text(payload, 'credentials')
+        key_id = sheet_key_id(payload)
         try:
-            username, password = await asyncio.to_thread(lambda: key().open(sealed))
+            username, password = await asyncio.to_thread(lambda: key().open(sealed, key_id))
             async with open_page(browser_session_id) as page:
                 await type_credentials(page, username, password)
         except SheetKeyUnavailable as exc:
             raise HTTPException(status_code=502, detail={'code': 'sheet_key_unavailable', 'message': str(exc)}) from None
-        except NotEncryptedToCredentialService as exc:
+        except (NotEncryptedToCredentialService, SheetKeyRotated) as exc:
             raise HTTPException(status_code=400, detail={'code': exc.code, 'message': str(exc)}) from None
         except SheetEntryRefused as exc:
             _LOG.warning('Sign-in Sheet entry refused: %s', exc)

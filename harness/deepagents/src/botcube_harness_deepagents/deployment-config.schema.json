@@ -1340,22 +1340,9 @@
               "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$"
             },
             "sheet": {
-              "description": "Decrypts what the Sign-in Sheet encrypts: an RSA ENCRYPT_DECRYPT key. Only a Credential Service that mounts the Sign-in Sheet routes uses it.",
-              "type": "object",
-              "properties": {
-                "keyArn": {
-                  "type": "string",
-                  "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:key\\/.+$",
-                  "description": "A KMS key, by ARN."
-                },
-                "keySpec": {
-                  "type": "string",
-                  "enum": ["RSA_2048", "RSA_3072", "RSA_4096"],
-                  "description": "The key's KeySpec, which its ARN cannot show."
-                }
-              },
-              "required": ["keyArn", "keySpec"],
-              "additionalProperties": false
+              "description": "Decrypts what the Sign-in Sheet encrypts: the alias of an RSA ENCRYPT_DECRYPT key, which the Credential Service checks at startup. Rotate it by creating a new RSA key and moving the alias: no redeploy, and a sheet open across the move is re-opened. Only a Credential Service that mounts the Sign-in Sheet routes uses it.",
+              "type": "string",
+              "pattern": "^arn:aws[a-z-]*:kms:[a-z0-9-]+:\\d{12}:alias\\/.+$"
             },
             "memory": {
               "description": "Encrypts the agent's AgentCore Memory.",

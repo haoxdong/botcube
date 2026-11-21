@@ -16,6 +16,8 @@ interface SuppliableGrant {
   readonly actions: readonly string[];
   /** The deploy identity field that names the role, so the operator can grant it before the first deploy. */
   readonly role?: string;
+  /** Where the actions apply, from the resource's name, when that is not the resource itself. */
+  readonly on?: (name: string) => string;
 }
 interface Suppliable {
   /** What BotCube creates in its place; absent, it creates and grants nothing, as for AgentCore Memory on its AWS owned key. */
@@ -38,7 +40,17 @@ export const SUPPLIABLE: Readonly<Record<string, Suppliable>> = {
     },
   },
   'kmsKeys.vault': { created: "the Credential Service's vault key", name: ({ kmsKeys }) => kmsKeys?.vault, grant: [{ to: 'credentialService', actions: KEY_USE }] },
-  'kmsKeys.sheet': { name: ({ kmsKeys }) => kmsKeys?.sheet?.keyArn, grant: [{ to: 'credentialService', actions: ['kms:Decrypt', 'kms:GetPublicKey'] }] },
+  'kmsKeys.sheet': {
+    name: ({ kmsKeys }) => kmsKeys?.sheet,
+    grant: [{
+      to: 'credentialService',
+      actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:GetPublicKey'],
+      on: (aliasArn) => {
+        const [arn, alias] = aliasArn.split(':alias/');
+        return `${arn}:key/* if ForAnyValue:StringEquals kms:ResourceAliases alias/${alias}`;
+      },
+    }],
+  },
   'kmsKeys.memory': { name: ({ kmsKeys }) => kmsKeys?.memory, others: { 'AgentCore Memory execution role': KEY_USE } },
   'kmsKeys.images': { created: "the bot image repository's key", name: ({ kmsKeys }) => kmsKeys?.images, grant: [{ to: 'harness', actions: ['kms:Decrypt'] }] },
   'kmsKeys.functions': {
