@@ -686,14 +686,16 @@ it('opens the Agent Profile as a narrow right sidebar beside the chat on a deskt
 it("dims a paused scheduled task's icon and name", () => {
   const { container, unmount } = render(
     <ul>
-      <li className="list-row scheduled-task scheduled-task-paused">
-        <span className="list-row-icon" />
-        <span className="list-row-title scheduled-task-title">Oil brief</span>
+      <li>
+        <div data-slot="item" className="scheduled-task" data-paused="true">
+          <div data-slot="item-media" />
+          <div data-slot="item-title" className="scheduled-task-title">Oil brief</div>
+        </div>
       </li>
     </ul>,
   );
 
-  expect(styleOf(container, '.list-row-icon').color).toBe('#646464');
+  expect(styleOf(container, '[data-slot="item-media"]').color).toBe('#646464');
   expect(styleOf(container, '.scheduled-task-title').color).toBe('#646464');
   unmount();
 });
@@ -1092,7 +1094,7 @@ it("sets each type size at its desktop size and iOS's phone one, in its weight",
     ['title', '<h1 class="plugins-title"></h1>', '18px', '600', '22px', '600'],
     ['identity title', '<h2 class="agent-profile-name"></h2>', '18px', '600', '22px', '600'],
     ['brand', '<aside class="sidebar sidebar-expanded"><span class="sidebar-brand-text"></span></aside>', '18px', '600', '22px', '600'],
-    ['body heading', '<div class="list-row-title"></div>', '14px', '600', '17px', '600'],
+    ['body heading', '<h3 class="list-group-heading"></h3>', '14px', '600', '17px', '600'],
     ['name pill', '<div class="chat-header-name"></div>', '14px', '600', '17px', '600'],
     ['body', '<p class="welcome-desc"></p>', '14px', '400', '17px', '400'],
     ['sidebar row', '<aside class="sidebar sidebar-expanded"><button class="sidebar-nav-item"></button></aside>', '14px', '400', '17px', '400'],

@@ -6,9 +6,9 @@ import { Swap, Collapse, Presence, presenceMotion, CollapseItem, CollapseList } 
 import { m as motionElement } from "motion/react";
 
 import { CalendarClock } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Button } from "../components/pill-button";
-import { ListRow, ListRowDetail, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "../components/ui/item";
 import { Sheet } from "../components/ui/sheet";
 import { Badge } from "../components/ui/badge";
 import { fetchAgentModels, ModelCatalogError, type AgentModel } from "./conversations";
@@ -143,30 +143,39 @@ function passed(schedule: string, timezone: string): boolean {
   return cadence?.frequency === "once" && Date.parse(stopInstant(`${cadence.date}T${cadence.time}`, timezone)) <= Date.now();
 }
 
-function TaskStatus({ task }: { task: ScheduledTask }) {
-  if (task.ended) return <Badge variant="secondary">Ended</Badge>;
-  return task.paused ? <Badge variant="secondary">Paused</Badge> : null;
+function TaskStatus({ task, id }: { task: ScheduledTask; id: string }) {
+  if (task.ended) return <Badge variant="secondary" id={id}>Ended</Badge>;
+  return task.paused ? <Badge variant="secondary" id={id}>Paused</Badge> : null;
 }
 
+/**
+ * A task as a stock Item. The tap is a button around the title, as a button may hold no block parts; its hit area
+ * stretches over the row (list-rows.css), and it takes its name from the title, the status and the detail line, as
+ * the whole row did when the row was the button.
+ */
 function ScheduledTaskRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void }) {
   const { time } = listing(task.schedule);
+  const id = useId();
+  const paused = task.paused || task.ended;
+  const labelledBy = [`${id}-title`, ...(paused ? [`${id}-status`] : []), `${id}-detail`].join(" ");
   return (
     <CollapseItem as="li">
-      <ListRow
-        render={<button type="button" aria-haspopup="dialog" onClick={onOpen} />}
-        className={task.paused || task.ended ? "scheduled-task scheduled-task-paused" : "scheduled-task"}
-      >
-        <ListRowIcon>
-          <CalendarClock size={20} />
-        </ListRowIcon>
-        <ListRowText className="scheduled-task-text">
-          <span className="scheduled-task-heading">
-            <ListRowTitle className="scheduled-task-title">{task.title}</ListRowTitle>
-            <TaskStatus task={task} />
-          </span>
-          <ListRowDetail className="scheduled-task-detail">{time === undefined ? task.prompt : `${time} · ${task.prompt}`}</ListRowDetail>
-        </ListRowText>
-      </ListRow>
+      <Item className={paused ? "scheduled-task scheduled-task-paused" : "scheduled-task"} data-paused={paused || undefined}>
+        <ItemMedia variant="icon" aria-hidden="true">
+          <CalendarClock />
+        </ItemMedia>
+        <ItemContent>
+          <div className="scheduled-task-heading">
+            <ItemTitle className="scheduled-task-title">
+              <button type="button" id={`${id}-title`} className="scheduled-task-open" aria-haspopup="dialog" aria-labelledby={labelledBy} onClick={onOpen}>
+                {task.title}
+              </button>
+            </ItemTitle>
+            <TaskStatus task={task} id={`${id}-status`} />
+          </div>
+          <ItemDescription id={`${id}-detail`} className="scheduled-task-detail">{time === undefined ? task.prompt : `${time} · ${task.prompt}`}</ItemDescription>
+        </ItemContent>
+      </Item>
     </CollapseItem>
   );
 }

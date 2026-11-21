@@ -26,45 +26,13 @@
 }
 
 .plugins-placeholder {
-  align-items: center;
   margin-top: var(--space-8);
-  padding: var(--space-16);
-  border: 1px dashed var(--color-line);
-  border-radius: var(--radius-lg);
 }
 
 .plugins-soon {
   flex: none;
   margin-left: auto;
   white-space: nowrap;
-}
-
-@media (max-width: 640px) {
-  .list-row {
-    --row-icon: 44px;
-  }
-
-  /* Coming soon sits under the title, so the description takes the card's full width */
-  .plugins-placeholder {
-    display: grid;
-    grid-template-columns: var(--row-icon) 1fr;
-    column-gap: var(--space-12);
-    row-gap: 2px;
-  }
-
-  .plugins-placeholder .list-row-icon {
-    grid-row: span 3;
-  }
-
-  .plugins-placeholder .list-row-text {
-    display: contents;
-  }
-
-  .plugins-soon {
-    grid-area: 2 / 2;
-    justify-self: start;
-    margin: 2px 0;
-  }
 }
 
 /* Too narrow for the sidebar, a readable chat and the profile side by side (260 + 440 + 440): the

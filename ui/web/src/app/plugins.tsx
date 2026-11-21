@@ -2,8 +2,8 @@
 
 import { BookOpen, Cable, Package, SquareTerminal, type LucideIcon } from "lucide-react";
 
-import { ListRow, ListRowIcon, ListRowText, ListRowTitle } from "../components/ui/list-row";
 import { Badge } from "../components/ui/badge";
+import { Item, ItemActions, ItemContent, ItemMedia, ItemTitle } from "../components/ui/item";
 
 /** The kinds of App the agent will take (botcube/GLOSSARY.md → Apps), in the decided order, none available yet. */
 const KINDS: readonly { name: string; none: string; Icon: LucideIcon }[] = [
@@ -22,15 +22,17 @@ export function AppsScreen({ agentName }: { agentName: string }) {
       {KINDS.map(({ name, none, Icon }) => (
         <section key={name} className="plugins-kind" aria-label={name}>
           <h2 className="section-label">{name}</h2>
-          <ListRow className="plugins-placeholder" render={<div />}>
-            <ListRowIcon>
-              <Icon size={20} />
-            </ListRowIcon>
-            <ListRowText>
-              <ListRowTitle>{none}</ListRowTitle>
-            </ListRowText>
-            <Badge variant="secondary" className="plugins-soon">Coming soon</Badge>
-          </ListRow>
+          <Item variant="outline" className="plugins-placeholder">
+            <ItemMedia variant="icon" aria-hidden="true">
+              <Icon />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>{none}</ItemTitle>
+            </ItemContent>
+            <ItemActions>
+              <Badge variant="secondary" className="plugins-soon">Coming soon</Badge>
+            </ItemActions>
+          </Item>
         </section>
       ))}
     </div>

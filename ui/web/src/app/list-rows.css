@@ -1,51 +1,8 @@
-/* ── List rows (Muse Fig 13, 15): a round icon tile, then a headline over muted detail lines ── */
+/* ── Lists of rows (Muse Fig 13, 15): each row a stock shadcn Item, under its group heading ── */
 .list-group-heading {
   margin: var(--space-24) 0 6px;
   font-size: var(--font-body);
   font-weight: var(--weight-semibold);
-}
-
-.list-row {
-  --row-icon: 40px;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-12);
-  padding: var(--space-12) 0;
-}
-
-.list-row-icon {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--row-icon);
-  height: var(--row-icon);
-  border-radius: var(--radius-pill);
-  background: var(--color-fill);
-  color: var(--color-text-muted);
-}
-
-.list-row-icon-failed {
-  color: var(--color-red);
-}
-
-.list-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  font-size: var(--font-small);
-}
-
-.list-row-title {
-  font-size: var(--font-body);
-  font-weight: var(--weight-semibold);
-  overflow-wrap: anywhere;
-}
-
-.list-row-detail {
-  color: var(--color-text-muted);
-  overflow-wrap: anywhere;
 }
 
 /* Scheduled: rows under frequency labels (Muse Fig 15); a tap opens the task's sheet. */
@@ -63,26 +20,20 @@
   padding: 0;
 }
 
+/* A row is an Item; the button around its title stretches its hit area over the whole row. */
 .scheduled-task {
-  appearance: none;
-  width: 100%;
-  border: none;
-  background: none;
-  color: inherit;
-  font: inherit;
+  position: relative;
+}
+
+.scheduled-task-open {
   text-align: left;
   cursor: pointer;
 }
 
-.scheduled-task-text {
-  flex: 1;
-}
-
-/* One line under the title: the time, then what the task asks, cut short. */
-.scheduled-task-detail {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.scheduled-task-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
 }
 
 .scheduled-sheet-body {
@@ -422,7 +373,7 @@ textarea.settings-text {
   color: var(--color-text-muted);
 }
 
-.scheduled-task-title {
+.scheduled-proposal .scheduled-task-title {
   font-weight: var(--weight-semibold);
 }
 
@@ -436,13 +387,24 @@ textarea.settings-text {
   gap: var(--space-8);
 }
 
-/* A paused task's icon and name dim beside its Paused pill; its detail lines are already muted. Colours, not
+/* A paused or ended task's icon and name dim beside its pill; its detail line is already muted. Colours, not
    opacity, keep the name at AA contrast. */
-.scheduled-task-paused .list-row-icon,
-.scheduled-task-paused .scheduled-task-title {
+.scheduled-task[data-paused] [data-slot="item-media"],
+.scheduled-task[data-paused] [data-slot="item-title"] {
   color: var(--color-text-muted);
 }
 
 .scheduled-task-hint {
   color: var(--color-text-muted);
+}
+
+/* Phones: Item rows take iOS sizes, 17px titles and 15px detail (Head of Design). */
+@media (max-width: 640px) {
+  [data-slot="item-title"] {
+    font-size: var(--font-body);
+  }
+
+  [data-slot="item-description"] {
+    font-size: var(--font-small);
+  }
 }
