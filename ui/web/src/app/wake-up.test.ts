@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { minutesLeft, untilLive, wake, wakeLapsed, WAKE_POLL_MS } from './wake-up';
+import { minutesLeft, reportWakeRequests, untilLive, wake, wakeLapsed, WAKE_POLL_MS } from './wake-up';
 
 const url = 'https://api.example.com';
 const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -69,4 +69,47 @@ describe('Wake up', () => {
     expect(await wakeLapsed(url, async () => answer(404, { message: 'Not Found' }))).toBe(false);
     expect(await wakeLapsed(url, async () => { throw new TypeError('fetch failed'); })).toBe(false);
   });
+});
+
+it('logs a disconnected wake-status read as a cancel and retains real network errors', async () => {
+  const events: { type: string; data: object }[] = [];
+  reportWakeRequests({ recordEvent: (type, data) => { events.push({ type, data }); } });
+  try {
+    const stop = new AbortController();
+    const disconnected = new TypeError('Failed to fetch');
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      expect(init?.signal).toBe(stop.signal);
+      stop.abort();
+      throw disconnected;
+    };
+    await expect(wake(url, 'GET', fetchImpl, stop.signal)).rejects.toBe(disconnected);
+    expect(events).toEqual([{ type: 'wake_status_cancel', data: { method: 'GET' } }]);
+
+    events.length = 0;
+    await expect(wake(url, 'GET', async () => { throw disconnected; })).rejects.toBe(disconnected);
+    expect(events).toEqual([{ type: 'com.amazon.rum.http_event', data: {
+      version: '1.0.0',
+      request: { method: 'GET', url: `${url}/production/wake` },
+      error: { type: 'TypeError', message: 'Failed to fetch' },
+    } }]);
+  } finally {
+    reportWakeRequests(null);
+  }
+});
+
+it('cancels an outstanding lapse check without treating it as a transient unpark error', async () => {
+  const stop = new AbortController();
+  const events: { type: string; data: object }[] = [];
+  reportWakeRequests({ recordEvent: (type, data) => { events.push({ type, data }); } });
+  try {
+    const disconnected = new TypeError('Failed to fetch');
+    await expect(wakeLapsed(url, async (_input, init) => {
+      expect(init?.signal).toBe(stop.signal);
+      stop.abort();
+      throw disconnected;
+    }, stop.signal)).rejects.toBe(disconnected);
+    expect(events).toEqual([{ type: 'wake_status_cancel', data: { method: 'GET' } }]);
+  } finally {
+    reportWakeRequests(null);
+  }
 });

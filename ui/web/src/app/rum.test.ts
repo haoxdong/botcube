@@ -52,7 +52,7 @@ it("collects uncaught errors and failed requests under the build's release", asy
   const { started, idle } = startWhenIdle();
   idle();
   await started;
-  expect(sdk.constructed).toEqual([["test", "0123abcd", "us-east-1", expect.objectContaining({ telemetries: ["errors", "http"] })]]);
+  expect(sdk.constructed).toEqual([["test", "0123abcd", "us-east-1", expect.objectContaining({ telemetries: ["errors", ["http", { urlsToExclude: [/\/production\/wake(?:\?|$)/] }]] })]]);
 });
 
 it.each([false, true])("marks the session automated when an automation drives the browser (%s), so the error grouper counts its errors as test traffic", async (webdriver) => {

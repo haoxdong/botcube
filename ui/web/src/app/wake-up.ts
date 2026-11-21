@@ -10,8 +10,28 @@ export type WakeState =
   | { state: "limit"; limit: number }
   | { state: "live" };
 
-export async function wake(chatServiceUrl: string, method: "GET" | "POST", fetchImpl: typeof fetch = fetch): Promise<WakeState> {
-  const response = await fetchImpl(`${chatServiceUrl}/production/wake`, { method, cache: "no-store" });
+type WakeReporter = { recordEvent: (type: string, data: object) => void };
+let reporter: WakeReporter | null = null;
+
+export function reportWakeRequests(next: WakeReporter | null): void {
+  reporter = next;
+}
+
+async function requestWake(chatServiceUrl: string, method: "GET" | "POST", fetchImpl: typeof fetch, signal?: AbortSignal): Promise<Response> {
+  const request = { method, url: `${chatServiceUrl}/production/wake` };
+  try {
+    const response = await fetchImpl(request.url, { method, cache: "no-store", signal: signal ?? null });
+    if (!response.ok) reporter?.recordEvent("com.amazon.rum.http_event", { version: "1.0.0", request, response: { status: response.status, statusText: response.statusText } });
+    return response;
+  } catch (error) {
+    if (signal?.aborted) reporter?.recordEvent("wake_status_cancel", { method });
+    else reporter?.recordEvent("com.amazon.rum.http_event", { version: "1.0.0", request, error: { type: error instanceof Error ? error.name : "Error", message: error instanceof Error ? error.message : String(error) } });
+    throw error;
+  }
+}
+
+export async function wake(chatServiceUrl: string, method: "GET" | "POST", fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<WakeState> {
+  const response = await requestWake(chatServiceUrl, method, fetchImpl, signal);
   if (!response.ok) throw new Error(`Wake up failed: ${response.status}`);
   const body = (await response.json()) as Partial<{ state: string; since: string; limit: number }>;
   if (body.state === "parked" || body.state === "live") return { state: body.state };
@@ -50,9 +70,9 @@ function pauseFor(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export async function wakeLapsed(chatServiceUrl: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
-  const answer = await fetchImpl(`${chatServiceUrl}/production/wake`, { cache: "no-store" })
-    .catch((error: unknown) => { if (error instanceof TypeError) return null; throw error; });
+export async function wakeLapsed(chatServiceUrl: string, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<boolean> {
+  const answer = await requestWake(chatServiceUrl, "GET", fetchImpl, signal)
+    .catch((error: unknown) => { if (!signal?.aborted && error instanceof TypeError) return null; throw error; });
   if (!answer?.ok) return false;
   return ((await answer.json()) as { state?: unknown }).state === "parked";
 }

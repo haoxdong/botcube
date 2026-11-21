@@ -58,3 +58,33 @@ it('says the wake failed when production parks again', async () => {
 
   expect(screen.getByText("Couldn't wake Marq: the wake did not start")).toBeInTheDocument();
 });
+
+it.each(['unmount', 'pagehide'])('cancels an outstanding status read on %s', async (ending) => {
+  let signal: AbortSignal | null | undefined;
+  vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(signal?.reason), { once: true });
+    });
+  });
+  const { unmount } = render(<WakeUpButton title="Marq" chatServiceUrl="http://chat.test" />);
+  expect(signal).toBeInstanceOf(AbortSignal);
+  if (ending === 'unmount') unmount();
+  else await act(async () => { window.dispatchEvent(new Event('pagehide')); });
+  expect(signal?.aborted).toBe(true);
+  unmount();
+});
+
+it('keeps the status read active when the page enters the back-forward cache', () => {
+  let signal: AbortSignal | null | undefined;
+  vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+    signal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(signal?.reason), { once: true });
+    });
+  });
+  const { unmount } = render(<WakeUpButton title="Marq" chatServiceUrl="http://chat.test" />);
+  window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: true }));
+  expect(signal?.aborted).toBe(false);
+  unmount();
+});

@@ -1,5 +1,6 @@
 "use client";
 
+import { reportWakeRequests } from "./wake-up";
 import { reportMoments } from "./latency";
 
 /** The CloudWatch RUM app monitor the page reports to, and the build's release; a build without a monitor reports nowhere. */
@@ -27,11 +28,12 @@ export function startRum({ appMonitorId, identityPoolId, region, release }: RumC
           identityPoolId,
           endpoint: `https://dataplane.rum.${region}.amazonaws.com`,
           sessionSampleRate: 1,
-          telemetries: ["errors", "http"],
+          telemetries: ["errors", ["http", { urlsToExclude: [/\/production\/wake(?:\?|$)/] }]],
         });
         // Every event's metadata carries it, so the error grouper counts an automated browser's errors as test traffic.
         rum.addSessionAttributes({ automated: navigator.webdriver === true });
         reportMoments(rum);
+        reportWakeRequests(rum);
       })
       .then(resolve, (cause: unknown) => {
         const error = new Error(`Latency reporting could not start: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
