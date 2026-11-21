@@ -74,7 +74,7 @@ export async function defineExample(app: App, configPath: string, options: Examp
   const seams = seamWiring(config);
   defineProduction(app, {
     ...seams.production,
-    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, suppliedNetwork: network !== undefined, imageRegistry: config.imageRegistry,
+    repositoryRoot: options.repositoryRoot, deployRoot: EXAMPLE_DEPLOY_ROOT, identity, corsOrigins: config.web?.corsOrigins ?? [], suppliedNetwork: network !== undefined, imageRegistry: config.imageRegistry,
     origin: options.origin?.(identity),
     storage: { ...(tables?.chat ? { suppliedChatTable: tables.chat } : {}), ...(config.supplied?.files ? { suppliedFiles: config.supplied.files } : {}) },
     ...(buckets?.connectionLogs ? { originConfig: { suppliedConnectionLogsBucketName: buckets.connectionLogs } } : {}),

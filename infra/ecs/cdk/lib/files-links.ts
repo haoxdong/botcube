@@ -14,6 +14,9 @@ import { optionalPhysicalName } from './physical-name.js';
 import type { PreviewChatService } from './preview-chat-service.js';
 import type { PreviewOriginStack } from './preview-origin-stack.js';
 
+/** Where the Chat Service's container mounts every account's Files directory, the root the Chat Service reads them under. */
+export const CHAT_FILES_MOUNT = '/mnt/files-efs';
+
 /**
  * Files on EFS: mount targets in the browser subnets, the Chat Service's mount of every account's directory,
  * and the key it signs each upload or download link with, which it serves itself.
@@ -38,7 +41,7 @@ export function addFilesLinks(origin: PreviewOriginStack, chat: PreviewChatServi
       authorizationConfig: { accessPointId: accounts.id, iam: 'ENABLED' },
     },
   });
-  chat.container.addMountPoints({ sourceVolume: 'files-efs', containerPath: '/mnt/files-efs', readOnly: false });
+  chat.container.addMountPoints({ sourceVolume: 'files-efs', containerPath: CHAT_FILES_MOUNT, readOnly: false });
   grantMount(statement => chat.task.addToTaskRolePolicy(statement), accounts.attrArn);
   const mode: unknown = origin.node.tryGetContext('filesAccessPointMode') ?? 'runtime';
   if (mode !== 'runtime' && mode !== 'pool') throw new Error('filesAccessPointMode must be runtime or pool');

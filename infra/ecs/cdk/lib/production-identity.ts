@@ -69,7 +69,7 @@ export interface DeployIdentity {
       publicSubnets: Subnet[];
     };
   };
-  domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[]; corsOrigins: string[] };
+  domains: { chatService: string; chatServicePreview: string; rawServiceOrigins?: string[] };
   ssm: { parkState: string };
   /** The repository's immutable GitHub OIDC subject prefix (`gh api repos/<repo>/actions/oidc/customization/sub`). */
   github: { oidcSubjectPrefix: string };

@@ -133,8 +133,7 @@
     "web": "http://localhost:3001",
     "chatService": "http://localhost:8123",
     "chatServicePreview": "https://api-preview.example.invalid",
-    "rawServiceOrigins": [],
-    "corsOrigins": ["http://localhost:3001", "http://127.0.0.1:3001"]
+    "rawServiceOrigins": []
   },
   "github": {
     "environment": "bot-cube-production",

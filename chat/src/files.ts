@@ -5,7 +5,7 @@ import { filesPoolManifest, s3PoolAccessPoints } from './files-pool-manifest.js'
 import { pooledAccessPoints } from './files-pool.js';
 import { HttpError } from './http-error.js';
 import { accountFilesEfs, efsAccessPoints, stsMountCredentials } from './files-efs.js';
-import type { AccountFiles, FilesRecords } from './files-shared.js';
+import { FILES_EFS_ROOT, type AccountFiles, type FilesRecords } from './files-shared.js';
 
 export type { AccountFiles, FileEntry, FilesMount, FilesRecords } from './files-shared.js';
 
@@ -51,7 +51,7 @@ function efsFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, ro
 
 export const filesConfigured = (env: NodeJS.ProcessEnv) => EFS_SETTINGS.some((name) => env[name]?.trim());
 
-export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, supplied?: SuppliedFiles, root = '/mnt/files-efs'): () => AccountFiles {
+export function accountFilesFromEnv(env: NodeJS.ProcessEnv, records: () => FilesRecords, supplied?: SuppliedFiles, root = FILES_EFS_ROOT): () => AccountFiles {
   let files: AccountFiles | undefined;
   return () => files ??= efsFilesFromEnv(env, records, root, supplied);
 }

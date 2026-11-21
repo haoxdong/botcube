@@ -142,8 +142,10 @@ function principalGrants(resources: Resources, principals: Map<string, Principal
 }
 
 const OWN_HOSTS = new Set([EXAMPLE_IDENTITY.domains.chatService, EXAMPLE_IDENTITY.domains.chatServicePreview,
-  ...EXAMPLE_IDENTITY.domains.corsOrigins,
-  ...EXAMPLES.flatMap(example => loadDeployment(deploymentConfigPath(example)).config.supplied?.credentialService?.url ?? [])].map(origin => new URL(origin).host));
+  ...EXAMPLES.flatMap(example => {
+    const { web, supplied } = loadDeployment(deploymentConfigPath(example)).config;
+    return [...(web?.corsOrigins ?? []), ...(supplied?.credentialService ? [supplied.credentialService.url] : [])];
+  })].map(origin => new URL(origin).host));
 const isOwn = ({ host, hostname }: URL) =>
   OWN_HOSTS.has(host) || ['localhost', '127.0.0.1', '[::1]', 'task-address'].includes(hostname) || hostname.endsWith(`.${EXAMPLE_IDENTITY.aws.ecs.privateNamespace}`);
 

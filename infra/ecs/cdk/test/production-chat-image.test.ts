@@ -13,18 +13,23 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a deploy root with its own chat Dockerfile builds it and names no Deployment Config', () => {
+test('a deploy root with its own chat Dockerfile builds it on the BotCube Config beside it and names no image path', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'own-chat-'));
   roots.push(root);
   fs.mkdirSync(path.join(root, 'product/deploy'), { recursive: true });
   fs.mkdirSync(path.join(root, 'product/chat'));
   fs.writeFileSync(path.join(root, 'product/chat/Dockerfile'), 'FROM scratch\n');
-  expect(productionChatImage(root, path.join(root, 'product/deploy'))).toEqual({ file: 'product/chat/Dockerfile' });
+  expect(productionChatImage(root, path.join(root, 'product/deploy'))).toEqual({
+    file: 'product/chat/Dockerfile', config: path.join(root, 'product/deployment-config.json'),
+  });
 });
 
 test('the public example, with no chat of its own, builds the stock Chat Service on its Deployment Config', () => {
   const image = productionChatImage(botcubeRoot, path.join(botcubeRoot, 'examples/public/deploy'));
-  expect(image).toEqual({ file: 'chat/Dockerfile', deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json' });
+  expect(image).toEqual({
+    file: 'chat/Dockerfile', config: path.join(botcubeRoot, 'examples/public/deployment-config.json'),
+    deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json',
+  });
   expect(repositoryImageProps(botcubeRoot, image.file).file).toBe('chat/Dockerfile');
   expect(fs.readFileSync(path.join(botcubeRoot, image.file), 'utf8'))
     .toContain('COPY ${BOTCUBE_ROOT}/examples/public/deployment-config.json examples/public/deployment-config.json');

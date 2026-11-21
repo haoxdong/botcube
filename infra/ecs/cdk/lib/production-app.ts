@@ -13,16 +13,25 @@ import { repositoryImageProps } from './repository-image.js';
 export const CARTRIDGE_ECS_APP = 'ecs/cdk';
 
 /**
- * The preview origin's Chat Service image. A Cartridge holding its own Chat Service in `chat/` beside `deploy/` builds
- * that; any other deploy root runs the stock Chat Service, on the public example's Deployment Config its image ships.
+ * The preview origin's Chat Service image and the BotCube Config it serves (`config`). A Cartridge holding its own Chat
+ * Service in `chat/` beside `deploy/` builds that, on the BotCube Config beside them; any other deploy root runs the
+ * stock Chat Service, on the public example's BotCube Config its image ships.
  */
-export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; deploymentConfig?: string } {
+export function productionChatImage(repositoryRoot: string, deployRoot: string): { file: string; config: string; deploymentConfig?: string } {
   const own = path.join(deployRoot, '../chat/Dockerfile');
-  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own) };
+  if (fs.existsSync(own)) return { file: path.relative(repositoryRoot, own), config: path.join(deployRoot, '../deployment-config.json') };
+  const botcube = path.resolve(projectDir(__dirname), '../../..');
   return {
-    file: path.relative(repositoryRoot, path.resolve(projectDir(__dirname), '../../../chat/Dockerfile')),
+    file: path.relative(repositoryRoot, path.join(botcube, 'chat/Dockerfile')),
+    config: path.join(botcube, 'examples/public/deployment-config.json'),
     deploymentConfig: '/opt/chat-service/examples/public/deployment-config.json',
   };
+}
+
+/** The browser origins, besides its own, the BotCube Config at `configPath` names in `web.corsOrigins`; none without them. */
+export function webOrigins(configPath: string): string[] {
+  const config: { web?: { corsOrigins: string[] } } = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  return config.web?.corsOrigins ?? [];
 }
 
 /** The preview origin's Credential Service image: the deploy root's own, or else the stock one from `credential-service/`. */
@@ -43,12 +52,12 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
   const repositoryRoot = path.resolve(projectDir(__dirname), process.env.BOTCUBE_REPOSITORY_ROOT ?? '../../../..');
   const deployRoot = activeDeployRoot();
   const identity = deployIdentity(deployRoot);
+  const chatImage = productionChatImage(repositoryRoot, deployRoot);
   let origin;
   let chat;
   if (app.node.tryGetContext('previewOrigin')) {
     const inputPath = process.env.PREVIEW_ORIGIN_INPUT;
     if (!inputPath) throw new Error('PREVIEW_ORIGIN_INPUT is required');
-    const chatImage = productionChatImage(repositoryRoot, deployRoot);
     if (chatImage.deploymentConfig) chat = { deploymentConfig: chatImage.deploymentConfig };
     origin = {
       input: JSON.parse(fs.readFileSync(inputPath, 'utf8')),
@@ -69,7 +78,7 @@ export function productionApp(product: Pick<ProductionOptions, 'serving' | 'cred
     }
     webLatency = { moments };
   }
-  defineProduction(app, { repositoryRoot, deployRoot, identity, origin, ...(chat ? { chat } : {}), ...(webLatency ? { webLatency } : {}), ...product });
+  defineProduction(app, { repositoryRoot, deployRoot, identity, corsOrigins: webOrigins(chatImage.config), origin, ...(chat ? { chat } : {}), ...(webLatency ? { webLatency } : {}), ...product });
   grantLambdasInline(app);
   return app;
 }

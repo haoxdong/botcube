@@ -6,6 +6,8 @@ import type { LinkRequest } from './files-link.js';
 
 /** Where every Agent Computer browser mounts its account's Files; Chrome's download directory (deploy/agent-computer). */
 export const FILES_MOUNT_PATH = '/mnt/files';
+/** Where the Chat Service's task mounts every account's Files directory; the CDK mounts its volume here. */
+export const FILES_EFS_ROOT = '/mnt/files-efs';
 /** How long a Files upload or download URL stays valid. */
 export const URL_SECONDS = 300;
 /** The POSIX identity every file operation through an account's access point runs as. */

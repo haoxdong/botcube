@@ -14,7 +14,6 @@ const values = {
   CLOUDWATCH_LOG_GROUP: identity.aws.cloudWatch.logGroup,
   CODEBUILD_PROJECT: identity.aws.codeBuild.project,
   NEXT_PUBLIC_CHAT_SERVICE_URL: identity.domains.chatService,
-  CORS_ORIGINS: identity.domains.corsOrigins.join(','),
   ECR_REPOSITORY: identity.aws.ecr.repository,
   GITHUB_DEPLOY_ENVIRONMENT: identity.github.environment,
   IAM_CODEBUILD_ROLE: identity.aws.iam.codeBuildRole,

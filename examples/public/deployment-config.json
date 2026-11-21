@@ -2,6 +2,9 @@
   "$schema": "../../deployment-config/deployment-config.schema.json",
   "bot": "../bot/bot.json",
   "productName": "BotCube",
+  "web": {
+    "corsOrigins": ["http://localhost:3001", "http://127.0.0.1:3001"]
+  },
   "parking": {
     "automationUserAgents": ["-Verification/", "collective-automation"]
   }

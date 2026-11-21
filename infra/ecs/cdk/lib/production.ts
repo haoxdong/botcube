@@ -94,6 +94,8 @@ export interface ProductionOptions {
   deployRoot: string;
   /** The deploy identity, as `deployIdentity` reads it. */
   identity: DeployIdentity;
+  /** The BotCube Config's `web.corsOrigins`: the UI origins the parked Worker answers and web latency reports from. */
+  corsOrigins: string[];
   /** The registry, mirroring ECR Public's paths, every image comes from. */
   imageRegistry?: string;
   /** The Deployment Config names `supplied.network`, which brings its own egress in place of the identity's `privateEgress`. */
@@ -162,7 +164,7 @@ export function defineProduction(app: App, options: ProductionOptions) {
   });
   const webLatency = new WebLatencyStack(app, 'WebLatency', {
     env, stackName: identity.aws.ecs.webLatency.stackName, appMonitorName: identity.aws.ecs.webLatency.appMonitorName,
-    domains: identity.domains.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
+    domains: options.corsOrigins.filter(origin => origin.startsWith('https://')).map(origin => new URL(origin).hostname),
     readerSubject: `${identity.github.oidcSubjectPrefix}:ref:refs/heads/main`,
     turnLogGroups: [`/${identity.aws.ecs.cluster}/chat-service-preview`, `/aws/bedrock-agentcore/runtimes/${identity.aws.agentCore.runtime}-*`],
     ...options.webLatency,
@@ -313,7 +315,7 @@ function createServingOrigin(app: App, options: ProductionOptions, input: Origin
     originZone: identity.aws.ecs.originZone,
     clientSecretName: identity.aws.ecs.originPullClientSecretName,
     caPath: identity.aws.ecs.originPullCaCertificate,
-    corsOrigins: identity.domains.corsOrigins,
+    corsOrigins: options.corsOrigins,
     parkedDnsTarget: identity.aws.ecs.parkedDnsTarget, wakeUrl,
     ...options.originConfig,
   });

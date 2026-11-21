@@ -38,7 +38,7 @@ test.each([true, false])('synthesizes the template identity with parked=%s and l
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, webLatency,
+    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency,
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -109,7 +109,7 @@ test('a waking Credential Service passes its ALB health check as fast as Chat', 
     ...identity.aws.ecs.credentialService, publicHostname: 'service.example.com', publicPaths: ['/sheets'],
   } } } };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity: published, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    repositoryRoot: root, deployRoot, identity: published, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -127,7 +127,7 @@ test('a waking Credential Service passes its ALB health check as fast as Chat', 
 test.each([true, false])('parks idle production and wakes it from the paused page with parked=%s', parked => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
+    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency: { sessionSampleRate: 1, moments: ['first-response'] },
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
@@ -199,7 +199,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
   const { root, deployRoot, app } = fixture();
   const webLatency = { sessionSampleRate: 1, moments: ['first-response'] };
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity, webLatency,
+    repositoryRoot: root, deployRoot, identity, corsOrigins: [], webLatency,
     storage: { tableName: 'adopter-chat' },
     originConfig: {
       securityGroupName: 'adopter-origin-ingress',
@@ -239,7 +239,7 @@ test.each([true, false])('composition names adopter-owned networks and browser r
 
 test('composition rejects competing chat table names before creating resources', () => {
   expect(() => defineProduction(new App(), {
-    repositoryRoot: '/unused', deployRoot: '/unused', identity,
+    repositoryRoot: '/unused', deployRoot: '/unused', identity, corsOrigins: [],
     chatTableName: 'legacy-chat', storage: { tableName: 'configured-chat' },
   })).toThrow('Choose chatTableName or storage.tableName, not both');
 });
@@ -252,7 +252,7 @@ test.each([
 ] as const)('production resource table in %s mode', (mode, nat, credentials, chat) => {
   const { root, deployRoot, app } = fixture();
   defineProduction(app, {
-    repositoryRoot: root, deployRoot, identity,
+    repositoryRoot: root, deployRoot, identity, corsOrigins: [],
     origin: {
       input: { cloudflareCidrs: ['192.0.2.0/24'], clientVersion: 'fixture', turnIdentityKeysVersion: 'key-revision', runtimeArn: `arn:aws:bedrock-agentcore:${identity.aws.region}:${identity.aws.account}:runtime/template-fixture` },
       images: { chat: ContainerImage.fromRegistry('template-chat'), credential: registryCredentialImage('template-credentials') },
