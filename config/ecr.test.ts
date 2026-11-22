@@ -7,6 +7,8 @@ describe('the Amazon ECR repository an image names', () => {
   it.each([
     [`123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/chat${DIGEST}`, 'arn:aws:ecr:us-east-1:123456789012:repository/acme/chat'],
     ['123456789012.dkr.ecr.us-east-1.amazonaws.com/acme/chat:1', 'arn:aws:ecr:us-east-1:123456789012:repository/acme/chat'],
+    [`123456789012.dkr.ecr.eu-west-2.amazonaws.com/acme/chat${DIGEST}`, 'arn:aws:ecr:eu-west-2:123456789012:repository/acme/chat'],
+    [`123456789012.dkr.ecr.cn-north-1.amazonaws.com.cn/acme/chat${DIGEST}`, 'arn:aws-cn:ecr:cn-north-1:123456789012:repository/acme/chat'],
   ])('%s is in %s', (uri, arn) => {
     expect(ecrRepositoryArn(uri)).toBe(arn);
   });
