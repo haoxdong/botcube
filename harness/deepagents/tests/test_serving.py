@@ -2926,13 +2926,23 @@ def test_a_finished_turns_history_reads_only_its_latest_checkpoint(
     assert len(writes_reads) == 1 and writes_reads[0].startswith(writes)
 
 
-def test_a_new_session_becomes_readable_when_its_first_turn_exits(
+def test_a_new_session_is_readable_while_its_first_turn_runs(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
     install_tagged_memory(monkeypatch, memory)
     monkeypatch.setattr(serving, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
     monkeypatch.setattr(session_api, 'AGENTCORE_MEMORY_ID', MEMORY_ID)
+    recorded = threading.Event()
+    stored = WarmSessionSaver.put_with_writes
+
+    def published(self: Any, config: Any, checkpoint: Any, *args: Any, **kwargs: Any) -> Any:
+        result = stored(self, config, checkpoint, *args, **kwargs)
+        if checkpoint['channel_values'].get('messages'):
+            recorded.set()
+        return result
+
+    monkeypatch.setattr(WarmSessionSaver, 'put_with_writes', published)
     started = threading.Event()
     answering = threading.Event()
     release_answer = threading.Event()
@@ -2970,12 +2980,15 @@ def test_a_new_session_becomes_readable_when_its_first_turn_exits(
             try:
                 assert started.wait(5), 'The first Turn did not publish RUN_STARTED'
                 assert answering.wait(5), 'The first Turn did not reach the held model'
+                assert recorded.wait(5), 'The initial question was never persisted'
                 response = records.post('/invocations', json={
                     'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1',
                 })
                 assert not running.done(), 'The first Turn finished before its record was read'
-                assert response.status_code == 404, response.text
-                assert response.json()['code'] == 'SESSION_NOT_FOUND'
+                assert response.status_code == 200, response.text
+                assert response.json()['messages'] == [
+                    {'id': 'message-0', 'role': 'user', 'content': 'First question'},
+                ]
             finally:
                 release_answer.set()
                 events = running.result(timeout=10)

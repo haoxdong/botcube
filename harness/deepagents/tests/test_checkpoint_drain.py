@@ -128,11 +128,12 @@ def test_client_receives_finished_before_eof_and_the_checkpoint_is_stored_once(
         events = response.result(timeout=5)
     assert eof.is_set()
     assert final_write.stored == 1
-    assert final_write.checkpoints == [final_write.checkpoint_id]
+    assert final_write.checkpoints[-1] == final_write.checkpoint_id
+    assert len(final_write.checkpoints) > 1
     phases = [json.loads(record.message) for record in caplog.records if record.message.startswith('{"event":"harness_phase"')]
     writes = [phase for phase in phases if phase['phase'] == 'checkpoint_write']
-    assert [write['checkpointId'] for write in writes] == [final_write.checkpoint_id]
-    assert writes[0]['startMs'] >= 0
+    assert writes[-1]['checkpointId'] == final_write.checkpoint_id
+    assert all(write['startMs'] >= 0 for write in writes)
     assert sum(event.get('type') == 'RUN_FINISHED' for event in events) == 1
     assert _replay('user-1', 'thread-1') == [('user', 'first'), ('assistant', 'Echo: first')]
 

@@ -212,7 +212,7 @@ def test_cancel_during_parallel_tools_rebuilds_sendable_persisted_history(
                     MEMORY_ID, region_name='us-east-1',
                 ))
                 current = await reader.aget_state(config)
-                assert current.values == {}  # Exit durability has not persisted the active Turn yet.
+                assert _tool_call_ids(current.values['messages']) == [READ_ID, WRITE_ID, *TASK_IDS]
                 stop = RunAgentInput.model_validate({
                     'threadId': followup.thread_id, 'runId': 'run-1', 'messages': [],
                     'tools': [], 'context': [], 'state': {},

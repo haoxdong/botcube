@@ -65,12 +65,6 @@ class SessionAgent(LangGraphAgent):
         self._early_answer = False
         self._used_tools = False
 
-    def get_stream_kwargs(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        stream = super().get_stream_kwargs(*args, **kwargs)
-        if isinstance(self.graph, CompiledStateGraph):
-            stream['durability'] = 'exit'
-        return stream
-
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         self._asked = None
         self._used_tools = False
