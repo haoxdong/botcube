@@ -179,6 +179,8 @@ def test_phase_lines_keep_request_offsets_and_late_checkpoint_identity(
             raise ConnectionError('write refused')
     lines = [json.loads(record.message) for record in caplog.records]
     phases = [line for line in lines if line['event'] == 'harness_phase']
+    phases = [{key: value for key, value in phase.items()
+               if key not in ('threadCpuMs', 'minorFaultsDelta', 'majorFaultsDelta')} for phase in phases]
     assert phases == [
         {'event': 'harness_phase', 'runId': 'run', 'sessionId': 'session', 'phase': 'graph_build',
          'startMs': 250, 'durationMs': 500},

@@ -813,7 +813,7 @@ async def _turn_memory(turn_identity: TurnIdentity, run_id: str) -> tuple[Any, A
 async def _turn_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None, run_id: str, persistent_memory: bool,
     read_checkpoint: Callable[[Any], Coroutine[Any, Any, CheckpointTuple | None]] | None = None,
-    prefetch_memory: Callable[[Any], None] | None = None,
+    prefetch_memory: Callable[[Any], session_memory.Prefetch | None] = lambda store: None,
 ) -> tuple[LangGraphAgent, LocalShellBackend]:
     building = asyncio.to_thread(build)
     if not AGENTCORE_MEMORY_ID or turn_identity is None:
@@ -822,10 +822,12 @@ async def _turn_agent(
             await read_checkpoint(agent.graph.checkpointer)
         return agent, backend
     initial: asyncio.Task[CheckpointTuple | None] | None = None
+    prefetched: session_memory.Prefetch | None = None
 
     async def memory_ready() -> tuple[Any, Any]:
-        nonlocal initial
+        nonlocal initial, prefetched
         saver, store = await _turn_memory(turn_identity, run_id)
+        prefetched = prefetch_memory(store)
         if read_checkpoint is not None:
             initial = asyncio.create_task(read_checkpoint(saver))
         return saver, store
@@ -837,8 +839,7 @@ async def _turn_agent(
                 raise outcome
         agent, backend = cast(tuple[LangGraphAgent, LocalShellBackend], built)
         saver, store = cast(tuple[Any, Any], memory)
-        if prefetch_memory is not None:
-            prefetch_memory(store)
+        session_memory.adopt_prefetch(prefetched)
         if initial is not None:
             await initial
         graph = agent.graph.copy({'checkpointer': saver, 'store': store if persistent_memory else None})
@@ -846,6 +847,7 @@ async def _turn_agent(
     except BaseException:
         if initial is not None:
             await asyncio.gather(initial, return_exceptions=True)
+        await session_memory.settle_prefetch(prefetched, wait=True)
         raise
 
 
@@ -977,9 +979,10 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
                 )
                 return saved
 
-            def prefetch(store: Any) -> None:
+            def prefetch(store: Any) -> session_memory.Prefetch | None:
                 if persistent_memory:
-                    session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
+                    return session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
+                return None
 
             agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
             validate_checkpoint(agent.graph, _session_config(session), saved)
@@ -1223,6 +1226,7 @@ class _SessionTurns:
         lock = self._locks.setdefault(session, asyncio.Lock())
         saver: Any = None
         steering_token = active_steering.set((turn.steering, put))
+        completed = False
         try:
             agent, root = await prepare()
             async with lock:
@@ -1266,6 +1270,7 @@ class _SessionTurns:
                     turn.release(put)
                     self._feed(session, turn, feeds)
                     _settle_finished_reuse(saver, turn.finished_without_interruption(agent))
+                completed = turn.finished and not turn.stopped
         except Exception as failure:
             _settle_finished_reuse(saver, False)
             if (deferred := turn.failure_after_answer(failure)) is not None:
@@ -1273,7 +1278,7 @@ class _SessionTurns:
             raise
         finally:
             active_steering.reset(steering_token)
-            session_memory.settle_prefetch()
+            await session_memory.settle_prefetch(wait=not completed)
             otel_context.detach(trace_token)
             if self._turns.get(session) is turn:
                 del self._turns[session], self._locks[session]

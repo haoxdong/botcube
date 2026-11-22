@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 
 @dataclass
-class _Prefetch:
+class Prefetch:
     """The Turn's Memory block, read while the Turn reads its history; `taken` once the Turn uses it."""
 
     run_id: str
@@ -38,7 +38,7 @@ class _Prefetch:
     taken: bool = False
 
 
-_prefetched: ContextVar[_Prefetch | None] = ContextVar('session_memory_prefetched', default=None)
+_prefetched: ContextVar[Prefetch | None] = ContextVar('session_memory_prefetched', default=None)
 
 
 @dataclass(frozen=True)
@@ -108,19 +108,30 @@ def render_memory(preferences: Sequence[str], facts: Sequence[str]) -> str:
     return '\n\n'.join(sections)
 
 
-def prefetch(load: Callable[[], str], run_id: str, warmed: str | None = None) -> None:
+def prefetch(load: Callable[[], str], run_id: str, warmed: str | None = None) -> Prefetch:
     """Supply the Turn's Memory block from its completed warmup or a read alongside history."""
     async def read() -> str:
-        return warmed if warmed is not None else await asyncio.to_thread(load)
+        with turn_timing.phase('personal_memory'):
+            return warmed if warmed is not None else await asyncio.to_thread(load)
 
-    _prefetched.set(_Prefetch(run_id, asyncio.create_task(read())))
+    prefetched = Prefetch(run_id, asyncio.create_task(read()))
+    adopt_prefetch(prefetched)
+    return prefetched
 
 
-def settle_prefetch() -> None:
+def adopt_prefetch(prefetched: Prefetch | None) -> None:
+    _prefetched.set(prefetched)
+
+
+async def settle_prefetch(prefetched: Prefetch | None = None, *, wait: bool = False) -> None:
     """At the Turn's end, log the failure of a read it never took, as a hedge that lost (ADR 0030); one it took failed the Turn."""
-    prefetched = _prefetched.get()
+    prefetched = prefetched or _prefetched.get()
+    if prefetched is not None and wait:
+        await asyncio.gather(prefetched.read, return_exceptions=True)
     if prefetched is not None and not prefetched.taken:
         prefetched.read.add_done_callback(partial(_log_unused_failure, prefetched.run_id))
+    if _prefetched.get() is prefetched:
+        _prefetched.set(None)
 
 
 def _log_unused_failure(run_id: str, read: asyncio.Task[str]) -> None:
@@ -145,10 +156,10 @@ class SessionMemoryMiddleware(AgentMiddleware):
             and time() - last_model_call_at <= PROMPT_CACHE_TTL_SECONDS
         ):
             return None
+        if prefetched is not None:
+            prefetched.taken = True
+            return {'session_memory': await asyncio.shield(prefetched.read)}
         with turn_timing.phase('personal_memory'):
-            if prefetched is not None:
-                prefetched.taken = True
-                return {'session_memory': await prefetched.read}
             return {'session_memory': await asyncio.to_thread(self._load, runtime.store)}
 
     async def awrap_model_call(

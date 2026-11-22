@@ -45,6 +45,7 @@ from openai import APIError
 from opentelemetry.instrumentation.utils import unwrap
 from typing_extensions import TypedDict
 
+from . import turn_timing
 from .compaction import BackgroundCompaction
 from .files import ARTIFACTS_DIRECTORY, HARNESS_DIRECTORY
 from .lazy_files import LazyFilesMiddleware
@@ -326,12 +327,16 @@ def build_agent(
     checkpointer: Any | None = None,
     permissions: list[FilesystemPermission] | None = None,
 ) -> Any:
+    turn_timing.graph_step('restore_hooks')
     _restore_middleware_hook_dispatch()
     resolved_model = model or build_model()
+    turn_timing.graph_step('profile_checks')
     _reject_dropped_settings(resolved_model, permissions)
     for spec in subagents or []:
         _reject_dropped_settings(spec.get('model', resolved_model), spec.get('permissions'))
+    turn_timing.graph_step('route_skills')
     files_backend, resolved_skills, specs = _route_tool_skills(backend, skills, tools or [], subagents or [])
+    turn_timing.graph_step('subagent_specs')
     if not any(spec['name'] == GENERAL_PURPOSE_SUBAGENT['name'] for spec in specs):
         specs.append({**GENERAL_PURPOSE_SUBAGENT, 'skills': resolved_skills})
     resolved_subagents = [_subagent_spec(spec, files_backend, resolved_skills) for spec in specs]
@@ -344,6 +349,7 @@ def build_agent(
         'system_prompt': system_prompt,
         'state_schema': PlainState,
     }
+    turn_timing.graph_step('middleware')
     compaction = SummarizationMiddleware if backend is None else BackgroundCompaction
     kwargs['middleware'] = [
         compaction(
@@ -361,7 +367,9 @@ def build_agent(
         kwargs['store'] = store
     if checkpointer is not None:
         kwargs['checkpointer'] = checkpointer
+    turn_timing.graph_step('create_agent')
     graph = create_deep_agent(**kwargs)
+    turn_timing.graph_step('validate_graph')
     _reject_exit_steps(graph)
     return graph
 

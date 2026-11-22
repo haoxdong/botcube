@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import resource
 import sys
 import threading
 from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from time import perf_counter
+from time import perf_counter, thread_time
 from typing import Any, Literal
 from uuid import UUID
 
@@ -59,6 +60,8 @@ _PHASES = frozenset({
     'files_pull',
     'checkpoint_write',
 })
+
+_graph_phase: ContextVar[bool] = ContextVar('graph_phase', default=False)
 
 Interval = tuple[float, float]
 
@@ -332,6 +335,42 @@ def model_run() -> str | None:
     return run_id if call is not None and call.end is None else None
 
 
+def _thread_faults() -> tuple[int, int] | None:
+    who = getattr(resource, 'RUSAGE_THREAD', None)
+    if who is None:
+        return None
+    usage = resource.getrusage(who)
+    return usage.ru_minflt, usage.ru_majflt
+
+
+def graph_step(name: str) -> None:
+    """Log a top-level graph step when this thread is building the current Turn's graph."""
+    timing = current()
+    if timing is not None and _graph_phase.get():
+        log.info(json.dumps({
+            'event': 'harness_graph_substep', 'runId': timing.run_id, 'sessionId': timing.session_id,
+            'phase': 'graph_build', 'step': name, 'startMs': round((perf_counter() - timing.receipt) * 1000, 3),
+        }, separators=(',', ':')))
+
+
+@contextmanager
+def _graph_metrics(enabled: bool) -> Generator[dict[str, Any], None, None]:
+    fields: dict[str, Any] = {}
+    if not enabled:
+        yield fields
+        return
+    token = _graph_phase.set(True)
+    cpu, faults = thread_time(), _thread_faults()
+    try:
+        yield fields
+    finally:
+        fields['threadCpuMs'] = round((thread_time() - cpu) * 1000, 3)
+        ended = _thread_faults()
+        fields['minorFaultsDelta'] = None if faults is None or ended is None else ended[0] - faults[0]
+        fields['majorFaultsDelta'] = None if faults is None or ended is None else ended[1] - faults[1]
+        _graph_phase.reset(token)
+
+
 @contextmanager
 def phase(name: str, *, checkpoint_id: str | None = None) -> Generator[None, None, None]:
     """Add the block's wall time to the current Turn's `name` phase."""
@@ -342,8 +381,9 @@ def phase(name: str, *, checkpoint_id: str | None = None) -> Generator[None, Non
         yield
         return
     started = perf_counter()
+    metrics: dict[str, Any] = {}
     try:
-        with _tracer.start_as_current_span(
+        with _graph_metrics(name == 'graph_build') as metrics, _tracer.start_as_current_span(
             f'harness.phase.{name}', record_exception=False, set_status_on_exception=False,
         ):
             yield
@@ -354,6 +394,7 @@ def phase(name: str, *, checkpoint_id: str | None = None) -> Generator[None, Non
             'event': 'harness_phase', 'runId': timing.run_id, 'sessionId': timing.session_id,
             'phase': name, 'startMs': round((started - timing.receipt) * 1000, 3),
             'durationMs': round((ended - started) * 1000, 3),
+            **metrics,
             **({'checkpointId': checkpoint_id} if checkpoint_id is not None else {}),
         }, separators=(',', ':')))
 
