@@ -15,7 +15,7 @@ from botcube_harness_deepagents import agent as agent_module
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.compaction import BackgroundCompaction
 from botcube_harness_deepagents.conversation import conversation
-from botcube_harness_deepagents.serving import _SessionAgent
+from botcube_harness_deepagents.session_agent import SessionAgent
 from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from conftest import ToolBindableFakeModel
 
@@ -63,7 +63,7 @@ async def _run_summary_turns(graph: Any, config: RunnableConfig, cross_threshold
             HumanMessage('Earlier question one' + (' copper' * 40000 if emergency else '')), AIMessage('Earlier answer one'),
             HumanMessage('Earlier question two'), AIMessage('Earlier answer two'),
         ]}, as_node='model')
-    agent = _SessionAgent(name='summary-regression', graph=graph)
+    agent = SessionAgent(name='summary-regression', graph=graph)
     request = RunAgentInput(
         thread_id='summary-session', run_id='turn', state={},
         messages=[UserMessage(id='new-question', content='Reply OK.')],

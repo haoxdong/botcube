@@ -15,6 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
 from botcube_harness_deepagents.agent import build_agent
+from botcube_harness_deepagents.session_agent import SessionAgent
 from botcube_harness_deepagents.turn_memory import collecting_turn_feeds
 from conftest import ToolBindableFakeMessagesModel
 
@@ -241,7 +242,7 @@ def test_the_serving_lifecycle_surfaces_a_failed_compaction_on_the_next_turn(
         )
         config = {'configurable': {'thread_id': 'serving-compaction', 'actor_id': 'member'}}
         await graph.aupdate_state(config, {'messages': _history()}, as_node='model')
-        agent = serving._SessionAgent(name='background-regression', graph=graph)
+        agent = SessionAgent(name='background-regression', graph=graph)
         turns = serving._SessionTurns()
         session = ('member', 'serving-compaction')
 

@@ -71,6 +71,7 @@ from botcube_harness_deepagents.definition import HarnessDefinition
 from botcube_harness_deepagents.files_mount import FilesMount, FilesMountError
 from botcube_harness_deepagents.llm import PLAN_MODEL_PREFIX, ModelRelay
 from botcube_harness_deepagents.memory.agentcore.warm_session import WarmSessionSaver
+from botcube_harness_deepagents.session_agent import SessionAgent
 from checkpoint_fake import ReadCountingSaver, legacy_session
 from deployment_fixture import deploy
 from mounted_files import MountedFiles, binding
@@ -1414,7 +1415,7 @@ def test_checkpoint_snapshot_keeps_streamed_reasoning_ids(service: _Service, sum
     starts = [event['messageId'] for event in events if event['type'] == 'REASONING_MESSAGE_START']
     assert len(starts) == (2 if summary else 0)
     agent = next(iter(serving._AGENTS.values()))
-    assert isinstance(agent, serving._SessionAgent)
+    assert isinstance(agent, SessionAgent)
     agent._graph_ended_at = None
     agent.active_run = {'id': 'snapshot-check', 'thread_id': 'thread-1'}
 
@@ -1434,7 +1435,7 @@ def test_checkpoint_snapshot_keeps_streamed_reasoning_ids(service: _Service, sum
 def test_invalid_checkpoint_snapshot_fails_loud(service: _Service, monkeypatch: pytest.MonkeyPatch) -> None:
     service.turn('hello')
     agent = next(iter(serving._AGENTS.values()))
-    assert isinstance(agent, serving._SessionAgent)
+    assert isinstance(agent, SessionAgent)
     agent._graph_ended_at = None
     agent.active_run = {'id': 'invalid-snapshot-check', 'thread_id': 'thread-1'}
 

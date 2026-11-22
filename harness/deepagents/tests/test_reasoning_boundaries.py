@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from botcube_harness_deepagents import message_times
 from botcube_harness_deepagents.conversation import conversation, reasoning_blocks
-from botcube_harness_deepagents.serving import _SessionAgent, _Thinking
+from botcube_harness_deepagents.session_agent import SessionAgent, _Thinking
 
 
 def _with_encrypted_completion(body: bytes) -> bytes:
@@ -55,7 +55,7 @@ def test_recorded_reasoning_starts_before_its_late_summary_words(monkeypatch: An
     at = [0, 1000, 12775, 12776, 13000, 20000, 20001, 20003, 20004]
     if encrypted:
         at.insert(6, 20000)
-    agent = _SessionAgent(name='boundary', graph=StateGraph(BaseModel).add_edge(START, END).compile())
+    agent = SessionAgent(name='boundary', graph=StateGraph(BaseModel).add_edge(START, END).compile())
     thinking = _Thinking()
     live = []
     for index, chunk in enumerate(chunks):
@@ -78,7 +78,7 @@ def test_recorded_reasoning_starts_before_its_late_summary_words(monkeypatch: An
 
 
 def test_live_thought_starts_on_empty_summary_and_closes_before_the_next() -> None:
-    agent = _SessionAgent(name='boundary', graph=StateGraph(BaseModel).add_edge(START, END).compile())
+    agent = SessionAgent(name='boundary', graph=StateGraph(BaseModel).add_edge(START, END).compile())
     thought = _Thinking()
     opened = agent._reasoning_chunk('lane', thought, {'type': 'reasoning', 'index': 0, 'id': 'provider-item'})
     assert [(event.type, event.message_id) for event in opened] == [

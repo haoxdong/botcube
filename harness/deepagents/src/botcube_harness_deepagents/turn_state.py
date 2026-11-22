@@ -318,7 +318,7 @@ def _session_config(session: tuple[str | None, str | None]) -> RunnableConfig:
 class AnsweredToolResultsMiddleware(AgentMiddleware):
     """Sends the model only the first recorded result of each tool call.
 
-    A Session recorded before _SessionAgent's guard can hold a resent result after
+    A Session recorded before SessionAgent's guard can hold a resent result after
     its call was answered, and Bedrock refuses every later Turn on it. The
     record keeps that result; only the model's request leaves it out. Read the
     first result's identity from the full state because native summarization

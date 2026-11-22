@@ -16,7 +16,7 @@ from ag_ui.core import RunAgentInput
 from langchain_core.messages import AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCallChunk
 
-from botcube_harness_deepagents.serving import _SessionAgent
+from botcube_harness_deepagents.session_agent import SessionAgent
 
 
 class _EventGraph:
@@ -46,7 +46,7 @@ def _end(run: str) -> dict[str, Any]:
 
 def _run(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     async def collect() -> list[dict[str, Any]]:
-        agent = _SessionAgent(name='replay', graph=_EventGraph(events))
+        agent = SessionAgent(name='replay', graph=_EventGraph(events))
         request = RunAgentInput(thread_id='session', run_id='client-turn', state={},
                                 messages=[], tools=[], context=[], forwarded_props={})
         return [event.model_dump(exclude_none=True) async for event in agent.run(request)]
@@ -160,7 +160,7 @@ def test_parallel_text_and_reasoning_remain_with_their_model() -> None:
 
 
 def test_closing_parallel_stream_clears_cursors_and_clone_starts_fresh() -> None:
-    agent = _SessionAgent(name='replay', graph=_EventGraph([
+    agent = SessionAgent(name='replay', graph=_EventGraph([
         _stream('reader', name='read_file', call='read', args=''),
         _stream('todos', name='write_todos', call='todos', args=''),
         _stream('reader', args='{"file_path":"/skill.md"}'),

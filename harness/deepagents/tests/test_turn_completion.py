@@ -28,6 +28,7 @@ from botcube_harness_deepagents.lazy_files import (
     LazyFilesMiddleware,
     current_turn_files,
 )
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import prepared
 
 
@@ -40,7 +41,7 @@ def _use_workspace() -> None:
     LazyFilesMiddleware().wrap_tool_call(request, lambda call: ToolMessage('Done', tool_call_id=call.tool_call['id']))
 
 
-def _agent(*, use_files: bool = False) -> serving._SessionAgent:
+def _agent(*, use_files: bool = False) -> SessionAgent:
     def reply(state: Any) -> dict[str, Any]:
         if use_files:
             _use_workspace()
@@ -50,7 +51,7 @@ def _agent(*, use_files: bool = False) -> serving._SessionAgent:
     graph.add_node('reply', reply)
     graph.add_edge(START, 'reply')
     graph.add_edge('reply', END)
-    return serving._SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
+    return SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
 
 
 def _input(run_id: str = 'run') -> RunAgentInput:
@@ -90,7 +91,7 @@ def test_live_clock_freezes_at_the_same_end_as_the_saved_answer(monkeypatch: pyt
             ToolBindableFakeModel(responses=['Done']), tools=[],
             middleware=[message_times.MessageTimesMiddleware()], checkpointer=MemorySaver(),
         )
-        agent = serving._SessionAgent(name='test', graph=graph)
+        agent = SessionAgent(name='test', graph=graph)
         request = _input()
         request.messages = [UserMessage(id='canonical-question', content='Compare markets')]
         assert request.forwarded_props is not None
@@ -196,7 +197,7 @@ def test_graph_interrupts_keep_the_adapters_finalization(mode: str) -> None:
     graph.add_edge('reply', 'next')
     graph.add_edge('next', END)
     saver = MemorySaver()
-    agent = serving._SessionAgent(name='test', graph=graph.compile(
+    agent = SessionAgent(name='test', graph=graph.compile(
         checkpointer=saver,
         interrupt_before=['reply'] if mode == 'before' else None,
         interrupt_after=['reply'] if mode == 'after' else None,

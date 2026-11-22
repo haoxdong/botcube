@@ -20,6 +20,7 @@ from agentcore_fake import (
 from botcube_harness_deepagents import serving, session_api
 from botcube_harness_deepagents.memory import agentcore
 from botcube_harness_deepagents.memory.agentcore import warm_session
+from botcube_harness_deepagents.session_agent import SessionAgent
 from test_serving import _files, _replay, _Service
 
 pytest_plugins = ('test_serving',)
@@ -47,12 +48,12 @@ def checkpoint_completion(request: pytest.FixtureRequest, monkeypatch: pytest.Mo
     if request.param == 'natural':
         return
     # Exercise recovery from intermediate checkpoints written by pre-exit-durability Turns.
-    stream_kwargs = serving._SessionAgent.get_stream_kwargs
+    stream_kwargs = SessionAgent.get_stream_kwargs
 
     def legacy_stream(self: Any, *args: Any, **kwargs: Any) -> Any:
         return {**stream_kwargs(self, *args, **kwargs), 'durability': 'async'}
 
-    monkeypatch.setattr(serving._SessionAgent, 'get_stream_kwargs', legacy_stream)
+    monkeypatch.setattr(SessionAgent, 'get_stream_kwargs', legacy_stream)
     saver = warm_session.WarmSessionSaver
     store = saver.put_with_writes
     finish = saver.finish_run

@@ -7,7 +7,7 @@ from langchain.agents import AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 
-from botcube_harness_deepagents.serving import _SessionAgent
+from botcube_harness_deepagents.session_agent import SessionAgent
 
 
 def test_a_first_turn_merges_into_a_session_without_a_messages_channel() -> None:
@@ -15,7 +15,7 @@ def test_a_first_turn_merges_into_a_session_without_a_messages_channel() -> None
     graph.add_node('reply', lambda state: {})
     graph.add_edge(START, 'reply')
     graph.add_edge('reply', END)
-    agent = _SessionAgent(name='agent', graph=graph.compile())
+    agent = SessionAgent(name='agent', graph=graph.compile())
     message = HumanMessage('Hello', id='user-1')
     run = RunAgentInput.model_validate({
         'thread_id': 'session-1',

@@ -34,6 +34,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from botcube_harness_deepagents import serving, trace_relay, turn_timing
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import HarnessDefinition
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel, prepared
 
 
@@ -69,7 +70,7 @@ async def exercise(session_id: str, mode: str) -> None:
     graph.add_node('model', reply)
     graph.add_edge(START, 'model')
     graph.add_edge('model', END)
-    agent = serving._SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
+    agent = SessionAgent(name='test', graph=graph.compile(checkpointer=MemorySaver()))
     inputs = RunAgentInput(thread_id=session_id, run_id=mode, messages=[UserMessage(id='question', role='user', content='question')], tools=[], context=[], state={}, forwarded_props={})
     if mode == 'disconnect':
         stream = turns.stream(('owner', session_id), prepared(agent, Path('.')), inputs, None, serving._RequestContext(session_id))
@@ -216,7 +217,7 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         ))
         backend = serving._require_bot().build_backend({'PATH': root + ':/usr/bin:/bin'})
         model = _CommandModel(command=command, answer_fails=answer_fails)
-        agent = serving._SessionAgent(name='test', graph=build_agent(backend=backend, skills=[], model=model, checkpointer=MemorySaver()))
+        agent = SessionAgent(name='test', graph=build_agent(backend=backend, skills=[], model=model, checkpointer=MemorySaver()))
 
         async def turn_agent(
             build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]],

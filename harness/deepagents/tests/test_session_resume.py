@@ -48,6 +48,7 @@ from agentcore_fake import (
 from agentcore_fake import FakeAgentCoreMemory as _FakeAgentCoreMemory
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.memory import agentcore
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeModel
 
 TURNS = 30
@@ -1148,7 +1149,6 @@ def test_a_resent_result_still_repairs_its_interrupted_recorded_call(tmp_path: P
     """The recorded result the library repairs from a resent one is kept; the resent copy is not."""
     from ag_ui.core import RunAgentInput
 
-    from botcube_harness_deepagents import serving
 
     placeholder = "Tool call 'ls' with id 'call-1' was interrupted before completion."
     recorded = [
@@ -1160,7 +1160,7 @@ def test_a_resent_result_still_repairs_its_interrupted_recorded_call(tmp_path: P
     run = RunAgentInput.model_validate({
         'thread_id': 'session-1', 'run_id': 'run-2', 'messages': [], 'tools': [], 'context': [], 'state': {}, 'forwarded_props': {},
     })
-    agent = serving._SessionAgent(name='agent', graph=_graph(InMemorySaver(), tmp_path, []))
+    agent = SessionAgent(name='agent', graph=_graph(InMemorySaver(), tmp_path, []))
 
     merged = agent.langgraph_default_merge_state({'messages': recorded}, [resent], run)
 

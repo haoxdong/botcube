@@ -13,6 +13,7 @@ from pydantic import SecretStr
 
 from botcube_harness_deepagents import aws_clients
 from botcube_harness_deepagents.agent import AgentResponseError, ask, build_agent
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import KwargsRecorder, ToolBindableFakeModel, prepared
 
 # The Bedrock clients every model shares; the real ones fetch the runtime's credentials.
@@ -442,7 +443,7 @@ def test_default_general_purpose_subagent_reads_files_and_publishes_its_write(
         model=model, backend=LocalShellBackend(root_dir=tmp_path, virtual_mode=True, inherit_env=False),
         skills=[], checkpointer=InMemorySaver(),
     )
-    agent = serving._SessionAgent(name='delegated-files', graph=graph)
+    agent = SessionAgent(name='delegated-files', graph=graph)
     request = RunAgentInput(
         thread_id='delegated-files', run_id='delegated-run',
         messages=[UserMessage(id='question', role='user', content='Delegate reading source.txt and writing answer.txt.')],

@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from botcube_harness_deepagents import files, serving
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.files_mount import FilesMount
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel, prepared
 from mounted_files import MountedFiles, binding
 
@@ -64,7 +65,7 @@ def test_a_turn_saves_the_file_its_answer_links_by_path_before_finishing(
         model=model, backend=LocalShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=False),
         skills=[], checkpointer=InMemorySaver(),
     )
-    agent = serving._SessionAgent(name='linked-files', graph=graph)
+    agent = SessionAgent(name='linked-files', graph=graph)
     request = RunAgentInput(
         thread_id='linked-files', run_id='linked-run',
         messages=[UserMessage(id='question', role='user', content='Write and link a file in /mnt/data.')],

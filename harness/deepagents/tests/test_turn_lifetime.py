@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from botcube_harness_deepagents import serving
 from botcube_harness_deepagents.agent import build_agent
 from botcube_harness_deepagents.definition import InvocationAuth, ModelRelay
+from botcube_harness_deepagents.session_agent import SessionAgent
 from conftest import ToolBindableFakeMessagesModel
 
 EPOCH = 1_700_000_000
@@ -123,7 +124,7 @@ def test_turn_crossing_the_token_limit_finishes_with_a_persisted_answer(
         model = _model(phase, pause)
         graph = build_agent(model=model, tools=[slow_work], backend=None, skills=(), checkpointer=MemorySaver(),
                             middleware=[serving.SteeringMiddleware()])
-        agent = serving._SessionAgent(name='test', graph=graph, config={'configurable': {'actor_id': 'owner'}})
+        agent = SessionAgent(name='test', graph=graph, config={'configurable': {'actor_id': 'owner'}})
         monkeypatch.setattr(serving, '_SESSION_TURNS', serving._SessionTurns())
         monkeypatch.setattr(serving, '_agent_and_backend', lambda **kwargs: (agent, SimpleNamespace(cwd=tmp_path)))
 
@@ -167,7 +168,7 @@ def test_an_expired_invocation_keeps_the_user_message_and_streams_a_complete_ans
     ))
     graph = build_agent(model=StreamingToolModel(responses=[AIMessage('Unexpected model call')]),
                         backend=None, skills=(), checkpointer=MemorySaver())
-    agent = serving._SessionAgent(name='test', graph=graph, config={'configurable': {'actor_id': 'owner'}})
+    agent = SessionAgent(name='test', graph=graph, config={'configurable': {'actor_id': 'owner'}})
     monkeypatch.setattr(serving, '_SESSION_TURNS', serving._SessionTurns())
     monkeypatch.setattr(serving, '_agent_and_backend', lambda **kwargs: (agent, SimpleNamespace(cwd=tmp_path)))
 
