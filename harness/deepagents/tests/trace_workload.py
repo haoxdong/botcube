@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import sys
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -85,7 +85,11 @@ async def exercise(session_id: str, mode: str) -> None:
         async def turn_agent(
             build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]],
             turn_identity: str | None, run_id: str, persistent_memory: bool,
+            read_checkpoint: Callable[[Any], Awaitable[Any]] | None = None,
+            prefetch_memory: Callable[[Any], None] | None = None,
         ) -> tuple[LangGraphAgent, LocalShellBackend]:
+            if read_checkpoint is not None:
+                await read_checkpoint(agent.graph.checkpointer)
             return agent, await asyncio.to_thread(backend)
 
         serving._SESSION_TURNS = turns
@@ -217,7 +221,11 @@ async def exercise_cli_turn(session_id: str, command: str, *, answer_fails: bool
         async def turn_agent(
             build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]],
             turn_identity: str | None, run_id: str, persistent_memory: bool,
+            read_checkpoint: Callable[[Any], Awaitable[Any]] | None = None,
+            prefetch_memory: Callable[[Any], None] | None = None,
         ) -> tuple[LangGraphAgent, LocalShellBackend]:
+            if read_checkpoint is not None:
+                await read_checkpoint(agent.graph.checkpointer)
             return agent, backend
 
         serving._SESSION_TURNS = serving._SessionTurns()

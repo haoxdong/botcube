@@ -14,6 +14,7 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Coroutine,
     Mapping,
     Sequence,
 )
@@ -55,6 +56,7 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.content import ReasoningContentBlock
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.config import get_config
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.memory import InMemoryStore
@@ -118,7 +120,11 @@ from .prompt_cache_observability import (
 )
 from .proxy_relay import start_proxy_relay_from_config
 from .scheduled_tasks import propose_scheduled_task
-from .session_format import SessionFormatLegacyError, latest_checkpoint
+from .session_format import (
+    SessionFormatLegacyError,
+    latest_checkpoint,
+    validate_checkpoint,
+)
 from .shell_backend import WorkerShellBackend
 from .snapshot_build import answer_once, prime_process, walk_graph, workspace_at
 from .sse import keep_alive
@@ -800,18 +806,41 @@ async def _turn_memory(turn_identity: TurnIdentity, run_id: str) -> tuple[Any, A
 
 async def _turn_agent(
     build: Callable[[], tuple[LangGraphAgent, LocalShellBackend]], turn_identity: TurnIdentity | None, run_id: str, persistent_memory: bool,
+    read_checkpoint: Callable[[Any], Coroutine[Any, Any, CheckpointTuple | None]] | None = None,
+    prefetch_memory: Callable[[Any], None] | None = None,
 ) -> tuple[LangGraphAgent, LocalShellBackend]:
     building = asyncio.to_thread(build)
     if not AGENTCORE_MEMORY_ID or turn_identity is None:
-        return await building
-    built, memory = await asyncio.gather(building, _turn_memory(turn_identity, run_id), return_exceptions=True)
-    for outcome in (built, memory):
-        if isinstance(outcome, BaseException):
-            raise outcome
-    agent, backend = cast(tuple[LangGraphAgent, LocalShellBackend], built)
-    saver, store = cast(tuple[Any, Any], memory)
-    graph = agent.graph.copy({'checkpointer': saver, 'store': store if persistent_memory else None})
-    return _SessionAgent(name=agent.name, graph=graph, config=agent.config), backend
+        agent, backend = await building
+        if read_checkpoint is not None:
+            await read_checkpoint(agent.graph.checkpointer)
+        return agent, backend
+    initial: asyncio.Task[CheckpointTuple | None] | None = None
+
+    async def memory_ready() -> tuple[Any, Any]:
+        nonlocal initial
+        saver, store = await _turn_memory(turn_identity, run_id)
+        if read_checkpoint is not None:
+            initial = asyncio.create_task(read_checkpoint(saver))
+        return saver, store
+
+    try:
+        built, memory = await asyncio.gather(building, memory_ready(), return_exceptions=True)
+        for outcome in (built, memory):
+            if isinstance(outcome, BaseException):
+                raise outcome
+        agent, backend = cast(tuple[LangGraphAgent, LocalShellBackend], built)
+        saver, store = cast(tuple[Any, Any], memory)
+        if prefetch_memory is not None:
+            prefetch_memory(store)
+        if initial is not None:
+            await initial
+        graph = agent.graph.copy({'checkpointer': saver, 'store': store if persistent_memory else None})
+        return _SessionAgent(name=agent.name, graph=graph, config=agent.config), backend
+    except BaseException:
+        if initial is not None:
+            await asyncio.gather(initial, return_exceptions=True)
+        raise
 
 
 def _apply_environment(backend: LocalShellBackend, environment: Mapping[str, str] | None) -> None:
@@ -932,22 +961,29 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
         )
 
         async def prepare() -> tuple[LangGraphAgent, Path]:
-            agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory)
-            if AGENTCORE_MEMORY_ID and persistent_memory:
-                store = agent.graph.store
-                session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
+            saved: CheckpointTuple | None = None
+
+            async def read(saver: Any) -> CheckpointTuple | None:
+                nonlocal saved
+                saved = await _read_turn_checkpoint(
+                    saver, input_data, session=session, opening=opening, actor_id=auth.actor_id,
+                    run_id=input_data.run_id, epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
+                )
+                return saved
+
+            def prefetch(store: Any) -> None:
+                if persistent_memory:
+                    session_memory.prefetch(lambda: agentcore_memory_backend.opening(store, auth.actor_id), input_data.run_id, warmed)
+
+            agent, backend = await _turn_agent(build, turn_identity, input_data.run_id, persistent_memory, read, prefetch)
+            validate_checkpoint(agent.graph, _session_config(session), saved)
             _require_bot().apply_session_id(backend, input_data.thread_id)
             return agent, Path(backend.cwd)
-
-        read_locked = partial(
-            _read_turn_checkpoint, session=session, opening=opening, actor_id=auth.actor_id,
-            run_id=input_data.run_id, epoch=forwarded.get('sessionSnapshotEpoch'), turn_identity=turn_identity,
-        )
 
         candidate = forwarded.get('agentSystemPrompt')
         prompt_hash = _served_prompt_hash(candidate)
         async with aclosing(_SESSION_TURNS.stream(
-            session, prepare, input_data, files, context, read_locked, invocation_deadline(auth.model_relay),
+            session, prepare, input_data, files, context, deadline=invocation_deadline(auth.model_relay),
         )) as events:
             async for event in events:
                 yield event
@@ -965,19 +1001,22 @@ async def _invoke_agent(input_data: RunAgentInput, context: _RequestContext, for
 
 
 async def _read_turn_checkpoint(
-    agent: LangGraphAgent, *, session: tuple[str | None, str | None], opening: bool,
+    saver: Any, input_data: RunAgentInput, *, session: tuple[str | None, str | None], opening: bool,
     actor_id: str, run_id: str, epoch: Any, turn_identity: TurnIdentity | None,
-) -> None:
-    saver = getattr(agent.graph, 'checkpointer', None)
-    if isinstance(saver, WarmSessionSaver):
-        saver.admit_snapshot_reuse(
-            _session_config(session), actor_id, run_id,
-            agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
-        )
-    with turn_timing.phase('checkpoint_read'):
-        saved = await latest_checkpoint(agent.graph, _session_config(session))
-        if opening:
-            _require_empty_opening_checkpoint(saved)
+) -> CheckpointTuple | None:
+    async with _SESSION_TURNS.checkpoint_read(session, input_data) as current:
+        if not current:
+            return None
+        if isinstance(saver, WarmSessionSaver):
+            saver.admit_snapshot_reuse(
+                _session_config(session), actor_id, run_id,
+                agentcore_memory_backend.finished_snapshot_epoch(turn_identity, epoch),
+            )
+        with turn_timing.phase('checkpoint_read'):
+            saved = await saver.aget_tuple(_session_config(session))
+            if opening:
+                _require_empty_opening_checkpoint(saved)
+            return saved
 
 
 def _settle_finished_reuse(saver: Any, finished: bool) -> None:
@@ -1054,6 +1093,14 @@ class _SessionTurns:
         self._end = object()
 
     @asynccontextmanager
+    async def checkpoint_read(
+        self, session: tuple[str | None, str | None], input_data: RunAgentInput,
+    ) -> AsyncGenerator[bool, None]:
+        async with self._locks.setdefault(session, asyncio.Lock()):
+            turn = self._turns.get(session)
+            yield turn is not None and turn.input_data is input_data and not turn.stopped
+
+    @asynccontextmanager
     async def preparation(self, session: tuple[str | None, str | None]) -> AsyncGenerator[bool, None]:
         lock = self._locks.setdefault(session, asyncio.Lock())
         turn = self._turns.get(session)
@@ -1122,7 +1169,7 @@ class _SessionTurns:
         previous = self._turns.get(session)
         if previous is not None:
             previous.stop()
-        self._turns[session] = turn = _Turn(input_data.run_id)
+        self._turns[session] = turn = _Turn(input_data.run_id, input_data=input_data)
         queue: asyncio.Queue[Any] = asyncio.Queue()
         run = asyncio.create_task(self._run(session, turn, prepare, input_data, files, context, queue.put_nowait, read_locked, deadline))
         def completed(work: asyncio.Task[None]) -> None:

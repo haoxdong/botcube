@@ -22,6 +22,10 @@ class SessionFormatLegacyError(RuntimeError):
 async def latest_checkpoint(graph: Any, config: RunnableConfig) -> CheckpointTuple | None:
     """The Session's latest checkpoint, read once; SessionFormatLegacyError when it is in the legacy format."""
     saved = await graph.checkpointer.aget_tuple(config)
+    return validate_checkpoint(graph, config, saved)
+
+
+def validate_checkpoint(graph: Any, config: RunnableConfig, saved: CheckpointTuple | None) -> CheckpointTuple | None:
     if saved is None:
         return None
     checkpoint = saved.checkpoint

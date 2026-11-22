@@ -68,6 +68,7 @@ async def _turn_events(
 @dataclass
 class _Turn:
     run_id: str
+    input_data: RunAgentInput | None = None
     steering: PendingSteering = field(default_factory=PendingSteering)
     work: asyncio.Task[None] | None = None
     response_finished: bool = False
