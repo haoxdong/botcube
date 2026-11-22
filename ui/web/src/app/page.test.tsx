@@ -6687,7 +6687,7 @@ describe('agent profile', () => {
     await userEvent.click(within(sheet).getByRole('button', { name: 'Delete' }));
 
     expect(within(sheet).getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close', 'More', 'Delete task', 'Cancel']);
-    expect(within(sheet).getByRole('button', { name: 'Delete task' })).toHaveClass('button-destructive');
+    expect(within(sheet).getByRole('button', { name: 'Delete task' })).toHaveClass('text-destructive', 'rounded-full');
     await userEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
     expect(within(sheet).getByRole('button', { name: 'Delete' })).toBeEnabled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([]);

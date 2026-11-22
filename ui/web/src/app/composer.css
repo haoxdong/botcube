@@ -219,9 +219,8 @@
   font-size: var(--font-body);
 }
 
-.composer-read-only .button {
+.composer-read-only .pill-button {
   flex-shrink: 0;
-  min-height: 36px;
 }
 
 /* The bot's accessory (the 🔒 chip), left-aligned above the text box: sized in the input's column like `.chat-composer`. */
@@ -511,13 +510,6 @@
     min-height: 46px;
     margin-bottom: var(--space-12);
     padding: 0 1px 0 calc(var(--space-16) - 1px);
-  }
-
-  .composer-read-only .button {
-    min-height: 44px;
-    padding-block: 0;
-    border: 6px solid transparent;
-    background-clip: padding-box;
   }
 }
 

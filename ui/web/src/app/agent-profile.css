@@ -329,16 +329,6 @@
   fill: currentColor;
 }
 
-/* Back is a round chevron as tall as the header's buttons. */
-.agent-file-back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--button-height);
-  height: var(--button-height);
-  padding: 0;
-}
-
 /* A grouped list, as iOS Settings and Contacts: one white card, rows split by hairlines inset to the text. */
 .agent-file-group {
   margin: 0;
@@ -500,10 +490,6 @@
   width: 1px;
   height: 1px;
   opacity: 0;
-}
-
-.picture-upload:focus-within {
-  outline: 2px solid var(--color-blue);
 }
 
 .agent-file-saved svg {

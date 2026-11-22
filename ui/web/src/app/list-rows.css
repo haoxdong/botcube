@@ -272,11 +272,6 @@ textarea.settings-text {
   gap: var(--space-12);
 }
 
-.scheduled-edit-actions .button {
-  min-height: max(36px, var(--button-height));
-  padding: 0 var(--space-16);
-}
-
 /* Open chat, Pause or Resume, Edit and Delete, one under another across the sheet. */
 .scheduled-sheet-actions {
   display: grid;

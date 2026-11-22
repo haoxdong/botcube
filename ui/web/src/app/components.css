@@ -9,48 +9,9 @@
   color: var(--color-text-muted);
 }
 
-/* A button's height: its small line at the page's line height, plus its 6px padding above and below. */
+/* A button's height: stock Button's h-8. */
 :root {
-  --button-height: calc(var(--font-small) * var(--leading) + 12px);
-}
-
-.button {
-  appearance: none;
-  border: none;
-  border-radius: var(--radius-pill);
-  padding: 6px var(--space-16);
-  font-size: var(--font-small);
-  color: var(--color-text);
-  background: var(--color-fill);
-  cursor: pointer;
-  transition: background var(--motion-quick) var(--ease);
-}
-
-@media (hover: hover) {
-  .button:hover:not(:disabled) {
-    background: var(--color-line);
-  }
-}
-
-.button-primary {
-  color: var(--color-white);
-  background: var(--color-text);
-}
-
-@media (hover: hover) {
-  .button-primary:hover:not(:disabled) {
-    color: var(--color-white);
-    background: var(--color-text);
-  }
-}
-
-.button-primary:disabled {
-  background: var(--color-line);
-  cursor: default;
-}
-
-.button-destructive {
-  color: var(--color-red);
+  --button-height: 2rem;
 }
 
 [data-slot="field"] input,

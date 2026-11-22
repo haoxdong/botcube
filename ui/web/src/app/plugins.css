@@ -184,12 +184,15 @@
 
 /* Phones: every control is a finger's 44px target at the least (Apple HIG). Icons keep their size. */
 @media (max-width: 640px) {
-  :root {
-    --button-height: 44px;
+  /* A pill keeps stock's 32px look; a clear ::after makes it a 44px target. */
+  .pill-button {
+    position: relative;
   }
 
-  .button {
-    min-height: var(--button-height);
+  .pill-button::after {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
   }
 
   .header-btn {

@@ -84,7 +84,7 @@ describe('SignInsList', () => {
   it('disables the actions while one runs, and says why one failed', () => {
     const html = render({ signIns: [site('linked', 'ann@example.com')], busy: true, error: 'Sign-out failed: 500' });
 
-    expect(html).toContain('<button class="button" type="button" disabled="">Sign out</button>');
+    expect(html).toMatch(/<button type="button"[^>]* disabled=""[^>]*>Sign out<\/button>/);
     expect(html).toContain('<p class="sign-in-error" role="alert">Sign-out failed: 500</p>');
   });
 

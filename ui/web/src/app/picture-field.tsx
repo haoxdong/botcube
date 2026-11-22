@@ -4,6 +4,7 @@ import { m as motionElement } from "motion/react";
 import { Presence, presenceMotion } from "./collapse";
 
 import { Button } from "../components/pill-button";
+import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, resizedPicture } from "./avatar";
 
@@ -45,7 +46,7 @@ export function PictureField({
   return (
     <div className="picture-field">
       <Avatar picture={picture} emoji={emoji} name={name} agent={agent} size={size} />
-      <label className="button picture-upload">
+      <label className={buttonVariants({ variant: "secondary", className: "pill-button picture-upload rounded-full has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/50" })}>
         Upload {noun}
         <Input type="file" accept="image/*" onChange={(event) => void choose(event.target.files?.[0])} />
       </label>

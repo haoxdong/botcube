@@ -207,8 +207,8 @@ function FileDocument({
   return (
     <article className={`agent-file ${tint}`} aria-label={file}>
       <header className="agent-file-header">
-        <Button type="button" className="agent-file-back" aria-label="Back" onClick={onBack}>
-          <ChevronLeft size={16} aria-hidden />
+        <Button type="button" size="icon" aria-label="Back" onClick={onBack}>
+          <ChevronLeft aria-hidden />
         </Button>
         <span className="agent-file-icon">
           <Icon aria-hidden="true" />
