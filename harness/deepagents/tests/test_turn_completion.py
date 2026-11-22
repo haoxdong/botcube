@@ -195,8 +195,9 @@ def test_graph_interrupts_keep_the_adapters_finalization(mode: str) -> None:
     graph.add_edge(START, 'reply')
     graph.add_edge('reply', 'next')
     graph.add_edge('next', END)
+    saver = MemorySaver()
     agent = serving._SessionAgent(name='test', graph=graph.compile(
-        checkpointer=MemorySaver(),
+        checkpointer=saver,
         interrupt_before=['reply'] if mode == 'before' else None,
         interrupt_after=['reply'] if mode == 'after' else None,
     ))
@@ -210,6 +211,9 @@ def test_graph_interrupts_keep_the_adapters_finalization(mode: str) -> None:
             assert [event.value for event in events if event.type == EventType.CUSTOM] == ['Approval required']
         state = await agent.graph.aget_state({'configurable': {'thread_id': 'session'}})
         assert state.next == (('next',) if mode == 'after' else ('reply',))
+        assert len([item async for item in saver.alist(
+            {'configurable': {'thread_id': 'session'}},
+        )]) == 1
 
     asyncio.run(exercise())
 

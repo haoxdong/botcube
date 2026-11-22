@@ -1,13 +1,7 @@
-"""Bounded write-through Session snapshots.
-
-Registered Chat writers may reuse completed local writes or successful warmup
-reads under the Session lock with the same actor and writer epoch. Mutations
-revoke reuse before writing; uncertain writes never promote.
-"""
+"""Bounded Session snapshots, reusable only under the same actor and writer epoch after successful settlement."""
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import threading
@@ -45,6 +39,7 @@ from langgraph_checkpoint_aws.checkpoint.agentcore.snapshot import (
 from langgraph_checkpoint_aws.checkpoint.deferred_saver import PendingWrite
 
 from ... import turn_timing
+from ...checkpoint_writes import CheckpointWrites
 from ...session_format import SessionFormatLegacyError
 from .serializer import CompressedReadingSerializer
 from .snapshot import FragmentedSnapshotClient
@@ -54,9 +49,7 @@ __all__ = ['WarmSessionSaver']
 # The Sessions one microVM keeps warm: a Runtime session serves one member's few chats.
 WARM_SESSIONS = 16
 
-# The ListEvents page that finds a Session's newest checkpoint. The filter applies within a page, and every
-# snapshot comes back in it: on a 742-event Session, a page of 100 cost ~800 ms without payloads and 67 MB with
-# them, against ~200 ms and 2.5 MB for 5, while the newest checkpoint sits among the newest few events.
+# Full snapshots dominate each page: on 742 events, 5 cost ~200 ms/2.5 MB versus 100 at ~800 ms/67 MB.
 CHECKPOINT_PAGE = 5
 
 # (memory ID, filing actor, AgentCore session ID): where a Session's checkpoints live.
@@ -255,7 +248,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._confirmed: dict[_Key, _Confirmed] = {}
         self._admission: tuple[_Key, str, str, str] | None = None
         self._written: tuple[_Key, _Confirmed] | None = None
-        self._write_lock = asyncio.Lock()
+        self._writes = CheckpointWrites()
 
     def admit_snapshot_reuse(
         self, config: RunnableConfig, actor_id: str, run_id: str, epoch: str | None,
@@ -401,18 +394,25 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         checkpoints, writes, channel_data = self.processor.process_events(events)
         return self.processor.build_checkpoint_tuple(checkpoints[checkpoint_id], writes[checkpoint_id], channel_data, config)
 
+    async def settle_writes(self) -> None:
+        await self._writes.settle()
+
+    async def aput(
+        self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        return await self._writes.persist(super().aput(config, checkpoint, metadata, new_versions))
+
     async def aput_writes(
         self, config: RunnableConfig, writes: Sequence[tuple[str, Any]], task_id: str, task_path: str = '',
     ) -> None:
-        async with self._write_lock:
-            await super().aput_writes(config, writes, task_id, task_path)
+        await self._writes.persist(super().aput_writes(config, writes, task_id, task_path))
 
     async def aput_with_writes(
         self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
         new_versions: ChannelVersions, pending_writes: Sequence[PendingWrite],
     ) -> RunnableConfig:
-        async with self._write_lock:
-            return await super().aput_with_writes(config, checkpoint, metadata, new_versions, pending_writes)
+        return await self._writes.persist(super().aput_with_writes(config, checkpoint, metadata, new_versions, pending_writes))
 
     def put_with_writes(
         self, config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata,
@@ -424,7 +424,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._confirmed.pop(key, None)
         self.checkpoint_event_client.kept = None
         try:
-            with turn_timing.phase('checkpoint_write'):
+            with turn_timing.phase('checkpoint_write', checkpoint_id=checkpoint['id']):
                 stored = super().put_with_writes(config, checkpoint, metadata, new_versions, pending_writes)
         except BaseException:
             # Memory may hold the checkpoint or not: lapse every Turn's confirmation, even one made mid-write.
@@ -441,7 +441,7 @@ class WarmSessionSaver(AgentCoreMemorySaver):
         self._written = None
         _SESSIONS.touch(self._key(CheckpointerConfig.from_runnable_config(dict(config))))
         try:
-            with turn_timing.phase('checkpoint_write'):
+            with turn_timing.phase('checkpoint_write', checkpoint_id=CheckpointerConfig.from_runnable_config(dict(config)).checkpoint_id):
                 super().put_writes(config, writes, task_id, task_path)
         finally:
             _SESSIONS.touch(self._key(CheckpointerConfig.from_runnable_config(dict(config))))

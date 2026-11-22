@@ -162,6 +162,31 @@ def test_phases_count_their_runs_until_the_last_token(clock: Clock) -> None:
     assert record['phaseCounts'] == {'checkpoint_write': 2, 'model_payload': 1}
 
 
+def test_phase_lines_keep_request_offsets_and_late_checkpoint_identity(
+    clock: Clock, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=turn_timing.__name__)
+    timing = turn_timing.TurnTiming('run', 'session', 'model', warmup=False, receipt=10)
+    with turn_timing.use(timing):
+        clock.now = 10.25
+        with turn_timing.phase('graph_build'):
+            clock.now = 10.75
+        timing.text()
+        timing.finish('finished')
+        clock.now = 11
+        with pytest.raises(ConnectionError), turn_timing.phase('checkpoint_write', checkpoint_id='checkpoint-7'):
+            clock.now = 11.125
+            raise ConnectionError('write refused')
+    lines = [json.loads(record.message) for record in caplog.records]
+    phases = [line for line in lines if line['event'] == 'harness_phase']
+    assert phases == [
+        {'event': 'harness_phase', 'runId': 'run', 'sessionId': 'session', 'phase': 'graph_build',
+         'startMs': 250, 'durationMs': 500},
+        {'event': 'harness_phase', 'runId': 'run', 'sessionId': 'session', 'phase': 'checkpoint_write',
+         'startMs': 1000, 'durationMs': 125, 'checkpointId': 'checkpoint-7'},
+    ]
+
+
 def test_phase_outside_a_turn_reads_no_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected() -> float:
         raise AssertionError('A phase outside a Turn read the clock')

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import threading
 from collections.abc import Iterator
@@ -14,7 +15,7 @@ import uvicorn
 from langchain_core.messages import AIMessage
 
 from agentcore_fake import FakeAgentCoreMemory, turn_identity
-from botcube_harness_deepagents import serving
+from botcube_harness_deepagents import serving, turn_timing
 from botcube_harness_deepagents.memory.agentcore import warm_session
 from test_serving import _replay, _Service
 
@@ -27,6 +28,7 @@ class FinalWrite:
     entered: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
     stored: int = 0
+    checkpoints: list[str] = field(default_factory=list)
     fail: bool = False
     answer: str = 'Echo: first'
     checkpoint_id: str | None = None
@@ -38,6 +40,7 @@ def final_write(monkeypatch: pytest.MonkeyPatch) -> Iterator[FinalWrite]:
     original = warm_session.WarmSessionSaver.put_with_writes
 
     def gated(self: warm_session.WarmSessionSaver, config: Any, checkpoint: Any, *args: Any, **kwargs: Any) -> Any:
+        gate.checkpoints.append(checkpoint['id'])
         messages = checkpoint['channel_values'].get('messages', [])
         if messages and isinstance(messages[-1], AIMessage) and messages[-1].text == gate.answer:
             if gate.checkpoint_id is None:
@@ -109,8 +112,9 @@ def read_stream(url: str, body: dict[str, Any], finished: threading.Event, eof: 
 
 @pytest.mark.parametrize('canonical', [False, True])
 def test_client_receives_finished_before_eof_and_the_checkpoint_is_stored_once(
-    service: _Service, memory: FakeAgentCoreMemory, streaming_url: str, final_write: FinalWrite, canonical: bool,
+    service: _Service, memory: FakeAgentCoreMemory, streaming_url: str, final_write: FinalWrite, canonical: bool, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger=turn_timing.__name__)
     finished, eof = threading.Event(), threading.Event()
     with ThreadPoolExecutor() as pool:
         response = pool.submit(read_stream, streaming_url, payload(canonical=canonical), finished, eof)
@@ -124,6 +128,11 @@ def test_client_receives_finished_before_eof_and_the_checkpoint_is_stored_once(
         events = response.result(timeout=5)
     assert eof.is_set()
     assert final_write.stored == 1
+    assert final_write.checkpoints == [final_write.checkpoint_id]
+    phases = [json.loads(record.message) for record in caplog.records if record.message.startswith('{"event":"harness_phase"')]
+    writes = [phase for phase in phases if phase['phase'] == 'checkpoint_write']
+    assert [write['checkpointId'] for write in writes] == [final_write.checkpoint_id]
+    assert writes[0]['startMs'] >= 0
     assert sum(event.get('type') == 'RUN_FINISHED' for event in events) == 1
     assert _replay('user-1', 'thread-1') == [('user', 'first'), ('assistant', 'Echo: first')]
 
@@ -194,3 +203,34 @@ def test_closing_the_client_after_finished_does_not_cancel_the_checkpoint(
     assert final_write.stored == 1
     assert service.recorder.heard[-1] == ['first', 'second']
     assert _replay('user-1', 'thread-1')[-2:] == [('user', 'second'), ('assistant', 'Echo: second')]
+
+
+def test_stop_during_interrupt_exit_keeps_the_checkpoint_before_eof(
+    service: _Service, memory: FakeAgentCoreMemory, streaming_url: str, final_write: FinalWrite,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build = serving.build_agent
+
+    def interrupted(**kwargs: Any) -> Any:
+        graph = build(**kwargs)
+        graph.interrupt_after_nodes = ['model']
+        return graph
+
+    monkeypatch.setattr(serving, 'build_agent', interrupted)
+    finished, eof = threading.Event(), threading.Event()
+    with ThreadPoolExecutor() as pool:
+        response = pool.submit(read_stream, streaming_url, payload(), finished, eof)
+        try:
+            assert final_write.entered.wait(5)
+            stop = payload()
+            stop['forwardedProps']['stop'] = True
+            with httpx2.Client(timeout=10) as client:
+                assert client.post(streaming_url, json=stop).status_code == 200
+            assert not eof.wait(0.2)
+        finally:
+            final_write.release.set()
+        events = response.result(timeout=5)
+    assert final_write.stored == 1
+    assert eof.is_set()
+    assert events[-1]['code'] == 'TURN_STOPPED'
+    assert _replay('user-1', 'thread-1') == [('user', 'first'), ('assistant', 'Echo: first')]

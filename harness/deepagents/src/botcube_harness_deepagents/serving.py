@@ -342,6 +342,12 @@ class _SessionAgent(LangGraphAgent):
         self._early_answer = False
         self._used_tools = False
 
+    def get_stream_kwargs(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        stream = super().get_stream_kwargs(*args, **kwargs)
+        if isinstance(self.graph, CompiledStateGraph):
+            stream['durability'] = 'exit'
+        return stream
+
     async def _handle_stream_events(self, input: RunAgentInput) -> AsyncGenerator[Any, None]:
         self._asked = None
         self._used_tools = False
@@ -1019,6 +1025,14 @@ async def _read_turn_checkpoint(
             return saved
 
 
+async def _settle_turn_writes(saver: Any, work: asyncio.Task[None]) -> None:
+    failure = None if work.cancelled() else work.exception()
+    if isinstance(saver, WarmSessionSaver):
+        await saver.settle_writes()
+    if failure is not None:
+        raise failure
+
+
 def _settle_finished_reuse(saver: Any, finished: bool) -> None:
     if isinstance(saver, WarmSessionSaver):
         if finished:
@@ -1233,6 +1247,7 @@ class _SessionTurns:
                         turn.work = asyncio.create_task(_turn_events(agent, input_data, reply.watching(publish)))
                     limited = await wait_for_turn(turn.work, deadline, finished=lambda: turn.finished)
                     try:
+                        await _settle_turn_writes(saver, turn.work)
                         await readiness.settle_prefetch()
                         if not turn.work.cancelled():
                             turn.work.result()

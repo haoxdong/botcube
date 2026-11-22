@@ -46,6 +46,13 @@ def _turn(service: _Service, text: str, epoch: Any = 'epoch-1', **props: Any) ->
 def checkpoint_completion(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     if request.param == 'natural':
         return
+    # Exercise recovery from intermediate checkpoints written by pre-exit-durability Turns.
+    stream_kwargs = serving._SessionAgent.get_stream_kwargs
+
+    def legacy_stream(self: Any, *args: Any, **kwargs: Any) -> Any:
+        return {**stream_kwargs(self, *args, **kwargs), 'durability': 'async'}
+
+    monkeypatch.setattr(serving._SessionAgent, 'get_stream_kwargs', legacy_stream)
     saver = warm_session.WarmSessionSaver
     store = saver.put_with_writes
     finish = saver.finish_run

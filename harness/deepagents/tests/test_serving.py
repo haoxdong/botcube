@@ -1282,7 +1282,8 @@ def test_stopping_a_model_before_it_reasons_or_answers_leaves_no_thought(
         events = running.result(timeout=10)
     assert events[-1]['code'] == 'TURN_STOPPED'
     timings = [json.loads(record.message) for record in caplog.records
-               if record.name == 'botcube_harness_deepagents.turn_timing']
+               if record.name == 'botcube_harness_deepagents.turn_timing'
+               and json.loads(record.message).get('event') == 'harness_turn_timing']
     assert sorted((line['runId'], line['status']) for line in timings) == [('run-0', 'finished'), ('run-0', 'stopped')]
     types = [event['type'] for event in events]
     assert 'TEXT_MESSAGE_START' not in types and not [kind for kind in types if kind.startswith('REASONING')]
@@ -2045,7 +2046,8 @@ def test_on_agentcore_a_later_turn_supersedes_one_still_preparing(
     assert service.recorder.heard == [['later']]
 
     timings = [json.loads(record.message) for record in caplog.records
-               if record.name == 'botcube_harness_deepagents.turn_timing']
+               if record.name == 'botcube_harness_deepagents.turn_timing'
+               and json.loads(record.message).get('event') == 'harness_turn_timing']
     assert sorted(line['status'] for line in timings) == ['finished', 'stopped']
 
 
@@ -2923,7 +2925,7 @@ def test_a_finished_turns_history_reads_only_its_latest_checkpoint(
     assert len(writes_reads) == 1 and writes_reads[0].startswith(writes)
 
 
-def test_a_new_session_is_readable_while_its_first_turn_runs(
+def test_a_new_session_becomes_readable_when_its_first_turn_exits(
     service: _Service, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     memory = FakeAgentCoreMemory()
@@ -2971,9 +2973,8 @@ def test_a_new_session_is_readable_while_its_first_turn_runs(
                     'operation': 'get', 'userId': 'user-1', 'sessionId': 'thread-1',
                 })
                 assert not running.done(), 'The first Turn finished before its record was read'
-                assert response.status_code == 200, response.text
-                assert [(message['role'], message.get('content', ''))
-                        for message in response.json()['messages']] == [('user', 'First question')]
+                assert response.status_code == 404, response.text
+                assert response.json()['code'] == 'SESSION_NOT_FOUND'
             finally:
                 release_answer.set()
                 events = running.result(timeout=10)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections import Counter
@@ -605,3 +606,42 @@ def test_prepared_empty_sessions_obey_cache_capacity(
         reader.admit_snapshot_reuse(config, 'user-1', 'run', 'epoch-1')
         assert reader.get_tuple(config) is None
         assert bool(client.calls) is evicted
+
+
+
+def test_cancelled_checkpoint_callers_still_drain_queued_writes_before_raising(
+    memory: FakeAgentCoreMemory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        saver, _ = _turn(memory)
+        entered = [asyncio.Event(), asyncio.Event()]
+        release = [asyncio.Event(), asyncio.Event()]
+        order: list[str] = []
+
+        async def put(self: Any, config: Any, checkpoint: Any, *args: Any) -> Any:
+            index = int(checkpoint['id'])
+            entered[index].set()
+            await release[index].wait()
+            order.append(checkpoint['id'])
+            if index == 0:
+                raise ConnectionError('first write refused')
+            return config
+
+        monkeypatch.setattr(AgentCoreMemorySaver, 'aput', put)
+        writes = [asyncio.create_task(saver.aput(
+            CONFIG, {**empty_checkpoint(), 'id': str(index)}, {'source': 'loop', 'step': index}, {},
+        )) for index in range(2)]
+        await entered[0].wait()
+        for write in writes:
+            write.cancel()
+        await asyncio.gather(*writes, return_exceptions=True)
+        draining = asyncio.create_task(saver.settle_writes())
+        release[0].set()
+        await entered[1].wait()
+        assert not draining.done()
+        release[1].set()
+        with pytest.raises(ConnectionError, match='first write refused'):
+            await draining
+        assert order == ['0', '1']
+
+    asyncio.run(exercise())

@@ -333,7 +333,7 @@ def model_run() -> str | None:
 
 
 @contextmanager
-def phase(name: str) -> Generator[None, None, None]:
+def phase(name: str, *, checkpoint_id: str | None = None) -> Generator[None, None, None]:
     """Add the block's wall time to the current Turn's `name` phase."""
     if name not in _PHASES:
         raise ValueError(f'Unknown Turn timing phase {name!r}')
@@ -348,7 +348,14 @@ def phase(name: str) -> Generator[None, None, None]:
         ):
             yield
     finally:
-        timing._phases.append((name, started, perf_counter()))
+        ended = perf_counter()
+        timing._phases.append((name, started, ended))
+        log.info(json.dumps({
+            'event': 'harness_phase', 'runId': timing.run_id, 'sessionId': timing.session_id,
+            'phase': name, 'startMs': round((started - timing.receipt) * 1000, 3),
+            'durationMs': round((ended - started) * 1000, 3),
+            **({'checkpointId': checkpoint_id} if checkpoint_id is not None else {}),
+        }, separators=(',', ':')))
 
 
 async def dispatched(request: Any) -> None:

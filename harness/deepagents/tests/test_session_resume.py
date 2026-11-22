@@ -556,9 +556,9 @@ def test_a_stop_invocation_stops_the_running_turn_it_names(tmp_path: Path, monke
         running = asyncio.create_task(session.events([{'id': 'user-message-1', 'role': 'user', 'content': 'List the files'}]))
         await _await_fixture_admission_or_public_completion(running, held)
 
-        assert await session.replay() == [
-            {'id': 'user-message-1', 'role': 'user', 'content': 'List the files'},
-        ]
+        from botcube_harness_deepagents.session_api import SessionNotFoundError
+        with pytest.raises(SessionNotFoundError):
+            await session.replay()
         assert await _stop('run-1') == []
         events = await running
         assert (events[-1].type, events[-1].code) == ('RUN_ERROR', 'TURN_STOPPED')
